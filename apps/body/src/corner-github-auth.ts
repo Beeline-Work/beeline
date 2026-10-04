@@ -1,7 +1,7 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, resolve } from 'node:path';
 
-/** Install session-local git/gh launchers which mint credentials only when used. */
+/** Install session-local git/gh launchers which refresh credentials for remote commands. */
 export async function installCornerGitHubWrappers(input: {
   root: string;
   runtimeConfigPath: string;
@@ -160,7 +160,7 @@ export function cornerGitHubCommandRefusal(
 
 async function writeLauncher(path: string, config: Record<string, string>): Promise<void> {
   const source = `#!/usr/bin/env node
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 const config = ${JSON.stringify(config)};
 const cornerGitHubCommandRefusal = ${cornerGitHubCommandRefusal.toString()};
 const authFailure = /(?:authentication failed|bad credentials|could not read username|http(?:\\/\\d(?:\\.\\d)?)? 40[13]|status (?:code )?40[13])/i;
@@ -175,7 +175,28 @@ function resolvePushBranch(source) {
   return current.status === 0 ? { branch: current.stdout.trim() } : {};
 }
 const refusal = cornerGitHubCommandRefusal(config.launcher, process.argv.slice(2), config.featureBranch, config.targetBranch, resolvePushBranch);
-if (refusal) { process.stderr.write(refusal + '\\n'); process.exit(1); }
+if (refusal) { process.stderr.write(refusal + '\\n'); process.exitCode = 1; }
+function needsToken(argv) {
+  if (config.launcher === 'gh') return true;
+  const optionsWithValue = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env']);
+  let index = 0;
+  while (index < argv.length && argv[index].startsWith('-')) {
+    if (argv[index] === '--version' || argv[index] === '--help') return false;
+    index += optionsWithValue.has(argv[index]) ? 2 : 1;
+  }
+  // Unknown commands (including aliases) may contact a remote.
+  const local = new Set([
+    'add', 'am', 'apply', 'bisect', 'blame', 'branch', 'cat-file', 'check-attr',
+    'check-ignore', 'check-ref-format', 'checkout', 'cherry-pick', 'clean', 'commit',
+    'config', 'describe', 'diff', 'diff-files', 'diff-index', 'diff-tree', 'for-each-ref',
+    'format-patch', 'fsck', 'gc', 'grep', 'hash-object', 'help', 'init', 'log', 'ls-files',
+    'ls-tree', 'merge', 'merge-base', 'mv', 'notes', 'rebase', 'reflog', 'reset',
+    'restore', 'rev-list', 'rev-parse', 'revert', 'rm', 'show', 'show-ref', 'stash',
+    'status', 'switch', 'symbolic-ref', 'tag', 'update-index', 'update-ref',
+    'verify-commit', 'verify-tag', 'worktree',
+  ]);
+  return !local.has(argv[index]);
+}
 function token() {
   let result;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -184,19 +205,40 @@ function token() {
     if (attempt < 2) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * (attempt + 1));
   }
   process.stderr.write(result.stderr || 'Beeline could not refresh the repository credential.\\n');
-  process.exit(result.status || 1);
+  process.exitCode = result.status || 1;
+  return undefined;
 }
-function run(value) {
+async function run(value) {
   const env = { ...process.env, GH_TOKEN: value, GITHUB_TOKEN: value, GIT_TERMINAL_PROMPT: '0' };
-  return spawnSync(config.command, process.argv.slice(2), { env, encoding: 'buffer', stdio: ['inherit', 'pipe', 'pipe'] });
+  const child = spawn(config.command, process.argv.slice(2), { env, stdio: ['inherit', 'pipe', 'pipe'] });
+  let authenticationFailed = false;
+  // Keep only enough diagnostic overlap to recognize an auth failure across chunks.
+  for (const [source, destination] of [[child.stdout, process.stdout], [child.stderr, process.stderr]]) {
+    let tail = '';
+    source.on('data', (chunk) => {
+      const diagnostic = tail + chunk.toString('utf8');
+      authenticationFailed ||= authFailure.test(diagnostic);
+      tail = diagnostic.slice(-1024);
+    });
+    source.pipe(destination, { end: false });
+  }
+  return new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (status) => resolve({ status, authenticationFailed }));
+  });
 }
-let result = run(token());
-const diagnostic = Buffer.concat([result.stdout || Buffer.alloc(0), result.stderr || Buffer.alloc(0)]).toString('utf8');
-if (result.status !== 0 && authFailure.test(diagnostic)) result = run(token());
-if (result.stdout) process.stdout.write(result.stdout);
-if (result.stderr) process.stderr.write(result.stderr);
-if (result.error) throw result.error;
-process.exit(result.status ?? 1);
+if (!refusal) {
+  const authenticated = needsToken(process.argv.slice(2));
+  const value = authenticated ? token() : '';
+  if (value !== undefined) {
+    let result = await run(value);
+    if (authenticated && result.status !== 0 && result.authenticationFailed) {
+      const refreshed = token();
+      if (refreshed !== undefined) result = await run(refreshed);
+    }
+    process.exitCode ??= result.status ?? 1;
+  }
+}
 `;
   await writeFile(path, source, { mode: 0o700 });
   await chmod(path, 0o700);

@@ -1,16 +1,202 @@
-import { execFile } from 'node:child_process';
-import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { cornerGitHubCommandRefusal, installCornerGitHubWrappers } from './corner-github-auth.js';
 
 const execFileAsync = promisify(execFile);
 
+async function slowPipe(command: string, argv: string[]) {
+  const child = spawn(command, argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+  child.stdout.pause();
+  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+  const closed = new Promise<number | null>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', resolve);
+  });
+  // A slow pipe consumer exposes premature process.exit() after a large write.
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  child.stdout.resume();
+  const code = await closed;
+  return { code, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) };
+}
+
 describe('corner GitHub wrappers', () => {
   const featureBranch = 'corner/guard-123';
   const targetBranch = 'main';
+  const roots: string[] = [];
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  async function fixture(gitBinary = '/usr/bin/git', ghSource?: string) {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-output-'));
+    roots.push(root);
+    const calls = join(root, 'tokens');
+    const cli = join(root, 'cli.mjs');
+    await writeFile(
+      cli,
+      `import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('test-token');`,
+    );
+    let ghBinary: string | undefined;
+    if (ghSource) {
+      ghBinary = join(root, 'gh.mjs');
+      await writeFile(ghBinary, '#!/usr/bin/env node\n' + ghSource);
+      await chmod(ghBinary, 0o700);
+    }
+    const env = await installCornerGitHubWrappers({
+      root,
+      runtimeConfigPath: '/runtime.json',
+      roomId: 'room',
+      cliEntrypoint: cli,
+      gitBinary,
+      ghBinary,
+      featureBranch,
+      targetBranch,
+      inheritedPath: process.env.PATH,
+    });
+    const bin = env.PATH!.split(':')[0]!;
+    return { root, calls, git: join(bin, 'git'), gh: join(bin, 'gh') };
+  }
+
+  it.each([68 * 1024, 512 * 1024, 2 * 1024 * 1024])(
+    'pipes a real Git blob of %i bytes intact',
+    async (size) => {
+      const { root, git } = await fixture();
+      await execFileAsync('/usr/bin/git', ['init', root]);
+      const blob = Buffer.alloc(size);
+      for (let index = 0; index < size; index += 1) blob[index] = index % 256;
+      await writeFile(join(root, 'blob'), blob);
+      await execFileAsync('/usr/bin/git', ['-C', root, 'add', 'blob']);
+      await execFileAsync('/usr/bin/git', [
+        '-C',
+        root,
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.test',
+        'commit',
+        '-m',
+        'blob',
+      ]);
+      const result = await slowPipe(git, ['-C', root, 'show', 'HEAD:blob']);
+      expect(result.code, result.stderr.toString().slice(-2000)).toBe(0);
+      expect(result.stdout.length).toBe(size);
+      expect(result.stdout.equals(blob)).toBe(true);
+      console.log(`Git show: ${result.stdout.length}/${size} bytes, byte-for-byte match`);
+    },
+  );
+
+  it('pipes large gh stdout and stderr intact', async () => {
+    const size = 2 * 1024 * 1024;
+    const { gh, calls } = await fixture(
+      '/usr/bin/git',
+      `
+if (process.env.GH_TOKEN !== 'test-token') process.exit(2);
+process.stdout.write(Buffer.alloc(${size}, 120));
+process.stderr.write(Buffer.alloc(${size}, 121));`,
+    );
+    const result = await slowPipe(gh, ['run', 'view', '--log']);
+    expect(result.code, result.stderr.toString().slice(-2000)).toBe(0);
+    expect(result.stdout.equals(Buffer.alloc(size, 120))).toBe(true);
+    expect(result.stderr.equals(Buffer.alloc(size, 121))).toBe(true);
+    expect(await readFile(calls, 'utf8')).toBe('token\n');
+    console.log(
+      `gh run view --log: ${result.stdout.length} stdout bytes and ${result.stderr.length} stderr bytes intact`,
+    );
+  });
+
+  it('runs local Git commands without requesting a token', async () => {
+    const { root, git, calls } = await fixture();
+    await execFileAsync(git, ['init', root]);
+    await writeFile(join(root, 'file'), 'local fixture\n');
+    const commands = [
+      ['-C', root, 'add', 'file'],
+      [
+        '-C',
+        root,
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.test',
+        'commit',
+        '-m',
+        'local',
+      ],
+      ['-C', root, 'status', '--short'],
+      ['--git-dir', join(root, '.git'), 'ls-files'],
+      ['-C', root, 'show', 'HEAD:file'],
+      ['-C', root, 'cat-file', '-p', 'HEAD:file'],
+      ['-C', root, 'rev-parse', 'HEAD'],
+    ];
+    for (const argv of commands) await execFileAsync(git, argv);
+    expect(await readFile(calls, 'utf8').catch(() => '')).toBe('');
+    console.log(
+      'Local init/add/commit/status/ls-files/show/cat-file/rev-parse: zero token requests',
+    );
+  });
+
+  it.each([
+    { launcher: 'git', argv: ['fetch'] },
+    { launcher: 'git', argv: ['push', 'origin', featureBranch] },
+    { launcher: 'git', argv: ['ls-remote'] },
+    { launcher: 'gh', argv: ['api', 'repos/owner/repo'] },
+  ])('refreshes and retries authentication for $launcher $argv', async ({ launcher, argv }) => {
+    const { root } = await fixture();
+    const command = join(root, 'remote.mjs');
+    const source = `import { existsSync, writeFileSync } from 'node:fs';
+if (process.env.GH_TOKEN !== 'test-token' || process.env.GITHUB_TOKEN !== 'test-token') process.exit(2);
+const marker = ${JSON.stringify(join(root, 'attempt'))};
+if (!existsSync(marker)) {
+  writeFileSync(marker, 'failed');
+  process.stderr.write('HTTP ');
+  setTimeout(() => { process.stderr.write('401\\n'); process.exitCode = 1; }, 25);
+} else console.log('remote ok');`;
+    await writeFile(command, '#!/usr/bin/env node\n' + source);
+    await chmod(command, 0o700);
+    const { git, gh, calls } = await fixture(command, source);
+    const result = await execFileAsync(launcher === 'git' ? git : gh, argv);
+    expect(result.stdout).toBe('remote ok\n');
+    expect(result.stderr).toBe('HTTP 401\n');
+    expect(await readFile(calls, 'utf8')).toBe('token\ntoken\n');
+  });
+
+  it.each([
+    { diagnostic: 'HTTP 403', code: 1, tokens: 'token\ntoken\n' },
+    { diagnostic: 'ordinary command failure', code: 7, tokens: 'token\n' },
+  ])(
+    'preserves exit status and bounds retries for $diagnostic',
+    async ({ diagnostic, code, tokens }) => {
+      const { gh, calls } = await fixture(
+        '/usr/bin/git',
+        `console.error(${JSON.stringify(diagnostic)}); process.exitCode = ${code};`,
+      );
+      await expect(execFileAsync(gh, ['api', 'repos/owner/repo'])).rejects.toMatchObject({ code });
+      expect(await readFile(calls, 'utf8')).toBe(tokens);
+    },
+  );
+
+  it('does not refresh or retry a local failure that mentions authentication', async () => {
+    const { root } = await fixture();
+    const command = join(root, 'local.mjs');
+    await writeFile(
+      command,
+      '#!/usr/bin/env node\nconsole.error("HTTP 401"); process.exitCode = 7;',
+    );
+    await chmod(command, 0o700);
+    const { git, calls } = await fixture(command);
+    await expect(execFileAsync(git, ['status'])).rejects.toMatchObject({
+      code: 7,
+      stderr: 'HTTP 401\n',
+    });
+    expect(await readFile(calls, 'utf8').catch(() => '')).toBe('');
+  });
   it.each([
     { launcher: 'git' as const, argv: ['push', 'origin', featureBranch], allowed: true },
     {
@@ -143,20 +329,33 @@ console.log('room-token');`,
 
   it('refuses a foreign destination before running git in a scratch repository', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-guard-'));
+    roots.push(root);
     const repo = join(root, 'repo');
     const remote = join(root, 'remote.git');
     const cli = join(root, 'cli.mjs');
-    await writeFile(cli, '#!/usr/bin/env node\nconsole.log("fresh-token");\n');
+    const calls = join(root, 'tokens');
+    await writeFile(
+      cli,
+      `import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token');`,
+    );
     await chmod(cli, 0o700);
-    await execFileAsync('git', ['init', '--bare', remote]);
-    await execFileAsync('git', ['init', repo]);
-    await execFileAsync('git', ['-C', repo, 'checkout', '-b', featureBranch]);
-    await execFileAsync('git', ['-C', repo, 'config', 'user.name', 'Beeline Test']);
-    await execFileAsync('git', ['-C', repo, 'config', 'user.email', 'beeline@example.test']);
+    await execFileAsync('/usr/bin/git', ['init', '--bare', remote]);
+    await execFileAsync('/usr/bin/git', ['init', repo]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'checkout', '-b', featureBranch]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'config', 'user.name', 'Beeline Test']);
+    await execFileAsync('/usr/bin/git', [
+      '-C',
+      repo,
+      'config',
+      'user.email',
+      'beeline@example.test',
+    ]);
     await writeFile(join(repo, 'README.md'), 'guard test\n');
-    await execFileAsync('git', ['-C', repo, 'add', 'README.md']);
-    await execFileAsync('git', ['-C', repo, 'commit', '-m', 'test']);
-    await execFileAsync('git', ['-C', repo, 'remote', 'add', 'origin', remote]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'add', 'README.md']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'commit', '-m', 'test']);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'remote', 'add', 'origin', remote]);
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'tag', 'v1.0.0']);
     const gitBinary = '/usr/bin/git';
     const env = await installCornerGitHubWrappers({
       root,
@@ -172,12 +371,22 @@ console.log('room-token');`,
 
     await execFileAsync(launcher, ['push', '-u', 'origin', featureBranch], { cwd: repo });
     expect(
-      (await execFileAsync('git', ['--git-dir', remote, 'show-ref', featureBranch])).stdout,
+      (await execFileAsync('/usr/bin/git', ['--git-dir', remote, 'show-ref', featureBranch]))
+        .stdout,
     ).toContain(`refs/heads/${featureBranch}`);
     await expect(
       execFileAsync(launcher, ['push', 'origin', 'foreign'], { cwd: repo }),
     ).rejects.toMatchObject({
       stderr: `beeline: this corner may push only ${featureBranch}\n`,
     });
+    for (const refspec of ['v1.0.0', `HEAD:refs/tags/${featureBranch}`, 'HEAD:main']) {
+      await expect(
+        execFileAsync(launcher, ['push', 'origin', refspec], { cwd: repo }),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: `beeline: this corner may push only ${featureBranch}\n`,
+      });
+    }
+    expect(await readFile(calls, 'utf8')).toBe('token\n');
   });
 });

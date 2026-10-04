@@ -4883,22 +4883,32 @@ export function BuzzChatSurface({
   // Changing the repo under a Room with open corners strands those corners on
   // the old repo, so re-binding is confirmed like the other destructive Room
   // actions (delete/leave) above, and skipped when there is nothing to strand.
+  const confirmRoomRepoReplacement = useCallback(async () => {
+    const hasOpenCorners = openCornerCount > 0;
+    if (!roomRepository || !hasOpenCorners) return true;
+    return Modal.confirm(
+      `Change ${ROOM_LABEL} repo?`,
+      `This ${ROOM_LABEL} has ${CORNER_LABEL}s still open on ${roomRepository.binding.name}. Changing the repo will not move them — they stay bound to the old repo.`,
+      { cancelText: 'Cancel', confirmText: 'Change anyway', destructive: true },
+    );
+  }, [openCornerCount, roomRepository]);
+
   const handleSelectRoomRepoCandidate = useCallback(
     (candidate: RepoCandidate) => {
-      const hasOpenCorners = openCornerCount > 0;
-      if (roomRepository && hasOpenCorners) {
-        void Modal.confirm(
-          `Change ${ROOM_LABEL} repo?`,
-          `This ${ROOM_LABEL} has ${CORNER_LABEL}s still open on ${roomRepository.binding.name}. Changing the repo will not move them — they stay bound to the old repo.`,
-          { cancelText: 'Cancel', confirmText: 'Change anyway', destructive: true },
-        ).then((confirmed) => {
-          if (confirmed) void applyRoomRepository(candidate);
-        });
-        return;
-      }
-      void applyRoomRepository(candidate);
+      void confirmRoomRepoReplacement().then((confirmed) => {
+        if (confirmed) void applyRoomRepository(candidate);
+      });
     },
-    [applyRoomRepository, openCornerCount, roomRepository],
+    [applyRoomRepository, confirmRoomRepoReplacement],
+  );
+
+  // Creating a repo for a linked Room replaces its repo too, so it asks first.
+  const handleCreateRoomRepository = useCallback(
+    async (installationId: number, name: string) => {
+      if (!(await confirmRoomRepoReplacement())) return;
+      await handleCreateGitHubRepository(installationId, name);
+    },
+    [confirmRoomRepoReplacement, handleCreateGitHubRepository],
   );
 
   /** Toggle ambient GitHub repository notifications (stars/issues/PRs) for this Room. */
@@ -4961,7 +4971,7 @@ export function BuzzChatSurface({
     onLoad: () => void loadRoomRepoChoice(),
     onConnect: () => void handleAddGitHubAccount(),
     onLink: handleSelectRoomRepoCandidate,
-    onCreate: handleCreateGitHubRepository,
+    onCreate: handleCreateRoomRepository,
     onUnlink: () => void handleUnlinkRoomRepository(),
     onCancel: closeRoomActions,
     draftContext: decodedId,

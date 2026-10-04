@@ -54,6 +54,7 @@ function mount({
   connected?: boolean;
   canManage?: boolean;
 } = {}) {
+  let connectOrg: () => void = () => undefined;
   const calls = {
     load: vi.fn(),
     connect: vi.fn(),
@@ -66,13 +67,19 @@ function mount({
   // body, footer.
   function Sheet() {
     const [listOpen, setListOpen] = useState(false);
+    const [connectedInstallations, setInstallations] = useState(installations);
+    connectOrg = () =>
+      setInstallations((current: any[]) => [
+        ...current,
+        { installationId: 3, accountLogin: 'new-org', status: 'active' },
+      ]);
     const choice = useRoomRepositoryChoice({
       visible: true,
       canManage,
       roomName: 'thecollector',
       current,
       candidates: connected ? candidates : [],
-      installations: connected ? installations : [],
+      installations: connected ? connectedInstallations : [],
       loading: false,
       busy: false,
       error: null,
@@ -117,7 +124,17 @@ function mount({
   const save = () => renderer.root.findByType('Button').props;
   const title = () => renderer.root.findByType('Sheet').props.title;
   const list = () => renderer.root.findByType('RepoList').props;
-  return { renderer, host, text, press, save, title, list, calls };
+  return {
+    renderer,
+    host,
+    text,
+    press,
+    save,
+    title,
+    list,
+    calls,
+    connectOrg: () => act(() => connectOrg()),
+  };
 }
 
 describe('Room header Repository control', () => {
@@ -186,6 +203,36 @@ describe('Room header Repository control', () => {
     press('room-repo-owner');
     press('room-owner-connect');
     expect(calls.connect).toHaveBeenCalledTimes(1);
+    act(() => renderer.unmount());
+  });
+
+  it('selects the org that Connect another org brings back', () => {
+    const { renderer, text, press, save, calls, connectOrg } = mount();
+    press('room-repo-row');
+    press('room-repo-mode-create');
+    press('room-repo-owner');
+    press('room-owner-connect');
+    expect(calls.connect).toHaveBeenCalledTimes(1);
+    connectOrg();
+    expect(text('room-repo-create')).toBe('new-orgthecollector');
+    act(() => save().onPress());
+    expect(calls.create).toHaveBeenCalledWith(3, 'thecollector');
+    act(() => renderer.unmount());
+  });
+
+  it('grows the block so the owner menu floats over the switch inside the sheet (H6)', () => {
+    const { renderer, host, press } = mount();
+    press('room-repo-row');
+    press('room-repo-mode-create');
+    press('room-repo-owner');
+    const menu = host('room-owner-menu');
+    act(() => menu?.props.onLayout({ nativeEvent: { layout: { height: 150 } } }));
+    const head = host('room-repo-head');
+    act(() => head?.props.onLayout({ nativeEvent: { layout: { height: 60 } } }));
+    // menu 150 + xs 4 must fit above the slot: head 60 + sm 8 + 86.
+    expect(host('room-owner-menu-space')?.props.style).toEqual({ height: 86 });
+    press('room-repo-owner');
+    expect(host('room-owner-menu-space')).toBeUndefined();
     act(() => renderer.unmount());
   });
 

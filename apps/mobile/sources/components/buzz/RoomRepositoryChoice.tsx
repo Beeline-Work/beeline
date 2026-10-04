@@ -12,6 +12,7 @@ import {
   repositoryChoiceFacts,
   RepositoryReadonlyRow,
   splitFullName,
+  useSelectConnectedOwner,
   type RepoMode,
 } from './RepositoryChoice';
 
@@ -73,6 +74,7 @@ export function useRoomRepositoryChoice({
   const [linkPicked, setLinkPicked] = useState(false);
   const [installationId, setInstallationId] = useState<number | null>(null);
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
+  const trackConnect = useSelectConnectedOwner(installations, setInstallationId);
   const currentKey = current?.key ?? null;
   const name = roomName.replace(/^#/, '').trim();
   const { activeInstallations, selectedInstallation, nameMatch, takenRepo, githubConnected } =
@@ -155,13 +157,13 @@ export function useRoomRepositoryChoice({
       mode={mode}
       notice={notice}
       onChooseMode={chooseMode}
-      onConnect={onConnect}
+      onConnect={trackConnect(onConnect)}
       onLinkInstead={linkInstead}
       onOpenList={() => setListOpen(true)}
       onReveal={reveal}
       onSelectInstallation={setInstallationId}
       ownerMenuOpen={ownerMenuOpen}
-      ownerMenuPlacement="inline"
+      reserveOwnerMenuSpace
       revealed={revealed}
       selectedInstallation={selectedInstallation}
       setOwnerMenuOpen={setOwnerMenuOpen}

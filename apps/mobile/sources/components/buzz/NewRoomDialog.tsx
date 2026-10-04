@@ -10,7 +10,12 @@ import { Button } from './Button';
 import { HullDialogInput } from './HullDialog';
 import { HullActionSheetModal, HULL_SHEET_INSET } from './HullActionSheet';
 import { RepoList } from './RepoList';
-import { RepositoryChoice, repositoryChoiceFacts, type RepoMode } from './RepositoryChoice';
+import {
+  RepositoryChoice,
+  repositoryChoiceFacts,
+  useSelectConnectedOwner,
+  type RepoMode,
+} from './RepositoryChoice';
 
 type Props = {
   visible: boolean;
@@ -75,6 +80,7 @@ export function NewRoomDialog({
   const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
   const wasVisible = useRef(false);
 
+  const trackConnect = useSelectConnectedOwner(repoInstallations, setInstallationId);
   const busy = creatingRoom || creatingRepository;
   const slug = roomName.trim();
   const { activeInstallations, selectedInstallation, nameMatch, takenRepo, githubConnected } =
@@ -232,7 +238,7 @@ export function NewRoomDialog({
             mode={mode}
             notice={repoPickerNotice}
             onChooseMode={chooseMode}
-            onConnect={handleAddGitHubAccount}
+            onConnect={trackConnect(handleAddGitHubAccount)}
             onLinkInstead={linkInstead}
             onOpenList={handleToggleRepoPicker}
             onReveal={reveal}

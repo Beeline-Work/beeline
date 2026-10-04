@@ -62,11 +62,14 @@ const installations = [
   { installationId: 79, accountLogin: 'other', status: 'active' },
 ] as any;
 
+const newOrg = { installationId: 80, accountLogin: 'new-org', status: 'active' } as any;
+
 function mount({
   createFails = false,
   connected = true,
   loading = false,
 }: { createFails?: boolean; connected?: boolean; loading?: boolean } = {}) {
+  let connectOrg: () => void = () => undefined;
   const submit = vi.fn();
   const createRepository = vi.fn();
   const addAccount = vi.fn();
@@ -77,6 +80,8 @@ function mount({
     const [pendingRepo, select] = useState<any>(null);
     const [showRepoPicker, show] = useState(false);
     const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
+    const [connectedInstallations, setInstallations] = useState(installations);
+    connectOrg = () => setInstallations((current: any[]) => [...current, newOrg]);
     return (
       <NewRoomDialog
         visible
@@ -103,7 +108,7 @@ function mount({
           show(false);
         }}
         repoCandidates={connected ? [repo, privateRepo, otherPlanning] : []}
-        repoInstallations={connected ? installations : []}
+        repoInstallations={connected ? connectedInstallations : []}
         repoPickerError={repoPickerError}
         handleAddGitHubAccount={addAccount}
         handleCreateRepository={async (installationId, name) => {
@@ -148,6 +153,7 @@ function mount({
   const press = (testID: string) => act(() => host(testID)?.props.onPress());
   const name = (value: string) => act(() => host('create-room-name')?.props.onChangeText(value));
   return {
+    connectOrg: () => act(() => connectOrg()),
     renderer,
     host,
     text,
@@ -266,6 +272,24 @@ describe('New Room sheet', () => {
     press('create-room-repo-owner');
     press('create-room-owner-connect');
     expect(addAccount).toHaveBeenCalledTimes(1);
+    act(() => renderer.unmount());
+  });
+
+  it('selects the org that Connect another org brings back', async () => {
+    const { renderer, text, press, name, connectOrg, createRepository } = mount();
+    name('roadmap');
+    press('create-room-repo-row');
+    press('create-room-repo-mode-create');
+    press('create-room-repo-owner');
+    press('create-room-owner-connect');
+    connectOrg();
+    expect(text('create-room-repo-create')).toContain('new-org');
+    await act(async () =>
+      renderer.root
+        .findAll((node: any) => node.props.testID === 'create-room-submit')[0]
+        .props.onPress(),
+    );
+    expect(createRepository).toHaveBeenCalledWith(80, 'roadmap');
     act(() => renderer.unmount());
   });
 

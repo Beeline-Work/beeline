@@ -125,17 +125,33 @@ describe('Room→repo write confirmation', () => {
 
 describe('Room→repo settings change', () => {
   it('confirms before re-binding a repo out from under a Room with open corners', () => {
-    const handler = blockFrom(
+    const confirm = blockFrom(
+      chatSource,
+      'const confirmRoomRepoReplacement = useCallback(',
+      'confirmRoomRepoReplacement',
+    );
+    expect(confirm).toContain('openCornerCount');
+    expect(confirm).toContain('Modal.confirm');
+    expect(confirm).toContain('!roomRepository || !hasOpenCorners');
+    expect(confirm).not.toContain('cornerLifecycle');
+    expect(confirm).not.toContain('roomListCorners');
+    // Link + Save and Create + Save both replace the repo, so both ask first.
+    const link = blockFrom(
       chatSource,
       'const handleSelectRoomRepoCandidate = useCallback(',
       'handleSelectRoomRepoCandidate',
     );
-    expect(handler).toContain('openCornerCount');
-    expect(handler).toContain('hasOpenCorners');
-    expect(handler).toContain('Modal.confirm');
-    expect(handler).toContain('roomRepository && hasOpenCorners');
-    expect(handler).not.toContain('cornerLifecycle');
-    expect(handler).not.toContain('roomListCorners');
+    expect(link).toContain('confirmRoomRepoReplacement()');
+    const create = blockFrom(
+      chatSource,
+      'const handleCreateRoomRepository = useCallback(',
+      'handleCreateRoomRepository',
+    );
+    expect(create.indexOf('await confirmRoomRepoReplacement()')).toBeGreaterThan(-1);
+    expect(create.indexOf('await confirmRoomRepoReplacement()')).toBeLessThan(
+      create.indexOf('handleCreateGitHubRepository(installationId, name)'),
+    );
+    expect(chatSource).toContain('onCreate: handleCreateRoomRepository,');
   });
 
   it('unassigns the repo only through the confirmed destructive path', () => {

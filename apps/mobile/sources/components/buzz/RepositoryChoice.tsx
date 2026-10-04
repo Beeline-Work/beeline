@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import { githubFullNameFromInput, type RepoCandidate } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
@@ -69,6 +69,36 @@ export function repositoryChoiceFacts({
   };
 }
 
+/**
+ * Wraps a Connect action so the org it connects comes back selected: the
+ * first active installation that was not there when Connect was pressed
+ * becomes the owner.
+ */
+export function useSelectConnectedOwner(
+  installations: readonly GitHubInstallationAccess[],
+  setInstallationId: (installationId: number) => void,
+) {
+  const before = useRef<Set<number> | null>(null);
+  const activeIds = installations
+    .filter((item) => item.status === 'active')
+    .map((item) => item.installationId);
+  const activeKey = activeIds.join(',');
+  useEffect(() => {
+    if (!before.current) return;
+    const added = activeIds.find((id) => !before.current!.has(id));
+    if (added === undefined) return;
+    before.current = null;
+    setInstallationId(added);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeKey]);
+  return (connect?: () => void) =>
+    connect &&
+    (() => {
+      before.current = new Set(activeIds);
+      connect();
+    });
+}
+
 type Props = {
   /** Prefix for every testID, e.g. `create-room` gives `create-room-repo-row`. */
   testIDPrefix: string;
@@ -95,11 +125,11 @@ type Props = {
   error?: string | null;
   notice?: string | null;
   /**
-   * `overlay` hangs the owner menu over the switch, as in New Room; `inline`
-   * pushes the row down instead, for a sheet with nothing above the switch
-   * for the menu to cover.
+   * Grow the block upward so the owner menu, which hangs over the switch,
+   * fits inside it. For a sheet with nothing above the switch for the menu to
+   * cover, which would otherwise clip it.
    */
-  ownerMenuPlacement?: 'overlay' | 'inline';
+  reserveOwnerMenuSpace?: boolean;
 };
 
 /**
@@ -130,8 +160,11 @@ export function RepositoryChoice({
   onLinkInstead,
   error,
   notice,
-  ownerMenuPlacement = 'overlay',
+  reserveOwnerMenuSpace = false,
 }: Props) {
+  const { theme } = useUnistyles();
+  const [menuHeight, setMenuHeight] = useState(0);
+  const [headHeight, setHeadHeight] = useState(0);
   const connectRow = (
     <TouchableOpacity
       accessibilityRole="button"
@@ -228,7 +261,8 @@ export function RepositoryChoice({
 
   const ownerMenu = (
     <View
-      style={ownerMenuPlacement === 'overlay' ? styles.ownerMenu : styles.ownerMenuInline}
+      onLayout={(event) => setMenuHeight(event.nativeEvent.layout.height)}
+      style={styles.ownerMenu}
       testID={`${p}-owner-menu`}
     >
       <ScrollView
@@ -302,29 +336,42 @@ export function RepositoryChoice({
     );
   }
 
+  const menuShown = ownerMenuOpen && mode === 'create' && githubConnected;
+  // The menu ends `xs` above the slot, which starts `sm` below the switch.
+  const reserved =
+    reserveOwnerMenuSpace && menuShown
+      ? Math.max(0, menuHeight + theme.buzz.space.xs - headHeight - theme.buzz.space.sm)
+      : 0;
+
   return (
     <View style={styles.repoBlock}>
-      <Text style={styles.fieldLabel}>Repository</Text>
-      <View style={styles.segments} testID={`${p}-repo-mode`}>
-        {MODES.map(({ mode: option, label }) => (
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityState={{ selected: mode === option, disabled: busy }}
-            disabled={busy}
-            key={option}
-            onPress={() => onChooseMode(option)}
-            style={[styles.segment, mode === option && styles.segmentSelected]}
-            testID={`${p}-repo-mode-${option}`}
-          >
-            <Text style={[styles.segmentText, mode === option && styles.segmentTextSelected]}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      {reserved > 0 && <View style={{ height: reserved }} testID={`${p}-owner-menu-space`} />}
+      <View
+        onLayout={(event) => setHeadHeight(event.nativeEvent.layout.height)}
+        testID={`${p}-repo-head`}
+      >
+        <Text style={styles.fieldLabel}>Repository</Text>
+        <View style={styles.segments} testID={`${p}-repo-mode`}>
+          {MODES.map(({ mode: option, label }) => (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityState={{ selected: mode === option, disabled: busy }}
+              disabled={busy}
+              key={option}
+              onPress={() => onChooseMode(option)}
+              style={[styles.segment, mode === option && styles.segmentSelected]}
+              testID={`${p}-repo-mode-${option}`}
+            >
+              <Text style={[styles.segmentText, mode === option && styles.segmentTextSelected]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
       {mode !== 'none' && (
         <View style={styles.slot}>
-          {ownerMenuOpen && mode === 'create' && githubConnected && ownerMenu}
+          {menuShown && ownerMenu}
           {slot()}
         </View>
       )}
@@ -472,14 +519,6 @@ const styles = StyleSheet.create((theme) => {
       bottom: '100%',
       marginBottom: hull.space.xs,
       zIndex: 3,
-      padding: hull.space.xs,
-      borderWidth: 1,
-      borderColor: hull.borderStrong,
-      borderRadius: hull.radius,
-      backgroundColor: hull.bgRaised,
-    },
-    ownerMenuInline: {
-      marginBottom: hull.space.xs,
       padding: hull.space.xs,
       borderWidth: 1,
       borderColor: hull.borderStrong,

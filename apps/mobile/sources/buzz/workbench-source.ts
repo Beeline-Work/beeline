@@ -20,6 +20,7 @@ import {
 } from './workbench';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { GOOGLE_ACCOUNT_CONNECTOR_ID } from '@beeline/api-contract/workbench';
+import type { WorkbenchAppSearchResult } from '@beeline/api-contract/workbench';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
 /**
@@ -33,6 +34,7 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
  * screens never read either implementation directly.
  */
 export interface WorkbenchSource {
+  searchApps(input: { query: string }): Promise<WorkbenchAppSearchResult>;
   beginLinkSignIn(): Promise<{ authorizationUrl: string }>;
   cancelLinkSignIn(state?: string): Promise<void>;
   disconnectLinkSignIn(): Promise<void>;
@@ -159,6 +161,9 @@ function toSteps(
  * through the session's own viewer on the server.
  */
 export class MonolithWorkbenchSource implements WorkbenchSource {
+  async searchApps(input: { query: string }): Promise<WorkbenchAppSearchResult> {
+    return monolithPhoneOperation('searchWorkbenchApps', input);
+  }
   beginLinkSignIn(): Promise<{ authorizationUrl: string }> {
     return monolithPhoneOperation('beginLinkSignIn', {});
   }

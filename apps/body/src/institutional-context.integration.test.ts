@@ -616,15 +616,17 @@ describe('institutional context prefetch, proven against the real server', () =>
     expect(prompts[1]).toContain('Priya works from the Berlin office.');
     expect(prompts[1]).not.toContain('Austin');
 
-    const files = await readdir(traceDir);
-    const records: TurnTraceRecord[] = [];
-    for (const file of files) {
-      const text = await readFile(join(traceDir, file), 'utf8');
-      for (const line of text.trim().split('\n').filter(Boolean)) records.push(JSON.parse(line));
-    }
-    const outcomes = records
-      .filter((entry) => entry.roomId === roomId && entry.outcome === 'complete')
-      .map((entry) => entry.attempts[entry.attempts.length - 1]?.institutionalMemory);
-    expect(outcomes).toEqual(['served', 'served']);
+    await vi.waitFor(async () => {
+      const files = await readdir(traceDir);
+      const records: TurnTraceRecord[] = [];
+      for (const file of files) {
+        const text = await readFile(join(traceDir, file), 'utf8');
+        for (const line of text.trim().split('\n').filter(Boolean)) records.push(JSON.parse(line));
+      }
+      const outcomes = records
+        .filter((entry) => entry.roomId === roomId && entry.outcome === 'complete')
+        .map((entry) => entry.attempts[entry.attempts.length - 1]?.institutionalMemory);
+      expect(outcomes).toEqual(['served', 'served']);
+    }, { timeout: 10_000, interval: 25 });
   }, 30_000);
 });

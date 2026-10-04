@@ -41,6 +41,8 @@ import type {
   ReadConnectionDetailInput,
   ReadConnectorInstallInput,
   ReadWorkbenchInput,
+  SearchWorkbenchAppsInput,
+  WorkbenchAppSearchResult,
   RevokeConnectionGrantsInput,
   RevokeConnectionGrantsResult,
   UnpairConnectorInput,
@@ -193,6 +195,7 @@ export type PhoneOperationMap = {
   reportRunningUpdate: { input: RunningUpdateInput; output: void };
   readConnectorInstall: { input: ReadConnectorInstallInput; output: Pick<WorkbenchView['connectors'][number], 'connectorId' | 'status'> | null };
   readWorkbench: { input: ReadWorkbenchInput; output: WorkbenchView };
+  searchWorkbenchApps: { input: SearchWorkbenchAppsInput; output: WorkbenchAppSearchResult };
   pairConnector: { input: PairConnectorInput; output: PairConnectorResult };
   cancelGoogleSignIn: { input: CancelGoogleSignInInput; output: { cancelled: boolean } };
   beginGoogleSignIn: { input: { connectorType: 'google-gmail' | 'google-calendar' | 'google-drive' | 'google-youtube' };

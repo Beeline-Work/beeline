@@ -126,12 +126,33 @@ async function render(): Promise<ReactTestRenderer> {
   await act(async () => {
     renderer = create(React.createElement(ConnectAppScreen));
     await Promise.resolve();
-    await Promise.resolve();
   });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
   return renderer;
 }
 
+async function search(renderer: ReactTestRenderer, query: string): Promise<void> {
+  await act(async () => renderer.root.findByProps({ testID: 'connect-app-input' }).props.onChangeText(query));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 230)); });
+}
+
 describe('Connect an app', () => {
+  it('Reproduction 9e6bb32e: shows No apps found and no Connect action for the screenshot query', async () => {
+    const renderer = await render();
+    await search(renderer, 'fuckface');
+    expect(renderer.root.findAllByProps({ testID: 'connect-app-fuckface' })).toHaveLength(0);
+    expect(JSON.stringify(renderer.toJSON())).toContain('No apps found');
+    expect(renderer.root.findAllByProps({ label: 'Connect' })).toHaveLength(0);
+    expect(source.appRequests).toHaveLength(0);
+  });
+
+  it('finds Resend beyond Popular and connects the selected result', async () => {
+    const renderer = await render();
+    await search(renderer, 'resend');
+    await act(async () => { renderer.root.findByProps({ testID: 'connect-app-resend' })
+      .findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
+    expect(source.appRequests).toEqual([{ app: 'Resend', helperId: 'helper-squire-box' }]);
+  });
   it('lets its last item scroll clear of the system navigation bar', async () => {
     safeArea.bottom = 48;
     try {
@@ -156,8 +177,7 @@ describe('Connect an app', () => {
 
   it('warns about Instagram account requirements before connecting a searched app', async () => {
     const renderer = await render();
-    await act(async () => renderer.root.findByProps({ testID: 'connect-app-input' })
-      .props.onChangeText('Instagram'));
+    await search(renderer, 'Instagram');
     expect(renderer.root.findByProps({ testID: 'connect-app-instagram' })).toBeTruthy();
     expect(JSON.stringify(renderer.toJSON())).toContain('Business or Creator account linked to a Facebook Page');
   });
@@ -171,7 +191,7 @@ describe('Connect an app', () => {
     expect(renderer.root.findAllByType('TextInput' as never)).toHaveLength(1);
     expect(renderer.root.findByProps({ testID: 'connect-app-gmail' }).findAllByType('TouchableOpacity' as never)).toHaveLength(1);
     expect(renderer.root.findByProps({ testID: 'connect-app-slack' }).findAllByType('TouchableOpacity' as never)).toHaveLength(1);
-    await act(async () => renderer.root.findByProps({ testID: 'connect-app-input' }).props.onChangeText('slack'));
+    await search(renderer, 'slack');
     expect(renderer.root.findAllByProps({ testID: 'connect-app-gmail' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'connect-app-slack' }).length).toBeGreaterThan(0);
   });

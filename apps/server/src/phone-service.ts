@@ -10,6 +10,7 @@ import {
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { composioToolkitForApp, type ComposioApps } from './composio-apps.js';
+import { appIdentity } from '@beeline/api-contract/workbench';
 import { beginComposioAppSignIn, completeComposioSignIn } from './app-connections.js';
 import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
@@ -4063,6 +4064,11 @@ export class PhoneService {
           input as Input<'readWorkbench'>,
           viewerId,
         )) as Output<Name>;
+      case 'searchWorkbenchApps':
+        return (await this.searchWorkbenchApps(
+          input as Input<'searchWorkbenchApps'>,
+          viewerId,
+        )) as Output<Name>;
       case 'pairConnector':
         return (await this.pairConnector(
           input as Input<'pairConnector'>,
@@ -7911,6 +7917,27 @@ export class PhoneService {
     );
   }
 
+  async searchWorkbenchApps(
+    input: Input<'searchWorkbenchApps'>,
+    viewerId: string,
+  ): Promise<Output<'searchWorkbenchApps'>> {
+    await this.viewerWorkbenchWorkspace(viewerId);
+    if (!this.composio) throw new Error('App search is unavailable');
+    const query = typeof input.query === 'string' ? input.query.trim() : '';
+    if (query.length > 80) throw new Error('App search is too long');
+    const rows = await this.composio.searchToolkits(query);
+    return rows.flatMap((row) => {
+      const identity = appIdentity(row.name);
+      if (!identity || composioToolkitForApp(identity.key) !== row.slug) return [];
+      const domain = row.appUrl ? new URL(row.appUrl).hostname : undefined;
+      return [{ appKey: identity.key, name: row.name,
+        ...(domain ? { domain } : {}),
+        ...(row.description ? { description: row.description } : {}),
+        ...(row.logo ? { logo: row.logo } : {}),
+      }];
+    });
+  }
+
   private async decorateAppSignInCards(messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
     const keys = messages.flatMap((message) =>
       message.appSignIn ? [composioToolkitForApp(message.appSignIn.appKey)] : [],
@@ -8302,6 +8329,25 @@ export class PhoneService {
   ): Promise<Output<'connectWorkbenchApp'>> {
     const app = typeof input.app === 'string' ? input.app.trim() : '';
     if (!app || app.length > APP_INPUT_MAX_LENGTH) throw new Error('app name is required');
+    await this.viewerWorkbenchWorkspace(viewerId);
+    const identity = appIdentity(app);
+    if (!identity) throw new Error('Select an app from search results');
+    const existing = await this.database.query(
+      `SELECT 1 FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2`,
+      [viewerId, identity.key],
+    );
+    if (existing.rows.length === 0) {
+      if (!this.composio) throw new Error('Select an app from search results');
+      let catalogEntry;
+      try { catalogEntry = await this.composio.toolkit(composioToolkitForApp(identity.key)); }
+      catch (error) {
+        if ((error as { status?: number }).status === 404)
+          throw new Error('Select an app from search results');
+        throw error;
+      }
+      if (catalogEntry.slug !== composioToolkitForApp(identity.key) || catalogEntry.enabled === false)
+        throw new Error('Select an app from search results');
+    }
     const { matched, machineId, ws } = await this.resolveViewerHelper(
       input.helperAgentId,
       viewerId,
@@ -9580,6 +9626,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'sendPushTest',
   'reportRunningUpdate',
   'readWorkbench',
+  'searchWorkbenchApps',
   'readConnectorInstall',
   'pairConnector',
   'cancelGoogleSignIn',
@@ -9617,6 +9664,7 @@ const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'countNeedsYou',
   'clearNeedsYou',
   'readWorkbench',
+  'searchWorkbenchApps',
   'readConnectionDetail',
   'readWallet',
   'readWalletHistory',

@@ -228,6 +228,37 @@ export class ComposioApps {
   private readonly toolkitCache = new Map<string, { until: number; value: Promise<{
     slug: string; description?: string; logo?: string; appUrl?: string; enabled?: boolean;
     composio_managed_auth_schemes?: unknown }> }>();
+
+  /** Search the provider's project catalog; never synthesize an app from query text. */
+  async searchToolkits(query: string): Promise<readonly { slug: string; name: string;
+    description?: string; logo?: string; appUrl?: string }[]> {
+    const params = new URLSearchParams({ limit: '30', sort_by: 'usage' });
+    if (query) params.set('search', query);
+    const page = await this.request(`/toolkits?${params}`, 'GET');
+    if (!Array.isArray(page.items)) throw new Error('App provider returned an invalid response');
+    return page.items.flatMap((value: unknown) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      const item = value as Json;
+      if (typeof item.slug !== 'string' || typeof item.name !== 'string' ||
+        !item.name.trim() || item.enabled === false || item.deprecated === true ||
+        item.is_local_toolkit === true) return [];
+      const meta = item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta)
+        ? item.meta as Json : {};
+      let appUrl: string | undefined;
+      if (typeof meta.app_url === 'string') {
+        try {
+          const parsed = new URL(meta.app_url);
+          if (parsed.protocol === 'https:' && parsed.hostname) appUrl = parsed.origin;
+        } catch { /* Invalid provider metadata cannot break search. */ }
+      }
+      return [{ slug: item.slug, name: item.name,
+        ...(typeof meta.description === 'string' ? { description: meta.description } : {}),
+        ...(typeof meta.logo === 'string' && /^https:\/\//i.test(meta.logo)
+          ? { logo: meta.logo } : {}),
+        ...(appUrl ? { appUrl } : {}),
+      }];
+    });
+  }
   constructor(private readonly apiKey: string, private readonly transport: typeof fetch = fetch) {
     if (!apiKey) throw new Error('App provider is unavailable');
   }

@@ -11,6 +11,13 @@ export async function installCornerGitHubWrappers(input: {
   ghBinary?: string;
   featureBranch: string;
   targetBranch: string;
+  /**
+   * The corner repository's real origin URL. The push guard enforces its
+   * feature-branch rule only on pushes that resolve to this remote; a push to
+   * a temporary fixture remote in a test suite is not that remote and is
+   * allowed. Omitted keeps the legacy behavior of enforcing every push.
+   */
+  originUrl?: string;
   inheritedPath?: string;
 }): Promise<Record<string, string>> {
   const bin = resolve(input.root, 'beeline-github-bin');
@@ -22,6 +29,7 @@ export async function installCornerGitHubWrappers(input: {
     room: input.roomId,
     featureBranch: input.featureBranch,
     targetBranch: input.targetBranch,
+    originUrl: input.originUrl ?? '',
   };
   await writeLauncher(resolve(bin, 'git'), {
     ...common,
@@ -42,12 +50,19 @@ export async function installCornerGitHubWrappers(input: {
   };
 }
 
+/**
+ * `pushesOrigin` reports whether a git push's remote is this corner's real
+ * origin. Any other remote is a local fixture a test suite may push to, and
+ * the branch restriction is skipped for it; with no origin knowledge the
+ * default keeps enforcing everywhere.
+ */
 export function cornerGitHubCommandRefusal(
   launcher: 'git' | 'gh',
   argv: readonly string[],
   featureBranch: string,
   targetBranch: string,
   resolvePushBranch: (source?: string) => { branch?: string; tag?: boolean } = () => ({}),
+  pushesOrigin: (remote?: string) => boolean = () => true,
 ): string | undefined {
   const refusal = `beeline: this corner may push only ${featureBranch}`;
   const branchName = (value: string) => {
@@ -89,7 +104,8 @@ export function cornerGitHubCommandRefusal(
   if (argv[command] !== 'push') return undefined;
 
   const positionals: string[] = [];
-  let repositoryOption = false;
+  let repositoryOption: string | undefined;
+  let dangerous = false;
   let optionsDone = false;
   const pushOptionsWithValue = new Set([
     '--repo',
@@ -119,14 +135,25 @@ export function cornerGitHubCommandRefusal(
           !arg.startsWith('-o') &&
           /[fd]/.test(arg.slice(1)))
       )
-        return refusal;
-      if (arg === '--repo' || arg.startsWith('--repo=')) repositoryOption = true;
+        dangerous = true;
+      if (arg === '--repo') repositoryOption = argv[index + 1];
+      else if (arg.startsWith('--repo=')) repositoryOption = arg.slice('--repo='.length);
       if (pushOptionsWithValue.has(arg)) index += 1;
       continue;
     }
     positionals.push(arg);
   }
-  const refspecs = repositoryOption ? positionals : positionals.slice(1);
+  // The branch rule protects the real repository only. A push aimed at a
+  // temporary local fixture remote is not it, so every restriction is skipped.
+  const remoteName =
+    repositoryOption !== undefined
+      ? repositoryOption
+      : positionals.length > 0
+        ? positionals[0]
+        : undefined;
+  if (!pushesOrigin(remoteName)) return undefined;
+  if (dangerous) return refusal;
+  const refspecs = repositoryOption !== undefined ? positionals : positionals.slice(1);
   const destinations = refspecs.length
     ? refspecs.map((raw) => {
         if (raw.startsWith('+')) return { refused: true };
@@ -164,17 +191,57 @@ import { spawn, spawnSync } from 'node:child_process';
 const config = ${JSON.stringify(config)};
 const cornerGitHubCommandRefusal = ${cornerGitHubCommandRefusal.toString()};
 const authFailure = /(?:authentication failed|bad credentials|could not read username|http(?:\\/\\d(?:\\.\\d)?)? 40[13]|status (?:code )?40[13])/i;
+const gitContext = (() => {
+  const argv = process.argv.slice(2);
+  const out = [];
+  const valueOptions = new Set(['-c', '--namespace', '--super-prefix', '--config-env']);
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '-C' || arg === '--git-dir' || arg === '--work-tree') { out.push(arg, argv[index + 1]); index += 1; }
+    else if (arg.startsWith('-C') && arg.length > 2) out.push('-C', arg.slice(2));
+    else if (arg.startsWith('--git-dir=') || arg.startsWith('--work-tree=')) out.push(arg);
+    else if (valueOptions.has(arg)) index += 1;
+    else if (!arg.startsWith('-')) break;
+  }
+  return out;
+})();
+function git(args, options) { return spawnSync(config.command, gitContext.concat(args), options); }
 function resolvePushBranch(source) {
   if (source) {
-    const tag = spawnSync(config.command, ['show-ref', '--verify', '--quiet', 'refs/tags/' + source], { stdio: 'ignore' }).status === 0;
+    const tag = git(['show-ref', '--verify', '--quiet', 'refs/tags/' + source], { stdio: 'ignore' }).status === 0;
     return { branch: source, tag };
   }
-  const tracked = spawnSync(config.command, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{push}'], { encoding: 'utf8' });
+  const tracked = git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{push}'], { encoding: 'utf8' });
   if (tracked.status === 0) return { branch: tracked.stdout.trim().replace(/^[^/]+\\//, '') };
-  const current = spawnSync(config.command, ['symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' });
+  const current = git(['symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' });
   return current.status === 0 ? { branch: current.stdout.trim() } : {};
 }
-const refusal = cornerGitHubCommandRefusal(config.launcher, process.argv.slice(2), config.featureBranch, config.targetBranch, resolvePushBranch);
+const looksLikeUrl = (value) => /^[a-z][a-z0-9+.-]*:\\/\\//i.test(value) || value.startsWith('/') || value.startsWith('.') || value.startsWith('~') || value.includes('@');
+const normalizeRemote = (value) => {
+  let v = value.trim().replace(/\\.git$/i, '');
+  const scp = v.match(/^[^/@]+@([^:]+):(.+)$/);
+  if (scp) return (scp[1] + '/' + scp[2]).toLowerCase();
+  v = v.replace(/^[a-z][a-z0-9+.-]*:\\/\\//i, '').replace(/^[^/@]+@/, '');
+  return v.replace(/\\/+$/, '').toLowerCase();
+};
+function pushesOrigin(remote) {
+  if (!config.originUrl) return true;
+  let url = remote;
+  if (!url || !looksLikeUrl(url)) {
+    const status = url ? null : git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{push}'], { encoding: 'utf8' });
+    let name = url;
+    if (!name) {
+      name = 'origin';
+      const full = status && status.status === 0 ? status.stdout.trim() : '';
+      if (full) name = full.includes('/') ? full.slice(0, full.indexOf('/')) : full;
+    }
+    const resolved = git(['config', '--get', 'remote.' + name + '.url'], { encoding: 'utf8' });
+    url = resolved.status === 0 ? resolved.stdout.trim() : undefined;
+  }
+  if (!url) return false;
+  return normalizeRemote(url) === normalizeRemote(config.originUrl);
+}
+const refusal = cornerGitHubCommandRefusal(config.launcher, process.argv.slice(2), config.featureBranch, config.targetBranch, resolvePushBranch, pushesOrigin);
 if (refusal) { process.stderr.write(refusal + '\\n'); process.exitCode = 1; }
 function needsToken(argv) {
   if (config.launcher === 'gh') return true;

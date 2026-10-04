@@ -567,6 +567,7 @@ export async function prepareRoomAgentHome(
 ): Promise<Record<string, string>> {
   const root = resolve(input.root);
   const operatorHome = input.operatorHome ?? homedir();
+  let tmpLinkReady = false;
   try {
     await mkdir(root, { recursive: true, mode: 0o700 });
     const rootStats = await lstat(root);
@@ -577,6 +578,21 @@ export async function prepareRoomAgentHome(
       const path = resolve(root, subdir);
       await mkdir(path, { recursive: true, mode: 0o700 });
       await assertRealContainedDirectory(path, root);
+    }
+    // `TMPDIR` is the short symlink `roomAgentHomeEnv` reports, so a session's
+    // Unix sockets stay inside `sun_path`; the bytes live in `root/tmp`. A
+    // failure here must not cost the whole isolated home, so it degrades to
+    // the long real path below.
+    try {
+      const tmpLink = roomSessionTmpDir(root);
+      const tmpTarget = resolve(root, 'tmp');
+      if ((await readlink(tmpLink).catch(() => undefined)) !== tmpTarget) {
+        await rm(tmpLink, { recursive: true, force: true });
+        await symlink(tmpTarget, tmpLink);
+      }
+      tmpLinkReady = true;
+    } catch (error) {
+      console.error(`[body] short TMPDIR link unavailable under ${root}:`, error);
     }
   } catch (error) {
     if (input.failClosed || input.resourceAuthFile || error instanceof AgentHomeSecurityError)
@@ -623,8 +639,11 @@ export async function prepareRoomAgentHome(
     if (agentHomeProvisionQueues.get(root) === provision) agentHomeProvisionQueues.delete(root);
   }
 
+  const env = tmpLinkReady
+    ? roomAgentHomeEnv(root)
+    : { ...roomAgentHomeEnv(root), TMPDIR: resolve(root, 'tmp') };
   return {
-    ...roomAgentHomeEnv(root),
+    ...env,
     ...androidAgentEnv({
       root,
       operatorHome,
@@ -1706,7 +1725,26 @@ export async function writeIsolatedHarnessFile(path: string, content: string): P
 }
 
 /**
- * The env overlay alone, without touching the filesystem.
+ * The short, per-session temp path a session's `TMPDIR` points at.
+ *
+ * A room's agent home lives under the daemon's state root and is easily longer
+ * than the ~108-byte `sun_path` a Unix socket address allows; `tsx` (and any
+ * other tool that binds an IPC socket under `os.tmpdir()`) then fails with
+ * `listen EINVAL`. The real scratch directory stays `<root>/tmp` — so
+ * `scratch-sweep.ts` and the OS sandbox keep seeing it — and this path is a
+ * symlink to it, named by a hash of the home so it is stable per session and
+ * comfortably inside the socket limit. `prepareRoomAgentHome` creates the
+ * symlink; `bwrap-sandbox.ts` binds its resolved directory over the sandbox's
+ * private `/tmp`.
+ */
+export function roomSessionTmpDir(root: string, base: string = '/tmp'): string {
+  const hash = createHash('sha256').update(resolve(root)).digest('hex').slice(0, 12);
+  return join(base, `beeline-${hash}`);
+}
+
+/**
+ * The env overlay alone, without touching the filesystem. `TMPDIR` is the
+ * short {@link roomSessionTmpDir} symlink; every other path is under `root`.
  */
 export function roomAgentHomeEnv(root: string): Record<string, string> {
   const resolved = resolve(root);
@@ -1723,7 +1761,7 @@ export function roomAgentHomeEnv(root: string): Record<string, string> {
     XDG_DATA_HOME: resolve(resolved, 'user/.local/share'),
     XDG_STATE_HOME: resolve(resolved, 'state'),
     XDG_CACHE_HOME: resolve(resolved, 'cache'),
-    TMPDIR: resolve(resolved, 'tmp'),
+    TMPDIR: roomSessionTmpDir(resolved),
   };
 }
 

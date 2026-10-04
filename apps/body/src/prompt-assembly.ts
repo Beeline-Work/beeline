@@ -52,9 +52,10 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
 export const CORE_BUDGET_BYTES = 2_300;
 /**
  * Ceiling for one surface's own rules, on top of the core. A code corner uses
- * ~4.1 KB, plus ~0.35 KB for corner.android on a host with an Android SDK.
+ * ~4.1 KB, plus ~0.35 KB for corner.android on a host with an Android SDK; the
+ * corner setup command (`corner.contract`) added ~0.01 KB.
  */
-export const SURFACE_BUDGET_BYTES = 4_480;
+export const SURFACE_BUDGET_BYTES = 4_490;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -127,6 +128,7 @@ Before any code, write its end-user story in one sentence: "a person who does X 
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
 Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
 Fix only the spec and approval quote. With a reproduction, change only what removes it and meets the checklist.
+Run npm run corner:prepare first.
 Only when the brief calls for repository changes, follow the PR procedure below. Otherwise do not commit, push or open a PR; deliver with post_artifact.
 Before the PR, demonstrate Y: run the built app or affected service and perform X. If no interactive surface is reachable, run the narrowest test or script exercising the exact user path and printing Y. An inner-function unit test, log line or code read is not a demonstration.
 The PR body MUST have ## Reproduced and ## Demonstrated. Cite Reproduction <id> in both, with steps, the wrong result and the now-passing result. In ## Demonstrated, when none was obtained, state that plainly ("not obtained") and show the regression; for feature work say "not a defect report".

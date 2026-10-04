@@ -6,6 +6,7 @@ import { SquireTaskRelay } from './squire-task-relay.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -118,9 +119,11 @@ import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
 import {
   harvestWarmNodeModules,
+  mobileNodeModulesStoreDir,
   sharedCargoTargetDir,
   sharedNpmCacheDir,
   sharedPnpmStoreDir,
+  sharedTurboCacheDir,
   warmNodeModulesStoreDir,
 } from './warm-node-modules.js';
 
@@ -904,6 +907,18 @@ export class MonolithCornerTurnLoop {
       const ghBinary = await execFileAsync('which', ['gh'])
         .then((result) => result.stdout.trim())
         .catch(() => undefined);
+      // The push guard is scoped to the worktree's OWN `origin`; this is the
+      // URL the corner actually pushes to, not a re-derivation of the server
+      // fact (which would miss a `git://` remote mapped to GitHub HTTPS).
+      const originUrl = await execFileAsync(gitBinary, [
+        '-C',
+        this.options.worktreePath,
+        'remote',
+        'get-url',
+        'origin',
+      ])
+        .then((result) => result.stdout.trim() || undefined)
+        .catch(() => undefined);
       githubEnv = await installCornerGitHubWrappers({
         root: this.options.config.agentHomeRoot,
         runtimeConfigPath: this.options.config.runtimeConfigPath,
@@ -912,6 +927,7 @@ export class MonolithCornerTurnLoop {
         gitBinary,
         featureBranch: repository.featureBranch,
         targetBranch: repository.targetBranch,
+        ...(originUrl ? { originUrl } : {}),
         ...(ghBinary ? { ghBinary } : {}),
         inheritedPath: homeOverlay.PATH ?? this.options.config.agentEnv.PATH ?? process.env.PATH,
       });
@@ -924,8 +940,12 @@ export class MonolithCornerTurnLoop {
     const npmCacheDir = sharedNpmCacheDir(this.options.runtime.supervisorRoot);
     const pnpmStoreDir = sharedPnpmStoreDir(this.options.runtime.supervisorRoot);
     const cargoTargetDir = sharedCargoTargetDir(this.options.runtime.supervisorRoot);
+    // Turbo derives its cache directory from the repository's GIT COMMON
+    // directory; in a linked corner worktree that is the read-only
+    // `repositories/.turbo/cache`, so every `turbo run` fails before it starts.
+    const turboCacheDir = sharedTurboCacheDir(this.options.runtime.supervisorRoot);
     await Promise.all(
-      [npmCacheDir, pnpmStoreDir, cargoTargetDir].map((path) =>
+      [npmCacheDir, pnpmStoreDir, cargoTargetDir, turboCacheDir].map((path) =>
         mkdir(path, { recursive: true, mode: 0o700 }),
       ),
     );
@@ -938,6 +958,7 @@ export class MonolithCornerTurnLoop {
       // hardlinks packages out of this content-addressable store.
       PNPM_CONFIG_STORE_DIR: pnpmStoreDir,
       CARGO_TARGET_DIR: cargoTargetDir,
+      TURBO_CACHE_DIR: turboCacheDir,
     };
     this.agentEnv = agentEnv;
     this.modelContextTokens = await modelContextWindowTokens(
@@ -981,6 +1002,7 @@ export class MonolithCornerTurnLoop {
           npmCacheDir,
           pnpmStoreDir,
           cargoTargetDir,
+          turboCacheDir,
           ...registryMcpHostBindPaths(
             configuration.registryMcpRoutes,
             this.options.config.registryMcpBrokerSocket,
@@ -2136,17 +2158,33 @@ export class MonolithCornerTurnLoop {
   private harvestWarmNodeModules(): void {
     if (this.harvest || !this.options.repository) return;
     const { cornerId, worktreePath, runtime } = this.options;
-    const run = harvestWarmNodeModules({
-      worktreePath,
-      storeRoot: warmNodeModulesStoreDir(runtime.supervisorRoot),
-    })
-      .then((outcome) => {
-        if (outcome.reason === 'already-warm' || outcome.reason === 'no-lockfile') return;
-        console.log(
-          `[thin-core] corner ${cornerId} warm node_modules harvest: ${outcome.reason}${
-            outcome.detail ? ` (${outcome.detail})` : ''
-          }`,
-        );
+    // `apps/mobile` has its own lockfile and store; harvesting it is what lets
+    // the next fresh corner skip the whole mobile install.
+    const mobilePath = resolve(worktreePath, 'apps/mobile');
+    const jobs = [
+      harvestWarmNodeModules({
+        worktreePath,
+        storeRoot: warmNodeModulesStoreDir(runtime.supervisorRoot),
+      }),
+      ...(existsSync(resolve(mobilePath, 'package-lock.json'))
+        ? [
+            harvestWarmNodeModules({
+              worktreePath: mobilePath,
+              storeRoot: mobileNodeModulesStoreDir(runtime.supervisorRoot),
+            }),
+          ]
+        : []),
+    ];
+    const run = Promise.all(jobs)
+      .then((outcomes) => {
+        for (const outcome of outcomes) {
+          if (outcome.reason === 'already-warm' || outcome.reason === 'no-lockfile') continue;
+          console.log(
+            `[thin-core] corner ${cornerId} warm node_modules harvest: ${outcome.reason}${
+              outcome.detail ? ` (${outcome.detail})` : ''
+            }`,
+          );
+        }
       })
       .catch((error) => {
         console.error(`[thin-core] corner ${cornerId} warm node_modules harvest failed:`, error);

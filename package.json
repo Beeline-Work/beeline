@@ -61,6 +61,7 @@
     "verify:beeline-install": "node scripts/verify-beeline-install.mjs",
     "measure:corner-wake": "node --import tsx scripts/measure-corner-wake.ts",
     "mobile:install": "npm install --prefix apps/mobile",
+    "corner:prepare": "npm run mobile:install && npm run build",
     "mobile:web": "npm run web --prefix apps/mobile",
     "mobile:typecheck": "npm run typecheck --prefix apps/mobile"
   },

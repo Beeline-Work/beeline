@@ -141,9 +141,32 @@ export function sharedCargoTargetDir(supervisorRoot: string): string {
   return resolve(supervisorRoot, 'beeline', 'cargo-target');
 }
 
+/**
+ * Turbo's build cache, shared by every corner on this host.
+ *
+ * Turbo derives its default cache directory from the GIT COMMON directory, so
+ * a linked worktree under `corners/` resolves it to the read-only
+ * `repositories/.turbo/cache` beside the bare canonical clone and every
+ * `turbo run` fails before it starts. Pointing `TURBO_CACHE_DIR` here makes the
+ * cache writable and shared, the same trade the npm cache already makes: later
+ * corners reuse cache hits instead of rebuilding.
+ */
+export function sharedTurboCacheDir(supervisorRoot: string): string {
+  return resolve(supervisorRoot, 'beeline', 'turbo-cache');
+}
+
 /** The host-wide warm `node_modules` store, one entry per lockfile key. */
 export function warmNodeModulesStoreDir(supervisorRoot: string): string {
   return resolve(supervisorRoot, 'beeline', 'node-modules');
+}
+
+/**
+ * The warm `node_modules` store for the isolated mobile app (`apps/mobile`),
+ * which is NOT a root workspace and has its own lockfile, so its tree needs a
+ * store of its own beside the root one.
+ */
+export function mobileNodeModulesStoreDir(supervisorRoot: string): string {
+  return resolve(supervisorRoot, 'beeline', 'node-modules-mobile');
 }
 
 /**

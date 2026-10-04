@@ -17,6 +17,11 @@
  *   node scripts/review-exact-head.mjs <sha> --typecheck <pkg> [--typecheck <pkg> ...]
  *       Also run each package's `npm run typecheck`.
  *
+ * `@beeline/mobile` is not a root workspace (it is deliberately installed and
+ * run on its own), so a mobile target or typecheck runs `npm` with
+ * `--prefix apps/mobile` and installs the mobile tree before it. Every other
+ * package uses `-w <pkg>` as before.
+ *
  * <sha> must be a full 40-hex commit id: an exact-head review is pinned to one
  * commit, never a branch that could move. Targets are package-qualified vitest
  * files/globs, e.g. `@beeline/server:src/integration.test.ts`.
@@ -42,6 +47,13 @@ export const REVIEW_BUILD_PACKAGES = [
   '@beeline/body',
   '@beeline/push-gateway',
 ];
+
+export const MOBILE_PACKAGE_NAMES = ['@beeline/mobile', 'mobile', 'apps/mobile'];
+
+/** `apps/mobile` is outside the root workspaces, so it needs `--prefix`, never `-w`. */
+export function isMobilePackage(pkg) {
+  return MOBILE_PACKAGE_NAMES.includes(pkg);
+}
 
 export function parseReviewArgs(argv) {
   const positional = [];
@@ -156,6 +168,18 @@ export function reviewExactHead(argv, deps = {}) {
     const install = run('npm', ['ci'], { cwd: worktreeDir });
     note('npm ci', install.status === 0, install.status === 0 ? '' : `exit ${install.status}`);
 
+    const needsMobile =
+      typechecks.some(isMobilePackage) ||
+      targets.some((target) => isMobilePackage(target.split(':')[0]));
+    if (needsMobile) {
+      const mobileInstall = run('npm', ['ci', '--prefix', 'apps/mobile'], { cwd: worktreeDir });
+      note(
+        'npm ci apps/mobile',
+        mobileInstall.status === 0,
+        mobileInstall.status === 0 ? '' : `exit ${mobileInstall.status}`,
+      );
+    }
+
     const buildArgs = ['run', 'build'];
     for (const pkg of REVIEW_BUILD_PACKAGES) {
       buildArgs.push('-w', pkg);
@@ -168,13 +192,17 @@ export function reviewExactHead(argv, deps = {}) {
     );
 
     for (const pkg of typechecks) {
-      const step = run('npm', ['run', 'typecheck', '-w', pkg], { cwd: worktreeDir });
+      const step = isMobilePackage(pkg)
+        ? run('npm', ['run', 'typecheck', '--prefix', 'apps/mobile'], { cwd: worktreeDir })
+        : run('npm', ['run', 'typecheck', '-w', pkg], { cwd: worktreeDir });
       note(`typecheck ${pkg}`, step.status === 0, step.status === 0 ? '' : `exit ${step.status}`);
     }
 
     for (const target of targets) {
       const [pkg, glob] = target.split(':');
-      const step = run('npm', ['test', '-w', pkg, '--', '--run', glob], { cwd: worktreeDir });
+      const step = isMobilePackage(pkg)
+        ? run('npm', ['test', '--prefix', 'apps/mobile', '--', '--run', glob], { cwd: worktreeDir })
+        : run('npm', ['test', '-w', pkg, '--', '--run', glob], { cwd: worktreeDir });
       note(`test ${pkg} ${glob}`, step.status === 0, step.status === 0 ? '' : `exit ${step.status}`);
     }
 

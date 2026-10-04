@@ -20,19 +20,13 @@ import {
 } from './agent-health.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine, type SystemLineInput } from './system-line.js';
-import { WORKFLOW_HANDOFF_CARD_TYPE, workflowRunLockKey } from './workflow-runs.js';
+import { workflowRunLockKey } from './workflow-runs.js';
 
 /**
- * Corner bookkeeping cards use their OWN `card_type`
- * (`CORNER_LIFECYCLE_CARD_TYPE`, defined in `room-choice.ts` to avoid
- * a circular import here), distinct from the generic engine's
- * `WORKFLOW_HANDOFF_CARD_TYPE` (`workflow-handoff`) — the `kind` stays
- * `workflow-handoff` (still a registered event kind, still zero real wakes,
- * since corner cards never set `wakes` and nothing subscribes to this kind),
- * but the card_type lets this one specific shape be excluded from a corner's
- * visible transcript (`hiddenWakeCardSql`) without touching the generic
- * engine's own `workflow-handoff` cards, which — for an ordinary Room-based
- * workflow — ARE the real, intended visible handoff notice.
+ * Lifecycle cards retain their persisted discriminator for existing history.
+ * They carry no workflow event kind: lifecycle wakes belong to advanceCorner.
+ * hiddenWakeCardSql excludes these rows from the human conversation, while
+ * actual workflows keep their visible workflow-handoff cards.
  */
 
 /**
@@ -359,9 +353,8 @@ async function writeStartCard(
     roomId: input.cornerId,
     authorId: SYSTEM_IDENTITY_ID,
     subject,
-    verb: 'started workflow',
-    object: CORNER_LIFECYCLE_CONTRACT.name,
-    kind: WORKFLOW_HANDOFF_CARD_TYPE,
+    verb: 'opened',
+    object: 'corner',
     // Never a chat line: `hiddenWakeCardSql` excludes this card type from the
     // transcript a human reads.
     presentation: 'card',
@@ -451,7 +444,6 @@ class Transition {
       subject,
       verb: 'handed off',
       object: toState,
-      kind: WORKFLOW_HANDOFF_CARD_TYPE,
       // The card never wakes anyone itself (no `wakes`); the one wake of the
       // next role is this transition's own side effect in `advanceCorner`.
       presentation: 'card',

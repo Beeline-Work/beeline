@@ -25,3 +25,7 @@ npm test -w @beeline/body -- src/workflow-corner-e2e.integration.test.ts
 Removed the obsolete corner-workflow migration proof, its package command, the mobile copy of the lifecycle workflow contract, and lifecycle-specific workflow projections and output binding. No obsolete corner workflow YAML definition was present. `apps/mobile/maestro/corner-opens.yaml` remains because it tests navigation, not a workflow definition.
 
 The corner lifecycle contract, transition lock, state columns and persisted card discriminator remain runtime authorities. The legacy `corner-workflow-handoff` value and deterministic message-id namespace remain intact for stored history. The migration that deletes previously seeded corner workflow definitions remains necessary; it identifies those old definitions by their extractor marker and preserves workflows people saved themselves.
+
+## Review regression C1 R1
+
+The agent-facing `getRoomConversation` path still returned `@system started workflow corner` after the initial UI fix. A regression opening both code and no-code corners failed with that exact body before this correction. New start cards now say `@system opened corner`; lifecycle bookkeeping has no workflow-handoff event kind. The test reads the real daemon conversation, asserts the new body and absence of workflow event kinds, and verifies the start card keeps its corner id, persisted discriminator and sequence zero. Existing history and deterministic ids remain unchanged.

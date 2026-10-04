@@ -868,7 +868,7 @@ type WorkflowWakeCard = { runId?: string; workflowSlug?: string; note?: string }
  * choice/poll card once answered — see `postWorkflowGate`) states the run id
  * and workflow name plainly, so a woken agent treats its own wake as proof a
  * run already exists rather than reaching for `start_workflow` again. The
- * corner's own built-in lifecycle run (`corner-workflow-handoff`) is excluded:
+ * corner's lifecycle bookkeeping (`corner-workflow-handoff`) is excluded:
  * every corner turn would otherwise carry this line for no reason, since a
  * corner is never started through `start_workflow`. A gate answer's optional
  * note is quoted ahead of it.

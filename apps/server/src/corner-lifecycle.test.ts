@@ -442,6 +442,22 @@ describe.each([
   });
 });
 
+describe('lifecycle wording in agent conversations', () => {
+  it.each(['code', 'no_code'] as const)('Reproduction C1 R1: opening a %s corner does not announce a workflow', async (lane) => {
+    const cornerId = await open(lane, 'owner/widgets');
+    const conversation = await daemon.execute('getRoomConversation', { roomId: cornerId }, A);
+    const start = conversation.items.find((message) => message.id === cornerId);
+    expect(start).toBeDefined();
+    expect(start!.body).toBe('@system opened corner');
+    expect(conversation.items.every((message) => message.systemEvent?.kind !== 'workflow-handoff')).toBe(true);
+    const persisted = await db.query<{ card_type: string; seq: string }>(
+      `SELECT card_type,card->>'seq' seq FROM messages WHERE id=$1`, [cornerId],
+    );
+    expect(persisted.rows).toEqual([{ card_type: 'corner-workflow-handoff', seq: '0' }]);
+    console.log(`Reproduction C1 R1 Demonstrated: open ${lane} corner → agent conversation says ${start!.body}, with no workflow event kind`);
+  });
+});
+
 describe('bookkeeping cards never appear in the corner conversation a human reads', () => {
   it('readRoom shows the real conversation but no workflow-handoff card, through open, upgrade, checks, and review', async () => {
     const cornerId = await open('no_code', 'owner/widgets');

@@ -264,7 +264,7 @@ describe('Room turn failure receipt', () => {
     ).toHaveLength(1);
   });
 
-  it('answers with the login Claude refreshed through a detached isolated credential', async () => {
+  it('shares the login Claude refreshed through a detached isolated credential', async () => {
     const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
     const rotated = JSON.stringify({
       claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 },
@@ -284,8 +284,11 @@ describe('Room turn failure receipt', () => {
         await writeFile(join(activeHome, 'claude/.credentials.json'), rotated);
       },
       prompt: async ({ agentHomeRoot: activeHome }) => {
-        const credential = await readFile(join(activeHome, 'claude/.credentials.json'), 'utf8');
-        expect(await readFile(operatorCredential, 'utf8')).toBe(spent);
+        const isolated = join(activeHome, 'claude/.credentials.json');
+        const credential = await readFile(isolated, 'utf8');
+        // Activation wrote the rotated login back and relinked this Room.
+        expect(lstatSync(isolated).isSymbolicLink()).toBe(true);
+        expect(await readFile(operatorCredential, 'utf8')).toBe(rotated);
         if (credential !== rotated) {
           throw new Error(
             'ACP error -32603: Internal error; harness stderr: Failed to authenticate: OAuth session expired and could not be refreshed',
@@ -305,7 +308,7 @@ describe('Room turn failure receipt', () => {
     expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
   });
 
-  it('uses a Claude refresh written during one turn on the next warm turn', async () => {
+  it('writes a Claude refresh made during one turn back before the next turn', async () => {
     const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
     const rotated = JSON.stringify({ claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 } });
     let operatorCredential = '';
@@ -327,9 +330,9 @@ describe('Room turn failure receipt', () => {
           await rename(refreshed, isolated);
           return { stopReason: 'end_turn', updates: [], agentText: 'First turn answered.', toolCalls: [] };
         }
-        expect(lstatSync(isolated).isFile()).toBe(true);
+        expect(lstatSync(isolated).isSymbolicLink()).toBe(true);
         expect(await readFile(isolated, 'utf8')).toBe(rotated);
-        expect(await readFile(operatorCredential, 'utf8')).toBe(spent);
+        expect(await readFile(operatorCredential, 'utf8')).toBe(rotated);
         return {
           stopReason: 'end_turn',
           updates: [],
@@ -347,28 +350,30 @@ describe('Room turn failure receipt', () => {
     expect(receipts.filter((receipt) => receipt.status === 'complete')).toHaveLength(2);
   });
 
-  it('restores the shared Claude login after a newer detached login fails authentication', async () => {
+  it('retries a written-back Claude login once through the shared link', async () => {
     const shared = JSON.stringify({ claudeAiOauth: { refreshToken: 'shared', expiresAt: 1_000 } });
     const detached = JSON.stringify({
       claudeAiOauth: { refreshToken: 'detached', expiresAt: 2_000 },
     });
+    let operatorCredential = '';
     const { receipts, posted, attempts } = await runTurn({
       agentCommand: '/opt/harness/claude-agent-acp',
       agentKind: 'claude',
       beforeRun: async ({ agentHomeRoot, operatorHome }) => {
+        operatorCredential = join(operatorHome, '.claude/.credentials.json');
         await mkdir(join(operatorHome, '.claude'), { recursive: true });
-        await writeFile(join(operatorHome, '.claude/.credentials.json'), shared);
+        await writeFile(operatorCredential, shared);
         await mkdir(join(agentHomeRoot, 'claude'), { recursive: true });
         await writeFile(join(agentHomeRoot, 'claude/.credentials.json'), detached);
       },
       prompt: async ({ agentHomeRoot, attempt }) => {
         const isolated = join(agentHomeRoot, 'claude/.credentials.json');
-        if (attempt === 1) {
-          expect(await readFile(isolated, 'utf8')).toBe(detached);
-          throw new Error('OAuth session expired and could not be refreshed');
-        }
+        // Activation wrote the newer login back; both attempts read it
+        // through the shared link.
         expect(lstatSync(isolated).isSymbolicLink()).toBe(true);
-        expect(await readFile(isolated, 'utf8')).toBe(shared);
+        expect(realpathSync(isolated)).toBe(realpathSync(operatorCredential));
+        expect(await readFile(isolated, 'utf8')).toBe(detached);
+        if (attempt === 1) throw new Error('OAuth session expired and could not be refreshed');
         return {
           stopReason: 'end_turn',
           updates: [],

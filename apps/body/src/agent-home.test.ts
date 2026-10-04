@@ -31,6 +31,7 @@ import {
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
   roomAgentHomeEnv,
+  writeBackRoomClaudeLogin,
 } from './agent-home.js';
 import {
   BEELINE_REVIEW_SKILL_NAME,
@@ -315,18 +316,21 @@ describe('per-room harness state isolation', () => {
     );
   });
 
-  it('keeps a newer Claude refresh when its atomic write detached the shared link', async () => {
+  it('writes a newer detached Claude login back to the shared file and relinks the Room', async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-refreshed-credential-'), 'agent-home');
+    const otherRoomRoot = resolve(await scratch('beeline-room-other-credential-'), 'agent-home');
     const source = resolve(operatorHome, '.claude/.credentials.json');
     const target = resolve(roomRoot, 'claude/.credentials.json');
+    const otherTarget = resolve(otherRoomRoot, 'claude/.credentials.json');
     const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
     const rotated = JSON.stringify({
       claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 },
     });
     await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
-    await writeFile(source, spent);
+    await writeFile(source, spent, { mode: 0o644 });
     await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+    await prepareRoomAgentHome({ root: otherRoomRoot, operatorHome, agentKind: 'claude' });
 
     // Claude refreshed through the isolated path: its atomic rename replaced
     // the link, so the rotated login exists only in this Room.
@@ -336,23 +340,137 @@ describe('per-room harness state isolation', () => {
 
     await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
 
-    expect(lstatSync(target).isFile()).toBe(true);
-    expect(readFileSync(target, 'utf8')).toBe(rotated);
-    expect(readFileSync(source, 'utf8')).toBe(spent);
-
-    // The operator can refresh concurrently. A later activation switches back
-    // to that credential without this Room ever replacing the operator file.
-    const operatorRefresh = JSON.stringify({
-      claudeAiOauth: { refreshToken: 'operator-refresh', expiresAt: 3_000 },
-    });
-    await writeFile(source, operatorRefresh);
-    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+    expect(readFileSync(source, 'utf8')).toBe(rotated);
+    expect(lstatSync(source).mode & 0o777).toBe(0o600);
     expect(lstatSync(target).isSymbolicLink()).toBe(true);
     expect(realpathSync(target)).toBe(realpathSync(source));
-    expect(readFileSync(source, 'utf8')).toBe(operatorRefresh);
+    // The other Room reads the rotated login through its own link.
+    expect(readFileSync(otherTarget, 'utf8')).toBe(rotated);
+    expect(
+      readdirSync(resolve(operatorHome, '.claude')).filter((name) =>
+        name.startsWith('.credentials.json.beeline-'),
+      ),
+    ).toHaveLength(0);
+    expect(
+      readdirSync(resolve(roomRoot, 'claude')).filter((name) =>
+        name.startsWith('.credentials.json.beeline-'),
+      ),
+    ).toHaveLength(0);
   });
 
-  it('keeps the operator Claude login when the detached copy expires no later', async () => {
+  it('writes a Claude refresh back after a turn without touching other harness logins', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-turn-end-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    const codexSource = resolve(operatorHome, '.codex/auth.json');
+    const codexTarget = resolve(roomRoot, 'codex/auth.json');
+    const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+    const rotated = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 },
+    });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await mkdir(resolve(operatorHome, '.codex'), { recursive: true });
+    await writeFile(source, spent);
+    await writeFile(codexSource, spent);
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+    await writeFile(`${target}.next`, rotated);
+    await rename(`${target}.next`, target);
+    await writeFile(`${codexTarget}.next`, rotated);
+    await rename(`${codexTarget}.next`, codexTarget);
+
+    await writeBackRoomClaudeLogin({ root: roomRoot, operatorHome });
+
+    expect(readFileSync(source, 'utf8')).toBe(rotated);
+    expect(realpathSync(target)).toBe(realpathSync(source));
+    expect(readFileSync(codexSource, 'utf8')).toBe(spent);
+    expect(lstatSync(codexTarget).isFile()).toBe(true);
+    expect(readFileSync(codexTarget, 'utf8')).toBe(rotated);
+  });
+
+  it('leaves the newest login when two Rooms write back concurrently', async () => {
+    for (let round = 0; round < 5; round += 1) {
+      const operatorHome = await scratch('beeline-operator-home-');
+      const source = resolve(operatorHome, '.claude/.credentials.json');
+      const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+      await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+      await writeFile(source, spent);
+      const rooms = await Promise.all(
+        [2_000, 3_000].map(async (expiresAt) => {
+          const root = resolve(await scratch('beeline-room-concurrent-'), 'agent-home');
+          await prepareRoomAgentHome({ root, operatorHome, agentKind: 'claude' });
+          const target = resolve(root, 'claude/.credentials.json');
+          await writeFile(
+            `${target}.next`,
+            JSON.stringify({ claudeAiOauth: { refreshToken: `r${expiresAt}`, expiresAt } }),
+          );
+          await rename(`${target}.next`, target);
+          return root;
+        }),
+      );
+      const ordered = round % 2 === 0 ? rooms : [...rooms].reverse();
+
+      await Promise.all(ordered.map((root) => writeBackRoomClaudeLogin({ root, operatorHome })));
+
+      expect(JSON.parse(readFileSync(source, 'utf8'))).toEqual({
+        claudeAiOauth: { refreshToken: 'r3000', expiresAt: 3_000 },
+      });
+      expect(
+        readdirSync(resolve(operatorHome, '.claude')).filter((name) =>
+          name.startsWith('.credentials.json.beeline-'),
+        ),
+      ).toHaveLength(0);
+    }
+  });
+
+  it('keeps the detached login in the Room while another write-back holds the lock', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-locked-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+    const rotated = JSON.stringify({ claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 } });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(source, spent);
+    await mkdir(resolve(roomRoot, 'claude'), { recursive: true });
+    await writeFile(target, rotated);
+    await writeFile(`${source}.beeline-lock`, 'other');
+
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+
+    expect(readFileSync(source, 'utf8')).toBe(spent);
+    expect(lstatSync(target).isFile()).toBe(true);
+    expect(readFileSync(target, 'utf8')).toBe(rotated);
+  });
+
+  it('never writes back a malformed detached Claude login and quarantines it', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-malformed-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    const current = JSON.stringify({ claudeAiOauth: { refreshToken: 'current', expiresAt: 1_000 } });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(source, current);
+    await mkdir(resolve(roomRoot, 'claude'), { recursive: true });
+    await writeFile(target, '{"claudeAiOauth":{"expiresAt":');
+
+    await writeBackRoomClaudeLogin({ root: roomRoot, operatorHome });
+    expect(readFileSync(source, 'utf8')).toBe(current);
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+
+    expect(readFileSync(source, 'utf8')).toBe(current);
+    expect(realpathSync(target)).toBe(realpathSync(source));
+    expect(
+      readdirSync(resolve(roomRoot, 'claude')).filter((name) =>
+        name.startsWith('.credentials.json.beeline-quarantine-'),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    ['earlier', 1_000],
+    ['at the same time', 2_000],
+  ])('keeps the operator Claude login when the detached copy expires %s', async (_, expiresAt) => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-older-credential-'), 'agent-home');
     const source = resolve(operatorHome, '.claude/.credentials.json');
@@ -365,9 +483,11 @@ describe('per-room harness state isolation', () => {
     await mkdir(resolve(roomRoot, 'claude'), { recursive: true });
     await writeFile(
       target,
-      JSON.stringify({ claudeAiOauth: { refreshToken: 'older', expiresAt: 1_000 } }),
+      JSON.stringify({ claudeAiOauth: { refreshToken: 'detached', expiresAt } }),
     );
 
+    await writeBackRoomClaudeLogin({ root: roomRoot, operatorHome });
+    expect(readFileSync(source, 'utf8')).toBe(current);
     await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
 
     expect(realpathSync(target)).toBe(realpathSync(source));

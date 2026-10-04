@@ -395,26 +395,109 @@ function claudeLoginExpiresAt(text: string): number | undefined {
   }
 }
 
-async function hasNewerDetachedClaudeLogin(detached: string, source: string): Promise<boolean> {
-  const detachedExpiresAt = claudeLoginExpiresAt(await readFile(detached, 'utf8'));
-  if (detachedExpiresAt === undefined) return false;
-  const sourceExpiresAt = claudeLoginExpiresAt(await readFile(source, 'utf8'));
-  return sourceExpiresAt !== undefined && detachedExpiresAt > sourceExpiresAt;
+const CLAUDE_LOGIN_LOCK_WAIT_MS = 2_000;
+const CLAUDE_LOGIN_LOCK_STALE_MS = 30_000;
+
+/**
+ * Run `write` while holding an exclusive lock file beside the shared Claude
+ * login. Every Room's body process takes the same lock, so two write-backs
+ * cannot interleave. A lock older than the stale bound belongs to a process
+ * that died mid-write and is removed. Returns undefined when the lock stays
+ * busy; the caller keeps its detached login for the next pass.
+ */
+async function withSharedClaudeLoginLock<T>(
+  shared: string,
+  write: () => Promise<T>,
+): Promise<T | undefined> {
+  const lock = `${shared}.beeline-lock`;
+  const deadline = Date.now() + CLAUDE_LOGIN_LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      await writeFile(lock, String(process.pid), { flag: 'wx', mode: 0o600 });
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const held = await lstat(lock).catch(() => undefined);
+      if (held && Date.now() - held.mtimeMs > CLAUDE_LOGIN_LOCK_STALE_MS) {
+        await rm(lock, { force: true });
+        continue;
+      }
+      if (Date.now() >= deadline) return undefined;
+      await new Promise((settle) => setTimeout(settle, 20));
+    }
+  }
+  try {
+    return await write();
+  } finally {
+    await rm(lock, { force: true });
+  }
 }
 
 /**
- * Restore shared login links, except a newer detached Claude login on activation.
+ * Write a Room's detached Claude login back to the operator's shared file
+ * when it expires later, then restore the Room's link.
+ *
+ * Claude Code persists a refresh with rename(2), which replaces the Room's
+ * symlink and leaves the rotated refresh token in that Room alone. When the
+ * old refresh token is single-use, the shared file then holds a spent token
+ * and every other Room (and the operator CLI) fails its next refresh. Writing
+ * the newer login back keeps one current token for everyone. The shared file is
+ * replaced atomically (temp file, mode 0600, rename) under a lock, and only
+ * when the shared login still expires earlier, so a concurrent refresh by
+ * another Room or the operator is never overwritten. A detached file without
+ * a readable `claudeAiOauth.expiresAt` is never written back.
+ */
+async function writeBackDetachedClaudeLogin(
+  target: string,
+  source: string,
+): Promise<'linked' | 'not-newer' | 'busy'> {
+  const detached = await readFile(target, 'utf8');
+  const detachedExpiresAt = claudeLoginExpiresAt(detached);
+  if (detachedExpiresAt === undefined) return 'not-newer';
+  const shared = await realpath(source);
+  const isNewer = async (): Promise<boolean> => {
+    const sharedExpiresAt = claudeLoginExpiresAt(await readFile(shared, 'utf8'));
+    return sharedExpiresAt !== undefined && detachedExpiresAt > sharedExpiresAt;
+  };
+  if (!(await isNewer())) return 'not-newer';
+  const written = await withSharedClaudeLoginLock(shared, async () => {
+    if (!(await isNewer())) return false;
+    const temp = `${shared}.beeline-${randomUUID()}`;
+    try {
+      await writeFile(temp, detached, { flag: 'wx', mode: 0o600 });
+      await chmod(temp, 0o600);
+      await rename(temp, shared);
+    } catch (error) {
+      await rm(temp, { force: true });
+      throw error;
+    }
+    return true;
+  });
+  if (written === undefined) return 'busy';
+  if (!written) return 'not-newer';
+  // The harness may have refreshed again since the read; keep that file for
+  // the next pass rather than linking over it.
+  if ((await readFile(target, 'utf8')) !== detached) return 'busy';
+  const link = `${target}.beeline-link-${randomUUID()}`;
+  await symlink(source, link);
+  await rename(link, target);
+  return 'linked';
+}
+
+/**
+ * Restore shared login links, writing a newer detached Claude login back first.
  *
  * Harnesses commonly persist refreshed tokens with rename(2). When they do
  * that through an isolated path, the rename replaces the symlink itself and
  * leaves one Room holding a detached regular file. A failed-login retry
- * quarantines that file and restores the link; activation keeps a newer Claude
- * login in the isolated home so a concurrent operator refresh cannot be lost.
+ * quarantines that file and restores the link; activation writes a newer
+ * Claude login back to the operator's file (see
+ * `writeBackDetachedClaudeLogin`) and relinks the Room.
  */
 export async function repairRoomAgentCredentialLinks(input: {
   root: string;
   operatorHome?: string;
-  keepNewerDetachedClaudeLogin?: boolean;
+  writeBackNewerClaudeLogin?: boolean;
 }): Promise<void> {
   const root = resolve(input.root);
   const operatorHome = input.operatorHome ?? homedir();
@@ -432,23 +515,41 @@ export async function repairRoomAgentCredentialLinks(input: {
       if (resolve(dirname(target), linked) === source) continue;
     }
     if (stats) {
-      // A successful Claude refresh can replace the isolated symlink. Keep
-      // that login for the next activation without writing over a concurrent
-      // refresh of the operator's credential. Failure retries use the shared
-      // source instead, so a failed detached refresh cannot trap the session.
-      if (
-        input.keepNewerDetachedClaudeLogin &&
-        credential.dir === 'claude' &&
-        stats.isFile() &&
-        (await hasNewerDetachedClaudeLogin(target, source))
-      ) {
-        continue;
+      // A successful Claude refresh can replace the isolated symlink. Share
+      // that login with every Room before the old refresh token is spent.
+      // Failure retries use the shared source instead, so a failed detached
+      // refresh cannot trap the session. A busy lock keeps the detached login
+      // here until the next pass.
+      if (input.writeBackNewerClaudeLogin && credential.dir === 'claude' && stats.isFile()) {
+        const outcome = await writeBackDetachedClaudeLogin(target, source);
+        if (outcome !== 'not-newer') continue;
       }
       const quarantine = `${target}.beeline-quarantine-${Date.now()}-${randomUUID()}`;
       await rename(target, quarantine);
     }
     await symlink(source, target);
   }
+}
+
+/**
+ * Write a Claude login this Room refreshed back to the operator's file.
+ *
+ * Runs after each prompt settles, the point where Claude Code may have
+ * refreshed and detached the Room's link, so the rotated token reaches other
+ * Rooms before their next turn rather than at this Room's next activation.
+ * Touches only the Claude credential and never quarantines.
+ */
+export async function writeBackRoomClaudeLogin(input: {
+  root: string;
+  operatorHome?: string;
+}): Promise<void> {
+  const claude = SHARED_CREDENTIALS.find((credential) => credential.dir === 'claude')!;
+  const source = resolve(input.operatorHome ?? homedir(), claude.source);
+  if (!existsSync(source)) return;
+  const target = resolve(input.root, claude.dir, claude.target);
+  const stats = await lstat(target).catch(() => undefined);
+  if (!stats?.isFile()) return;
+  await writeBackDetachedClaudeLogin(target, source);
 }
 
 /**
@@ -485,7 +586,7 @@ export async function prepareRoomAgentHome(
     await repairRoomAgentCredentialLinks({
       root,
       operatorHome,
-      keepNewerDetachedClaudeLogin: input.agentKind === 'claude',
+      writeBackNewerClaudeLogin: input.agentKind === 'claude',
     });
   } catch (error) {
     if (input.failClosed || input.resourceAuthFile) throw error;

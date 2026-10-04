@@ -50,8 +50,6 @@ const MODES: { mode: RepoMode; label: string }[] = [
   { mode: 'create', label: 'Create' },
 ];
 
-/** The two-line repository row keeps one height in every mode so Create Room never moves. */
-const REPO_SLOT_HEIGHT = 64;
 const OWNER_ROW_HEIGHT = 44;
 const OWNER_MENU_MAX_ROWS = 4;
 
@@ -209,17 +207,17 @@ export function NewRoomDialog({
       accessibilityRole="button"
       disabled={busy || !handleAddGitHubAccount}
       onPress={handleAddGitHubAccount}
-      style={styles.slotRow}
+      style={styles.boxRow}
       testID="create-room-github-connect"
     >
-      <Text style={styles.rowLabel}>GitHub</Text>
-      <Text style={styles.rowValue}>Connect</Text>
+      <Text style={styles.boxKey}>GitHub</Text>
+      <Text style={styles.connectValue}>Connect</Text>
       <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
     </TouchableOpacity>
   );
 
   const loadingRow = (
-    <View style={styles.slotRow} testID="create-room-repo-loading">
+    <View style={styles.boxRow} testID="create-room-repo-loading">
       <Text style={styles.quiet}>Loading GitHub…</Text>
     </View>
   );
@@ -236,13 +234,15 @@ export function NewRoomDialog({
         accessibilityRole="button"
         disabled={busy}
         onPress={handleToggleRepoPicker}
-        style={styles.slotRow}
+        style={styles.repoRow}
         testID="create-room-repo-link"
       >
         <View style={styles.twoLine}>
-          <Text numberOfLines={1} style={styles.ownerLine}>
-            {parts?.owner ?? 'Repository'}
-          </Text>
+          {parts?.owner && (
+            <Text numberOfLines={1} style={styles.ownerLine}>
+              {parts.owner}
+            </Text>
+          )}
           <Text numberOfLines={1} style={[styles.nameLine, !parts && styles.placeholderName]}>
             {parts?.name ?? 'Choose a repo'}
           </Text>
@@ -253,7 +253,7 @@ export function NewRoomDialog({
   };
 
   const createRow = () => (
-    <View style={[styles.slotRow, takenRepo && styles.takenRow]} testID="create-room-repo-create">
+    <View style={[styles.repoRow, takenRepo && styles.takenRow]} testID="create-room-repo-create">
       <View style={styles.twoLine}>
         <View style={styles.ownerLineRow}>
           <TouchableOpacity
@@ -275,22 +275,23 @@ export function NewRoomDialog({
               size={12}
             />
           </TouchableOpacity>
-          {takenRepo && (
+        </View>
+        <Text numberOfLines={1} style={[styles.nameLine, !slug && styles.placeholderName]}>
+          {slug || 'room-name'}
+        </Text>
+        {takenRepo && (
+          <View style={styles.takenLine}>
+            <Text style={styles.takenText}>Already exists.</Text>
             <TouchableOpacity
               accessibilityRole="button"
               hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
               onPress={() => linkInstead(takenRepo)}
               testID="create-room-repo-link-instead"
             >
-              <Text style={styles.takenText}>
-                Exists · <Text style={styles.takenAction}>Link it instead</Text>
-              </Text>
+              <Text style={styles.takenAction}>Link it instead</Text>
             </TouchableOpacity>
-          )}
-        </View>
-        <Text numberOfLines={1} style={[styles.nameLine, styles.followedName]}>
-          {slug || 'room-name'}
-        </Text>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -313,7 +314,11 @@ export function NewRoomDialog({
               setInstallationId(installation.installationId);
               setOwnerMenuOpen(false);
             }}
-            style={styles.ownerMenuRow}
+            style={[
+              styles.ownerMenuRow,
+              installation.installationId === selectedInstallation?.installationId &&
+                styles.ownerMenuSelected,
+            ]}
             testID={`create-room-owner-${installation.installationId}`}
           >
             <Text numberOfLines={1} style={styles.rowLabel}>
@@ -342,13 +347,6 @@ export function NewRoomDialog({
   );
 
   const slot = () => {
-    if (mode === 'none') {
-      return (
-        <View style={styles.slotRow} testID="create-room-repo-none">
-          <Text style={styles.quiet}>No repository. You can link one later.</Text>
-        </View>
-      );
-    }
     if (!githubConnected) return repoAccessLoading ? loadingRow : connectRow;
     return mode === 'link' ? linkRow() : createRow();
   };
@@ -392,15 +390,15 @@ export function NewRoomDialog({
       {step === 'form' && (
         <View style={styles.form} testID="create-room-content">
           <View style={styles.roomNameField}>
-            <Text style={styles.fieldLabel}>Name</Text>
             <HullDialogInput
               accessibilityLabel={`${ROOM_LABEL} name`}
+              ruleStyle={styles.nameRule}
               editable={!busy}
               onChangeText={setRoomName}
               onSubmitEditing={() => {
                 if (!submitDisabled) void submit();
               }}
-              placeholder="room-name"
+              placeholder="Name"
               testID="create-room-name"
               value={roomName}
             />
@@ -412,6 +410,7 @@ export function NewRoomDialog({
           </View>
           {revealed ? (
             <View style={styles.repoBlock}>
+              <Text style={styles.fieldLabel}>Repository</Text>
               <View style={styles.segments} testID="create-room-repo-mode">
                 {MODES.map(({ mode: option, label }) => (
                   <TouchableOpacity
@@ -431,10 +430,12 @@ export function NewRoomDialog({
                   </TouchableOpacity>
                 ))}
               </View>
-              <View style={styles.slot}>
-                {ownerMenuOpen && mode === 'create' && githubConnected && ownerMenu}
-                {slot()}
-              </View>
+              {mode !== 'none' && (
+                <View style={styles.slot}>
+                  {ownerMenuOpen && mode === 'create' && githubConnected && ownerMenu}
+                  {slot()}
+                </View>
+              )}
               {mode !== 'none' && !!repoPickerError && (
                 <Text
                   accessibilityRole="alert"
@@ -455,11 +456,11 @@ export function NewRoomDialog({
               accessibilityRole="button"
               disabled={busy}
               onPress={reveal}
-              style={styles.row}
+              style={[styles.boxRow, styles.collapsedRow]}
               testID="create-room-repo-row"
             >
-              <Text style={styles.rowLabel}>Repository</Text>
-              <Text numberOfLines={1} style={styles.rowValue}>
+              <Text style={styles.boxKey}>Repository</Text>
+              <Text numberOfLines={1} style={styles.boxValue}>
                 None
               </Text>
               <ChevronGlyph
@@ -469,8 +470,8 @@ export function NewRoomDialog({
               />
             </TouchableOpacity>
           )}
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>Public</Text>
+          <View style={styles.publicRow}>
+            <Text style={styles.boxKey}>Public</Text>
             <Switch
               accessibilityLabel="Public Room"
               disabled={busy}
@@ -478,7 +479,7 @@ export function NewRoomDialog({
               testID="create-room-public"
               thumbColor={theme.buzz.bgBase}
               {...(Platform.OS === 'web' ? { activeThumbColor: theme.buzz.bgBase } : {})}
-              trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+              trackColor={{ false: theme.buzz.borderStrong, true: theme.buzz.accent }}
               value={!inviteOnly}
             />
           </View>
@@ -513,63 +514,71 @@ export function NewRoomDialog({
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    form: { paddingTop: 4 },
-    roomNameField: { paddingHorizontal: HULL_SHEET_INSET, paddingBottom: 16 },
+    form: { paddingHorizontal: HULL_SHEET_INSET, paddingTop: hull.space.xs },
+    roomNameField: { paddingBottom: hull.space.md },
     fieldLabel: {
       ...Typography.default(),
       ...hull.type.meta,
       color: hull.textMuted,
+      marginBottom: hull.space.xs,
     },
+    nameRule: { marginTop: 0 },
     hint: {
       ...Typography.default(),
       ...hull.type.meta,
       color: hull.textMuted,
       marginTop: hull.space.sm,
-      marginHorizontal: HULL_SHEET_INSET,
-    },
-    row: {
-      minHeight: 54,
-      paddingHorizontal: HULL_SHEET_INSET,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.sm,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
     },
     rowLabel: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary, flex: 1 },
-    rowValue: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.textMuted,
-      maxWidth: '50%',
-      flexShrink: 1,
-    },
-    chevron: { color: hull.chrome },
-    selectedMark: { ...hull.type.body, color: hull.accent },
-    repoBlock: {
-      paddingHorizontal: HULL_SHEET_INSET,
-      paddingTop: hull.space.md,
-      paddingBottom: hull.space.md,
-      gap: hull.space.sm,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
-    },
-    segments: {
+    chevron: { color: hull.textMuted },
+    selectedMark: { ...hull.type.body, color: hull.buttonPrimaryFill },
+    // One quiet boxed row: the collapsed Repository choice, GitHub Connect, loading.
+    boxRow: {
+      minHeight: 46,
+      paddingHorizontal: hull.space.md,
       flexDirection: 'row',
-      minHeight: 44,
+      alignItems: 'center',
+      gap: hull.space.xs,
       borderWidth: 1,
       borderColor: hull.border,
       borderRadius: hull.radius,
-      overflow: 'hidden',
     },
-    segment: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    segmentSelected: { backgroundColor: hull.bgHighlight },
-    segmentText: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    segmentTextSelected: { color: hull.textPrimary },
+    collapsedRow: { marginBottom: hull.space.xs },
+    boxKey: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary, flex: 1 },
+    boxValue: { ...Typography.default(), ...hull.type.meta, color: hull.textPrimary },
+    connectValue: {
+      ...Typography.default('semiBold'),
+      ...hull.type.meta,
+      color: hull.buttonPrimaryFill,
+    },
+    repoBlock: { paddingBottom: hull.space.xs },
+    segments: {
+      flexDirection: 'row',
+      padding: hull.space.xs,
+      gap: 0,
+      backgroundColor: hull.bgBase,
+      borderWidth: 1,
+      borderColor: hull.border,
+      borderRadius: hull.radius,
+    },
+    segment: {
+      flex: 1,
+      minHeight: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: hull.radius,
+    },
+    segmentSelected: { backgroundColor: hull.buttonPrimaryFill },
+    segmentText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
+    segmentTextSelected: {
+      ...Typography.default('semiBold'),
+      color: hull.buttonPrimaryText,
+    },
     // The owner menu hangs above the row it changes and covers the switch.
-    slot: { position: 'relative', zIndex: 2 },
-    slotRow: {
-      height: REPO_SLOT_HEIGHT,
+    slot: { position: 'relative', zIndex: 2, marginTop: hull.space.sm },
+    repoRow: {
+      paddingTop: hull.space.sm,
+      paddingBottom: hull.space.sm,
       paddingHorizontal: hull.space.md,
       flexDirection: 'row',
       alignItems: 'center',
@@ -580,63 +589,94 @@ const styles = StyleSheet.create((theme) => {
     },
     takenRow: { borderColor: hull.warning },
     twoLine: { flex: 1, minWidth: 0, gap: hull.space.xs },
-    ownerLineRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
-    ownerLine: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    ownerLineRow: { flexDirection: 'row', alignItems: 'center' },
+    ownerLine: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
     ownerChip: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 4,
+      gap: hull.space.xs,
       flexShrink: 1,
+      minHeight: 22,
+      paddingLeft: hull.space.sm,
+      paddingRight: hull.space.xs,
+      backgroundColor: hull.bgHighlight,
+      borderWidth: 1,
+      borderColor: hull.borderStrong,
+      borderRadius: hull.radius,
     },
     ownerChipText: {
-      ...Typography.default('semiBold'),
+      ...Typography.default(),
       ...hull.type.meta,
-      color: hull.accent,
+      color: hull.textPrimary,
       flexShrink: 1,
     },
+    takenLine: { flexDirection: 'row', alignItems: 'center', gap: hull.space.xs },
     takenText: { ...Typography.default(), ...hull.type.meta, color: hull.warning },
-    takenAction: { textDecorationLine: 'underline' },
-    nameLine: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
-    placeholderName: { color: hull.textMuted },
-    followedName: { color: hull.textSecondary },
+    takenAction: {
+      ...Typography.default('semiBold'),
+      ...hull.type.meta,
+      color: hull.buttonPrimaryFill,
+      textDecorationLine: 'underline',
+    },
+    nameLine: {
+      ...Typography.default('semiBold'),
+      ...hull.type.bodyStrong,
+      color: hull.textPrimary,
+    },
+    placeholderName: { ...Typography.default(), ...hull.type.body, color: hull.textMuted },
     quiet: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, flex: 1 },
     ownerMenu: {
       position: 'absolute',
       left: 0,
       right: 0,
-      bottom: REPO_SLOT_HEIGHT - 1,
+      bottom: '100%',
+      marginBottom: hull.space.xs,
       zIndex: 3,
+      padding: hull.space.xs,
       borderWidth: 1,
-      borderColor: hull.border,
+      borderColor: hull.borderStrong,
       borderRadius: hull.radius,
       backgroundColor: hull.bgRaised,
     },
     ownerMenuRow: {
       minHeight: OWNER_ROW_HEIGHT,
-      paddingHorizontal: hull.space.md,
+      paddingHorizontal: hull.space.sm,
       flexDirection: 'row',
       alignItems: 'center',
       gap: hull.space.sm,
     },
+    ownerMenuSelected: { backgroundColor: hull.bgHighlight },
     ownerMenuConnect: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: hull.border },
-    connectText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
+    connectText: { ...Typography.default(), ...hull.type.body, color: hull.textSecondary },
+    // Public sits in the compact layout as one quiet line, with no divider.
+    publicRow: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: hull.space.sm,
+    },
     picker: { paddingBottom: 8 },
     pickerContent: { paddingHorizontal: HULL_SHEET_INSET, flexShrink: 1 },
     error: {
       ...Typography.default(),
       ...hull.type.meta,
       color: hull.dialogDanger,
+      marginTop: hull.space.sm,
     },
     actions: {
       flexDirection: 'row',
+      justifyContent: 'flex-end',
       alignItems: 'center',
+      gap: hull.space.xs,
       paddingHorizontal: HULL_SHEET_INSET,
       paddingTop: hull.space.sm,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
     },
-    cancelAction: { minHeight: 44, flex: 1, justifyContent: 'center', alignItems: 'center' },
-    cancelText: { ...Typography.default(), ...hull.type.body, color: hull.buttonSecondaryText },
-    primaryAction: { minWidth: 118 },
+    cancelAction: {
+      minHeight: 42,
+      paddingHorizontal: hull.space.sm,
+      justifyContent: 'center',
+    },
+    cancelText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
+    primaryAction: { minHeight: 42, paddingHorizontal: hull.space.md },
   };
 });

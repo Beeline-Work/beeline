@@ -457,10 +457,7 @@ export class DaemonService {
         authenticatedAgentId,
         true,
       );
-      if (
-        typeof candidate.text === 'string' &&
-        /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\/?\s*$/.test(candidate.text)
-      )
+      if (isCorner)
         await this.reconcileZeroCheckWorkerCompletion(scopedRoom!, authenticatedAgentId, output.id);
       return output as Output<Name>;
     }
@@ -738,12 +735,7 @@ export class DaemonService {
           },
         });
       }
-      if (
-        name === 'postRoomMessage' &&
-        candidate.relay === undefined &&
-        typeof candidate.text === 'string' &&
-        /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\/?\s*$/.test(candidate.text)
-      ) {
+      if (name === 'postRoomMessage' && candidate.relay === undefined && isCorner) {
         await this.reconcileZeroCheckWorkerCompletion(
           scopedRoom!,
           authenticatedAgentId,
@@ -1664,10 +1656,12 @@ export class DaemonService {
    * A repository with no checks emits no check webhook, so its configured
    * reviewer otherwise waits forever. Resolve that absence only after the
    * worker has finished its PR turn; at PR-open time the same empty rollup is
-   * merely a race with GitHub registering workflows. GitHub also runs no
-   * workflows for a PR that conflicts with its base, so the zero-check result
-   * resolves only once GitHub has computed mergeability and found no conflict;
-   * a conflict, a verdict still computing, or a failed read stays pending.
+   * merely a race with GitHub registering workflows. Completion uses the
+   * registered PR, regardless of whether the worker's reply contains its URL.
+   * GitHub also runs no workflows for a PR that conflicts with its base, so
+   * the zero-check result resolves only once GitHub has computed mergeability
+   * and found no conflict; a conflict, a verdict still computing, or a failed
+   * read stays pending.
    */
   private async reconcileZeroCheckWorkerCompletion(
     cornerId: string,

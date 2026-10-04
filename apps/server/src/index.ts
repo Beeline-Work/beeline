@@ -304,7 +304,7 @@ async function main() {
     },
     objectService,
     linkWallet,
-    github ? (cornerId) => github!.refreshUnknownMergeability(cornerId) : undefined,
+    github ? (cornerId) => github!.refreshStaleMergeability(cornerId) : undefined,
     github ? (cornerId) => github!.landCorner(cornerId) : undefined,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
@@ -390,7 +390,7 @@ async function main() {
             ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
           }));
         if (githubJobs) {
-          await backgroundJobs.run('github-mergeability', () => githubJobs.refreshUnknownMergeability());
+          await backgroundJobs.run('github-mergeability', () => githubJobs.refreshStaleMergeability());
           await backgroundJobs.run('github-merged-corners', () => githubJobs.reconcileMergedCorners());
         }
       }

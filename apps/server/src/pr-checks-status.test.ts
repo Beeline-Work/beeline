@@ -174,7 +174,7 @@ beforeEach(async () => {
     undefined,
     undefined,
     undefined,
-    (cornerId) => operations.refreshUnknownMergeability(cornerId),
+    (cornerId) => operations.refreshStaleMergeability(cornerId),
   );
 });
 

@@ -1184,8 +1184,12 @@ export class GitHubOperations {
     }
   }
 
-  /** Retry GitHub's asynchronous mergeability calculation for open corner PRs. */
-  async refreshUnknownMergeability(cornerId?: string): Promise<void> {
+  /**
+   * Retry GitHub's asynchronous mergeability calculation for open corner PRs,
+   * and re-read a stored 'dirty' PR so a conflict that GitHub has since
+   * cleared stops re-firing the merge-conflict wake.
+   */
+  async refreshStaleMergeability(cornerId?: string): Promise<void> {
     const rows = await this.database.query<{
       corner_id: string;
       repository: string;
@@ -1214,7 +1218,7 @@ export class GitHubOperations {
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
          AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
-         AND fact.lifecycle->'pr'->>'mergeability'='unknown'
+         AND fact.lifecycle->'pr'->>'mergeability' IN ('unknown','dirty')
          AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
          AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
          AND ($1::uuid IS NULL OR fact.corner_id=$1)`,
@@ -1251,7 +1255,7 @@ export class GitHubOperations {
             current.pr.number !== row.number ||
             current.pr.headSha !== pr.headSha ||
             (current.pr.baseSha ?? null) !== row.base_sha ||
-            current.pr.mergeability !== 'unknown'
+            (current.pr.mergeability !== 'unknown' && current.pr.mergeability !== 'dirty')
           )
             return;
           await this.updateLifecycle(
@@ -1492,7 +1496,7 @@ export class GitHubOperations {
         );
         changed = true;
       });
-      if (changed) await this.refreshUnknownMergeability(row.corner_id);
+      if (changed) await this.refreshStaleMergeability(row.corner_id);
     }
   }
 
@@ -1729,7 +1733,7 @@ export class GitHubOperations {
               if (note.inserted) this.onRoomChanged?.(target.corner_id);
             }
           });
-          if (mergeability === 'unknown') await this.refreshUnknownMergeability(target.corner_id);
+          if (mergeability === 'unknown') await this.refreshStaleMergeability(target.corner_id);
           if (body.action === 'opened' || body.action === 'synchronize')
             await this.refreshCheckRollup({ ...target, has_pr: true }, repository,
               { name: 'Pull request checks', status: 'pending', headSha, url }, database);
@@ -1922,7 +1926,7 @@ export class GitHubOperations {
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
         });
-        await this.refreshUnknownMergeability(target.corner_id);
+        await this.refreshStaleMergeability(target.corner_id);
   }
 
   private async lifecycle(

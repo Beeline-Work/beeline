@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { router, useGlobalSearchParams } from 'expo-router';
+import { router, useGlobalSearchParams, usePathname } from 'expo-router';
 import { isWorkspaceListView, type Identity, type WorkspaceListView } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { monolithSession } from '@/auth/monolith-session';
@@ -25,6 +25,7 @@ export function WorkspaceNavigationShell({ children }: { children: React.ReactNo
 }
 
 function MobileWorkspaceNavigationShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const params = useGlobalSearchParams<{ communityId?: string | string[] }>();
   const requestedId = Array.isArray(params.communityId)
     ? params.communityId[0]
@@ -109,7 +110,9 @@ function MobileWorkspaceNavigationShell({ children }: { children: React.ReactNod
         if (identity) void saveActiveCommunityId(identity.publicKey, communityId);
         router.replace({ pathname: '/beeline/channels', params: { communityId } });
       }}
-      onAdd={() => router.push('/beeline/community')}
+      onAdd={() => {
+        if (pathname !== '/beeline/community') router.push('/beeline/community');
+      }}
       onSettings={() => router.push('/beeline/settings')}
       viewerPubkey={identity?.publicKey}
       viewerAvatarUrl={workspaces?.viewer.avatar}

@@ -169,6 +169,20 @@ async function run() {
       [55, 0],
       [105, 0],
     ]);
+    const pushesBeforeAdd = (window as any).__proofPushCount;
+    element('community-rail-add')!.click();
+    await pause(100);
+    check(
+      'Workspace choice Add closes the rail without pushing a duplicate page',
+      closed() &&
+        element('proof-page')?.textContent?.includes('community') === true &&
+        (window as any).__proofPushCount === pushesBeforeAdd,
+    );
+    await drag(2, [
+      [15, 0],
+      [55, 0],
+      [105, 0],
+    ]);
     dismiss();
     await pause(100);
     check('Scrim dismisses the rail', closed());

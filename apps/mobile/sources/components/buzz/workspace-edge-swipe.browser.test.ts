@@ -60,14 +60,16 @@ describe.skipIf(!existsSync(CHROME))('Workspace edge swipe through the page stac
       import React from 'react'; import { View, Text, Pressable } from 'react-native';
       import { BuzzCommunityShell, CommunityDrawerTrigger } from '${path.join(mobile, 'sources/components/buzz/CommunityRail')}';
       let page='conversation', selected='workspace-a'; const listeners=new Set();
+      window.__proofPushCount=0;
       const publish=()=>listeners.forEach(fn=>fn());
       window.__proofNavigate=next=>{page=next;publish()};
       export const router={
         replace: target=>{selected=target.params.communityId;page='rooms';publish()},
-        push: target=>{page=target.split('/').at(-1);publish()}
+        push: target=>{window.__proofPushCount++;page=target.split('/').at(-1);publish()}
       };
       const useRoute=()=>{const [,render]=React.useReducer(x=>x+1,0);React.useEffect(()=>{listeners.add(render);return()=>listeners.delete(render)},[])};
       export const useGlobalSearchParams=()=>{useRoute();return {communityId:selected}};
+      export const usePathname=()=>{useRoute();return '/beeline/'+page};
       function Page(){const [taps,setTaps]=React.useState(0);useRoute();return <View testID="proof-page" style={{height:700}}>
         <Text>{page}: {selected} · taps: {taps}</Text>
         {page==='rooms' && <CommunityDrawerTrigger community={{communityId:selected,name:selected}}/>}

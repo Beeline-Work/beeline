@@ -4966,21 +4966,34 @@ export class DaemonService {
       throw new Error(
         `the event sentence must be at most ${MAX_EVENT_CONSEQUENCE_LENGTH} characters`,
       );
-    const wakes = [...new Set(input.mentionAgentIds ?? [])];
+    let wakes = [...new Set(input.mentionAgentIds ?? [])];
     if (wakes.length > MAX_MENTIONS_PER_EVENT)
       throw new Error(`an event may wake at most ${MAX_MENTIONS_PER_EVENT} agents`);
     if (wakes.length) {
-      const members = await this.database.query<{ identity_id: string }>(
-        `SELECT member.identity_id FROM memberships member
+      const members = await this.database.query<{ identity_id: string; handle: string | null }>(
+        `SELECT member.identity_id, identity.handle FROM memberships member
          JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
-         WHERE member.room_id=$1 AND member.removed_at IS NULL
-           AND member.identity_id=ANY($2::text[])`,
-        [input.roomId, wakes],
+         WHERE member.room_id=$1 AND member.removed_at IS NULL`,
+        [input.roomId],
       );
-      const present = new Set(members.rows.map((row) => row.identity_id));
-      const missing = wakes.filter((wake) => !present.has(wake));
+      const idsPresent = new Set(members.rows.map((row) => row.identity_id));
+      const byHandle = new Map<string, string>();
+      for (const member of members.rows) {
+        const handle = member.handle?.trim().replace(/^@/, '').toLowerCase();
+        if (handle) byHandle.set(handle, member.identity_id);
+      }
+      const resolved = new Set<string>();
+      const missing: string[] = [];
+      for (const wake of wakes) {
+        const resolvedId = idsPresent.has(wake)
+          ? wake
+          : byHandle.get(wake.trim().replace(/^@/, '').toLowerCase());
+        if (resolvedId) resolved.add(resolvedId);
+        else missing.push(wake);
+      }
       if (missing.length)
         throw new Error(`not an agent member of this Room: ${missing.join(', ')}`);
+      wakes = [...resolved];
     }
     const active = await this.database.query<{ request_id: string }>(
       `SELECT request_id FROM agent_turns

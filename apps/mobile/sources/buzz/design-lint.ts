@@ -43,6 +43,8 @@ export const DESIGN_ALLOWLIST: Readonly<Record<DesignRule, Readonly<Record<strin
       'HullDialog and HullActionSheet carry the one product-wide floating-surface shadow.',
     'components/buzz/ConversationComposer.tsx':
       'The listening mic glows brass with the voice volume: a live signal, not elevation.',
+    'components/buzz/AppStatusIndicator.tsx':
+      'The connecting app spinner glows amber while it turns: a live signal, not elevation.',
   },
   font: {},
   component: {},

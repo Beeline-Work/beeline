@@ -146,7 +146,7 @@ Obsidian Refined is the default. Bone is its only counterpart (the older Editori
 Stated so no one re-litigates them. Each is redundant with a non-colour signal, and none licenses a fifth.
 
 1. **Brass** is the one accent (see Primary). It never fills an identity plate: an agent's plate carries its own hue and brass only rings it. A closed poll's still brass wash is pigment for magnitude, not "winner"; the leader is also the longest bar and `bodyStrong`.
-2. **Diff green/red** (`diffAdded`/`diffRemoved`) appear only in diff and change-review views and on a failed tool call, redundant with `+`/`−`, status letters, or the word `failed`. Tuned per canvas because they ship as text colour.
+2. **Diff green/red** (`diffAdded`/`diffRemoved`) appear only in diff and change-review views and on a failed tool call, redundant with `+`/`−`, status letters, or the word `failed`. Tuned per canvas because they ship as text colour. The one other licensed use is the Workbench app status mark: `diffAdded` for a connected app and `dialogDanger` for an erroring one, each redundant with the state word and a check/failed shape. The connecting spinner's amber is brass `accent`.
 3. **No speaker rails.** No transcript rail carries a human or agent colour; the ledger reads by proximity and byline.
 4. **Two Inks** (`syntaxStructure`, `syntaxName`, `syntaxValue`) is the fenced-code palette: three roles in two hues from the canvas family, laddered by luminance so a block still parses in greyscale. It lives only inside a fenced block and the reader that opens one.
 
@@ -194,7 +194,7 @@ Flat by default. Depth is tonal: the elevation ladder in Colors, one hairline, a
 
 - **Lifted surfaces** (`HullSurface`, a faint scratch texture) are reserved for something that genuinely floats over the slab and does not repeat: modal sheets and the merge-approval panel.
 - **Floating surfaces** (`HullDialog`, `HullActionSheet`) carry the one product-wide shadow (`dialogShadowColor` `#000`, radius 48, y-offset 18) at a per-theme `dialogShadowOpacity`: 0.55 on Obsidian, 0.14 on Bone, where the denser shadow reads as a grey smear.
-- **No other shadow and no blur.** Prompts, toasts and hint panels sit flat on `bgRaised` with a hairline. The one exception is the listening mic's brass glow, which tracks voice volume (a live signal, not elevation).
+- **No other shadow and no blur.** Prompts, toasts and hint panels sit flat on `bgRaised` with a hairline. Two exceptions are live signals, not elevation: the listening mic's brass glow, which tracks voice volume, and the Workbench app's connecting spinner, whose amber glow breathes as it turns (`components/buzz/AppStatusIndicator.tsx`).
 - Transcript asks use `TranscriptCard`'s raised fill without texture; transcript records have no fill.
 
 **The Flat Chrome Rule.** Headers, rails and lists never gain a fill or shadow to separate themselves; a hairline and weight do that work.

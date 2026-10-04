@@ -704,14 +704,17 @@ export function ledgerBytes(bytes: number): string | undefined {
   return `${(bytes / 1024).toFixed(1)} kB`;
 }
 
-/** How an app row's trailing state reads: the word beside its dot. */
+/** How an app row's trailing state reads: the state word and the mark
+ *  beside it. Connected draws a green check, connecting an amber spinner
+ *  with its ambient glow, error the red failed indicator. The status is the
+ *  server's projection; nothing here invents one. */
 export function appInstrument(status: WorkbenchApp['status']): {
   value: 'connected' | 'connecting' | 'error';
-  glyph: 'live' | 'pulse' | 'failed';
+  glyph: 'check' | 'spinner' | 'failed';
   valueTone?: 'danger' | 'accent';
 } {
-  if (status === 'connected') return { value: 'connected', glyph: 'live' };
-  if (status === 'connecting') return { value: 'connecting', glyph: 'pulse', valueTone: 'accent' };
+  if (status === 'connected') return { value: 'connected', glyph: 'check' };
+  if (status === 'connecting') return { value: 'connecting', glyph: 'spinner', valueTone: 'accent' };
   return { value: 'error', glyph: 'failed', valueTone: 'danger' };
 }
 

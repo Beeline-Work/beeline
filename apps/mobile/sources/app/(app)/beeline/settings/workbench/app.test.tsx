@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
+import { beelineThemes } from '@/buzz/groknight';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import AppDetailScreen from './app';
 
@@ -23,7 +24,20 @@ vi.mock('@/components/buzz/Button', async () => {
 vi.mock('react-native', async () => {
   const R = await import('react');
   const host = (name: string) => (props: any) => R.createElement(name, props, props.children);
-  return { ScrollView: host('ScrollView'), Text: host('Text'), TouchableOpacity: host('TouchableOpacity'), View: host('View'), Platform: { OS: 'web', select: (values: Record<string, unknown>) => values.web ?? values.default } };
+  return {
+    ScrollView: host('ScrollView'), Text: host('Text'), TouchableOpacity: host('TouchableOpacity'), View: host('View'),
+    Animated: {
+      Value: function (this: unknown, v: number) {
+        return { _value: v, interpolate: () => ({ _value: v }) };
+      },
+      timing: () => ({ start: () => undefined }),
+      sequence: () => ({ start: () => undefined }),
+      loop: () => ({ start: () => undefined, stop: () => undefined }),
+      View: host('Animated.View'),
+    },
+    Easing: { linear: () => 'linear', inOut: (value: unknown) => value, out: (value: unknown) => value },
+    Platform: { OS: 'web', select: (values: Record<string, unknown>) => values.web ?? values.default },
+  };
 });
 vi.mock('@/components/buzz/AppMark', () => ({ AppMark: (props: any) => React.createElement('AppMark', props) }));
 vi.mock('@/components/buzz/AppPageHeader', () => ({ AppPageHeader: (props: any) => React.createElement('AppPageHeader', props) }));
@@ -133,6 +147,27 @@ describe('App detail', () => {
     expect(renderer.root.findByProps({ testID: 'app-detail-disconnect' })).toBeTruthy();
     await act(async () => { renderer.root.findByProps({ testID: 'app-detail-disconnect' }).props.onPress(); await Promise.resolve(); });
     expect((await source.readWorkbench({ workspaceId: 'ws', viewerId: 'human-dani' })).apps).toHaveLength(0);
+  });
+
+  it('marks each app status with its own indicator and label tone', async () => {
+    const cases = [
+      { status: 'connected' as const, label: 'Connected', mark: 'app-detail-status-check',
+        color: beelineThemes.obsidian.diffAdded },
+      { status: 'connecting' as const, label: 'Connecting', mark: 'app-detail-status-spinner',
+        color: beelineThemes.obsidian.accent },
+      { status: 'error' as const, label: 'Connection failed', mark: 'app-detail-status-failed',
+        color: beelineThemes.obsidian.dialogDanger },
+    ];
+    for (const entry of cases) {
+      source.setApps([{ id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio',
+        status: entry.status, useCount: 0 }]);
+      const renderer = await render();
+      const indicator = renderer.root.findByProps({ testID: 'app-detail-status' });
+      expect(indicator.findByProps({ testID: entry.mark })).toBeTruthy();
+      const label = renderer.root.findByProps({ testID: 'app-detail-status-label' });
+      expect(label.props.children).toBe(entry.label);
+      expect(Object.assign({}, ...[label.props.style].flat(Infinity as 1)).color).toBe(entry.color);
+    }
   });
 
   it('warns about Instagram account requirements before sign-in', async () => {

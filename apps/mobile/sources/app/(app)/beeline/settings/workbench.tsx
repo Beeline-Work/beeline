@@ -10,6 +10,7 @@ import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ToolDetailsCell } from '@/components/buzz/ToolDetailsCell';
 import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { AppStatusIndicator } from '@/components/buzz/AppStatusIndicator';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { getWalletSource } from '@/buzz/wallet-source';
@@ -35,6 +36,7 @@ import {
   connectorExpandedActions,
   connectorInstrument,
   keysOutsideApps,
+  type WorkbenchApp,
   type WorkbenchView,
 } from '@/buzz/workbench';
 
@@ -361,7 +363,7 @@ export default function WorkbenchScreen() {
           <Text style={styles.sectionLabel} testID="workbench-apps-head">
             APPS
           </Text>
-          {apps.map(app => <WorkbenchIndexRow key={app.id} leading={<AppMark name={app.name} domain={app.domain} logo={app.logo} />} onPress={() => router.push({ pathname: '/beeline/settings/workbench/app', params: { workspaceId, viewerId, appId: app.id } } as unknown as Href)} testID={`workbench-app-${app.key}`} title={app.name} value={appInstrument(app.status).value} />)}
+          {apps.map(app => <WorkbenchIndexRow key={app.id} leading={<AppMark name={app.name} domain={app.domain} logo={app.logo} />} onPress={() => router.push({ pathname: '/beeline/settings/workbench/app', params: { workspaceId, viewerId, appId: app.id } } as unknown as Href)} status={app.status} testID={`workbench-app-${app.key}`} title={app.name} />)}
           <WorkbenchIndexRow onPress={openConnectApp} testID="workbench-connect-app" title="Connect an app" action />
           <Text style={styles.appsNote}>Agents can also connect an app for you from a conversation when they need one.</Text>
         </View>
@@ -404,10 +406,10 @@ export default function WorkbenchScreen() {
   );
 }
 
-function WorkbenchIndexRow({ leading, title, value, onPress, testID, action = false }: {
-  leading?: React.ReactNode; title: string; value?: string; onPress?: () => void; testID: string; action?: boolean;
+function WorkbenchIndexRow({ leading, title, status, onPress, testID, action = false }: {
+  leading?: React.ReactNode; title: string; status?: WorkbenchApp['status']; onPress?: () => void; testID: string; action?: boolean;
 }) {
-  const body = <>{leading}<Text numberOfLines={1} style={[styles.rowTitle, action && styles.rowAction]}>{title}</Text>{value ? <Text style={styles.rowValue}>{value}</Text> : null}{action ? <ChevronGlyph direction="right" size={18} color={styles.rowValue.color} /> : null}</>;
+  const body = <>{leading}<Text numberOfLines={1} style={[styles.rowTitle, action && styles.rowAction]}>{title}</Text>{status ? <AppStatusIndicator status={status} label={appInstrument(status).value} testID={`${testID}-status`} textStyle={styles.rowValue} /> : null}{action ? <ChevronGlyph direction="right" size={18} color={styles.rowValue.color} /> : null}</>;
   return onPress ? <TouchableOpacity accessibilityRole="button" onPress={onPress} style={styles.indexRow} testID={testID}>{body}</TouchableOpacity> : <View style={styles.indexRow} testID={testID}>{body}</View>;
 }
 

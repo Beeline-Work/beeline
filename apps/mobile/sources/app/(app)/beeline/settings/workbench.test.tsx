@@ -72,16 +72,19 @@ vi.mock('react-native', async () => {
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
     Animated: {
-      Value: (v: number) => ({
-        _value: v,
-        add: () => ({ _value: v }),
-        interpolate: () => ({ _value: v }),
-      }),
+      Value: function (this: unknown, v: number) {
+        return {
+          _value: v,
+          add: () => ({ _value: v }),
+          interpolate: () => ({ _value: v }),
+        };
+      },
       timing: () => ({ start: () => undefined }),
       sequence: () => ({ start: () => undefined }),
       loop: () => ({ start: () => undefined, stop: () => undefined }),
       View: host('Animated.View'),
     },
+    Easing: { linear: () => 'linear', inOut: (value: unknown) => value, out: (value: unknown) => value },
   };
 });
 
@@ -104,6 +107,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 
 import WorkbenchScreen from './workbench';
 import { WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
+import { beelineThemes } from '@/buzz/groknight';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWalletSource } from '@/buzz/wallet-source';
@@ -350,13 +354,54 @@ describe('Workbench settings screen', () => {
     const gmail = renderer.root.findByProps({ testID: 'workbench-app-gmail' });
     const slack = renderer.root.findByProps({ testID: 'workbench-app-slack' });
     expect(gmail.props.title).toBe('Gmail');
-    expect(slack.props.value).toBe('connected');
+    expect(slack.props.status).toBe('connected');
     expect(connect.props.title).toBe('Connect an app');
     expect(renderer.root.findAllByProps({ testID: 'workbench-connector-composio' })).toHaveLength(0);
     act(() => gmail.props.onPress());
     expect(navigation.push.mock.calls.at(-1)![0]).toMatchObject({ pathname: '/beeline/settings/workbench/app', params: { appId: 'app-gmail' } });
     act(() => connect.props.onPress());
     expect(navigation.push.mock.calls.at(-1)![0].pathname).toBe('/beeline/settings/workbench/connect-app');
+  });
+
+  it('marks connected apps green, errors red, and connecting with an amber spinner and glow', async () => {
+    const source = new MockWorkbenchSource();
+    source.setApps([
+      { id: 'app-gmail', key: 'gmail', name: 'Gmail', transport: 'composio', status: 'connected', useCount: 1 },
+      { id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio', status: 'connecting', useCount: 0 },
+      { id: 'app-runway', key: 'runway', name: 'Runway', transport: 'composio', status: 'error',
+        errorMessage: 'App provider request failed (403)', useCount: 0 },
+    ]);
+    setWorkbenchSource(source);
+    const renderer = await render();
+
+    const connected = renderer.root.findByProps({ testID: 'workbench-app-gmail-status' });
+    expect(connected.findByProps({ testID: 'workbench-app-gmail-status-check' })).toBeTruthy();
+    const connectedLabel = renderer.root.findByProps({ testID: 'workbench-app-gmail-status-label' });
+    expect(connectedLabel.props.children).toBe('connected');
+    expect(Object.assign({}, ...[connectedLabel.props.style].flat(Infinity as 1)).color).toBe(
+      beelineThemes.obsidian.diffAdded,
+    );
+
+    const connecting = renderer.root.findByProps({ testID: 'workbench-app-slack-status' });
+    expect(connecting.findByProps({ testID: 'workbench-app-slack-status-spinner' })).toBeTruthy();
+    expect(
+      connecting.findByProps({ testID: 'workbench-app-slack-status-spinner-glow' }),
+    ).toBeTruthy();
+    const connectingLabel = renderer.root.findByProps({
+      testID: 'workbench-app-slack-status-label',
+    });
+    expect(connectingLabel.props.children).toBe('connecting');
+    expect(Object.assign({}, ...[connectingLabel.props.style].flat(Infinity as 1)).color).toBe(
+      beelineThemes.obsidian.accent,
+    );
+
+    const failed = renderer.root.findByProps({ testID: 'workbench-app-runway-status' });
+    expect(failed.findByProps({ testID: 'workbench-app-runway-status-failed' })).toBeTruthy();
+    const failedLabel = renderer.root.findByProps({ testID: 'workbench-app-runway-status-label' });
+    expect(failedLabel.props.children).toBe('error');
+    expect(Object.assign({}, ...[failedLabel.props.style].flat(Infinity as 1)).color).toBe(
+      beelineThemes.obsidian.dialogDanger,
+    );
   });
 
   it('shows the five reported Android rows with app marks and the failed state', async () => {
@@ -375,7 +420,7 @@ describe('Workbench settings screen', () => {
       expect(row.findByType('Image').props.source.uri).toBeUndefined();
       expect(row.findAllByType('Text').some((text: { props: { children: unknown } }) => text.props.children === name[0])).toBe(false);
     }
-    expect(renderer.root.findByProps({ testID: 'workbench-app-runway' }).props.value).toBe('error');
+    expect(renderer.root.findByProps({ testID: 'workbench-app-runway' }).props.status).toBe('error');
   });
 
   it('falls back to a favicon for an unlisted Composio app and shows its failed connection', async () => {
@@ -386,7 +431,7 @@ describe('Workbench settings screen', () => {
     setWorkbenchSource(source);
     const renderer = await render();
     const row = renderer.root.findByProps({ testID: 'workbench-app-example' });
-    expect(row.props.value).toBe('error');
+    expect(row.props.status).toBe('error');
     const firstImage = row.findByType('Image');
     expect(firstImage.props.source.uri).toBe('https://invalid.example/logo.png');
     act(() => firstImage.props.onError());

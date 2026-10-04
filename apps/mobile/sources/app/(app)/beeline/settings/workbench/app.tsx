@@ -5,6 +5,7 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { AppMark } from '@/components/buzz/AppMark';
+import { AppStatusIndicator } from '@/components/buzz/AppStatusIndicator';
 import { Button } from '@/components/buzz/Button';
 import { AppPageHeader } from '@/components/buzz/AppPageHeader';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
@@ -108,7 +109,12 @@ export default function AppDetailScreen() {
         <View style={styles.identity}>
           <AppMark name={app.name} domain={app.domain} logo={app.logo} size={48} />
           <View style={styles.identityCopy}>
-            <Text style={styles.status}>{app.status === 'connected' ? 'Connected' : app.status === 'connecting' ? 'Connecting' : 'Connection failed'}</Text>
+            <AppStatusIndicator
+              status={app.status}
+              label={app.status === 'connected' ? 'Connected' : app.status === 'connecting' ? 'Connecting' : 'Connection failed'}
+              testID="app-detail-status"
+              textStyle={styles.status}
+            />
             {app.accountLabel ? <Text style={styles.account}>{app.accountLabel}{app.workspaceName ? ` · ${app.workspaceName} workspace` : ''}</Text> : null}
           </View>
         </View>

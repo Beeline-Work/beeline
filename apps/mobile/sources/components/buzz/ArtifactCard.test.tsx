@@ -485,7 +485,7 @@ describe('the artifact card is the preview (mock 1b)', () => {
       hostNodes(renderer, 'artifact-open-browser')[0]!.props.onPress();
     });
     expect(mocks.modalShow).toHaveBeenCalledWith(
-      expect.objectContaining({ props: expect.objectContaining({ attachment: second }) }),
+      expect.objectContaining({ props: expect.objectContaining({ attachment: second, photoAttachments: [first, second] }) }),
     );
     expect(mocks.openArtifactInBrowserOrExplain).toHaveBeenCalledWith(second);
 

@@ -10,6 +10,7 @@ import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
 import { useSandboxWebView, useSandboxWebViewStatus } from '@/components/buzz/sandbox-webview';
 import { ArtifactText } from '@/components/buzz/ArtifactMedia';
 import { ZoomableArtifactImage } from '@/components/buzz/ZoomableArtifactImage';
+import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { CodeHighlighter } from '@/components/buzz/CodeHighlighter';
@@ -30,7 +31,8 @@ import { useCopiedToast } from '@/components/buzz/CopiedToast';
  * text and reads through the same Markdown renderer as a Markdown artifact.
  */
 export function ArtifactViewerScreen({
-  attachment,
+  attachment: initialAttachment,
+  photoAttachments,
   document,
   markdown,
   notice,
@@ -40,7 +42,24 @@ export function ArtifactViewerScreen({
   | { attachment?: never; document: CodeDocument; markdown?: never; notice?: never }
   | { attachment?: never; document?: never; markdown: { title: string; text: string }; notice?: never }
   | { attachment?: never; document?: never; markdown?: never; notice: { title: string; message: string } }
-) & { authorHandle?: string; onClose: () => void }) {
+) & {
+  authorHandle?: string;
+  photoAttachments?: readonly AttachmentReference[];
+  onClose: () => void;
+}) {
+  const photos = initialAttachment && artifactFormat(initialAttachment.mimeType) === 'image'
+    ? photoAttachments
+    : undefined;
+  const [photoIndex, setPhotoIndex] = useState(() =>
+    Math.max(0, photos?.findIndex((photo) => photo.url === initialAttachment?.url) ?? 0),
+  );
+  const attachment = photos?.[photoIndex] ?? initialAttachment;
+  const isPhotoGroup = Boolean(photos && photos.length > 1);
+  const changePhoto = (direction: -1 | 1) => {
+    if (isPhotoGroup) {
+      setPhotoIndex((index) => (index + direction + photos!.length) % photos!.length);
+    }
+  };
   const format = attachment
     ? artifactFormat(attachment.mimeType)
     : document
@@ -48,8 +67,8 @@ export function ArtifactViewerScreen({
       : markdown
         ? 'markdown'
         : 'notice';
-  const title = attachment
-    ? (attachment.title ?? attachment.name)
+  const title = initialAttachment
+    ? (attachment!.title ?? attachment!.name)
     : document
       ? document.title
       : markdown
@@ -142,7 +161,44 @@ export function ArtifactViewerScreen({
         ) : format === 'markdown' ? (
           <ArtifactViewerMarkdown attachment={attachment!} />
         ) : format === 'image' ? (
-          <ZoomableArtifactImage attachment={attachment!} title={title} />
+          <>
+            {isPhotoGroup ? (
+              <View style={styles.photoNavigation}>
+                <Pressable
+                  accessibilityLabel="Previous photo"
+                  accessibilityRole="button"
+                  onPress={() => changePhoto(-1)}
+                  style={styles.headerAction}
+                  testID="artifact-viewer-photo-previous"
+                >
+                  <ChevronGlyph color={theme.buzz.textPrimary} direction="left" size={CHEVRON_ROW_SIZE} />
+                </Pressable>
+                <Text
+                  accessibilityLabel={`Photo ${photoIndex + 1} of ${photos!.length}`}
+                  accessibilityLiveRegion="polite"
+                  style={styles.photoPosition}
+                  testID="artifact-viewer-photo-position"
+                >
+                  {photoIndex + 1} of {photos!.length}
+                </Text>
+                <Pressable
+                  accessibilityLabel="Next photo"
+                  accessibilityRole="button"
+                  onPress={() => changePhoto(1)}
+                  style={styles.headerAction}
+                  testID="artifact-viewer-photo-next"
+                >
+                  <ChevronGlyph color={theme.buzz.textPrimary} direction="right" size={CHEVRON_ROW_SIZE} />
+                </Pressable>
+              </View>
+            ) : null}
+            <ZoomableArtifactImage
+              key={attachment!.url}
+              attachment={attachment!}
+              title={title}
+              onSwipePhoto={isPhotoGroup ? changePhoto : undefined}
+            />
+          </>
         ) : format === 'text' ? (
           <ArtifactText attachment={attachment!} crop={false} testID="artifact-viewer-text" />
         ) : format === 'pdf' && Platform.OS !== 'ios' ? (
@@ -300,6 +356,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   headerActionText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   body: { flex: 1 },
+  photoNavigation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: theme.buzz.space.sm,
+  },
+  photoPosition: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet },
   webview: { flex: 1, backgroundColor: 'transparent' },
   codeBody: { flexGrow: 1, padding: theme.buzz.space.md },
   codeInscription: {

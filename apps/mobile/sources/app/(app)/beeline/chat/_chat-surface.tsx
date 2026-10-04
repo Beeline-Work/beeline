@@ -169,7 +169,10 @@ import {
   fallbackMemberName,
   personIdentityLabel,
 } from '@/buzz/member-display';
-import { directMessageHeaderPresence } from '@/buzz/direct-message-header-presence';
+import {
+  directMessageAgentHeaderMeta,
+  directMessageHeaderPresence,
+} from '@/buzz/direct-message-header-presence';
 import {
   createCommunityInviteUrl,
   resolveCommunityInvitePublicOrigin,
@@ -2068,10 +2071,23 @@ export function BuzzChatSurface({
     dmPeerPubkey && dmPeerAgent
       ? resolveAgentDisplayIdentity(dmPeerPubkey, dmPeerAgent)
       : undefined;
-  const dmHeaderPresence = directMessageHeaderPresence(
+  const dmPeerPresence = directMessageHeaderPresence(
     directMessageListItem?.room.id === decodedId ? directMessageListItem : null,
     presenceNow,
   );
+  const dmPeerWorkspaceAgent = dmPeerPubkey
+    ? workspaceRoster?.agents.find((agent) => agent.identity.pubkey === dmPeerPubkey)
+    : undefined;
+  const dmHeaderPresence =
+    dmPeerAgent || dmPeerWorkspaceAgent
+      ? directMessageAgentHeaderMeta(
+          {
+            model: dmPeerWorkspaceAgent?.model,
+            ownerHandle: dmPeerWorkspaceAgent?.owner?.handle,
+          },
+          dmPeerPresence,
+        )
+      : dmPeerPresence;
   const dmAnnouncementAuthor = dmPeerPubkey
     ? roomSurface?.messages.find((message) => message.author.pubkey === dmPeerPubkey)?.author
     : undefined;

@@ -337,6 +337,8 @@ export function TranscriptCard({
   });
 
   const hasFooter = footerNote !== undefined || actions.length > 0;
+  // A card that is only its head closes with the same inset it opens with.
+  const headOnly = !body && code === undefined && !rows.length && !choices.length && !hasFooter;
   return (
     <View style={styles.frameShell}>
       {animateArrival ? (
@@ -366,7 +368,7 @@ export function TranscriptCard({
             accessibilityState={onHeaderPress ? { expanded: headerExpanded } : undefined}
             disabled={!onHeaderPress}
             onPress={onHeaderPress}
-            style={styles.head}
+            style={[styles.head, headOnly && styles.headOnly]}
             testID={headerTestID}
           >
             {identity ? <View style={styles.identity}>{identity}</View> : null}
@@ -787,6 +789,7 @@ const styles = StyleSheet.create((theme) => {
       paddingTop: metric.headTop,
       paddingHorizontal: metric.side,
     },
+    headOnly: { paddingBottom: metric.headTop },
     identity: { width: metric.identitySize },
     headCopy: { flex: 1, minWidth: 0 },
     titleLine: {

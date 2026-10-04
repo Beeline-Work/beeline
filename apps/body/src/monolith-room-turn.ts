@@ -896,6 +896,9 @@ export class MonolithRoomTurnLoop {
           grantedHostRoutes: mountedHostRoutes,
           extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,
+          ...(this.options.config.agentEnv.PATH
+            ? { inheritedPath: this.options.config.agentEnv.PATH }
+            : {}),
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }

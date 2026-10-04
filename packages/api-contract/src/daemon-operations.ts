@@ -965,6 +965,8 @@ export type PostLiveOutputInput = TurnOutputAuthority &
   AgentRoomInput & {
     readonly turnId: string;
     readonly text: string;
+    /** Current narration run, coalesced across token deltas; not the whole turn. */
+    readonly latestChunk?: string;
   };
 export type RetractLiveOutputInput = TurnOutputAuthority &
   AgentRoomInput & {

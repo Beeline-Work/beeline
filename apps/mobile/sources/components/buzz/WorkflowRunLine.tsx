@@ -4,7 +4,6 @@ import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { StyleSheet } from 'react-native-unistyles';
 import type {
   WorkflowActorView,
-  WorkflowContract,
   WorkflowOpenedCornerView,
   WorkflowRunDetailView,
   WorkflowReceiptInput,
@@ -181,8 +180,8 @@ function Segment({
 }
 
 /**
- * One state rail, with receipts and transition exits inside each state.
- * Tapping a state expands its recorded visits. The page reads the run;
+ * One row per reached visit, with its description and output.
+ * Tapping a row expands its record. The page reads the run;
  * decisions stay on the choice cards in the Room.
  */
 export function WorkflowRunLine({
@@ -194,7 +193,7 @@ export function WorkflowRunLine({
 }: {
   detail: WorkflowRunDetailView;
   now: number;
-  /** Each working agent's streaming reply in the run's Room, by agent id. */
+  /** Newest chunks keyed by agent id and turn request id. */
   liveDrafts?: ReadonlyMap<string, string>;
   onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
   testID?: string;
@@ -204,7 +203,7 @@ export function WorkflowRunLine({
     [detail.contract, detail.history],
   );
   const [open, setOpen] = useState<ReadonlySet<string>>(
-    () => new Set(line.filter((step) => step.status === 'current').map((step) => step.state)),
+    () => new Set(line.filter((step) => step.status === 'current').map((step) => step.visitId ?? step.state)),
   );
   const toggle = (state: string) =>
     setOpen((previous) => {
@@ -220,14 +219,14 @@ export function WorkflowRunLine({
           above={index > 0 ? segmentTone(line[index - 1]!, step) : undefined}
           below={index < line.length - 1 ? segmentTone(step, line[index + 1]!) : undefined}
           detail={detail}
-          expanded={open.has(step.state)}
-          key={step.state}
+          expanded={open.has(step.visitId ?? step.state)}
+          key={step.visitId ?? step.state}
           liveDrafts={liveDrafts}
           now={now}
           onOpenCorner={onOpenCorner}
-          onToggle={() => toggle(step.state)}
+          onToggle={() => toggle(step.visitId ?? step.state)}
           step={step}
-          testID={`${testID}-step-${step.state}`}
+          testID={`${testID}-step-${step.state}${line.slice(0, index).some((previous) => previous.state === step.state) ? `-visit-${index}` : ''}`}
         />
       ))}
     </View>
@@ -309,11 +308,15 @@ function StepRow({
   });
   const assignee = workflowStepAssignee(step, detail);
   const isViewer = assignee !== undefined && assignee.id === detail.viewer?.id;
-  const draft =
-    step.status === 'current' && assignee?.kind === 'agent' ? liveDrafts?.get(assignee.id) : undefined;
+  const draft = step.status === 'current' && assignee?.kind === 'agent'
+    ? Array.from(liveDrafts ?? []).reverse().find(([turn]) => latest?.outputTurns?.includes(turn))?.[1]
+      ?? latest?.liveOutput
+    : undefined;
+  const final = step.status !== 'current' && (step.kind === 'handoff' || step.kind === 'gate') ? latest?.finalReply : undefined;
+  const description = detail.contract.handoffs[step.state]?.does;
   const name = workflowStateLabel(step.state);
-  const label = [name, STATUS_WORD[step.status], assignee?.name, meta].filter(Boolean).join(', ');
-  const seconds = step.kind === 'terminal' ? undefined : stepSeconds(step, now);
+  const label = [name, description, STATUS_WORD[step.status], assignee?.name, meta].filter(Boolean).join(', ');
+  const seconds = stepSeconds(step, now);
   const reachedAt = step.kind === 'terminal' ? step.visits[0]?.enteredAt : undefined;
   const canOpen = expandable(step);
   const current = step.status === 'current';
@@ -338,7 +341,7 @@ function StepRow({
       <View style={styles.right}>
         {assignee ? <Assignee actor={assignee} testID={testID} viewer={isViewer} /> : null}
         {seconds !== undefined ? (
-          <Text style={styles.duration}>{formatRunDuration(seconds)}</Text>
+          <Text style={styles.duration} testID={`${testID}-duration`}>{formatRunDuration(seconds)}</Text>
         ) : reachedAt !== undefined ? (
           <Text style={styles.duration}>{clock(reachedAt)}</Text>
         ) : null}
@@ -371,6 +374,7 @@ function StepRow({
         </View>
       )}
       <View style={styles.outcome}>
+        {description ? <Text style={styles.exits} testID={`${testID}-description`}>{description}</Text> : null}
         {draft ? (
           <Text
             ellipsizeMode="head"
@@ -382,15 +386,7 @@ function StepRow({
           </Text>
         ) : null}
         <Receipt receipt={latest?.receipt} testID={testID} />
-        {current ? (
-          <Text style={styles.exits} testID={`${testID}-exits`}>
-            {stateExits(step, detail.contract)}
-          </Text>
-        ) : latest?.outcome && latest.nextState ? (
-          <Text style={styles.exits} testID={`${testID}-exit`}>
-            {`→ ${workflowStateLabel(latest.nextState)} via ${latest.receipt?.exit.gate ?? latest.outcome}`}
-          </Text>
-        ) : null}
+        {final ? <Text style={styles.receiptLine} testID={`${testID}-final`}>{final.text}</Text> : null}
       </View>
       {canOpen && expanded ? (
         <View style={styles.readout} testID={`${testID}-readout`}>
@@ -429,13 +425,6 @@ function Chevron({ open }: { open: boolean }) {
 }
 
 type ReadoutLine = { key: string; value: React.ReactNode; items?: readonly string[] };
-
-function stateExits(step: WorkflowLineStep, contract: WorkflowContract): string {
-  const state = contract.handoffs[step.state];
-  if (!state || !('on' in state)) return '';
-  return `Exits: ${Object.entries(state.on).map(([gate, target]) =>
-    `${gate} → ${workflowStateLabel(target)}`).join(' · ')}`;
-}
 
 /** Every workflow uses the same optional outcome line and typed reference chips. */
 function Receipt({ receipt, testID }: { receipt?: WorkflowReceiptInput; testID: string }) {
@@ -501,24 +490,6 @@ const Brass = ({ children }: { children: React.ReactNode }) => (
 const Ghost = ({ children }: { children: React.ReactNode }) => (
   <Text style={styles.ghost}>{children}</Text>
 );
-
-/** The outcomes a step can still leave by: `then approved → Land`, `or changes → Implement · 0 of 3`. */
-function outcomeLines(step: WorkflowLineStep, contract: WorkflowContract): ReadoutLine[] {
-  const declared = contract.handoffs[step.state];
-  if (!declared || declared.kind === 'terminal' || declared.kind === 'waiting') return [];
-  const loop = 'loop' in declared ? declared.loop : undefined;
-  return Object.entries(declared.on).map(([outcome, target], index) => ({
-    key: index === 0 ? 'then' : 'or',
-    value: (
-      <>
-        <Brass>{outcome}</Brass> → {workflowStateLabel(target)}
-        {loop && loop.onEdge === outcome ? (
-          <Ghost>{` · ${step.loop?.taken ?? 0} of ${loop.cap}`}</Ghost>
-        ) : null}
-      </>
-    ),
-  }));
-}
 
 /** The gate's card as it was settled: question, options, and who chose what when. */
 function gateLines(
@@ -690,7 +661,7 @@ function StepReadout({
             key: 'delivers',
             value: requires.length > 0 ? requires.join(', ') : <Ghost>nothing</Ghost>,
           },
-          ...outcomeLines(step, detail.contract),
+
         ]}
       />
     );

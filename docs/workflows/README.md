@@ -27,33 +27,33 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
   "roles": ["writer", "reviewer", "approver"],
   "start": "draft",
   "handoffs": {
-    "draft": {
+    "draft": { "does": "Write the note.",
       "role": "writer",
       "hint": "the draft note",
       "requires": ["text"],
       "on": { "submitted": "review", "timeout": "stuck" },
       "timeoutSeconds": 3600
     },
-    "review": {
+    "review": { "does": "Review the note and request changes if needed.",
       "role": "reviewer",
       "requires": ["verdict", "notes"],
       "on": { "approved": "sign_off", "changes_requested": "draft" },
       "loop": { "onEdge": "changes_requested", "cap": 3, "onExceeded": "stuck" }
     },
-    "sign_off": {
+    "sign_off": { "does": "Ask a person for permission to publish.",
       "kind": "gate",
       "role": "approver",
       "requires": ["decision"],
       "on": { "publish": "done", "reject": "failed" }
     },
-    "stuck": {
+    "stuck": { "does": "Ask a person how to continue.",
       "kind": "gate",
       "role": "approver",
       "requires": ["decision"],
       "on": { "retry": "draft", "abandon": "failed" }
     },
-    "done": { "kind": "terminal", "status": "done" },
-    "failed": { "kind": "terminal", "status": "failed" }
+    "done": { "does": "The note is ready to publish.", "kind": "terminal", "status": "done" },
+    "failed": { "does": "The note will not be published.", "kind": "terminal", "status": "failed" }
   }
 }
 ```
@@ -65,7 +65,7 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
 | `version` | Always `1`. |
 | `name` | Lowercase words joined by hyphens (`a-z`, `0-9`, `-`). No underscores. At most 64 characters. |
 | `description` | 1-60 characters. |
-| `summary` | Optional plaintext on one line, at most 140 characters. Shown above the state rail; absent means nothing is shown. |
+| `summary` | Required nonempty plain-language overview on one line, at most 140 characters. Shown above the run’s steps. |
 | `roles` | 1-16 unique role names. Lowercase letters, digits, `_` or `-`, starting with a letter. |
 | `start` | The state a run begins in. It must not be a terminal. |
 | `handoffs` | 2-64 states, keyed by state name. State names follow the role-name rule. |
@@ -73,6 +73,8 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
 Unknown top-level keys are rejected.
 
 ### State kinds
+
+Every state needs a `does` sentence: nonempty plain language on one line, at most 140 characters. It describes what the step does for people reading the run, including gates and terminals.
 
 Every state may have an optional free-text `hint` describing the outcome or artifact to attach when leaving it. The dispatched agent sees this hint in its command before calling `handoff`. A hint does not require a receipt.
 
@@ -86,9 +88,9 @@ Every state may have an optional free-text `hint` describing the outcome or arti
 | `loop` | Optional cap on one outcome: `{ "onEdge": <outcome>, "cap": 1-100, "onExceeded": <state> }`. `onExceeded` must differ from where `onEdge` normally goes. |
 | `timeoutSeconds` | Optional, 60 to 2592000. Needs a `timeout` outcome in `on`. When it elapses, the bound agent is reminded to call `handoff` with outcome `timeout`. |
 
-**Gate** (`"kind": "gate"`): a human decides. It allows only `kind`, `role`, `requires`, `on` and optional `hint`, and needs 2-4 outcomes of at most 32 characters each. The run posts a choice card with one option per outcome. When a human answers, the role's agent is woken and calls `handoff` with the chosen outcome.
+**Gate** (`"kind": "gate"`): a human decides. It allows only `kind`, `role`, `requires`, `on`, `does` and optional `hint`, and needs 2-4 outcomes of at most 32 characters each. The run posts a choice card with one option per outcome. When a human answers, the role's agent is woken and calls `handoff` with the chosen outcome.
 
-**Terminal** (`"kind": "terminal"`): the run ends. It allows only `kind`, `status` and optional `hint`, where status is `done`, `failed` or `abandoned`.
+**Terminal** (`"kind": "terminal"`): the run ends. It allows only `kind`, `status`, `does` and optional `hint`, where status is `done`, `failed` or `abandoned`.
 
 Unknown keys on a state are rejected. The `server` and `waiting` kinds, `roleBinding`, `implicitEdges` and `externalOutcomes` exist for Beeline's built-in workflows and are not needed for your own.
 
@@ -148,4 +150,12 @@ A handoff may include `receipt` beside `contents`. It does not replace the state
 
 The engine records `exit: { gate, actorId }` on the transition card. Agents cannot supply or override it. Receipt data belongs to the state the card leaves, including each separate visit around a loop. Existing cards without receipts remain readable.
 
-The run page has one vertical rail, with one circle per declared state. Active states list their exits; finished states show the taken exit. Rows show the title, then at the right the assignee's mark and handle (the viewer's own when the step waits on or was answered by them; none for a state with no role) and the duration, then the working agent's live reply on the current step, and the optional receipt line and chips. Role names are not shown. Expanding a row shows timestamps and exit details. There is no horizontal rail or previous-runs counter.
+The run page has one vertical rail with one circle per reached visit, its saved description, assignee and elapsed time. Current visits show the newest available chunk; finished agent visits show their last committed final reply, with optional receipt lines and chips alongside. Expanding a row shows timestamps and handoff details. There is no horizontal rail or previous-runs counter.
+
+## Reading a run
+
+The run page shows the overview from the run's pinned revision, then only reached steps in execution order. Repeated visits get separate rows. Each row shows its saved `does` sentence, responsible person or agent, and elapsed time from server entry/exit timestamps. Current time advances; completed time stays fixed. Human decisions are still answered on the ordinary choice cards in the Room.
+
+While an agent works, its step shows the current narration run as a readable output chunk, replacing the previous run rather than displaying individual token fragments. A finished step shows its own last committed final reply, even when the agent called `handoff` before posting that reply. The server associates the turn with its visit; corner output belongs to the step's holder or a turn triggered by its handoff, so another agent's separate conversation supplies neither live nor final output. An optional receipt supplements this result and never replaces it. Do not repeat your final reply as a receipt.
+
+Older saved revisions remain readable and executable. Missing summaries show nothing, missing `does` uses the existing step name, and missing captured output shows nothing. Revising an older workflow requires adding the human metadata; existing runs retain their pinned revision. Past final replies are not backfilled.

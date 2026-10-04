@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { readWorkflowContract, workflowContentsError, workflowReceiptError } from './workflow-contracts.js';
+import { readWorkflowContract, workflowContentsError, workflowReceiptError, workflowSaveError } from './workflow-contracts.js';
 
 const contract = {
   version: 1,
@@ -400,5 +400,24 @@ describe('workflow summaries, hints and receipts', () => {
     expect(workflowReceiptError({ refs: [ref, { ...ref, kind: 'pr' }, { ...ref, kind: 'checks' }] })).toBeNull();
     for (const refs of [[ref, ref, ref, ref], [{ ...ref, kind: 'custom' }], [{ ...ref, url: 'javascript:alert(1)' }], [{ ...ref, label: '' }]])
       expect(workflowReceiptError({ refs })).not.toBeNull();
+  });
+});
+
+describe('human descriptions at the save boundary', () => {
+  const described = { ...contract, summary: 'Build and review the agreed change.',
+    handoffs: Object.fromEntries(Object.entries(contract.handoffs).map(([name, state]) =>
+      [name, { ...state, does: `Perform ${name.replace(/_/g, ' ')}.` }])) };
+  it('accepts new descriptions while reading legacy pinned contracts', () => {
+    expect(workflowSaveError(described)).toBeNull();
+    expect(readWorkflowContract(contract)).not.toBeNull();
+    expect(workflowSaveError(contract)).toContain('summary');
+  });
+  it.each([undefined, '', '  ', 'x'.repeat(141), 'a\nb', 'a\rb', 'a\u2028b', 'a\u2029b'])('rejects invalid summary or does: %j', (text) => {
+    expect(workflowSaveError({ ...described, summary: text })).not.toBeNull();
+    expect(workflowSaveError({ ...described, handoffs: { ...described.handoffs,
+      implement: { ...described.handoffs.implement, does: text } } })).not.toBeNull();
+  });
+  it('counts Unicode characters consistently at 140', () => {
+    expect(workflowSaveError({ ...described, summary: '🦊'.repeat(140) })).toBeNull();
   });
 });

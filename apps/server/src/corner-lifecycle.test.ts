@@ -538,7 +538,12 @@ describe('the no-code -> code upgrade (row 4, report section C)', () => {
     await upgrade(cornerId);
     const before = await cards(cornerId);
     await upgrade(cornerId);
-    expect(await cards(cornerId)).toEqual(before);
+    // Claiming the new turn may add output association metadata without a lifecycle move.
+    const lifecycle = (values: Awaited<ReturnType<typeof cards>>) => values.map((card) => {
+      const { outputCommandIds: _output, ...transition } = card as typeof card & { outputCommandIds?: string[] };
+      return transition;
+    });
+    expect(lifecycle(await cards(cornerId))).toEqual(lifecycle(before));
   });
 });
 

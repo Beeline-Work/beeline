@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 
 const STARTED = 1_790_000_000;
@@ -92,6 +92,8 @@ type Proof = {
     { handle: string; viewer: boolean; mark: boolean; color: string; rightAligned: boolean }
   >;
   live: Record<string, string>;
+  finals: Record<string, string>;
+  durations: string[];
   gate: { text: string[]; controls: number } | null;
   expanded: string[] | null;
   pushedBefore: unknown[];
@@ -153,8 +155,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(page.text.slice(0, 2)).toEqual(['Issues triage', 'Feedback triage']);
     expect(page).toMatchObject({ overview: false, earlier: false, summary: null, receipts: [] });
     expect(page.text).not.toContain('#14');
-    expect(page.exits['approve-exits']).toBe('Exits: dispatch → Dispatch · skip → Done');
-    expect(page.exits['pull-exit']).toBe('→ Approve via ranked');
+    expect(page.exits).toEqual({});
     expect(page).toMatchObject({
       eyebrowFont: '13px SpaceGrotesk-Regular',
       titleFont: '16px SpaceGrotesk-SemiBold',
@@ -173,7 +174,6 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       notify: ['@candy', false, true, true],
       pull: ['@candy', false, true, true],
       approve: ['@lunchboxfortwo', true, true, true],
-      dispatch: ['@candy', false, true, true],
     });
     expect(page.assignees.approve!.color).toBe(BRASS);
     expect(page.assignees.pull!.color).not.toBe(BRASS);
@@ -184,8 +184,6 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       notify: 'done',
       pull: 'done',
       approve: 'current',
-      dispatch: 'pending',
-      done: 'pending',
     });
     expect(page.halo).toBe(1);
     expect(page.lines).toEqual([
@@ -193,10 +191,6 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       'pull-above-brass',
       'pull-below-brass',
       'approve-above-brass',
-      'approve-below-quiet',
-      'dispatch-above-quiet',
-      'dispatch-below-quiet',
-      'done-above-quiet',
     ]);
     // The gate opens on its own as a record: the question, the options, whose move it is.
     expect(page.gate).toEqual({
@@ -240,7 +234,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(page.pushedBefore).toEqual([]);
   }, 120_000);
 
-  it('ghosts the steps a fork went around and says why, in words', async () => {
+  it('shows only the steps the branch reached', async () => {
     const detail = feedbackTriageDetail(
       repo(),
       { state: 'done', status: 'done', viewerHolds: false, updatedAt: STARTED + 58 },
@@ -260,31 +254,14 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     );
     const page = await proof(detail, '');
     expect(page.text).toContain('Done · nothing new');
-    expect(page.text).toContain('3 ran · 2 skipped');
+    expect(page.text).toContain('3 reached');
     expect(page.circles).toEqual({
       notify: 'done',
       pull: 'done',
-      approve: 'skipped',
-      dispatch: 'skipped',
       done: 'done',
     });
-    expect(page.lines).toEqual([
-      'notify-below-brass',
-      'pull-above-brass',
-      'pull-below-dashed',
-      'approve-above-dashed',
-      'approve-below-dashed',
-      'dispatch-above-dashed',
-      'dispatch-below-dashed',
-      'done-above-dashed',
-    ]);
-    expect(page.labels).toEqual([
-      'Notify, done, Candy',
-      'Pull, done, Candy',
-      'Approve, skipped, Skipped · Pull: nothing new',
-      'Dispatch, skipped, Skipped · Pull: nothing new',
-      'Done, done, Ended by Pull',
-    ]);
+    expect(page.lines).toEqual(['notify-below-brass', 'pull-above-brass', 'pull-below-brass', 'done-above-brass']);
+    expect(page.labels).toEqual(['Notify, done, Candy', 'Pull, done, Candy', 'Done, done, Ended by Pull']);
     expect(page.halo).toBe(0);
   }, 120_000);
 
@@ -375,7 +352,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     ]);
   }, 120_000);
 
-  it('Reproduction 517: one rail, optional summary and generic receipt chips at phone and desktop widths', async () => {
+  it('Reproduction wf-human-1: saved descriptions replace exits at phone and desktop widths', async () => {
     const detail = {
       run: { runId: 'run-1', workflowSlug: 'research', description: 'Research and review',
         roomId: 'corner-2', roomName: 'Research', state: 'review', status: 'live', viewerHolds: false,
@@ -383,8 +360,8 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       contract: { version: 1, name: 'research', description: 'Research and review',
         summary: 'Collect evidence, then review the result.', roles: ['analyst'], start: 'collect',
         handoffs: {
-          collect: { role: 'analyst', requires: [], on: { collected: 'review' } },
-          review: { role: 'analyst', requires: [], on: { approved: 'done', rejected: 'failed' } },
+          collect: { does: 'Collect the evidence.', role: 'analyst', requires: [], on: { collected: 'review' } },
+          review: { does: 'Review the evidence.', role: 'analyst', requires: [], on: { approved: 'done', rejected: 'failed' } },
           done: { kind: 'terminal', status: 'done' }, failed: { kind: 'terminal', status: 'failed' },
         } },
       history: [
@@ -401,9 +378,10 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       const page = await proof(detail, '?expand=collect', width);
       expect(page).toMatchObject({ overview: false, earlier: false, overflow: false,
         summary: detail.contract.summary });
-      expect(Object.keys(page.circles)).toEqual(['collect', 'review', 'done']);
-      expect(page.exits).toEqual({ 'collect-exit': '→ Review via collected',
-        'review-exits': 'Exits: approved → Done · rejected → Failed' });
+      expect(Object.keys(page.circles)).toEqual(['collect', 'review']);
+      expect(page.exits).toEqual({});
+      expect(page.text).toContain('Collect the evidence.');
+      expect(page.text).toContain('Review the evidence.');
       expect(page.text).toContain('Collected the indicators.');
       expect(page.refs).toHaveLength(3);
       expect(page.refs).toEqual(expect.arrayContaining([
@@ -430,29 +408,92 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
         } },
       history: [
         { toState: 'opened', actor: owner, at: STARTED },
-        { fromState: 'opened', outcome: 'code', toState: 'implement', actor: owner, at: STARTED + 10 },
+        { fromState: 'opened', outcome: 'code', toState: 'implement', actor: owner, at: STARTED + 10, outputTurns: [`${candy.id}:t1`] },
       ],
       roleHolders: { implementer: candy },
       viewer: owner,
     };
-    const drafts = [
-      { type: 'draft', roomId: 'corner-2', agentId: candy.id, turnId: 't1', text: 'Reading the run view.' },
-      { type: 'draft', roomId: 'corner-2', agentId: candy.id, turnId: 't1',
-        text: 'Reading the run view.\n\nAdding the handle to each row.' },
-    ];
+    // Use the real helper producer, with token-sized deltas and a slow wire.
+    // Loading it at runtime keeps host-only types out of mobile typecheck.
+    const { AgentTurnStream } = await vi.importActual<any>(path.join(repo(), 'apps/body/src/turn-stream.ts'));
+    const drafts: Array<Record<string, unknown>> = [];
+    const releases: Array<() => void> = [];
+    const stream = new AgentTurnStream({ agentId: candy.id, roomId: 'corner-2', requestId: 't1', label: 'proof',
+      api: { execute: (_name: string, input: Record<string, unknown>) => {
+        drafts.push({ type: 'draft', ...input });
+        return new Promise<void>(resolve => releases.push(resolve));
+      } } });
+    let currentRun = '';
+    for (const delta of ['Read', 'ing', ' the', ' run', ' view', '.']) {
+      currentRun += delta;
+      stream.onChunk(delta, currentRun, currentRun);
+    }
+    releases.shift()!();
+    await new Promise(resolve => setImmediate(resolve));
+    const prior = currentRun;
+    currentRun = '';
+    for (const delta of ['Add', 'ing', ' the', ' handle', ' to', ' each', ' row', '.']) {
+      currentRun += delta;
+      stream.onChunk(delta, `${prior}\n\n${currentRun}`, currentRun);
+    }
+    releases.shift()!();
+    await new Promise(resolve => setImmediate(resolve));
+    releases.shift()!();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(drafts.map(draft => draft.latestChunk)).toEqual(['Read', 'Reading the run view.', 'Adding the handle to each row.']);
     const page = await proof(detail, '', 390, drafts);
-    expect(page.live).toEqual({ implement: 'Reading the run view. Adding the handle to each row.' });
+    expect(page.live).toEqual({ implement: 'Adding the handle to each row.' });
     expect(Object.keys(page.assignees)).toEqual(['implement']);
     expect(page.assignees.implement).toMatchObject({ handle: '@candy', viewer: false, rightAligned: true });
     expect(page.labels).toEqual(expect.arrayContaining([
       'Opened, done, Automatic',
       'Implement, current step, Candy',
-      'Checks, not yet reached, Automatic',
     ]));
     for (const role of ROLE_NAMES) expect(page.text.join(' ')).not.toContain(role);
     // A draft from another agent paints nothing on this step.
     const other = await proof(detail, '', 390, [{ ...drafts[0], agentId: 'd'.repeat(64) }]);
     expect(other.live).toEqual({});
+    const unrelated = await proof(detail, '', 390, [{ ...drafts[0], turnId: 'other-run' }]);
+    expect(unrelated.live).toEqual({});
+  }, 120_000);
+
+  it('Reproduction wf-human-1: a fresh render keeps each finished visit final and the current newest chunk', async () => {
+    const detail = {
+      run: { runId: 'run-1', workflowSlug: 'research', description: 'Research and review',
+        roomId: 'corner-2', roomName: 'Research', state: 'collect', status: 'live', viewerHolds: false,
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 20, earlierRunCount: 0 },
+      contract: { version: 1, name: 'research', description: 'Research and review',
+        summary: 'Collect evidence and review it.', roles: ['analyst'], start: 'collect', handoffs: {
+          collect: { does: 'Collect the evidence.', role: 'analyst', requires: [], on: { collected: 'review' } },
+          review: { does: 'Review the evidence.', role: 'analyst', requires: [], on: { retry: 'collect', approved: 'done' } },
+          done: { does: 'The research is finished.', kind: 'terminal', status: 'done' },
+          failed: { kind: 'terminal', status: 'failed' },
+        } },
+      history: [
+        { visitId: 'first', toState: 'collect', at: STARTED, finalReply: { messageId: 'm1', text: 'First evidence result.' } },
+        { visitId: 'second', fromState: 'collect', toState: 'review', outcome: 'collected', actor: candy,
+          at: STARTED + 10, finalReply: { messageId: 'm2', text: 'Review requests another visit.' } },
+        { visitId: 'third', fromState: 'review', toState: 'collect', outcome: 'retry', actor: candy,
+          at: STARTED + 20, outputTurns: [`${candy.id}:current`], liveOutput: 'Latest saved chunk.' },
+      ], roleHolders: { analyst: candy }, viewer: owner,
+    };
+    for (const width of [390, 1440]) {
+      const page = await proof(detail, '', width, [{ type: 'draft', roomId: 'corner-2', agentId: candy.id,
+        turnId: 'old-turn', text: 'Unrelated draft', latestChunk: 'Unrelated draft' }]);
+      expect(Object.keys(page.circles)).toEqual(['collect', 'review', 'collect-visit-2']);
+      expect(page.finals).toEqual({ collect: 'First evidence result.', review: 'Review requests another visit.' });
+      expect(page.live).toEqual({ 'collect-visit-2': 'Latest saved chunk.' });
+      expect(page.durations.slice(0, 2)).toEqual(['10s', '10s']);
+      expect(page.exits).toEqual({});
+      expect(page.overflow).toBe(false);
+    }
+    const complete = { ...detail, run: { ...detail.run, state: 'done', status: 'done', updatedAt: STARTED + 30 },
+      history: [...detail.history.slice(0, 2), { ...detail.history[2], finalReply: { messageId: 'm3', text: 'Second evidence result.' } },
+        { visitId: 'last', fromState: 'collect', toState: 'done', outcome: 'approved', at: STARTED + 30 }] };
+    const refreshed = await proof(complete, '');
+    expect(refreshed.finals['collect-visit-2']).toBe('Second evidence result.');
+    expect(refreshed.live).toEqual({});
+    expect(refreshed.durations).toEqual(['10s', '10s', '10s', '0s']);
   }, 120_000);
 
 });

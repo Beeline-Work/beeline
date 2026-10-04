@@ -380,6 +380,14 @@ export type WorkflowOpenedCornerView = {
 };
 /** One `workflow-handoff` card. The first has only `toState` (the run's start). */
 export type WorkflowRunStepView = {
+  /** Stable entry card identity, also distinguishes repeated visits. */
+  readonly visitId?: string;
+  /** Authorized turn keys (agent id + ':' + request id) pinned to this visit. */
+  readonly outputTurns?: readonly string[];
+  readonly liveOutput?: string;
+  /** The visit's last authorized committed final reply; never an optional receipt. */
+  readonly finalReply?: { readonly messageId: string; readonly text: string };
+
   readonly fromState?: string;
   readonly outcome?: string;
   readonly toState: string;

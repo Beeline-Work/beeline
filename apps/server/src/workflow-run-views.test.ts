@@ -1,8 +1,11 @@
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
+import { describedWorkflow } from './test-support.js';
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
+import { createAgentCommand, claimAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
 import { advanceCorner, CORNER_LIFECYCLE_CONTRACT } from './corner-lifecycle.js';
 import { PhoneService } from './phone-service.js';
 import { answerRoomChoice, postRoomChoice } from './room-choice.js';
@@ -121,7 +124,7 @@ beforeEach(async () => {
 afterEach(async () => database.close());
 
 async function triageRun(): Promise<string> {
-  await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: TRIAGE });
+  await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: describedWorkflow(TRIAGE)});
   const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
     name: 'feedback-triage',
     roleBindings: { triager: TRIAGER },
@@ -171,7 +174,7 @@ describe('listRoomWorkflowRuns', () => {
   });
 
   it('keeps the last role holder after the run ends', async () => {
-    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: TRIAGE });
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: describedWorkflow(TRIAGE)});
     const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
       name: 'feedback-triage',
       roleBindings: { triager: TRIAGER },
@@ -209,7 +212,7 @@ describe('listRoomWorkflowRuns', () => {
   });
 
   it('counts earlier runs and prefers the live one', async () => {
-    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: TRIAGE });
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: describedWorkflow(TRIAGE)});
     const start = async () =>
       (
         await startWorkflow(database, await command(CORNER, TRIAGER), {
@@ -250,7 +253,7 @@ describe('listRoomWorkflowRuns', () => {
 describe('readWorkflowRun', () => {
   it('S05-1 lists the head and history in sequence for same-transaction descending IDs', async () => {
     const starter = await command(CORNER, TRIAGER);
-    await saveWorkflow(database, starter, { contract: TRIAGE });
+    await saveWorkflow(database, starter, { contract: describedWorkflow(TRIAGE)});
     const runId = await database.transaction(async (tx) => {
       vi.mocked(randomBytes).mockImplementationOnce(() => Buffer.alloc(32, 0xff));
       const { runId } = await startWorkflow(tx, starter, {
@@ -281,7 +284,7 @@ describe('readWorkflowRun', () => {
   it('returns the pinned contract and the ordered history of a run that looped', async () => {
     const runId = await triageRun();
     const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
-    expect(detail.contract).toEqual(TRIAGE);
+    expect(detail.contract).toEqual(describedWorkflow(TRIAGE));
     expect(detail.history.map(({ fromState, outcome, toState }) => ({ fromState, outcome, toState }))).toEqual([
       { fromState: undefined, outcome: undefined, toState: 'pull' },
       { fromState: 'pull', outcome: 'retry', toState: 'pull' },
@@ -347,9 +350,9 @@ describe('readWorkflowRun', () => {
       name: 'corner',
       description: 'A workflow someone named corner',
     };
-    await saveWorkflow(database, await command(ROOM, TRIAGER), { contract: saved });
+    await saveWorkflow(database, await command(ROOM, TRIAGER), { contract: describedWorkflow(saved)});
     await saveWorkflow(database, await command(ROOM, TRIAGER), {
-      contract: { ...saved, description: 'A workflow someone named corner, again' },
+      contract: describedWorkflow({ ...saved, description: 'A workflow someone named corner, again' }),
     });
     const { runId } = await startWorkflow(database, await command(ROOM, TRIAGER), {
       name: 'corner',
@@ -423,7 +426,7 @@ describe('readWorkflowRun', () => {
   });
 
   it("returns each step's contents, the gate's recorded answer, and the corners the dispatch opened", async () => {
-    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: TRIAGE });
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: describedWorkflow(TRIAGE)});
     const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
       name: 'feedback-triage',
       roleBindings: { triager: TRIAGER },
@@ -522,7 +525,7 @@ describe('readWorkflowRun', () => {
        WHERE id IN ($1,$2)`,
       [OWNER, TRIAGER],
     );
-    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: TRIAGE });
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: describedWorkflow(TRIAGE)});
     const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
       name: 'feedback-triage',
       roleBindings: { triager: TRIAGER },
@@ -569,7 +572,7 @@ describe('optional workflow receipts end to end', () => {
       ...TRIAGE.handoffs, pull: { ...TRIAGE.handoffs.pull, hint: 'the ranked issues' },
       approve: { ...TRIAGE.handoffs.approve, hint: 'the human decision' },
     } };
-    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract });
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: describedWorkflow(contract) });
     const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
       name: contract.name, roleBindings: { triager: TRIAGER },
     });
@@ -688,5 +691,206 @@ describe('a workflow gate answer with a note', () => {
     await expect(
       phone.execute('answerChoice', { choiceId: plain.choiceId, optionId: 'A', note: 'hi' }, OWNER),
     ).rejects.toThrow('choice note is only accepted on a workflow gate');
+  });
+});
+
+describe('visit output through daemon completion and phone GET', () => {
+  async function start(roomId = CORNER, starter = TRIAGER) {
+    await saveWorkflow(database, await command(roomId, TRIAGER), { contract: describedWorkflow(TRIAGE) });
+    return (await startWorkflow(database, await command(roomId, starter), {
+      name: TRIAGE.name, roleBindings: { triager: TRIAGER },
+    })).runId;
+  }
+  async function wake(runId: string, roomId = CORNER) {
+    const pending = (await database.query<CommandRow>(
+      `SELECT command.* FROM agent_commands command JOIN messages source ON source.id=command.source_message_id
+       WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'
+         AND source.card->>'runId'=$3 ORDER BY command.created_at DESC LIMIT 1`,
+      [roomId, TRIAGER, runId],
+    )).rows[0]!;
+    expect(pending).toBeDefined();
+    return claimAgentCommand(database, roomId, TRIAGER, pending.id, `generation-${pending.id}`);
+  }
+  async function final(command: CommandRow, text: string) {
+    return new DaemonService(database, new LiveHub()).execute('postRoomMessage', {
+      roomId: command.room_id, requestId: command.turn_request_id,
+      generationId: command.generation_id!, text,
+    }, command.agent_id);
+  }
+  const read = (runId: string, viewer = OWNER, roomId = CORNER) =>
+    phone.execute('readWorkflowRun', { roomId, runId }, viewer);
+
+  it('Reproduction wf-human-1 R2: a reviewer question does not supply Implement output', async () => {
+    await advanceCorner(database, CORNER, { kind: 'open', lane: 'code',
+      workspaceId: WORKSPACE, implementerAgentId: TRIAGER });
+    const worker = await command(CORNER, TRIAGER);
+    const held = await claimAgentCommand(database, CORNER, TRIAGER, worker.id, 'worker-generation');
+    const other = await command(CORNER, REVIEWER);
+    const reviewer = await claimAgentCommand(database, CORNER, REVIEWER, other.id, 'reviewer-generation');
+    const daemon = new DaemonService(database, new LiveHub());
+    for (const [turn, text] of [[held, 'Building the agreed change.'], [reviewer, 'Answering a separate question.']] as const)
+      await daemon.execute('postAgentDraft', { roomId: CORNER, turnId: turn.turn_request_id,
+        requestId: turn.turn_request_id, generationId: turn.generation_id!, text, latestChunk: text }, turn.agent_id);
+    for (const viewer of [OWNER, REVIEWER]) {
+      const step = (await read(CORNER, viewer)).history[1]!;
+      expect.soft(step.outputTurns).toEqual([`${TRIAGER}:${held.turn_request_id}`]);
+      expect.soft(step.liveOutput).toBe('Building the agreed change.');
+    }
+    await advanceCorner(database, CORNER, { kind: 'push', headSha: '1'.repeat(40), contents: {} });
+    const saved = await final(held, 'The implementation is ready.');
+    await final(reviewer, 'Here is the answer to your separate question.');
+    for (const viewer of [OWNER, REVIEWER]) {
+      const fresh = await read(CORNER, viewer);
+      expect(fresh.history[1]!.finalReply).toEqual({ messageId: saved.id, text: 'The implementation is ready.' });
+      expect(fresh.history[2]!.finalReply).toBeUndefined();
+      console.info(`Reproduction wf-human-1 R2: viewer ${viewer.slice(0, 1)} saw Implement final: ${fresh.history[1]!.finalReply!.text}`);
+    }
+  });
+
+  it('Reproduction wf-human-1: isolates two runs and repeated visits, including late final and duplicate delivery', async () => {
+    const one = await start();
+    const two = await start(CORNER, REVIEWER);
+    const first = await wake(one);
+    const second = await wake(two);
+    const daemon = new DaemonService(database, new LiveHub());
+    await daemon.execute('postAgentDraft', { roomId: CORNER, turnId: first.turn_request_id,
+      requestId: first.turn_request_id, generationId: first.generation_id!,
+      text: 'Older chunk. Newest chunk.', latestChunk: 'Newest chunk.' }, TRIAGER);
+    expect((await read(one)).history[0]).toMatchObject({ liveOutput: 'Newest chunk.',
+      outputTurns: [`${TRIAGER}:${first.turn_request_id}`] });
+    expect((await read(two)).history[0]!.liveOutput).toBeUndefined();
+    await handoff(database, first, { runId: one, outcome: 'retry', contents: {} });
+    const repeated = await wake(one);
+    // The old turn closes after the next visit is already held by the same agent.
+    const saved = await final(first, 'First visit final.');
+    await final(first, 'First visit final.');
+    await final(second, 'Other run final.');
+    await handoff(database, repeated, { runId: one, outcome: 'nothing_new', contents: {} });
+    await final(repeated, 'Second visit final.');
+    for (const viewer of [OWNER, REVIEWER]) {
+      const fresh = await read(one, viewer);
+      expect(fresh.history.map((step) => step.toState)).toEqual(['pull', 'pull', 'done']);
+      expect(fresh.history[0]!.finalReply).toEqual({ messageId: saved.id, text: 'First visit final.' });
+      expect(fresh.history[1]!.finalReply?.text).toBe('Second visit final.');
+      expect(fresh.history[2]!.finalReply).toBeUndefined();
+      expect(fresh.contract.summary).toBe('Daily feedback sweep');
+      expect(fresh.contract.handoffs.pull!.does).toBe('Perform pull.');
+    }
+    expect((await read(two)).history[0]!.finalReply?.text).toBe('Other run final.');
+    await expect(read(one, OUTSIDER)).rejects.toThrow();
+  });
+
+  it('keeps a delayed handoff wake on its original corner visit and leaves server steps empty', async () => {
+    await advanceCorner(database, CORNER, { kind: 'open', lane: 'code',
+      workspaceId: WORKSPACE, implementerAgentId: TRIAGER });
+    const visitId = (await read(CORNER)).history[1]!.visitId!;
+    const triggered = (await createAgentCommand(database, { roomId: CORNER, agentId: REVIEWER,
+      sourceMessageId: visitId, reason: 'subscribed_event' }))!;
+    await advanceCorner(database, CORNER, { kind: 'push', headSha: '1'.repeat(40), contents: {} });
+    const held = await claimAgentCommand(database, CORNER, REVIEWER, triggered.id, 'delayed-handoff');
+    const unrelated = await command(CORNER, TRIAGER);
+    const other = await claimAgentCommand(database, CORNER, TRIAGER, unrelated.id, 'server-step-question');
+    await final(other, 'A separate answer during checks.');
+    const saved = await final(held, 'The handoff-triggered result.');
+    const fresh = await read(CORNER);
+    expect(fresh.history[1]!.finalReply).toEqual({ messageId: saved.id, text: 'The handoff-triggered result.' });
+    expect(fresh.history[2]!.finalReply).toBeUndefined();
+    expect(fresh.history[2]!.outputTurns).toBeUndefined();
+  });
+
+  it('keeps the reviewer final on Review and excludes a separate implementer turn', async () => {
+    await advanceCorner(database, CORNER, { kind: 'open', lane: 'code',
+      workspaceId: WORKSPACE, implementerAgentId: TRIAGER });
+    const headSha = '1'.repeat(40);
+    await advanceCorner(database, CORNER, { kind: 'push', headSha, contents: {} });
+    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      [CORNER, JSON.stringify({ checks: 'passing', lifecycle: 'in-review', pr: { number: 1, headSha } })]);
+    const source = await command(CORNER, TRIAGER);
+    expect((await advanceCorner(database, CORNER, { kind: 'checks', result: 'passing',
+      sourceMessageId: source.source_message_id })).state).toBe('review');
+    const review = (await database.query<CommandRow>(
+      `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3`,
+      [CORNER, REVIEWER, source.source_message_id])).rows[0]!;
+    const held = await claimAgentCommand(database, CORNER, REVIEWER, review.id, 'review-generation');
+    const worker = await command(CORNER, TRIAGER);
+    const other = await claimAgentCommand(database, CORNER, TRIAGER, worker.id, 'separate-worker-generation');
+    const saved = await final(held, 'The review is complete.');
+    await final(other, 'A separate implementer answer.');
+    await advanceCorner(database, CORNER, { kind: 'closed' });
+    for (const viewer of [OWNER, TRIAGER]) {
+      const fresh = await read(CORNER, viewer);
+      expect(fresh.history.find(step => step.toState === 'review')!.finalReply)
+        .toEqual({ messageId: saved.id, text: 'The review is complete.' });
+      expect(fresh.history[1]!.finalReply).toBeUndefined();
+    }
+  });
+
+  it('captures a committed reply before handoff and retains pinned metadata across revisions', async () => {
+    const runId = await start();
+    const held = await wake(runId);
+    await final(held, 'Reply before handoff.');
+    await handoff(database, await command(CORNER, TRIAGER), { runId, outcome: 'nothing_new', contents: {} });
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: {
+      ...(describedWorkflow(TRIAGE) as object), summary: 'A revised overview.',
+    } });
+    const fresh = await read(runId);
+    expect(fresh.history[0]!.finalReply?.text).toBe('Reply before handoff.');
+    expect(fresh.contract.summary).toBe('Daily feedback sweep');
+  });
+
+  it('stores the newest chunk in a top-level workflow without showing unrelated Room drafts', async () => {
+    const runId = await start(ROOM);
+    const held = await wake(runId, ROOM);
+    const daemon = new DaemonService(database, new LiveHub());
+    await daemon.execute('postAgentDraft', { roomId: ROOM, turnId: held.turn_request_id,
+      requestId: held.turn_request_id, generationId: held.generation_id!,
+      text: 'Accumulated text', latestChunk: 'Latest delta' }, TRIAGER);
+    expect((await read(runId, OWNER, ROOM)).history[0]!.liveOutput).toBe('Latest delta');
+    expect((await read(runId, REVIEWER, ROOM)).history[0]!.liveOutput).toBe('Latest delta');
+  });
+
+  it('does not turn failed or cancelled output into a final; a reclaimed turn keeps its original visit', async () => {
+    const runId = await start();
+    const held = await wake(runId);
+    await handoff(database, held, { runId, outcome: 'retry', contents: {} });
+    await database.query(`UPDATE agent_commands SET state='pending',generation_id=NULL WHERE id=$1`, [held.id]);
+    await expect(final(held, 'Refused stale final')).rejects.toThrow();
+    const retried = await claimAgentCommand(database, CORNER, TRIAGER, held.id, 'retry-generation');
+    await final(retried, 'Recovered final.');
+    expect((await read(runId)).history[0]!.finalReply?.text).toBe('Recovered final.');
+    expect((await read(runId)).history[1]!.finalReply).toBeUndefined();
+    const current = await wake(runId);
+    await database.query(`UPDATE agent_turns SET status='cancelled' WHERE room_id=$1 AND request_id=$2`, [CORNER, current.turn_request_id]);
+    await expect(final(current, 'Cancelled final')).rejects.toThrow();
+    expect((await read(runId)).history[1]!.finalReply).toBeUndefined();
+  });
+
+  it('pins a resumed turn to its parent visit after the run has advanced', async () => {
+    const runId = await start();
+    const held = await wake(runId);
+    await handoff(database, held, { runId, outcome: 'retry', contents: {} });
+    const source = await command(CORNER, TRIAGER);
+    const resumed = (await createAgentCommand(database, { roomId: CORNER, agentId: TRIAGER,
+      sourceMessageId: source.source_message_id, action: 'resume', reason: 'resume',
+      parent: held, retainDepth: true, turnRequestId: held.turn_request_id }))!;
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [held.id]);
+    const claimed = await claimAgentCommand(database, CORNER, TRIAGER, resumed.id, 'resume-generation');
+    await final(claimed, 'Final after resuming the original turn.');
+    const fresh = await read(runId);
+    expect(fresh.history[0]!.finalReply?.text).toBe('Final after resuming the original turn.');
+    expect(fresh.history[1]!.finalReply).toBeUndefined();
+  });
+
+  it('keeps legacy revisions executable without inventing descriptions or replies', async () => {
+    const runId = await start();
+    await database.query(`UPDATE workspace_skill_versions SET markdown=$1
+      WHERE skill_id=(SELECT id FROM workspace_skills WHERE workspace_id=$2 AND slug=$3)`,
+      [JSON.stringify(TRIAGE), WORKSPACE, TRIAGE.name]);
+    const legacy = await read(runId);
+    expect(legacy.contract.summary).toBeUndefined();
+    expect(legacy.contract.handoffs.pull!.does).toBeUndefined();
+    expect(legacy.history[0]!.finalReply).toBeUndefined();
+    await handoff(database, await command(CORNER, TRIAGER), { runId, outcome: 'nothing_new', contents: {} });
+    expect((await read(runId)).run.status).toBe('done');
   });
 });

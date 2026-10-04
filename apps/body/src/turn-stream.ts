@@ -72,6 +72,7 @@ export class AgentTurnStream {
    * one bounds the lane at ONE write in flight plus ONE waiting.
    */
   private pending: string | undefined;
+  private latestChunk = '';
   /**
    * The stream as it stood when a corner handed everything up to that point to
    * its durable work ledger — this turn's persisted stream offset. Held as the
@@ -103,6 +104,9 @@ export class AgentTurnStream {
    * it has.
    */
   readonly onChunk = (_delta: string, full: string, currentRun?: string): void => {
+    // ACP deltas can split words; keep the current narration run readable
+    // when the bounded draft lane coalesces several token updates.
+    this.latestChunk = sanitizeAgentReply(currentRun ?? '');
     this.latest = full;
     this.latestRun = currentRun ?? '';
     const text = sanitizeAgentReply(this.tailOf(full));
@@ -190,10 +194,11 @@ export class AgentTurnStream {
   private publishPending(): void {
     if (this.inFlight || this.pending === undefined) return;
     const text = this.pending;
+    const latestChunk = this.latestChunk;
     this.pending = undefined;
     const { api, agentId, roomId, requestId, label } = this.options;
     this.inFlight = api
-      .execute('postAgentDraft', { agentId, roomId, turnId: requestId, text })
+      .execute('postAgentDraft', { agentId, roomId, turnId: requestId, text, latestChunk })
       .then(() => undefined)
       .catch((error) => console.error(`[thin-core] ${label} draft publish failed:`, error))
       .then(() => {
@@ -227,6 +232,7 @@ export class AgentTurnStream {
   beginRun(): void {
     this.latest = '';
     this.latestRun = '';
+    this.latestChunk = '';
     // The offset measured the abandoned run. The retry rewrites the answer
     // from its first delta, so nothing of the new stream is saved yet.
     this.persisted = '';

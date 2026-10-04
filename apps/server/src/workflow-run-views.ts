@@ -436,6 +436,10 @@ export async function listRoomWorkflowRuns(
 const MICROS = (column: string) => `(extract(epoch FROM ${column})*1000000)::bigint::text`;
 
 type RunCardRow = {
+  id: string;
+  output_turns: string[] | null;
+  live_output: string | null;
+  final_reply: WorkflowRunStepView['finalReply'] | null;
   from_state: string | null;
   outcome: string | null;
   to_state: string;
@@ -621,7 +625,8 @@ export async function readWorkflowRun(
   const topRoomId = room.parent_id ?? input.roomId;
   const cards = (
     await db.query<RunCardRow>(
-      `SELECT message.card->>'fromState' from_state,message.card->>'outcome' outcome,
+      `SELECT message.id,output.output_turns,output.live_output,output.final_reply,
+              message.card->>'fromState' from_state,message.card->>'outcome' outcome,
               message.card->>'toState' to_state,message.card->>'status' status,
               COALESCE((message.card->>'reassigned')::boolean,false) reassigned,
               CASE WHEN jsonb_typeof(message.card->'contents')='object'
@@ -634,6 +639,27 @@ export async function readWorkflowRun(
               message.card_type
        FROM messages message
        JOIN identities author ON author.id=message.author_id
+       LEFT JOIN LATERAL (
+         SELECT array_agg(command.agent_id||':'||command.turn_request_id)
+           FILTER (WHERE command.state='claimed' AND turn.status='working'
+             AND turn.created_at>now()-interval '90 seconds') output_turns,
+           (array_agg(live.body->>'latestChunk' ORDER BY live.updated_at DESC)
+             FILTER (WHERE command.state='claimed' AND turn.status='working'
+               AND turn.created_at>now()-interval '90 seconds' AND live.body->>'latestChunk' IS NOT NULL))[1] live_output,
+           (array_agg(jsonb_build_object('messageId',reply.id,'text',reply.text)
+             ORDER BY reply.created_at DESC,reply.id DESC)
+             FILTER (WHERE command.state='complete' AND reply.id IS NOT NULL))[1] final_reply
+         FROM jsonb_array_elements_text(COALESCE(message.card->'outputCommandIds','[]'::jsonb)) pinned(command_id)
+         JOIN agent_commands command ON command.id=pinned.command_id AND command.room_id=message.room_id
+         LEFT JOIN agent_turns turn ON turn.room_id=command.room_id
+           AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
+         LEFT JOIN live_outputs live ON live.room_id=command.room_id
+           AND live.agent_id=command.agent_id AND live.turn_id=command.turn_request_id AND live.kind='draft'
+         LEFT JOIN messages reply ON reply.id=command.result_message_id
+           AND reply.room_id=message.room_id AND reply.author_id=command.agent_id
+           AND reply.request_id=command.turn_request_id AND reply.presentation='message'
+         WHERE turn.status IS NULL OR turn.status<>'cancelled'
+       ) output ON true
        WHERE message.room_id=$1 AND message.card_type=ANY($3::text[])
          AND message.card->>'runId'=$2 AND message.card->>'toState' IS NOT NULL
        ORDER BY (message.card->>'seq')::int NULLS FIRST,message.created_at,message.id`,
@@ -674,6 +700,10 @@ export async function readWorkflowRun(
     return {
       ...(card.from_state ? { fromState: card.from_state } : {}),
       ...(card.from_state && card.outcome ? { outcome: card.outcome } : {}),
+      visitId: card.id,
+      ...(card.output_turns?.length ? { outputTurns: card.output_turns } : {}),
+      ...(card.live_output ? { liveOutput: card.live_output } : {}),
+      ...(card.final_reply ? { finalReply: card.final_reply } : {}),
       toState: card.to_state,
       ...(card.status ? { status: card.status } : {}),
       actor: actorView(

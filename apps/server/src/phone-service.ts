@@ -1014,7 +1014,7 @@ export class PhoneService {
     const rows = await this.database.query<{
       agent_id: string;
       turn_id: string;
-      body: { text?: unknown } | null;
+      body: { text?: unknown; latestChunk?: unknown } | null;
     }>(
       `SELECT o.agent_id, o.turn_id, o.body FROM live_outputs o
        JOIN rooms r ON r.id=o.room_id AND r.parent_id IS NOT NULL
@@ -1034,6 +1034,7 @@ export class PhoneService {
               agentId: row.agent_id,
               turnId: row.turn_id,
               text,
+              ...(typeof row.body?.latestChunk === 'string' ? { latestChunk: row.body.latestChunk } : {}),
             },
           ]
         : [];

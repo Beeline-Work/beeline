@@ -79,10 +79,11 @@ export async function installCornerGitHubWrappers(input: {
 }
 
 /**
- * `pushesOrigin` reports whether a git push's remote is this corner's real
- * origin. Any other remote is a local fixture a test suite may push to, and
- * the branch restriction is skipped for it; with no origin knowledge the
- * default keeps enforcing everywhere.
+ * `pushesOrigin` reports whether the branch restriction applies to a git push.
+ * Only a remote whose effective push URL is a local path or `file://` is a
+ * fixture a test suite owns, and only that returns `false`; every other remote
+ * - including one whose URL cannot be resolved - keeps the restriction. With
+ * no origin knowledge the default enforces everywhere.
  */
 export function cornerGitHubCommandRefusal(
   launcher: 'git' | 'gh',
@@ -93,6 +94,9 @@ export function cornerGitHubCommandRefusal(
   pushesOrigin: (remote?: string) => boolean = () => true,
 ): string | undefined {
   const refusal = `beeline: this corner may push only ${featureBranch}`;
+  // The branch rule protects every remote except a local fixture a test suite
+  // owns. `pushesOrigin` proves locality from the URL git will actually push
+  // to; only a local path or file:// skips the restriction.
   const branchName = (value: string) => {
     const withoutOwner = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1) : value;
     return withoutOwner.replace(/^refs\/heads\//, '');
@@ -171,8 +175,6 @@ export function cornerGitHubCommandRefusal(
     }
     positionals.push(arg);
   }
-  // The branch rule protects the real repository only. A push aimed at a
-  // temporary local fixture remote is not it, so every restriction is skipped.
   const remoteName =
     repositoryOption !== undefined
       ? repositoryOption
@@ -229,7 +231,7 @@ const gitContext = (() => {
     if (arg === '-C' || arg === '--git-dir' || arg === '--work-tree') { out.push(arg, argv[index + 1]); index += 1; }
     else if (arg.startsWith('-C') && arg.length > 2) out.push('-C', arg.slice(2));
     else if (arg.startsWith('--git-dir=') || arg.startsWith('--work-tree=')) out.push(arg);
-    else if (valueOptions.has(arg)) index += 1;
+    else if (valueOptions.has(arg)) { out.push(arg, argv[index + 1]); index += 1; }
     else if (!arg.startsWith('-')) break;
   }
   return out;
@@ -246,29 +248,37 @@ function resolvePushBranch(source) {
   return current.status === 0 ? { branch: current.stdout.trim() } : {};
 }
 const looksLikeUrl = (value) => /^[a-z][a-z0-9+.-]*:\\/\\//i.test(value) || value.startsWith('/') || value.startsWith('.') || value.startsWith('~') || value.includes('@');
-const normalizeRemote = (value) => {
-  let v = value.trim().replace(/\\.git$/i, '');
-  const scp = v.match(/^[^/@]+@([^:]+):(.+)$/);
-  if (scp) return (scp[1] + '/' + scp[2]).toLowerCase();
-  v = v.replace(/^[a-z][a-z0-9+.-]*:\\/\\//i, '').replace(/^[^/@]+@/, '');
-  return v.replace(/\\/+$/, '').toLowerCase();
+const isLocalPushUrl = (value) => {
+  if (!value) return false;
+  // SCP-like syntax (git@host:path) always names a host, never a local path.
+  if (/^[^/@]+@[^:]+:/.test(value)) return false;
+  const scheme = value.match(/^([a-z][a-z0-9+.-]*):/i);
+  if (scheme && value.slice(scheme[0].length).startsWith('//'))
+    return scheme[1].toLowerCase() === 'file';
+  // A bare path - absolute or relative - is the only other local form.
+  return true;
 };
 function pushesOrigin(remote) {
   if (!config.originUrl) return true;
-  let url = remote;
-  if (!url || !looksLikeUrl(url)) {
-    const status = url ? null : git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{push}'], { encoding: 'utf8' });
-    let name = url;
-    if (!name) {
-      name = 'origin';
-      const full = status && status.status === 0 ? status.stdout.trim() : '';
-      if (full) name = full.includes('/') ? full.slice(0, full.indexOf('/')) : full;
-    }
-    const resolved = git(['config', '--get', 'remote.' + name + '.url'], { encoding: 'utf8' });
+  let name = remote;
+  if (!name) {
+    const status = git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{push}'], { encoding: 'utf8' });
+    const full = status.status === 0 ? status.stdout.trim() : '';
+    if (full) name = full.includes('/') ? full.slice(0, full.indexOf('/')) : full;
+    if (!name) name = 'origin';
+  }
+  let url;
+  if (looksLikeUrl(name)) url = name;
+  else {
+    // '--push' is the URL git will actually use, so it follows pushurl and
+    // insteadOf rewrites that a raw remote.<name>.url read would miss.
+    const resolved = git(['remote', 'get-url', '--push', name], { encoding: 'utf8' });
     url = resolved.status === 0 ? resolved.stdout.trim() : undefined;
   }
-  if (!url) return false;
-  return normalizeRemote(url) === normalizeRemote(config.originUrl);
+  // Only a push whose effective URL is a local path or file:// is exempt.
+  // Everything else, including an unresolved remote, keeps the branch rule.
+  if (!url) return true;
+  return !isLocalPushUrl(url);
 }
 const refusal = cornerGitHubCommandRefusal(config.launcher, argv, config.featureBranch, config.targetBranch, resolvePushBranch, pushesOrigin);
 if (refusal) { process.stderr.write(refusal + '\\n'); process.exitCode = 1; }

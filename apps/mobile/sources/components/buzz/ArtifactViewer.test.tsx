@@ -381,6 +381,7 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
       const photo = attachment({ mimeType: 'image/png', name: 'photo.png' });
       const renderer = render(<ArtifactViewerScreen attachment={photo} onClose={mocks.onClose} />);
       const viewport = renderer.root.findByProps({ testID: 'artifact-viewer-image-viewport' });
+      expect(Object.assign({}, ...viewport.props.style.filter(Boolean)).touchAction).toBe('none');
       act(() => viewport.props.onLayout({ nativeEvent: { layout: { width: 400, height: 300 } } }));
       const preventDefault = vi.fn();
       act(() =>
@@ -418,6 +419,151 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     expect(mocks.copyPicture).toHaveBeenCalledWith(photo);
     expect(mocks.sharePicture).toHaveBeenCalledWith(photo);
     expect(mocks.showPictureActions).toHaveBeenCalledWith(photo);
+  });
+
+  const photos = ['First', 'Second', 'Third'].map((title, index) => attachment({
+    url: `https://usebeeline.app/v1/media/photo-${index}`,
+    mimeType: 'image/png', name: `${title}.png`, title,
+  }));
+  const point = (pageX: number, pageY = 100) => ({ pageX, pageY });
+  const touch = (...points: ReturnType<typeof point>[]) => ({ nativeEvent: { touches: points } });
+  const viewportFor = (renderer: ReactTestRenderer) =>
+    renderer.root.findByProps({ testID: 'artifact-viewer-image-viewport' });
+  const currentPhoto = (renderer: ReactTestRenderer) =>
+    renderer.root.findByType('ArtifactImage' as any).props.attachment;
+  function swipe(renderer: ReactTestRenderer, dx: number, dy = 0, cancel = false) {
+    const viewport = viewportFor(renderer);
+    act(() => {
+      viewport.props.onStartShouldSetPanResponderCapture(touch(point(200)));
+      const state = { dx, dy };
+      if (!viewport.props.onMoveShouldSetPanResponderCapture(touch(point(200 + dx, 100 + dy)), state)) return;
+      viewport.props.onPanResponderGrant(touch(point(200)));
+      viewport.props.onPanResponderMove(touch(point(200 + dx, 100 + dy)));
+      if (cancel) viewport.props.onPanResponderTerminate();
+      else viewport.props.onPanResponderRelease(touch(), state);
+    });
+  }
+  function gallery(selected = 2) {
+    mocks.onClose.mockClear();
+    mocks.platformOS.value = 'android';
+    return render(<ArtifactViewerScreen attachment={photos[selected]!} photoAttachments={photos} onClose={mocks.onClose} />);
+  }
+
+  it('opens a non-first photo and swipes both ways, wrapping within its message group', () => {
+    const renderer = gallery();
+    expect(currentPhoto(renderer)).toBe(photos[2]);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Photo 3 of 3' })).toBeDefined();
+    swipe(renderer, 120);
+    expect(currentPhoto(renderer)).toBe(photos[1]);
+    swipe(renderer, -120);
+    expect(currentPhoto(renderer)).toBe(photos[2]);
+    swipe(renderer, -120);
+    expect(currentPhoto(renderer)).toBe(photos[0]);
+    swipe(renderer, 120);
+    expect(currentPhoto(renderer)).toBe(photos[2]);
+    expect(mocks.onClose).not.toHaveBeenCalled();
+    console.log('Reproduction PHOTO-SWIPE-1 demonstrated: Third → right swipe → Second → left swipe → Third; boundaries wrap within the message');
+  });
+
+  it('updates the title, Copy, Share and long press to the picture reached by a swipe', async () => {
+    const renderer = gallery();
+    swipe(renderer, 120);
+    expect(renderer.root.findAllByType('Text' as any)[0].props.children).toBe('Second');
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'artifact-viewer-copy' }).props.onPress();
+      renderer.root.findByProps({ testID: 'artifact-viewer-share' }).props.onPress();
+      renderer.root.findByProps({ testID: 'artifact-viewer-image-actions' }).props.onLongPress();
+    });
+    expect(mocks.copyPicture).toHaveBeenLastCalledWith(photos[1]);
+    expect(mocks.sharePicture).toHaveBeenLastCalledWith(photos[1]);
+    expect(mocks.showPictureActions).toHaveBeenLastCalledWith(photos[1]);
+  });
+
+  it('preserves zoomed pan, and resets zoom and image dimensions when navigation changes the photo', () => {
+    const renderer = gallery();
+    const viewport = viewportFor(renderer);
+    act(() => {
+      viewport.props.onLayout({ nativeEvent: { layout: { width: 400, height: 300 } } });
+      renderer.root.findByType('ArtifactImage' as any).props.onLoadImageSize(800, 600);
+      renderer.root.findByProps({ testID: 'artifact-viewer-zoom-in' }).props.onPress();
+    });
+    swipe(renderer, 80);
+    expect(currentPhoto(renderer)).toBe(photos[2]);
+    expect(renderer.root.findByProps({ testID: 'artifact-viewer-image-actions' }).props.style[1].transform[0]).toEqual({ translateX: 80 });
+    act(() => renderer.root.findByProps({ testID: 'artifact-viewer-photo-next' }).props.onPress());
+    expect(currentPhoto(renderer)).toBe(photos[0]);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Image zoom 100 percent' })).toBeDefined();
+    act(() => renderer.root.findByProps({ testID: 'artifact-viewer-photo-previous' }).props.onPress());
+    expect(currentPhoto(renderer)).toBe(photos[2]);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Image zoom 100 percent' })).toBeDefined();
+  });
+
+  it('never pages during a pinch, even after returning to fitted size and lifting one finger', () => {
+    const renderer = gallery();
+    const viewport = viewportFor(renderer);
+    act(() => {
+      viewport.props.onLayout({ nativeEvent: { layout: { width: 400, height: 300 } } });
+      viewport.props.onStartShouldSetPanResponderCapture(touch(point(100)));
+      viewport.props.onPanResponderGrant(touch(point(100)));
+      viewport.props.onPanResponderStart(touch(point(100), point(200)));
+      viewport.props.onPanResponderMove(touch(point(100), point(200)));
+      viewport.props.onPanResponderMove(touch(point(50), point(250)));
+    });
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Image zoom 200 percent' })).toBeDefined();
+    act(() => {
+      viewport.props.onPanResponderMove(touch(point(100), point(200)));
+      viewport.props.onPanResponderMove(touch(point(300)));
+      viewport.props.onPanResponderRelease(touch(), { dx: 200, dy: 0 });
+    });
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Image zoom 100 percent' })).toBeDefined();
+    expect(currentPhoto(renderer)).toBe(photos[2]);
+  });
+
+  it('ignores short, vertical, diagonal and cancelled swipes, and movement after long press', () => {
+    const renderer = gallery();
+    for (const [dx, dy, cancel] of [[30, 0, false], [0, 120, false], [120, 100, false], [120, 0, true]] as const) {
+      swipe(renderer, dx, dy, cancel);
+      expect(currentPhoto(renderer)).toBe(photos[2]);
+    }
+    const viewport = viewportFor(renderer);
+    act(() => {
+      viewport.props.onStartShouldSetPanResponderCapture(touch(point(100)));
+      renderer.root.findByProps({ testID: 'artifact-viewer-image-actions' }).props.onLongPress();
+      expect(viewport.props.onMoveShouldSetPanResponderCapture(touch(point(300)), { dx: 200, dy: 0 })).toBe(false);
+      viewport.props.onPanResponderRelease(touch(), { dx: 200, dy: 0 });
+    });
+    expect(currentPhoto(renderer)).toBe(photos[2]);
+    act(() => {
+      viewport.props.onStartShouldSetPanResponderCapture(touch(point(100)));
+      expect(viewport.props.onMoveShouldSetPanResponderCapture(touch(point(100, 150)), { dx: 0, dy: 50 })).toBe(false);
+      expect(viewport.props.onMoveShouldSetPanResponderCapture(touch(point(300)), { dx: 200, dy: 0 })).toBe(false);
+    });
+  });
+
+  it('ignores a previous photo size callback after switching, without clamping the new photo pan', () => {
+    const renderer = gallery();
+    const staleSize = renderer.root.findByType('ArtifactImage' as any).props.onLoadImageSize;
+    act(() => staleSize(100, 1000));
+    swipe(renderer, 120);
+    const viewport = viewportFor(renderer);
+    act(() => {
+      viewport.props.onLayout({ nativeEvent: { layout: { width: 400, height: 300 } } });
+      renderer.root.findByType('ArtifactImage' as any).props.onLoadImageSize(800, 600);
+      renderer.root.findByProps({ testID: 'artifact-viewer-zoom-in' }).props.onPress();
+    });
+    swipe(renderer, 80);
+    act(() => staleSize(100, 1000));
+    expect(renderer.root.findByProps({ testID: 'artifact-viewer-image-actions' }).props.style[1].transform[0]).toEqual({ translateX: 80 });
+    expect(currentPhoto(renderer)).toBe(photos[1]);
+  });
+
+  it('keeps a single photo fitted without paging controls or claiming horizontal swipes', () => {
+    const renderer = render(<ArtifactViewerScreen attachment={photos[0]!} onClose={mocks.onClose} />);
+    swipe(renderer, 120);
+    expect(currentPhoto(renderer)).toBe(photos[0]);
+    expect(renderer.root.findAllByProps({ testID: 'artifact-viewer-photo-position' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'artifact-viewer-photo-next' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'artifact-viewer-photo-previous' })).toHaveLength(0);
   });
 
   it('does not add picture controls to other full-screen artifacts', async () => {

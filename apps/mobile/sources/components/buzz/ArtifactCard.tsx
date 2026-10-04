@@ -100,13 +100,17 @@ export const ArtifactCard = React.memo(function ArtifactCard({
     }
     Modal.show({
       component: ArtifactViewerScreen,
-      props: { attachment: activeAttachment, authorHandle: activeAuthorHandle },
+      props: {
+        attachment: activeAttachment,
+        authorHandle: activeAuthorHandle,
+        ...(isPhotoGroup ? { photoAttachments } : {}),
+      },
       // The viewer is a full-screen surface: the default centered placement
       // constrains width to 460 and no height, collapsing its flex:1 root to
       // nothing — a dimmed room with an invisible viewer.
       placement: 'fill',
     });
-  }, [activeAttachment, activeAuthorHandle, format, isDesktop]);
+  }, [activeAttachment, activeAuthorHandle, format, isDesktop, isPhotoGroup, photoAttachments]);
 
   // What is left external is what nothing on the device can paint — a ZIP, an
   // octet-stream, anything unrecognized. Those keep the file-style row and the

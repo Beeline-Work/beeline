@@ -1137,3 +1137,87 @@ export async function archiveWorkflow(
   );
   return { slug: input.name, archived: Boolean(result.rowCount) };
 }
+
+function describedLegacyWorkflowState(name: string, raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const state = raw as Record<string, unknown>;
+  if (typeof state.does === 'string' && state.does.trim()) return state;
+  const role = typeof state.role === 'string' ? state.role : undefined;
+  return {
+    ...state,
+    does: role
+      ? `Step ${name} (${role}): describe what this step does`
+      : `Step ${name}: describe what this step does`,
+  };
+}
+
+/**
+ * The pure half of `backfillWorkflowSkillDescriptions`: fills whichever of
+ * `summary`/per-step `does` a contract is missing, with the exact
+ * placeholders the backfill writes to storage, leaving every edge, role
+ * binding and loop rule untouched. Every `handoffs` entry gets a `does`,
+ * terminal states included: `workflowSaveError` (PR #2083) requires one on
+ * every state with no exception, so a contract missing it on even one
+ * terminal state would still be refused the next time it is saved. Exported
+ * so a caller that must describe a legacy contract before saving it through
+ * the NORMAL save path can match the backfill exactly instead of
+ * hand-writing prose that could drift from it.
+ */
+export function describedLegacyWorkflowContract(contract: WorkflowContract): WorkflowContract {
+  const next: Record<string, unknown> = { ...contract };
+  if (typeof next.summary !== 'string' || !(next.summary as string).trim()) {
+    const description = typeof next.description === 'string' ? (next.description as string).trim() : '';
+    next.summary = description || 'Summary not written yet';
+  }
+  const handoffs = next.handoffs;
+  if (handoffs && typeof handoffs === 'object' && !Array.isArray(handoffs)) {
+    next.handoffs = Object.fromEntries(
+      Object.entries(handoffs as Record<string, unknown>).map(([name, raw]) => [
+        name,
+        describedLegacyWorkflowState(name, raw),
+      ]),
+    );
+  }
+  return next as WorkflowContract;
+}
+
+/**
+ * `workflowSaveError` (PR #2083) made a NEW save require a `summary` and
+ * every state's `does`; every workflow skill version saved before that rule
+ * existed has neither, and a pinned run keeps reading its exact saved
+ * version forever (`loadPinnedContract`), so those old versions are never
+ * re-validated on their own. Keeps `content_hash` honest (every
+ * other reader treats it as `sha256(markdown)`, e.g.
+ * `feedback-triage-workflow.ts`'s re-seed check). Idempotent: a version
+ * already carrying both fields round-trips to the same markdown and is left
+ * untouched. Run from `migrateData()`.
+ */
+export async function backfillWorkflowSkillDescriptions(database: SqlDatabase): Promise<number> {
+  const rows = await database.query<{ skill_id: string; version: number; markdown: string }>(
+    `SELECT version.skill_id,version.version,version.markdown
+     FROM workspace_skill_versions version
+     JOIN workspace_skills skill ON skill.id=version.skill_id
+     WHERE skill.kind='workflow' AND version.source_deleted_at IS NULL
+     ORDER BY version.skill_id,version.version`,
+  );
+  let changed = 0;
+  for (const row of rows.rows) {
+    let contract: WorkflowContract;
+    try {
+      contract = JSON.parse(row.markdown) as WorkflowContract;
+    } catch {
+      continue;
+    }
+    const markdown = JSON.stringify(describedLegacyWorkflowContract(contract));
+    if (markdown === row.markdown) continue;
+    await database.query(
+      `UPDATE workspace_skill_versions SET markdown=$3,content_hash=$4
+       WHERE skill_id=$1 AND version=$2`,
+      [row.skill_id, row.version, markdown, createHash('sha256').update(markdown).digest('hex')],
+    );
+    changed++;
+  }
+  if (changed)
+    console.log(`backfillWorkflowSkillDescriptions: filled summary/does on ${changed} workflow skill version(s)`);
+  return changed;
+}

@@ -550,15 +550,17 @@ describe('PR-scoped check gate', () => {
        VALUES($1,0,$2,'final_authorization','passed','Agent claimed an all-clear',$3)`,
       [C, SHA, A],
     );
-    await expect(callGate(1)).resolves.toMatchObject({
+    const gate1 = await callGate(1);
+    expect(gate1).toMatchObject({
       checks: 'passed',
       approvalPending: true,
       mergeAllowed: false,
       reviewerExists: false,
       reviewFailed: false,
       isWorkerYolo: true,
-      didHumanSayDontMerge: false,
+      expressMergeOrdered: false,
     });
+    expect(gate1).not.toHaveProperty('didHumanSayDontMerge');
 
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
@@ -574,23 +576,49 @@ describe('PR-scoped check gate', () => {
     });
 
     await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
-    await expect(callGate(3)).resolves.toMatchObject({
+    const gate3 = await callGate(3);
+    expect(gate3).toMatchObject({
       approvalPending: true,
       mergeAllowed: false,
       reviewerExists: true,
       reviewFailed: false,
       isWorkerYolo: false,
-      didHumanSayDontMerge: false,
+      expressMergeOrdered: false,
     });
+    expect(gate3).not.toHaveProperty('didHumanSayDontMerge');
 
     await db.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [A]);
     const { holdId } = await new PhoneService(db, 'http://test').execute('setCornerHold', { cornerId: C }, H);
-    await expect(callGate(4)).resolves.toMatchObject({
+    const gate4 = await callGate(4);
+    expect(gate4).toMatchObject({
       approvalPending: true,
       mergeAllowed: false,
-      didHumanSayDontMerge: true,
+      expressMergeOrdered: false,
       holds: [{ id: holdId, actorId: H, standing: 'owner', setAt: expect.any(String) }],
     });
+    expect(gate4).not.toHaveProperty('didHumanSayDontMerge');
+
+    // A current Workspace owner or admin's order carries on its own: it is
+    // never re-gated behind the standing hold above, worker yolo, or the
+    // missing reviewer.
+    await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
+    await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
+    await db.query(
+      `INSERT INTO corner_merge_approvals(corner_id,approved_by,force,pull_request_number,head_sha)
+       VALUES($1,$2,true,614,$3)
+       ON CONFLICT(corner_id) DO UPDATE SET approved_by=EXCLUDED.approved_by,force=EXCLUDED.force,
+         pull_request_number=EXCLUDED.pull_request_number,head_sha=EXCLUDED.head_sha,approved_at=now()`,
+      [C, H, SHA],
+    );
+    const gate5 = await callGate(5);
+    expect(gate5).toMatchObject({
+      reviewerExists: false,
+      isWorkerYolo: false,
+      held: true,
+      expressMergeOrdered: true,
+      mergeAllowed: true,
+    });
+    expect(gate5).not.toHaveProperty('didHumanSayDontMerge');
     child.kill();
   });
 });

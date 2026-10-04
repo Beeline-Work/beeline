@@ -31,6 +31,42 @@ export async function recordCornerMergeApproval(
 }
 
 /**
+ * An owner or admin's express instruction to merge now, for this exact head.
+ * Authority is the corner's Workspace: a current human member of the corner
+ * whose Workspace-level role is `owner` or `admin`. Recorded in the same
+ * table as a reviewer's PASS, with `force: true` because an express order is
+ * not re-gated behind checks, reviewer, yolo, or a hold (`cornerMergeGate`
+ * reads it as its own route to `open`, independent of all four).
+ */
+export async function recordExpressMergeOrder(
+  database: SqlDatabase,
+  input: { cornerId: string; pullRequestNumber: number; headSha: string },
+  actorId: string,
+): Promise<{ roomId: string; headSha: string }> {
+  const authorized = await database.query<{ ok: boolean }>(
+    `SELECT true ok FROM rooms corner
+     JOIN memberships room_member ON room_member.room_id=corner.id AND room_member.identity_id=$2
+       AND room_member.removed_at IS NULL
+     JOIN memberships workspace_member ON workspace_member.workspace_id=corner.workspace_id
+       AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+       AND workspace_member.removed_at IS NULL AND workspace_member.role IN ('owner','admin')
+     JOIN identities person ON person.id=$2 AND person.kind='human'
+     WHERE corner.id=$1 AND corner.archived_at IS NULL`,
+    [input.cornerId, actorId],
+  );
+  if (!authorized.rowCount)
+    throw new Error('merge order denied: current Workspace owner or admin required');
+  await recordCornerMergeApproval(database, {
+    cornerId: input.cornerId,
+    approvedBy: actorId,
+    force: true,
+    pullRequestNumber: input.pullRequestNumber,
+    headSha: input.headSha,
+  });
+  return { roomId: input.cornerId, headSha: input.headSha };
+}
+
+/**
  * Why the server refused to record a reviewer's PASS. The code leads the
  * message, so the agent that called `approve_merge` reads which rule failed.
  */

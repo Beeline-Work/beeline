@@ -2107,6 +2107,110 @@ describe('the gate stays shut (AC-8)', () => {
   });
 });
 
+describe('an express merge order from the owner or admin always carries (defect: express command must carry)', () => {
+  it('a corner with no reviewer set merges once its owner orders the merge, but not before and not on a standing hold', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await greenHead(cornerId, 7, SHA);
+    expect(await currentState(cornerId)).toBe('implement');
+    githubHead = SHA;
+    githubRollupState = 'passed';
+
+    // Left alone, a corner with no reviewer never merges itself.
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA }))
+      .toMatchObject({ reviewerExists: false, expressMergeOrdered: false, open: false });
+    expect(await github.landCorner(cornerId)).toBe(false);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+
+    // A standing do-not-merge hold still stops an autonomous merge.
+    const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, open: false });
+    expect(await github.landCorner(cornerId)).toBe(false);
+    await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);
+
+    // The owner's express instruction, relayed by the agent it was tagged
+    // to, carries on its own: no reviewer, no yolo mode, no autonomous open.
+    await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
+    await say(cornerId, '@hoots merge this now');
+    const direct = (await commands(A, cornerId)).at(-1)!;
+    await claim(direct);
+    await daemon.execute('orderCornerMerge',
+      { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A);
+
+    const gate = await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA });
+    expect(gate).toMatchObject({ reviewerExists: false, isWorkerYolo: false, expressMergeOrdered: true, open: true });
+
+    const status = await github.prChecksStatus({ cornerId });
+    expect(status).toMatchObject({ expressMergeOrdered: true, mergeAllowed: true });
+    // Each fact is named once: no held/didHumanSayDontMerge duplicate survives.
+    expect(Object.keys(status).filter((key) => /humansaydontmerge/i.test(key))).toEqual([]);
+
+    expect(await github.landCorner(cornerId)).toBe(true);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
+  });
+
+  it('refuses an order from someone who is not a current Workspace owner or admin', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await greenHead(cornerId, 7, SHA);
+    githubHead = SHA;
+    githubRollupState = 'passed';
+    const peer = 'f'.repeat(64);
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human',$1) ON CONFLICT DO NOTHING`, [peer]);
+    await db.query(
+      `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member') ON CONFLICT DO NOTHING`,
+      [W, peer],
+    );
+    await db.query(
+      `INSERT INTO memberships(room_id,identity_id,role,workspace_id) VALUES($1,$2,'member',$3) ON CONFLICT DO NOTHING`,
+      [cornerId, peer, W],
+    );
+    await phone.execute('sendRoomMessage', { roomId: cornerId, messageId: randomBytes(32).toString('hex'),
+      text: '@hoots merge this now' }, peer);
+    const direct = (await commands(A, cornerId)).at(-1)!;
+    await claim(direct);
+    await expect(daemon.execute('orderCornerMerge',
+      { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A))
+      .rejects.toThrow(/Workspace owner or admin/);
+    expect(await github.landCorner(cornerId)).toBe(false);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('an immediate order attempts the merge itself rather than waiting for the next sweep', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await greenHead(cornerId, 7, SHA);
+    githubHead = SHA;
+    githubRollupState = 'passed';
+    const wiredDaemon = new DaemonService(
+      db,
+      new LiveHub(),
+      undefined, // roomGitHubToken
+      undefined, // mediaMaximumBytes
+      undefined, // commandTransaction
+      undefined, // authorizedCommand
+      undefined, // livePaintDiagnostics
+      undefined, // liveDiagnosticServerInstance
+      undefined, // prChecksStatus
+      undefined, // _legacyProviderSlot
+      undefined, // institutionalMemoryShadow
+      undefined, // mcpRegistry
+      undefined, // registryMcpOAuth
+      undefined, // composio
+      undefined, // feedback
+      undefined, // objects
+      undefined, // linkWallet
+      undefined, // refreshMergeability
+      (id: string) => github.landCorner(id), // landCorner
+    );
+    await say(cornerId, '@hoots merge this now');
+    const direct = (await commands(A, cornerId)).at(-1)!;
+    await claim(direct);
+    await wiredDaemon.execute('orderCornerMerge',
+      { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
+    await mergedWebhook(cornerId, 7, SHA);
+    expect(await currentState(cornerId)).toBe('landed');
+  });
+});
+
 describe('a corner opened before the workflow run existed (AC-10)', () => {
   it('gets a run derived from its lifecycle and continues through review and merge', async () => {
     const cornerId = await inReview();

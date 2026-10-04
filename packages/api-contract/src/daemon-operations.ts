@@ -536,6 +536,16 @@ export type DaemonOperationMap = {
     { holdId: string; roomId: string }
   >;
   /**
+   * This turn's original human requester's express instruction to merge now.
+   * Only a current Workspace owner or admin's order carries; it is recorded
+   * for the exact head, in the same table where `approve_merge`
+   * records a reviewer's PASS.
+   */
+  orderCornerMerge: Operation<
+    CornerInput & TurnOutputAuthority & RoomInput & { requestId: string },
+    { roomId: string; headSha: string }
+  >;
+  /**
    * One-way `no_code -> code` promotion of a repository-backed corner. The
    * active command must come from a human message in that same corner; the
    * server spends that command, re-arms it as a pending resume and pushes

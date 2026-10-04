@@ -19,7 +19,11 @@ import type {
   DaemonOperationMap,
   SystemEvent,
 } from '@beeline/api-contract/daemon';
-import { CornerVerdictRejectedError, recordCornerMergeApproval } from './corner-merge-approval.js';
+import {
+  CornerVerdictRejectedError,
+  recordCornerMergeApproval,
+  recordExpressMergeOrder,
+} from './corner-merge-approval.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import {
   CORNER_VALIDATION_STAGES,
@@ -315,6 +319,10 @@ export class DaemonService {
     private readonly objects?: ObjectService,
     private readonly linkWallet?: import('./link-agent-wallet.js').LinkAgentWallet,
     private readonly refreshMergeability?: (cornerId: string) => Promise<void>,
+    /** Best-effort immediate merge attempt after `order_corner_merge`: an
+     *  express order does not wait for the next merge sweep, which only ever
+     *  considers corners already sitting in `land`. */
+    private readonly landCorner?: (cornerId: string) => Promise<boolean>,
   ) {}
 
   /** A turn's memory query, embedded before its command transaction opened. */
@@ -1501,6 +1509,45 @@ export class DaemonService {
           if (!actor) throw new Error('hold requires a human requester');
           return setCornerHold(db, hold, actor.author_id);
         })) as Output<Name>;
+      }
+      case 'orderCornerMerge': {
+        const order = input as Input<'orderCornerMerge'>;
+        await this.access(order.cornerId, authenticatedAgentId);
+        const result = await this.database.transaction(async (db) => {
+          await lockCornerWorkflowRun(db, order.cornerId);
+          const command = await authorizeCommandOutput(
+            db, order.roomId, authenticatedAgentId, order.requestId, order.generationId,
+          );
+          const actor = (await db.query<{ author_id: string }>(
+            `SELECT message.author_id FROM messages message
+             JOIN identities person ON person.id=message.author_id AND person.kind='human'
+             WHERE message.id=$1`,
+            [command.root_source_message_id],
+          )).rows[0];
+          if (!actor) throw new Error('merge order requires a human requester');
+          const target = (await db.query<{ number: number | null; head_sha: string | null }>(
+            `SELECT (fact.lifecycle->'pr'->>'number')::int number,
+                    fact.lifecycle->'pr'->>'headSha' head_sha
+             FROM corner_facts fact WHERE fact.corner_id=$1`,
+            [order.cornerId],
+          )).rows[0];
+          if (!target?.number || !target.head_sha)
+            throw new Error('corner has no pull request to merge');
+          return recordExpressMergeOrder(
+            db,
+            { cornerId: order.cornerId, pullRequestNumber: target.number, headSha: target.head_sha },
+            actor.author_id,
+          );
+        });
+        // The order is durable either way; an express order does not wait for
+        // the next merge sweep, which only ever considers corners already
+        // sitting in `land`.
+        try {
+          await this.landCorner?.(order.cornerId);
+        } catch (error) {
+          console.error(`[server] merge order's immediate land attempt failed for corner ${order.cornerId}:`, error);
+        }
+        return result as Output<Name>;
       }
       case 'createCorner':
         return (await this.createCorner(
@@ -7759,6 +7806,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   offerConnector: true,
   createCorner: true,
   setCornerHold: true,
+  orderCornerMerge: true,
   upgradeCornerLane: true,
   archiveCorner: true,
   ensureAgentMembership: true,

@@ -751,8 +751,8 @@ export class GitHubOperations {
         ? reviewerWake.status === 'unreachable'
           ? `Only ${approval} records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
           : `Only ${approval} records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${woken} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
-        : 'This Room has no configured reviewer. The reviewer outcome is not failed, but the complete merge gate still requires reviewerExists=true, so nothing merges this corner automatically.';
-    const mergeAllowed = checks === 'passed' && gate.open;
+        : 'This Room has no configured reviewer. The reviewer outcome is not failed, but the autonomous merge gate still requires reviewerExists=true, so nothing merges this corner on its own; a current Workspace owner or admin can still order this exact head merged with order_corner_merge.';
+    const mergeAllowed = gate.expressMergeOrdered || (checks === 'passed' && gate.open);
     return {
       checks,
       recordedChecks: corner.lifecycle.checks,
@@ -767,6 +767,7 @@ export class GitHubOperations {
       held: gate.held,
       holds: gate.holds,
       isWorkerYolo: gate.isWorkerYolo,
+      expressMergeOrdered: gate.expressMergeOrdered,
       mergeAllowed,
       rule,
     };

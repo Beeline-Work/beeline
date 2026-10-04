@@ -1349,7 +1349,7 @@ describe('GitHub phone operations', () => {
       headSha: nextHead,
       mergeability: 'dirty',
     });
-    await operations.refreshUnknownMergeability(corner);
+    await operations.refreshStaleMergeability(corner);
     expect(
       (
         await database.query<{ reason: string }>(
@@ -1405,7 +1405,7 @@ describe('GitHub phone operations', () => {
       headSha: newestHead,
       mergeability: 'other',
     });
-    await operations.refreshUnknownMergeability(corner);
+    await operations.refreshStaleMergeability(corner);
     expect(
       (
         await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
@@ -1415,7 +1415,7 @@ describe('GitHub phone operations', () => {
       ).rows[0]?.lifecycle.pr.mergeability,
     ).toBe('other');
     const readsAfterSettlement = readPullRequest.mock.calls.length;
-    await operations.refreshUnknownMergeability(corner);
+    await operations.refreshStaleMergeability(corner);
     expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement);
     await operations.processWebhook('pull_request', {
       ...unknown,
@@ -1499,7 +1499,7 @@ describe('GitHub phone operations', () => {
       baseSha: '5'.repeat(40),
       mergeability: 'clean',
     });
-    await operations.refreshUnknownMergeability(corner);
+    await operations.refreshStaleMergeability(corner);
     expect(
       (
         await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
@@ -1515,7 +1515,7 @@ describe('GitHub phone operations', () => {
       baseSha: newBaseSha,
       mergeability: 'dirty',
     });
-    await operations.refreshUnknownMergeability(corner);
+    await operations.refreshStaleMergeability(corner);
     expect(
       (
         await database.query<{ lifecycle: { pr: { mergeability: string } } }>(
@@ -1621,7 +1621,7 @@ describe('GitHub phone operations', () => {
       baseSha: newerCandidate,
       mergeability: 'dirty',
     });
-    await operations.refreshUnknownMergeability(corner);
+    await operations.refreshStaleMergeability(corner);
     expect(
       (
         await database.query(
@@ -1631,6 +1631,93 @@ describe('GitHub phone operations', () => {
         )
       ).rowCount,
     ).toBe(5);
+  });
+  it("reconverges a stored-dirty PR to GitHub's cleared verdict and stops the conflict wake", async () => {
+    const { corners, headSha, app } = await checksFixture();
+    const corner = corners[0]!;
+    await database.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,mergeability}','"dirty"') WHERE corner_id=$1`,
+      [corner],
+    );
+    const readPullRequest = app.readPullRequest as unknown as ReturnType<typeof vi.fn>;
+    readPullRequest.mockResolvedValueOnce({
+      number: 1,
+      url: 'https://github.com/owner/widgets/pull/1',
+      headSha,
+      mergeability: 'clean',
+    });
+    const operations = new GitHubOperations(
+      database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret',
+    );
+    await operations.refreshStaleMergeability(corner);
+    expect(
+      (
+        await database.query<{ mergeability: string }>(
+          `SELECT lifecycle->'pr'->>'mergeability' mergeability FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.mergeability,
+    ).toBe('clean');
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(0);
+  });
+  it('keeps a still-conflicting PR dirty and does not duplicate the conflict wake', async () => {
+    const { corners, headSha, app } = await checksFixture();
+    const corner = corners[0]!;
+    // The agent must be a corner member (not just a parent-Room member) for
+    // the conflict wake's agent_commands row to be dispatchable.
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`,
+      [corner, REVIEWER],
+    );
+    await database.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,mergeability}','"dirty"') WHERE corner_id=$1`,
+      [corner],
+    );
+    const readPullRequest = app.readPullRequest as unknown as ReturnType<typeof vi.fn>;
+    readPullRequest.mockResolvedValue({
+      number: 1,
+      url: 'https://github.com/owner/widgets/pull/1',
+      headSha,
+      mergeability: 'dirty',
+    });
+    const operations = new GitHubOperations(
+      database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret',
+    );
+    await operations.refreshStaleMergeability(corner);
+    expect(
+      (
+        await database.query<{ mergeability: string }>(
+          `SELECT lifecycle->'pr'->>'mergeability' mergeability FROM corner_facts WHERE corner_id=$1`,
+          [corner],
+        )
+      ).rows[0]?.mergeability,
+    ).toBe('dirty');
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(1);
+    // A second periodic sweep over the same unresolved conflict must not fire again.
+    await operations.refreshStaleMergeability(corner);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(1);
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

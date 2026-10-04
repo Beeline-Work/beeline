@@ -40,6 +40,13 @@ export type SquireMcpClientOptions = {
   readonly onExit?: (pid: number | undefined, code: number | null) => void;
   /** Task-owned relays kill the whole façade → npx → Squire process group. */
   readonly processGroup?: boolean;
+  /**
+   * An unsolicited (id-less) JSON-RPC message from the Squire MCP server over
+   * this same stdio session — e.g. a future decision notification for an
+   * approval it returned pending. Absent, every notification is dropped, as
+   * before.
+   */
+  readonly onNotification?: (message: Record<string, unknown>) => void;
 };
 
 type PendingEntry = {
@@ -199,7 +206,10 @@ export class StdioSquireMcpClient {
         continue;
       }
       const id = typeof message.id === 'number' ? message.id : undefined;
-      if (id === undefined) continue; // notification
+      if (id === undefined) {
+        this.options.onNotification?.(message);
+        continue;
+      }
       const entry = this.pending.get(id);
       if (!entry) continue;
       this.pending.delete(id);

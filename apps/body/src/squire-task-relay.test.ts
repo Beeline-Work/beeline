@@ -26,11 +26,13 @@ function fixture(
   contextFile = '/tmp/context',
   authorize = async () => true,
   respond?: (method: string, params: { name?: string }) => Promise<unknown>,
+  onApprovalDecided?: (decision: unknown) => void,
 ) {
   let spawns = 0;
   let exits = 0;
   let callbacks: { onSpawn: (pid: number) => void; onExit: (pid: number, code: number) => void;
-    onDiagnostic: (message: string) => void } | undefined;
+    onDiagnostic: (message: string) => void; onNotification: (message: Record<string, unknown>) => void }
+    | undefined;
   const relay = new SquireTaskRelay('agent', 'room', contextFile, authorize, homedir(), (hooks) => {
     spawns++;
     callbacks = hooks as typeof callbacks;
@@ -45,11 +47,12 @@ function fixture(
       }),
       close: () => { exits++; },
     } as unknown as StdioSquireMcpClient;
-  });
+  }, onApprovalDecided);
   relays.push(relay);
   return { relay, stats: () => ({ spawns, exits }),
     die: () => callbacks?.onExit(2000 + spawns, 1),
-    diagnose: (message: string) => callbacks?.onDiagnostic(message) };
+    diagnose: (message: string) => callbacks?.onDiagnostic(message),
+    notify: (message: Record<string, unknown>) => callbacks?.onNotification(message) };
 }
 
 async function request(
@@ -210,6 +213,96 @@ describe('helper-owned Squire task relay', () => {
     relay.deactivate('turn-two');
     await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
     expect(stats().exits).toBe(1);
+  });
+
+  it('resolves a pending approval from an unsolicited Squire notification, with what was approved', async () => {
+    const decisions: unknown[] = [];
+    const { relay, stats, notify } = fixture('/tmp/context', async () => true, async (_method, params) => {
+      if (params.name === 'operate_start')
+        return { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] };
+      if (params.name === 'inject_card')
+        return { content: [{ type: 'text', text: JSON.stringify({
+          status: 'approval_pending', approval_id: 'buy-1', session_id: 'browser-1',
+          approval_url: 'https://trustysquire.ai/vault/pay/buy-1',
+        }) }] };
+      return { content: [{ type: 'text', text: 'ok' }] };
+    }, (decision) => decisions.push(decision));
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
+    await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'inject_card', arguments: { sessionId: 'browser-1', item: 'MUJI order', merchant: 'MUJI' },
+    });
+    vi.useFakeTimers();
+    relay.deactivate('turn-one', 'turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS * 2);
+    expect(stats().exits).toBe(0); // the open approval keeps the connection alive
+    notify({ jsonrpc: '2.0', method: 'notifications/approval_decided',
+      params: { approval_id: 'buy-1', status: 'approved' } });
+    expect(decisions).toEqual([{
+      requestId: 'turn-one', approvalId: 'buy-1', status: 'approved',
+      tool: 'inject_card', title: 'Purchase approval', detail: 'MUJI order · at MUJI',
+    }]);
+    // The resumed turn picks up the decision and ends normally, like any turn;
+    // only THAT deactivate (with no approval flag) frees the connection to idle.
+    vi.useRealTimers();
+    relay.activate(command('resume', 'turn-two'), 'generation');
+    expect((await request(relay, 'resume', 'turn-two', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
+    vi.useFakeTimers();
+    relay.deactivate('turn-two');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
+    expect(stats().exits).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it('wakes with the denial when Squire reports a decline, carrying the same correlation', async () => {
+    const decisions: unknown[] = [];
+    const { relay, notify } = fixture('/tmp/context', async () => true, async (_method, params) => {
+      if (params.name === 'operate_start')
+        return { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] };
+      if (params.name === 'inject_card')
+        return { content: [{ type: 'text', text: JSON.stringify({
+          status: 'approval_pending', approval_id: 'buy-2', session_id: 'browser-1',
+          approval_url: 'https://trustysquire.ai/vault/pay/buy-2', item: 'order',
+        }) }] };
+      return { content: [{ type: 'text', text: 'ok' }] };
+    }, (decision) => decisions.push(decision));
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
+    await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'inject_card', arguments: { sessionId: 'browser-1' },
+    });
+    relay.deactivate('turn-one', 'turn-one');
+    notify({ jsonrpc: '2.0', method: 'notifications/approval_decided',
+      params: { approval_id: 'buy-2', status: 'denied' } });
+    expect(decisions).toEqual([expect.objectContaining({
+      requestId: 'turn-one', approvalId: 'buy-2', status: 'denied',
+    })]);
+  });
+
+  it('ignores a notification for an approval it never tracked, or a malformed one', async () => {
+    const decisions: unknown[] = [];
+    const { relay, notify } = fixture('/tmp/context', async () => true, async (_method, params) =>
+      params.name === 'operate_start'
+        ? { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] }
+        : { content: [{ type: 'text', text: JSON.stringify({
+          status: 'approval_pending', approval_id: 'buy-1', session_id: 'browser-1',
+          approval_url: 'https://trustysquire.ai/vault/pay/buy-1', item: 'order',
+        }) }] },
+      (decision) => decisions.push(decision),
+    );
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'operate_start' });
+    await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'inject_card', arguments: { sessionId: 'browser-1' },
+    });
+    notify({ jsonrpc: '2.0', method: 'notifications/approval_decided',
+      params: { approval_id: 'unknown-approval', status: 'approved' } });
+    notify({ jsonrpc: '2.0', method: 'notifications/approval_decided', params: { approval_id: 'buy-1' } });
+    notify({ jsonrpc: '2.0', method: 'notifications/something_else',
+      params: { approval_id: 'buy-1', status: 'approved' } });
+    expect(decisions).toEqual([]);
   });
 
   it('releases a pending Squire approval hold when its request is cancelled', async () => {

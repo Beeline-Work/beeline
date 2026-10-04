@@ -570,6 +570,12 @@ export class MonolithCornerTurnLoop {
           })
         ).allowed,
       options.config.operatorHome ?? homedir(),
+      undefined,
+      (decision) => {
+        options.api
+          .execute('postSquireApprovalDecision', { roomId: options.cornerId, ...decision })
+          .catch(() => {});
+      },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.cornerId, {

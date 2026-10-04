@@ -260,4 +260,32 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     });
     expect(grant).toContain('This is the answer to your grant request');
   });
+
+  it('a Squire approval decision resumes the turn with what was approved or denied', () => {
+    const approved = resumePrompt({
+      body: 'Trusty Squire approved Purchase approval · MUJI order · at MUJI',
+      systemEvent: {
+        subject: { kind: 'person', id: 'trusty-squire', name: 'Trusty Squire' },
+        verb: 'approved',
+        kind: 'squire-approval-decided',
+        object: { text: 'Purchase approval' },
+        consequence: 'MUJI order · at MUJI',
+      },
+    });
+    expect(approved).toContain(
+      "This is Trusty Squire's answer to the approval you were waiting on: Trusty Squire approved Purchase approval · MUJI order · at MUJI.",
+    );
+    expect(approved).toContain('continue exactly where you left off with Trusty Squire');
+    expect(approved).not.toContain('grant request');
+    const denied = resumePrompt({
+      body: 'Trusty Squire denied Purchase approval',
+      systemEvent: {
+        subject: { kind: 'person', id: 'trusty-squire', name: 'Trusty Squire' },
+        verb: 'denied',
+        kind: 'squire-approval-decided',
+        object: { text: 'Purchase approval' },
+      },
+    });
+    expect(denied).toContain('If it was denied, stop that Trusty Squire action');
+  });
 });

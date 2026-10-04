@@ -12454,6 +12454,75 @@ describe('monolith integration', () => {
     );
   });
 
+  it('wakes the paused turn with Squire’s own decision on an approval, approved or denied', async () => {
+    const asked = (await (
+      await operation('sendRoomMessage', { roomId: ROOM, text: '@bee buy the headphones', mentions: [AGENT] })
+    ).json()) as { messageId: string };
+    const approved = await daemonOperation('postSquireApprovalDecision', {
+      roomId: ROOM,
+      requestId: asked.messageId,
+      approvalId: 'purchase-decided-1',
+      status: 'approved',
+      tool: 'inject_card',
+      title: 'Purchase approval',
+      detail: 'Noise-cancelling headphones · at Acme',
+    });
+    expect(approved.status).toBe(200);
+    const rows = await database.query<{
+      room_id: string;
+      author_id: string;
+      text: string;
+      card: Record<string, unknown>;
+      system_event: { kind?: string };
+    }>(`SELECT room_id,author_id,text,card,system_event FROM messages WHERE card_type='squire-approval-decision'`);
+    expect(rows.rows).toHaveLength(1);
+    const row = rows.rows[0]!;
+    expect(row.room_id).toBe(ROOM);
+    expect(row.author_id).toBe(connectorIdentityId('trusty-squire'));
+    expect(row.text).toBe('@trusty-squire approved Purchase approval · Noise-cancelling headphones · at Acme');
+    expect(row.system_event.kind).toBe('squire-approval-decided');
+    expect(row.card).toMatchObject({
+      approvalId: 'purchase-decided-1',
+      tool: 'inject_card',
+      title: 'Purchase approval',
+      detail: 'Noise-cancelling headphones · at Acme',
+      status: 'approved',
+      agentId: AGENT,
+    });
+    const resume = await database.query<{ action: string; state: string }>(
+      `SELECT action,state FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action='resume'`,
+      [ROOM, AGENT, asked.messageId],
+    );
+    expect(resume.rows).toEqual([{ action: 'resume', state: 'pending' }]);
+
+    // A denial wakes the next paused turn the same way, carrying the denial.
+    const askedAgain = (await (
+      await operation('sendRoomMessage', { roomId: ROOM, text: '@bee buy it again', mentions: [AGENT] })
+    ).json()) as { messageId: string };
+    const denied = await daemonOperation('postSquireApprovalDecision', {
+      roomId: ROOM,
+      requestId: askedAgain.messageId,
+      approvalId: 'purchase-decided-2',
+      status: 'denied',
+      tool: 'inject_card',
+      title: 'Purchase approval',
+      detail: 'A different item',
+    });
+    expect(denied.status).toBe(200);
+    const deniedRow = (
+      await database.query<{ text: string; card: Record<string, unknown> }>(
+        `SELECT text,card FROM messages WHERE card_type='squire-approval-decision' AND card->>'approvalId'='purchase-decided-2'`,
+      )
+    ).rows[0]!;
+    expect(deniedRow.text).toBe('@trusty-squire denied Purchase approval · A different item');
+    expect(deniedRow.card).toMatchObject({ status: 'denied' });
+    const resumeDenied = await database.query<{ action: string }>(
+      `SELECT action FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action='resume'`,
+      [ROOM, AGENT, askedAgain.messageId],
+    );
+    expect(resumeDenied.rows).toEqual([{ action: 'resume' }]);
+  });
+
   it("lets another human trigger the agent owner's mounted Squire without a card", async () => {
     const MACHINE = 'machine-squire-box';
     const SIBLING = 'd'.repeat(64);

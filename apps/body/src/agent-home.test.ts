@@ -657,7 +657,13 @@ describe('operator skills + MCP passthrough', () => {
     expect(readFileSync(resolve(skillsDir, 'greet', 'SKILL.md'), 'utf8')).toBe('say hi');
     const managedSkill = resolve(skillsDir, 'using-beeline', 'SKILL.md');
     expect(lstatSync(resolve(skillsDir, 'using-beeline')).isSymbolicLink()).toBe(false);
-    expect(readFileSync(managedSkill, 'utf8')).toContain('name: using-beeline');
+    const managedSkillText = readFileSync(managedSkill, 'utf8');
+    expect(managedSkillText).toContain('name: using-beeline');
+    expect(managedSkillText).toContain('inspect its live state with the tools you have');
+    expect(managedSkillText).toContain('Memory and Room history are not evidence of current state');
+    expect(managedSkillText).toContain('Before asking a person for a code, a status or a file');
+    expect(managedSkillText).toContain('Ask only when none can, and say why');
+    expect(managedSkillText).toContain('The key-ownership and grant rules still apply');
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
     expect(reviewSkill).toContain('PASS: call `approve_merge` with the reviewed head SHA');
     expect(reviewSkill).toContain('`approved <reviewed sha>` without tagging the author. Do not tell the author to merge.');

@@ -873,6 +873,9 @@ export class MonolithCornerTurnLoop {
           grantedHostRoutes: mountedHostRoutes,
           extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,
+          ...(this.options.config.agentEnv.PATH
+            ? { inheritedPath: this.options.config.agentEnv.PATH }
+            : {}),
           ...(this.options.config.agentKind ? { agentKind: this.options.config.agentKind } : {}),
           ...(this.options.config.operatorHome
             ? { operatorHome: this.options.config.operatorHome }
@@ -912,7 +915,7 @@ export class MonolithCornerTurnLoop {
         featureBranch: repository.featureBranch,
         targetBranch: repository.targetBranch,
         ...(ghBinary ? { ghBinary } : {}),
-        inheritedPath: this.options.config.agentEnv.PATH ?? process.env.PATH,
+        inheritedPath: homeOverlay.PATH ?? this.options.config.agentEnv.PATH ?? process.env.PATH,
       });
       githubEnv = launchers.env;
       this.cornerGitHubCli = launchers.githubCli;
@@ -1135,6 +1138,9 @@ export class MonolithCornerTurnLoop {
         : {}),
       ...(this.options.requesterHandle ? { requesterHandle: this.options.requesterHandle } : {}),
       ...(this.options.agentMayUpgradeCorner ? { agentMayUpgradeCorner: true } : {}),
+      ...(agentEnv.BEELINE_ANDROID_EMULATOR_PORT
+        ? { android: { emulatorPort: agentEnv.BEELINE_ANDROID_EMULATOR_PORT } }
+        : {}),
     });
     this.turnSessionPrefix = session.turnPrefix;
     this.sessionPromptSectionIds = session.report.map((section) => section.id);

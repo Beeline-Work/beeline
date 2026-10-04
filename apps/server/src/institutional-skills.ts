@@ -469,20 +469,17 @@ export async function loadWorkspaceSkill(
     throw new Error('workspace skill slug is invalid');
   }
   return database.transaction(async (db) => {
-    const authority = (
-      await db.query<{ workspace_id: string; requester_identity_id: string }>(
-        `SELECT room.workspace_id,root.author_id requester_identity_id
-         FROM rooms room
-         JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
-         JOIN rooms root_room ON root_room.id=root.room_id
-           AND root_room.workspace_id=room.workspace_id
-         JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
-         WHERE room.id=$1`,
-        [command.room_id, command.root_source_message_id],
-      )
+    // The skill belongs to the calling Room's own Workspace; who or what
+    // authored the turn's root message (a human, or a schedule/event/
+    // agent-to-agent wake) is not a condition of serving it. Usage attributes
+    // to the calling agent.
+    const room = (
+      await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
+        command.room_id,
+      ])
     ).rows[0];
-    if (!authority) throw new Error('workspace skill requester authority is unavailable');
-    if (!rolloutAllowsLive(await institutionalWorkspaceRolloutStage(db, authority.workspace_id))) {
+    if (!room) throw new Error('workspace skill room is unavailable');
+    if (!rolloutAllowsLive(await institutionalWorkspaceRolloutStage(db, room.workspace_id))) {
       throw new Error('workspace skill is not enabled for this Workspace');
     }
     const skill = (
@@ -491,7 +488,7 @@ export async function loadWorkspaceSkill(
                 skill.source_room_id,skill.repository,skill.target_commit,skill.path,
                 version.markdown,skill.updated_at,skill.kind
          ${AUTHORIZED_SKILLS_SQL} AND skill.slug=$4`,
-        [authority.workspace_id, authority.requester_identity_id, command.agent_id, slug],
+        [room.workspace_id, command.agent_id, command.agent_id, slug],
       )
     ).rows[0];
     if (!skill) throw new Error('workspace skill is unavailable');
@@ -502,12 +499,12 @@ export async function loadWorkspaceSkill(
        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
       [
         randomUUID(),
-        authority.workspace_id,
+        room.workspace_id,
         skill.id,
         skill.current_version,
         command.room_id,
         command.turn_request_id,
-        authority.requester_identity_id,
+        command.agent_id,
         command.agent_id,
       ],
     );

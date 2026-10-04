@@ -503,4 +503,42 @@ describe('authorized institutional history search', () => {
     expect(telemetry?.result_count).toBe(1);
     expect(telemetry?.authorized_room_count).toBeGreaterThanOrEqual(2);
   });
+
+  it('serves a turn started by a schedule or event wake, whose root message is agent-authored', async () => {
+    const scheduleRoot = 'schedule-wake-root';
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'daily triage sweep')`,
+      [scheduleRoot, OUTPUT, AGENT],
+    );
+    const scheduleCommand: CommandRow = {
+      ...command,
+      id: 'schedule-root-command',
+      source_message_id: scheduleRoot,
+      root_source_message_id: scheduleRoot,
+    };
+    const result = await searchInstitutionalHistory(database, scheduleCommand, {
+      agentId: AGENT,
+      roomId: OUTPUT,
+      query: 'release marker',
+      limit: 10,
+    });
+    expect(result.results.map((row) => row.messageId)).toContain('shared-result');
+  });
+
+  it('refuses when the root message\'s Room is in another Workspace than the calling Room', async () => {
+    const crossWorkspaceCommand: CommandRow = {
+      ...command,
+      id: 'cross-workspace-command',
+      source_message_id: 'cross-workspace',
+      root_source_message_id: 'cross-workspace',
+    };
+    await expect(
+      searchInstitutionalHistory(database, crossWorkspaceCommand, {
+        agentId: AGENT,
+        roomId: OUTPUT,
+        query: 'release marker',
+        limit: 10,
+      }),
+    ).rejects.toThrow(/requester authority is unavailable/);
+  });
 });

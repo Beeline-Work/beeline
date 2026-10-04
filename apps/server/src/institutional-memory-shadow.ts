@@ -195,38 +195,6 @@ function skillMatches(skill: WorkspaceSkillIndexCandidate, words: ReadonlySet<st
 }
 
 /**
- * Resolve the durable requester for a turn whose root message carries no
- * current human Workspace member — the corner lifecycle shape. The corner
- * workflow's transitions (checks verdict, review wake, merge refusal or
- * conflict) create commands whose source and root is the @system/GitHub note
- * that woke them, so the root-message authority query's human-membership join
- * drops it. A corner's requester is durable: `corner_facts.commissioned_by` is
- * the human who commissioned it (the same identity push delivery already uses
- * for corner outcomes), so a corner turn resolves authority from there instead
- * of failing closed. The commissioned human must still be a current Workspace
- * member, and the fallback is corner-only: a top-level Room turn whose root
- * vanished stays refused.
- */
-export async function institutionalCornerRequesterAuthority(
-  db: SqlDatabase,
-  roomId: string,
-): Promise<{ workspace_id: string; requester_identity_id: string } | undefined> {
-  return (
-    await db.query<{ workspace_id: string; requester_identity_id: string }>(
-      `SELECT room.workspace_id,corner.commissioned_by requester_identity_id
-       FROM rooms room
-       JOIN corner_facts corner ON corner.corner_id=room.id
-       JOIN identities requester ON requester.id=corner.commissioned_by AND requester.kind='human'
-       JOIN memberships member ON member.workspace_id=room.workspace_id
-         AND member.room_id IS NULL AND member.identity_id=corner.commissioned_by
-         AND member.removed_at IS NULL
-       WHERE room.id=$1 AND room.parent_id IS NOT NULL AND corner.commissioned_by IS NOT NULL`,
-      [roomId],
-    )
-  ).rows[0];
-}
-
-/**
  * Compile one command-bound, immutable turn snapshot. Workspace facts are
  * transparent across the Workspace; only the durable root requester's own
  * profile is loaded. No Room roster is used as a profile fan-out axis.
@@ -276,15 +244,18 @@ export async function getInstitutionalContext(
   const queryEmbedding = await withDeadline(embed, INSTITUTIONAL_CONTEXT_EMBEDDING_TIMEOUT_MS)(
     requestText, 'query');
   return database.transaction(async (db) => {
+    // The root message's author is this turn's requester whether human or
+    // agent (a schedule, event, or agent-to-agent wake); only its Room needs
+    // to share the calling Room's Workspace. A root that no longer exists
+    // there is the one case left refused.
     const authority = (
       await db.query<{
         workspace_id: string;
         requester_identity_id: string;
-        request_text: string;
         repository_key: string | null;
         repository_name: string | null;
       }>(
-        `SELECT room.workspace_id,root.author_id requester_identity_id,root.text request_text,
+        `SELECT room.workspace_id,root.author_id requester_identity_id,
                 COALESCE(room.repository_key,parent.repository_key) repository_key,
                 COALESCE(room.repository_name,parent.repository_name) repository_name
          FROM rooms room
@@ -292,14 +263,10 @@ export async function getInstitutionalContext(
          JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
          JOIN rooms root_room ON root_room.id=root.room_id
            AND root_room.workspace_id=room.workspace_id
-         JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
-         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
-           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=root.author_id
-           AND workspace_member.removed_at IS NULL
          WHERE room.id=$1`,
         [command.room_id, command.root_source_message_id],
       )
-    ).rows[0] ?? (await institutionalCornerRequesterAuthority(db, command.room_id));
+    ).rows[0];
     if (!authority) throw new Error('institutional memory requester authority is unavailable');
     const rolloutStage = await institutionalWorkspaceRolloutStage(db, authority.workspace_id);
     if (!rolloutAllowsLive(rolloutStage)) {
@@ -307,9 +274,6 @@ export async function getInstitutionalContext(
     }
     // Only items whose saved keywords appear in the request load. Nothing
     // fills leftover space, so a request that matches nothing loads nothing.
-    // `requestText` is the pre-transaction read of the same root message the
-    // authority row carries, so the corner fallback authority (which has no
-    // request text of its own) still matches on the same words.
     const words = institutionalMemoryRequestWords(requestText);
     // Kicked off alongside the DB queries below, not after: the embedding
     // call is a separate network round trip, so it costs nothing extra as
@@ -513,7 +477,11 @@ export async function getInstitutionalContext(
   });
 }
 
-/** The requester whose memory a turn may read: its root author, or a corner's commissioner. */
+/**
+ * The requester whose memory a turn may read: the root message's author,
+ * whether human or agent (a schedule, event, or agent-to-agent wake); only
+ * its Room needs to share the calling Room's Workspace.
+ */
 async function memoryReadAuthority(
   db: SqlDatabase,
   command: CommandRow,
@@ -524,14 +492,10 @@ async function memoryReadAuthority(
        FROM rooms room
        JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
        JOIN rooms root_room ON root_room.id=root.room_id AND root_room.workspace_id=room.workspace_id
-       JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
-       JOIN memberships member ON member.workspace_id=room.workspace_id
-         AND member.room_id IS NULL AND member.identity_id=root.author_id
-         AND member.removed_at IS NULL
        WHERE room.id=$1`,
       [command.room_id, command.root_source_message_id],
     )
-  ).rows[0] ?? (await institutionalCornerRequesterAuthority(db, command.room_id));
+  ).rows[0];
   if (!authority) throw new Error('institutional memory requester authority is unavailable');
   const rolloutStage = await institutionalWorkspaceRolloutStage(db, authority.workspace_id);
   if (!rolloutAllowsLive(rolloutStage)) {

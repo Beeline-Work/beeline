@@ -100,6 +100,7 @@ type Proof = {
   finals: Record<string, string>;
   durations: string[];
   gate: Record<string, string>;
+  haloGapFromDivider: number | null;
   corners: string[];
   alsoRunning: string[];
   pushedBefore: unknown[];
@@ -294,9 +295,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
         },
       ],
     );
-    // A finished step starts collapsed to its one-line description, so its
-    // gate record and the corners it opened need their headers tapped open.
-    const gate = await proof(detail, '?expandAll=1');
+    const gate = await proof(detail, '');
     // The viewer answered the gate, so the row carries their own mark and handle.
     expect(gate.assignees.approve).toMatchObject({
       handle: '@lunchboxfortwo',
@@ -311,7 +310,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(gate.gate).toEqual({ approve: 'dispatch · Owner' });
     // The corner(s) the dispatch step opened are plain links, right under its row.
     expect(gate.text).toEqual(expect.arrayContaining(['Corner dropdown fix', 'Mock file type fix']));
-    const dispatch = await proof(detail, '?corner=fix-2&expandAll=1');
+    const dispatch = await proof(detail, '?corner=fix-2');
     // The corner link goes to that corner, under the Room it was opened in.
     expect(dispatch.pushedBefore).toEqual([]);
     expect(dispatch.pushed).toEqual([
@@ -440,9 +439,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       ], roleHolders: { analyst: candy }, viewer: owner,
     };
     for (const width of [390, 1440]) {
-      // Each finished visit starts collapsed to its one-line description;
-      // tap every header open to read its final reply back.
-      const page = await proof(detail, '?expandAll=1', width, [{ type: 'draft', roomId: 'corner-2', agentId: candy.id,
+      const page = await proof(detail, '', width, [{ type: 'draft', roomId: 'corner-2', agentId: candy.id,
         turnId: 'old-turn', text: 'Unrelated draft', latestChunk: 'Unrelated draft' }]);
       expect(Object.keys(page.circles)).toEqual(['collect', 'review', 'collect-visit-2']);
       expect(page.finals).toEqual({ collect: 'First evidence result.', review: 'Review requests another visit.' });
@@ -453,7 +450,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const complete = { ...detail, run: { ...detail.run, state: 'done', status: 'done', updatedAt: STARTED + 30 },
       history: [...detail.history.slice(0, 2), { ...detail.history[2], finalReply: { messageId: 'm3', text: 'Second evidence result.' } },
         { visitId: 'last', fromState: 'collect', toState: 'done', outcome: 'approved', at: STARTED + 30 }] };
-    const refreshed = await proof(complete, '?expandAll=1');
+    const refreshed = await proof(complete, '');
     expect(refreshed.finals['collect-visit-2']).toBe('Second evidence result.');
     expect(refreshed.live).toEqual({});
     // The terminal that ends the run reads by the clock it was reached, not a duration.
@@ -501,7 +498,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     ]);
   }, 120_000);
 
-  it('starts a finished step collapsed to its one-line description, opening on a header tap, while the current step starts open', async () => {
+  it('starts every step open, collapsing to its one-line description on a header tap', async () => {
     const detail = {
       run: { runId: 'run-1', workflowSlug: 'mm-desk', description: 'MM desk', roomId: 'corner-2',
         roomName: 'MM desk', state: 'verify', status: 'live', viewerHolds: false,
@@ -522,17 +519,40 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     };
     const drafts = [{ type: 'draft', roomId: 'corner-2', agentId: candy.id, turnId: 't1',
       text: 'Checking spreads.', latestChunk: 'Checking spreads.' }];
-    const collapsed = await proof(detail, '', 390, drafts);
-    // The finished step's one-line description still shows; its final reply doesn't.
-    expect(collapsed.does.scout).toBe('Scans markets.');
-    expect(collapsed.finals).toEqual({});
-    // The current step needs no tap: its live output is already on the page.
-    expect(collapsed.live).toEqual({ verify: 'Checking spreads.' });
-    const opened = await proof(detail, '?toggle=scout', 390, drafts);
+    const opened = await proof(detail, '', 390, drafts);
+    // Every step's detail is already on the page, finished or current alike.
+    expect(opened.does.scout).toBe('Scans markets.');
     expect(opened.finals).toEqual({ scout: 'Found three pairs worth checking.' });
-    // Tapping the open current step's own header hides its live output again.
-    const closedCurrent = await proof(detail, '?toggle=verify', 390, drafts);
-    expect(closedCurrent.live).toEqual({});
+    expect(opened.live).toEqual({ verify: 'Checking spreads.' });
+    // Tapping a finished step's header collapses it to just its description.
+    const collapsedScout = await proof(detail, '?toggle=scout', 390, drafts);
+    expect(collapsedScout.does.scout).toBe('Scans markets.');
+    expect(collapsedScout.finals).toEqual({});
+    expect(collapsedScout.live).toEqual({ verify: 'Checking spreads.' });
+    // Tapping the current step's own header hides its live output too.
+    const collapsedVerify = await proof(detail, '?toggle=verify', 390, drafts);
+    expect(collapsedVerify.live).toEqual({});
+  }, 120_000);
+
+  it("clears the Steps divider with the current step's halo when the first step is the one running", async () => {
+    const detail = {
+      run: { runId: 'run-1', workflowSlug: 'mm-desk', description: 'MM desk', roomId: 'corner-2',
+        roomName: 'MM desk', state: 'scout', status: 'live', viewerHolds: false,
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+      contract: { version: 1, name: 'mm-desk', description: 'MM desk', roles: ['scout'],
+        start: 'scout', handoffs: {
+          scout: { does: 'Scans markets.', role: 'scout', requires: [], on: { done: 'done' } },
+          done: { kind: 'terminal', status: 'done' },
+        } },
+      history: [{ toState: 'scout', actor: candy, at: STARTED }],
+      roleHolders: { scout: candy },
+    };
+    const page = await proof(detail, '');
+    expect(page.circles.scout).toBe('current');
+    // Before the fix the halo (wider than the circle it rings) sat only 2px
+    // below the divider; space.sm of rail-list top padding now clears it by
+    // the same rhythm the row's own text uses.
+    expect(page.haloGapFromDivider).toBeGreaterThanOrEqual(8);
   }, 120_000);
 
   it("shows a done gate's own resolution only once, not again as the agent's final message", async () => {
@@ -561,7 +581,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
         { fromState: 'approve', outcome: 'dispatch', toState: 'done', status: 'done', actor: candy, at: STARTED + 210 },
       ],
     );
-    const page = await proof(detail, '?expandAll=1');
+    const page = await proof(detail, '');
     // Only the gate's own resolution line shows; the question that posted it does not.
     expect(page.gate).toEqual({ approve: 'dispatch · Owner' });
     expect(page.finals).toEqual({});
@@ -586,11 +606,11 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       ],
       roleHolders: { analyst: candy },
     };
-    const page = await proof(detail, '?toggle=collect&fontOf=Collect the evidence.');
+    const page = await proof(detail, '?fontOf=Collect the evidence.');
     // `does` (the one-line description) sets the scale: 13px, the same role
     // as every other secondary line on the page.
     expect(page.fontOf).toBe('13px SpaceGrotesk-Regular');
-    const finalPage = await proof(detail, '?toggle=collect&fontOf=Collected the indicators.');
+    const finalPage = await proof(detail, '?fontOf=Collected the indicators.');
     // The agent's final reply reads at that same size, not the Room's 16px prose.
     expect(finalPage.fontOf).toBe('13px SpaceGrotesk-Regular');
   }, 120_000);

@@ -113,6 +113,13 @@ async function run() {
     ids(/-gate$/).map((id) => [id.slice(prefix.length, -'-gate'.length),
       document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent]),
   );
+  // The vertical gap between the Steps divider and a halo above it — most
+  // exposed when the first step is the one running.
+  const divider = document.querySelector<HTMLElement>('[data-testid="workflow-run-steps-header"]');
+  const halo = document.querySelector<HTMLElement>(`[data-testid^="${prefix}"][data-testid$="-halo"]`);
+  const haloGapFromDivider = divider && halo
+    ? halo.getBoundingClientRect().top - divider.getBoundingClientRect().bottom
+    : null;
   report(
     JSON.stringify({
       text,
@@ -135,6 +142,7 @@ async function run() {
         document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.textContent])),
       durations: Array.from(document.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"][data-testid$="-duration"]`)).map((node) => node.textContent),
       gate,
+      haloGapFromDivider,
       corners: ids(/^workflow-run-corner-/),
       alsoRunning: ids(/^workflow-run-also-running-/),
       pushedBefore,

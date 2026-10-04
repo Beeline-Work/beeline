@@ -192,7 +192,7 @@ export function WorkflowRunLine({
     [detail.contract, detail.history],
   );
   return (
-    <View testID={testID}>
+    <View style={styles.list} testID={testID}>
       {line.map((step, index) => (
         <StepRow
           above={index > 0 ? segmentTone(line[index - 1]!, step) : undefined}
@@ -332,10 +332,10 @@ function StepRow({
   // The terminal that ends the run reads by the clock it was reached, not an elapsed span.
   const reachedAt = step.kind === 'terminal' ? visit?.enteredAt : undefined;
   const dimmed = step.status === 'pending' || step.status === 'skipped' ? styles.dimmed : null;
-  // Anything beyond the one-line description a tap can hide: a finished
-  // step starts collapsed to it, the current step starts open.
+  // Every step starts open; a tap collapses it to its one-line description,
+  // and a second tap reopens it.
   const hasDetail = Boolean(draft || final || gateLine || visit?.openedCorners?.length);
-  const [expanded, setExpanded] = useState(current);
+  const [expanded, setExpanded] = useState(true);
   const open = expanded || !hasDetail;
   return (
     <View style={styles.step} testID={testID}>
@@ -408,6 +408,11 @@ const styles = StyleSheet.create((theme) => {
     ghost: { color: theme.buzz.ledgerGhost },
     quiet: { color: theme.buzz.ledgerQuiet },
     ink: { color: theme.buzz.textSecondary },
+    // The current step's halo (HALO, wider than the circle it rings) would
+    // otherwise touch whatever sits directly above the rail — the page's
+    // section divider when the run's first step is the one running. The
+    // same space.sm rhythm the row's own text uses keeps it clear.
+    list: { paddingTop: space.sm },
     step: { position: 'relative' },
     lineAbove: { position: 'absolute', left: LINE_X - 1, width: 2, top: 0, height: CIRCLE_TOP },
     lineBelow: {

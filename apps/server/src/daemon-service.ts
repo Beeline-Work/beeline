@@ -1533,11 +1533,15 @@ export class DaemonService {
           )).rows[0];
           if (!target?.number || !target.head_sha)
             throw new Error('corner has no pull request to merge');
-          return recordExpressMergeOrder(
+          const recorded = await recordExpressMergeOrder(
             db,
             { cornerId: order.cornerId, pullRequestNumber: target.number, headSha: target.head_sha },
             actor.author_id,
           );
+          // The order carries the run straight to `land` from wherever it
+          // sits; the normal land path then merges it, with no second route in.
+          await advanceCorner(db, order.cornerId, { kind: 'express-merge-ordered' });
+          return recorded;
         });
         // The order is durable either way; an express order does not wait for
         // the next merge sweep, which only ever considers corners already

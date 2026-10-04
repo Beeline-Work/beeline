@@ -195,6 +195,8 @@ export type CornerEvent =
   /** Checks started again on the same head (a re-run); the verdict that follows is reported as `checks`. */
   | { kind: 'checks-pending' }
   | { kind: 'approval'; headSha: string }
+  /** A current Workspace owner or admin ordered this exact head merged (`order_corner_merge`); carries the run straight to `land` from wherever it sits. */
+  | { kind: 'express-merge-ordered' }
   | { kind: 'review-ended'; review: CommandRow; verdictMessageId: string }
   | { kind: 'merge-unconfirmed'; number: number; error: string }
   | { kind: 'merge-refused'; headSha: string; reason: string }
@@ -414,17 +416,23 @@ class Transition {
     return Object.hasOwn(edgesOf(this.run.toState), outcome);
   }
 
-  /** `loopCount` is this trip's number around the state's loop, when the edge is its loop edge. */
+  /**
+   * `loopCount` is this trip's number around the state's loop, when the edge
+   * is its loop edge. `force` takes the run straight to `outcome` as its next
+   * state regardless of the current state's declared edges, for an authority
+   * that overrides the lifecycle's own requires (an express merge order).
+   */
   async take(
     outcome: string,
     contents: Record<string, unknown> = {},
     loopCount?: number,
+    force = false,
   ): Promise<string> {
     const fromState = this.run.toState;
     const implicit = CORNER_LIFECYCLE_CONTRACT.implicitEdges?.includes(outcome) ?? false;
-    if (!implicit && !this.allows(outcome))
+    if (!implicit && !force && !this.allows(outcome))
       throw new Error(`corner contract has no ${fromState} --${outcome}--> edge`);
-    let toState = implicit ? outcome : edgesOf(fromState)[outcome]!;
+    let toState = implicit || force ? outcome : edgesOf(fromState)[outcome]!;
     const state = CORNER_LIFECYCLE_CONTRACT.handoffs[fromState];
     const loop = state && 'loop' in state ? state.loop : undefined;
     if (loop && loop.onEdge === outcome && loopCount !== undefined && loopCount > loop.cap)
@@ -654,6 +662,13 @@ async function applyEvent(
     }
     case 'approval':
       return approvalRecorded(db, cornerId, corner, transition, event);
+    case 'express-merge-ordered':
+      // Authority, not autonomy: carries straight to `land` from wherever the
+      // run sits, with no reviewer/checks/hold requirement, so the normal
+      // land path (`GitHubOperations.landCorner`) merges it from there.
+      if (transition.state === 'land') return no('already in land');
+      await transition.take('land', {}, undefined, true);
+      return OK;
     case 'review-ended':
       return reviewEnded(db, cornerId, corner, transition, event);
     case 'merge-unconfirmed':
@@ -1342,16 +1357,13 @@ export async function claimCornerMergeAttempt(
     // No provider request belongs in this transaction.
     const gate = await cornerMergeGate(db, cornerId, { number: pr.number, headSha });
     if (!gate.open) return false;
-    // An express order is not re-gated behind the recorded checks verdict or
-    // which workflow state the run is sitting in; autonomous merge still is.
-    if (!gate.expressMergeOrdered && corner.lifecycle.checks !== 'passing') return false;
     const claimed = await db.query(
       `UPDATE corner_facts SET merge_attempt_head=$2,lifecycle=lifecycle-'mergeRecovery',updated_at=now()
-       WHERE corner_id=$1 AND (workflow_state='land' OR $3)
+       WHERE corner_id=$1 AND workflow_state='land'
          AND lifecycle->'pr'->>'headSha'=$2
          AND merge_attempt_head IS DISTINCT FROM $2
        RETURNING 1`,
-      [cornerId, headSha, gate.expressMergeOrdered],
+      [cornerId, headSha],
     );
     return claimed.rowCount > 0;
   });

@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -522,6 +522,78 @@ describe('runUpdateFunctionalProbe', () => {
       );
       expect(compare).not.toHaveBeenCalled();
     });
+  });
+
+  it('Reproduction PROBE-REFRESH-1: keeps a login the probe turn refreshed after removing the probe root', async () => {
+    // A Claude-shaped stub: during the prompt it refreshes the way Claude Code
+    // does, writing a temp file and renaming it over the credential link in
+    // $CLAUDE_CONFIG_DIR, then answers. No real credential is read.
+    const dir = await mkdtemp(join(tmpdir(), 'beeline-fake-claude-acp-'));
+    roots.push(dir);
+    const command = join(dir, 'claude-agent-acp');
+    await writeFile(
+      command,
+      `#!/usr/bin/env node
+const readline = require('node:readline');
+const fs = require('node:fs');
+const path = require('node:path');
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+readline.createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+  } else if (message.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'probe-session' } });
+  } else if (message.method === 'session/prompt') {
+    const credential = path.join(process.env.CLAUDE_CONFIG_DIR, '.credentials.json');
+    fs.writeFileSync(credential + '.tmp', process.env.FAKE_ROTATED_LOGIN);
+    fs.renameSync(credential + '.tmp', credential);
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'probe-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'READY' } } } });
+    send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } });
+  } else if (message.method === 'shutdown') {
+    process.exit(0);
+  }
+});
+`,
+    );
+    await chmod(command, 0o755);
+    const root = await mkdtemp(join(tmpdir(), 'beeline-probe-'));
+    roots.push(root);
+    const operatorHome = join(root, 'operator-home');
+    const operatorCredential = join(operatorHome, '.claude/.credentials.json');
+    const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+    const rotated = JSON.stringify({ claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 } });
+    await mkdir(join(operatorHome, '.claude'), { recursive: true });
+    await writeFile(operatorCredential, spent);
+
+    await expect(
+      runUpdateFunctionalProbe({
+        config: {
+          agentBinary: command,
+          agentKind: 'claude',
+          agentCommand: command,
+          agentArgs: [],
+          mcpBinary: '/fake-dev-mcp',
+          readonlyMcpCommand: '/fake-beeline-mcp',
+          agentEnv: { PATH: process.env.PATH ?? '', FAKE_ROTATED_LOGIN: rotated },
+          workspaceRoot: join(root, 'workspace'),
+          autoApprovePermissions: true,
+          accessPolicy: 'everyone',
+          operatorHome,
+          sharedSkills: [],
+        } as unknown as BodyConfig,
+        runtimeDir: join(root, 'runtime'),
+        releaseId: 'release-1',
+        sandboxRequired: false,
+        sessionTimeoutMs: 10_000,
+        turnTimeoutMs: 10_000,
+        retryDelayMs: 10,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ harness: 'claude', turnCompleted: true }));
+
+    // The probe root is gone; the rotated login must have reached the shared
+    // file instead of being deleted with it.
+    expect(await readFile(operatorCredential, 'utf8')).toBe(rotated);
   });
 
   it('fails, named, when the turn ends empty and pi left no record', async () => {

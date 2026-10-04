@@ -35,6 +35,7 @@ import {
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
   repairRoomAgentCredentialLinks,
+  writeBackRoomClaudeLogin,
 } from './agent-home.js';
 import {
   claimGrantedHostRoutes,
@@ -670,6 +671,21 @@ export class MonolithRoomTurnLoop {
    * A rotation is a fact about one live session, so the pin goes with it.
    */
   /**
+   * Claude Code may have refreshed its login during the prompt, detaching
+   * this Room's credential link. Share the rotated login now so other Rooms
+   * do not spend the old refresh token before this Room's next activation.
+   */
+  private async writeBackClaudeLogin(): Promise<void> {
+    if (this.options.config.agentKind !== 'claude' || !this.options.config.agentHomeRoot) return;
+    await writeBackRoomClaudeLogin({
+      root: this.options.config.agentHomeRoot,
+      operatorHome: this.options.config.operatorHome,
+    }).catch((error: unknown) => {
+      console.error(`[thin-core] monolith Room ${this.options.roomId} could not write back a refreshed Claude login:`, error);
+    });
+  }
+
+  /**
    * What this turn really cost and did, read at the moment its prompt settled.
    *
    * The token count is the harness's own (pi records it; every other harness
@@ -814,7 +830,7 @@ export class MonolithRoomTurnLoop {
         await repairRoomAgentCredentialLinks({
           root: this.options.config.agentHomeRoot,
           operatorHome: this.options.config.operatorHome,
-          keepNewerDetachedClaudeLogin: this.options.config.agentKind === 'claude',
+          writeBackNewerClaudeLogin: this.options.config.agentKind === 'claude',
         });
       }
       return this.sessionId;
@@ -1552,6 +1568,7 @@ export class MonolithRoomTurnLoop {
                     promptError = error;
                   }
                   this.turnMetrics = await this.captureTurnMetrics();
+                  await this.writeBackClaudeLogin();
                   const settledSteerTail = active.steerTail;
                   await settledSteerTail;
                   if (settledSteerTail !== active.steerTail) continue;

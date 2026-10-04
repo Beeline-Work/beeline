@@ -378,7 +378,7 @@ async function main(): Promise<void> {
       'the reconciled reviewer turn carries no approve_merge tool when the corner owner is unrecorded',
     );
 
-  console.log('# 5. Reproduction ZC-1: a completed PR has no check contexts or webhook');
+  console.log('# 5. Reproduction ZC-2: a completed PR has no check contexts or webhook');
   const objective = await systemLine(database, {
     roomId: ZERO_CHECK_CORNER,
     authorId: HUMAN,
@@ -417,16 +417,16 @@ async function main(): Promise<void> {
       roomId: ZERO_CHECK_CORNER,
       requestId: worker.turnRequestId,
       generationId: 'zero-check-worker',
-      text: 'https://github.com/owner/widgets/pull/3',
+      text: 'https://github.com/owner/widgets/pull/3\nReady for review.',
     },
     implementerToken,
   );
   const zeroCheckReviews = await reviewerCommands(ZERO_CHECK_CORNER);
   console.log(
-    `   worker completed PR #3; GitHub reported zero contexts; reviewer polled and got ${describe(zeroCheckReviews)}`,
+    `   Reproduction ZC-2: worker completed PR #3 with text after its URL; GitHub reported zero contexts; reviewer polled and got ${describe(zeroCheckReviews)}`,
   );
   if (!zeroCheckReviews.length)
-    failures.push('Reproduction ZC-1: no review command after a completed zero-check PR');
+    failures.push('Reproduction ZC-2: no review command after a completed zero-check PR');
 
   console.log('# 6. Reproduction MG-1: green is not merge permission without reviewer PASS');
   const beforeApproval = JSON.parse(await prChecksStatus({ pullRequest: 3 })) as {

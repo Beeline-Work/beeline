@@ -624,8 +624,8 @@ describe('PR-scoped check gate', () => {
 });
 
 describe('zero-check worker completion', () => {
-  /** The worker finishes its PR turn by posting the PR URL into the corner. */
-  async function finishPrTurn(baseSha: string) {
+  /** The worker finishes its turn after GitHub has registered the corner PR. */
+  async function finishPrTurn(baseSha: string, text = URL) {
     await new PhoneService(db, 'http://test').execute(
       'updateRoom',
       { roomId: R, reviewerAgentId: REVIEWER },
@@ -678,7 +678,7 @@ describe('zero-check worker completion', () => {
     );
     await daemon.execute(
       'postRoomMessage',
-      { roomId: C, requestId: worker!.turnRequestId, generationId: 'g1', text: URL },
+      { roomId: C, requestId: worker!.turnRequestId, generationId: 'g1', text },
       A,
     );
     const lifecycle = (
@@ -735,6 +735,38 @@ describe('zero-check worker completion', () => {
     });
     expect(after.reviewer).toEqual(['subscribed_event']);
     expect(after.worker).toEqual([]);
+  });
+
+  it.each([
+    `PR: ${URL}\nReady for review.`,
+    'Checks are still pending; nothing to push.',
+    '@owner the change is ready for review.',
+  ])('Reproduction ZC-2: dispatches no-CI review after reply %s', async (text) => {
+    rollupState = null;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    const after = await finishPrTurn(mainHead, text);
+    console.info(
+      `Reproduction ZC-2: zero contexts, worker completed; reviewer commands=${JSON.stringify(after.reviewer)}`,
+    );
+    expect(after.reviewer).toEqual(['subscribed_event']);
+    expect(after.lifecycle).toMatchObject({ checks: 'passing', checksSummary: { total: 0 } });
+    expect(after.worker).toEqual([]);
+    expect(await gate()).toMatchObject({ approvalPending: true, mergeAllowed: false });
+  });
+
+  it.each(['PENDING', 'FAILURE'])('keeps configured CI gated when checks are %s', async (state) => {
+    rollupState = state;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    const after = await finishPrTurn(mainHead, 'Ready for review.');
+    expect(after.reviewer).toEqual([]);
+    expect(after.lifecycle.checks).not.toBe('passing');
+    expect(await gate()).toMatchObject({
+      checks: state === 'PENDING' ? 'pending' : 'failed',
+      checkCount: 1,
+      mergeAllowed: false,
+    });
   });
 
   it('keeps waiting on a clean verdict GitHub computed against a stale base', async () => {

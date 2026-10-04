@@ -6,7 +6,7 @@ import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import AppDetailScreen from './app';
 
-const navigation = vi.hoisted(() => ({ back: vi.fn() }));
+const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn() }));
 const signIn = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock('expo-router', () => ({ router: navigation, useLocalSearchParams: () => ({ workspaceId: 'ws', viewerId: 'human-dani', appId: 'app-slack' }), useFocusEffect: (effect: () => void) => React.useEffect(effect, [effect]) }));
 vi.mock('@/buzz/app-sign-in', () => ({ openAppSignIn: signIn.open }));
@@ -35,6 +35,7 @@ beforeEach(() => {
   source.setApps([{ id: 'app-slack', key: 'slack', name: 'Slack', domain: 'slack.com', transport: 'composio', status: 'connected', accountLabel: 'lunchbox', workspaceName: 'Tubing Crew', useCount: 1, lastUse: { agentId: 'monarch', agentName: 'Monarch', roomId: 'launch', roomName: 'launch', usedAt: 60 * 60 * 10 + 3 * 60 } }]);
   setWorkbenchSource(source);
   navigation.back.mockClear();
+  navigation.push.mockClear();
   signIn.open.mockClear();
 });
 
@@ -45,6 +46,61 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 describe('App detail', () => {
+  it.each(['squire-api', 'squire-browser', 'registry-mcp'] as const)('Reproduction RUNWAY-1: retries Runway through its %s route', async (transport) => {
+    source.setApps([{ id: 'app-slack', key: 'runway', name: 'Runway', transport,
+      status: 'error', errorMessage: 'App sign-in is unavailable for this person', useCount: 0 }]);
+    source.beginAppSignIn = vi.fn().mockRejectedValue(new Error('App sign-in is unavailable for this person'));
+    const renderer = await render();
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })[0].props.children)
+      .toBe('Runway connects through your helper. Retry to ask your helper to finish connecting it.');
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'app-detail-connect' }).props.onPress();
+    });
+    const notice = renderer.root.findByProps({ testID: 'app-detail-connection-notice' }).props.children;
+    expect(notice).toBe('Continue connecting Runway in your chat with squire-box.');
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })).toHaveLength(0);
+    console.log(`Reproduction RUNWAY-1 ${transport}: browser sign-in calls=${vi.mocked(source.beginAppSignIn).mock.calls.length}; helper requests=${source.appRequests.length}; visible=${notice}`);
+    expect(source.beginAppSignIn).not.toHaveBeenCalled();
+    expect(source.appRequests).toEqual([{ app: 'Runway', helperId: 'helper-squire-box', reconnect: true }]);
+    expect(signIn.open).not.toHaveBeenCalled();
+  });
+
+  it('offers Trusty Squire setup when it is the missing prerequisite for Runway', async () => {
+    source.setApps([{ id: 'app-slack', key: 'runway', name: 'Runway', transport: 'squire-api',
+      status: 'error', errorMessage: 'Connect Trusty Squire in Workbench first', useCount: 0 }]);
+    source.beginAppSignIn = vi.fn();
+    const renderer = await render();
+    const button = renderer.root.findByProps({ testID: 'app-detail-connect' });
+    expect(button.props.label).toBe('Connect Trusty Squire');
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })[0].props.children)
+      .toBe('Runway connects through Trusty Squire. Connect Trusty Squire, then return here to connect Runway.');
+    await act(async () => { button.props.onPress(); });
+    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
+      params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'trusty-squire' } });
+    expect(source.appRequests).toHaveLength(0);
+    expect(source.beginAppSignIn).not.toHaveBeenCalled();
+  });
+
+  it('asks for the assigned Runway helper to come online without switching machines', async () => {
+    source.setApps([{ id: 'app-slack', key: 'runway', name: 'Runway', transport: 'squire-api',
+      helperId: 'helper-office-mini', helperName: 'office-mini', status: 'error', useCount: 0 }]);
+    const renderer = await render();
+    await act(async () => { renderer.root.findByProps({ testID: 'app-detail-connect' }).props.onPress(); });
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })[0].props.children)
+      .toBe('Bring office-mini online, then retry Runway.');
+    expect(source.appRequests).toHaveLength(0);
+  });
+
+  it('uses a fresh browser link when the server resolves the explicit retry to managed sign-in', async () => {
+    source.setApps([{ id: 'app-slack', key: 'runway', name: 'Runway', transport: 'squire-api',
+      status: 'error', useCount: 0 }]);
+    source.connectApp = vi.fn().mockResolvedValue({ appId: 'app-slack', authorizationUrl: 'https://example.test/fresh' });
+    const renderer = await render();
+    await act(async () => { renderer.root.findByProps({ testID: 'app-detail-connect' }).props.onPress(); });
+    expect(signIn.open).toHaveBeenCalledWith('https://example.test/fresh', {
+      workspaceId: 'ws', viewerId: 'human-dani', appId: 'app-slack',
+    });
+  });
   it('lets its last item scroll clear of the system navigation bar', async () => {
     safeArea.bottom = 48;
     try {

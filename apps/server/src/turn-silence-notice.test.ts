@@ -94,7 +94,7 @@ describe('first-silence notice', () => {
     );
     expect(result).toMatchObject({ hiccupRestart: true, hiccupAttempt: 1 });
     expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy could not answer · provider error 429 concurrency_limit. Resending your message.',
+      text: "@candy could not answer · its provider is failing; switch its model in the agent's settings. provider error 429 concurrency_limit. Resending your message.",
       silence: 'hiccup',
       state: 'failed',
     });

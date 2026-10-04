@@ -223,7 +223,7 @@ Create an assignment a fresh session can execute without the parent transcript. 
   - \`## User stories\`: what this enables, one per line as "a person who does X sees Y". Only stories traceable to the quoted Intent; never import a plan, a teammate's suggestion, or your own idea as a story. Keep unaffected lines as they are across revisions.
   - \`## Non-goals\`: explicit exclusions.
   - \`## Risks\`: what could go wrong, and for whom.
-  - \`## References\`: each reference or mock with what it is and whose call it is; the mock posted in this outline is the reviewer's acceptance reference, not any other optional or agent-generated mock.
+  - \`## References\`: each reference or mock with what it is and whose call it is; the mock posted here (DESIGN.md, else existing app styles) is the reviewer's acceptance reference, not any other optional or agent-generated mock.
   Add implementation guidance under further headings when it helps.
 - files (\`attachments\`): the Room files the worker needs, each with its purpose and whether it is required.
 - \`approval\`: one human Room message ID. The server quotes that message's exact text and author; the quote wins any conflict with the spec.

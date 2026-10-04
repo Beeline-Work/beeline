@@ -282,6 +282,27 @@ describe('SurfaceGlyphLoader', () => {
   });
 });
 
+describe('message source locating overlay', () => {
+  it('paints the surface-size glyph above "Locating message…", not the inline thinking cell', () => {
+    const source = readFileSync(
+      path.join(SOURCES_ROOT, 'app/(app)/beeline/chat/_chat-surface.tsx'),
+      'utf8',
+    );
+    const loader = source.match(
+      /<SurfaceGlyphLoader\b([^>]*)testID="message-source-locating-glyph"[^>]*\/>/,
+    );
+    expect(loader, 'locating overlay mounts SurfaceGlyphLoader').not.toBeNull();
+    const compact = /\bcompact\b/.test(loader![0]);
+    const renderer = render(
+      React.createElement(SurfaceGlyphLoader, {
+        compact,
+        testID: 'message-source-locating-glyph',
+      }),
+    );
+    expect(renderer.root.findByType('Svg').props.width).toBe(SURFACE_GLYPH_SIZE);
+  });
+});
+
 describe('Room loading boundary', () => {
   it('paints only after the native splash hands off to a loading Room deck', async () => {
     const { RoomDeckLoadingView } = await import('./RoomDeckLoadingView');

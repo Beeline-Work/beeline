@@ -6388,7 +6388,7 @@ export function BuzzChatSurface({
                   style={styles.messageSourceLocating}
                   testID="message-source-locating"
                 >
-                  <SurfaceGlyphLoader compact testID="message-source-locating-glyph" />
+                  <SurfaceGlyphLoader testID="message-source-locating-glyph" />
                   <Text style={styles.messageSourceLocatingText}>Locating message…</Text>
                 </View>
               )}

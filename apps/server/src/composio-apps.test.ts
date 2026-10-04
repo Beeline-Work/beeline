@@ -106,17 +106,18 @@ describe('managed app provider boundary', () => {
   const LINKED = { redirect_url: 'https://app.composio.dev/connect/fixture',
     connected_account_id: ACCOUNT, expires_at: new Date(Date.now() + 600_000).toISOString() };
   const config = (id: string, overrides: Record<string, unknown> = {}) => ({ id,
-    toolkit: { slug: 'youtube' }, auth_scheme: 'OAUTH2', is_composio_managed: false,
+    toolkit: { slug: 'notion' }, auth_scheme: 'OAUTH2', is_composio_managed: false,
     status: 'ENABLED', ...overrides });
   const managed = config('ac_managed', { is_composio_managed: true });
 
-  function authFixture(items: unknown[], toolkit: Record<string, unknown> = { slug: 'youtube' }) {
+  function authFixture(items: unknown[], toolkit: Record<string, unknown> = { slug: 'notion' }) {
+    const slug = String(toolkit.slug);
     const calls: { method: string; url: URL; body?: Record<string, unknown> }[] = [];
     const transport = vi.fn(async (url: URL | string, init?: RequestInit) => {
       const parsed = new URL(String(url));
       const method = init?.method ?? 'GET';
       calls.push({ method, url: parsed, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
-      if (parsed.pathname === '/api/v3/toolkits/youtube') return json(toolkit);
+      if (parsed.pathname === `/api/v3/toolkits/${slug}`) return json(toolkit);
       if (parsed.pathname === '/api/v3/toolkits/missing') return json({}, 404);
       if (parsed.pathname === '/api/v3/auth_configs' && method === 'GET') return json({ items });
       if (parsed.pathname === '/api/v3/auth_configs' && method === 'POST') return json({ auth_config: {
@@ -126,7 +127,7 @@ describe('managed app provider boundary', () => {
     });
     const provider = new ComposioApps('fixture-only', transport as typeof fetch);
     const linkedWith = async () => {
-      await provider.link(PERSON, 'youtube');
+      await provider.link(PERSON, slug);
       return calls.find((call) => call.url.pathname.endsWith('/connected_accounts/link'))?.body?.auth_config_id;
     };
     return { provider, calls, linkedWith };
@@ -138,7 +139,7 @@ describe('managed app provider boundary', () => {
       config('ac_custom', { created_at: '2026-09-29T00:00:00Z' })]);
     await expect(fixture.linkedWith()).resolves.toBe('ac_custom');
     const listed = fixture.calls.find((call) => call.url.pathname === '/api/v3/auth_configs');
-    expect(listed?.url.searchParams.get('toolkit_slug')).toBe('youtube');
+    expect(listed?.url.searchParams.get('toolkit_slug')).toBe('notion');
     expect(listed?.url.searchParams.has('is_composio_managed')).toBe(false);
     expect(fixture.calls.some((call) => call.method === 'POST' &&
       call.url.pathname === '/api/v3/auth_configs')).toBe(false);
@@ -156,18 +157,66 @@ describe('managed app provider boundary', () => {
       config('ac_api_key', { auth_scheme: 'API_KEY' })]);
     await expect(fixture.linkedWith()).resolves.toBe('ac_created');
     expect(fixture.calls.find((call) => call.method === 'POST' &&
-      call.url.pathname === '/api/v3/auth_configs')?.body).toEqual({ toolkit: { slug: 'youtube' },
+      call.url.pathname === '/api/v3/auth_configs')?.body).toEqual({ toolkit: { slug: 'notion' },
       auth_config: { type: 'use_composio_managed_auth', credentials: {}, restrict_to_following_tools: [] } });
   });
 
   it('reports OAuth support from managed schemes or an enabled custom OAuth2 config', async () => {
-    const managedToolkit = authFixture([], { slug: 'youtube', composio_managed_auth_schemes: ['OAUTH2'] });
-    await expect(managedToolkit.provider.supportsOAuth('youtube')).resolves.toBe(true);
-    expect(managedToolkit.calls.map((call) => call.url.pathname)).toEqual(['/api/v3/toolkits/youtube']);
-    await expect(authFixture([config('ac_custom')]).provider.supportsOAuth('youtube')).resolves.toBe(true);
+    const managedToolkit = authFixture([], { slug: 'notion', composio_managed_auth_schemes: ['OAUTH2'] });
+    await expect(managedToolkit.provider.supportsOAuth('notion')).resolves.toBe(true);
+    expect(managedToolkit.calls.map((call) => call.url.pathname)).toEqual(['/api/v3/toolkits/notion']);
+    await expect(authFixture([config('ac_custom')]).provider.supportsOAuth('notion')).resolves.toBe(true);
     await expect(authFixture([config('ac_disabled', { status: 'DISABLED' }),
-      config('ac_api_key', { auth_scheme: 'API_KEY' })]).provider.supportsOAuth('youtube')).resolves.toBe(false);
+      config('ac_api_key', { auth_scheme: 'API_KEY' })]).provider.supportsOAuth('notion')).resolves.toBe(false);
     await expect(authFixture([config('ac_custom')]).provider.supportsOAuth('missing')).resolves.toBe(false);
+  });
+
+  describe('YouTube signs in only through the custom OAuth2 config', () => {
+    const youtube = (id: string, overrides: Record<string, unknown> = {}) =>
+      config(id, { toolkit: { slug: 'youtube' }, ...overrides });
+    const managedToolkit = { slug: 'youtube', composio_managed_auth_schemes: ['OAUTH2'] };
+    const created = (calls: { method: string; url: URL }[]) => calls.some((call) =>
+      call.method === 'POST' && call.url.pathname === '/api/v3/auth_configs');
+
+    it('links and reports support through the custom config', async () => {
+      const fixture = authFixture([youtube('ac_managed', { is_composio_managed: true }),
+        youtube('ac_custom')], managedToolkit);
+      await expect(fixture.provider.supportsOAuth('youtube')).resolves.toBe(true);
+      await expect(fixture.linkedWith()).resolves.toBe('ac_custom');
+      expect(created(fixture.calls)).toBe(false);
+    });
+
+    it('never uses an existing managed config', async () => {
+      const fixture = authFixture([youtube('ac_managed', { is_composio_managed: true })], managedToolkit);
+      await expect(fixture.provider.supportsOAuth('youtube')).resolves.toBe(false);
+      await expect(fixture.linkedWith()).rejects.toThrow('App sign-in is not available for this app yet');
+      expect(fixture.calls.some((call) => call.url.pathname.endsWith('/connected_accounts/link'))).toBe(false);
+      expect(created(fixture.calls)).toBe(false);
+    });
+
+    it('never creates a managed config when none exists', async () => {
+      const fixture = authFixture([youtube('ac_disabled', { status: 'DISABLED' })], managedToolkit);
+      await expect(fixture.provider.supportsOAuth('youtube')).resolves.toBe(false);
+      await expect(fixture.linkedWith()).rejects.toThrow('App sign-in is not available for this app yet');
+      expect(created(fixture.calls)).toBe(false);
+    });
+
+    it('leaves YouTube out of search until the custom config exists', async () => {
+      const search = (items: unknown[]) => new ComposioApps('fixture-only', vi.fn(async (url: URL | string) => {
+        const parsed = new URL(String(url));
+        if (parsed.pathname === '/api/v3/toolkits') return json({ items: [
+          { slug: 'youtube', name: 'YouTube' }, { slug: 'notion', name: 'Notion' }] });
+        if (parsed.pathname === '/api/v3/auth_configs') {
+          expect(parsed.searchParams.get('toolkit_slug')).toBe('youtube');
+          return json({ items });
+        }
+        throw new Error('unexpected request');
+      }) as typeof fetch).searchToolkits('');
+      await expect(search([youtube('ac_managed', { is_composio_managed: true })])).resolves.toEqual([
+        { slug: 'notion', name: 'Notion' }]);
+      await expect(search([youtube('ac_custom')])).resolves.toEqual([
+        { slug: 'youtube', name: 'YouTube' }, { slug: 'notion', name: 'Notion' }]);
+    });
   });
 
   it('maps Google product names to separate managed OAuth toolkits', () => {

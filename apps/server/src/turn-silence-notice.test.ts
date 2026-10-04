@@ -6,7 +6,7 @@ import { DaemonService } from './daemon-service.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import type { CommittedTurnLiveRow } from './live.js';
-import { noteFirstSilence } from './turn-silence-notice.js';
+import { noteFirstSilence, reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -907,5 +907,94 @@ describe('silence detector ownership', () => {
       generation_id: 'g2',
     });
     expect(await failureLine(database, requestId)).toBeUndefined();
+  });
+});
+
+describe('expired command lease sweep', () => {
+  let database: PgliteDatabase;
+  beforeEach(async () => {
+    database = await fixture();
+  });
+  afterEach(async () => {
+    await database.close();
+  });
+
+  it('terminates a long-expired claim with no human trigger, which noteFirstSilence cannot reach', async () => {
+    const requestId = '1'.repeat(63) + 'c';
+    // An agent-to-agent dispatch: the source message is agent-authored, so
+    // noteFirstSilence's own trigger lookup (which requires a human author)
+    // never frees this command no matter how long it stalls.
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy go')`,
+      [requestId, ROOM, AGENT],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: requestId,
+      reason: 'agent_tag',
+    });
+    await claimAgentCommand(database, ROOM, AGENT, command!.id, 'stale-gen');
+    await database.query(
+      `UPDATE agent_commands SET lease_expires_at=now()-interval '1 hour' WHERE id=$1`,
+      [command!.id],
+    );
+
+    const live = new LiveHub();
+    const toHelper: Array<{ roomId: string; reason: string }> = [];
+    live.subscribeAll((event) => {
+      if (event.type === 'invalidate' && event.targetAgentId === AGENT)
+        toHelper.push({ roomId: event.roomId, reason: event.reason });
+    });
+    expect(
+      await noteFirstSilence(database, live, {
+        roomId: ROOM,
+        requestId,
+        agentId: AGENT,
+        generationId: 'stale-gen',
+        reason: 'the turn stalled',
+        reasonKind: 'hiccup',
+        stalled: true,
+      }),
+    ).toMatchObject({ hiccupRestart: false });
+    expect(await commandState(database, command!.id)).toMatchObject({ state: 'claimed' });
+
+    const terminated = await reclaimExpiredCommandLeases(database, live);
+    expect(terminated).toBe(1);
+    expect(await commandState(database, command!.id)).toMatchObject({ state: 'complete' });
+    expect(
+      (
+        await database.query<{ status: string }>(
+          `SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
+          [ROOM, AGENT, requestId],
+        )
+      ).rows[0]?.status,
+    ).toBe('failed');
+    expect(toHelper).toEqual([{ roomId: ROOM, reason: 'postgres:agent_commands' }]);
+
+    // Idempotent: nothing left to terminate on a second pass.
+    expect(await reclaimExpiredCommandLeases(database, live)).toBe(0);
+  });
+
+  it('leaves a freshly claimed command alone', async () => {
+    const requestId = '1'.repeat(63) + 'd';
+    const command = await ask(database, requestId);
+    expect(await reclaimExpiredCommandLeases(database, new LiveHub())).toBe(0);
+    expect(await commandState(database, command.id)).toMatchObject({ state: 'claimed' });
+  });
+
+  it('never touches a command already reclaimed under a new generation', async () => {
+    const requestId = '1'.repeat(63) + 'g';
+    const command = await ask(database, requestId);
+    await database.query(
+      `UPDATE agent_commands SET lease_expires_at=now()-interval '1 hour' WHERE id=$1`,
+      [command.id],
+    );
+    await claimAgentCommand(database, ROOM, AGENT, command.id, 'g-fresh');
+    expect(await reclaimExpiredCommandLeases(database, new LiveHub())).toBe(0);
+    expect(await commandState(database, command.id)).toMatchObject({
+      state: 'claimed',
+      generation_id: 'g-fresh',
+    });
   });
 });

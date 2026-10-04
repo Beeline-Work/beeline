@@ -1769,6 +1769,13 @@ export class MonolithRoomTurnLoop {
             `[thin-core] monolith Room ${this.options.roomId} receipt heartbeat failed:`,
             error,
           ),
+        () => {
+          console.warn(
+            `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} dropped: ` +
+              'the server revoked its output authority',
+          );
+          this.stopTurn(item.id);
+        },
       );
       startTraceStats();
       await api.execute('postAgentTurnReceipt', {

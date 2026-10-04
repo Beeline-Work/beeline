@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
 import { TURN_RECEIPT_HEARTBEAT_MS, withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 
 function deferred<T>() {
@@ -61,5 +61,54 @@ describe('turn receipt heartbeat', () => {
     heartbeat.resolve({ id: 'heartbeat', createdAt: 2 });
     await running;
     expect(settled).toBe(true);
+  });
+
+  it('calls onAuthorityLost once a heartbeat is permanently rejected, without stopping retries of other errors', async () => {
+    vi.useFakeTimers();
+    const task = deferred<string>();
+    const execute = vi.fn(async () => {
+      throw new DaemonApiError(
+        'monolith daemon request failed (403: command output authority rejected)',
+        403,
+        false,
+        'command output authority rejected',
+      );
+    });
+    const onHeartbeatError = vi.fn();
+    const onAuthorityLost = vi.fn();
+    const running = withTurnReceiptHeartbeat(
+      { execute } as unknown as Pick<DaemonApiClient, 'execute'>,
+      { agentId: 'agent', roomId: 'room', requestId: 'request', generationId: 'generation' },
+      () => task.promise,
+      onHeartbeatError,
+      onAuthorityLost,
+    );
+    await vi.advanceTimersByTimeAsync(TURN_RECEIPT_HEARTBEAT_MS);
+    expect(onHeartbeatError).toHaveBeenCalledTimes(1);
+    expect(onAuthorityLost).toHaveBeenCalledTimes(1);
+
+    task.resolve('dropped');
+    await expect(running).resolves.toBe('dropped');
+  });
+
+  it('never calls onAuthorityLost for a transient heartbeat failure', async () => {
+    vi.useFakeTimers();
+    const task = deferred<string>();
+    const execute = vi.fn(async () => {
+      throw new DaemonApiError('monolith daemon request failed (503: unavailable)', 503, true);
+    });
+    const onAuthorityLost = vi.fn();
+    const running = withTurnReceiptHeartbeat(
+      { execute } as unknown as Pick<DaemonApiClient, 'execute'>,
+      { agentId: 'agent', roomId: 'room', requestId: 'request', generationId: 'generation' },
+      () => task.promise,
+      vi.fn(),
+      onAuthorityLost,
+    );
+    await vi.advanceTimersByTimeAsync(TURN_RECEIPT_HEARTBEAT_MS * 2);
+    expect(onAuthorityLost).not.toHaveBeenCalled();
+
+    task.resolve('done');
+    await expect(running).resolves.toBe('done');
   });
 });

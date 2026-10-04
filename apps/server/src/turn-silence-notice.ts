@@ -41,6 +41,90 @@ export function turnSilenceLockKey(roomId: string, requestId: string, agentId: s
   return `silence:${roomId}:${requestId}:${agentId}`;
 }
 
+/**
+ * A claimed command's lease already makes it reclaimable by any helper that
+ * next asks for this room's commands (`claimAgentCommand` allows it the
+ * moment `lease_expires_at<=now()`), but nothing ever asks again for a room
+ * or corner whose live loop stopped watching it. Two paths that would
+ * otherwise notice miss it entirely: an agent-to-agent dispatch
+ * (`agent_tag`, `subscribed_event`) has no human-authored source message
+ * for `noteFirstSilence`'s own trigger lookup to report against, so the
+ * ordinary 90-second stall path calls `reassignFailedCornerReviewer` /
+ * `reassignFailedWorkflowRole` but never reaches `inscribeSilence` to free
+ * the command itself; and a corner reviewer reassignment with no configured
+ * fallback leaves the original claim exactly where it was even when it does
+ * run. Left alone, such a command sits `claimed` with an expired lease
+ * forever, and a later arrival in the same room can be forced to wait
+ * behind it the moment some helper claims it again. This sweep terminates
+ * it outright on the lease alone -- no human trigger, no fallback reviewer,
+ * and no live loop required -- so a lane can never stay blocked waiting on
+ * an execution that is already gone. Runs on the background reconciliation
+ * cycle, well past `COMMAND_LEASE_SECONDS` so a heartbeat's own transient
+ * gap is never mistaken for abandonment.
+ */
+export const EXPIRED_LEASE_SWEEP_GRACE_MS = 5 * 60_000;
+
+export async function reclaimExpiredCommandLeases(
+  database: SqlDatabase,
+  live: LiveHub,
+  graceMs = EXPIRED_LEASE_SWEEP_GRACE_MS,
+): Promise<number> {
+  const stuck = await database.query<{
+    id: string;
+    room_id: string;
+    agent_id: string;
+    turn_request_id: string;
+    generation_id: string | null;
+  }>(
+    `SELECT id,room_id,agent_id,turn_request_id,generation_id FROM agent_commands
+     WHERE state='claimed' AND action IN ('input','resume')
+       AND lease_expires_at<now()-make_interval(secs => $1::double precision/1000)
+     ORDER BY lease_expires_at LIMIT 200`,
+    [graceMs],
+  );
+  let terminated = 0;
+  for (const command of stuck.rows) {
+    await database.transaction((db) =>
+      reassignFailedWorkflowRole(db, {
+        roomId: command.room_id,
+        requestId: command.turn_request_id,
+        agentId: command.agent_id,
+      }),
+    );
+    await reassignFailedCornerReviewer(database, {
+      roomId: command.room_id,
+      requestId: command.turn_request_id,
+      agentId: command.agent_id,
+    });
+    const completed = await database.transaction(async (db) => {
+      const result = await db.query(
+        `UPDATE agent_commands SET state='complete',completed_at=now()
+         WHERE id=$1 AND state='claimed' AND lease_expires_at<now()`,
+        [command.id],
+      );
+      if (!result.rowCount) return false;
+      await db.query(
+        `UPDATE agent_turns SET status='failed',
+           failure_reason='the command lease expired with no live execution',created_at=now()
+         WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'
+           AND generation_id IS NOT DISTINCT FROM $4`,
+        [command.room_id, command.agent_id, command.turn_request_id, command.generation_id],
+      );
+      return true;
+    });
+    if (!completed) continue;
+    terminated += 1;
+    live.publish({
+      type: 'invalidate',
+      roomId: command.room_id,
+      reason: 'postgres:agent_commands',
+      targetAgentId: command.agent_id,
+      agentId: command.agent_id,
+    });
+  }
+  return terminated;
+}
+
 export async function noteFirstSilence(
   database: SqlDatabase,
   live: LiveHub,

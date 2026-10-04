@@ -25,7 +25,12 @@ Tap calls `beginAppSignIn({appId})`; the returned `authorizationUrl` is opened
 in the system browser and is never written into Room history. The hosted
 provider returns through `GET /v1/apps/oauth/verify?session_uri=…`, which
 redirects to `beeline://beeline/settings/workbench/connect-signin` with
-`appSignInSession`. The signed-in phone then calls
+`appSignInSession`. Beeline web cannot open that scheme, so it opens the link
+in the same tab through `GET /v1/apps/oauth/start?authorization=…&return=<web
+origin>`. That accepts only a provider sign-in link and an origin listed in
+`BEELINE_WEB_APP_ORIGINS`, and sets a short-lived cookie scoped to
+`/v1/apps/oauth`. With that cookie the verifier redirects to
+`<web origin>/beeline/settings/workbench/connect-signin` instead. The signed-in client then calls
 `completeAppSignIn({sessionUri: appSignInSession, appId})` using the app ID stored
 when the phone opened the link. The server checks that the app belongs to the
 returning person and is pending before redeeming the session, then verifies

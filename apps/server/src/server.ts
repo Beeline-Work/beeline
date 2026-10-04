@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
+import { isAppSignInLink } from './composio-apps.js';
 import { bearer, type TokenAuth } from './auth.js';
 import {
   AGENT_OWNER_AUTHORITY_MESSAGE,
@@ -126,6 +127,20 @@ export interface ServerOptions {
   phoneReadLimits?: PhoneReadLimits;
   /** Protocol ping interval for helper sockets; tests shorten it. */
   liveHeartbeatMs?: number;
+}
+
+const appSignInReturnCookie = 'beeline_app_sign_in_return';
+
+/** The configured web origin this browser started app sign-in from, if any. */
+function appSignInWebOrigin(request: IncomingMessage, options: ServerOptions): string | undefined {
+  for (const part of (request.headers.cookie ?? '').split(';')) {
+    const [name, ...value] = part.trim().split('=');
+    if (name !== appSignInReturnCookie) continue;
+    let origin: string;
+    try { origin = decodeURIComponent(value.join('=')); } catch { return undefined; }
+    return options.webAppOrigins?.includes(origin) ? origin : undefined;
+  }
+  return undefined;
 }
 
 function applyWebAppCors(
@@ -1024,10 +1039,43 @@ async function route(
     }
     return;
   }
+  if (method === 'GET' && url.pathname === '/v1/apps/oauth/start') {
+    // Beeline web opens the provider through here so the verifier below can
+    // send this browser back to the web app instead of the native app scheme.
+    const authorization = url.searchParams.get('authorization') ?? '';
+    const webOrigin = url.searchParams.get('return') ?? '';
+    if (!isAppSignInLink(authorization) || !options.webAppOrigins?.includes(webOrigin)) {
+      json(response, 400, { error: 'Invalid app sign-in start' });
+      return;
+    }
+    response.writeHead(302, {
+      location: authorization,
+      'set-cookie': `${appSignInReturnCookie}=${encodeURIComponent(webOrigin)}; Path=/v1/apps/oauth; Max-Age=900; HttpOnly; Secure; SameSite=Lax`,
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff',
+    });
+    response.end();
+    return;
+  }
   if (method === 'GET' && url.pathname === '/v1/apps/oauth/verify') {
     const sessionUri = url.searchParams.get('session_uri');
     if (!sessionUri || sessionUri.length > 4096) {
       json(response, 400, { error: 'Invalid app sign-in session' });
+      return;
+    }
+    const webOrigin = appSignInWebOrigin(request, options);
+    if (webOrigin) {
+      const webReturn = new URL('/beeline/settings/workbench/connect-signin', webOrigin);
+      webReturn.searchParams.set('appSignInSession', sessionUri);
+      response.writeHead(302, {
+        location: webReturn.toString(),
+        'set-cookie': `${appSignInReturnCookie}=; Path=/v1/apps/oauth; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        'x-content-type-options': 'nosniff',
+      });
+      response.end();
       return;
     }
     const destination = new URL('beeline://beeline/settings/workbench/connect-signin');

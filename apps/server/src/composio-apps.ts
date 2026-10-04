@@ -16,6 +16,17 @@ function requiredString(value: unknown): string {
 }
 
 /** Names in the Workbench stay product names; these are server-side toolkit slugs. */
+/** A hosted sign-in link the provider issued; nothing else may be opened as one. */
+export function isAppSignInLink(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' &&
+      (parsed.hostname === 'composio.dev' || parsed.hostname.endsWith('.composio.dev'));
+  } catch {
+    return false;
+  }
+}
+
 export function composioToolkitForApp(key: string): string {
   const known: Record<string, string> = {
     calendar: 'googlecalendar', drive: 'googledrive', docs: 'googledocs',
@@ -445,10 +456,7 @@ export class ComposioApps {
       auth_config_id: authConfigId, user_id: userId,
     });
     const url = requiredString(linked.redirect_url);
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:' ||
-      !(parsed.hostname === 'composio.dev' || parsed.hostname.endsWith('.composio.dev')))
-      throw new Error('App provider returned an invalid sign-in link');
+    if (!isAppSignInLink(url)) throw new Error('App provider returned an invalid sign-in link');
     const expiresAt = new Date(requiredString(linked.expires_at));
     if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())
       throw new Error('App provider returned an expired sign-in link');

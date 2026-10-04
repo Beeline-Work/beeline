@@ -211,6 +211,69 @@ async function writeChoiceCard(
   ]);
 }
 
+/**
+ * Close every still-open choice card a workflow run left behind, and mark
+ * each closed card on its message. A gate's choice is otherwise stranded the
+ * moment its run leaves the gate by an agent's handoff, or ends at all: the
+ * open row outlives the run and `postRoomChoice`'s one-open-choice rule then
+ * refuses every later gate in the same Room (the production stall this
+ * fixes). Only open rows are touched, so an already-answered gate card keeps
+ * its own answer. Returns how many choices were closed.
+ */
+export async function closeRunChoices(
+  database: SqlDatabase,
+  roomId: string,
+  runId: string,
+): Promise<number> {
+  const closed = await database.query<{ message_id: string }>(
+    `UPDATE room_choices choice SET status='closed'
+     FROM messages message
+     WHERE choice.message_id=message.id AND choice.room_id=$1
+       AND message.card->>'runId'=$2 AND choice.status='open'
+     RETURNING choice.message_id`,
+    [roomId, runId],
+  );
+  if (!closed.rowCount) return 0;
+  await database.query(
+    `UPDATE messages SET card=card || '{"status":"closed"}'::jsonb WHERE id=ANY($1::text[])`,
+    [closed.rows.map((row) => row.message_id)],
+  );
+  return closed.rowCount;
+}
+
+/**
+ * Close every open choice whose card belongs to a workflow run that has
+ * ended (its start card no longer carries `active=true`) or vanished. The
+ * one-open-choice rule alone cannot recover a row a pre-fix run stranded
+ * open, because `room_choices_open_agent_room` is a partial unique index on
+ * `status='open'`: the row must actually be closed, not merely skipped. This
+ * is the migration-free cleanup — idempotent, and it covers every past path
+ * that ended a run rather than only the ones a one-time migration could
+ * enumerate. Returns how many choices were closed.
+ */
+async function closeEndedRunChoices(
+  database: SqlDatabase,
+  input: { roomId: string; agentId: string },
+): Promise<number> {
+  const closed = await database.query<{ message_id: string }>(
+    `UPDATE room_choices choice SET status='closed'
+     FROM messages message
+     LEFT JOIN messages run ON run.id=(message.card->>'runId') AND run.card_type='workflow-handoff'
+     WHERE choice.message_id=message.id AND choice.room_id=$1 AND choice.agent_id=$2
+       AND choice.status='open'
+       AND message.card->>'runId' IS NOT NULL
+       AND COALESCE(run.card->>'active','false') <> 'true'
+     RETURNING choice.message_id`,
+    [input.roomId, input.agentId],
+  );
+  if (!closed.rowCount) return 0;
+  await database.query(
+    `UPDATE messages SET card=card || '{"status":"closed"}'::jsonb WHERE id=ANY($1::text[])`,
+    [closed.rows.map((row) => row.message_id)],
+  );
+  return closed.rowCount;
+}
+
 export async function postRoomChoice(
   database: SqlDatabase,
   input: {
@@ -258,6 +321,12 @@ export async function postRoomChoice(
       );
     }
   }
+  // A gate's card left open when its run ended would refuse this insert
+  // forever: both this one-open-choice rule and the
+  // `room_choices_open_agent_room` partial unique index key on
+  // `status='open'`. Close those rows first — the runtime equivalent of a
+  // one-time cleanup migration, covering any past path that ended a run.
+  await closeEndedRunChoices(database, { roomId: input.roomId, agentId: input.agentId });
   const open = (
     await database.query<{ id: string }>(
       `SELECT id FROM room_choices WHERE agent_id=$1 AND room_id=$2 AND status='open' LIMIT 1`,

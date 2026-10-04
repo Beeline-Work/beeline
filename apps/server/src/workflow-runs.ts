@@ -22,7 +22,7 @@ import { applySkillRevision, assertSkillTextSafe } from './institutional-skills.
 import type { AfterCommit } from './institutional-memory-embeddings.js';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { firstHealthyAgent, nextHealthyAgent } from './agent-health.js';
-import { postRoomChoice } from './room-choice.js';
+import { closeRunChoices, postRoomChoice } from './room-choice.js';
 import { ensureSystemIdentity, identitySubject, systemLine } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -805,6 +805,12 @@ export async function handoff(
     if (!nextState) throw new Error('workflow contract is internally inconsistent');
     const isTerminal = nextState.kind === 'terminal';
     const isGate = nextState.kind === 'gate';
+    // Leaving a gate (by handoff instead of the card) or ending the run must
+    // not strand that gate's open choice: it would refuse every later gate in
+    // this Room. The card-answer path settles its own choice already.
+    if (state.kind === 'gate' || isTerminal) {
+      await closeRunChoices(db, command.room_id, input.runId);
+    }
     const roleBindings = { ...run.roleBindings };
     const nextRole = isTerminal ? undefined : (nextState as WorkflowHandoffState | WorkflowGateState).role;
     const nextResolution = nextRole

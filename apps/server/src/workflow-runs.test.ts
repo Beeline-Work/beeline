@@ -918,6 +918,83 @@ describe('handoff', () => {
     })).rejects.toThrow(`You are already in run ${runId} of corner.`);
   });
 
+  /** Drive a fresh run from `implement` to the open `human_approve` gate; returns its choice id. */
+  async function driveToApprovalGate(runId: string): Promise<string> {
+    await handoff(database, await commandFor(IMPLEMENTER), {
+      runId, outcome: 'pushed', contents: { summary: 'x', prUrl: 'y' },
+    });
+    await handoff(database, await commandFor(IMPLEMENTER), {
+      runId, outcome: 'passing', contents: { headSha: 'abc' },
+    });
+    await handoff(database, await commandFor(REVIEWER), {
+      runId, outcome: 'approved', contents: { verdict: 'approve', notes: 'lgtm' },
+    });
+    return (
+      await database.query<{ id: string }>(
+        `SELECT id FROM room_choices WHERE room_id=$1 AND agent_id=$2 AND status='open'`,
+        [ROOM, APPROVER],
+      )
+    ).rows[0]!.id;
+  }
+
+  async function startSecondRun(): Promise<string> {
+    const start = await commandFor(IMPLEMENTER);
+    return (
+      await startWorkflow(database, start, {
+        name: 'corner',
+        roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
+      })
+    ).runId;
+  }
+
+  it('closes a gate choice left open by a handoff and lets a later run reach the gate', async () => {
+    // Run 1: implement -> checks -> review -> human_approve, then leave the
+    // gate by the bound agent's handoff (not the card) and land.
+    const { runId: firstRun } = await startedRun();
+    const firstGate = await driveToApprovalGate(firstRun);
+    const landed = await handoff(database, await commandFor(APPROVER), {
+      runId: firstRun, outcome: 'approved', contents: { decision: 'approved' },
+    });
+    expect(landed).toMatchObject({ state: 'land', status: 'done' });
+    expect(
+      (await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [firstGate]))
+        .rows[0]?.status,
+    ).toBe('closed');
+
+    // Run 2 reaches the same gate. Before the fix, run 1's stranded open
+    // choice made postWorkflowGate throw 'choice conflict'.
+    const secondRun = await startSecondRun();
+    const secondGate = await driveToApprovalGate(secondRun);
+    expect(secondGate).not.toBe(firstGate);
+    expect(
+      (await database.query<{ run_id: string }>(
+        `SELECT message.card->>'runId' run_id FROM room_choices choice
+         JOIN messages message ON message.id=choice.message_id WHERE choice.id=$1`,
+        [secondGate],
+      )).rows[0]?.run_id,
+    ).toBe(secondRun);
+  });
+
+  it('closes a stranded open choice left by a run that already ended', async () => {
+    // Simulate the production row: a run that landed while its gate choice
+    // stayed 'open'. The one-open-choice rule and the partial unique index
+    // must not let it refuse a later gate.
+    const { runId: firstRun } = await startedRun();
+    const firstGate = await driveToApprovalGate(firstRun);
+    await handoff(database, await commandFor(APPROVER), {
+      runId: firstRun, outcome: 'approved', contents: { decision: 'approved' },
+    });
+    await database.query(`UPDATE room_choices SET status='open' WHERE id=$1`, [firstGate]);
+
+    const secondRun = await startSecondRun();
+    const secondGate = await driveToApprovalGate(secondRun);
+    expect(secondGate).not.toBe(firstGate);
+    expect(
+      (await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [firstGate]))
+        .rows[0]?.status,
+    ).toBe('closed');
+  });
+
   it('schedules and cancels a state timeout across a handoff', async () => {
     const timed = {
       ...CONTRACT,

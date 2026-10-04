@@ -944,11 +944,14 @@ export async function beginComposioAppSignIn(
     const row = (
       await db.query<AppRow>(
         `SELECT ${APP_COLUMNS} FROM workspace_apps a
-         WHERE a.id=$1::uuid AND a.owner_identity_id=$2 AND a.transport='composio'
+         WHERE a.id=$1::uuid AND a.owner_identity_id=$2
            AND a.state='active' FOR UPDATE`, [appId, ownerId],
       )
     ).rows[0];
-    if (!row) throw new Error('App sign-in is unavailable for this person');
+    if (!row) throw new Error('This app connection is no longer in your Workbench. Return to Workbench and connect it again.');
+    if (row.transport !== 'composio') throw new Error(row.transport === 'registry-mcp'
+      ? 'This app connects through your helper. Reconnect it from Workbench.'
+      : 'This app connects through Trusty Squire. Reconnect it from Workbench.');
     const toolkit = composioToolkitForApp(row.app_key);
     if (row.composio_account_id) {
       if (!row.composio_link_expires_at &&

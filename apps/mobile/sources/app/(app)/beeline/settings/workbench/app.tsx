@@ -25,9 +25,14 @@ export default function AppDetailScreen() {
   const [app, setApp] = useState<WorkbenchApp | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connectionNotice, setConnectionNotice] = useState<string | null>(null);
+  const needsSquire = app?.transport.startsWith('squire-') &&
+    app.errorMessage === 'Connect Trusty Squire in Workbench first';
 
   useFocusEffect(useCallback(() => {
     let live = true;
+    setError(null);
+    setConnectionNotice(null);
     void getWorkbenchSource().readWorkbench({ workspaceId, viewerId }).then(view => {
       if (live) setApp(view.apps.find(item => item.id === appId) ?? null);
     }).catch(() => { if (live) setError('App unavailable right now'); });
@@ -45,11 +50,37 @@ export default function AppDetailScreen() {
 
   const reconnect = async () => {
     if (!app || working) return;
+    if (needsSquire) {
+      router.push({ pathname: '/beeline/settings/workbench/connect',
+        params: { workspaceId, viewerId, connectorId: 'trusty-squire' } });
+      return;
+    }
     setWorking(true);
     setError(null);
+    setConnectionNotice(null);
     try {
-      const started = await getWorkbenchSource().beginAppSignIn({ appId: app.id });
-      await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId, appId: app.id });
+      if (app.transport === 'composio') {
+        const started = await getWorkbenchSource().beginAppSignIn({ appId: app.id });
+        await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId, appId: app.id });
+      } else {
+        const source = getWorkbenchSource();
+        const helpers = await source.listHelpers({ workspaceId });
+        const helper = helpers.find(item => item.online && (!app.helperId || item.id === app.helperId));
+        if (!helper) throw new Error(app.helperName
+          ? `Bring ${app.helperName} online, then retry ${app.name}.`
+          : `Connect a helper in Workbench, then retry ${app.name}.`);
+        const started = await source.connectApp({ workspaceId, app: app.name, helperId: helper.id,
+          ...(app.status === 'error' ? { reconnect: true } : {}) });
+        if (started.authorizationUrl) {
+          await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId, appId: started.appId });
+        } else {
+          const view = await source.readWorkbench({ workspaceId, viewerId });
+          const updated = view.apps.find(item => item.id === started.appId);
+          if (updated) setApp(updated);
+          if (updated?.status === 'connecting')
+            setConnectionNotice(`Continue connecting ${app.name} in your chat with ${helper.name}.`);
+        }
+      }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'Could not connect app';
       setError(appErrorCopy(message));
@@ -85,10 +116,15 @@ export default function AppDetailScreen() {
         {app.key === 'instagram' && app.status !== 'connected' ? <Text style={styles.permission}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : null}
         <Text style={styles.permission}>Your agents can use {app.name} as you. Other people’s agents ask you first.</Text>
         <Text style={styles.lastUsed}>{lastUsed}</Text>
-        {app.status !== 'connected' ? <Button disabled={working} label={working ? 'Connecting' : app.status === 'error' ? `Retry ${app.name}` : `Connect ${app.name}`} onPress={() => void reconnect()} style={styles.action} testID="app-detail-connect" /> : null}
+        {connectionNotice ? <Text accessibilityLiveRegion="polite" style={styles.permission} testID="app-detail-connection-notice">{connectionNotice}</Text> : null}
+        {app.status !== 'connected' ? <Button disabled={working} label={working ? 'Connecting' : needsSquire ? 'Connect Trusty Squire' : app.status === 'error' ? `Retry ${app.name}` : `Connect ${app.name}`} onPress={() => void reconnect()} style={styles.action} testID="app-detail-connect" /> : null}
         <Button disabled={working} label={working ? 'Disconnecting' : 'Disconnect'} onPress={() => void disconnect()} style={styles.action} testID="app-detail-disconnect" variant="secondary" />
       </> : null}
-      {error || app?.status === 'error' && app.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{error ?? appErrorCopy(app?.errorMessage ?? '')}</Text> : null}
+      {error || app?.status === 'error' && app.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{error ?? (app && needsSquire
+        ? `${app.name} connects through Trusty Squire. Connect Trusty Squire, then return here to connect ${app.name}.`
+        : app?.transport !== 'composio' && app?.errorMessage === 'App sign-in is unavailable for this person'
+          ? `${app.name} connects through your helper. Retry to ask your helper to finish connecting it.`
+          : appErrorCopy(app?.errorMessage ?? ''))}</Text> : null}
     </ScrollView>
   </View>;
 }

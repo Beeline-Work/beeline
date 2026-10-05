@@ -2230,8 +2230,14 @@ CREATE TABLE IF NOT EXISTS room_choices (
   status text NOT NULL CHECK (status IN ('open','answered','skipped','closed','retracted')),
   created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS room_choices_open_agent_room
-  ON room_choices(agent_id, room_id) WHERE status='open';
+ALTER TABLE room_choices ADD COLUMN IF NOT EXISTS workflow_run_id text;
+-- Existing gate cards already carry the run id on their message.
+UPDATE room_choices choice SET workflow_run_id=message.card->>'runId'
+  FROM messages message WHERE message.id=choice.message_id AND choice.status='open'
+    AND choice.workflow_run_id IS NULL AND message.card->>'runId' IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS room_choices_open_ordinary_agent_room
+  ON room_choices(agent_id, room_id) WHERE status='open' AND workflow_run_id IS NULL;
+DROP INDEX IF EXISTS room_choices_open_agent_room;
 CREATE INDEX IF NOT EXISTS room_choices_due_idx
   ON room_choices(closes_at) WHERE status='open' AND closes_at IS NOT NULL;
 -- room_id/workspace_id/message_id all cascade from rooms/workspaces/messages

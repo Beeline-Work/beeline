@@ -712,12 +712,15 @@ export class DaemonService {
               candidate.status === 'complete',
               String(candidate.status),
             );
+            // A failed workflow hook must never roll back the terminal receipt.
             if (candidate.status === 'complete')
-              await failOverUnansweredTurn(db, {
-                roomId: scopedRoom!,
-                agentId: authenticatedAgentId,
-                sourceMessageId: command.source_message_id,
-              });
+              committedTasks.push((database) => database.transaction((db) =>
+                failOverUnansweredTurn(db, {
+                  roomId: scopedRoom!,
+                  agentId: authenticatedAgentId,
+                  sourceMessageId: command.source_message_id,
+                }),
+              ));
           }
         }
         return result;

@@ -534,8 +534,14 @@ export function workflowSaveError(value: unknown): string | null {
   const error = workflowContractError(value);
   if (error) return error;
   const contract = value as WorkflowContract;
+  for (const field of ['implicitEdges', 'externalOutcomes'] as const)
+    if (Object.hasOwn(contract, field)) return `${field} is corner-only and cannot be saved in a workflow`;
   if (!contract.summary?.trim()) return 'summary is required and must be nonempty';
   for (const [name, state] of Object.entries(contract.handoffs)) {
+    if (state.kind === 'server' || state.kind === 'waiting')
+      return `handoffs.${name}: kind ${state.kind} is corner-only and cannot be saved in a workflow`;
+    if (Object.hasOwn(state, 'roleBinding'))
+      return `handoffs.${name}: roleBinding is corner-only and cannot be saved in a workflow`;
     if (!state.does?.trim()) return `handoffs.${name}: does is required and must be nonempty`;
     if ('on' in state && Object.hasOwn(state.on, WORKFLOW_BLOCKED_OUTCOME))
       return `handoffs.${name}: "${WORKFLOW_BLOCKED_OUTCOME}" is built in; name this outcome something else`;

@@ -14,6 +14,12 @@ describe('preview agent-command autocomplete wiring', () => {
     expect(source).toContain("currentSlashQuery ?? mentionSlash?.query ?? ''");
   });
 
+  it('uses the live server login verdict in the shared Room/corner palette', () => {
+    expect(source).toContain('[scope]: detail.canLogin === true');
+    expect(source).toContain('agentCanLoginByScope[mentionAgentCommandScope]');
+    expect(source).toContain('setAgentCanLoginByScope((current) => (Object.keys(current).length ? {} : current))');
+  });
+
   it('offers the owner Fast mode from the same agent read and toggles it through the profile operation', () => {
     expect(source).toContain('[scope]: fastModeCommandState(detail, viewerPubkey)');
     expect(source).toContain('agentFastModeByScope[mentionAgentCommandScope]');

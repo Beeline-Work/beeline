@@ -835,6 +835,12 @@ describe('agent profile recent work', () => {
     catalog: [],
     watchFilters: [],
   };
+  it('preserves only boolean login verdicts and fails closed on missing or malformed values', () => {
+    expect(readAgentDetailView({ ...profile, canLogin: true })?.canLogin).toBe(true);
+    expect(readAgentDetailView({ ...profile, canLogin: false })?.canLogin).toBe(false);
+    expect(readAgentDetailView({ ...profile, canLogin: 'true' })?.canLogin).toBeUndefined();
+    expect(readAgentDetailView(profile)?.canLogin).toBeUndefined();
+  });
   it('reads old servers without work and rejects unsafe links without dropping the profile', () => {
     expect(readAgentDetailView(profile)?.recentWork).toEqual([]);
     const work = { title: 'Visible merged work', url: 'https://github.com/acme/repo/pull/12' };

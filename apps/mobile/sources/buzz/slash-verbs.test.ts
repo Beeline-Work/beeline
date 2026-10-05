@@ -243,3 +243,17 @@ describe('agent-mention slash palette query', () => {
     expect(insertAgentSlashCommand('@agent-name /us', 'usage')).toBe('@agent-name /usage ');
   });
 });
+
+
+describe('server-authorized login palette entry', () => {
+  it('offers login without a harness catalog and hides it without permission', () => {
+    expect(availableAgentMentionCommands([], 'lo', null, true).map(c => c.name)).toEqual(['login']);
+    expect(availableAgentMentionCommands([], 'lo', null, false)).toEqual([]);
+    expect(availableAgentMentionCommands([], 'lo')).toEqual([]);
+  });
+  it('reserves login even when a stale harness advertises it', () => {
+    const stale = [{ name: 'LOGIN', description: 'Harness login' }];
+    expect(availableAgentMentionCommands(stale, 'lo', null, true).map(c => c.name)).toEqual(['login']);
+    expect(availableAgentMentionCommands(stale, 'lo', null, false)).toEqual([]);
+  });
+});

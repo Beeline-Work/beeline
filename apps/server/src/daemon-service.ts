@@ -7127,8 +7127,8 @@ export class DaemonService {
     const brief = await this.database.transaction(async (db) => {
       await lockCornerLifecycle(db, input.cornerId);
       const corner = (
-        await db.query<{ parent_id: string; owner_agent_id: string | null; kind: string; created_by: string; workflow_state: string }>(
-          `SELECT room.parent_id,fact.owner_agent_id,fact.kind,room.created_by,fact.workflow_state FROM rooms room
+        await db.query<{ parent_id: string; owner_agent_id: string | null; kind: string; created_by: string }>(
+          `SELECT room.parent_id,fact.owner_agent_id,fact.kind,room.created_by FROM rooms room
          JOIN corner_facts fact ON fact.corner_id=room.id
          WHERE room.id=$1 AND room.archived_at IS NULL FOR UPDATE OF room`,
           [input.cornerId],
@@ -7212,14 +7212,6 @@ export class DaemonService {
         verb: 'revised the corner brief',
         object: { text: `Revision ${revision}`, id: input.cornerId },
       });
-      const worker = corner.workflow_state === 'ask_human' ? undefined : await createAgentCommand(db, {
-        roomId: input.cornerId,
-        agentId: corner.owner_agent_id ?? agentId,
-        sourceMessageId: note.id,
-        reason: 'corner_brief_revision',
-        parent: command,
-        retainDepth: true,
-      });
       const outcome = await advanceCorner(db, input.cornerId, {
         kind: 'brief-revised',
         revision,
@@ -7228,7 +7220,7 @@ export class DaemonService {
         command,
       });
       return { ...(await currentCornerBrief(db, input.cornerId))!, wake: outcome.wake ?? {
-        queued: Boolean(worker), ...(worker ? { agentId: worker.agent_id } : { reason: 'No lifecycle wake queued' }),
+        queued: false, reason: 'No lifecycle wake queued',
       } };
     });
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });

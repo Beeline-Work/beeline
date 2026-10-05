@@ -2,6 +2,9 @@ import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+import { pushTextWithAutoLinks } from '@/components/markdown/parseMarkdownSpans';
+import type { MarkdownSpan } from '@/components/markdown/parseMarkdown';
+import { openExternalUrl } from '@/utils/open-external-url';
 import { workflowDisplayName, workflowStateLabel } from '@/buzz/workflow-graph';
 import { CORNER_META_SIZE } from './CornerGlyph';
 import { WorkflowGlyph } from './WorkflowGlyph';
@@ -36,6 +39,11 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   testID?: string;
 }) {
   const line = objective?.trim();
+  const spans = React.useMemo(() => {
+    const result: MarkdownSpan[] = [];
+    if (line) pushTextWithAutoLinks(result, line, []);
+    return result;
+  }, [line]);
   const run = workflow?.status === 'live' && onOpenWorkflow ? workflow : undefined;
   if (!line && !onOpenBrief && !run && !workflowError) return null;
   return (
@@ -45,7 +53,15 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
         {line ? (
           <View style={styles.objective}>
             <Text accessibilityRole="text" style={styles.copy} testID={`${testID}-copy`}>
-              {line}
+              {spans.some((span) => span.url) ? spans.map((span, index) => span.url ? (
+                <Text
+                  key={index}
+                  accessibilityRole="link"
+                  accessibilityLabel={span.text}
+                  style={styles.objectiveLink}
+                  onPress={() => { void openExternalUrl(span.url!).catch(() => undefined); }}
+                >{span.text}</Text>
+              ) : span.text) : line}
             </Text>
           </View>
         ) : null}
@@ -207,6 +223,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     color: theme.buzz.textSecondary,
   },
+  objectiveLink: { textDecorationLine: 'underline' },
   briefLink: {
     flexShrink: 0,
     minWidth: 44,

@@ -449,6 +449,47 @@ describe('save_workflow error reasons', () => {
 });
 
 describe('start_workflow', () => {
+  it('Reproduction workflow-line-1: reads short workflow lines without a self-mention through the phone service', async () => {
+    await database.query(`UPDATE identities SET handle='impy' WHERE id=$1`, [IMPLEMENTER]);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, OWNER]);
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT) });
+    const { runId } = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: REVIEWER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const phone = new PhoneService(database, 'http://localhost');
+    const start = (await phone.readRoom(ROOM, OWNER))!.messages.find(message => message.id === runId)!;
+    const wakes = (await database.query<{ agent_id: string }>(
+      `SELECT agent_id FROM agent_commands WHERE source_message_id=$1`, [runId],
+    )).rows.map(row => row.agent_id);
+    await handoff(database, await commandFor(REVIEWER), {
+      runId, outcome: 'blocked', contents: { summary: 'blocked', prUrl: 'none' },
+    });
+    await cancelWorkflowRun(database, command, { runId, reason: 'Stop the demonstration' });
+    const messages = (await phone.readRoom(ROOM, OWNER))!.messages;
+    const cancel = messages.find(message => message.text.includes('cancelled workflow'))!;
+    const handoffLine = messages.find(message => message.text.includes('handed off'))!;
+    const gate = messages.find(message => message.text.includes('reached a gate'))!;
+    console.log('Reproduction workflow-line-1:', JSON.stringify({
+      start: start.text, handoff: handoffLine.text, gate: gate.text, cancel: cancel.text, runId, wakes,
+    }));
+    expect(start.text).toBe(`Impy started workflow corner · run ${runId.slice(0, 8)}`);
+    expect(start.systemEvent?.subject).toMatchObject({ id: IMPLEMENTER, name: 'Impy' });
+    expect(runId).toHaveLength(64);
+    expect(wakes).toEqual([REVIEWER]);
+    expect(handoffLine.text).toBe(`Ravi handed off ask_human · run ${runId.slice(0, 8)} of corner`);
+    expect(gate.text).toContain(`corner run ${runId.slice(0, 8)} reached a gate at ask_human`);
+    expect(cancel.text).toBe(`@impy cancelled workflow corner · run ${runId.slice(0, 8)}`);
+    const cards = (await database.query<{ id: string; card: { runId: string } }>(
+      `SELECT id,card FROM messages WHERE id=ANY($1::text[])`, [[start.id, cancel.id]],
+    )).rows;
+    expect(cards).toHaveLength(2);
+    expect(cards.every(row => row.card.runId === runId)).toBe(true);
+    expect(cancel.author.pubkey).toBe(SYSTEM_IDENTITY_ID);
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('abandoned');
+  });
+
   it('rejects a role with no binding', async () => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT)});
@@ -522,7 +563,7 @@ describe('start_workflow', () => {
     );
   });
 
-  it('shows the full run id on the handoff card: the stored text a human reads carries it verbatim', async () => {
+  it('shows a short run id in start text and keeps the full id in the card', async () => {
     // `messages.text` (not just the structured `card`) is what the mobile app
     // renders for this card: `workflow-handoff` is not a card type
     // `phone-service.ts`'s `toRoomViewMessage` gives a dedicated field, and it
@@ -534,10 +575,11 @@ describe('start_workflow', () => {
       name: 'corner',
       roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
     });
-    const row = await database.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [
+    const row = await database.query<{ text: string; card: { runId: string } }>(`SELECT text,card FROM messages WHERE id=$1`, [
       started.runId,
     ]);
-    expect(row.rows[0]?.text).toContain(started.runId);
+    expect(row.rows[0]?.text).toBe(`Impy started workflow corner · run ${started.runId.slice(0, 8)}`);
+    expect(row.rows[0]?.card.runId).toBe(started.runId);
   });
 
   it('rejects start_workflow from an agent currently acting inside an active run of the same workflow, naming the run id', async () => {
@@ -782,12 +824,13 @@ describe('handoff', () => {
     expect(result.state).toBe('checks');
     expect(await pendingCommandsFor(IMPLEMENTER)).toBeGreaterThan(0);
     // The handoff card's stored text (what the mobile app renders for it,
-    // same fallback as the start card) carries the full run id too.
-    const rows = await database.query<{ text: string }>(
-      `SELECT text FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1 ORDER BY created_at DESC LIMIT 1`,
+    // same fallback as the start card) uses a short run id.
+    const rows = await database.query<{ text: string; card: { runId: string } }>(
+      `SELECT text,card FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1 ORDER BY created_at DESC LIMIT 1`,
       [runId],
     );
-    expect(rows.rows[0]?.text).toContain(runId);
+    expect(rows.rows[0]?.text).toBe(`Impy handed off checks · run ${runId.slice(0, 8)} of corner`);
+    expect(rows.rows[0]?.card.runId).toBe(runId);
   });
 
   it('rejects a handoff on a run that has already ended', async () => {
@@ -1197,9 +1240,17 @@ describe('stuck/escalation gates route to the run starter, not a human, when an 
     const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
     const woken = inbox.commands.find((c) => c.source.systemEvent?.verb === 'reached a gate at');
     expect(woken).toBeDefined();
-    expect(woken!.source.body).toContain(runId);
+    console.log('Reproduction workflow-recovery-1 gate:', woken!.source.body);
+    expect(woken!.source.body).toContain(`You are in run ${runId} of corner.`);
+    expect(woken!.source.body).toContain(`corner run ${runId.slice(0, 8)}`);
     expect(woken!.source.body).toContain('human_approve');
     expect(woken!.source.body).toContain(APPROVER);
+    const recoveryRunId = /You are in run ([a-f0-9]{64}) of corner/.exec(woken!.source.body)![1]!;
+    const recovered = await assignWorkflowRole(database, await commandFor(IMPLEMENTER), {
+      runId: recoveryRunId, role: 'approver', targetAgentId: REVIEWER,
+    });
+    expect(recovered).toEqual({ runId, state: 'human_approve' });
+    console.log('Reproduction workflow-recovery-1 gate recovery:', JSON.stringify(recovered));
   });
 
   it('still posts the human choice card and wakes nobody else when a human started the run', async () => {
@@ -1252,11 +1303,21 @@ describe('stuck/escalation gates route to the run starter, not a human, when an 
     });
     expect((await listRunCard(runId)).roleBindings.closer).toBe(APPROVER);
     const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
-    const woken = inbox.commands.find((c) => c.source.body.includes(runId));
+    const woken = inbox.commands.find((c) => c.source.systemEvent?.verb === 'got no answer at');
     expect(woken).toBeDefined();
+    console.log('Reproduction workflow-recovery-1 silence:', woken!.source.body);
+    expect(woken!.source.body).toContain(`You are in run ${runId} of list-flow.`);
+    expect(woken!.source.body).toContain(`list-flow run ${runId.slice(0, 8)}`);
     expect(woken!.source.body).toContain('closer');
     expect(woken!.source.body).toContain(APPROVER);
     expect(woken!.source.body).toContain('provider timeout');
+    const recoveryRunId = /You are in run ([a-f0-9]{64}) of list-flow/.exec(woken!.source.body)![1]!;
+    const recovered = await assignWorkflowRole(database, await commandFor(IMPLEMENTER), {
+      runId: recoveryRunId, role: 'closer', targetAgentId: REVIEWER,
+    });
+    expect(recovered.runId).toBe(runId);
+    expect((await listRunCard(runId)).roleBindings.closer).toBe(REVIEWER);
+    console.log('Reproduction workflow-recovery-1 silence recovery:', JSON.stringify(recovered));
   });
 });
 
@@ -1922,7 +1983,7 @@ describe('agent workflow run reads and cancellation', () => {
     )).rows[0]!;
     console.log('Cancellation notice:', JSON.stringify(notice));
     expect(notice.author_id).toBe(SYSTEM_IDENTITY_ID);
-    expect(notice.text).toBe(`@owner cancelled workflow corner · run ${runId}`);
+    expect(notice.text).toBe(`@owner cancelled workflow corner · run ${runId.slice(0, 8)}`);
     expect(notice.actor_id).toBe(OWNER);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
     const room = await new PhoneService(database, 'http://localhost').readRoom(ROOM, OWNER);

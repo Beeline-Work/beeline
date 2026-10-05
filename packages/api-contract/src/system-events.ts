@@ -221,6 +221,11 @@ export function eventBudgetRefusal(woken: number): string {
   );
 }
 
+/** Display a workflow run id in prose; structured fields keep the full id. */
+export function shortRunId(id: string): string {
+  return id.slice(0, 8);
+}
+
 /** "Candy" · "Candy and Terra" · "Candy, Terra and Codex". */
 export function joinSystemNames(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? '';

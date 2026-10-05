@@ -141,6 +141,30 @@ describe('who an event line mentions', () => {
       )
     ).rows[0]!.woke;
 
+  it('uses a plain self-subject only for workflow cards and keeps other subjects as mentions', async () => {
+    await database.query(`UPDATE identities SET handle='owl' WHERE id=$1`, [GREETER]);
+    await database.query(`UPDATE identities SET handle='ada' WHERE id=$1`, [HUMAN]);
+    for (const [subjectId, authorId, cardType, expectedName] of [
+      [GREETER, GREETER, 'workflow-handoff', 'Owl'],
+      [GREETER, undefined, 'workflow-handoff', 'Owl'],
+      [HUMAN, HUMAN, 'workflow-handoff', 'Ada'],
+      [GREETER, HUMAN, 'workflow-handoff', '@owl'],
+      [GREETER, GREETER, undefined, '@owl'],
+    ] as const) {
+      const line = await systemLine(database, {
+        roomId: ROOM,
+        authorId,
+        subject: { kind: subjectId === HUMAN ? 'person' : 'agent', id: subjectId, name: 'Stale name' },
+        verb: 'started workflow',
+        object: 'test',
+        cardType,
+      });
+      expect(line.text).toBe(`${expectedName} started workflow test`);
+      expect(line.event.subject).toMatchObject({ id: subjectId, name: expectedName });
+      expect(await wokenBy(line.id)).toEqual([]);
+    }
+  });
+
   it('adds the Room members subscribed to the kind, keeping the explicit mentions', async () => {
     const written = await systemLine(database, {
       roomId: ROOM,

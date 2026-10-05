@@ -57,6 +57,7 @@ function workflowRunShims(
   drafts: unknown[] = [],
   siblingRuns: unknown[] = [],
 ): Record<string, string> {
+  const view = detail as { contract: unknown; run: unknown };
   return {
     ...webProofShims(mobile),
     '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
@@ -67,12 +68,12 @@ function workflowRunShims(
     });`,
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
-    export const useLocalSearchParams = () => ({ roomId: 'corner-2', runId: 'run-1' });
+    export const useLocalSearchParams = () => ({ roomId: 'corner-2', runId: 'run-1', ...(new URLSearchParams(location.search).has('list') ? { name: 'feedback-triage' } : {}) });
     export const router = { push: (href) => { (globalThis.__pushed ??= []).push(href); },
       replace: (href) => { (globalThis.__replaced ??= []).push(href); }, back: () => undefined };`,
     '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
     export const monolithPhoneOperation = async (name) =>
-      name === 'listRoomWorkflowRuns' ? { workflows: ${JSON.stringify(siblingRuns)} } : (${JSON.stringify(detail)});`,
+      name === 'listRoomWorkflowRuns' ? { workflows: ${JSON.stringify(siblingRuns)} } : name === 'readWorkflowDefinition' ? { contract: ${JSON.stringify(view.contract)}, runs: [${JSON.stringify(view.run)}] } : (${JSON.stringify(detail)});`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ({ publicKey: '${'a'.repeat(64)}' });`,
   };
@@ -119,7 +120,7 @@ async function proof(
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/workflow-run-proof.tsx'),
     mobile,
-    shims: workflowRunShims(mobile, detail, drafts, siblingRuns),
+    shims: Object.fromEntries(Object.entries(workflowRunShims(mobile, detail, drafts, siblingRuns)).map(([name, source]) => [name, source.replace('beelineThemes.obsidian', "beelineThemes[new URLSearchParams(location.search).get('theme') ?? 'obsidian']")])),
     width,
     query,
   });
@@ -134,6 +135,38 @@ const repo = () => path.resolve(process.cwd(), '../..');
 const BRASS = 'rgb(176, 138, 74)';
 
 describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
+  it('Reproduction display-6: deadline failure stops the current step halo', async () => {
+    const detail = feedbackTriageDetail(repo(),
+      { state: 'pull', status: 'failed', viewerHolds: false, updatedAt: STARTED + 60 }, [
+        { toState: 'pull', actor: candy, at: STARTED },
+        { fromState: 'pull', toState: 'pull', status: 'failed', outcome: 'deadline', actor: candy, at: STARTED + 60 },
+      ]);
+    for (const theme of ['obsidian', 'bone']) {
+      const page = await proof(detail, `?theme=${theme}`);
+      console.log(`Reproduction display-6 (${theme}): ${page.text.find(text => text.startsWith('Failed'))}; halos=${page.halo}; steps=${JSON.stringify(page.circles)}`);
+      expect(page.text).toContain('Failed · deadline');
+      expect(page.halo).toBe(0);
+      expect(page.circles).toEqual({ pull: 'failed' });
+    }
+  }, 120_000);
+
+  it('Reproduction display-7: the cancelled run list says Abandoned', async () => {
+    const detail = feedbackTriageDetail(repo(),
+      { state: 'pull', status: 'abandoned', viewerHolds: false, updatedAt: STARTED + 60 }, [
+        { toState: 'pull', actor: candy, at: STARTED },
+        { fromState: 'pull', toState: 'pull', status: 'abandoned', outcome: 'cancelled', actor: candy, at: STARTED + 60 },
+      ]);
+    for (const theme of ['obsidian', 'bone']) {
+      const page = await proof(detail, `?list&theme=${theme}`);
+      console.log(`Reproduction display-7 (${theme}): run list=${JSON.stringify(page.text)}`);
+      expect(page.text).toContain('Abandoned');
+      expect(page.text).not.toContain('Failed');
+      const run = await proof(detail, `?theme=${theme}`);
+      expect(run.text).toContain('Abandoned · cancelled');
+      expect(run.halo).toBe(0);
+    }
+  }, 120_000);
+
   it('draws one straight line with the gate recorded read-only and no way out to the corner', async () => {
     const detail = feedbackTriageDetail(
       repo(),

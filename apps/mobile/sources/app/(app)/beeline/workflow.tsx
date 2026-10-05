@@ -96,7 +96,7 @@ export default function Workflow() {
               }
             >
               <Text style={styles.title}>
-                {run.status === 'live' ? 'Running' : run.status === 'done' ? 'Completed' : 'Failed'}
+                {run.status === 'live' ? 'Running' : run.status === 'done' ? 'Completed' : run.status === 'abandoned' ? 'Abandoned' : 'Failed'}
               </Text>
               <Text style={styles.meta}>{workflowStarterLine(run)}</Text>
               <Text selectable style={styles.id}>

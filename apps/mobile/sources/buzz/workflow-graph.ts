@@ -4,9 +4,11 @@ import type {
   WorkflowGateRecordView,
   WorkflowOpenedCornerView,
   WorkflowRunStepView,
+  WorkflowRunStatus,
   WorkflowState,
   WorkflowReceipt,
 } from '@beeline/api-contract/phone';
+import { workflowRunStatus, workflowStepDisplayStatus } from '@beeline/api-contract/phone';
 
 /**
  * The run's reached visits in execution order (including repeated states),
@@ -104,12 +106,17 @@ function predictedTail(
 export function workflowRunLine(
   contract: WorkflowContract,
   history: readonly WorkflowRunStepView[] = [],
+  runStatus?: WorkflowRunStatus,
 ): WorkflowLineStep[] {
   const entries = history.filter((entry) => contract.handoffs[entry.toState]);
+  const lastEntry = entries[entries.length - 1];
+  const status = runStatus ?? (lastEntry ? workflowRunStatus(contract, lastEntry.toState, lastEntry.status) : 'live');
   const reached = entries.map<WorkflowLineStep>((entry, index, entries) => {
     const declared = contract.handoffs[entry.toState]!;
     const next = entries[index + 1];
     const terminal = declared.kind === 'terminal';
+    const closedHere = next && next.toState === entry.toState && next.fromState === next.toState &&
+      (next.status === 'failed' || next.status === 'abandoned');
     const visit: WorkflowLineVisit = {
       enteredAt: entry.at,
       ...(next ? {
@@ -131,11 +138,16 @@ export function workflowRunLine(
       state: entry.toState,
       kind: kindOf(declared),
       ...(terminal ? { terminalStatus: declared.status } : {}),
-      status: terminal && declared.status !== 'done' ? 'failed' : next || terminal ? 'done' : 'current',
+      status: entry.displayStatus ?? workflowStepDisplayStatus(contract, entry.toState, status, Boolean(next && !closedHere)),
       onMainPath: false,
       visits: [visit],
     };
-  }).filter((step, index) => !(entries[index]?.status === 'abandoned' && entries[index]?.fromState === entries[index]?.toState));
+  }).filter((_step, index) => {
+    const entry = entries[index]!;
+    // A close in the current state is the previous visit's exit, not a new visit.
+    return !((entry.status === 'abandoned' || entry.status === 'failed') &&
+      entry.fromState === entry.toState && entries[index - 1]?.toState === entry.toState);
+  });
   const last = reached[reached.length - 1];
   if (!last || last.status !== 'current') return reached;
   return [...reached, ...predictedTail(contract, last.state, new Set(reached.map((step) => step.state)))];

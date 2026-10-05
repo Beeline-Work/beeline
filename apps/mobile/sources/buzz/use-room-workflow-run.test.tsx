@@ -9,7 +9,28 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 const wire = vi.hoisted(() => ({ listener: undefined as any }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { wire.listener = listener; return () => undefined; } }) }));
 afterEach(() => { read.mockReset(); read.mockResolvedValue({ workflows: [] }); });
-import { useRoomWorkflowRun } from './use-room-workflow-run';
+import { liveRoomRuns, pickRoomWorkflowRun, useRoomWorkflowRun } from './use-room-workflow-run';
+import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+
+it('CWM1: the latest handoff stays primary, including a live state named stuck', () => {
+  const run = (fields: Partial<WorkflowRunSummaryView>): WorkflowRunSummaryView => ({
+    runId: 'default', roomId: 'corner-multi', roomName: 'MM desk',
+    workflowSlug: 'mm-desk-steer', description: '', state: 'scout', status: 'live',
+    startedAt: 1, updatedAt: 1, viewerHolds: false, earlierRunCount: 0, ...fields,
+  });
+  const runs = [
+    run({ runId: 'recent-start', workflowSlug: 'macro-paper-desk', startedAt: 20, updatedAt: 20 }),
+    run({ runId: '6afa8c98', state: 'stuck', startedAt: 10, updatedAt: 30 }),
+    run({ runId: 'ended', status: 'done', updatedAt: 100 }),
+    run({ runId: 'elsewhere', roomId: 'another-corner', updatedAt: 90 }),
+    run({ runId: 'older-handoff', workflowSlug: 'feedback-triage', updatedAt: 15 }),
+  ];
+  expect(pickRoomWorkflowRun('corner-multi', runs)?.runId).toBe('6afa8c98');
+  expect(liveRoomRuns('corner-multi', runs).map(run => run.runId))
+    .toEqual(['6afa8c98', 'recent-start', 'older-handoff']);
+  expect(runs[0].runId).toBe('recent-start');
+  expect(pickRoomWorkflowRun('empty', runs)).toBeUndefined();
+});
 it('Reproduction R9a: focused corner opens with exactly one workflow read', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   function Corner() { useRoomWorkflowRun('corner-1'); return null; }

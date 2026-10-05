@@ -58,6 +58,38 @@ const result = (c: AgentCommand, text: string, generationId = 'g1', extra = {}) 
     },
     c.agentId,
   );
+
+it.each([R, C])('projects reply context outside the conversation window in %s', async (roomId) => {
+  const parentId = id();
+  const parentText = 'Five corners from the audit: '.repeat(30);
+  await db.query('INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)',
+    [parentId, roomId, B, parentText]);
+  const sent = await phone.execute('sendRoomReply', {
+    roomId, parentMessageId: parentId, text: '@hoots Dispatch these five corners',
+  }, H);
+  const command = (await commands(A, roomId)).find((c) => c.sourceMessageId === sent.messageId)!;
+  expect(command).toBeDefined();
+  const reply = {
+    replyToMessageId: parentId,
+    replyToAuthorId: B,
+    replyToAuthorName: 'Goosy',
+    replyToExcerpt: expect.any(String),
+  };
+  expect(command.source).toMatchObject(reply);
+  expect(command.source.replyToExcerpt!.length).toBeLessThanOrEqual(300);
+  const excerpt = command.source.replyToExcerpt!;
+  expect(excerpt).toMatch(/…$/);
+  expect(parentText.startsWith(excerpt.slice(0, -1))).toBe(true);
+  expect(parentText[excerpt.length - 1]).toMatch(/\s/);
+  const inbox = await daemon.execute('getRoomInbox', { roomId }, A);
+  expect(inbox.items.find((m) => m.id === sent.messageId)).toMatchObject(reply);
+  const conversation = await daemon.execute('getRoomConversation', { roomId, limit: 1 }, A);
+  expect(conversation.items).toHaveLength(1);
+  expect(conversation.items[0]).toMatchObject(reply);
+  expect(conversation.items[0]?.id).toBe(sent.messageId);
+  expect(conversation.items[0]?.replyToExcerpt).toBe(command.source.replyToExcerpt);
+  console.log('Reproduction reply-context: phone reply → server wake/inbox/newest-page supplies parent ID, author and bounded excerpt');
+});
 beforeAll(async () => {
   db = new PgliteDatabase();
   await migrate(db);

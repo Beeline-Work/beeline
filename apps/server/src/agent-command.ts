@@ -1,3 +1,4 @@
+import { webhookPromptBody } from './room-webhooks.js';
 import {
   AGENT_SIGN_IN_SERVICE_LABELS,
   agentSignInUsesKey,
@@ -1043,7 +1044,7 @@ export async function readAgentCommands(
       source: {
         id: r.source_message_id,
         authorId: r.author_id,
-        body: (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}\n` : '') + r.text + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
+        body: (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}\n` : '') + webhookPromptBody(r.text, r.system_event ?? null) + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
         attachments: r.attachments ?? [],
         createdAt: Math.floor(r.created_at.getTime() / 1000),
         type: r.presentation,

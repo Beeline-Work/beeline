@@ -73,6 +73,7 @@
         "scripts/corner-dropdown-proof.tsx",
         "scripts/new-corner-dialog-proof.tsx",
         "scripts/room-repo-choice-proof.tsx",
+        "scripts/room-webhooks-proof.tsx",
         "scripts/composer-dictation-proof.tsx",
         "scripts/composer-dictation-correction-proof.tsx",
         "scripts/page-headers-proof.tsx",

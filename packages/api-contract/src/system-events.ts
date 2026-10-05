@@ -35,6 +35,8 @@ export type SystemEvent = {
   readonly consequence?: string;
   /** What this line IS, for subscribers and daemons. Absent on a line nobody reacts to. */
   readonly kind?: SystemEventKind;
+  /** Outside input, carried only by an untrusted webhook event. */
+  readonly payload?: unknown;
 };
 
 export const SYSTEM_LINE_SEPARATOR = ' · ';
@@ -67,6 +69,7 @@ export const SERVER_EVENT_KINDS = [
   'choice-skipped',
   'poll-closed',
   'workflow-handoff',
+  'webhook-request-decided',
 ] as const;
 export type ServerEventKind = (typeof SERVER_EVENT_KINDS)[number];
 
@@ -95,6 +98,7 @@ export const SERVER_EVENT_KIND_DETAIL: Readonly<Record<ServerEventKind, string>>
     "fires when a posted choice's window closes unanswered, starting a new turn for the asking agent",
   'poll-closed': 'fires when a posted poll closes, starting a new turn for the asking agent',
   'workflow-handoff': 'fires when a workflow run starts or hands off to its next role',
+  'webhook-request-decided': 'answers one webhook request and resumes its requesting agent',
 };
 
 /**
@@ -114,6 +118,7 @@ export const PER_ITEM_EVENT_KINDS: readonly ServerEventKind[] = [
   'choice-answered',
   'choice-skipped',
   'poll-closed',
+  'webhook-request-decided',
 ];
 export function isPerItemEventKind(value: unknown): value is ServerEventKind {
   return (PER_ITEM_EVENT_KINDS as readonly string[]).includes(value as string);
@@ -123,8 +128,8 @@ export function isPerItemEventKind(value: unknown): value is ServerEventKind {
 export const SUBSCRIBABLE_EVENT_KINDS: readonly ServerEventKind[] = SERVER_EVENT_KINDS.filter(
   (kind) => !isPerItemEventKind(kind),
 );
-export function isSubscribableEventKind(value: unknown): value is ServerEventKind {
-  return (SUBSCRIBABLE_EVENT_KINDS as readonly string[]).includes(value as string);
+export function isSubscribableEventKind(value: unknown): value is ServerEventKind | WebhookEventKind {
+  return isWebhookKind(value) || (SUBSCRIBABLE_EVENT_KINDS as readonly string[]).includes(value as string);
 }
 
 /** The one-line refusal `subscribe_events` gives for a per-item kind. */
@@ -142,7 +147,12 @@ export function eventKindCatalogLines(
   return kinds.map((kind) => `${kind} ${SERVER_EVENT_KIND_DETAIL[kind]}`);
 }
 export type AgentEventKind = `agent:${string}`;
-export type SystemEventKind = ServerEventKind | AgentEventKind;
+export type WebhookEventKind = `webhook:${string}`;
+export type SystemEventKind = ServerEventKind | AgentEventKind | WebhookEventKind;
+
+export function isWebhookKind(value: unknown): value is WebhookEventKind {
+  return typeof value === 'string' && /^webhook:[a-z0-9-]{1,40}$/.test(value);
+}
 
 const AGENT_KIND = /^agent:[a-z0-9-]{1,40}$/;
 
@@ -153,7 +163,7 @@ export function isAgentKind(value: unknown): value is AgentEventKind {
   return typeof value === 'string' && AGENT_KIND.test(value);
 }
 export function isSystemEventKind(value: unknown): value is SystemEventKind {
-  return isServerEventKind(value) || isAgentKind(value);
+  return isServerEventKind(value) || isAgentKind(value) || isWebhookKind(value);
 }
 
 /**
@@ -169,6 +179,7 @@ export const RESUME_KINDS: readonly SystemEventKind[] = [
   'grant-decided',
   'squire-approval-decided',
   'connector-offer-decided',
+  'webhook-request-decided',
 ];
 export function isResumeKind(value: unknown): boolean {
   return RESUME_KINDS.includes(value as SystemEventKind);

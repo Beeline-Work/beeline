@@ -1,6 +1,7 @@
+import type { RoomWebhooksResult } from './room-webhooks.js';
 import type { AppRoute, AppTransport, ConnectAppStatus } from './app-connections.js';
 import type { CornerHoldInput, CornerMergeHold } from './phone-operations.js';
-import type { ServerEventKind, SystemEvent } from './system-events.js';
+import type { ServerEventKind, WebhookEventKind, SystemEvent } from './system-events.js';
 import type {
   AgentGrantEscalation,
   AgentGrantKind,
@@ -103,7 +104,7 @@ export type UpdateAgentScheduleInput = AgentRoomInput & {
 export type SetEventSubscriptionsInput = RoomInput & {
   readonly kinds: readonly string[];
 };
-export type EventSubscriptionsResult = { readonly kinds: readonly ServerEventKind[] };
+export type EventSubscriptionsResult = { readonly kinds: readonly (ServerEventKind | WebhookEventKind)[] };
 
 /**
  * One event this agent emits into the Room it is answering in.
@@ -240,7 +241,7 @@ export type DaemonOperationMap = {
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
   >;
-  claimAgentCommand: Operation<CommandClaimInput, WriteResult>;
+  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly webhookResult?: { readonly url: string; readonly signingSecret?: string } }>;
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
@@ -277,6 +278,8 @@ export type DaemonOperationMap = {
   listWorkSchedules: Operation<AgentInput, WorkScheduleListResult>;
   createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
   setEventSubscriptions: Operation<SetEventSubscriptionsInput, EventSubscriptionsResult>;
+  requestWebhook: Operation<RoomInput & TurnOutputAuthority & { source: string; reason: string }, { requestId: string; status: string }>;
+  listRoomWebhooks: Operation<RoomInput, RoomWebhooksResult>;
   watchCorner: Operation<
     RoomInput & { readonly cornerId: string; readonly kinds: readonly CornerWatchKind[] },
     CornerWatchResult

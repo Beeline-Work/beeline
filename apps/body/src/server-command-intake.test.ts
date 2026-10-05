@@ -19,6 +19,26 @@ const command = (id = 'c1', action: AgentCommand['action'] = 'input'): AgentComm
   reason: 'human_tag',
   source: { id, authorId: 'human', body: 'Do it', createdAt: 1, type: 'message', attachments: [] },
 });
+
+it('delivers the private webhook URL only to the claimed requesting-agent resume', async () => {
+  const abort = new AbortController(), ctx = await context();
+  const resumed = { ...command('approval', 'resume'), source: { ...command().source,
+    body: 'Webhook approved', systemEvent: { kind: 'webhook-request-decided' as const,
+      subject: { kind: 'system' as const, name: 'Beeline' }, verb: 'approved' },
+  } };
+  const execute = vi.fn(async (name: string) => name === 'getAgentCommands'
+    ? { commandProtocol: 1, commands: [resumed] }
+    : name === 'claimAgentCommand'
+      ? { id: 'claimed', webhookResult: { url: 'https://example.invalid/v1/hooks/private', signingSecret: 'explicitly-shared' } }
+      : { id: 'ok' });
+  const wire = socketApi(execute);
+  let delivered: AgentCommand | undefined;
+  await runServerCommandIntake({ api: wire.api, roomId: 'room', agentId: 'agent', context: ctx, signal: abort.signal,
+    run: async (received) => { delivered = received; abort.abort(); }, stop: () => undefined });
+  expect(delivered?.source.body).toContain('Approved webhook URL (shown once): https://example.invalid/v1/hooks/private');
+  expect(delivered?.source.body).toContain('explicitly-shared');
+  expect(resumed.source.body).toBe('Webhook approved');
+});
 async function context() {
   const dir = await mkdtemp(join(tmpdir(), 'command-test-'));
   paths.push(dir);

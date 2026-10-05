@@ -1,3 +1,5 @@
+import { RoomWebhooks, WebhookError } from './room-webhooks.js';
+import { WEBHOOK_MAX_BYTES } from '@beeline/api-contract/phone';
 import { WorkflowAuthorizationError } from './workflow-admin.js';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -254,6 +256,9 @@ function clientKey(request: IncomingMessage): string {
   const first = value?.split(',')[0]?.trim();
   return first || request.socket.remoteAddress || 'unknown';
 }
+export function requestLogPath(path: string): string {
+  return path.startsWith('/v1/hooks/') ? '/v1/hooks/[redacted]' : path;
+}
 function signatureMatches(secret: string, payload: Buffer, header: string | undefined) {
   if (!header?.startsWith('sha256=')) return false;
   const expected = `sha256=${createHmac('sha256', secret).update(payload).digest('hex')}`;
@@ -403,7 +408,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         ).catch(() => undefined);
       });
     }
-    console.log('[req]', method, url.pathname);
+    console.log('[req]', method, requestLogPath(url.pathname));
     const minimum = helperVersionGate.minimum;
     const reportedVersion = request.headers['x-beeline-helper-version'];
     if (
@@ -431,7 +436,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     ).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       const status =
-        error instanceof WorkflowAuthorizationError
+        error instanceof WorkflowAuthorizationError || error instanceof WebhookError
           ? error.status
           : (message.startsWith('corner brief attachment ') &&
                 message.endsWith('is missing or unavailable in this Room')) ||
@@ -463,7 +468,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       console.error(
         '[req-error]',
         method,
-        url.pathname,
+        requestLogPath(url.pathname),
         `status=${status}`,
         error instanceof Error ? error.stack || error.message : String(error),
       );
@@ -1403,6 +1408,16 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const location = await options.github.completeInstallation(state, installationId);
     response.writeHead(302, { location, 'cache-control': 'no-store' });
     response.end();
+    return;
+  }
+
+  if (method === 'POST' && url.pathname.startsWith('/v1/hooks/')) {
+    let raw: Buffer;
+    try { raw = await bytes(request, WEBHOOK_MAX_BYTES); } catch { throw new WebhookError(413, 'webhook body too large'); }
+    const header = (name: string) => typeof request.headers[name] === 'string' ? request.headers[name] as string : undefined;
+    const result = await new RoomWebhooks(options.database).receive(url.pathname.slice('/v1/hooks/'.length), raw,
+      header('x-beeline-timestamp'), header('x-beeline-signature'), header('idempotency-key'), signatureMatches);
+    json(response, 202, result);
     return;
   }
 

@@ -1,3 +1,4 @@
+import { WebhookRequestCard } from '@/components/buzz/WebhookRequestCard';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { HumanProfile } from '../human-profile';
 import BuzzMembers from '../members';
@@ -5526,6 +5527,10 @@ export function BuzzChatSurface({
         );
       }
 
+      if (item.webhookRequest) {
+        return <WebhookRequestCard request={item.webhookRequest} roomId={decodedId}
+          canManage={!viewerIsAgent && (viewerChannelRole === 'owner' || viewerChannelRole === 'admin' || canManageWorkspace)} />;
+      }
       if (item.grantRequest) {
         return (
           <GrantRequestCard
@@ -5872,6 +5877,7 @@ export function BuzzChatSurface({
       targetBranchActionId,
       targetBranchNotice,
       viewerChannelRole,
+      canManageWorkspace,
       viewerIsAgent,
       speakerWorking,
       beginReply,
@@ -7184,6 +7190,10 @@ export function BuzzChatSurface({
                 testID="room-workflows-trigger"
               />
             ) : null}
+            {!viewerIsAgent && (canManageWorkspace || viewerChannelRole === 'owner' || viewerChannelRole === 'admin') && getBuzzRuntimeConfig().monolithEnabled && (
+              <HullActionSheetRow label="Webhooks" chevron="right" testID="room-webhooks-action"
+                onPress={() => { setRoomActionsVisible(false); router.push({ pathname: '/beeline/settings/webhooks', params: { roomId: decodedId } } as Href); }} />
+            )}
             {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
               <HullActionSheetRow
                 accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}

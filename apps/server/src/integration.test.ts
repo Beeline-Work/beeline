@@ -9605,6 +9605,8 @@ describe('monolith integration', () => {
       }).runOnce(),
     ).toBe(0);
     expect((await fetch(`${origin}/v1/media/${mediaId}`)).status).toBe(200);
+    await database.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+      VALUES($1,$2,'presence','presence','{"status":"online"}')`, [ROOM, AGENT]);
     const revision = await daemonOperation('reviseCornerBrief', {
       roomId: cornerId,
       cornerId,
@@ -10114,6 +10116,73 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
+  it.each([
+    ...['opened', 'no_code_work', 'upgrade_to_code', 'implement', 'checks', 'review', 'land', 'ask_human', 'landed', 'closed']
+      .map(state => ({ state, health: 'healthy' })),
+    ...['implement', 'ask_human'].flatMap(state =>
+      ['offline', 'removed', 'recent-failure', 'out-of-credit'].map(health => ({ state, health }))),
+  ])(
+    'Reproduction BR-01: brief revision from $state with $health worker', async ({ state, health }) => {
+      const worker = 'd'.repeat(64);
+      await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Worker','worker')`, [worker]);
+      await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [worker, HUMAN]);
+      for (const roomId of [null, ROOM])
+        await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, roomId, worker]);
+      const opened = await daemonOperation('createCorner', {
+        roomId: ROOM, requestId: 'worker-brief-open', name: 'Worker brief',
+        objective: 'Keep the approved behavior', repository: 'example/repo',
+        brief: { content: 'Keep the approved behavior.' },
+      });
+      expect(opened.status).toBe(200);
+      const { cornerId } = await opened.json() as { cornerId: string };
+      await phone.execute('sendRoomMessage', {
+        roomId: cornerId, messageId: createHash('sha256').update(`worker-${state}`).digest('hex'),
+        text: '@worker please implement this corner',
+      }, HUMAN);
+      await database.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [ROOM, worker]);
+      // Keep the opener out of credit while its already-claimed command revises the brief.
+      await database.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'opener-failed',$2,'failed')`, [ROOM, AGENT]);
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card) VALUES($1,$2,$3,'Allowance spent','turn-failed',$4::jsonb)`, [
+        createHash('sha256').update(`failure-${state}`).digest('hex'), ROOM, HUMAN,
+        JSON.stringify({ requestId: 'opener-failed', agentId: AGENT, silenceKind: 'allowance-spent' }),
+      ]);
+      await database.query(`UPDATE messages SET card=jsonb_set(card,'{toState}',to_jsonb($2::text)) WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId, state]);
+      await database.query(`UPDATE corner_facts SET workflow_state=$2 WHERE corner_id=$1`, [cornerId, state]);
+      if (health === 'offline')
+        await database.query(`DELETE FROM live_outputs WHERE agent_id=$1`, [worker]);
+      if (health === 'removed')
+        await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [cornerId, worker]);
+      if (health === 'recent-failure' || health === 'out-of-credit') {
+        await database.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,created_at)
+          VALUES($1,'worker-failed',$2,'failed',now()-$3::interval)`, [ROOM, worker, health === 'out-of-credit' ? '1 day' : '0 seconds']);
+        await database.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
+          VALUES($1,$2,$3,'Worker failed','turn-failed',$4::jsonb)`, [
+          createHash('sha256').update(`worker-failure-${state}`).digest('hex'), ROOM, HUMAN,
+          JSON.stringify({ requestId: 'worker-failed', agentId: worker, silenceKind: health === 'out-of-credit' ? 'allowance-spent' : 'hiccup' }),
+        ]);
+      }
+      const revised = await daemonOperation('reviseCornerBrief', {
+        roomId: cornerId, cornerId, requestId: 'worker-brief-correction', expectedRevision: 1,
+        brief: { content: 'Keep the corrected behavior.', change: 'Corrected behavior' },
+      });
+      expect(revised.status).toBe(200);
+      const result = await revised.json();
+      const wakes = (await database.query<{ agent_id: string }>(
+        `SELECT command.agent_id FROM agent_commands command JOIN messages note ON note.id=command.source_message_id
+         WHERE command.room_id=$1 AND note.text LIKE '%revised the corner brief%'`, [cornerId],
+      )).rows.map(row => row.agent_id);
+      const terminal = state === 'landed' || state === 'closed';
+      const shouldWake = !terminal && health === 'healthy';
+      console.info(`Reproduction BR-01: HTTP reviseCornerBrief from ${state}, worker ${health}; expected=${shouldWake ? 'current worker' : 'none'}; observed=${wakes.map(id => id === worker ? 'current worker' : 'opener').join(',') || 'none'}; revision=${result.revision}`);
+      expect(result).toMatchObject({ revision: 2, wake: shouldWake ? { queued: true, agentId: worker } : { queued: false, reason: expect.any(String) } });
+      expect(wakes).toEqual(shouldWake ? [worker] : []);
+      expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%revised the corner brief%'`, [cornerId])).rows).toHaveLength(1);
+      expect((await database.query<{ worker_agent_id: string; workflow_state: string }>(
+        `SELECT worker_agent_id,workflow_state FROM corner_facts WHERE corner_id=$1`, [cornerId],
+      )).rows[0]).toEqual({ worker_agent_id: worker, workflow_state: state === 'ask_human' && shouldWake ? 'implement' : state });
+    },
+  );
+
   it('wakes the configured reviewer with a revised brief on an already green head', async () => {
     const opened = await daemonOperation('createCorner', {
       roomId: ROOM,
@@ -10165,7 +10234,6 @@ describe('monolith integration', () => {
       [cornerId],
     );
     expect(commands.rows).toEqual([
-      { agent_id: AGENT, reason: 'corner_brief_revision' },
       { agent_id: reviewerId, reason: 'corner_check' },
     ]);
     const reviewerCommand = (

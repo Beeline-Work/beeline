@@ -1,6 +1,7 @@
 import { humanRoomAdmin, WorkflowAuthorizationError } from './workflow-admin.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  shortRunId,
   workflowSaveError,
   workflowContentsError,
   workflowReceiptError,
@@ -249,6 +250,7 @@ async function noteWorkflowRoleExhausted(
   input: {
     roomId: string;
     runId: string;
+    workflowSlug: string;
     role: string;
     afterMessageId: string;
     list: readonly string[];
@@ -268,8 +270,15 @@ async function noteWorkflowRoleExhausted(
     authorId: SYSTEM_IDENTITY_ID,
     subject: { kind: 'system', name: `No agent on the ${input.role} role's list` },
     verb: 'is healthy',
-    consequence: `${reasons ? `${reasons} in run ${input.runId}; ` : `in run ${input.runId}; `}ask an agent to call assign_workflow_role to bind another agent in this Room`.slice(0, 600),
-    ...(starter.kind === 'agent' ? { kind: 'workflow-handoff' as const, wakes: [starter.id] } : {}),
+    consequence: `${reasons ? `${reasons} in run ${shortRunId(input.runId)}; ` : `in run ${shortRunId(input.runId)}; `}ask an agent to call assign_workflow_role to bind another agent in this Room`.slice(0, 600),
+    ...(starter.kind === 'agent'
+      ? {
+          kind: 'workflow-handoff' as const,
+          wakes: [starter.id],
+          // The wake names the full run id for the starter to act on.
+          card: { runId: input.runId, workflowSlug: input.workflowSlug },
+        }
+      : {}),
     afterMessageId: input.afterMessageId,
   });
 }
@@ -696,6 +705,7 @@ async function dispatchState(
     await noteWorkflowRoleExhausted(db, {
       roomId: input.roomId,
       runId: input.runId,
+      workflowSlug: input.contract.name,
       role,
       afterMessageId: input.cardId,
       list: input.roleAgents[role] ?? [],
@@ -866,7 +876,7 @@ async function moveRole(
     verb: 'moved',
     object: stateName,
     consequence:
-      `${from ? `from ${names.get(from)} ` : ''}to ${names.get(input.picked)} because ${input.why} in run ${runId} of ${run.workflowSlug}`.slice(0, 600),
+      `${from ? `from ${names.get(from)} ` : ''}to ${names.get(input.picked)} because ${input.why} in run ${shortRunId(runId)} of ${run.workflowSlug}`.slice(0, 600),
     ...input.line,
     kind: 'workflow-handoff',
     ...(state.kind === 'gate' ? {} : { wakes: [input.picked] }),
@@ -999,13 +1009,14 @@ async function failOver(
         verb: 'applied',
         object: 'timeout',
         consequence:
-          `at ${scope.stateName} and went to ${toState} because nobody on the ${role} role is left${reasons ? ` (${reasons})` : ''} in run ${scope.runId} of ${scope.run.workflowSlug}`.slice(0, 600),
+          `at ${scope.stateName} and went to ${toState} because nobody on the ${role} role is left${reasons ? ` (${reasons})` : ''} in run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`.slice(0, 600),
       }),
     });
   }
   await noteWorkflowRoleExhausted(db, {
     roomId: scope.roomId,
     runId: scope.runId,
+    workflowSlug: scope.run.workflowSlug,
     role,
     afterMessageId: scope.head.id,
     list,
@@ -1058,7 +1069,7 @@ export async function cancelWorkflowRun(
         subject: identitySubject(await loadIdentityRow(db, actorId)),
         verb: 'cancelled workflow',
         object: run.workflowSlug,
-        consequence: `run ${input.runId}`,
+        consequence: `run ${shortRunId(input.runId)}`,
       },
     });
     return { runId: input.runId, state: run.toState, status: 'abandoned', reason };
@@ -1251,7 +1262,7 @@ export async function handoff(
         subject: identitySubject(actor),
         verb: 'handed off',
         object: toState,
-        consequence: `run ${input.runId} of ${run.workflowSlug}`,
+        consequence: `run ${shortRunId(input.runId)} of ${run.workflowSlug}`,
       }),
     });
     return { runId: input.runId, ...result };
@@ -1317,8 +1328,8 @@ export async function settleWorkflowGate(
       verb: input.skip ? 'skipped' : 'picked',
       object: input.skip ? scope.stateName : label,
       consequence: input.skip
-        ? `so ${label} applied and run ${scope.runId} went to ${toState}`
-        : `at ${scope.stateName} so run ${scope.runId} went to ${toState}`,
+        ? `so ${label} applied and run ${shortRunId(scope.runId)} went to ${toState}`
+        : `at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`,
     }),
   });
   if (input.skip) {
@@ -1326,7 +1337,7 @@ export async function settleWorkflowGate(
       subject: { kind: 'system', name: `The ${scope.stateName} gate of ${scope.run.workflowSlug}` },
       verb: 'took its default',
       object: label,
-      consequence: `${systemIdentityMention({ ...viewer, handle: viewer.handle ?? null }) || viewer.name} skipped it in run ${scope.runId}`,
+      consequence: `${systemIdentityMention({ ...viewer, handle: viewer.handle ?? null }) || viewer.name} skipped it in run ${shortRunId(scope.runId)}`,
     });
   }
   return { choiceId: settled.choiceId, status: input.skip ? 'skipped' : 'answered', roomId: settled.roomId };
@@ -1346,14 +1357,14 @@ async function expireGate(db: SqlDatabase, scope: RunScope, state: WorkflowGateS
       subject: { kind: 'system', name: 'the workflow' },
       verb: 'applied',
       object: label,
-      consequence: `at ${scope.stateName} and went to ${toState} because nobody answered in ${after} in run ${scope.runId} of ${scope.run.workflowSlug}`,
+      consequence: `at ${scope.stateName} and went to ${toState} because nobody answered in ${after} in run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`,
     }),
   });
   await noticeRunOwner(db, scope, `gate-default:${attempt}`, {
     subject: { kind: 'system', name: `The ${scope.stateName} gate of ${scope.run.workflowSlug}` },
     verb: 'took its default',
     object: label,
-    consequence: `nobody answered in ${after} in run ${scope.runId}`,
+    consequence: `nobody answered in ${after} in run ${shortRunId(scope.runId)}`,
   });
 }
 
@@ -1395,7 +1406,7 @@ export async function fireWorkflowTimer(
           authorId: SYSTEM_IDENTITY_ID,
           subject: { kind: 'system', name: 'the workflow' },
           verb: 'closed',
-          object: `run ${scope.runId} of ${scope.run.workflowSlug}`,
+          object: `run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`,
           consequence: `as failed at ${scope.stateName} because it passed its deadline${after}`,
         },
       });
@@ -1669,7 +1680,7 @@ export async function startWorkflow(
       subject: identitySubject(starter),
       verb: 'started workflow',
       object: contract.name,
-      consequence: `run ${runId}`,
+      consequence: `run ${shortRunId(runId)}`,
       kind: 'workflow-handoff',
       ...(!exhausted && !isGate ? { wakes: [(resolution as { agentId: string }).agentId] } : {}),
       presentation: 'card',

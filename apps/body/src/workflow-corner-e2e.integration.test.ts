@@ -639,8 +639,8 @@ it(
       )
     ).rows.map((row) => row.text);
     expect(recovery).toEqual([
-      `the workflow moved quote · from @baby to @vera because its lease expired in run ${runId} of desk-heal`,
-      `the workflow moved quote · from @vera to @trey because blocked (no access to the quote database) in run ${runId} of desk-heal`,
+      `the workflow moved quote · from @baby to @vera because its lease expired in run ${runId.slice(0, 8)} of desk-heal`,
+      `the workflow moved quote · from @vera to @trey because blocked (no access to the quote database) in run ${runId.slice(0, 8)} of desk-heal`,
     ]);
     const transcript = (
       await database.query<{ text: string }>(

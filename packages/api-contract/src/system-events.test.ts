@@ -12,6 +12,7 @@ import {
   isSystemEvent,
   isSystemEventKind,
   joinSystemNames,
+  shortRunId,
   MAX_EVENT_DEPTH,
   MAX_MENTIONS_PER_EVENT,
   MAX_TURNS_PER_ROOT,
@@ -24,6 +25,11 @@ import {
 } from './system-events.js';
 
 describe('the one system-line grammar', () => {
+  it('shortens run ids for display without padding short ids', () => {
+    expect(shortRunId('6afa8c98772151d164723723e6b26c248ca5c39e521efd125e89af93da496b4c')).toBe('6afa8c98');
+    expect(shortRunId('run-1')).toBe('run-1');
+  });
+
   it('reads subject verb object · consequence with nothing else', () => {
     expect(formatSystemLine({ subject: { kind: 'person', name: 'Candy' }, verb: 'joined' })).toBe(
       'Candy joined',

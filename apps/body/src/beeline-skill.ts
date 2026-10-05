@@ -136,7 +136,7 @@ Before judging the implementation, independently repeat the two judgment legs fr
 
 ## 3. Empirical pass second
 
-Build one visible validation record for the brief revision and code head. Assess intent, base synchronization, independent review, tests, documentation, lint and types, publication, CI, and final Beeline authorization. Each applicable stage is pending, running, passed, failed, skipped, or not applicable, with a reason for the last two. A required skipped, failed, or unverified stage blocks PASS. An empty CI rollup is not proof of passing checks. Reuse valid author evidence; run targeted independent checks where needed. A screenshot or rendered app is needed for visual claims, and server-boundary behavior for authorization claims.
+Build one visible validation record for the brief revision and code head. Assess intent, base synchronization, independent review, tests, documentation, lint and types, publication, CI, and final Beeline authorization. Each applicable stage is pending, running, passed, failed, skipped, or not applicable, with a reason for the last two. A required skipped, failed, or unverified stage blocks PASS. An empty rollup alone is not proof of passing checks. Use pr_checks_status for the exact current head: checks="passed" with checkCount=0 is the server-confirmed no-checks path and satisfies the CI prerequisite for review. Do not refuse review because no literal green check exists, and do not require mergeAllowed=true before reviewing: the missing reviewer PASS itself keeps that gate closed. Pending, failed, or unknown checks still block approval. Reuse valid author evidence; run targeted independent checks where needed. A screenshot or rendered app is needed for visual claims, and server-boundary behavior for authorization claims.
 Use record_validation_stage for each assessed stage, naming the current brief revision and exact PR head.
 ${VALIDATION_STAGE_OWNERSHIP}
 The record informs the verdict but never replaces approve_merge or pr_checks_status.
@@ -177,7 +177,7 @@ When the diff touches UI and the repository has a DESIGN.md, check every changed
 
 ## 8. Gate and verdict
 
-- Review the exact green head named in your reviewer instruction. If the head moved, do not approve it.
+- Review the exact green head named in your reviewer instruction; a server-confirmed zero-check passed head counts as green. If the head moved, do not approve it.
 - Re-read the assigned brief revision before the verdict. A repair changes the head and invalidates affected evidence; a requirement correction invalidates the relevant verdict even if code did not change. Keep product-completeness findings (a missing or contradicted user story, done non-goal, unaddressed risk, mock mismatch, or approval quote) separate from engineering findings (correctness, security, maintainability, tests). Give every confirmed finding a stable ID that survives rereview, the affected outline line or \`engineering\`, location, severity, evidence, and repair disposition. Reuse the same ID until that finding is resolved. Mechanical repairs return to the author; ask a human only for a genuinely unresolved product choice. Do not run a nested validation pipeline or push the author's branch.
 - Always use this exact verdict shape:
 

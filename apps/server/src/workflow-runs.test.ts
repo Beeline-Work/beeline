@@ -453,6 +453,39 @@ describe('save_workflow error reasons', () => {
 });
 
 describe('start_workflow', () => {
+  it('Reproduction workflow-line-1: reads short workflow lines without a self-mention through the phone service', async () => {
+    await database.query(`UPDATE identities SET handle='impy' WHERE id=$1`, [IMPLEMENTER]);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, OWNER]);
+    const command = await commandFor(IMPLEMENTER);
+    await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT) });
+    const { runId } = await startWorkflow(database, command, {
+      name: 'corner',
+      roleBindings: { implementer: REVIEWER, reviewer: REVIEWER, approver: APPROVER },
+    });
+    const phone = new PhoneService(database, 'http://localhost');
+    const start = (await phone.readRoom(ROOM, OWNER))!.messages.find(message => message.id === runId)!;
+    const wakes = (await database.query<{ agent_id: string }>(
+      `SELECT agent_id FROM agent_commands WHERE source_message_id=$1`, [runId],
+    )).rows.map(row => row.agent_id);
+    await handoff(database, await commandFor(REVIEWER), {
+      runId, outcome: 'stuck', contents: { summary: 'stuck', prUrl: 'none' },
+    });
+    await cancelWorkflowRun(database, command, { runId, reason: 'Stop the demonstration' });
+    const messages = (await phone.readRoom(ROOM, OWNER))!.messages;
+    const cancel = messages.find(message => message.text.includes('cancelled workflow'))!;
+    const handoffLine = messages.find(message => message.text.includes('handed off'))!;
+    expect(start.text).toBe(`Impy started workflow corner · run ${runId.slice(0, 8)}`);
+    expect(start.systemEvent?.subject).toMatchObject({ id: IMPLEMENTER, name: 'Impy' });
+    expect(wakes).toEqual([REVIEWER]);
+    expect(handoffLine.text).toBe(`Ravi handed off ask_human · run ${runId.slice(0, 8)} of corner`);
+    expect(cancel.text).toBe(`@impy cancelled workflow corner · run ${runId.slice(0, 8)}`);
+    const cards = (await database.query<{ id: string; card: { runId: string } }>(
+      `SELECT id,card FROM messages WHERE id=ANY($1::text[])`, [[start.id, cancel.id]],
+    )).rows;
+    expect(cards.every(row => row.card.runId === runId)).toBe(true);
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('abandoned');
+  });
+
   it('rejects a role with no binding', async () => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT)});
@@ -526,7 +559,7 @@ describe('start_workflow', () => {
     );
   });
 
-  it('shows the full run id on the handoff card: the stored text a human reads carries it verbatim', async () => {
+  it('shows a short run id in start text and keeps the full id in the card', async () => {
     // `messages.text` (not just the structured `card`) is what the mobile app
     // renders for this card: `workflow-handoff` is not a card type
     // `phone-service.ts`'s `toRoomViewMessage` gives a dedicated field, and it
@@ -538,10 +571,11 @@ describe('start_workflow', () => {
       name: 'corner',
       roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
     });
-    const row = await database.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [
+    const row = await database.query<{ text: string; card: { runId: string } }>(`SELECT text,card FROM messages WHERE id=$1`, [
       started.runId,
     ]);
-    expect(row.rows[0]?.text).toContain(started.runId);
+    expect(row.rows[0]?.text).toBe(`Impy started workflow corner · run ${started.runId.slice(0, 8)}`);
+    expect(row.rows[0]?.card.runId).toBe(started.runId);
   });
 
   it('rejects start_workflow from an agent currently acting inside a live run of the same workflow, naming the run id and state', async () => {
@@ -796,12 +830,13 @@ describe('handoff', () => {
     expect(result.state).toBe('checks');
     expect(await pendingCommandsFor(IMPLEMENTER)).toBeGreaterThan(0);
     // The handoff card's stored text (what the mobile app renders for it,
-    // same fallback as the start card) carries the full run id too.
-    const rows = await database.query<{ text: string }>(
-      `SELECT text FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1 ORDER BY created_at DESC LIMIT 1`,
+    // same fallback as the start card) uses a short run id.
+    const rows = await database.query<{ text: string; card: { runId: string } }>(
+      `SELECT text,card FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1 ORDER BY created_at DESC LIMIT 1`,
       [runId],
     );
-    expect(rows.rows[0]?.text).toContain(runId);
+    expect(rows.rows[0]?.text).toBe(`Impy handed off checks · run ${runId.slice(0, 8)} of corner`);
+    expect(rows.rows[0]?.card.runId).toBe(runId);
   });
 
   it('rejects a handoff on a run that has already ended', async () => {
@@ -1075,7 +1110,7 @@ describe('handoff', () => {
     expect((last.contents as { reason: string }).reason).toBe('@impy its lease expired');
     const line = (await database.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [last.messageId])).rows[0]!;
     expect(line.text).toBe(
-      `the workflow applied timeout · at implement and went to ask_human because nobody on the implementer role is left (@impy its lease expired) in run ${runId} of corner`,
+      `the workflow applied timeout · at implement and went to ask_human because nobody on the implementer role is left (@impy its lease expired) in run ${runId.slice(0, 8)} of corner`,
     );
   });
 });
@@ -1934,7 +1969,7 @@ describe('agent workflow run reads and cancellation', () => {
     )).rows[0]!;
     console.log('Cancellation notice:', JSON.stringify(notice));
     expect(notice.author_id).toBe(SYSTEM_IDENTITY_ID);
-    expect(notice.text).toBe(`@owner cancelled workflow corner · run ${runId}`);
+    expect(notice.text).toBe(`@owner cancelled workflow corner · run ${runId.slice(0, 8)}`);
     expect(notice.actor_id).toBe(OWNER);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
     const room = await new PhoneService(database, 'http://localhost').readRoom(ROOM, OWNER);
@@ -2224,7 +2259,7 @@ describe('blocked: an agent that cannot do its step hands it on', () => {
       tried: [{ agentId: WORKER_A, reason: 'blocked (no database write access)' }],
     });
     expect(last.text).toBe(
-      `the workflow moved work · from @wa to @wb because blocked (no database write access) in run ${runId} of list-flow`,
+      `the workflow moved work · from @wa to @wb because blocked (no database write access) in run ${runId.slice(0, 8)} of list-flow`,
     );
     expect(await pendingCommandsFor(WORKER_B)).toBeGreaterThan(0);
   });
@@ -2483,9 +2518,9 @@ describe('gates with a timeout and a default', () => {
     });
     expect(read.history.at(-1)).toBeDefined();
     const line = (await runCards(runId)).at(-1)!.text;
-    expect(line).toBe(`the workflow applied stop · at sign_off and went to failed because nobody answered in 10 min in run ${runId} of gated`);
+    expect(line).toBe(`the workflow applied stop · at sign_off and went to failed because nobody answered in 10 min in run ${runId.slice(0, 8)} of gated`);
     expect(await ownerNotices(OWNER)).toEqual([
-      `The sign_off gate of gated took its default stop · nobody answered in 10 min in run ${runId}`,
+      `The sign_off gate of gated took its default stop · nobody answered in 10 min in run ${runId.slice(0, 8)}`,
     ]);
     expect(await fireTimer(runId, 'step')).toBe(0);
     expect(await ownerNotices(OWNER)).toHaveLength(1);
@@ -2500,7 +2535,7 @@ describe('gates with a timeout and a default', () => {
       outcome: 'stop', actorId: OWNER, contents: { decision: 'stop', defaultedBy: OWNER },
     });
     expect(await ownerNotices(OWNER)).toEqual([
-      `The sign_off gate of gated took its default stop · @owner skipped it in run ${runId}`,
+      `The sign_off gate of gated took its default stop · @owner skipped it in run ${runId.slice(0, 8)}`,
     ]);
     const plain = await startedRun(OWNER);
     await withoutTimeouts('corner', 'human_approve');
@@ -2653,7 +2688,7 @@ describe('one live run per workflow per Room', () => {
     const skips = (await database.query<{ text: string }>(
       `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%skipped a run%'`, [ROOM],
     )).rows;
-    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId} is still live at work` }]);
+    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId.slice(0, 8)} is still live at work` }]);
   });
 });
 
@@ -2665,7 +2700,7 @@ describe('run deadline', () => {
     expect(read).toMatchObject({ state: 'work', status: 'failed', allowedOutcomes: {} });
     expect(read.history.at(-1)).toMatchObject({ outcome: 'deadline', status: 'failed', contents: { reason: 'deadline' } });
     expect((await runCards(runId)).at(-1)!.text).toBe(
-      `the workflow closed run ${runId} of gated · as failed at work because it passed its deadline of 2 h`,
+      `the workflow closed run ${runId.slice(0, 8)} of gated · as failed at work because it passed its deadline of 2 h`,
     );
     expect((await database.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
     expect((await database.query(`SELECT 1 FROM agent_commands command JOIN messages message ON message.id=command.source_message_id WHERE command.state='pending' AND message.card->>'runId'=$1`, [runId])).rowCount).toBe(0);

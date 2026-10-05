@@ -1,12 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import {
   sameMessageRefMap,
+  sameRecordValueMap,
   sameSelectedMembers,
   sameStringSet,
   shallowEqualRecord,
 } from './use-stable';
 
 describe('render-input identity comparators', () => {
+  it('sameRecordValueMap compares rebuilt flat values field-wise', () => {
+    const first = new Map([['a', { name: 'Ruby', handle: 'ruby' }]]);
+    expect(sameRecordValueMap(first, new Map([['a', { name: 'Ruby', handle: 'ruby' }]]))).toBe(
+      true,
+    );
+    expect(sameRecordValueMap(first, new Map([['a', { name: 'Rubi', handle: 'ruby' }]]))).toBe(
+      false,
+    );
+    expect(sameRecordValueMap(first, new Map([['b', { name: 'Ruby', handle: 'ruby' }]]))).toBe(
+      false,
+    );
+    expect(sameRecordValueMap(first, new Map())).toBe(false);
+  });
+
   it('shallowEqualRecord compares flat boolean/string records field-wise', () => {
     expect(shallowEqualRecord({ a: true, b: false }, { a: true, b: false })).toBe(true);
     expect(shallowEqualRecord({}, {})).toBe(true);

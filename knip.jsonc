@@ -110,7 +110,7 @@
       // These are copied to an operator host and executed during database
       // cutover; they are intentionally not package.json commands.
       "entry": [
-        "src/{index,import-cli,measure-cli}.ts",
+        "src/{index,measure-cli}.ts",
         "scripts/{copy-postgres-data,verify-fly-cutover}.mjs",
       ],
     },

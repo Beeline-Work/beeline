@@ -27,6 +27,14 @@ export const WORKFLOW_CONTENTS_MAX_BYTES = 16_384;
 /** `agent_schedules` interval granularity is whole minutes; timeouts round up to it. */
 export const WORKFLOW_TIMEOUT_SECONDS_MIN = 60;
 export const WORKFLOW_TIMEOUT_SECONDS_MAX = 30 * 24 * 60 * 60;
+/** A saved workflow run started through `start_workflow` closes as failed after this long unless its contract sets `deadlineSeconds`. */
+export const WORKFLOW_DEFAULT_DEADLINE_SECONDS = 24 * 60 * 60;
+/**
+ * The built-in outcome every handoff state accepts: the holder cannot do the
+ * step, says why in `contents.reason`, and the step moves to the next eligible
+ * agent on its role list. New saves may not declare it in `on`.
+ */
+export const WORKFLOW_BLOCKED_OUTCOME = 'blocked';
 /** Agents one `start_workflow` role binding may list, tried in order. */
 export const WORKFLOW_ROLE_AGENTS_MAX = 16;
 export const WORKFLOW_TEXT_MAX_LENGTH = 140;
@@ -89,11 +97,15 @@ export type WorkflowHandoffState = {
   readonly requires: readonly string[];
   readonly on: Readonly<Record<string, string>>;
   readonly loop?: WorkflowLoop;
-  /** Seconds until the bound agent is reminded to move this state on. Gates cannot time out this way. */
+  /**
+   * Seconds each agent on the role list gets. When it passes, the engine moves
+   * the step to the next eligible agent; once the list is used up it applies
+   * the `timeout` outcome itself.
+   */
   readonly timeoutSeconds?: number;
 };
 
-/** Posts an `ask_choice` card; `role`'s agent is woken once a human answers. */
+/** Posts an `ask_choice` card; a person's answer moves the run on. */
 export type WorkflowGateState = {
   /** A short sentence for people reading the run. Optional on legacy revisions. */
   readonly does?: string;
@@ -102,6 +114,10 @@ export type WorkflowGateState = {
   readonly role: string;
   readonly requires: readonly string[];
   readonly on: Readonly<Record<string, string>>;
+  /** Seconds until an unanswered gate takes `default`. Declared together with `default`. */
+  readonly timeoutSeconds?: number;
+  /** The outcome applied on timeout or on a person's Skip. One of `on`. */
+  readonly default?: string;
 };
 
 /**
@@ -180,6 +196,8 @@ export type WorkflowContract = {
    * declares.
    */
   readonly externalOutcomes?: readonly string[];
+  /** Seconds a run may stay live before the engine closes it as failed. */
+  readonly deadlineSeconds?: number;
 };
 
 /** The workflow's own name, stored as `workspace_skills.slug` (hyphen only, per that column's CHECK). */
@@ -201,6 +219,11 @@ const isIdentifierArray = (value: unknown, max: number, pattern: RegExp): value 
   value.length <= max &&
   value.every((entry) => typeof entry === 'string' && pattern.test(entry)) &&
   new Set(value).size === value.length;
+
+const timeoutInRange = (value: unknown): boolean =>
+  Number.isInteger(value) &&
+  (value as number) >= WORKFLOW_TIMEOUT_SECONDS_MIN &&
+  (value as number) <= WORKFLOW_TIMEOUT_SECONDS_MAX;
 
 const oneLine = (value: unknown): value is string =>
   typeof value === 'string' && Array.from(value).length <= WORKFLOW_TEXT_MAX_LENGTH &&
@@ -254,6 +277,7 @@ export function workflowContractError(value: unknown): string | null {
     'handoffs',
     'implicitEdges',
     'externalOutcomes',
+    'deadlineSeconds',
   ]);
   if (topKey !== undefined) return `unknown key "${topKey}" at the top level`;
   if (value.version !== WORKFLOW_CONTRACT_VERSION) return `version must be ${WORKFLOW_CONTRACT_VERSION}`;
@@ -274,6 +298,8 @@ export function workflowContractError(value: unknown): string | null {
   if (typeof value.start !== 'string' || !Object.hasOwn(value.handoffs, value.start))
     return `start must name a state in handoffs (got ${JSON.stringify(value.start)})`;
   const states = value.handoffs as Record<string, unknown>;
+  if (value.deadlineSeconds !== undefined && !timeoutInRange(value.deadlineSeconds))
+    return `deadlineSeconds must be a whole number from ${WORKFLOW_TIMEOUT_SECONDS_MIN} to ${WORKFLOW_TIMEOUT_SECONDS_MAX}`;
   if (
     value.externalOutcomes !== undefined &&
     !isIdentifierArray(value.externalOutcomes, WORKFLOW_OUTCOMES_MAX, IDENTIFIER_PATTERN)
@@ -317,7 +343,7 @@ export function workflowContractError(value: unknown): string | null {
     if (raw.kind !== undefined && !isGate && !isServer)
       return `${at}: kind must be gate, server, terminal or waiting, or omitted for a handoff`;
     const allowedKeys = isGate
-      ? ['kind', 'role', 'requires', 'on']
+      ? ['kind', 'role', 'requires', 'on', 'timeoutSeconds', 'default']
       : isServer
         ? ['kind', 'role', 'requires', 'on', 'loop']
         : ['role', 'roleBinding', 'requires', 'on', 'loop', 'timeoutSeconds'];
@@ -362,15 +388,15 @@ export function workflowContractError(value: unknown): string | null {
       .filter(([outcome]) => !external.has(outcome))
       .map(([, target]) => target as string);
     for (const [outcome] of outcomes) declaredOutcomes.add(outcome);
-    if (!isGate && !isServer && raw.timeoutSeconds !== undefined) {
-      if (
-        !Number.isInteger(raw.timeoutSeconds) ||
-        (raw.timeoutSeconds as number) < WORKFLOW_TIMEOUT_SECONDS_MIN ||
-        (raw.timeoutSeconds as number) > WORKFLOW_TIMEOUT_SECONDS_MAX
-      )
-        return `${at}: timeoutSeconds must be a whole number from ${WORKFLOW_TIMEOUT_SECONDS_MIN} to ${WORKFLOW_TIMEOUT_SECONDS_MAX}`;
-      if (!Object.hasOwn(on, 'timeout')) return `${at}: timeoutSeconds needs a "timeout" outcome in on`;
-    }
+    if (!isServer && raw.timeoutSeconds !== undefined && !timeoutInRange(raw.timeoutSeconds))
+      return `${at}: timeoutSeconds must be a whole number from ${WORKFLOW_TIMEOUT_SECONDS_MIN} to ${WORKFLOW_TIMEOUT_SECONDS_MAX}`;
+    if (isGate) {
+      if ((raw.timeoutSeconds === undefined) !== (raw.default === undefined))
+        return `${at}: a gate declares timeoutSeconds and default together, or neither`;
+      if (raw.default !== undefined && (typeof raw.default !== 'string' || !Object.hasOwn(on, raw.default)))
+        return `${at}: default ${JSON.stringify(raw.default)} is not an outcome in on`;
+    } else if (!isServer && raw.timeoutSeconds !== undefined && !Object.hasOwn(on, 'timeout'))
+      return `${at}: timeoutSeconds needs a "timeout" outcome in on`;
     if (!isGate && raw.loop !== undefined) {
       const loop = raw.loop;
       if (!record(loop) || unknownKey(loop, ['onEdge', 'cap', 'onExceeded']) !== undefined)
@@ -474,6 +500,8 @@ export type WorkflowRunReadResult = {
   readonly workflowSlug: string;
   readonly workflowVersion: number;
   readonly state: string;
+  /** Pass this to `handoff`; it changes every time the step moves or is reassigned. */
+  readonly attempt: number;
   readonly status: 'live' | 'done' | 'failed' | 'abandoned';
   readonly role?: string;
   readonly boundAgentId?: string;
@@ -497,13 +525,24 @@ export type WorkflowRunReadResult = {
   }[];
 };
 
-/** New saves require human descriptions; pinned legacy reads keep their original contract. */
+/**
+ * New saves require human descriptions, a timeout on every agent step and a
+ * timeout with a default on every gate, so no run can wait on nobody;
+ * pinned legacy reads keep their original contract.
+ */
 export function workflowSaveError(value: unknown): string | null {
   const error = workflowContractError(value);
   if (error) return error;
   const contract = value as WorkflowContract;
   if (!contract.summary?.trim()) return 'summary is required and must be nonempty';
-  for (const [name, state] of Object.entries(contract.handoffs))
+  for (const [name, state] of Object.entries(contract.handoffs)) {
     if (!state.does?.trim()) return `handoffs.${name}: does is required and must be nonempty`;
+    if ('on' in state && Object.hasOwn(state.on, WORKFLOW_BLOCKED_OUTCOME))
+      return `handoffs.${name}: "${WORKFLOW_BLOCKED_OUTCOME}" is built in; name this outcome something else`;
+    if (state.kind === undefined && state.timeoutSeconds === undefined)
+      return `handoffs.${name}: timeoutSeconds is required, with a "timeout" outcome in on`;
+    if (state.kind === 'gate' && (state.timeoutSeconds === undefined || state.default === undefined))
+      return `handoffs.${name}: a gate needs timeoutSeconds and default`;
+  }
   return null;
 }

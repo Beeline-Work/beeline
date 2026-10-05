@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { migrate } from '../../server/src/database.js';
-import { PgliteDatabase } from '../../server/src/test-support.js';
+import { describedWorkflow, PgliteDatabase } from '../../server/src/test-support.js';
 import { TokenAuth } from '../../server/src/auth.js';
 import { PhoneService } from '../../server/src/phone-service.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
@@ -13,6 +13,7 @@ import { LiveHub } from '../../server/src/live.js';
 import { createBeelineServer } from '../../server/src/server.js';
 import { createAgentCommand, type CommandRow } from '../../server/src/agent-command.js';
 import { describedLegacyWorkflowContract, saveWorkflow } from '../../server/src/workflow-runs.js';
+import { AgentScheduleLoop } from '../../server/src/agent-schedules.js';
 import type { TransactionalDatabase } from '@beeline/auth/store';
 import { getPublicKey } from '@beeline/nostr';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
@@ -206,7 +207,9 @@ beforeEach(async () => {
   await saveWorkflow(
     database,
     seedCommand,
-    { contract: describedLegacyWorkflowContract(CONTRACT) },
+    // New saves also need a timeout on every step; the run below never
+    // reaches one, so every path it takes is the real contract's.
+    { contract: describedWorkflow(describedLegacyWorkflowContract(CONTRACT)) },
     undefined,
   );
 }, HOOK_TIMEOUT_MS);
@@ -530,5 +533,121 @@ it(
       [CORNER, runB],
     );
     expect(emptyLoopCards.rows.map((row) => row.to_state)).toEqual(['scout', 'score']);
+  },
+);
+
+/** A step with a three-agent lead list and a 10-minute lease per agent. */
+const HEALING = {
+  version: 1,
+  name: 'desk-heal',
+  description: 'One lead step that heals itself',
+  summary: 'A lead quotes the desk; silent or blocked leads hand the step on.',
+  roles: ['lead'],
+  start: 'quote',
+  handoffs: {
+    quote: {
+      does: 'Quote the desk.',
+      role: 'lead',
+      requires: ['quotes'],
+      on: { quoted: 'done', timeout: 'failed' },
+      timeoutSeconds: 600,
+    },
+    done: { does: 'The desk is quoted.', kind: 'terminal', status: 'done' },
+    failed: { does: 'Nobody could quote the desk.', kind: 'terminal', status: 'failed' },
+  },
+} as const;
+
+it(
+  'heals a scheduled run with no human action: a silent lead times out, the next reports blocked, the third finishes',
+  { timeout: 60_000 },
+  async () => {
+    const scratchRoot = await mkdtemp(join(tmpdir(), 'beeline-workflow-heal-'));
+    roots.push(scratchRoot);
+    for (const agentId of [SCOUT, VERIFIER, TRADER])
+      await database.query(
+        `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body,updated_at)
+         VALUES($1,$2,'presence','presence','{"status":"online"}'::jsonb,now())`,
+        [CORNER, agentId],
+      );
+    const saver = await seedHumanTag(AUDITOR, '@jellybean save the desk-heal workflow');
+    const saverTurn = await claimTurn(AUDITOR, saver, scratchRoot);
+    await useTool(AUDITOR, saverTurn, 'save_workflow', { contract: HEALING });
+
+    // The schedule was made by the agent itself; its owner is the person who asked.
+    const scheduleId = '44444444-4444-4444-8444-444444444444';
+    await database.query(
+      `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug,owner_id)
+       VALUES($1,$2,$3,$4,$4,'{"kind":"interval","everyMinutes":1440}'::jsonb,'start desk-heal',now()-interval '1 minute','desk-heal',$5)`,
+      [scheduleId, WORKSPACE, CORNER, AUDITOR, HUMAN],
+    );
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    const tick = await pendingCommandFor(AUDITOR);
+    const tickTurn = await claimTurn(AUDITOR, tick, scratchRoot);
+    const started = await useTool(AUDITOR, tickTurn, 'start_workflow', {
+      name: 'desk-heal',
+      roleBindings: { lead: ['baby', 'vera', 'trey'] },
+    });
+    const runId = started.runId as string;
+
+    // Baby is woken for attempt 0 and never answers.
+    const silent = await pendingCommandFor(SCOUT);
+    expect(silent.room_id).toBe(CORNER);
+    await database.query(
+      `UPDATE agent_schedules SET next_run_at=now()-interval '1 minute'
+       WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='step'`,
+      [runId],
+    );
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+
+    // Vera takes attempt 1 and cannot do it.
+    const veraCommand = await pendingCommandFor(VERIFIER);
+    const veraTurn = await claimTurn(VERIFIER, veraCommand, scratchRoot);
+    const blocked = await useTool(VERIFIER, veraTurn, 'handoff', {
+      runId,
+      outcome: 'blocked',
+      contents: { reason: 'no access to the quote database' },
+    });
+    expect(blocked).toEqual({ runId, state: 'quote', attempt: 2 });
+
+    // Trey takes attempt 2 and finishes.
+    const treyCommand = await pendingCommandFor(TRADER);
+    const treyTurn = await claimTurn(TRADER, treyCommand, scratchRoot);
+    const done = await useTool(TRADER, treyTurn, 'handoff', {
+      runId,
+      outcome: 'quoted',
+      contents: { quotes: 12 },
+      attempt: 2,
+    });
+    expect(done).toEqual({ runId, state: 'done', attempt: 3, status: 'done' });
+    // Baby wakes late and repeats attempt 0: nothing moves.
+    const babyTurn = await claimTurn(SCOUT, await seedHumanTag(SCOUT, '@baby are you there'), scratchRoot);
+    expect(await useTool(SCOUT, babyTurn, 'handoff', { runId, outcome: 'quoted', contents: { quotes: 1 }, attempt: 0 }))
+      .toEqual({ alreadyAdvanced: true, runId, state: 'done', seq: 3, status: 'done' });
+
+    const read = await useTool(AUDITOR, tickTurn, 'get_workflow_run', { runId });
+    expect(read).toMatchObject({ state: 'done', status: 'done' });
+    const humanActions = await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND author_id=$2 AND card->>'runId'=$3`,
+      [CORNER, HUMAN, runId],
+    );
+    expect(humanActions.rowCount).toBe(0);
+    const recovery = (
+      await database.query<{ text: string }>(
+        `SELECT text FROM messages WHERE room_id=$1 AND card_type='workflow-handoff' AND card->>'runId'=$2
+           AND card->>'reassigned'='true' ORDER BY (card->>'seq')::int`,
+        [CORNER, runId],
+      )
+    ).rows.map((row) => row.text);
+    expect(recovery).toEqual([
+      `the workflow moved quote · from @baby to @vera because its lease expired in run ${runId.slice(0, 8)} of desk-heal`,
+      `the workflow moved quote · from @vera to @trey because blocked (no access to the quote database) in run ${runId.slice(0, 8)} of desk-heal`,
+    ]);
+    const transcript = (
+      await database.query<{ text: string }>(
+        `SELECT text FROM messages WHERE room_id=$1 AND card->>'runId'=$2 ORDER BY (card->>'seq')::int`,
+        [CORNER, runId],
+      )
+    ).rows.map((row) => row.text);
+    console.log(`Demonstrated: run ${runId} reached done with no human action.\n${transcript.join('\n')}`);
   },
 );

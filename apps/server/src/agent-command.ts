@@ -929,7 +929,14 @@ function mergeCardDetail(card: MergeCard | null): string {
   return detail ? `\n${detail}` : '';
 }
 
-type WorkflowWakeCard = { runId?: string; workflowSlug?: string; note?: string };
+type WorkflowWakeCard = {
+  runId?: string;
+  workflowSlug?: string;
+  note?: string;
+  seq?: number;
+  /** A gate answer's transition card carries the person's note in its contents. */
+  contents?: { note?: unknown };
+};
 
 /**
  * A wake from a saved workflow run (a `workflow-handoff` card, or a gate's
@@ -949,11 +956,17 @@ function workflowWakeDetail(
   status: string | null,
 ): string {
   if (!card?.runId || !card.workflowSlug || cardType === CORNER_LIFECYCLE_CARD_TYPE) return '';
-  const note = card.note ? `\nTheir note with the answer: ${JSON.stringify(card.note)}` : '';
+  const answerNote = card.note ?? (typeof card.contents?.note === 'string' ? card.contents.note : undefined);
+  const note = answerNote ? `\nTheir note with the answer: ${JSON.stringify(answerNote)}` : '';
   const allowed = status ? 'none' : Object.entries(outcomes ?? {})
     .map(([outcome, target]) => `${outcome} -> ${target}`).join(', ') || 'none';
+  // A dispatch card's seq is the attempt this wake is for; a later card makes it stale.
+  const attempt = cardType === 'workflow-handoff' && !status
+    ? `\nThis wake is attempt ${card.seq ?? 0}: pass "attempt": ${card.seq ?? 0} to handoff. If you cannot do this step, hand off outcome "blocked" with contents {"reason": "..."} and it moves to the next agent on the role.`
+    : '';
   return `${note}\nYou are in run ${card.runId} of ${card.workflowSlug}. Continue this run; do not start a new one.` +
-    (state ? `\nCurrent state: ${state}${status ? ` (${status})` : ''}. Allowed outcomes: ${allowed}. Read the pinned contract and requirements with get_workflow_run.` : '');
+    (state ? `\nCurrent state: ${state}${status ? ` (${status})` : ''}. Allowed outcomes: ${allowed}. Read the pinned contract and requirements with get_workflow_run.` : '') +
+    attempt;
 }
 
 export async function readAgentCommands(

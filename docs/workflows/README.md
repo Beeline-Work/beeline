@@ -2,16 +2,18 @@
 
 A workflow is a saved contract that passes work between named roles in a Room. Each step names who acts, what they must hand over, and where each outcome goes next. Runs live in the Room transcript: every step is posted as a handoff card.
 
-A workflow does not run on a timer. It moves only when a bound agent calls `handoff` or a human answers a gate. For work that repeats (a check every few minutes, a daily start), target `create_schedule` at it with `workflowName`, and have that scheduled turn call `start_workflow`. Other agents join an existing run through `handoff` with its full run ID.
+A workflow does not start on a timer. It moves when a bound agent calls `handoff`, a person answers a gate, or one of the run's own timers fires: a step's `timeoutSeconds`, a gate's `timeoutSeconds`, or the run's deadline. For work that repeats (a check every few minutes, a daily start), target `create_schedule` at it with `workflowName`, and have that scheduled turn call `start_workflow`. Other agents join an existing run through `handoff` with its full run ID.
+
+A run heals itself without a person stepping in: an agent that goes silent loses the step when its timeout passes, an agent that cannot do a step reports `blocked`, a turn that ends without a handoff or fails moves the step on, and a run that outlives its deadline closes as failed. Each automatic move posts one line in the Room naming what moved, from whom, to whom, and why.
 
 ## Tools
 
 | Tool | What it does |
 | --- | --- |
 | `save_workflow` | Validates a contract and saves it Workspace-wide, versioned by `name`. Saving the same name again makes a new version. |
-| `start_workflow` | Starts a run of a saved workflow in this Room. You bind every role, and it returns a `runId`. |
+| `start_workflow` | Starts a run of a saved workflow in this Room. You bind every role, and it returns a `runId`. Refused while another run of the same workflow is live in this Room. |
 | `get_workflow_run` | Reads a run by `runId`, including its current state, requirements, history and pinned contract. |
-| `handoff` | Moves a run you hold to its next state. You give an `outcome` and the `contents` the state requires. |
+| `handoff` | Moves a run you hold to its next state. You give an `outcome`, the `contents` the state requires, and the `attempt` your wake names. Outcome `blocked` hands the step to the next agent on its role list. |
 | `cancel_workflow_run` | Ends an active run with a recorded reason, subject to requester, role-owner or admin authority. |
 | `assign_workflow_role` | Binds any agent in the Room to a role when no agent on that role's list is healthy. |
 | `archive_workflow` | Retires a saved workflow so it can no longer be started. Runs in progress keep going. |
@@ -26,6 +28,7 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
   "summary": "Draft a note, review the result, and ask a person before publishing.",
   "roles": ["writer", "reviewer", "approver"],
   "start": "draft",
+  "deadlineSeconds": 172800,
   "handoffs": {
     "draft": { "does": "Write the note.",
       "role": "writer",
@@ -37,20 +40,25 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
     "review": { "does": "Review the note and request changes if needed.",
       "role": "reviewer",
       "requires": ["verdict", "notes"],
-      "on": { "approved": "sign_off", "changes_requested": "draft" },
-      "loop": { "onEdge": "changes_requested", "cap": 3, "onExceeded": "stuck" }
+      "on": { "approved": "sign_off", "changes_requested": "draft", "timeout": "stuck" },
+      "loop": { "onEdge": "changes_requested", "cap": 3, "onExceeded": "stuck" },
+      "timeoutSeconds": 3600
     },
     "sign_off": { "does": "Ask a person for permission to publish.",
       "kind": "gate",
       "role": "approver",
       "requires": ["decision"],
-      "on": { "publish": "done", "reject": "failed" }
+      "on": { "publish": "done", "reject": "failed" },
+      "timeoutSeconds": 86400,
+      "default": "reject"
     },
     "stuck": { "does": "Ask a person how to continue.",
       "kind": "gate",
       "role": "approver",
       "requires": ["decision"],
-      "on": { "retry": "draft", "abandon": "failed" }
+      "on": { "retry": "draft", "abandon": "failed" },
+      "timeoutSeconds": 86400,
+      "default": "abandon"
     },
     "done": { "does": "The note is ready to publish.", "kind": "terminal", "status": "done" },
     "failed": { "does": "The note will not be published.", "kind": "terminal", "status": "failed" }
@@ -69,6 +77,7 @@ A workflow does not run on a timer. It moves only when a bound agent calls `hand
 | `roles` | 1-16 unique role names. Lowercase letters, digits, `_` or `-`, starting with a letter. |
 | `start` | The state a run begins in. It must not be a terminal. |
 | `handoffs` | 2-64 states, keyed by state name. State names follow the role-name rule. |
+| `deadlineSeconds` | Optional, 60 to 2592000. How long a run may stay live; when it passes, the run closes as `failed` with reason `deadline`, even while it waits at a gate. Every run gets 86400 (24 hours) when this is omitted, so a longer workflow must declare it. Moving a step to another agent does not reset it. |
 
 Unknown top-level keys are rejected.
 
@@ -84,15 +93,15 @@ Every state may have an optional free-text `hint` describing the outcome or arti
 | --- | --- |
 | `role` | One of `roles`. Required. |
 | `requires` | Field names that `handoff` must include in `contents`, up to 32. Letters, digits and `_`. Use `[]` for none. |
-| `on` | Outcome to next state, 1-16 outcomes. Each target must be a declared state. |
+| `on` | Outcome to next state, 1-16 outcomes. Each target must be a declared state. `blocked` is built in and cannot be declared. |
 | `loop` | Optional cap on one outcome: `{ "onEdge": <outcome>, "cap": 1-100, "onExceeded": <state> }`. `onExceeded` must differ from where `onEdge` normally goes. |
-| `timeoutSeconds` | Optional, 60 to 2592000. Needs a `timeout` outcome in `on`. When it elapses, the bound agent is reminded to call `handoff` with outcome `timeout`. |
+| `timeoutSeconds` | Required on a new save, 60 to 2592000. Needs a `timeout` outcome in `on`. Each agent on the role's list gets this long. When it passes, the step moves to the next eligible agent; once the list is used up, the engine applies `timeout` itself, with `contents: { reason }` naming each agent and why it left. A three-agent list can take up to three times this long. |
 
-**Gate** (`"kind": "gate"`): a human decides. It allows only `kind`, `role`, `requires`, `on`, `does` and optional `hint`, and needs 2-4 outcomes of at most 32 characters each. The run posts a choice card with one option per outcome. When a human answers, the role's agent is woken and calls `handoff` with the chosen outcome.
+**Gate** (`"kind": "gate"`): a person decides. It allows only `kind`, `role`, `requires`, `on`, `does`, optional `hint`, and `timeoutSeconds` with `default` (both required on a new save; `default` is one of `on`). It needs 2-4 outcomes of at most 32 characters each. The run posts a choice card with one option per outcome, however the run was started. A person's answer moves the run straight to that outcome's state, with `contents: { decision, note, answeredBy }`. **Skip** applies `default`; a gate saved before defaults were required has none and refuses Skip with "this gate needs an answer". When `timeoutSeconds` passes with no answer, the engine applies `default`. Skip and the timeout each send one notice to the run's owner. The gate role's agent is not woken at a gate and cannot `handoff` out of it.
 
 **Terminal** (`"kind": "terminal"`): the run ends. It allows only `kind`, `status`, `does` and optional `hint`, where status is `done`, `failed` or `abandoned`.
 
-Unknown keys on a state are rejected. The `server` and `waiting` kinds, `roleBinding`, `implicitEdges` and `externalOutcomes` exist for Beeline's built-in workflows and are not needed for your own.
+Unknown keys on a state are rejected. A new save is refused, naming the state, when an agent step has no `timeoutSeconds` or a gate lacks `timeoutSeconds` and `default`. Versions saved before this rule keep running as saved; the rule applies when they are next saved. The `server` and `waiting` kinds, `roleBinding`, `implicitEdges` and `externalOutcomes` exist for Beeline's built-in workflows and are not needed for your own.
 
 ### Graph rules
 
@@ -119,13 +128,21 @@ Any current agent member of the Room can start a run or create/update a schedule
 
    The run posts a card whose message id is the `runId` and wakes the agent bound to the start state. If the start state is a gate, it posts the gate's choice card instead.
 
-   **Every wake from a run states the run id and workflow name plainly**, including step handoffs, answered gates, and state timeouts: `You are in run <runId> of <name>. Continue this run; do not start a new one.` The handoff card also shows the full run id. Call `handoff` with that `runId` to continue. If the calling agent currently holds a role in an active run of the same workflow, `start_workflow` refuses it even when a human message woke the agent, with `You are already in run <runId> of <name>. Continue it or hand off within it.` It also refuses another agent starting that workflow from the same schedule occurrence while its run is active, naming the existing run id. A human Room/Workspace admin can start a separately attributed run through `startOwnedWorkflow`.
+   **One live run per workflow per Room.** Each corner is its own Room. While a run of a workflow is live in a Room, every start of it there is refused, whether by an agent, a schedule or a person's `startOwnedWorkflow`: `<name> already has a live run <runId> in this Room, at <state>. Continue it or cancel it before starting another.` A schedule with `workflowName` checks this first; a tick that finds a live run posts one line (`The <name> schedule skipped a run · run <runId> is still live at <state>`) and wakes no one. Runs of other workflows, and runs in other Rooms, are unaffected.
 
-3. **Read and hand off.** Any agent member of the run's Room can call `get_workflow_run` with `{ "runId" }`. The response includes `workflowSlug`, `workflowVersion`, `state`, `status`, the current `role` and `boundAgentId`, `allowedOutcomes` (outcome → next state), `requiredFields`, `receiptHint` when declared, the full pinned `contract`, and `history` with actors, contents and receipts. Read this contract even if the saved definition or repository copy has since changed. Every workflow wake includes its current state and allowed outcomes, including start, handoff, gate-answer and timeout wakes.
+   **The run's owner** is the person who started it: the person who started it directly, the person whose message an agent answered when it called `start_workflow`, or for a scheduled start, the person who created the schedule (for a schedule an agent created, the person whose message led to it). Gate defaults are noticed to the owner in their `@system` DM. With no owner on record, or once the owner has left the Room, notices go to the Room's admins. Any person in the Room may still answer a gate.
 
-   The agent holding the current state calls `handoff` with `{ "runId", "outcome", "contents" }`. The outcome must be one the state declares. `contents` must be an object, at most 16 KB, containing every `requires` field. A refusal lists all missing fields and all allowed outcomes with their next states together. The next state's agent is woken automatically, so no @mention is needed.
-4. **Gates.** When a run reaches a gate, a choice card is posted for a human. After they answer, the gate role's agent calls `handoff` with the chosen outcome. The person may add an optional one-line note (at most 140 characters) with their pick. The wake quotes it (`Their note with the answer: "..."`), and the run page shows it under the answer. The outcome still comes from the picked option.
-5. **No healthy agent.** If nobody on a list-bound role's list is healthy, the run says so in the Room and waits. A human can ask an agent to call `assign_workflow_role` with `{ "runId", "role", "agentId" }` to bind any agent in the Room.
+   **Every wake from a run states the run id, workflow name and attempt plainly**: `You are in run <runId> of <name>. Continue this run; do not start a new one.` followed by `This wake is attempt <n>: pass "attempt": <n> to handoff.` The attempt is the `seq` of the card that dispatched the step, and it changes every time the step moves or is reassigned. The handoff card also shows the full run id.
+
+3. **Read and hand off.** Any agent member of the run's Room can call `get_workflow_run` with `{ "runId" }`. The response includes `workflowSlug`, `workflowVersion`, `state`, `attempt`, `status`, the current `role` and `boundAgentId`, `allowedOutcomes` (outcome → next state), `requiredFields`, `receiptHint` when declared, the full pinned `contract`, and `history` with actors, contents and receipts. Read this contract even if the saved definition or repository copy has since changed. Every workflow wake includes its current state and allowed outcomes, including start, handoff, gate-answer and timeout wakes.
+
+   The agent holding the current state calls `handoff` with `{ "runId", "outcome", "contents", "attempt" }`. The outcome must be one the state declares. `contents` must be an object, at most 16 KB, containing every `requires` field. A refusal lists all missing fields and all allowed outcomes with their next states together. The next state's agent is woken automatically, so no @mention is needed. A successful handoff returns the new `attempt`; pass it to a further `handoff` in the same turn if you also hold the next step.
+
+   **Repeats and stale wakes do nothing.** If `attempt` no longer matches the run, nothing changes and the call returns `{ "alreadyAdvanced": true, "state", "seq" }` with the current state. An identical repeat of the handoff that moved the run returns that handoff's result again. Without `attempt`, the engine reads it from the wake the turn answers; a turn with no wake from this run may move the current step once. Every move cancels the run's pending wakes for older attempts.
+
+   **Blocked.** An agent that cannot do its step calls `handoff` with outcome `blocked` and `contents: { "reason": "..." }` (1-500 characters); no other `requires` field is needed. The step moves to the next eligible agent on its role list. A failed or stalled turn does the same, and so does a turn that answered the step's current attempt and ended without the run moving: end every step with its handoff in the same turn. A turn woken by something else does not count. The list only moves forward, and each agent is tried once per visit to a state; entering a state again through an `on` edge starts a fresh list.
+4. **Gates.** When a run reaches a gate, a choice card is posted for a person, carrying the run id and attempt. Their answer moves the run to the chosen outcome's state and wakes that state's agent; an answer on a card the gate has already left is refused. The person may add an optional one-line note (at most 140 characters) with their pick. The next agent's wake quotes it (`Their note with the answer: "..."`), and the run page shows it under the answer. The outcome still comes from the picked option. Skip and the gate's timeout apply its `default`, as described under **Gate** above.
+5. **No eligible agent.** When nobody on a role's list is left, the run posts one line naming every agent on the list with its reason (offline, out of credit, recent failure, blocked, lease expired, no handoff, turn failed, earlier on the list, or not in this Room). After `blocked` or an expired lease, a step with a `timeout` outcome takes it; otherwise the run waits, and only its deadline closes it. A human can ask an agent to call `assign_workflow_role` with `{ "runId", "role", "agentId" }` to bind any agent in the Room.
 6. **End or cancel.** The run ends when it reaches a terminal state. To stop an active run, call `cancel_workflow_run` with `{ "runId", "reason" }` (a nonempty reason, at most 4000 characters). The server derives the caller from the active turn's root requester; an agent cannot nominate someone else or borrow its owner's authority. Cancellation is allowed for the run's recorded requester, a human owner of any currently bound role agent, or a human Room/Workspace admin. Other callers are refused. The cancellation card records the actor and reason, leaves the run at its last declared state with status `abandoned`, removes its timeout and pending wakes, and closes an open gate without dispatching another agent. The run read returns `cancellation`, no allowed outcomes and no required fields. `handoff` and role reassignment on an ended run are refused.
 7. **Retire.** `archive_workflow` with `{ "name" }` stops new runs of that workflow.
 

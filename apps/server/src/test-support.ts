@@ -136,13 +136,29 @@ export function describedWorkflow(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const contract = value as Record<string, unknown>;
   const states = contract.handoffs;
+  const terminals = states && typeof states === 'object' && !Array.isArray(states)
+    ? Object.entries(states as Record<string, Record<string, unknown>>)
+        .filter(([, state]) => state?.kind === 'terminal')
+    : [];
+  const timeoutTarget =
+    (terminals.find(([, state]) => state.status === 'failed') ?? terminals[0])?.[0];
+  /** A step or gate with no timeout of its own gets a long one, as the save rules require. */
+  const timed = (state: Record<string, unknown>): Record<string, unknown> => {
+    const on = state.on && typeof state.on === 'object' ? (state.on as Record<string, string>) : undefined;
+    if (state.timeoutSeconds !== undefined || !on || !Object.keys(on).length) return state;
+    if (state.kind === undefined && timeoutTarget)
+      return { ...state, on: { ...on, timeout: on.timeout ?? timeoutTarget }, timeoutSeconds: 86400 };
+    if (state.kind === 'gate' && state.default === undefined)
+      return { ...state, timeoutSeconds: 86400, default: Object.keys(on)[0] };
+    return state;
+  };
   return {
     ...contract,
     summary: contract.summary ?? contract.description,
     ...(states && typeof states === 'object' && !Array.isArray(states) ? {
       handoffs: Object.fromEntries(Object.entries(states).map(([name, state]) => [name,
         state && typeof state === 'object' && !Array.isArray(state)
-          ? { does: `Perform ${name.replace(/[_-]/g, ' ')}.`, ...state } : state])),
+          ? timed({ does: `Perform ${name.replace(/[_-]/g, ' ')}.`, ...state }) : state])),
     } : {}),
   };
 }

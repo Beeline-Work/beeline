@@ -194,6 +194,7 @@ import {
   getWorkflowRun,
   cancelWorkflowRun,
   saveWorkflow,
+  failOverUnansweredTurn,
   startWorkflow,
 } from './workflow-runs.js';
 import { activeWorkflowRunIds, scheduleWorkflowName } from './workflow-admin.js';
@@ -711,6 +712,12 @@ export class DaemonService {
               candidate.status === 'complete',
               String(candidate.status),
             );
+            if (candidate.status === 'complete')
+              await failOverUnansweredTurn(db, {
+                roomId: scopedRoom!,
+                agentId: authenticatedAgentId,
+                sourceMessageId: command.source_message_id,
+              });
           }
         }
         return result;
@@ -4897,10 +4904,27 @@ export class DaemonService {
     );
     const scheduleId = randomUUID();
     const nextRunAt = nextScheduleOccurrence(input.cadence, new Date());
+    // The person whose message led to this schedule owns the workflow runs it
+    // starts; never the hidden scheduler that posts an agent's own schedule.
+    const requestId = (input as { requestId?: unknown }).requestId;
+    const ownerId =
+      typeof requestId === 'string'
+        ? (
+            await db.query<{ author_id: string }>(
+              `SELECT root.author_id FROM agent_commands command
+               JOIN messages root ON root.id=command.root_source_message_id
+               JOIN identities person ON person.id=root.author_id AND person.kind='human'
+                 AND NOT COALESCE(person.hidden_from_roster,false)
+               WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
+               ORDER BY command.created_at DESC LIMIT 1`,
+              [input.roomId, agentId, requestId],
+            )
+          ).rows[0]?.author_id
+        : undefined;
     await db.query(
       `INSERT INTO agent_schedules(
-         id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_slug
-       ) VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,$7,$8,$9)`,
+         id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_slug,owner_id
+       ) VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,$7,$8,$9,$10)`,
       [
         scheduleId,
         room.rows[0].workspace_id,
@@ -4911,6 +4935,7 @@ export class DaemonService {
         input.maxRuns ?? null,
         nextRunAt,
         workflowName ?? null,
+        ownerId ?? null,
       ],
     );
     return { scheduleId, nextRunAt: Math.floor(nextRunAt.getTime() / 1_000) };
@@ -5081,7 +5106,8 @@ export class DaemonService {
       `SELECT schedule.workflow_slug,schedule.id,schedule.agent_id,agent.handle agent_handle,schedule.cadence,
          schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule JOIN identities agent ON agent.id=schedule.agent_id
-       WHERE schedule.room_id=$1 AND (schedule.workflow_slug IS NOT NULL OR schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
+       WHERE schedule.room_id=$1 AND schedule.workflow_run IS NULL
+         AND (schedule.workflow_slug IS NOT NULL OR schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
        ORDER BY schedule.created_at,schedule.id`,
       [input.roomId, agentId],
     );

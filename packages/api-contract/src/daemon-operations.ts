@@ -214,8 +214,24 @@ export type DaemonOperationMap = {
         readonly outcome: string;
         readonly contents: unknown;
         readonly receipt?: WorkflowReceiptInput;
+        /** The attempt the caller's wake named; omitted, it is read from the command's own wake. */
+        readonly attempt?: number;
       },
-    { readonly runId: string; readonly state: string; readonly status?: 'done' | 'failed' }
+    | {
+        readonly runId: string;
+        readonly state: string;
+        /** The attempt now current; the step's holder passes it to its own next handoff. */
+        readonly attempt: number;
+        readonly status?: 'done' | 'failed';
+      }
+    | {
+        /** The step moved before this call; nothing changed. */
+        readonly alreadyAdvanced: true;
+        readonly runId: string;
+        readonly state: string;
+        readonly seq: number;
+        readonly status?: 'done' | 'failed' | 'abandoned';
+      }
   >;
   /** Retire a workflow; in-flight runs keep their pinned version. */
   archiveWorkflow: Operation<

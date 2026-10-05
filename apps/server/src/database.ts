@@ -1681,6 +1681,7 @@ CREATE INDEX IF NOT EXISTS agent_schedules_workspace_idx ON agent_schedules(work
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS max_runs integer;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS run_count integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_run jsonb;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS owner_id text REFERENCES identities(id);
 
 CREATE TABLE IF NOT EXISTS agent_schedule_occurrences (
   schedule_id uuid NOT NULL REFERENCES agent_schedules(id) ON DELETE CASCADE,

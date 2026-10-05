@@ -4,7 +4,7 @@ import {
   AGENT_SIGN_IN_NO_ANSWER_MESSAGE,
   completeAgentSignInCard,
 } from './agent-sign-in.js';
-import { startWorkflow } from './workflow-runs.js';
+import { settleWorkflowGate, startWorkflow } from './workflow-runs.js';
 import { humanRoomAdmin, scheduleWorkflowName } from './workflow-admin.js';
 import { setCornerHold } from './corner-holds.js';
 import {
@@ -4474,7 +4474,7 @@ export class PhoneService {
               schedule.created_at,surface.parent_id surface_parent_id,surface.name surface_name
        FROM agent_schedules schedule
        JOIN rooms surface ON surface.id=schedule.room_id
-       WHERE surface.id=$1 OR surface.parent_id=$1
+       WHERE (surface.id=$1 OR surface.parent_id=$1) AND schedule.workflow_run IS NULL
        ORDER BY schedule.created_at,schedule.id`,
       [roomId],
     );
@@ -6812,18 +6812,27 @@ export class PhoneService {
     });
   }
   private async answerChoice(input: Input<'answerChoice'>, viewerId: string) {
-    return this.database.transaction((database) =>
-      answerRoomChoice(database, {
-        choiceId: input.choiceId,
-        optionId: input.optionId,
-        viewerId,
-        note: input.note,
-      }),
+    return this.database.transaction(
+      async (database) =>
+        (await settleWorkflowGate(database, {
+          choiceId: input.choiceId,
+          optionId: input.optionId,
+          viewerId,
+          note: input.note,
+        })) ??
+        answerRoomChoice(database, {
+          choiceId: input.choiceId,
+          optionId: input.optionId,
+          viewerId,
+          note: input.note,
+        }),
     );
   }
   private async skipChoice(input: Input<'skipChoice'>, viewerId: string) {
-    return this.database.transaction((database) =>
-      skipRoomChoice(database, { choiceId: input.choiceId, viewerId }),
+    return this.database.transaction(
+      async (database) =>
+        (await settleWorkflowGate(database, { choiceId: input.choiceId, viewerId, skip: true })) ??
+        skipRoomChoice(database, { choiceId: input.choiceId, viewerId }),
     );
   }
   private async requireGrantAuthority(grantId: unknown, viewerId: string) {

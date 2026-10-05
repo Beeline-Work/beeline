@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readWorkflowContract } from '@beeline/api-contract/daemon';
+import { readWorkflowContract, workflowSaveError } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import { migrate } from './database.js';
 import {
@@ -127,6 +127,8 @@ describe('feedback-triage workflow', () => {
     expect(JSON.parse(docs('feedback-triage.json'))).toEqual(FEEDBACK_TRIAGE_CONTRACT);
     expect(docs('feedback-triage-steps.md')).toBe(FEEDBACK_TRIAGE_STEPS);
     expect(readWorkflowContract(FEEDBACK_TRIAGE_CONTRACT)).toEqual(FEEDBACK_TRIAGE_CONTRACT);
+    // The built-in contract meets the same save rules a person's workflow does.
+    expect(workflowSaveError(FEEDBACK_TRIAGE_CONTRACT)).toBeNull();
   });
 
   it('installs the workflow and its steps where a triage schedule runs and points that schedule at it, cadence unchanged', async () => {
@@ -198,10 +200,14 @@ describe('feedback-triage workflow', () => {
           unnotifiedPullRequests: [1968, 1970],
         },
       }),
-    ).resolves.toEqual({ runId, state: 'pull' });
+    ).resolves.toEqual({ runId, state: 'pull', attempt: 1 });
+    // The same turn moves the next step only by naming its attempt.
     await expect(
       handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] } }),
-    ).resolves.toEqual({ runId, state: 'done', status: 'done' });
+    ).resolves.toEqual({ alreadyAdvanced: true, runId, state: 'pull', seq: 1 });
+    await expect(
+      handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] }, attempt: 1 }),
+    ).resolves.toEqual({ runId, state: 'done', attempt: 2, status: 'done' });
   });
 
   it("refreshes its own outdated seed but never a team's own workflow of the same name", async () => {

@@ -1521,7 +1521,12 @@ export class MonolithCornerTurnLoop {
                   this.attachmentDir && briefAttachments.length
                     ? await deliverAttachments(
                         briefAttachments,
-                        join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
+                        join(
+                          this.attachmentDir,
+                          requestId.replace(/[^\w-]/g, '_'),
+                          'brief',
+                          String(assignedBrief!.revision),
+                        ),
                         this.options.fetchImpl,
                       )
                     : [];

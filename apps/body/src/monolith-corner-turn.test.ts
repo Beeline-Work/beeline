@@ -1373,6 +1373,61 @@ describe('corner close-request delivery', () => {
     console.info('Reproduction BP-01 (files): ACP received revision 3, Approved spec 3 and its verified revision-3.txt; revisions 1 and 2 were absent');
   });
 
+  it.each(['spec.pdf', ''])(
+    'Reproduction BP-02: preserves task and brief bytes with matching name %j', async (name) => {
+      const taskBytes = 'Task attachment content';
+      const briefBytes = 'Approved brief content';
+      const taskUrl = 'https://server.example/v1/media/task-file';
+      const brief: CornerBrief = {
+        id: 'corner-id', revision: 2, spec: 'Approved widget spec',
+        authorId: TEST_AGENT_PUBLIC_KEY, sourceRoomId: 'room-id',
+        attachments: [{
+          objectId: '00000000-0000-4000-8000-000000000002',
+          title: name, purpose: 'Approved reference', required: true,
+          mime: 'application/pdf', size: briefBytes.length,
+          sha256: createHash('sha256').update(briefBytes).digest('hex'),
+        }],
+      };
+      const execute = vi.fn(async (operation: string) => {
+        if (operation === 'getAgentConfiguration') return { commands: [] };
+        if (operation === 'getWorkspaceRoster') return { members: [] };
+        if (operation === 'getRoomConversation') return { items: [], cursor: 'latest' };
+        if (operation === 'getCornerRestoreState') return { cornerId: 'corner-id', brief };
+        if (operation === 'listCornerBriefRevisions') return { revisions: [] };
+        return { id: 'write', createdAt: 1 };
+      });
+      const scratch = await mkdtemp(join(tmpdir(), 'beeline-brief-collision-'));
+      roots.push(scratch);
+      const fetchImpl = vi.fn(async (url: string | URL | Request) =>
+        new Response(String(url) === taskUrl ? taskBytes : briefBytes),
+      ) as unknown as typeof fetch;
+      const { acp, loop, scheduler } = await cornerHarness(
+        execute, 60_000, undefined, undefined, { agentEnv: { TMPDIR: scratch } }, fetchImpl,
+        { attachments: [{ url: taskUrl, ...(name ? { name } : {}), mimeType: 'application/pdf' }] },
+      );
+      vi.mocked(acp.sessionPrompt).mockImplementationOnce(async (_sessionId, prompt) => {
+        const text = String(prompt);
+        const taskPath = text.match(/local file (.+) \(source https:\/\/server.example\/v1\/media\/task-file\)/)?.[1];
+        const briefPath = text.match(/\(Approved reference; required; sha256 [a-f0-9]+\): (.+)/)?.[1];
+        expect(taskPath).toBeDefined();
+        expect(briefPath).toBeDefined();
+        const observedTask = await readFile(taskPath!, 'utf8');
+        const observedBrief = await readFile(briefPath!, 'utf8');
+        console.info(`Reproduction BP-02 (${name || 'unnamed'}): task path reads ${JSON.stringify(observedTask)}; brief path reads ${JSON.stringify(observedBrief)}`);
+        expect(observedTask).toBe(taskBytes);
+        expect(observedBrief).toBe(briefBytes);
+        expect(taskPath).not.toBe(briefPath);
+        expect(briefPath).toBe(join(scratch, 'beeline-attachments', 'human-msg', 'brief', '2', name || 'attachment-1'));
+        expect(text).toContain('Brief revision 2:');
+        return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [] };
+      });
+      await loop.run();
+      await scheduler.dispose();
+      expect(acp.sessionPrompt).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledWith('postRoomMessage', expect.objectContaining({ text: 'Done.' }));
+    },
+  );
+
   it('Reproduction reply-context: renders reply provenance in a corner turn and transcript', async () => {
     const reply = {
       replyToMessageId: 'old-audit',

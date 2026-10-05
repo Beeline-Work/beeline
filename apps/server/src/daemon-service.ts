@@ -43,6 +43,8 @@ import {
 } from './corner-brief.js';
 import {
   AGENT_TO_AGENT_HOP_CAP,
+  boundReplyExcerpt,
+  REPLY_EXCERPT_MAX_LENGTH,
   classifyTurnSilence,
   cornerTextRefusal,
   readCornerAppDefinition,
@@ -2626,6 +2628,8 @@ export class DaemonService {
       agent_author: boolean;
       reply_to_message_id: string | null;
       reply_to_author_id: string | null;
+      reply_to_author_name: string | null;
+      reply_to_excerpt: string | null;
       root_message_id: string | null;
       request_id: string | null;
       request_author_id: string | null;
@@ -2702,6 +2706,8 @@ export class DaemonService {
         ...(row.agent_author ? { agentAuthor: true } : {}),
         ...(row.reply_to_message_id ? { replyToMessageId: row.reply_to_message_id } : {}),
         ...(row.reply_to_author_id ? { replyToAuthorId: row.reply_to_author_id } : {}),
+        ...(row.reply_to_author_name ? { replyToAuthorName: row.reply_to_author_name } : {}),
+        ...(row.reply_to_excerpt !== null ? { replyToExcerpt: boundReplyExcerpt(row.reply_to_excerpt) } : {}),
         ...(row.root_message_id ? { rootMessageId: row.root_message_id } : {}),
         ...(row.request_id ? { requestId: row.request_id } : {}),
         ...(row.request_author_id ? { requestAuthorId: row.request_author_id } : {}),
@@ -6534,9 +6540,8 @@ export class DaemonService {
       row.owner_identity_id, composioToolkitForApp(row.app_key))))
       throw new Error('App account is unavailable; reconnect it');
     const tools = await this.composio.listTools(composioToolkitForApp(row.app_key), input.query);
-    if (!tools.length)
-      throw new Error(input.query ? 'No tools matched the app tool query'
-        : 'App provider returned no tools');
+    if (!tools.length && !input.query)
+      throw new Error('App provider returned no tools');
     return { tools };
   }
 
@@ -7789,6 +7794,10 @@ const conversationColumns = `SELECT id,author_id,created_at,presentation,text,ca
                WHERE author.id=messages.author_id AND author.kind='agent') agent_author,
         reply_to_message_id,
         (SELECT parent.author_id FROM messages parent WHERE parent.id=messages.reply_to_message_id) reply_to_author_id,
+        (SELECT author.name FROM messages parent JOIN identities author ON author.id=parent.author_id
+         WHERE parent.id=messages.reply_to_message_id) reply_to_author_name,
+        (SELECT left(parent.text,${REPLY_EXCERPT_MAX_LENGTH + 1}) FROM messages parent
+         WHERE parent.id=messages.reply_to_message_id) reply_to_excerpt,
         root_message_id,request_id,
         (SELECT request.author_id FROM messages request WHERE request.id=messages.request_id) request_author_id,
         agent_hop_count,attachments,system_event,

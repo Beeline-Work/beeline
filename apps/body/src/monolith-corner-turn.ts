@@ -108,6 +108,7 @@ import {
   cornerReviewerInstruction,
   cornerSelfReviewerInstruction,
   roomMentionDirectory,
+  renderReplyContext,
   type PromptSurface,
   type SessionPromptContext,
 } from './prompt-assembly.js';
@@ -1569,6 +1570,7 @@ export class MonolithCornerTurnLoop {
                   line: [
                     ...(message.type === 'message' ? [`[message id: ${message.id}]`] : []),
                     `${names.get(message.authorId) ?? 'Beeline'} [${message.type}]: ${message.body.trim() ? message.body : '(shared attachments)'}`,
+                    ...(message.replyToMessageId ? [renderReplyContext(message)] : []),
                     ...attachmentMarkerLines(message.attachments ?? []),
                   ].join('\n'),
                 }));
@@ -1636,6 +1638,7 @@ export class MonolithCornerTurnLoop {
                   task: {
                     ...(sourceMessageId ? { reactionTargetId: sourceMessageId } : {}),
                     body: trigger,
+                    reply: this.commandContext.current?.source,
                     outsideEvent: this.commandContext.current?.source.systemEvent,
                     attachmentLines: attachmentPromptLines(
                       attachments,

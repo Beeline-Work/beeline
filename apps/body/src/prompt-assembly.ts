@@ -1,4 +1,4 @@
-import { quoteOutsideData, type SystemEvent } from '@beeline/api-contract/daemon';
+import { boundReplyExcerpt, quoteOutsideData, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { CornerGitHubCli } from './corner-github-auth.js';
@@ -28,6 +28,21 @@ import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
  */
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
+
+type ReplyContext = Pick<RoomInboxResult['items'][number],
+  'replyToMessageId' | 'replyToAuthorId' | 'replyToAuthorName' | 'replyToExcerpt'>;
+
+/** Reply provenance is context, with Room text quoted so it cannot become prompt structure. */
+export function renderReplyContext(message: ReplyContext): string {
+  if (!message.replyToMessageId) return '';
+  const author = message.replyToAuthorName ?? message.replyToAuthorId ?? 'unknown author';
+  return [
+    `Reply to message ${message.replyToMessageId} by ${JSON.stringify(author)}:`,
+    ...(message.replyToExcerpt !== undefined
+      ? [`> ${JSON.stringify(boundReplyExcerpt(message.replyToExcerpt))}`]
+      : []),
+  ].join('\n');
+}
 
 export const PROMPT_SURFACES = [
   'room',
@@ -651,6 +666,7 @@ export interface TurnPromptContext {
   }[];
   readonly reviewerTarget?: string;
   readonly task: {
+    readonly reply?: ReplyContext;
     /** Room: who the server selected this task from. */
     readonly fromName?: string;
     readonly cornerAskId?: string;
@@ -807,6 +823,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
               ? `Corner ask id: ${task.cornerAskId}. Use get_corner_ask to retrieve its status and answer.`
               : '',
             task.body,
+            renderReplyContext(task.reply ?? {}),
           ]
             .filter(Boolean)
             .join('\n\n')
@@ -815,6 +832,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
               ? [`Reaction target message id: ${task.reactionTargetId}`]
               : []),
             `Newest message:\n${task.body}`,
+            ...(task.reply?.replyToMessageId ? [renderReplyContext(task.reply)] : []),
             ...(task.attachmentLines ?? []),
           ].join('\n'),
   },

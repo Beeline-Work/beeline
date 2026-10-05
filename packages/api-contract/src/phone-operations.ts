@@ -326,7 +326,7 @@ export type WorkflowActorView = {
   /** The chosen face (one of `FACE_IDS`). */
   readonly face?: string;
 };
-/** `live` until the run reaches a terminal state, then that terminal's status. */
+/** A run's recorded close status, or its definition's status for older cards. */
 export type WorkflowRunStatus = 'live' | WorkflowTerminalState['status'];
 export type WorkflowRunSummaryView = {
   /** The `start_workflow` message id (a corner's own lifecycle run uses the corner id). */
@@ -399,6 +399,8 @@ export type WorkflowRunStepView = {
   readonly outcome?: string;
   readonly toState: string;
   readonly status?: WorkflowTerminalState['status'];
+  /** Server-projected visit status; optional for responses from older servers. */
+  readonly displayStatus?: import('./workflow-run-status.js').WorkflowStepDisplayStatus;
   readonly actor?: WorkflowActorView;
   readonly at: number;
   /** What `fromState` handed off with: the card's `contents`. */

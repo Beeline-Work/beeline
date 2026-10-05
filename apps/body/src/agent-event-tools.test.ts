@@ -120,6 +120,16 @@ describe('beeline-agent event tools', () => {
     expect(calls).toEqual([]);
   });
 
+  it('accepts the advertised maximum lengths and refuses the next character', async () => {
+    const calls: Call[] = [];
+    await emitEvent({ kind: `agent:${'x'.repeat(40)}`, consequence: 'x'.repeat(200) }, deps(calls));
+    await expect(emitEvent({ kind: `agent:${'x'.repeat(41)}`, consequence: 'ok' }, deps(calls)))
+      .rejects.toThrow(/slug at most 40 characters/);
+    await expect(emitEvent({ kind: 'agent:x', consequence: 'x'.repeat(201) }, deps(calls)))
+      .rejects.toThrow(/at most 200 characters/);
+    expect(calls).toHaveLength(1);
+  });
+
   it("surfaces the server's refusal verbatim, so the emitting model reads why nothing was posted", async () => {
     const calls: Call[] = [];
     await expect(

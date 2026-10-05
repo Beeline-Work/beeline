@@ -124,6 +124,7 @@ export const INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX = 10;
  * first and ranked by word-overlap before the result limit above applies.
  */
 export const INSTITUTIONAL_MEMORY_SEARCH_SCAN_MAX = 200;
+export const INSTITUTIONAL_HISTORY_RESULT_MIN = 1;
 export const INSTITUTIONAL_HISTORY_RESULT_MAX = 10;
 export const INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES = 360;
 /**

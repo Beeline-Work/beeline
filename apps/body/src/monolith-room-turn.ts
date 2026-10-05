@@ -111,6 +111,7 @@ import {
   assembleSessionPrompt,
   assembleTurnPrompt,
   roomMentionDirectory,
+  renderReplyContext,
   type PromptSurface,
 } from './prompt-assembly.js';
 import { TurnStoppedError } from './turn-stop.js';
@@ -138,6 +139,8 @@ type HumanMessage = Pick<
   | 'type'
   | 'replyToMessageId'
   | 'replyToAuthorId'
+  | 'replyToAuthorName'
+  | 'replyToExcerpt'
   | 'requestAuthorId'
   | 'agentHopCount'
   | 'cornerAskId'
@@ -1455,6 +1458,7 @@ export class MonolithRoomTurnLoop {
                     message.body,
                     message.attachments,
                     message.id,
+                    renderReplyContext(message),
                   ),
                 }));
               const command = this.commandContext.current;
@@ -1512,6 +1516,7 @@ export class MonolithRoomTurnLoop {
                   closedCorners,
                   task: {
                     fromName: inboxItemAuthorName(item, names),
+                    reply: item,
                     outsideEvent: this.commandContext.current?.source.systemEvent,
                     ...(item.cornerAskId ? { cornerAskId: item.cornerAskId } : {}),
                     body: roomMessagePrompt(
@@ -1626,6 +1631,7 @@ export class MonolithRoomTurnLoop {
                         this.deliveredAttachments.get(steerItem.id),
                         this.acceptsImages(),
                         steerItem.type === 'message' ? steerItem.id : undefined,
+                        renderReplyContext(steerItem),
                       ),
                     ),
                     'Continue now and answer the updated request without erasing the earlier context.',
@@ -1993,10 +1999,12 @@ function transcriptMessagePrompt(
   body: string,
   attachments: RoomMessage['attachments'],
   messageId: string,
+  replyContext = '',
 ): string {
   return [
     `[message id: ${messageId}]`,
     `${author}: ${body.trim() || '(shared attachments)'}`,
+    ...(replyContext ? [replyContext] : []),
     ...attachmentMarkerLines(attachments),
   ].join('\n');
 }
@@ -2008,12 +2016,14 @@ function roomMessagePrompt(
   delivered?: readonly DeliveredAttachment[],
   harnessAcceptsImages = true,
   messageId?: string,
+  replyContext = '',
 ): string {
   const message = body.trim() || '(shared attachments)';
   const rendered = author ? `${author}: ${message}` : message;
   return [
     ...(messageId ? [`[message id: ${messageId}]`] : []),
     rendered,
+    ...(replyContext ? [replyContext] : []),
     ...attachmentPromptLines(attachments, delivered, harnessAcceptsImages),
   ].join('\n');
 }

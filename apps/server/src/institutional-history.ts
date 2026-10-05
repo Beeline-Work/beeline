@@ -4,6 +4,7 @@ import {
   INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
   INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES,
   INSTITUTIONAL_HISTORY_RESULT_MAX,
+  INSTITUTIONAL_HISTORY_RESULT_MIN,
   INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES,
   type SearchInstitutionalHistoryInput,
   type SearchInstitutionalHistoryResult,
@@ -70,7 +71,8 @@ function boundedQuery(value: unknown): string {
 
 function boundedLimit(value: unknown): number {
   if (value === undefined) return 5;
-  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > 10) {
+  if (!Number.isSafeInteger(value) || (value as number) < INSTITUTIONAL_HISTORY_RESULT_MIN ||
+      (value as number) > INSTITUTIONAL_HISTORY_RESULT_MAX) {
     throw new Error('institutional history limit is invalid');
   }
   return Math.min(value as number, INSTITUTIONAL_HISTORY_RESULT_MAX);

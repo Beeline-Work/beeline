@@ -9,7 +9,7 @@ import type { CornerBrief } from '@beeline/api-contract/daemon';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient, AcpTurnBackstopError, TURN_BACKSTOP_MS } from './acp.js';
 import type { BodyConfig } from './config.js';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import type { DaemonApiClient, InboxItem } from './daemon-api-client.js';
 import {
   cornerHasUndeliveredRepositoryWork,
   cornerToolActivity,
@@ -1160,6 +1160,7 @@ describe('corner close-request delivery', () => {
     closePollMs?: number,
     configOverrides?: Partial<BodyConfig>,
     fetchImpl?: typeof fetch,
+    sourceOverrides?: Partial<InboxItem>,
   ) {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-wake-'));
     roots.push(root);
@@ -1209,6 +1210,7 @@ describe('corner close-request delivery', () => {
                 type: 'message',
                 body: 'Please continue',
                 attachments: [],
+                ...sourceOverrides,
               },
             ],
             cursor: 'human-msg',
@@ -1369,6 +1371,31 @@ describe('corner close-request delivery', () => {
     expect(prompt).not.toContain('UNAVAILABLE');
     expect(downloads).toEqual([1, 2, 3]);
     console.info('Reproduction BP-01 (files): ACP received revision 3, Approved spec 3 and its verified revision-3.txt; revisions 1 and 2 were absent');
+  });
+
+  it('Reproduction reply-context: renders reply provenance in a corner turn and transcript', async () => {
+    const reply = {
+      replyToMessageId: 'old-audit',
+      replyToAuthorId: 'audit-author',
+      replyToAuthorName: 'Ruby',
+      replyToExcerpt: 'Five corners from the audit.',
+    };
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomConversation') return {
+        items: [{ id: 'earlier-reply', authorId: 'human', type: 'message',
+          body: 'Please inspect this list', attachments: [], ...reply }],
+      };
+      return { id: 'write', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000, undefined, undefined, undefined, undefined, reply);
+    await loop.run();
+    await scheduler.dispose();
+    const prompt = String(vi.mocked(acp.sessionPrompt).mock.calls[0]?.[1]);
+    const marker = 'Reply to message old-audit by "Ruby":\n> "Five corners from the audit."';
+    expect(prompt).toContain(`Newest message:\nPlease continue\n${marker}`);
+    expect(prompt).toContain(`Please inspect this list\n${marker}`);
+    console.log('Reproduction reply-context: corner turn and transcript show parent ID, author and quoted excerpt');
   });
 
   it('Reproduction A06 and H-11: delivers a model-sized corner prompt and whole-turn receipt', async () => {

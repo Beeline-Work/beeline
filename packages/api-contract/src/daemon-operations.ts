@@ -725,6 +725,10 @@ export type RoomInboxResult = {
     readonly replyToMessageId?: string;
     /** Current author of the reply parent, projected by the server. */
     readonly replyToAuthorId?: string;
+    /** Current display name of the reply parent author. */
+    readonly replyToAuthorName?: string;
+    /** Quoted by the body as untrusted text; at most 300 characters. */
+    readonly replyToExcerpt?: string;
     readonly rootMessageId?: string;
     readonly requestId?: string;
     /** Author of the message this agent reply answered, even outside this page. */

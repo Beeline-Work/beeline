@@ -182,6 +182,8 @@ describe('who an agent can tag, and how it is spelled', () => {
                 body: 'say hello to the new arrival',
                 replyToMessageId: 'agent-parent',
                 replyToAuthorId: agent.publicKey,
+                replyToAuthorName: 'Greeter',
+                replyToExcerpt: 'Five corners: fix reply context and the four remaining audit findings.',
                 attachments: [],
               },
             ],
@@ -280,6 +282,10 @@ describe('who an agent can tag, and how it is spelled', () => {
     );
     expect(prompts[0]).toContain('- @lunchboxfortwo — Captain (person)');
     expect(prompts[0]).toContain('- @bananaman614305 (person)');
+    expect(prompts[0]).toContain('Reply to message agent-parent by "Greeter"');
+    expect(prompts[0]).toContain('> "Five corners: fix reply context and the four remaining audit findings."');
+    expect(prompts[1]).not.toContain('Reply to message');
+    console.log('Reproduction reply-context: human reply → Room turn prompt shows parent ID, author and quoted excerpt; non-reply has no reply marker');
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-1' }));
     expect(writes).toContainEqual(expect.objectContaining({ triggerMessageId: 'ask-2' }));
   }, 20_000);

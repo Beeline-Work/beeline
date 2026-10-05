@@ -1089,6 +1089,48 @@ async function failOver(
   return { state: scope.stateName, attempt: attemptOf(scope.run) };
 }
 
+/** Explicit workflow controls use the command's requester, never the executing agent's privileges. */
+async function authorizeWorkflowControl(
+  db: SqlDatabase,
+  command: CommandRow,
+  input: { requesterId: string | null; agentIds: string[]; authority: string; action: string },
+): Promise<string> {
+  const actorId = await workflowRequester(db, command);
+  const roleOwners = await db.query(
+    `SELECT 1 FROM agents WHERE agent_id=ANY($1::text[]) AND owner_id=$2`,
+    [input.agentIds, actorId],
+  );
+  if (
+    actorId !== input.requesterId && !roleOwners.rowCount &&
+    !(await humanRoomAdmin(db, command.room_id, actorId))
+  ) {
+    throw new WorkflowAuthorizationError(
+      `only ${input.authority}, or a human Room admin can ${input.action}`,
+      403,
+    );
+  }
+  return actorId;
+}
+
+async function authorizeRunControl(
+  db: SqlDatabase,
+  command: CommandRow,
+  run: WorkflowRunCard,
+  action: string,
+): Promise<string> {
+  const start = (await db.query<{ author_id: string; card: WorkflowRunCard }>(
+    `SELECT author_id,card FROM messages WHERE room_id=$1 AND id=$2 AND card_type=$3`,
+    [command.room_id, run.runId, WORKFLOW_HANDOFF_CARD_TYPE],
+  )).rows[0];
+  if (!start) throw new Error('workflow start is unavailable');
+  return authorizeWorkflowControl(db, command, {
+    requesterId: start.card.requesterId ?? start.author_id,
+    agentIds: [...Object.values(run.roleBindings), ...Object.values(start.card.roleAgents ?? {}).flat()],
+    authority: 'the run requester, a bound role owner',
+    action,
+  });
+}
+
 export async function cancelWorkflowRun(
   database: SqlDatabase,
   command: CommandRow,
@@ -1100,26 +1142,7 @@ export async function cancelWorkflowRun(
   return database.transaction(async (db) => {
     const scope = await openRun(db, command.room_id, input.runId);
     const { run } = scope;
-    const start = (await db.query<{ author_id: string; card: WorkflowRunCard }>(
-      `SELECT author_id,card FROM messages WHERE room_id=$1 AND id=$2 AND card_type=$3`,
-      [command.room_id, input.runId, WORKFLOW_HANDOFF_CARD_TYPE],
-    )).rows[0];
-    if (!start) throw new Error('workflow start is unavailable');
-    const actorId = await workflowRequester(db, command);
-    const roleOwners = await db.query(
-      `SELECT 1 FROM agents WHERE agent_id=ANY($1::text[]) AND owner_id=$2`,
-      [[...Object.values(run.roleBindings), ...Object.values(start.card.roleAgents ?? {}).flat()], actorId],
-    );
-    // Older runs retain the start card's author as their requester.
-    if (
-      actorId !== (start.card.requesterId ?? start.author_id) && !roleOwners.rowCount &&
-      !(await humanRoomAdmin(db, command.room_id, actorId))
-    ) {
-      throw new WorkflowAuthorizationError(
-        'only the run requester, a bound role owner, or a human Room admin can cancel this run',
-        403,
-      );
-    }
+    const actorId = await authorizeRunControl(db, command, run, 'cancel this run');
     if (scope.ended) throw new Error('this workflow run has already ended');
     const reason = input.reason.trim();
     await closeRun(db, scope, {
@@ -1896,6 +1919,7 @@ export async function assignWorkflowRole(
   }
   return database.transaction(async (db) => {
     const scope = await openRun(db, command.room_id, input.runId);
+    await authorizeRunControl(db, command, scope.run, 'reassign this run');
     const targetAgentId = isAgentIdentityReference(input.targetAgentId)
       ? input.targetAgentId
       : await memberIdForHandle(db, command.room_id, input.targetAgentId);
@@ -1931,18 +1955,34 @@ export async function archiveWorkflow(
   input: { name: string },
 ): Promise<{ slug: string; archived: boolean }> {
   if (typeof input.name !== 'string' || !input.name) throw new Error('workflow name is required');
-  const room = (
-    await database.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
-      command.room_id,
-    ])
-  ).rows[0];
-  if (!room) throw new Error('workflow room not found');
-  const result = await database.query(
-    `UPDATE workspace_skills SET state='stale',updated_at=now()
-     WHERE workspace_id=$1 AND slug=$2 AND kind='workflow' AND state='active'`,
-    [room.workspace_id, input.name],
-  );
-  return { slug: input.name, archived: Boolean(result.rowCount) };
+  return database.transaction(async (db) => {
+    const room = (await db.query<{ workspace_id: string }>(
+      `SELECT workspace_id FROM rooms WHERE id=$1`, [command.room_id],
+    )).rows[0];
+    if (!room) throw new Error('workflow room not found');
+    // Archive has no run: the current save's source author is its requester;
+    // when that author is an agent, its human owner has the role-owner authority.
+    const skill = (await db.query<{ id: string; requester_id: string | null }>(
+      `SELECT skill.id,source.author_id requester_id FROM workspace_skills skill
+       JOIN workspace_skill_versions version ON version.skill_id=skill.id AND version.version=skill.current_version
+       LEFT JOIN messages source ON source.id=version.source_message_ids[1] AND source.deleted_at IS NULL
+       WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'
+       FOR UPDATE OF skill`,
+      [room.workspace_id, input.name],
+    )).rows[0];
+    if (!skill) return { slug: input.name, archived: false };
+    await authorizeWorkflowControl(db, command, {
+      requesterId: skill.requester_id,
+      agentIds: skill.requester_id ? [skill.requester_id] : [],
+      authority: 'the saved workflow requester, its agent owner',
+      action: 'archive this workflow',
+    });
+    const result = await db.query(
+      `UPDATE workspace_skills SET state='stale',updated_at=now() WHERE id=$1 AND state='active'`,
+      [skill.id],
+    );
+    return { slug: input.name, archived: Boolean(result.rowCount) };
+  });
 }
 
 function describedLegacyWorkflowState(name: string, raw: unknown): unknown {

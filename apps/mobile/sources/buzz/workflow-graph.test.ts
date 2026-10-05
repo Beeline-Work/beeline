@@ -44,6 +44,22 @@ function assigneesOf(
 }
 
 describe('workflowRunLine execution history', () => {
+  it('uses the server visit status instead of inferring a current step from the definition', () => {
+    const line = workflowRunLine(feedbackTriage, [
+      { toState: 'pull', at: 100, displayStatus: 'failed' },
+    ], 'failed');
+    expect(rowsOf(line)).toEqual([['pull', 'failed']]);
+  });
+
+  it('closes the failed visit at the deadline and keeps older server responses working', () => {
+    const line = workflowRunLine(feedbackTriage, [
+      { toState: 'pull', at: 100 },
+      { fromState: 'pull', toState: 'pull', status: 'failed', outcome: 'deadline', at: 120 },
+    ], 'failed');
+    expect(rowsOf(line)).toEqual([['pull', 'failed']]);
+    expect(stepSeconds(line[0]!, 300)).toBe(20);
+  });
+
   it('shows only reached states in order, without future terminal rows', () => {
     const history = [{ toState: 'notify', at: 100 },
       { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 112 },

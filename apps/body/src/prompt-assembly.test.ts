@@ -336,6 +336,24 @@ describe('prompt assembly guards', () => {
     );
   });
 
+  it.each(['code-corner-reviewed', 'code-corner-rest'])(
+    '%s skips rebase only for a missing remote branch, rebases later pushes, and stops on lookup failure',
+    (name) => {
+      const prompt = assembleSessionPrompt(SESSION_VARIANTS[name]!).systemPrompt;
+      expect(prompt).toContain(
+        'Before pushing, run `git ls-remote --exit-code origin feature/corner-abc`. Exit code 0: rebase on origin/feature/corner-abc;',
+      );
+      expect(prompt).toContain('Exit code 2: the branch is absent; skip rebase for the first push.');
+      expect(prompt).toContain(
+        'Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push.',
+      );
+      expect(prompt).not.toContain('Before pushing, rebase on origin/feature/corner-abc;');
+      expect(prompt).toContain(
+        'resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests.',
+      );
+    },
+  );
+
   it('never tells an author or reviewer to run gh pr merge', () => {
     const texts: Array<[string, string]> = [
       ...Object.entries(SESSION_VARIANTS).map(

@@ -5,7 +5,7 @@ import type { MarkdownSpan } from "./parseMarkdown";
 // instead of permanently consuming its opening syntax.
 const pattern = /(\*\*(.*?)\*\*)|((?<!\*)\*(?!\*)(.*?)\*(?!\*))|(\[([^\]]+)\]\(([^)]+)\))|(`(.*?)`)/g;
 
-function pushTextWithAutoLinks(spans: MarkdownSpan[], text: string, styles: MarkdownSpan['styles']) {
+export function pushTextWithAutoLinks(spans: MarkdownSpan[], text: string, styles: MarkdownSpan['styles']) {
     const urlPattern = /https?:\/\/[^\s<]+/g;
     let lastIndex = 0;
     let match: RegExpExecArray | null;

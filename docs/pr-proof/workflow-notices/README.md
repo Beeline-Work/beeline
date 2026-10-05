@@ -35,6 +35,5 @@ then fetch the Room as a person. Both notices return `presentation: system`
 and keep their short run identifier. From the repository root:
 
 ```sh
-npm run build -w @beeline/server
-node --import tsx scripts/prove-workflow-notices.mjs
+npm run prove:workflow-notices
 ```

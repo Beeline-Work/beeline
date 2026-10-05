@@ -19,6 +19,7 @@ vi.mock('react-native-unistyles', () => {
   const theme = {
     buzz: {
       space: { xs: 4, sm: 8, md: 16 },
+      transcriptCard: { side: 16 },
       radius: 3,
       type: { body: {}, meta: {}, machine: {} },
       textPrimary: 'ink',
@@ -104,6 +105,31 @@ describe('@agent login card', () => {
     kind: 'paste-code',
     authorizeUrl: 'https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c',
   };
+
+  it.each<Partial<AgentSignInCardView>>([
+    {},
+    { harness: 'codex', kind: 'device-code', userCode: 'EBQ9-VJCLN' },
+    { harness: 'cursor', kind: 'approve-wait' },
+    { harness: 'pi', kind: 'api-key', provider: 'openrouter' },
+    { status: 'starting' },
+    { status: 'failed', errorMessage: 'Try a fresh code.' },
+    { status: 'failed', kind: undefined, authorizeUrl: undefined, errorMessage: 'Machine offline.' },
+  ])('insets the entire login body, including waiting and failures (%j)', (state) => {
+    const { renderer } = render({ ...claude, ...state });
+    const body = byId(renderer, 'agent-sign-in-body');
+    expect(body.props.style).toMatchObject({ paddingHorizontal: 16, paddingVertical: 8 });
+    const card = renderer.root.findByType('TranscriptCard' as any);
+    expect(card.findAllByProps({ testID: 'agent-sign-in-body' })).toContain(body);
+    for (const control of renderer.root.findAllByType('Button' as any)) {
+      expect(body.findAllByType('Button' as any)).toContain(control);
+    }
+  });
+
+  it('adds no empty body to a signed-in or non-owner record', () => {
+    for (const renderer of [render({ ...claude, status: 'signed-in' }).renderer, render(claude, false).renderer]) {
+      expect(renderer.root.findAllByProps({ testID: 'agent-sign-in-body' })).toHaveLength(0);
+    }
+  });
 
   it("carries the company's logo, not an identity plate", () => {
     const logo = (card: AgentSignInCardView) =>

@@ -38,20 +38,6 @@ export function useSettings(): Settings {
     return storage(useShallow((state) => state.settings));
 }
 
-export function useSettingMutable<K extends keyof Settings>(
-    name: K,
-): [Settings[K], (value: Settings[K]) => void] {
-    const value = useSetting(name);
-    const setValue = React.useCallback((next: Settings[K]) => {
-        storage.getState().applySettingsLocal({ [name]: next });
-    }, [name]);
-    return [value, setValue];
-}
-
-export function useSetting<K extends keyof Settings>(name: K): Settings[K] {
-    return storage(useShallow((state) => state.settings[name]));
-}
-
 export function useLocalSettings(): LocalSettings {
     return storage(useShallow((state) => state.localSettings));
 }

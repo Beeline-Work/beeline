@@ -3127,14 +3127,20 @@ export class DaemonService {
       (!Number.isInteger(input.beforeRevision) || input.beforeRevision < 1)
     )
       throw new Error('invalid brief revision cursor');
+    if (
+      input.afterRevision !== undefined &&
+      (!Number.isInteger(input.afterRevision) || input.afterRevision < 0)
+    )
+      throw new Error('invalid brief revision cursor');
     const limit = input.limit ?? 1;
     if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error('invalid brief revision limit');
     const rows = (
       await this.database.query<CornerBriefRow>(
         `${CORNER_BRIEF_REVISION_SELECT}
        WHERE brief.corner_id=$1 AND ($2::integer IS NULL OR brief.revision<$2)
+         AND ($4::integer IS NULL OR brief.revision>$4)
        ORDER BY brief.revision DESC LIMIT $3`,
-        [input.cornerId, input.beforeRevision ?? null, limit + 1],
+        [input.cornerId, input.beforeRevision ?? null, limit + 1, input.afterRevision ?? null],
       )
     ).rows;
     return {

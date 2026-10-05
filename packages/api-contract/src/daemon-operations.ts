@@ -312,7 +312,12 @@ export type DaemonOperationMap = {
   listRoomCorners: Operation<RoomInput, CornerListResult>;
   getCornerRestoreState: Operation<CornerInput, CornerRestoreResult>;
   listCornerBriefRevisions: Operation<
-    CornerInput & { readonly beforeRevision?: number; readonly limit?: number },
+    CornerInput & {
+      readonly beforeRevision?: number;
+      /** Return only revisions newer than the prompt's current assignment. */
+      readonly afterRevision?: number;
+      readonly limit?: number;
+    },
     {
       readonly revisions: readonly CornerBrief[];
       readonly nextBeforeRevision?: number;

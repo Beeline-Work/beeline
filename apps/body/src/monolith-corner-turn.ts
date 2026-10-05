@@ -1495,41 +1495,56 @@ export class MonolithCornerTurnLoop {
                   institutionalContext.embeddingMs ?? 0,
                 );
               }
-              const briefAttachments: DaemonAttachment[] = (restored.brief?.attachments ?? []).map(
-                (file) => ({
-                  url: new URL(`/v1/media/${file.objectId}`, api.baseUrl).toString(),
-                  name: file.title,
-                  mimeType: file.mime,
-                  size: file.size,
-                }),
-              );
-              const allAttachments = [...attachments, ...briefAttachments];
-              const delivered: DeliveredAttachment[] =
-                this.attachmentDir && allAttachments.length
+              let assignedBrief = restored.brief;
+              const taskDelivered: DeliveredAttachment[] =
+                this.attachmentDir && attachments.length
                   ? await deliverAttachments(
-                      allAttachments,
+                      attachments,
                       join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
                       this.options.fetchImpl,
                     )
                   : [];
-              const briefFileLines = await Promise.all(
-                (restored.brief?.attachments ?? []).map(async (file, index) => {
-                  const entry = delivered.find(
-                    (item) => item.attachment === briefAttachments[index],
-                  );
-                  const verified =
-                    entry?.path &&
-                    createHash('sha256')
-                      .update(await readFile(entry.path))
-                      .digest('hex') === file.sha256;
-                  return `- ${file.title} (${file.purpose}; ${file.required ? 'required' : 'optional'}; sha256 ${file.sha256}): ${verified ? entry.path : 'UNAVAILABLE OR CONTENT MISMATCH'}`;
-                }),
-              );
-              const missingRequiredBriefFile = (restored.brief?.attachments ?? []).some(
-                (file, index) =>
-                  file.required &&
-                  briefFileLines[index]?.includes('UNAVAILABLE OR CONTENT MISMATCH'),
-              );
+              let delivered = taskDelivered;
+              let briefFileLines: string[] = [];
+              let missingRequiredBriefFile = false;
+              const deliverBrief = async (): Promise<void> => {
+                const briefAttachments: DaemonAttachment[] = (assignedBrief?.attachments ?? []).map(
+                  (file) => ({
+                    url: new URL(`/v1/media/${file.objectId}`, api.baseUrl).toString(),
+                    name: file.title,
+                    mimeType: file.mime,
+                    size: file.size,
+                  }),
+                );
+                const briefDelivered: DeliveredAttachment[] =
+                  this.attachmentDir && briefAttachments.length
+                    ? await deliverAttachments(
+                        briefAttachments,
+                        join(this.attachmentDir, requestId.replace(/[^\w-]/g, '_')),
+                        this.options.fetchImpl,
+                      )
+                    : [];
+                briefFileLines = await Promise.all(
+                  (assignedBrief?.attachments ?? []).map(async (file, index) => {
+                    const entry = briefDelivered.find(
+                      (item) => item.attachment === briefAttachments[index],
+                    );
+                    const verified =
+                      entry?.path &&
+                      createHash('sha256')
+                        .update(await readFile(entry.path))
+                        .digest('hex') === file.sha256;
+                    return `- ${file.title} (${file.purpose}; ${file.required ? 'required' : 'optional'}; sha256 ${file.sha256}): ${verified ? entry.path : 'UNAVAILABLE OR CONTENT MISMATCH'}`;
+                  }),
+                );
+                missingRequiredBriefFile = (assignedBrief?.attachments ?? []).some(
+                  (file, index) =>
+                    file.required &&
+                    briefFileLines[index]?.includes('UNAVAILABLE OR CONTENT MISMATCH'),
+                );
+                delivered = [...taskDelivered, ...briefDelivered];
+              };
+              await deliverBrief();
               const names = new Map(
                 roster.members.map((member) => [member.identityId, member.name]),
               );
@@ -1561,13 +1576,43 @@ export class MonolithCornerTurnLoop {
               // same turn against a NEW session id that holds none of this
               // transcript. The objective is outside the window and always
               // renders, warm session or not.
-              const buildPrompt = (): string => {
+              const buildPrompt = async (followup?: string): Promise<string> => {
+                // Context reads and file delivery can outlive a brief revision.
+                // Check at assembly time; unchanged revisions return no spec or files.
+                for (;;) {
+                  const { revisions } = await api.execute('listCornerBriefRevisions', {
+                    cornerId,
+                    afterRevision: assignedBrief?.revision ?? 0,
+                    limit: 1,
+                  });
+                  const latestBrief = revisions[0];
+                  if (!latestBrief || latestBrief.revision <= (assignedBrief?.revision ?? 0)) break;
+                  assignedBrief = latestBrief;
+                  await deliverBrief();
+                }
+                if (followup && !assignedBrief) return followup;
+                const briefContext = {
+                  ...(assignedBrief
+                    ? {
+                        brief: {
+                          brief: assignedBrief,
+                          fileLines: briefFileLines,
+                          missingRequiredFile: missingRequiredBriefFile,
+                        },
+                      }
+                    : {}),
+                };
                 const transcript = this.warmTranscript.select(
                   this.sessionId,
                   transcriptRows,
                   this.agent.publicKey,
                 );
-                const assembled = assembleTurnPrompt({
+                const assembled = assembleTurnPrompt(followup ? {
+                  surface: this.sessionSurface,
+                  modelContextTokens: this.modelContextTokens,
+                  ...briefContext,
+                  task: { body: followup },
+                } : {
                   surface: this.sessionSurface,
                   modelContextTokens: this.modelContextTokens,
                   sessionPrefix: this.turnSessionPrefix,
@@ -1575,15 +1620,7 @@ export class MonolithCornerTurnLoop {
                   ...(restored.titleGenerated && restored.title
                     ? { generatedTitle: restored.title }
                     : {}),
-                  ...(restored.brief
-                    ? {
-                        brief: {
-                          brief: restored.brief,
-                          fileLines: briefFileLines,
-                          missingRequiredFile: missingRequiredBriefFile,
-                        },
-                      }
-                    : {}),
+                  ...briefContext,
                   transcript: {
                     lines: transcript.rows.map((row) => row.line),
                     sinceLastTurn: transcript.warm,
@@ -1822,9 +1859,13 @@ export class MonolithCornerTurnLoop {
                 );
               };
               let loginRetryUsed = false;
-              const runPrompt = async (prompt = buildPrompt()): Promise<PromptResult> => {
+              const runPrompt = async (prompt?: string, continuation?: string): Promise<PromptResult> => {
+                const activePrompt = async (): Promise<string> => {
+                  const assembled = await buildPrompt(prompt);
+                  return continuation ? `${assembled}\n\n${continuation}` : assembled;
+                };
                 try {
-                  return await runPromptAttempt(prompt);
+                  return await runPromptAttempt(await activePrompt());
                 } catch (error) {
                   if (!isExpiredHarnessLoginError(error)) throw error;
                   if (loginRetryUsed) {
@@ -1850,7 +1891,7 @@ export class MonolithCornerTurnLoop {
                   await this.discardSession();
                   await trace.measure('activation', () => this.activate(trace));
                   try {
-                    return await runPromptAttempt(prompt);
+                    return await runPromptAttempt(await activePrompt());
                   } catch (retryError) {
                     if (!isExpiredHarnessLoginError(retryError)) throw retryError;
                     return {
@@ -1895,7 +1936,8 @@ export class MonolithCornerTurnLoop {
                   await trace.measure('activation', () => this.activate(trace));
                 }
                 result = await runPrompt(
-                  `${buildPrompt()}\n\n${deviceGrantResumePrompt(grantedDevice, result.agentText)}`,
+                  undefined,
+                  deviceGrantResumePrompt(grantedDevice, result.agentText),
                 );
                 trace.promptSettled();
               }
@@ -1992,9 +2034,8 @@ export class MonolithCornerTurnLoop {
                 // prompt's `beginRun` then clears it for a fresh stream.
                 await flushToolCalls(result.toolCalls, '');
                 replyBeforeNudge = durableReplyText(stream.remainderOf(result.agentText));
-                // This is the same warm session: identity, soul and merge
-                // authority remain in its system prompt and need not be
-                // repeated in this focused follow-up.
+                // Even a focused follow-up needs the current assignment;
+                // runPrompt refreshes it before adding this instruction.
                 result = await runPrompt(
                   this.reviewerInstructionInput
                     ? (refreshedReviewerInstruction ?? CORNER_REVIEWER_SESSION_INSTRUCTION)

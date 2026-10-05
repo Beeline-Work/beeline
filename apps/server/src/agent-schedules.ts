@@ -248,6 +248,17 @@ export class AgentScheduleLoop {
     const finished =
       started && current.max_runs !== null && current.run_count + increment >= current.max_runs;
     if (finished) {
+      await ensureSystemIdentity(database);
+      await systemLine(database, {
+        roomId: current.room_id,
+        authorId: SYSTEM_IDENTITY_ID,
+        subject: {
+          kind: 'system',
+          name: current.workflow_slug ? `The ${current.workflow_slug} schedule` : 'The schedule',
+        },
+        verb: 'expired',
+        consequence: `reached its limit of ${current.max_runs} runs`,
+      });
       await database.query(`DELETE FROM agent_schedules WHERE id=$1`, [current.id]);
       return;
     }

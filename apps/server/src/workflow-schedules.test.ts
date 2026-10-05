@@ -153,6 +153,51 @@ it('Reproduction schedules-11: keeps maxRuns:1 through skips and later starts ex
   );
 });
 
+it('Reproduction schedule-cap-1: two blocked slots preserve three starts and announce expiration once', async () => {
+  const blocking = await start();
+  const { scheduleId, due } = await schedule('Start workflow daily', true);
+  await db.query(`UPDATE agent_schedules SET max_runs=3 WHERE id=$1`, [scheduleId]);
+  const loop = new AgentScheduleLoop(db);
+  for (let slot = 0; slot < 2; slot += 1) {
+    await loop.runOnce(new Date(due.getTime() + slot * 60_000));
+    expect((await daemon.execute('listAgentSchedules', { roomId: ROOM }, AGENT)).schedules)
+      .toEqual([expect.objectContaining({ scheduleId, runCount: 0, maxRuns: 3 })]);
+  }
+  await cancelWorkflowRun(db, { room_id: ROOM, agent_id: OWNER }, {
+    runId: blocking.runId, reason: 'Release the blocked slots',
+  });
+  const runIds: string[] = [];
+  const usedCommands = new Set<string>();
+  for (let slot = 2; slot < 5; slot += 1) {
+    await loop.runOnce(new Date(due.getTime() + slot * 60_000));
+    const command = (await db.query<CommandRow>(
+      `SELECT * FROM agent_commands WHERE reason='schedule'`,
+    )).rows.find((row) => !usedCommands.has(row.id));
+    expect(command).toBeDefined();
+    const fresh = await startWorkflow(db, command!, {
+      name: 'daily', roleBindings: { worker: AGENT },
+    });
+    runIds.push(fresh.runId);
+    usedCommands.add(command!.id);
+    await cancelWorkflowRun(db, { room_id: ROOM, agent_id: OWNER }, {
+      runId: fresh.runId, reason: 'Finish this occurrence before the next slot',
+    });
+  }
+  expect(runIds).toHaveLength(3);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='schedule'`)).rowCount).toBe(3);
+  expect((await daemon.execute('listAgentSchedules', { roomId: ROOM }, AGENT)).schedules).toEqual([]);
+  console.log('schedule-cap-1: two skips consumed zero cap; three scheduled commands started three workflow runs');
+  await loop.runOnce(new Date(due.getTime() + 5 * 60_000));
+  const notices = (await db.query<{ room_id: string; presentation: string; text: string }>(
+    `SELECT room_id,presentation,text FROM messages WHERE text LIKE '%schedule expired%'`,
+  )).rows;
+  expect(notices).toEqual([{
+    room_id: ROOM, presentation: 'system',
+    text: 'The daily schedule expired · reached its limit of 3 runs',
+  }]);
+  console.log('Demonstrated schedule-cap-1: exactly one expiration system message in the schedule Room, including after a repeated tick');
+});
+
 it('Reproduction schedules-12: resolves Start the daily workflow with… and skips before restart', async () => {
   await start();
   const { scheduleId, due } = await schedule('Start the daily workflow with today’s input');

@@ -1,6 +1,7 @@
 import { humanRoomAdmin, WorkflowAuthorizationError } from './workflow-admin.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  shortRunId,
   workflowSaveError,
   workflowContentsError,
   workflowReceiptError,
@@ -306,7 +307,7 @@ export async function cancelWorkflowRun(
       subject: identitySubject(await loadIdentityRow(db, actorId)),
       verb: 'cancelled workflow',
       object: run.workflowSlug,
-      consequence: `run ${input.runId}`,
+      consequence: `run ${shortRunId(input.runId)}`,
       afterMessageId: input.runId,
       // No event kind: cancellation is a durable record that wakes nobody.
       presentation: 'card',
@@ -451,7 +452,7 @@ async function postWorkflowGate(
       id: randomBytes(32).toString('hex'),
       roomId: input.roomId,
       authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', name: `${input.contract.name} run ${input.runId}` },
+      subject: { kind: 'system', name: `${input.contract.name} run ${shortRunId(input.runId)}` },
       verb: 'reached a gate at',
       object: input.stateName,
       consequence:
@@ -711,7 +712,7 @@ export async function startWorkflow(
       subject: identitySubject(starter),
       verb: 'started workflow',
       object: contract.name,
-      consequence: `run ${runId}`,
+      consequence: `run ${shortRunId(runId)}`,
       kind: 'workflow-handoff',
       ...(!exhausted && !isGate ? { wakes: [(resolution as { agentId: string }).agentId] } : {}),
       presentation: 'card',
@@ -864,7 +865,7 @@ export async function handoff(
       subject: identitySubject(actor),
       verb: 'handed off',
       object: toState,
-      consequence: `run ${input.runId} of ${run.workflowSlug}`,
+      consequence: `run ${shortRunId(input.runId)} of ${run.workflowSlug}`,
       kind: 'workflow-handoff',
       ...(!isTerminal && !isGate && !exhausted
         ? { wakes: [(nextResolution as { agentId: string }).agentId] }
@@ -955,7 +956,7 @@ async function reassignRole(
     subject: { kind: 'system', name: 'the workflow' },
     verb: 'reassigned',
     object: input.role,
-    consequence: `run ${input.runId} of ${input.run.workflowSlug}`,
+    consequence: `run ${shortRunId(input.runId)} of ${input.run.workflowSlug}`,
     kind: 'workflow-handoff',
     ...(state.kind === 'gate' ? {} : { wakes: [input.picked] }),
     presentation: 'card',
@@ -1063,7 +1064,7 @@ export async function reassignFailedWorkflowRole(
           .digest('hex'),
         roomId: input.roomId,
         authorId: SYSTEM_IDENTITY_ID,
-        subject: { kind: 'system', name: `${run.workflowSlug} run ${run.runId}` },
+        subject: { kind: 'system', name: `${run.workflowSlug} run ${shortRunId(run.runId)}` },
         verb: 'got no answer at',
         object: role,
         consequence:

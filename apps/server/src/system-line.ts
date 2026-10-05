@@ -244,13 +244,17 @@ function agentHandle(name: string): string {
   );
 }
 
-/** Identities in system lines are addresses: @handle, never a display name. */
+/** The canonical mention for an identity addressed by a system line. */
 export function systemIdentityMention(row: IdentityLabelRow): string {
   if (row.kind === 'human') return row.handle ? `@${row.handle}` : '';
   return `@${row.handle ?? agentHandle(row.name)}`;
 }
 
-async function canonicalPhrase(database: SqlDatabase, phrase: SystemPhrase): Promise<SystemPhrase> {
+async function canonicalPhrase(
+  database: SqlDatabase,
+  phrase: SystemPhrase,
+  plainSubjectId?: string,
+): Promise<SystemPhrase> {
   const ids = [
     phrase.subject.id,
     typeof phrase.object === 'string' ? undefined : phrase.object?.id,
@@ -277,9 +281,15 @@ async function canonicalPhrase(database: SqlDatabase, phrase: SystemPhrase): Pro
         : phrase.subject.name;
   return {
     ...phrase,
-    subject: subjectRow
-      ? { ...phrase.subject, name: systemIdentityMention(subjectRow) }
-      : { ...phrase.subject, name: fallbackSubjectName },
+    subject: {
+      ...phrase.subject,
+      name:
+        plainSubjectId && phrase.subject.id === plainSubjectId
+          ? subjectRow?.name ?? phrase.subject.name
+          : subjectRow
+            ? systemIdentityMention(subjectRow)
+            : fallbackSubjectName,
+    },
     ...(objectRow && object && clause(object.text) === clause(objectRow.name)
       ? { object: { ...object, text: systemIdentityMention(objectRow) } }
       : {}),
@@ -422,10 +432,17 @@ export async function systemLine(
   database: SqlDatabase,
   input: SystemLineInput,
 ): Promise<SystemLineResult> {
-  const { text, event } = composeSystemLine(await canonicalPhrase(database, input));
-  const id = input.id ?? randomBytes(32).toString('hex');
   const authorId = input.authorId ?? input.subject.id;
   if (!authorId) throw new Error('system line needs an author identity');
+  // Workflow cards name their own author without a self-address.
+  const { text, event } = composeSystemLine(
+    await canonicalPhrase(
+      database,
+      input,
+      input.cardType === 'workflow-handoff' ? authorId : undefined,
+    ),
+  );
+  const id = input.id ?? randomBytes(32).toString('hex');
   const wakes = [
     ...new Set([
       ...(input.wakes ?? []),

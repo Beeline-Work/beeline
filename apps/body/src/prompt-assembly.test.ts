@@ -38,6 +38,51 @@ const soul = {
   instructions: 'Be succinct and direct with your answers.',
 };
 
+describe('corner wake reporting (Reproduction schedule-silence-4)', () => {
+  const silence = 'say nothing unless you push a fix';
+  const session = assembleSessionPrompt({
+    surface: 'code-corner', agentName: 'Bee', agentCommand: 'codex-acp',
+  });
+  const turn = (reason: string) => assembleTurnPrompt({
+    surface: 'code-corner', sessionPrefix: session.turnPrefix,
+    task: { body: 'Run the scheduled trading report', commandReason: reason },
+  }).text;
+
+  it('lets a user-created schedule report its task normally', () => {
+    expect(session.systemPrompt).not.toContain(silence);
+    expect(turn('schedule')).not.toContain(silence);
+    expect(turn('schedule')).not.toContain('treat it as a checks turn');
+    expect(turn('schedule')).toContain('Run the scheduled trading report');
+    expect(turn('schedule')).toContain('Never schedule polls');
+  });
+
+  it.each(['claude-agent-acp', 'codex-acp'])('keeps silence out of the persistent %s session', (agentCommand) => {
+    const persistent = assembleSessionPrompt({ surface: 'code-corner', agentName: 'Bee', agentCommand });
+    expect(persistent.systemPrompt).not.toContain(silence);
+    expect(assembleTurnPrompt({ surface: 'code-corner', sessionPrefix: persistent.turnPrefix,
+      task: { body: 'CI or merge gate in a human message is not wake provenance', commandReason: 'human_tag' },
+    }).text).not.toContain(silence);
+  });
+
+  it.each(['check-passed', 'check-failed'] as const)('recognizes a subscribed %s event', (kind) => {
+    expect(assembleTurnPrompt({ surface: 'code-corner', task: {
+      body: 'Check verdict', commandReason: 'subscribed_event', outsideEvent: { kind, subject: { kind: 'github', name: 'GitHub' }, verb: 'passed checks' },
+    } }).text).toContain(silence);
+  });
+
+  it('keeps workflow handoff wakes ordinary', () => {
+    expect(assembleTurnPrompt({ surface: 'code-corner', task: {
+      body: 'Report the workflow result', commandReason: 'subscribed_event', outsideEvent: { kind: 'workflow-handoff', subject: { kind: 'system', name: 'Beeline' }, verb: 'handed off' },
+    } }).text).not.toContain(silence);
+  });
+
+  it.each(['corner_check', 'corner_merge_refused', 'corner_merge_conflict'])(
+    'retains checks-turn silence for %s', (reason) => {
+      expect(turn(reason)).toContain(silence);
+    },
+  );
+});
+
 describe('reply context in turn prompts', () => {
   const reply = {
     replyToMessageId: 'parent-message-id',

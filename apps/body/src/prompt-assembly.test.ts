@@ -630,12 +630,18 @@ describe('Reproduction runtime-brief-5: delivery capability', () => {
   const base = { id: 'corner', revision: 2, authorId: 'author', sourceRoomId: 'room', attachments: [] };
   const forbidden = ['corner:prepare', 'record_validation_stage', 'Validation stages', '## Reproduced', '## Demonstrated', 'Use its file manifest', 'gh pr create', 'Once the pull request exists', 'pr_checks_status'];
   it.each([
+    ['R5-1 MM desk list', { spec: '## Non-goals\nNo real orders, quoter code changes, repository edits, pull requests, public hosting, …' }, false],
+    ['R5-1 bullet list', { spec: '## Non-goals\n- No real orders, quoter code changes, repository edits, pull requests, public hosting, …' }, false],
+    ['R5-2 scoped PRs', { repositoryWork: true, spec: '## Non-goals\nNo pull requests other than this fix.' }, true],
+    ['R5-2 scoped edits', { repositoryWork: true, spec: '## Non-goals\nNo repository edits outside apps/body.' }, true],
+    ['R5-2 CI config', { repositoryWork: true, spec: "## Non-goals\nDo not change the repository's CI config." }, true],
+    ['explicit true wins over None', { repositoryWork: true, spec: '## Assigned files\nNone' }, true],
     ['assigned', { repositoryWork: true, spec: '## Intent\nFix code\n## Assigned files\napps/body/src/prompt-assembly.ts' }, true],
     ['none', { repositoryWork: false, spec: '## Intent\nRun the desk\n## Assigned files\nNone; standalone runtime artifact outside git checkout' }, false],
     ['empty assigned files', { spec: '## Intent\nRun the desk\n## Assigned files\n' }, false],
     ['legacy none', { spec: '## Intent\nRun the desk\n## Assigned files\nNone; standalone runtime artifact outside git checkout' }, false],
-    ['prohibited edits', { repositoryWork: true, spec: '## Non-goals\nNo repository edits.\n## References\napps/body/src/prompt-assembly.ts' }, false],
-    ['prohibited PRs', { repositoryWork: true, spec: '## Non-goals\nNo pull requests.\n## References\napps/body/src/prompt-assembly.ts' }, false],
+    ['prohibited edits', { spec: '## Non-goals\nNo repository edits.\n## References\napps/body/src/prompt-assembly.ts' }, false],
+    ['prohibited PRs', { spec: '## Non-goals\nNo pull requests.\n## References\napps/body/src/prompt-assembly.ts' }, false],
   ])('%s', (_name, fields, coding) => {
     const brief = { ...base, ...fields } as CornerBrief;
     const context = { ...SESSION_VARIANTS['code-corner-reviewed']!, brief };

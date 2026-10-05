@@ -148,11 +148,20 @@ The server merge gate is the authority: pr_checks_status reports mergeAllowed tr
  */
 export function cornerHasRepositoryWork(brief?: CornerBrief): boolean {
   if (!brief) return true;
+  if (brief.repositoryWork !== undefined) return brief.repositoryWork;
   const nonGoals = brief.spec.match(/^## Non-goals\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/mi)?.[1] ?? '';
-  if (/\b(?:no|never|do not|forbid(?:s|den)?)\s+(?:repository\s+edits?|(?:open(?:ing)?\s+)?pull requests?|(?:edit|modify|change)\s+(?:the\s+)?repository)\b/i.test(nonGoals)) return false;
+  const prohibition = /^(?:repository edits?|pull requests?|(?:edit|modify|change) (?:the )?repository)[.!;]*$/i;
+  for (const line of nonGoals.split('\n')) {
+    const bullet = /^\s*[-*]\s+/.test(line);
+    const clause = line.trim().replace(/^[-*]\s+/, '');
+    const negative = /^(?:no|never|do not|forbid(?:s|den)?)\s+/i;
+    if (!bullet && !negative.test(clause)) continue;
+    const items = clause.replace(negative, '').split(/,\s*|\s+(?:and|or)\s+/i);
+    if (items.some((item) => prohibition.test(item.trim()))) return false;
+  }
   const assigned = brief.spec.match(/^## Assigned files\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/mi)?.[1];
   if (assigned !== undefined && (!assigned.trim() || /^(?:\s*[-*]?\s*)(?:\(?none\)?|no assigned files)\b/i.test(assigned))) return false;
-  return brief.repositoryWork ?? true;
+  return true;
 }
 
 export const CORNER_RUNTIME_AUTHOR_CONTRACT = `The current brief's spec — stories, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.

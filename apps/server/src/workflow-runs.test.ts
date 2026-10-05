@@ -2704,6 +2704,42 @@ describe('one live run per workflow per Room', () => {
       .resolves.toMatchObject({ state: 'work' });
   });
 
+  it('reports a blocking run once across three slots without changing its cards or timers', async () => {
+    const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(runId);
+    const scheduleId = '30000000-0000-4000-8000-000000000005';
+    const now = new Date();
+    await database.query(`UPDATE messages SET created_at=$2 WHERE id=$1`, [runId, new Date(now.getTime()-30*60_000)]);
+    await database.query(
+      `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug)
+       VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":60}'::jsonb,'run gated',$6,'gated')`,
+      [scheduleId, WORKSPACE, ROOM, WORKER_B, OWNER, now],
+    );
+    const snapshot = async () => ({
+      cards: await runCards(runId),
+      timers: (await database.query(`SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`, [runId])).rows,
+    });
+    const before = await snapshot();
+    const commands = await pendingCommandsFor(WORKER_B);
+    for (let slot=0; slot<3; slot++) {
+      await database.query(`UPDATE agent_schedules SET next_run_at=$2 WHERE id=$1`, [scheduleId, new Date(now.getTime()+slot*60_000)]);
+      const tick = new Date(now.getTime()+slot*60_000);
+      await Promise.all([new AgentScheduleLoop(database).runOnce(tick), new AgentScheduleLoop(database).runOnce(tick)]);
+    }
+    const skips = async () => (await database.query<{text:string}>(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%skipped a run%' ORDER BY created_at,id`, [ROOM])).rows;
+    expect(await snapshot()).toEqual(before);
+    expect(await pendingCommandsFor(WORKER_B)).toBe(commands);
+    expect(await skips()).toEqual([{text: `The gated schedule skipped a run · run ${runId} is active at step sign_off in state live for 30 min`}]);
+    await cancelWorkflowRun(database, {room_id: ROOM, agent_id: OWNER} as CommandRow, {runId, reason:'next blocking run'});
+    const next = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await database.query(`UPDATE messages SET created_at=$2 WHERE id=$1`, [next, now]);
+    await database.query(`UPDATE agent_schedules SET next_run_at=$2 WHERE id=$1`, [scheduleId, new Date(now.getTime()+3*60_000)]);
+    await new AgentScheduleLoop(database).runOnce(new Date(now.getTime()+3*60_000));
+    expect(await skips()).toHaveLength(2);
+    expect((await skips())[1]!.text).toContain(`run ${next} is active at step work in state live for 3 min`);
+    console.log('Reproduction blocking-run-notice: three blocked slots produced one full-ID/step/state/elapsed notice; different run produced a new notice; cards and timers unchanged');
+  });
+
   it('posts one skip line on a schedule tick that finds a live run, and wakes no one', async () => {
     const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
     await database.query(
@@ -2717,7 +2753,7 @@ describe('one live run per workflow per Room', () => {
     const skips = (await database.query<{ text: string }>(
       `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%skipped a run%'`, [ROOM],
     )).rows;
-    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId.slice(0, 8)} is still live at work` }]);
+    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId} is active at step work in state live for 0 min` }]);
   });
 });
 
@@ -2809,7 +2845,7 @@ describe('legacy run timer recovery', () => {
     const skips = (await database.query<{ text: string }>(
       `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%skipped a run%'`, [ROOM],
     )).rows;
-    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId.slice(0, 8)} is still live at sign_off` }]);
+    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId} is active at step sign_off in state live for 180 min` }]);
     expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 30_000))).toBe(0);
     expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('live');
     console.log('Reproduction legacy-timers: overdue gate stayed live without timers; schedule skipped at sign_off');

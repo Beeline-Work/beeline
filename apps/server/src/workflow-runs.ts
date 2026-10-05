@@ -1593,10 +1593,10 @@ export async function liveWorkflowRun(
   db: SqlDatabase,
   roomId: string,
   workflowName: string,
-): Promise<{ runId: string; state: string } | undefined> {
+): Promise<{ runId: string; state: string; status: string; startedAt: Date } | undefined> {
   const active = (
-    await db.query<{ id: string }>(
-      `SELECT id FROM messages
+    await db.query<{ id: string; created_at: Date }>(
+      `SELECT id,created_at FROM messages
        WHERE room_id=$1 AND card_type='workflow-handoff' AND card->>'active'='true'
          AND card->>'workflowSlug'=$2
        ORDER BY created_at,id LIMIT 1`,
@@ -1605,7 +1605,7 @@ export async function liveWorkflowRun(
   ).rows[0];
   if (!active) return undefined;
   const run = await loadRun(db, roomId, active.id);
-  return { runId: active.id, state: run?.toState ?? 'unknown' };
+  return { runId: active.id, state: run?.toState ?? 'unknown', status: run?.status ?? 'live', startedAt: active.created_at };
 }
 
 /** Serializes starts of one workflow in one Room, so the live-run check and the start card commit together. */

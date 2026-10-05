@@ -12,7 +12,6 @@ import type { SqlDatabase } from './database.js';
 import { ensureSystemIdentity, systemLine } from './system-line.js';
 import { fireWorkflowTimer, liveWorkflowRun } from './workflow-runs.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { shortRunId } from '@beeline/api-contract/daemon';
 
 const MINUTE_MS = 60_000;
 const MAX_INTERVAL_MINUTES = 366 * 24 * 60;
@@ -158,17 +157,25 @@ export class AgentScheduleLoop {
           ? await liveWorkflowRun(database, current.room_id, current.workflow_slug)
           : undefined;
         if (live) {
-          // One live run per workflow per Room: this tick starts nothing and
-          // wakes no one, and says so once.
-          await ensureSystemIdentity(database);
-          await systemLine(database, {
-            id: messageId,
-            roomId: current.room_id,
-            authorId: SYSTEM_IDENTITY_ID,
-            subject: { kind: 'system', name: `The ${current.workflow_slug} schedule` },
-            verb: 'skipped a run',
-            consequence: `run ${shortRunId(live.runId)} is still live at ${live.state}`,
-          });
+          // The schedule row lock serializes this durable notice claim with the tick.
+          const notice = await database.query(
+            `UPDATE agent_schedules SET last_reported_blocking_run_id=$2
+             WHERE id=$1 AND last_reported_blocking_run_id IS DISTINCT FROM $2
+             RETURNING id`,
+            [current.id, live.runId],
+          );
+          if (notice.rowCount) {
+            await ensureSystemIdentity(database);
+            const elapsedMinutes = Math.max(0, Math.floor((now.getTime() - live.startedAt.getTime()) / MINUTE_MS));
+            await systemLine(database, {
+              id: messageId,
+              roomId: current.room_id,
+              authorId: SYSTEM_IDENTITY_ID,
+              subject: { kind: 'system', name: `The ${current.workflow_slug} schedule` },
+              verb: 'skipped a run',
+              consequence: `run ${live.runId} is active at step ${live.state} in state ${live.status} for ${elapsedMinutes} min`,
+            });
+          }
           await this.advance(database, current, now, false);
           return current.room_id;
         }

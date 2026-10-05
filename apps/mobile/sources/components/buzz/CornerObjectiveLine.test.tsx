@@ -3,6 +3,16 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+vi.mock('./HullActionSheet', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullActionSheetModal: (props: any) => props.visible
+      ? ReactModule.createElement('Sheet', props, props.children, props.footer) : null,
+    HullActionSheetRow: (props: any) => ReactModule.createElement('Row', props, props.label),
+    HullActionSheetCancel: (props: any) => ReactModule.createElement('Cancel', props),
+  };
+});
+
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -146,7 +156,7 @@ describe('CornerObjectiveLine', () => {
     expect(link.findByType('Text' as any).props.children).toBe('Read brief');
     expect(link.findByType('Text' as any).props.style.color).toBe('#c49a52');
     const actions = renderer.root.findAllByType('View' as any)
-      .find((view: any) => view.props.style?.flexWrap === 'wrap');
+      .find((view: any) => view.props.style?.flexWrap === 'nowrap');
     expect(actions?.findAllByType('Pressable' as any)).toHaveLength(2);
     act(() => link.props.onPress());
     expect(onOpenBrief).toHaveBeenCalledTimes(1);
@@ -211,7 +221,7 @@ describe('CornerObjectiveLine', () => {
       .toBe('Feedback triage · Approve');
   });
 
-  it('shows a static +N running badge beside the pinned run, naming another live workflow', () => {
+  it('CWM1: +N running names the other workflows and opens each selected run', () => {
     const onOpenWorkflow = vi.fn();
     const other: WorkflowRunSummaryView = { ...RUN, runId: 'o'.repeat(64), workflowSlug: 'macro-paper-desk', state: 'draft' };
     const renderer = render(
@@ -224,10 +234,18 @@ describe('CornerObjectiveLine', () => {
     );
     const badge = renderer.root.findByProps({ testID: 'corner-objective-line-workflow-more' });
     expect(flatText(badge)).toBe('+1 running');
-    // The badge is a plain indicator, not a control: tapping the panel's own
-    // link opens the pinned run's page; the other run surfaces only on that
-    // run page's own "Also running" section.
-    expect(badge.props.onPress).toBeUndefined();
+    expect(badge.props.accessibilityRole).toBe('button');
+    expect(badge.props.accessibilityLabel).toBe('Show 1 other running workflows');
+    expect(badge.props.style({ pressed: false })[0].minHeight).toBe(44);
+    expect(renderer.root.findAllByType('Sheet')).toHaveLength(0);
+    act(() => badge.props.onPress());
+    expect(onOpenWorkflow).not.toHaveBeenCalled();
+    const rows = renderer.root.findAllByType('Row');
+    expect(rows.map((row: any) => row.props.label)).toEqual(['Macro paper desk · Draft']);
+    expect(rows[0].props.accessibilityLabel).toBe('Open workflow, Macro paper desk · Draft');
+    act(() => rows[0].props.onPress());
+    expect(onOpenWorkflow).toHaveBeenCalledWith(other);
+    expect(renderer.root.findAllByType('Sheet')).toHaveLength(0);
     const link = renderer.root.findByProps({ testID: 'corner-objective-line-workflow' });
     act(() => link.props.onPress());
     expect(onOpenWorkflow).toHaveBeenCalledWith(RUN);
@@ -237,6 +255,32 @@ describe('CornerObjectiveLine', () => {
         <CornerObjectiveLine objective="Run the sweep" onOpenWorkflow={() => undefined} workflow={RUN} />,
       ).root.findAllByProps({ testID: 'corner-objective-line-workflow-more' }),
     ).toHaveLength(0);
+  });
+
+  it('closes the workflow list with Cancel or backdrop/back without opening a run', () => {
+    const onOpenWorkflow = vi.fn();
+    const other = { ...RUN, runId: 'other', state: 'scout' };
+    const renderer = render(<CornerObjectiveLine workflow={RUN} otherLiveRuns={[other]} onOpenWorkflow={onOpenWorkflow} />);
+    const more = renderer.root.findByProps({ testID: 'corner-objective-line-workflow-more' });
+    act(() => more.props.onPress());
+    act(() => renderer.root.findByType('Cancel').props.onPress());
+    expect(renderer.root.findAllByType('Sheet')).toHaveLength(0);
+    act(() => more.props.onPress());
+    act(() => renderer.root.findByType('Sheet').props.onClose());
+    expect(renderer.root.findAllByType('Sheet')).toHaveLength(0);
+    expect(onOpenWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('updates the open list when the live runs change', () => {
+    const onOpenWorkflow = vi.fn();
+    const first = { ...RUN, runId: 'first', state: 'scout' };
+    const next = { ...RUN, runId: 'next', state: 'draft' };
+    const renderer = render(<CornerObjectiveLine workflow={RUN} otherLiveRuns={[first]} onOpenWorkflow={onOpenWorkflow} />);
+    act(() => renderer.root.findByProps({ testID: 'corner-objective-line-workflow-more' }).props.onPress());
+    act(() => renderer.update(<CornerObjectiveLine workflow={RUN} otherLiveRuns={[next]} onOpenWorkflow={onOpenWorkflow} />));
+    expect(renderer.root.findAllByType('Row').map((row: any) => row.props.label)).toEqual(['Feedback triage · Draft']);
+    act(() => renderer.root.findByType('Row').props.onPress());
+    expect(onOpenWorkflow).toHaveBeenCalledWith(next);
   });
 
   it('names the holder when the step is not the viewer’s, and hides the line once the run ends', () => {

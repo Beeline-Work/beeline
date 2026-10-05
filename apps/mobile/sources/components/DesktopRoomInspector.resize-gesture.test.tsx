@@ -75,6 +75,11 @@ vi.mock('@/components/buzz/ConversationComposer', () => ({
   COMPOSER_MAX_INPUT_HEIGHT: 115,
   ConversationComposer: () => null,
 }));
+vi.mock('@/components/buzz/HullActionSheet', () => ({
+  HullActionSheetCancel: () => null,
+  HullActionSheetModal: () => null,
+  HullActionSheetRow: () => null,
+}));
 vi.mock('@/components/buzz/Ledger', () => ({
   LedgerRoomUpdate: () => null,
   LedgerSystemLine: () => null,

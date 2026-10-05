@@ -5,6 +5,7 @@ import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { workflowDisplayName, workflowStateLabel } from '@/buzz/workflow-graph';
 import { CORNER_META_SIZE } from './CornerGlyph';
 import { WorkflowGlyph } from './WorkflowGlyph';
+import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
 
 /** `Related market arbitrage paper · Verify`: which run, and where it stands. */
 function runLabel(run: WorkflowRunSummaryView): string {
@@ -62,9 +63,7 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
               <WorkflowLine onPress={() => onOpenWorkflow!(run)} run={run} testID={`${testID}-workflow`} />
             ) : null}
             {run && otherLiveRuns.length > 0 ? (
-              <Text style={styles.briefLinkText} testID={`${testID}-workflow-more`}>
-                {`+${otherLiveRuns.length} running`}
-              </Text>
+              <OtherWorkflowRuns runs={otherLiveRuns} onOpenWorkflow={onOpenWorkflow!} testID={testID} />
             ) : null}
             {onOpenBrief ? (
               <CornerBriefLink onPress={onOpenBrief} testID={`${testID}-brief`} />
@@ -75,6 +74,49 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
     </View>
   );
 });
+
+function OtherWorkflowRuns({ runs, onOpenWorkflow, testID }: {
+  runs: readonly WorkflowRunSummaryView[];
+  onOpenWorkflow: (run: WorkflowRunSummaryView) => void;
+  testID: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <Pressable
+        accessibilityLabel={`Show ${runs.length} other running workflows`}
+        accessibilityRole="button"
+        onPress={() => setOpen(true)}
+        style={({ pressed }) => [styles.briefLink, pressed && styles.briefLinkPressed]}
+        testID={`${testID}-workflow-more`}
+      >
+        <Text style={styles.briefLinkText}>{`+${runs.length} running`}</Text>
+      </Pressable>
+      <HullActionSheetModal
+        accessibilityLabel="Close running workflows"
+        onClose={() => setOpen(false)}
+        title="Other running workflows"
+        testID={`${testID}-workflow-list`}
+        visible={open}
+        footer={<HullActionSheetCancel onPress={() => setOpen(false)} testID={`${testID}-workflow-list-close`} />}
+      >
+        {runs.map((run) => (
+          <HullActionSheetRow
+            key={run.runId}
+            label={runLabel(run)}
+            accessibilityLabel={`Open workflow, ${runLabel(run)}`}
+            chevron="right"
+            onPress={() => {
+              setOpen(false);
+              onOpenWorkflow(run);
+            }}
+            testID={`${testID}-workflow-other-${run.runId}`}
+          />
+        ))}
+      </HullActionSheetModal>
+    </>
+  );
+}
 
 /** Compact workflow link beside the brief action. */
 function WorkflowLine({
@@ -143,15 +185,20 @@ const styles = StyleSheet.create((theme) => ({
   },
   inner: { flex: 1, minWidth: 0 },
   objective: { flexDirection: 'row', alignItems: 'flex-start', minWidth: 0, gap: 8 },
-  links: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 8 },
+  links: { flexDirection: 'row', alignItems: 'center', flexWrap: 'nowrap', columnGap: 8 },
   workflow: {
     flexDirection: 'row',
     alignItems: 'center',
+    maxWidth: '100%',
+    flexShrink: 1,
+    minWidth: 0,
     minHeight: 44,
     gap: 8,
   },
   workflowCopy: {
     ...theme.buzz.type.meta,
+    flexShrink: 1,
+    minWidth: 0,
     color: theme.buzz.textSecondary,
   },
   copy: {

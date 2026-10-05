@@ -1,5 +1,6 @@
 import { ROOM_WEBHOOK_SCHEMA } from './room-webhooks.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
+import { workflowBackfillOnce } from './migrations/workflow-cleanup.js';
 import {
   AGENT_COMMAND_SCHEMA,
   reconcileConfiguredCornerReviewers,
@@ -581,6 +582,11 @@ function messageSearchDocumentSql(
 }
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS workflow_backfills (
+  name text PRIMARY KEY,
+  completed_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS identities (
   id text PRIMARY KEY CHECK (id ~ '^[0-9a-f]{64}$'),
   kind text NOT NULL CHECK (kind IN ('human', 'agent')),
@@ -1733,10 +1739,8 @@ ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
   CHECK (kind IN ('agent', 'human'));
 -- Retired: the per-corner Feedback triage switch. Feedback triage is now the
--- saved feedback-triage workflow, and nothing reads this column. It stays so
--- an older server image keeps working during a rolling update; a later
--- release can drop it.
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS feedback_triage boolean NOT NULL DEFAULT false;
+-- saved feedback-triage workflow; the previous release already stopped reading this column.
+ALTER TABLE corner_facts DROP COLUMN IF EXISTS feedback_triage;
 CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_agent_id);
 -- The corner lifecycle's current state, projected from its newest handoff
 -- card in the same transaction (corner-lifecycle.ts), and the one head the
@@ -2694,12 +2698,7 @@ export async function migrate(
      ON messages(room_id,author_id,created_at DESC,id DESC)
      WHERE presentation='activity' AND durable_fact IS NULL`,
   ));
-  await retryMigrationStep('active workflow trigger index', () => createIndexConcurrently(
-    database, 'messages_workflow_active_trigger_idx',
-    `CREATE INDEX CONCURRENTLY messages_workflow_active_trigger_idx
-     ON messages(room_id, (card->'trigger'->>'scheduleId'), (card->>'workflowSlug'), (card->'trigger'->>'period'))
-     WHERE card_type='workflow-handoff' AND card->>'active'='true'`,
-  ));
+  await database.query('DROP INDEX IF EXISTS messages_workflow_active_trigger_idx');
   await retryMigrationStep('unread cursor index', () => createIndexConcurrently(
     database, 'messages_unread_cursor_idx',
     `CREATE INDEX CONCURRENTLY messages_unread_cursor_idx
@@ -2803,8 +2802,10 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
-  await dataStep('feedback triage workflow', () => backfillFeedbackTriageWorkflow(database));
-  await dataStep('workflow skill summary/does', () => backfillWorkflowSkillDescriptions(database));
+  await dataStep('feedback triage workflow', () =>
+    workflowBackfillOnce(database, 'feedback-triage-v2', backfillFeedbackTriageWorkflow));
+  await dataStep('workflow skill summary/does', () =>
+    workflowBackfillOnce(database, 'workflow-descriptions-v1', backfillWorkflowSkillDescriptions));
   await dataStep('stale workflow gate choices', () => closeStaleWorkflowGateChoices(database));
   await dataStep('workflow run timers', () => backfillWorkflowRunTimers(database));
   const blockers = await dataStep('corner merge blockers', () =>

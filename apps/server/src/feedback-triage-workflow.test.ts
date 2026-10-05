@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readWorkflowContract, workflowSaveError } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
-import { migrate } from './database.js';
+import { migrate, migrateData } from './database.js';
+import { workflowBackfillOnce } from './migrations/workflow-cleanup.js';
 import {
   FEEDBACK_TRIAGE_CONTRACT,
   FEEDBACK_TRIAGE_SCHEDULE_PROMPT,
@@ -121,6 +122,45 @@ function cornerTurn(messageId: string): CommandRow {
 }
 
 describe('feedback-triage workflow', () => {
+  it('does no seed or description writes on the second migration startup', async () => {
+    // Model an upgrade: fixtures predate the newly introduced markers.
+    await database.query(`DELETE FROM workflow_backfills`);
+    await migrateData(database);
+    expect(await skills()).toHaveLength(2);
+    const before = (await database.query(`SELECT * FROM workspace_skill_versions ORDER BY skill_id,version`)).rows;
+    await database.query(`
+      CREATE FUNCTION forbid_backfill_write() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'repeated workflow backfill write'; END $$;
+      CREATE TRIGGER forbid_skill_backfill BEFORE INSERT OR UPDATE ON workspace_skill_versions
+        FOR EACH ROW EXECUTE FUNCTION forbid_backfill_write();
+      CREATE TRIGGER forbid_schedule_backfill BEFORE UPDATE ON agent_schedules
+        FOR EACH ROW EXECUTE FUNCTION forbid_backfill_write();
+    `);
+    await migrateData(database);
+    expect((await database.query(`SELECT * FROM workspace_skill_versions ORDER BY skill_id,version`)).rows).toEqual(before);
+    console.log('Demonstrated cleanup-boot: second migration startup made no feedback seed or workflow description writes');
+  });
+
+  it('rolls a failed backfill back with its marker and allows a retry', async () => {
+    const prompt = (await schedules()).find((row) => row.id === TRIAGE_SCHEDULE)!.message;
+    await expect(workflowBackfillOnce(database, 'test-retry', async (db) => {
+      await db.query(`UPDATE agent_schedules SET message='failed migration' WHERE id=$1`, [TRIAGE_SCHEDULE]);
+      throw new Error('interrupted');
+    })).rejects.toThrow('interrupted');
+    expect((await schedules()).find((row) => row.id === TRIAGE_SCHEDULE)!.message).toBe(prompt);
+    expect((await database.query(`SELECT name FROM workflow_backfills WHERE name='test-retry'`)).rows).toEqual([]);
+    await workflowBackfillOnce(database, 'test-retry', backfillFeedbackTriageWorkflow);
+    await workflowBackfillOnce(database, 'test-retry', async () => { throw new Error('ran twice'); });
+  });
+
+  it('Reproduction cleanup-feedback: leaves unrelated feedback sweep schedules alone', async () => {
+    const prompt = 'Run a customer feedback sweep and summarize the survey responses.';
+    await database.query(`UPDATE agent_schedules SET message=$2 WHERE id=$1`, [UNRELATED_SCHEDULE, prompt]);
+    await backfillFeedbackTriageWorkflow(database);
+    expect((await schedules()).find((row) => row.id === UNRELATED_SCHEDULE)!.message).toBe(prompt);
+    console.log('Demonstrated cleanup-feedback: migration preserved an unrelated feedback sweep schedule');
+  });
+
   it('matches the readable copies under docs/workflows and passes the workflow validator', () => {
     const docs = (name: string) =>
       readFileSync(new URL(`../../../docs/workflows/${name}`, import.meta.url), 'utf8');

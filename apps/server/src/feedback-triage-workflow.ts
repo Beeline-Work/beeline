@@ -143,7 +143,7 @@ export const FEEDBACK_TRIAGE_SCHEDULE_PROMPT =
  * prompt names them, and `7d7fa17b` is the triage corner's own schedule.
  */
 const RETIRED_SWEEP_SCHEDULE_SQL = `(schedule.id::text LIKE '7d7fa17b%'
-  OR schedule.message ~* '(list_feedback|get_feedback|file_feedback_issue|attach_feedback_to_issue|dismiss_feedback|feedback sweep)')`;
+  OR schedule.message ~* '(list_feedback|get_feedback|file_feedback_issue|attach_feedback_to_issue|dismiss_feedback)')`;
 
 async function seedSkill(
   db: SqlDatabase,
@@ -214,7 +214,7 @@ async function seedSkill(
  * Installs the feedback-triage workflow and its procedure in every Workspace
  * whose triage schedule was written for the retired triage tools, and points
  * that schedule at the workflow. Cadence, agent and next run are untouched.
- * Idempotent: run from `migrateData()` on every release.
+ * Idempotent: the release migration calls this once, under a completion marker.
  */
 export async function backfillFeedbackTriageWorkflow(database: SqlDatabase): Promise<number> {
   const schedules = await database.query<{ id: string; workspace_id: string; room_id: string }>(

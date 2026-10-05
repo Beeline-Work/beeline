@@ -42,10 +42,10 @@ person who reported that problem.
 The contract is `docs/workflows/feedback-triage.json`. The procedure an agent
 follows at each step is `docs/workflows/feedback-triage-steps.md`. The server
 installs both (`apps/server/src/feedback-triage-workflow.ts`, run from
-`migrateData()` on every release) in each Workspace that has a triage schedule:
+`migrateData()` under a one-time completion marker) in each Workspace that has a triage schedule:
 the triage corner's schedule `7d7fa17b`, or any schedule whose prompt names the
-retired triage tools or the feedback sweep. It refreshes its own copy when the
-committed text changes and never overwrites a team's own workflow of the same
+retired triage tools. Ordinary prompts mentioning a feedback sweep stay untouched.
+The migration refreshes its own seed and never overwrites a team's own workflow of the same
 name. Any other Workspace can save the same files with `save_workflow` and
 `save_skill`. Agents find them the way they find memories and procedures. The per-turn Memory index lists
 `Workflow feedback-triage (start_workflow): …`, and `load_workspace_skill`
@@ -164,6 +164,6 @@ The per-corner **Feedback triage** setting (`set_feedback_triage`), the six
 triage tools (`list_feedback`, `get_feedback`, `list_feedback_issues`,
 `file_feedback_issue`, `attach_feedback_to_issue`, `dismiss_feedback`), GitHub
 issue filing with its redaction rules, and the `issues` webhook resolver are
-gone. Fix corners replace the public issues. The `corner_facts.feedback_triage`
-column, the `feedback_items.issue_*` columns and `feedback_issue_comments`
+gone. Fix corners replace the public issues. The unused `corner_facts.feedback_triage`
+column is dropped. The `feedback_items.issue_*` columns and `feedback_issue_comments`
 stay unread for rolling-update compatibility.

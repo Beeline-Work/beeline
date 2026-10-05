@@ -1184,6 +1184,8 @@ export type CornerBriefDraft = {
    * mock for any frontend change), as headings inside one doc.
    */
   readonly spec: string;
+  /** False when no repository files are assigned or edits/PRs are forbidden; attachments are separate. */
+  readonly repositoryWork?: boolean;
   /** The human Room message that approved this spec. The server quotes it. */
   readonly approval: { readonly sourceMessageId: string };
   readonly attachments?: readonly {
@@ -1209,6 +1211,8 @@ export type CornerBrief = {
    * ## References, then the old build spec).
    */
   readonly spec: string;
+  /** False when no repository files are assigned or edits/PRs are forbidden; attachments are separate. */
+  readonly repositoryWork?: boolean;
   /** Absent only on revisions that predate approvals. */
   readonly approval?: CornerBriefApproval;
   readonly change?: string;

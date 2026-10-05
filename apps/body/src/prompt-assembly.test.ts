@@ -150,6 +150,12 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     reviewerHandle: 'sol',
     selfReviewer: true,
   },
+  'code-corner-runtime': {
+    surface: 'code-corner', agentName: 'Bee', soul, agentCommand: 'claude-agent-acp',
+    worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    reviewerHandle: 'sol', yoloMode: true,
+    brief: { id: 'corner', revision: 2, authorId: 'author', sourceRoomId: 'room', attachments: [], repositoryWork: false, spec: '## Intent\nRun the desk\n## Non-goals\nNo repository edits or pull requests' },
+  },
   'review-corner': {
     surface: 'review-corner',
     agentName: 'Sol',
@@ -617,4 +623,37 @@ describe('assembled prompts', () => {
       ).toMatchFileSnapshot(`../../../docs/prompts/${name}.md`);
     });
   }
+});
+
+
+describe('Reproduction runtime-brief-5: delivery capability', () => {
+  const base = { id: 'corner', revision: 2, authorId: 'author', sourceRoomId: 'room', attachments: [] };
+  const forbidden = ['corner:prepare', 'record_validation_stage', 'Validation stages', '## Reproduced', '## Demonstrated', 'Use its file manifest', 'gh pr create', 'Once the pull request exists', 'pr_checks_status'];
+  it.each([
+    ['assigned', { repositoryWork: true, spec: '## Intent\nFix code\n## Assigned files\napps/body/src/prompt-assembly.ts' }, true],
+    ['none', { repositoryWork: false, spec: '## Intent\nRun the desk\n## Assigned files\nNone; standalone runtime artifact outside git checkout' }, false],
+    ['empty assigned files', { spec: '## Intent\nRun the desk\n## Assigned files\n' }, false],
+    ['legacy none', { spec: '## Intent\nRun the desk\n## Assigned files\nNone; standalone runtime artifact outside git checkout' }, false],
+    ['prohibited edits', { repositoryWork: true, spec: '## Non-goals\nNo repository edits.\n## References\napps/body/src/prompt-assembly.ts' }, false],
+    ['prohibited PRs', { repositoryWork: true, spec: '## Non-goals\nNo pull requests.\n## References\napps/body/src/prompt-assembly.ts' }, false],
+  ])('%s', (_name, fields, coding) => {
+    const brief = { ...base, ...fields } as CornerBrief;
+    const context = { ...SESSION_VARIANTS['code-corner-reviewed']!, brief };
+    const assembled = assembleSessionPrompt(context);
+    for (const rule of forbidden) {
+      if (coding && rule !== 'gh pr create') expect(assembled.systemPrompt).toContain(rule);
+      else if (coding) expect(assembled.systemPrompt).toContain('Open the pull request with gh');
+      else expect(assembled.systemPrompt).not.toContain(rule);
+    }
+    expect(assembled.systemPrompt).toContain('The human approval quote wins any conflict');
+    expect(assembled.systemPrompt).toContain('respect every non-goal and risk');
+    expect(assembled.systemPrompt).toContain('post_artifact');
+    const turn = assembleTurnPrompt({ surface: 'code-corner', sessionPrefix: assembled.systemPrompt, brief: { brief, fileLines: [] }, task: { body: 'How is the desk doing?' } }).text;
+    expect(turn).toContain(brief.spec);
+    expect(turn).toContain('How is the desk doing?');
+    if (!coding) expect(turn).not.toContain('Assigned files:');
+    const withAttachment = assembleTurnPrompt({ surface: 'code-corner', brief: { brief, fileLines: ['reference.pdf: /scratch/reference.pdf'] }, task: { body: 'How is the desk doing?' } }).text;
+    expect(withAttachment).toContain('reference.pdf');
+    if (!coding) expect(withAttachment).toContain('Brief attachments:');
+  });
 });

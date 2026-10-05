@@ -87,6 +87,7 @@ export type RoomShellState =
 
 export interface SessionPromptContext {
   readonly surface: PromptSurface;
+  readonly brief?: CornerBrief;
   readonly agentName: string;
   readonly soul?: { readonly name: string; readonly instructions: string };
   /** The ACP command; decides whether session text must also ride every turn. */
@@ -139,6 +140,29 @@ intent, base, tests, docs, lint_types, publication, final_authorization | implem
 review | configured reviewer records the review stage | current revision/head and reviewer identity
 ci | implementer | current revision/head; passed requires passing checks
 The server merge gate is the authority: pr_checks_status reports mergeAllowed true for the current head; the server then merges that head. final_authorization grants nothing; do not wait for mergeAllowed.`;
+
+/**
+ * New briefs carry an explicit capability. Legacy briefs keep their code lane
+ * unless their assignment or non-goals explicitly exclude repository work.
+ * Attachments are reference material, never repository assignments.
+ */
+export function cornerHasRepositoryWork(brief?: CornerBrief): boolean {
+  if (!brief) return true;
+  const nonGoals = brief.spec.match(/^## Non-goals\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/mi)?.[1] ?? '';
+  if (/\b(?:no|never|do not|forbid(?:s|den)?)\s+(?:repository\s+edits?|(?:open(?:ing)?\s+)?pull requests?|(?:edit|modify|change)\s+(?:the\s+)?repository)\b/i.test(nonGoals)) return false;
+  const assigned = brief.spec.match(/^## Assigned files\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/mi)?.[1];
+  if (assigned !== undefined && (!assigned.trim() || /^(?:\s*[-*]?\s*)(?:\(?none\)?|no assigned files)\b/i.test(assigned))) return false;
+  return brief.repositoryWork ?? true;
+}
+
+export const CORNER_RUNTIME_AUTHOR_CONTRACT = `The current brief's spec — stories, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
+Meet every story; respect every non-goal and risk.
+Before any code or build action, the brief must hold this ask's outline; opening and prompting inside it is not that outline. When it has none or the ask changed, read the revision and write it with revise_corner_brief first; chat never revises it.
+Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
+Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
+Fix only the spec and approval quote. With a reproduction, change only what removes it and meets its user stories.
+Deliver files with post_artifact; answer plain chat questions directly.
+No unrequested features, flags, compatibility shims or refactors.`;
 
 export const CORNER_AUTHOR_CONTRACT = `The current brief's spec — stories, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
 Meet every story; respect every non-goal and risk. Use its file manifest. Use record_validation_stage for this revision and head. Do not call a missing stage passed.
@@ -467,10 +491,10 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 900,
     layer: 'surface',
     surfaces: ['code-corner', 'review-corner'],
-    render: ({ worktree, surface, githubCli }) =>
+    render: ({ worktree, surface, githubCli, brief }) =>
       [
         `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
-        surface !== 'code-corner'
+        surface !== 'code-corner' || !cornerHasRepositoryWork(brief)
           ? ''
           : githubCli === 'rest'
             ? `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push. Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
@@ -497,7 +521,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 2_600,
     layer: 'surface',
     surfaces: ['code-corner'],
-    render: () => CORNER_AUTHOR_CONTRACT,
+    render: ({ brief }) => cornerHasRepositoryWork(brief) ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
   },
   {
     id: 'corner.merge',
@@ -506,6 +530,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 520,
     layer: 'surface',
     surfaces: ['code-corner'],
+    when: ({ brief }) => cornerHasRepositoryWork(brief),
     render: ({ yoloMode, reviewerHandle, selfReviewer }) =>
       (selfReviewer
         ? cornerSelfReviewerInstruction({ isReviewer: true, openedByAgent: true })!
@@ -519,6 +544,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 900,
     layer: 'surface',
     surfaces: ['code-corner'],
+    when: ({ brief }) => cornerHasRepositoryWork(brief),
     render: () =>
       'A checks turn is one that wakes you about CI or the merge gate. On it, say nothing unless you push a fix or report checks="unknown", and then use one short line. Never restate server check or merge notes. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never schedule polls of pr_checks_status or the merge gate; the server wakes you when it changes. If a schedule wakes you here anyway, treat it as a checks turn.',
   },
@@ -720,7 +746,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     surfaces: CORNERS,
     render: ({ brief, surface }) =>
       brief
-        ? `${renderAssignedCornerBrief(brief.brief)}\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}${surface === 'code-corner' && isPlaceholderCornerBrief(brief.brief) ? `\n\n${CORNER_PLACEHOLDER_BRIEF_RULE}` : ''}`
+        ? `${renderAssignedCornerBrief(brief.brief)}${cornerHasRepositoryWork(brief.brief) ? `\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}` : brief.fileLines.length ? `\n\nBrief attachments:\n${brief.fileLines.join('\n')}` : ''}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}${surface === 'code-corner' && isPlaceholderCornerBrief(brief.brief) ? `\n\n${CORNER_PLACEHOLDER_BRIEF_RULE}` : ''}`
         : 'No assigned brief: the human messages in this corner are the authority; skip steps that need a brief revision.',
   },
   {

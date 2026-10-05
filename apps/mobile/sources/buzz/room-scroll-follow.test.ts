@@ -448,6 +448,6 @@ describe('the chat screen wires the scroll rule', () => {
     );
     expect(install).toContain('scrollToNewestMessage();');
     expect(install).not.toContain('scrollToIndex');
-    expect(beginReply).toContain('[decodedId, replyTargetForMessage, scrollToNewestMessage, visibleMessages]');
+    expect(beginReply).toContain('[decodedId, replyTargetForMessage, scrollToNewestMessage]');
   });
 });

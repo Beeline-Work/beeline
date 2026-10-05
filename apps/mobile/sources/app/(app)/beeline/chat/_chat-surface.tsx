@@ -346,6 +346,7 @@ import {
 import {
   sameElementRefs,
   sameMessageRefMap,
+  sameRecordValueMap,
   sameSelectedMembers,
   sameStringSet,
   shallowEqualRecord,
@@ -1346,9 +1347,14 @@ export function BuzzChatSurface({
   );
   // Current server message authors refresh the same membership roster that
   // drives Room and corner bylines, mention suggestions, and mention glossing.
-  const conversationIdentities = useMemo(
-    () => conversationIdentityByPubkey(roomSurface?.members ?? [], combinedMessages),
-    [combinedMessages, roomSurface?.members],
+  // Rebuilt from every live message, so keep the previous map while no
+  // identity changed: the agent/person lookups and the row renderer hang off it.
+  const conversationIdentities = useStable(
+    useMemo(
+      () => conversationIdentityByPubkey(roomSurface?.members ?? [], combinedMessages),
+      [combinedMessages, roomSurface?.members],
+    ),
+    sameRecordValueMap,
   );
   // Open on the tail; older history reveals from what's already resident here
   // first, then pages in from the server once that's exhausted.
@@ -1387,6 +1393,7 @@ export function BuzzChatSurface({
       ids: arrivalMessages.flatMap(messageBoundaryIds),
     });
   }, [arrivalMessages, decodedId, roomSurface]);
+  const arrivingCardIds = useStable(transcriptArrivalObservation.arrivingIds, sameStringSet);
   useEffect(() => {
     // Keep the comparison anchored to the last committed transcript. Mutating
     // this ref during render makes React's development double-render consume a
@@ -3269,7 +3276,7 @@ export function BuzzChatSurface({
   const visibleMessageById = useStable(rawVisibleMessageById, sameMessageRefMap);
   // The first human reply to a message answers it; a corner proposal card shows
   // which choice that reply made and who made it.
-  const answerByMessageId = useMemo(() => {
+  const rawAnswerByMessageId = useMemo(() => {
     const answers = new Map<string, { decision: 'open' | 'cancel' | null; handle: string }>();
     for (const message of visibleMessages) {
       const identity = message.authorIdentity;
@@ -3282,7 +3289,11 @@ export function BuzzChatSurface({
     }
     return answers;
   }, [visibleMessages]);
-  const bylineOpeners = useMemo(() => transcriptBylineOpeners(visibleMessages), [visibleMessages]);
+  const answerByMessageId = useStable(rawAnswerByMessageId, sameRecordValueMap);
+  const bylineOpeners = useStable(
+    useMemo(() => transcriptBylineOpeners(visibleMessages), [visibleMessages]),
+    sameStringSet,
+  );
   const rawImmediatelyPrecedingVisibleMessageById = useMemo(() => {
     const map = new Map<string, ChatDisplayMessage>();
     for (let index = 1; index < visibleMessages.length; index += 1) {
@@ -3589,7 +3600,11 @@ export function BuzzChatSurface({
   const beginReply = useCallback(
     (message: ChatDisplayMessage) => {
       const target = message.isAgentActivity
-        ? activityMessageReplyTarget(message, visibleMessages, replyTargetForMessage(message))
+        ? activityMessageReplyTarget(
+            message,
+            chronologicalMessagesRef.current,
+            replyTargetForMessage(message),
+          )
         : {
             ...replyTargetForMessage(message),
             ...(message.reference ? { reference: message.reference } : {}),
@@ -3608,7 +3623,9 @@ export function BuzzChatSurface({
       };
       if (message.isAgentActivity || target.reference?.channelId === decodedId) install();
     },
-    [decodedId, replyTargetForMessage, scrollToNewestMessage, visibleMessages],
+    // Read through the ref: a transcript dependency here would hand every
+    // row a new renderer on each live message.
+    [decodedId, replyTargetForMessage, scrollToNewestMessage],
   );
 
   const handleReactToMessage = useCallback(
@@ -5883,7 +5900,7 @@ export function BuzzChatSurface({
     continuedIds: continuedAttributionIds,
     precedingMessageById: immediatelyPrecedingVisibleMessageById,
     messageById: visibleMessageById,
-    arrivingCardIds: transcriptArrivalObservation.arrivingIds,
+    arrivingCardIds,
     cardMotionStore: transcriptCardMotionStore,
     firstNewMessageId,
     arrivalFlashMessageId,

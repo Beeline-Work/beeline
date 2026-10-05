@@ -67,6 +67,31 @@ export function sameMessageRefMap<T>(
 }
 
 /**
+ * Equality for lookup maps rebuilt with fresh flat-record values: same keys,
+ * and each value field-wise equal under `shallowEqualRecord`.
+ */
+export function sameRecordValueMap<T extends object>(
+  previous: ReadonlyMap<string, T>,
+  next: ReadonlyMap<string, T>,
+): boolean {
+  if (previous === next) return true;
+  if (previous.size !== next.size) return false;
+  for (const [key, value] of next) {
+    const held = previous.get(key);
+    if (held === value) continue;
+    if (
+      !held ||
+      !shallowEqualRecord(
+        held as Readonly<Record<string, unknown>>,
+        value as Readonly<Record<string, unknown>>,
+      )
+    )
+      return false;
+  }
+  return true;
+}
+
+/**
  * Element-wise reference equality for a derived array of already-stable
  * objects — a filter over a memoized list rebuilds the array on every
  * recompute even when it selected exactly the same members.

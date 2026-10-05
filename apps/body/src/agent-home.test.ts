@@ -802,7 +802,8 @@ describe('operator skills + MCP passthrough', () => {
     expect(reviewSkill).not.toContain('gh pr merge');
     expect(reviewSkill).not.toContain('Never merge');
     expect(reviewSkill).not.toContain('approved pending checks');
-    expect(reviewSkill).not.toContain('unknown checks');
+    expect(reviewSkill).toContain('checks="passed" with checkCount=0');
+    expect(reviewSkill).toContain('Pending, failed, or unknown checks still block approval.');
     expect(reviewSkill).not.toContain('--match-head-commit <reviewed sha>');
     expect(reviewSkill).toContain('P0 - OUTLINE FULFILLED, DEMONSTRATED');
     expect(reviewSkill).toContain('If the user-visible Y cannot be produced, FAIL now');

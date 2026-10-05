@@ -873,7 +873,7 @@ async function enterState(
     ...input.line(toState),
     kind: 'workflow-handoff',
     ...(!isTerminal && !isGate && nextAgentId ? { wakes: [nextAgentId] } : {}),
-    presentation: 'card',
+    presentation: 'system',
     cardType: WORKFLOW_HANDOFF_CARD_TYPE,
     card: {
       runId,
@@ -946,7 +946,7 @@ async function moveRole(
     ...input.line,
     kind: 'workflow-handoff',
     ...(state.kind === 'gate' ? {} : { wakes: [input.picked] }),
-    presentation: 'card',
+    presentation: 'system',
     cardType: WORKFLOW_HANDOFF_CARD_TYPE,
     card: {
       runId,
@@ -1003,7 +1003,7 @@ async function closeRun(
     ...input.line,
     afterMessageId: runId,
     // No event kind: a closed run is a durable record that wakes nobody.
-    presentation: 'card',
+    presentation: 'system',
     cardType: WORKFLOW_HANDOFF_CARD_TYPE,
     card: {
       runId,
@@ -1786,7 +1786,7 @@ export async function startWorkflow(
       consequence: `run ${shortRunId(runId)}`,
       kind: 'workflow-handoff',
       ...(!exhausted && !isGate ? { wakes: [(resolution as { agentId: string }).agentId] } : {}),
-      presentation: 'card',
+      presentation: 'system',
       cardType: WORKFLOW_HANDOFF_CARD_TYPE,
       card: {
         runId,

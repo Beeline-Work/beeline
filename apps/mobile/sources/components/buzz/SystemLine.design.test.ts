@@ -200,8 +200,8 @@ describe('the system line', () => {
   });
 });
 
-describe('the folded GitHub lifecycle line', () => {
-  it('shows the newest three links and expands the rest inline', () => {
+describe('historical GitHub lifecycle details', () => {
+  it('shows every link immediately without an expansion control', () => {
     const onOpenUrl = vi.fn();
     const items = Array.from({ length: 5 }, (_, index) => ({
       id: String(index + 1),
@@ -226,15 +226,15 @@ describe('the folded GitHub lifecycle line', () => {
       renderer.root.findAll(
         (node) => node.type === 'Text' && /^github-lifecycle-item-/.test(node.props.testID ?? ''),
       ),
-    ).toHaveLength(3);
-    const disclosure = renderer.root.findByProps({ testID: 'github-lifecycle-expand-run' });
-    expect(flattenText(disclosure.props.children)).toBe('and 2 more');
-    act(() => disclosure.props.onPress());
-    expect(
-      renderer.root.findAll(
-        (node) => node.type === 'Text' && /^github-lifecycle-item-/.test(node.props.testID ?? ''),
-      ),
     ).toHaveLength(5);
+    expect(
+      renderer.root.findAllByProps({ testID: 'github-lifecycle-expand-run' }),
+    ).toHaveLength(0);
+    for (const item of items) {
+      const link = renderer.root.findByProps({ testID: `github-lifecycle-item-${item.id}` });
+      expect(flattenText(link.props.children)).toContain(item.title);
+      expect(link.props.numberOfLines).toBeUndefined();
+    }
     renderer.root.findByProps({ testID: 'github-lifecycle-item-5' }).props.onPress();
     expect(onOpenUrl).toHaveBeenCalledWith('https://github.test/pull/5');
   });

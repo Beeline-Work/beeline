@@ -33,6 +33,16 @@ export async function humanRoomAdmin(
   );
 }
 
+/** One resolver for schedule writes and the legacy schedule backfill. */
+export function scheduleWorkflowSlugSql(workspace: string, message: string): string {
+  return `(SELECT skill.slug FROM workspace_skills skill
+    CROSS JOIN LATERAL (SELECT ${message} message) prompt
+    WHERE skill.workspace_id=${workspace} AND skill.kind='workflow'
+      AND (prompt.message ~ ('(?i)\\m(start_workflow|start workflow|workflow)[[:space:]]+["\`]?' || skill.slug || '([^[:alnum:]_-]|$)')
+        OR prompt.message ~ ('(?i)\\m' || skill.slug || '["\`]?[[:space:]]+workflow\\M'))
+    ORDER BY strpos(lower(prompt.message),skill.slug),skill.slug LIMIT 1)`;
+}
+
 /** Explicit targets and old prompts naming a saved workflow share the same gate. */
 export async function scheduleWorkflowName(
   db: SqlDatabase,
@@ -44,17 +54,12 @@ export async function scheduleWorkflowName(
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(explicit)) throw new Error('workflow name is invalid');
     return explicit;
   }
-  const match =
-    /(?:start_workflow|start workflow|workflow)\s+["`]?([a-z0-9]+(?:-[a-z0-9]+)*)\b/i.exec(
-      prompt,
-    ) ?? /\b([a-z0-9]+(?:-[a-z0-9]+)*)["`]?\s+workflow\b/i.exec(prompt);
-  if (!match) return undefined;
-  const exists = await db.query(
-    `SELECT 1 FROM workspace_skills skill JOIN rooms room ON room.workspace_id=skill.workspace_id
-    WHERE room.id=$1 AND skill.slug=$2 AND skill.kind='workflow'`,
-    [roomId, match[1]],
+  const resolved = await db.query<{ slug: string | null }>(
+    `SELECT ${scheduleWorkflowSlugSql('room.workspace_id', '$2::text')} slug
+    FROM rooms room WHERE room.id=$1`,
+    [roomId, prompt],
   );
-  return exists.rowCount ? match[1] : undefined;
+  return resolved.rows[0]?.slug ?? undefined;
 }
 
 /**

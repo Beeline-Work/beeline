@@ -3707,11 +3707,64 @@ export class PhoneService {
       case 'clearNeedsYou':
         await this.clearNeedsYou(input as Input<'clearNeedsYou'>, viewerId);
         return undefined as Output<Name>;
-      case 'createRoomSchedule':
-        return (await this.createRoomSchedule(
-          input as Input<'createRoomSchedule'>,
-          viewerId,
-        )) as Output<Name>;
+      case 'createRoomSchedule': {
+        if (!this.routingTransaction)
+          return this.database.transaction((db) =>
+            new PhoneService(
+              db,
+              this.publicOrigin,
+              this.github,
+              this.sendPushTest,
+              this.live,
+              true,
+            ).execute('createRoomSchedule', input as Input<'createRoomSchedule'>, viewerId),
+          ) as Promise<Output<Name>>;
+        const request = input as Input<'createRoomSchedule'>;
+        const db = this.database;
+        const target = await this.requireTopLevelRoom(request.roomId);
+        if (target.workspace_id !== request.workspaceId) throw new Error('room is not in workspace');
+        if (!(await humanRoomAdmin(db, request.roomId, viewerId)))
+          throw new Error('room manager required');
+        if (typeof request.message !== 'string' || !request.message.trim())
+          throw new Error('schedule message is required');
+        if (!request.cadence || typeof request.cadence !== 'object')
+          throw new Error('schedule cadence is invalid');
+        validateScheduleCadence(request.cadence);
+        const agent = await db.query(
+          `SELECT 1 FROM identities identity
+           JOIN memberships membership ON membership.identity_id=identity.id
+           WHERE identity.id=$1 AND identity.kind='agent' AND membership.room_id=$2
+             AND membership.workspace_id=$3 AND membership.removed_at IS NULL`,
+          [request.agentId, request.roomId, request.workspaceId],
+        );
+        if (!agent.rowCount) throw new Error('agent not found in room');
+        const workflowName = await scheduleWorkflowName(
+          db,
+          request.roomId,
+          request.message,
+          request.workflowName,
+        );
+        const id = randomUUID();
+        const nextRunAt = nextScheduleOccurrence(request.cadence, new Date());
+        const inserted = await db.query<RoomScheduleRow>(
+          `INSERT INTO agent_schedules(
+             id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug
+           ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)
+           RETURNING id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at`,
+          [
+            id,
+            request.workspaceId,
+            request.roomId,
+            request.agentId,
+            viewerId,
+            JSON.stringify(request.cadence),
+            request.message.trim(),
+            nextRunAt,
+            workflowName ?? null,
+          ],
+        );
+        return roomSchedule(inserted.rows[0]!) as Output<Name>;
+      }
       case 'listRoomSchedules':
         return (await this.listRoomSchedules(
           (input as Input<'listRoomSchedules'>).roomId,
@@ -4405,69 +4458,10 @@ export class PhoneService {
       };
     });
   }
-  private async createRoomSchedule(
-    input: Input<'createRoomSchedule'>,
-    viewerId: string,
-  ): Promise<Output<'createRoomSchedule'>> {
-    if (!this.routingTransaction)
-      return this.database.transaction((db) =>
-        new PhoneService(
-          db,
-          this.publicOrigin,
-          this.github,
-          this.sendPushTest,
-          this.live,
-          true,
-        ).createRoomSchedule(input, viewerId),
-      );
-    const db = this.database;
-    const target = await this.requireTopLevelRoom(input.roomId);
-    if (target.workspace_id !== input.workspaceId) throw new Error('room is not in workspace');
-    if (!(await humanRoomAdmin(db, input.roomId, viewerId)))
-      throw new Error('room manager required');
-    if (typeof input.message !== 'string' || !input.message.trim())
-      throw new Error('schedule message is required');
-    if (!input.cadence || typeof input.cadence !== 'object')
-      throw new Error('schedule cadence is invalid');
-    validateScheduleCadence(input.cadence);
-    const agent = await db.query(
-      `SELECT 1 FROM identities identity
-       JOIN memberships membership ON membership.identity_id=identity.id
-       WHERE identity.id=$1 AND identity.kind='agent' AND membership.room_id=$2
-         AND membership.workspace_id=$3 AND membership.removed_at IS NULL`,
-      [input.agentId, input.roomId, input.workspaceId],
-    );
-    if (!agent.rowCount) throw new Error('agent not found in room');
-    const workflowName = await scheduleWorkflowName(
-      db,
-      input.roomId,
-      input.message,
-      input.workflowName,
-    );
-    const id = randomUUID();
-    const nextRunAt = nextScheduleOccurrence(input.cadence, new Date());
-    const inserted = await db.query<RoomScheduleRow>(
-      `INSERT INTO agent_schedules(
-         id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug
-       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)
-       RETURNING id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at`,
-      [
-        id,
-        input.workspaceId,
-        input.roomId,
-        input.agentId,
-        viewerId,
-        JSON.stringify(input.cadence),
-        input.message.trim(),
-        nextRunAt,
-        workflowName ?? null,
-      ],
-    );
-    return roomSchedule(inserted.rows[0]!);
-  }
   private async listRoomSchedules(roomId: string, viewerId: string) {
     await this.requireTopLevelRoom(roomId);
-    await this.requireRoomWorkspaceManager(roomId, viewerId);
+    if (!(await humanRoomAdmin(this.database, roomId, viewerId)))
+      throw new Error('room manager required');
     const schedules = await this.database.query<RoomScheduleRow>(
       `SELECT schedule.id,schedule.workspace_id,schedule.room_id,schedule.agent_id,
               schedule.creator_id,schedule.cadence,schedule.message,schedule.next_run_at,
@@ -4495,7 +4489,8 @@ export class PhoneService {
     viewerId: string,
   ): Promise<void> {
     await this.requireTopLevelRoom(input.roomId);
-    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
+    if (!(await humanRoomAdmin(this.database, input.roomId, viewerId)))
+      throw new Error('room manager required');
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules schedule USING rooms surface
        WHERE schedule.id=$1 AND surface.id=schedule.room_id

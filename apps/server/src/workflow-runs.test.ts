@@ -3,7 +3,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
-import { migrate, type QueryResult, type SqlDatabase } from './database.js';
+import { migrate, migrateData, type QueryResult, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
 import { answerRoomChoice } from './room-choice.js';
@@ -14,6 +14,7 @@ import {
   activeRunIdsForSchedule,
   archiveWorkflow,
   assignWorkflowRole,
+  backfillWorkflowRunTimers,
   backfillWorkflowSkillDescriptions,
   closeStaleWorkflowGateChoices,
   describedLegacyWorkflowContract,
@@ -27,6 +28,7 @@ import {
   settleWorkflowGate,
   startWorkflow,
   workflowRunLockKey,
+  WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS,
 } from './workflow-runs.js';
 
 vi.mock('node:crypto', async (importOriginal) => {
@@ -2743,5 +2745,184 @@ describe('run deadline', () => {
     expect(before - Date.now()).toBeLessThanOrEqual(86_400_000);
     await reassignFailedWorkflowRole(database, { roomId: ROOM, requestId: runId, agentId: WORKER_A });
     expect(await deadline()).toBe(before);
+  });
+});
+
+describe('legacy run timer recovery', () => {
+  async function timersFor(runId: string) {
+    return (await database.query<{ id: string; next_run_at: Date; updated_at: Date; workflow_run: { timer: string; attempt?: number } }>(
+      `SELECT id,next_run_at,updated_at,workflow_run FROM agent_schedules
+       WHERE workflow_run->>'runId'=$1 ORDER BY workflow_run->>'timer'`, [runId],
+    )).rows;
+  }
+
+  async function removeStepTimeout(slug: string, state: string) {
+    await database.query(
+      `UPDATE workspace_skill_versions version SET markdown=(markdown::jsonb #- $2::text[])::text
+       FROM workspace_skills skill WHERE skill.id=version.skill_id AND skill.slug=$1`,
+      [slug, ['handoffs', state, 'timeoutSeconds']],
+    );
+  }
+
+  it('Reproduction legacy-timers: closes an overdue legacy gate once and lets the next schedule tick start a run', async () => {
+    const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await withoutTimeouts('gated', 'sign_off');
+    await reachGate(runId);
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId]);
+    await database.query(
+      `UPDATE messages SET created_at=now()-interval '3 hours',card=card-'deadlineSeconds'-'seq' WHERE id=$1`, [runId],
+    );
+    const scheduleId = '30000000-0000-4000-8000-000000000005';
+    await database.query(
+      `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug)
+       VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":60}'::jsonb,'run gated',now()-interval '1 minute','gated')`,
+      [scheduleId, WORKSPACE, ROOM, WORKER_B, OWNER],
+    );
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    const skips = (await database.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%skipped a run%'`, [ROOM],
+    )).rows;
+    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId.slice(0, 8)} is still live at sign_off` }]);
+    expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 30_000))).toBe(0);
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('live');
+    console.log('Reproduction legacy-timers: overdue gate stayed live without timers; schedule skipped at sign_off');
+
+    await migrateData(database);
+    const timers = (await database.query<{ timer: string }>(
+      `SELECT workflow_run->>'timer' timer FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId],
+    )).rows;
+    expect(timers).toEqual([{ timer: 'deadline' }]);
+    expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 30_000))).toBe(1);
+    const closed = await getWorkflowRun(database, ROOM, runId);
+    expect(closed).toMatchObject({ state: 'sign_off', status: 'failed' });
+    expect(closed.history.at(-1)).toMatchObject({ outcome: 'deadline', contents: { reason: 'deadline' } });
+    expect((await runCards(runId)).filter((row) => row.card.closure)).toHaveLength(1);
+    await migrateData(database);
+    expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 30_000))).toBe(0);
+    expect((await runCards(runId)).filter((row) => row.card.closure)).toHaveLength(1);
+
+    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute' WHERE id=$1`, [scheduleId]);
+    expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
+    const scheduled = (await database.query<CommandRow>(
+      `SELECT * FROM agent_commands WHERE reason='schedule' AND agent_id=$1 ORDER BY created_at DESC LIMIT 1`, [WORKER_B],
+    )).rows[0]!;
+    const fresh = await startWorkflow(database, scheduled, { name: 'gated', roleBindings: { worker: WORKER_A, approver: APPROVER } });
+    expect(fresh.runId).not.toBe(runId);
+    expect(fresh.state).toBe('work');
+    console.log('Demonstrated legacy-timers: deadline closed the gate once; the next schedule tick started a fresh run');
+  });
+
+  it('Reproduction orphaned-run: migrates a healthy legacy run alongside an unreadable run', async () => {
+    const orphaned = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(orphaned);
+    const { runId } = await startedListRun();
+    await removeStepTimeout('list-flow', 'work');
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=ANY($1::text[])`, [[orphaned, runId]]);
+    await database.query(`UPDATE messages SET card=card-'active' WHERE id=ANY($1::text[])`, [[orphaned, runId]]);
+    await database.query(`DELETE FROM workspace_skills WHERE slug='gated'`);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(migrateData(database)).resolves.toBeUndefined();
+      expect(errors).toHaveBeenCalledWith(
+        `backfillWorkflowRunTimers: failed to recover run ${orphaned}`,
+        expect.objectContaining({ message: 'workflow contract version is unavailable' }),
+      );
+      const timers = await timersFor(runId);
+      expect(timers.map((row) => row.workflow_run.timer)).toEqual(['deadline', 'step']);
+      expect(await timersFor(orphaned)).toEqual([]);
+      await expect(migrateData(database)).resolves.toBeUndefined();
+      expect(await timersFor(runId)).toEqual(timers);
+      expect(await timersFor(orphaned)).toEqual([]);
+      console.log('Demonstrated orphaned-run: boot migration completed despite a missing contract; the healthy legacy run received deadline and step timers, unchanged on repeat boot');
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it('gives a legacy current attempt a full lease, fails over, and takes its declared timeout after exhaustion', async () => {
+    const { runId } = await startedListRun();
+    await removeStepTimeout('list-flow', 'work');
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId]);
+    await database.query(
+      `UPDATE messages SET card=card-'seq'-'deadlineSeconds'-'active',created_at=now()-interval '2 hours' WHERE id=$1`, [runId],
+    );
+    const before = Date.now();
+    expect(await backfillWorkflowRunTimers(database)).toBe(2);
+    const timers = await timersFor(runId);
+    expect(timers.map((row) => row.workflow_run)).toEqual([
+      { runId, workflowSlug: 'list-flow', timer: 'deadline' },
+      { runId, workflowSlug: 'list-flow', timer: 'step', attempt: 0 },
+    ]);
+    expect(timers[1]!.next_run_at.getTime()).toBeGreaterThanOrEqual(before + WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS * 1000);
+    // The 24 h deadline is measured from the original start, not the recovery.
+    const start = (await database.query<{ created_at: Date }>(`SELECT created_at FROM messages WHERE id=$1`, [runId])).rows[0]!;
+    expect(timers[0]!.next_run_at.getTime()).toBe(start.created_at.getTime() + 86_400_000);
+    expect(await new AgentScheduleLoop(database).runOnce(new Date(before + 30_000))).toBe(0);
+    expect(await backfillWorkflowRunTimers(database)).toBe(0);
+    expect(await timersFor(runId)).toEqual(timers);
+
+    expect(await fireTimer(runId, 'step')).toBe(1);
+    expect(await listRunCard(runId)).toMatchObject({ seq: 1, roleBindings: { worker: WORKER_B } });
+    const next = await timersFor(runId);
+    expect(next[1]!.workflow_run.attempt).toBe(1);
+    expect(next[1]!.next_run_at.getTime()).toBeGreaterThan(Date.now() + 3_500_000);
+    expect(await fireTimer(runId, 'step')).toBe(1);
+    const ended = await getWorkflowRun(database, ROOM, runId);
+    expect(ended).toMatchObject({ state: 'failed', status: 'failed' });
+    expect(ended.history.at(-1)).toMatchObject({ outcome: 'timeout' });
+    expect(await backfillWorkflowRunTimers(database)).toBe(0);
+    expect(await timersFor(runId)).toEqual([]);
+  });
+
+  it('arms the default for newly dispatched legacy steps and leaves a step without a timeout outcome for its deadline', async () => {
+    await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow(LIST_CONTRACT) });
+    await withoutTimeouts('list-flow', 'work');
+    const { runId } = await startWorkflow(database, await commandFor(WORKER_A), {
+      name: 'list-flow', roleBindings: { worker: WORKER_A, closer: APPROVER },
+    });
+    const timers = await timersFor(runId);
+    expect(timers[1]!.workflow_run).toMatchObject({ timer: 'step', attempt: 0 });
+    expect(timers[1]!.next_run_at.getTime()).toBeGreaterThan(Date.now() + 3_500_000);
+    expect(await fireTimer(runId, 'step')).toBe(1);
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('live');
+    expect((await timersFor(runId)).map((row) => row.workflow_run.timer)).toEqual(['deadline']);
+    expect(await fireTimer(runId, 'deadline')).toBe(1);
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('failed');
+  });
+
+  it('uses the pinned deadline, preserves existing declared timers, and takes the run lock before reading its head', async () => {
+    const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(runId);
+    const gateTimer = (await timersFor(runId))[1]!;
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='deadline'`, [runId]);
+    await database.query(`UPDATE messages SET created_at=now()-interval '1 hour',card=card-'deadlineSeconds' WHERE id=$1`, [runId]);
+    await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow({ ...GATED, deadlineSeconds: 14_400 }) });
+    const versions = (await database.query(`SELECT markdown,content_hash FROM workspace_skill_versions ORDER BY version`)).rows;
+    const recorded = new RecordingDatabase(database);
+    expect(await backfillWorkflowRunTimers(recorded)).toBe(1);
+    const lock = recorded.calls.findIndex((call) => call.sql.includes('pg_advisory_xact_lock'));
+    const head = recorded.calls.findIndex((call) => call.sql.includes('ORDER BY (card'));
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(head).toBeGreaterThan(lock);
+    const timers = await timersFor(runId);
+    const start = (await database.query<{ created_at: Date }>(`SELECT created_at FROM messages WHERE id=$1`, [runId])).rows[0]!;
+    expect(timers[0]!.next_run_at.getTime()).toBe(start.created_at.getTime() + 7_200_000);
+    expect(timers[1]).toEqual(gateTimer);
+    expect(await backfillWorkflowRunTimers(database)).toBe(0);
+    expect(await timersFor(runId)).toEqual(timers);
+    expect((await database.query(`SELECT markdown,content_hash FROM workspace_skill_versions ORDER BY version`)).rows).toEqual(versions);
+  });
+
+  it('does not arm ended or cancelled legacy runs, even when their start cards lack the active flag', async () => {
+    const ended = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(ended);
+    await answerGate(ended, 'publish');
+    const cancelled = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await cancelWorkflowRun(database, { room_id: ROOM, agent_id: OWNER } as CommandRow, { runId: cancelled, reason: 'stop' });
+    await database.query(`UPDATE messages SET card=card-'active' WHERE id=ANY($1::text[])`, [[ended, cancelled]]);
+    expect(await backfillWorkflowRunTimers(database)).toBe(0);
+    expect(await backfillWorkflowRunTimers(database)).toBe(0);
+    expect(await timersFor(ended)).toEqual([]);
+    expect(await timersFor(cancelled)).toEqual([]);
   });
 });

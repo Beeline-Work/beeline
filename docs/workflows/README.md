@@ -4,7 +4,7 @@ A workflow is a saved contract that passes work between named roles in a Room. E
 
 A workflow does not start on a timer. It moves when a bound agent calls `handoff`, a person answers a gate, or one of the run's own timers fires: a step's `timeoutSeconds`, a gate's `timeoutSeconds`, or the run's deadline. For work that repeats (a check every few minutes, a daily start), target `create_schedule` at it with `workflowName`, and have that scheduled turn call `start_workflow`. Other agents join an existing run through `handoff` with its full run ID.
 
-A run heals itself without a person stepping in: an agent that goes silent loses the step when its timeout passes, an agent that cannot do a step reports `blocked`, a turn that ends without a handoff or fails moves the step on, and a run that outlives its deadline closes as failed. Each automatic move posts one line in the Room naming what moved, from whom, to whom, and why.
+A run heals itself without a person stepping in: an agent that goes silent loses the step when its timeout passes, an agent that cannot do a step reports `blocked`, a turn that ends without a handoff or fails moves the step on, and a run that outlives its deadline closes as failed. Each automatic move posts one line in the Room naming what moved, from whom, to whom, and why. Runs started before deadline timers existed receive a deadline at their original start time plus the pinned `deadlineSeconds` (or 24 hours). An already overdue run closes on the next scheduler pass.
 
 ## Tools
 
@@ -101,7 +101,7 @@ Every state may have an optional free-text `hint` describing the outcome or arti
 
 **Terminal** (`"kind": "terminal"`): the run ends. It allows only `kind`, `status`, `does` and optional `hint`, where status is `done`, `failed` or `abandoned`.
 
-Unknown keys on a state are rejected. A new save is refused, naming the state, when an agent step has no `timeoutSeconds` or a gate lacks `timeoutSeconds` and `default`. Versions saved before this rule keep running as saved; the rule applies when they are next saved. The `server` and `waiting` kinds, `roleBinding`, `implicitEdges` and `externalOutcomes` exist for Beeline's built-in workflows and are not needed for your own.
+Unknown keys on a state are rejected. A new save is refused, naming the state, when an agent step has no `timeoutSeconds` or a gate lacks `timeoutSeconds` and `default`. Agent steps in older versions without `timeoutSeconds` get a one-hour lease per agent, including on failover. Recovery of a missing step timer grants the current attempt a full lease from recovery; existing timers keep their due times. A legacy gate without a default still needs a person's answer and closes only when the run's deadline passes. Saved versions are not rewritten; the save rule applies when they are next saved. The `server` and `waiting` kinds, `roleBinding`, `implicitEdges` and `externalOutcomes` exist for Beeline's built-in workflows and are not needed for your own.
 
 ### Graph rules
 

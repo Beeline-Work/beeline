@@ -19,7 +19,7 @@ import { PER_ITEM_EVENT_KINDS, uniqueAgentHandle } from '@beeline/api-contract/p
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
 import { backfillFeedbackTriageWorkflow } from './feedback-triage-workflow.js';
-import { backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
+import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
 import { retireAgentClasses } from './agent-class-retirement.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
@@ -2806,6 +2806,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('feedback triage workflow', () => backfillFeedbackTriageWorkflow(database));
   await dataStep('workflow skill summary/does', () => backfillWorkflowSkillDescriptions(database));
   await dataStep('stale workflow gate choices', () => closeStaleWorkflowGateChoices(database));
+  await dataStep('workflow run timers', () => backfillWorkflowRunTimers(database));
   const blockers = await dataStep('corner merge blockers', () =>
     reconcileCornerMergeBlockers(database));
   if (blockers)

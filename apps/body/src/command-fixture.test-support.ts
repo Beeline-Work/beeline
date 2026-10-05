@@ -104,6 +104,10 @@ export function commandFixtureApi(
         if (name === 'acknowledgeAgentCommand') return { id: input.commandId, createdAt: 1 };
         if (name === 'getCornerRestoreState' && closed && settled && !pending.size)
           return { cornerId: roomId, closeRequested: true };
+        if (name === 'listCornerBriefRevisions') {
+          const result = await target.execute(name, input as never);
+          return { ...result, revisions: result.revisions ?? [] };
+        }
         const pendingResult = target.execute(name, input as never);
         if (name === 'postRoomMessage') queueMicrotask(() => void pump());
         const result = await pendingResult;

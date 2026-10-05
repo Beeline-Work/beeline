@@ -9650,6 +9650,20 @@ describe('monolith integration', () => {
         { revision: 1, spec: brief.content },
       ],
     });
+    expect(await (await daemonOperation('listCornerBriefRevisions', {
+      cornerId, afterRevision: 1, limit: 1,
+    })).json()).toMatchObject({ revisions: [{ revision: 2 }] });
+    expect(await (await daemonOperation('listCornerBriefRevisions', {
+      cornerId, afterRevision: 2, limit: 1,
+    })).json()).toEqual({ revisions: [] });
+    expect(await (await daemonOperation('listCornerBriefRevisions', {
+      cornerId, afterRevision: 0, limit: 1,
+    })).json()).toMatchObject({ revisions: [{ revision: 2 }] });
+    for (const afterRevision of [-1, 1.5]) {
+      expect((await daemonOperation('listCornerBriefRevisions', {
+        cornerId, afterRevision, limit: 1,
+      })).status).toBe(400);
+    }
     const outsider = 'd'.repeat(64);
     const isolated = new DaemonService(database, new LiveHub());
     await expect(

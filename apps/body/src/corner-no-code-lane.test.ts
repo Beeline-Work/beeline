@@ -723,6 +723,7 @@ async function upgradeTurn(
         lane,
         closeRequested,
       };
+    if (name === 'listCornerBriefRevisions') return { revisions: [] };
     if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
     if (name === 'getWorkspaceRoster')
       return {

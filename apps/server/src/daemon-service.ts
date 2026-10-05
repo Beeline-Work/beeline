@@ -1526,15 +1526,28 @@ export class DaemonService {
             db, hold.roomId, authenticatedAgentId, hold.requestId, hold.generationId,
           );
           const releasing = hold.releaseHoldId !== undefined;
+          // A release needs a human's own order: the source of this turn, or of
+          // the parent Room turn whose steer_corner relay woke this corner turn.
           const actor = (await db.query<{ author_id: string }>(
-            `SELECT message.author_id FROM messages message
-             JOIN identities person ON person.id=message.author_id AND person.kind='human'
-             WHERE message.id=$1 AND ($2::uuid IS NULL OR message.room_id=$2)`,
-            [releasing ? command.source_message_id : command.root_source_message_id,
-              releasing ? hold.cornerId : null],
+            releasing
+              ? `SELECT message.author_id FROM agent_commands command
+                 JOIN rooms corner ON corner.id=$2
+                 LEFT JOIN agent_commands steered ON command.reason='relay_steer'
+                   AND command.room_id=corner.id AND steered.id=command.parent_command_id
+                   AND steered.room_id=corner.parent_id
+                 JOIN messages message ON message.id=COALESCE(steered.source_message_id,command.source_message_id)
+                 JOIN identities person ON person.id=message.author_id AND person.kind='human'
+                 WHERE command.id=$1 AND command.reason<>'corner_objective'
+                   AND COALESCE(steered.reason,'')<>'corner_objective'
+                   AND message.room_id=COALESCE(steered.room_id,command.room_id)
+                   AND message.room_id IN (corner.id,corner.parent_id)`
+              : `SELECT message.author_id FROM messages message
+                 JOIN identities person ON person.id=message.author_id AND person.kind='human'
+                 WHERE message.id=$1`,
+            releasing ? [command.id, hold.cornerId] : [command.root_source_message_id],
           )).rows[0];
-          if (releasing && (!actor || command.reason === 'corner_objective' || command.room_id !== hold.cornerId))
-            throw new Error('a direct human instruction in this corner is required to release a hold');
+          if (releasing && !actor)
+            throw new Error('a direct human instruction in this corner or its parent Room is required to release a hold');
           if (!actor) throw new Error('hold requires a human requester');
           return setCornerHold(db, hold, actor.author_id);
         })) as Output<Name>;
@@ -3136,14 +3149,20 @@ export class DaemonService {
       (!Number.isInteger(input.beforeRevision) || input.beforeRevision < 1)
     )
       throw new Error('invalid brief revision cursor');
+    if (
+      input.afterRevision !== undefined &&
+      (!Number.isInteger(input.afterRevision) || input.afterRevision < 0)
+    )
+      throw new Error('invalid brief revision cursor');
     const limit = input.limit ?? 1;
     if (!Number.isInteger(limit) || limit < 1 || limit > 20) throw new Error('invalid brief revision limit');
     const rows = (
       await this.database.query<CornerBriefRow>(
         `${CORNER_BRIEF_REVISION_SELECT}
        WHERE brief.corner_id=$1 AND ($2::integer IS NULL OR brief.revision<$2)
+         AND ($4::integer IS NULL OR brief.revision>$4)
        ORDER BY brief.revision DESC LIMIT $3`,
-        [input.cornerId, input.beforeRevision ?? null, limit + 1],
+        [input.cornerId, input.beforeRevision ?? null, limit + 1, input.afterRevision ?? null],
       )
     ).rows;
     return {

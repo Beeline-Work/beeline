@@ -51,6 +51,9 @@ vi.mock('react-native-unistyles', async () => {
   };
 });
 
+const external = vi.hoisted(() => ({ openExternalUrl: vi.fn(async (_url: string) => undefined) }));
+vi.mock('@/utils/open-external-url', () => external);
+
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { readRoomView } from '@beeline/api-contract/phone';
 import { workflowRunHref } from '@/buzz/workflow-run-copy';
@@ -99,6 +102,29 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('CornerObjectiveLine', () => {
+  it('OBJ1: tapping the objective dashboard URL opens the exact port and preserves panel actions', () => {
+    external.openExternalUrl.mockClear();
+    const onOpenBrief = vi.fn();
+    const onOpenWorkflow = vi.fn();
+    const objective = 'MM desk — P&L dashboard: http://100.102.125.52:8787.';
+    const renderer = render(<CornerObjectiveLine objective={objective} onOpenBrief={onOpenBrief}
+      workflow={RUN} onOpenWorkflow={onOpenWorkflow} />);
+    const copy = renderer.root.findByProps({ testID: 'corner-objective-line-copy' });
+    expect(flatText(copy)).toBe(objective);
+    const links = copy.findAllByType('Text' as any).filter((node: any) => node.props.accessibilityRole === 'link');
+    expect(links).toHaveLength(1);
+    expect(flatText(links[0])).toBe('http://100.102.125.52:8787');
+    act(() => links[0].props.onPress());
+    expect(external.openExternalUrl).toHaveBeenCalledWith('http://100.102.125.52:8787');
+    expect(onOpenBrief).not.toHaveBeenCalled();
+    expect(onOpenWorkflow).not.toHaveBeenCalled();
+    act(() => renderer.root.findByProps({ testID: 'corner-objective-line-brief' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'corner-objective-line-workflow' }).props.onPress());
+    expect(onOpenBrief).toHaveBeenCalledTimes(1);
+    expect(onOpenWorkflow).toHaveBeenCalledWith(RUN);
+    console.log('Reproduction OBJ1 Demonstrated: render objective panel, tap dashboard URL → external opener receives http://100.102.125.52:8787; punctuation, copy, brief and workflow preserved.');
+  });
+
   it('inscribes the full objective as prose on a brass rail — no clamp, box, or control', () => {
     const objective =
       'Restore the complete corner objective across every line so a long but valid request remains readable in its entirety.';
@@ -125,6 +151,18 @@ describe('CornerObjectiveLine', () => {
         .filter((node: any) => typeof node.type === 'string'),
     ).toHaveLength(0);
     expect(renderer.root.findAllByType('Pressable' as any)).toHaveLength(0);
+  });
+
+  it('keeps literal prose and independently opens multiple URLs without their trailing punctuation', () => {
+    external.openExternalUrl.mockClear();
+    const objective = '**Watch** http://100.102.125.52:8787, then https://example.com/dashboard?tab=pnl!';
+    const renderer = render(<CornerObjectiveLine objective={objective} />);
+    const copy = renderer.root.findByProps({ testID: 'corner-objective-line-copy' });
+    expect(flatText(copy)).toBe(objective);
+    const links = copy.findAllByType('Text' as any).filter((node: any) => node.props.accessibilityRole === 'link');
+    expect(links.map(flatText)).toEqual(['http://100.102.125.52:8787', 'https://example.com/dashboard?tab=pnl']);
+    for (const link of links) act(() => link.props.onPress());
+    expect(external.openExternalUrl.mock.calls.map((call) => call[0])).toEqual(links.map(flatText));
   });
 
   it('renders nothing rather than a placeholder when there is no objective', () => {

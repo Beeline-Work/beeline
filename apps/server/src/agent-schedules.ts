@@ -271,7 +271,19 @@ export class AgentScheduleLoop {
     );
     let fired = 0;
     for (const row of due.rows) {
-      if (!(await fireWorkflowTimer(this.database, row))) continue;
+      try {
+        if (!(await fireWorkflowTimer(this.database, row))) continue;
+      } catch (error) {
+        // The timer transaction rolled back, including its claim. Back it off
+        // outside that transaction so a poisoned timer cannot starve the queue.
+        console.error(`workflow timer ${row.id} failed; retrying in one minute`, error);
+        await this.database.query(
+          `UPDATE agent_schedules SET next_run_at=$2,updated_at=now()
+           WHERE id=$1 AND workflow_run=$3::jsonb AND next_run_at <= $4`,
+          [row.id, new Date(now.getTime() + 60_000), JSON.stringify(row.workflow_run), now],
+        );
+        continue;
+      }
       fired += 1;
       this.onPosted?.(row.room_id);
     }

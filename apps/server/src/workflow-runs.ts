@@ -531,7 +531,7 @@ type WorkflowTimerKind = 'step' | 'deadline';
  * `AgentScheduleLoop` hands due rows to `fireWorkflowTimer`. Rows written
  * before attempts existed carry no `timer` and act as the current step's.
  */
-type WorkflowTimer = { runId: string; workflowSlug: string; timer?: WorkflowTimerKind; attempt?: number };
+type WorkflowTimer = { runId: string; workflowSlug: string; timer?: WorkflowTimerKind; attempt?: number; retryRoleList?: boolean };
 
 function scheduleUuid(key: string): string {
   const bytes = createHash('sha256').update(key).digest().subarray(0, 16);
@@ -560,6 +560,7 @@ async function scheduleRunTimer(
     timer: WorkflowTimerKind;
     seconds: number;
     attempt?: number;
+    retryRoleList?: boolean;
     fireAt?: Date;
   },
 ): Promise<void> {
@@ -575,6 +576,7 @@ async function scheduleRunTimer(
     workflowSlug: input.workflowSlug,
     timer: input.timer,
     ...(input.attempt !== undefined ? { attempt: input.attempt } : {}),
+    ...(input.retryRoleList ? { retryRoleList: true } : {}),
   };
   await db.query(
     `INSERT INTO agent_schedules
@@ -654,6 +656,7 @@ async function postWorkflowGate(
   const choice = await postRoomChoice(db, {
     roomId: input.roomId,
     agentId: askerAgentId,
+    workflowRunId: input.runId,
     mode: 'question',
     prompt: workflowGatePrompt(input.contract, input.stateName),
     ...(input.state.default && input.state.timeoutSeconds
@@ -1038,20 +1041,21 @@ async function roleList(db: SqlDatabase, scope: RunScope, role: string): Promise
  * unhealthy or no longer in the Room. With nobody left, `timeout` applies the
  * step's `timeout` outcome as the system (when it declares one); otherwise,
  * and always for `wait`, the run posts each agent's reason and waits.
+ * Without a timeout outcome, retry the whole list after another full lease.
  */
 async function failOver(
   db: SqlDatabase,
   scope: RunScope,
-  input: { leaving?: string; why: string; whenExhausted: 'timeout' | 'wait' },
+  input: { leaving?: string; why: string; whenExhausted: 'timeout' | 'wait'; retryRoleList?: boolean },
 ): Promise<{ state: string; attempt: number; status?: 'done' | 'failed' }> {
   const state = scope.state as WorkflowHandoffState;
   const role = state.role;
-  const tried = [
+  const tried = input.retryRoleList ? [] : [
     ...(scope.run.tried ?? []).filter((entry) => entry.agentId !== input.leaving),
     ...(input.leaving ? [{ agentId: input.leaving, reason: input.why }] : []),
   ];
   const list = await roleList(db, scope, role);
-  const cursor = input.leaving ?? scope.run.roleBindings[role];
+  const cursor = input.retryRoleList ? undefined : input.leaving ?? scope.run.roleBindings[role];
   const start = cursor && list.includes(cursor) ? list.indexOf(cursor) + 1 : 0;
   const picked = await firstHealthyAgent(
     db,
@@ -1086,6 +1090,18 @@ async function failOver(
     tried,
     ...(cursor ? { cursor } : {}),
   });
+  if (!Object.hasOwn(state.on, 'timeout')) {
+    await scheduleRunTimer(db, {
+      workspaceId: scope.workspaceId,
+      roomId: scope.roomId,
+      runId: scope.runId,
+      workflowSlug: scope.run.workflowSlug,
+      timer: 'step',
+      seconds: state.timeoutSeconds ?? WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS,
+      attempt: attemptOf(scope.run),
+      retryRoleList: true,
+    });
+  }
   return { state: scope.stateName, attempt: attemptOf(scope.run) };
 }
 
@@ -1509,6 +1525,7 @@ export async function fireWorkflowTimer(
       leaving: scope.run.roleBindings[scope.state.role],
       why: 'its lease expired',
       whenExhausted: 'timeout',
+      retryRoleList: timer.retryRoleList,
     });
     return true;
   });
@@ -1519,7 +1536,7 @@ export async function fireWorkflowTimer(
  * move: the agent did not hand off, so the step moves on as `blocked` with
  * reason no handoff. A turn woken by anything else, or by an older attempt,
  * is unrelated and changes nothing. Called from the turn's terminal
- * `complete` receipt, in its transaction.
+ * `complete` receipt, in a separate transaction after completion commits.
  */
 export async function failOverUnansweredTurn(
   db: SqlDatabase,

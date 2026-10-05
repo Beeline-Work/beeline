@@ -434,6 +434,36 @@ describe('connect_app', () => {
     }
   });
 
+  it('returns an empty tool list over the daemon API when a query matches nothing', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const started = await daemon.execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'find a tool' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
+    provider.listTools.mockResolvedValueOnce([]);
+    const server = createBeelineServer({ database, phone, daemon, live: new LiveHub(),
+      mediaMaximumBytes: 1,
+      auth: { authenticateDaemon: async () => HELPER, authenticatePhone: async () => null } as unknown as TokenAuth });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const response = await fetch(`${origin}/v1/daemon/operations/listAppTools`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
+        body: JSON.stringify({ ...turn, appId: started.appId!, query: 'nonexistent-tool' }),
+      });
+      const result = await response.json();
+      console.log(`Reproduction tool-input-limits: no-match query → HTTP ${response.status} ${JSON.stringify(result)}`);
+      expect(response.status).toBe(200);
+      expect(result).toEqual({ tools: [] });
+      expect(provider.listTools).toHaveBeenCalledWith('slack', 'nonexistent-tool');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it('names the cause when a connected app has no discoverable tools', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);

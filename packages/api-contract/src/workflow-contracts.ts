@@ -1,3 +1,4 @@
+import type { CornerLifecycleContract, CornerLifecycleState } from './corner-lifecycle-contract.js';
 /**
  * Declarative, bounded workflow contracts: named roles (not specific agents),
  * handoffs between roles with required contents, loop caps with an
@@ -82,18 +83,6 @@ export type WorkflowHandoffState = {
   readonly hint?: string;
   readonly kind?: undefined;
   readonly role: string;
-  /**
-   * Resolve `role`'s bound agent LIVE at each dispatch (format `live:<dotted
-   * path>`, e.g. `live:parent.reviewer_agent_id`) instead of the pinned
-   * `roleBindings` recorded at `start_workflow` time — for a role whose
-   * configuration can change after a run starts. The generic engine does not
-   * interpret the path: only the server code that understands it can resolve
-   * and act on it, and the pinned `roleBindings` value the generic engine
-   * checks against is a non-agent marker string (the path itself), so
-   * `handoff()`'s ordinary `boundAgentId !== command.agent_id` check can
-   * never match a real agent and safely refuses every ordinary call.
-   */
-  readonly roleBinding?: string;
   readonly requires: readonly string[];
   readonly on: Readonly<Record<string, string>>;
   readonly loop?: WorkflowLoop;
@@ -120,26 +109,6 @@ export type WorkflowGateState = {
   readonly default?: string;
 };
 
-/**
- * A transition the SERVER posts as a side effect of code it already runs
- * (webhook processing, an existing daemon operation) rather than an agent's
- * own `handoff()` tool call. `role` is advisory only (who this state is
- * conceptually "waiting on", for a readable card) and is never checked for
- * authorization the way a `WorkflowHandoffState`'s role is: `handoff()` and
- * `start_workflow` both refuse to advance a `kind:'server'` state at all, so
- * only the server's own write path can move one.
- */
-export type WorkflowServerState = {
-  /** A short sentence for people reading the run. Optional on legacy revisions. */
-  readonly does?: string;
-  readonly hint?: string;
-  readonly kind: 'server';
-  readonly role?: string;
-  readonly requires: readonly string[];
-  readonly on: Readonly<Record<string, string>>;
-  readonly loop?: WorkflowLoop;
-};
-
 export type WorkflowTerminalState = {
   /** A short sentence for people reading the run. Optional on legacy revisions. */
   readonly does?: string;
@@ -149,29 +118,10 @@ export type WorkflowTerminalState = {
   readonly status: 'done' | 'failed' | 'abandoned';
 };
 
-/**
- * A parked, non-terminal state with no declared outgoing edges of its own —
- * used for a loop's ask-a-human escape when there is no real choice card
- * today, only a plain informational line. Distinct from `kind:'gate'`, which
- * stays available for a genuine human decision point. Only reachable by
- * `implicitEdges` after this (e.g. a human closing a stalled run), never by
- * an ordinary `on` edge or by `handoff()`/`start_workflow`.
- */
-export type WorkflowWaitingState = {
-  /** A short sentence for people reading the run. Optional on legacy revisions. */
-  readonly does?: string;
-  readonly hint?: string;
-  readonly kind: 'waiting';
-  /** Advisory only, exactly like `WorkflowServerState.role` — who is conceptually active here. */
-  readonly role?: string;
-};
-
 export type WorkflowState =
   | WorkflowHandoffState
   | WorkflowGateState
-  | WorkflowServerState
-  | WorkflowTerminalState
-  | WorkflowWaitingState;
+  | WorkflowTerminalState;
 
 export type WorkflowContract = {
   readonly version: 1;
@@ -181,24 +131,17 @@ export type WorkflowContract = {
   readonly roles: readonly string[];
   readonly start: string;
   readonly handoffs: Readonly<Record<string, WorkflowState>>;
-  /**
-   * Terminal state names reachable from ANY non-terminal state at any time,
-   * independent of graph position — a merge webhook or a human close request
-   * doesn't wait for a run to be "at" a particular state. Each named state
-   * must itself be `kind:'terminal'`.
-   */
-  readonly implicitEdges?: readonly string[];
-  /**
-   * Outcome names that only an event from outside the run can report — for
-   * the corner, a new commit landing on its branch or GitHub refusing a merge.
-   * The run cannot reach such an edge again on its own, so cycle detection
-   * ignores edges with these outcomes. Each must be an outcome some state
-   * declares.
-   */
-  readonly externalOutcomes?: readonly string[];
   /** Seconds a run may stay live before the engine closes it as failed. */
   readonly deadlineSeconds?: number;
 };
+
+/** Pinned reads retain the pre-split schema until their runs end. New saves use WorkflowContract. */
+export type WorkflowReadContract = Omit<WorkflowContract, 'handoffs'> & {
+  readonly handoffs: Readonly<Record<string, WorkflowReadState>>;
+  readonly implicitEdges?: CornerLifecycleContract['implicitEdges'];
+  readonly externalOutcomes?: CornerLifecycleContract['externalOutcomes'];
+};
+export type WorkflowReadState = WorkflowState | CornerLifecycleState;
 
 /** The workflow's own name, stored as `workspace_skills.slug` (hyphen only, per that column's CHECK). */
 const CONTRACT_NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -257,15 +200,15 @@ export function workflowReceiptError(value: unknown): string | null {
  * `readWorkflowDefinition` (BFS reachability from `start`, DFS cycle check
  * with capped loop-edges excluded), rewritten against this smaller schema.
  */
-export function readWorkflowContract(value: unknown): WorkflowContract | null {
-  return workflowContractError(value) === null ? (value as WorkflowContract) : null;
+export function readWorkflowContract(value: unknown): WorkflowReadContract | null {
+  return workflowContractError(value) === null ? (value as WorkflowReadContract) : null;
 }
 
 /**
  * The reason `readWorkflowContract` rejects `value`, naming the rule and where
  * it failed (a field, or `handoffs.<state>`), or null when the contract is valid.
  */
-export function workflowContractError(value: unknown): string | null {
+export function workflowContractError(value: unknown, saved = false): string | null {
   if (!record(value)) return 'contract must be a JSON object';
   const topKey = unknownKey(value, [
     'version',
@@ -478,6 +421,25 @@ export function workflowContractError(value: unknown): string | null {
     return true;
   };
   if (!walk(value.start)) return `cycle ${cycle.join(' -> ')} has no loop cap`;
+  if (saved) {
+    const contract = value as WorkflowReadContract;
+    for (const field of ['implicitEdges', 'externalOutcomes'] as const)
+      if (Object.hasOwn(contract, field)) return `${field} is corner-only and cannot be saved in a workflow`;
+    if (!contract.summary?.trim()) return 'summary is required and must be nonempty';
+    for (const [name, state] of Object.entries(contract.handoffs)) {
+      if (state.kind === 'server' || state.kind === 'waiting')
+        return `handoffs.${name}: kind ${state.kind} is corner-only and cannot be saved in a workflow`;
+      if (Object.hasOwn(state, 'roleBinding'))
+        return `handoffs.${name}: roleBinding is corner-only and cannot be saved in a workflow`;
+      if (!state.does?.trim()) return `handoffs.${name}: does is required and must be nonempty`;
+      if ('on' in state && Object.hasOwn(state.on, WORKFLOW_BLOCKED_OUTCOME))
+        return `handoffs.${name}: "${WORKFLOW_BLOCKED_OUTCOME}" is built in; name this outcome something else`;
+      if (state.kind === undefined && state.timeoutSeconds === undefined)
+        return `handoffs.${name}: timeoutSeconds is required, with a "timeout" outcome in on`;
+      if (state.kind === 'gate' && (state.timeoutSeconds === undefined || state.default === undefined))
+        return `handoffs.${name}: a gate needs timeoutSeconds and default`;
+    }
+  }
   return null;
 }
 
@@ -509,7 +471,7 @@ export type WorkflowRunReadResult = {
   readonly requiredFields: readonly string[];
   readonly receiptHint?: string;
   readonly cancellation?: { readonly reason: string; readonly actorId: string };
-  readonly contract: WorkflowContract;
+  readonly contract: WorkflowReadContract;
   readonly history: readonly {
     readonly messageId: string;
     readonly actorId: string;
@@ -531,24 +493,5 @@ export type WorkflowRunReadResult = {
  * pinned legacy reads keep their original contract.
  */
 export function workflowSaveError(value: unknown): string | null {
-  const error = workflowContractError(value);
-  if (error) return error;
-  const contract = value as WorkflowContract;
-  for (const field of ['implicitEdges', 'externalOutcomes'] as const)
-    if (Object.hasOwn(contract, field)) return `${field} is corner-only and cannot be saved in a workflow`;
-  if (!contract.summary?.trim()) return 'summary is required and must be nonempty';
-  for (const [name, state] of Object.entries(contract.handoffs)) {
-    if (state.kind === 'server' || state.kind === 'waiting')
-      return `handoffs.${name}: kind ${state.kind} is corner-only and cannot be saved in a workflow`;
-    if (Object.hasOwn(state, 'roleBinding'))
-      return `handoffs.${name}: roleBinding is corner-only and cannot be saved in a workflow`;
-    if (!state.does?.trim()) return `handoffs.${name}: does is required and must be nonempty`;
-    if ('on' in state && Object.hasOwn(state.on, WORKFLOW_BLOCKED_OUTCOME))
-      return `handoffs.${name}: "${WORKFLOW_BLOCKED_OUTCOME}" is built in; name this outcome something else`;
-    if (state.kind === undefined && state.timeoutSeconds === undefined)
-      return `handoffs.${name}: timeoutSeconds is required, with a "timeout" outcome in on`;
-    if (state.kind === 'gate' && (state.timeoutSeconds === undefined || state.default === undefined))
-      return `handoffs.${name}: a gate needs timeoutSeconds and default`;
-  }
-  return null;
+  return workflowContractError(value, true);
 }

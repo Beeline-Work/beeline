@@ -92,7 +92,7 @@ describe('workflowRunLine execution history', () => {
       ['notify', 'current'], ['pull', 'pending'], ['approve', 'pending'],
       ['dispatch', 'pending'], ['done', 'pending'],
     ]);
-    expect(line.slice(1).every((step) => step.visits.length === 0 && step.onMainPath)).toBe(true);
+    expect(line.slice(1).every((step) => step.visits.length === 0)).toBe(true);
     // A terminal run has nothing left to predict.
     const ended = workflowRunLine(feedbackTriage, [{ toState: 'notify', at: 100 },
       { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 110 },

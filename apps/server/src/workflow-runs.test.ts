@@ -1,3 +1,4 @@
+import { normalizeLegacyWorkflowRuns } from './migrations/workflow-cleanup.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { describedWorkflow } from './test-support.js';
@@ -1606,6 +1607,7 @@ describe('per-run sequence (S05-1)', () => {
   it('sequences a legacy run from one and continues above its unsequenced card', async () => {
     const { runId } = await startedListRun();
     await database.query(`UPDATE messages SET card=card-'seq' WHERE id=$1`, [runId]);
+    await normalizeLegacyWorkflowRuns(database);
     await handoff(database, await commandFor(WORKER_A), {
       runId,
       outcome: 'retry',
@@ -2751,6 +2753,10 @@ describe('run deadline', () => {
 });
 
 describe('legacy run timer recovery', () => {
+  beforeEach(async () => {
+    // Simulate the first deployment over legacy fixtures, before its one-time marker.
+    await database.query(`DELETE FROM workflow_backfills WHERE name='workflow-storage-v1'`);
+  });
   async function timersFor(runId: string) {
     return (await database.query<{ id: string; next_run_at: Date; updated_at: Date; workflow_run: { timer: string; attempt?: number } }>(
       `SELECT id,next_run_at,updated_at,workflow_run FROM agent_schedules
@@ -3061,5 +3067,50 @@ describe('Reproduction workflow-stalls', () => {
     expect(await fireTimer(runId, 'step')).toBe(1);
     expect(await listRunCard(runId)).toMatchObject({ seq: 2, roleBindings: { worker: WORKER_A } });
     console.log('Demonstrated workflow-stalls-5: exhausted list re-armed at its normal interval and reassigned recovered first agent');
+  });
+});
+
+describe('workflow cleanup migration', () => {
+  it('Demonstrated cleanup-storage: migrates every legacy shape once and a person can still answer the live gate', async () => {
+    const ended = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(ended);
+    await answerGate(ended, 'publish');
+    const live = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(live);
+    await database.query(`DELETE FROM workflow_backfills WHERE name='workflow-storage-v1'`);
+    await database.query(`UPDATE messages SET card=card-'active' WHERE id=ANY($1::text[])`, [[ended, live]]);
+    await database.query(`UPDATE messages SET card=card-'seq' WHERE card_type='workflow-handoff' AND card->>'runId'=$1`, [live]);
+    await database.query(`UPDATE messages SET card=card-'attempt' WHERE id IN (SELECT message_id FROM room_choices) AND card->>'runId'=$1`, [live]);
+    const oldId = randomUUID();
+    await database.query(`UPDATE agent_schedules SET id=$2,workflow_run=workflow_run-'timer'-'attempt'
+      WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='step'`, [live, oldId]);
+    const due = (await database.query(`SELECT next_run_at FROM agent_schedules WHERE id=$1`, [oldId])).rows[0]!;
+    const commandsBefore = (await database.query(`SELECT * FROM agent_commands ORDER BY id`)).rows;
+    await migrateData(database);
+    expect((await database.query(`SELECT id,card->>'active' active FROM messages WHERE id=ANY($1::text[]) ORDER BY id`, [[ended, live]])).rows)
+      .toEqual([{ id: ended, active: 'false' }, { id: live, active: 'true' }].sort((a,b) => a.id.localeCompare(b.id)));
+    expect((await database.query(`SELECT card->>'seq' seq FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1 ORDER BY (card->>'seq')::int`, [live])).rows)
+      .toEqual([{ seq: '-1' }, { seq: '0' }]);
+    const timer = (await database.query<{ id: string; next_run_at: Date; workflow_run: unknown }>(`SELECT id,next_run_at,workflow_run FROM agent_schedules
+      WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='step'`, [live])).rows[0]!;
+    expect(timer.id).not.toBe(oldId);
+    expect(timer.next_run_at).toEqual(due.next_run_at);
+    expect(timer.workflow_run).toMatchObject({ timer: 'step', attempt: 0 });
+    expect((await database.query(`SELECT * FROM agent_commands ORDER BY id`)).rows).toEqual(commandsBefore);
+    expect(await getWorkflowRun(database, ROOM, live)).toMatchObject({ state: 'sign_off', status: 'live', attempt: 0 });
+    const snapshot = async () => ({
+      messages: (await database.query(`SELECT id,card FROM messages WHERE card->>'runId'=ANY($1::text[]) ORDER BY id`, [[ended, live]])).rows,
+      timers: (await database.query(`SELECT * FROM agent_schedules ORDER BY id`)).rows,
+    });
+    const once = await snapshot();
+    await normalizeLegacyWorkflowRuns(database);
+    expect(await snapshot()).toEqual(once);
+    const recorded = new RecordingDatabase(database);
+    await migrateData(recorded);
+    expect(await snapshot()).toEqual(once);
+    expect(recorded.calls.some(({ sql }) => sql.includes('WITH missing AS') || sql.includes('FROM room_choices choice JOIN messages choicemsg'))).toBe(false);
+    await answerGate(live, 'publish');
+    expect(await getWorkflowRun(database, ROOM, live)).toMatchObject({ status: 'done' });
+    console.log('Demonstrated cleanup-storage: legacy live gate kept its lease and received no new wake; second startup skipped backfills; human answer completed the run');
   });
 });

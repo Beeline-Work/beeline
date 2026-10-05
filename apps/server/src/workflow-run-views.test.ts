@@ -1,3 +1,4 @@
+import { listRoomWorkflowRuns } from './workflow-run-views.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { describedWorkflow } from './test-support.js';
@@ -145,6 +146,12 @@ describe('listRoomWorkflowRuns', () => {
       name: 'feedback-triage', roleBindings: { triager: TRIAGER },
     });
     const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
+    const reads = vi.spyOn(database, 'query');
+    await listRoomWorkflowRuns(database, ROOM, OWNER);
+    expect(reads).toHaveBeenCalledTimes(4); // heads + pinned contracts + actors + viewer, independent of run count
+    reads.mockRestore();
+    expect(listed.workflows.every(run => run.startedBy?.id === TRIAGER)).toBe(true);
+    expect(listed.workflows.every(run => !('earlierRunCount' in run) && !('activeRunIds' in run))).toBe(true);
     console.log('Reproduction display-8: listRoomWorkflowRuns →', listed.workflows.map(run => ({ roomId: run.roomId, runId: run.runId })));
     expect(listed.workflows.filter(run => run.roomId === ROOM).map(run => run.runId)).toEqual([roomRun.runId]);
     expect(listed.workflows.filter(run => run.roomId === CORNER).map(run => run.runId)).toEqual([cornerRun.runId]);
@@ -172,7 +179,6 @@ describe('listRoomWorkflowRuns', () => {
       holder: { id: TRIAGER, name: 'Candy', kind: 'agent' },
       // A gate is a choice card any person in the Room answers.
       viewerHolds: true,
-      earlierRunCount: 0,
     });
     expect(bySlug.corner).toBeUndefined();
     const asTriager = await phone.execute('listRoomWorkflowRuns', { roomId: CORNER }, TRIAGER);
@@ -212,7 +218,7 @@ describe('listRoomWorkflowRuns', () => {
     expect(bySlug.corner).toBeUndefined();
   });
 
-  it('counts earlier runs and prefers the live one', async () => {
+  it('prefers the live run', async () => {
     await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: describedWorkflow(TRIAGE)});
     const start = async () =>
       (
@@ -232,7 +238,7 @@ describe('listRoomWorkflowRuns', () => {
     }, OWNER)).rejects.toThrow(`feedback-triage already has a live run ${live}`);
     const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
     const triage = listed.workflows.find((run) => run.workflowSlug === 'feedback-triage')!;
-    expect(triage).toMatchObject({ runId: live, status: 'live', state: 'pull', earlierRunCount: 1, activeRunIds: [live] });
+    expect(triage).toMatchObject({ runId: live, status: 'live', state: 'pull', });
   });
 
   it('refuses a viewer who cannot read the Room', async () => {
@@ -279,7 +285,7 @@ describe('readWorkflowRun', () => {
     const changed = await database.query(`UPDATE messages SET card=card-'runId'-'attempt' WHERE card_type='choice' AND room_id=$1 RETURNING id`, [CORNER]);
     expect(changed.rows).toHaveLength(1);
     const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
-    expect(detail.history[2]?.gate).toMatchObject({ status: 'open', question: 'feedback-triage: approve' });
+    expect(detail.history[2]?.gate).toMatchObject({ status: 'open' });
   });
 
   it('matches a reassigned gate attempt to the original visit', async () => {
@@ -357,7 +363,7 @@ describe('readWorkflowRun', () => {
     expect(detail.history[1]!.actor).toMatchObject({ id: TRIAGER, name: 'Candy' });
     expect(detail.history.every((step) => typeof step.at === 'number')).toBe(true);
     expect(detail.roleHolders).toEqual({ triager: { id: TRIAGER, name: 'Candy', kind: 'agent' } });
-    expect(detail.run).toMatchObject({ runId, state: 'approve', status: 'live', earlierRunCount: 0 });
+    expect(detail.run).toMatchObject({ runId, state: 'approve', status: 'live', });
   });
 
   it('Reproduction C1: a corner lifecycle has no workflow listing or run page, including legacy cards', async () => {
@@ -415,8 +421,6 @@ describe('readWorkflowRun', () => {
       workflowSlug: 'corner',
       description: 'A workflow someone named corner, again',
       state: 'pull',
-      earlierRunCount: 0,
-      activeRunIds: [runId],
     });
 
     await expect(phone.execute('readWorkflowRun', { roomId: CORNER, runId: CORNER }, OWNER))
@@ -428,7 +432,7 @@ describe('readWorkflowRun', () => {
     expect(ordinary.history.map((step) => step.toState)).toEqual(['pull']);
   });
 
-  it("returns each step's contents, the gate's recorded answer, and the corners the dispatch opened", async () => {
+  it("returns the gate answer and opened corners without unused payload fields", async () => {
     await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: describedWorkflow(TRIAGE)});
     const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
       name: 'feedback-triage',
@@ -441,13 +445,9 @@ describe('readWorkflowRun', () => {
       contents: { problems },
     });
     const waiting = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
-    expect(waiting.history[1]).toMatchObject({ toState: 'approve', contents: { problems } });
+    expect(waiting.history[1]).toMatchObject({ toState: 'approve' });
+    expect(waiting.history[1]).not.toHaveProperty('contents');
     expect(waiting.history[1]!.gate).toEqual({
-      question: 'feedback-triage: approve',
-      options: [
-        { letter: 'A', label: 'dispatch', consequence: 'go to dispatch' },
-        { letter: 'B', label: 'skip', consequence: 'go to done' },
-      ],
       status: 'open',
     });
 
@@ -503,7 +503,6 @@ describe('readWorkflowRun', () => {
     ]);
     expect(detail.history[3]).toMatchObject({
       fromState: 'dispatch',
-      contents: { corners },
     });
     expect(detail.history.filter((step) => step.openedCorners)).toHaveLength(1);
     // The triager, a member of both, sees both listed corners and not the unrelated one.
@@ -619,7 +618,7 @@ describe('a workflow gate answer with a note', () => {
     return { runId, choiceId: choice.id, dispatch };
   }
 
-  it("stores the note, wakes the next step's agent with it, and shows it on the run", async () => {
+  it("stores the note and wakes the next step's agent with it", async () => {
     const { runId, choiceId, dispatch } = await openGate();
     await phone.execute(
       'answerChoice',
@@ -641,7 +640,6 @@ describe('a workflow gate answer with a note', () => {
       status: 'answered',
       answer: 'dispatch',
       answeredBy: { id: OWNER, name: 'Owner', kind: 'human' },
-      note: 'only the dropdown one, skip the rest',
     });
   });
 

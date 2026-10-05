@@ -1,6 +1,6 @@
 import type { activeCornerHolds } from './corner-holds.js';
 import { createHash } from 'node:crypto';
-import type { WorkflowContract, WorkflowTerminalState } from '@beeline/api-contract/daemon';
+import type { CornerLifecycleContract, WorkflowTerminalState } from '@beeline/api-contract/daemon';
 import { cornerRunFromLifecycle, type CornerLifecycleView } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
@@ -57,10 +57,7 @@ import { workflowRunLockKey } from './workflow-runs.js';
  * The contract is plain TypeScript. It is not a Workspace workflow: it is
  * never stored in `workspace_skills`, never listed or started as one, and a
  * Workspace workflow saved with the slug `corner` has no effect on corners.
- * It keeps the `WorkflowContract` shape only so the run page can draw it
- * (`version: 1` is that shape's fixed format marker, not a stored version).
- * Its cards name neither a workflow nor a version; the run page finds them by
- * their card type. A
+ * Its schema is separate from saved workflows. A
  * corner's run id is its own room id — one run for its whole life — and its
  * current state is the newest card citing that run, projected onto
  * `corner_facts.workflow_state`/`workflow_outcome` in the same transaction
@@ -68,7 +65,7 @@ import { workflowRunLockKey } from './workflow-runs.js';
  */
 export const CORNER_LIFECYCLE_SLUG = 'corner';
 
-export const CORNER_LIFECYCLE_CONTRACT: WorkflowContract = {
+export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
   version: 1,
   name: CORNER_LIFECYCLE_SLUG,
   description: 'Corner lifecycle: implement, check, review, merge, or close',

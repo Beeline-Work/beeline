@@ -1,3 +1,4 @@
+import { workflowRunLiveSql } from './workflow-run-live.js';
 import type { SqlDatabase } from './database.js';
 
 export class WorkflowAuthorizationError extends Error {
@@ -81,23 +82,16 @@ export async function activeWorkflowRunIds(
   ).rows[0];
   if (!skill) return [];
   const active = await db.query<{ run_id: string }>(
-    `WITH latest AS (
-    SELECT DISTINCT ON (message.card->>'runId') message.card->>'runId' run_id,
-      message.card->>'toState' state,message.card->>'workflowVersion' version,message.card->>'status' status
+    `SELECT message.id run_id
     FROM messages message JOIN rooms surface ON surface.id=message.room_id
     JOIN rooms requested ON requested.id=$1 AND requested.workspace_id=surface.workspace_id
-    JOIN memberships readable ON readable.room_id=surface.id AND readable.identity_id=$4 AND readable.removed_at IS NULL
+    JOIN memberships readable ON readable.room_id=surface.id AND readable.identity_id=$3 AND readable.removed_at IS NULL
     WHERE (surface.id=COALESCE(requested.parent_id,requested.id)
       OR surface.parent_id=COALESCE(requested.parent_id,requested.id))
       AND message.card_type='workflow-handoff' AND message.card->>'workflowSlug'=$2
-      AND message.deleted_at IS NULL
-    ORDER BY message.card->>'runId',(message.card->>'seq')::int DESC NULLS LAST,
-      message.created_at DESC,message.id DESC
-  ) SELECT latest.run_id FROM latest JOIN workspace_skill_versions version
-    ON version.skill_id=$3 AND version.version=latest.version::int
-    WHERE latest.status IS NULL AND (version.markdown::jsonb->'handoffs'->latest.state->>'kind') IS DISTINCT FROM 'terminal'
-    ORDER BY latest.run_id`,
-    [roomId, name, skill.id, viewerId],
+      AND message.deleted_at IS NULL AND ${workflowRunLiveSql('message.card')}
+    ORDER BY message.id`,
+    [roomId, name, viewerId],
   );
   return active.rows.map((row) => row.run_id);
 }

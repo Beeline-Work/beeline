@@ -5,6 +5,7 @@ import type { AgentAccessPolicy } from './agent-access.js';
 import type { PushLevel } from './push-level.js';
 import type { CompleteAgentSignInInput, CompleteAgentSignInResult } from './agent-sign-in.js';
 import type {
+  WorkflowReadContract,
   WorkflowContract,
   WorkflowTerminalState,
   WorkflowReceipt,
@@ -52,11 +53,13 @@ import type {
 } from './workbench.js';
 
 export type {
+  WorkflowReadContract,
   WorkflowContract,
   WorkflowLoop,
   WorkflowReceipt,
   WorkflowReceiptInput,
   WorkflowReceiptRef,
+  WorkflowReadState,
   WorkflowState,
   WorkflowTerminalState,
 } from './workflow-contracts.js';
@@ -103,7 +106,7 @@ export type PhoneOperationMap = {
   listRoomWorkflowRuns: { input: RoomInput; output: WorkflowRunListResult };
   /** One run with its pinned contract and ordered handoff history, for the run page's graph. */
   listWorkflowDefinitions: { input: RoomInput; output: { readonly workflows: readonly { readonly name: string }[] } };
-  readWorkflowDefinition: { input: RoomInput & { readonly name: string }; output: { readonly contract: WorkflowContract; readonly runs: readonly WorkflowRunSummaryView[] } };
+  readWorkflowDefinition: { input: RoomInput & { readonly name: string }; output: { readonly contract: WorkflowReadContract; readonly runs: readonly WorkflowRunSummaryView[] } };
   /** A human Room/Workspace admin starts a run directly, attributed to that human (`startKind: 'human_admin'`). */
   startOwnedWorkflow: { input: RoomInput & { readonly name: string; readonly roleBindings: Readonly<Record<string, string | readonly string[]>> }; output: { readonly runId: string; readonly state: string } };
   readWorkflowRun: { input: ReadWorkflowRunInput; output: WorkflowRunDetailView };
@@ -342,12 +345,8 @@ export type WorkflowRunSummaryView = {
   readonly viewerHolds: boolean;
   readonly startedAt: number;
   readonly updatedAt: number;
-  /** Runs of the same workflow in the same Room and its corners that started before this one. */
-  readonly earlierRunCount: number;
   readonly startedBy?: WorkflowActorView;
   readonly startKind?: 'direct' | 'schedule' | 'human_admin';
-  /** Every currently-live run id of this workflow in the same Room and its corners, this one included. */
-  readonly activeRunIds?: readonly string[];
 };
 export type WorkflowRunListResult = { readonly workflows: readonly WorkflowRunSummaryView[] };
 export type ReadWorkflowRunInput = RoomInput & { readonly runId: string };
@@ -356,19 +355,11 @@ export type ReadWorkflowRunInput = RoomInput & { readonly runId: string };
  * it was settled. `status` is the card's own (`open` while it waits).
  */
 export type WorkflowGateRecordView = {
-  readonly question: string;
-  readonly options: readonly {
-    readonly letter: string;
-    readonly label: string;
-    readonly consequence: string;
-  }[];
   readonly status: 'open' | 'answered' | 'skipped' | 'closed' | 'retracted';
   /** The chosen option's label. */
   readonly answer?: string;
   readonly answeredBy?: WorkflowActorView;
   readonly answeredAt?: number;
-  /** The note the answerer typed with their pick. */
-  readonly note?: string;
 };
 /** A corner opened by the step's holder while the run was in that step. */
 export type WorkflowOpenedCornerView = {
@@ -394,8 +385,6 @@ export type WorkflowRunStepView = {
   readonly displayStatus?: import('./workflow-run-status.js').WorkflowStepDisplayStatus;
   readonly actor?: WorkflowActorView;
   readonly at: number;
-  /** What `fromState` handed off with: the card's `contents`. */
-  readonly contents?: Readonly<Record<string, unknown>>;
   readonly receipt?: WorkflowReceipt;
   /** When `toState` is a gate: the choice card posted for this visit. */
   readonly gate?: WorkflowGateRecordView;
@@ -405,7 +394,7 @@ export type WorkflowRunStepView = {
 export type WorkflowRunDetailView = {
   readonly run: WorkflowRunSummaryView;
   /** The contract version the run is pinned to. */
-  readonly contract: WorkflowContract;
+  readonly contract: WorkflowReadContract;
   readonly history: readonly WorkflowRunStepView[];
   /** The run's role holders as of its newest card, by role name. */
   readonly roleHolders: Readonly<Record<string, WorkflowActorView>>;

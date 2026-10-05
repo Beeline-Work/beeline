@@ -1,7 +1,7 @@
 import type { Href } from 'expo-router';
 import type {
   WorkflowActorView,
-  WorkflowContract,
+  WorkflowReadContract,
   WorkflowRunSummaryView,
 } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_PUBKEY } from './system-identity';
@@ -21,12 +21,6 @@ export function workflowRunHref(run: Pick<WorkflowRunSummaryView, 'roomId' | 'ru
 
 const TERMINAL_LABEL = { done: 'Done', failed: 'Failed', abandoned: 'Abandoned' } as const;
 
-/** `round 2 of 3`: the current trip out of the loop's cap. Hidden until the run has taken the loop edge once. */
-export function loopRoundLabel(loop: WorkflowLineStep['loop']): string | undefined {
-  if (!loop || loop.taken < 1) return undefined;
-  return `round ${Math.min(loop.taken + 1, loop.cap)} of ${loop.cap}`;
-}
-
 /** `nothing_new` → `nothing new`. */
 export function outcomeLabel(outcome: string): string {
   return workflowStateLabel(outcome).toLowerCase();
@@ -37,7 +31,7 @@ function capitalized(line: string): string {
 }
 
 /** The role a state names, if any. */
-export function stateRole(contract: WorkflowContract, state: string): string | undefined {
+export function stateRole(contract: WorkflowReadContract, state: string): string | undefined {
   const declared = contract.handoffs[state];
   if (!declared || declared.kind === 'terminal') return undefined;
   return declared.role;
@@ -47,20 +41,19 @@ export function stateRole(contract: WorkflowContract, state: string): string | u
  * Who holds or held a step, drawn at the row's right: the run's holder for the
  * current step (the viewer when it waits on them), whoever left a reached step
  * (the person who answered a gate), and the identity bound to a pending step's
- * role. A step with no role (the server runs it, or it waits) and a skipped
- * step have none.
+ * role. A step with no role has none.
  */
 export function workflowStepAssignee(
   step: WorkflowLineStep,
   input: {
-    contract: WorkflowContract;
+    contract: WorkflowReadContract;
     roleHolders: Readonly<Record<string, WorkflowActorView>>;
     run: Pick<WorkflowRunSummaryView, 'viewerHolds' | 'holder'>;
     viewer?: WorkflowActorView;
   },
 ): WorkflowActorView | undefined {
   const role = stateRole(input.contract, step.state);
-  if (!role || step.status === 'skipped') return undefined;
+  if (!role) return undefined;
   const bound = input.roleHolders[role];
   if (step.status === 'current')
     return (input.run.viewerHolds ? input.viewer : undefined) ?? input.run.holder ?? bound;
@@ -80,13 +73,13 @@ function enteredFrom(step: WorkflowLineStep, history: readonly { fromState?: str
 
 /**
  * A step's one meta line beside its name: whose move it is now, that the
- * server runs it, or why it was skipped. Who holds a step is its mark
+ * server runs it. Who holds a step is its mark
  * (`workflowStepAssignee`), so no name is repeated here.
  */
 export function workflowStepMeta(
   step: WorkflowLineStep,
   input: {
-    contract: WorkflowContract;
+    contract: WorkflowReadContract;
     run: Pick<WorkflowRunSummaryView, 'viewerHolds'>;
     history: readonly { fromState?: string; toState: string }[];
   },
@@ -95,13 +88,6 @@ export function workflowStepMeta(
   const automatic = !roleless
     ? undefined
     : step.kind === 'server' ? 'Automatic' : step.kind === 'waiting' ? 'Waiting' : undefined;
-  const round = loopRoundLabel(step.loop);
-  if (step.status === 'skipped') {
-    const by = step.skippedBy;
-    if (!by) return 'Skipped';
-    if (by.outcome === undefined) return `Skipped · run ended at ${workflowStateLabel(by.state)}`;
-    return `Skipped · ${workflowStateLabel(by.state)}: ${outcomeLabel(by.outcome)}`;
-  }
   if (step.kind === 'terminal') {
     if (step.status === 'pending') return 'Ends the run';
     const from = enteredFrom(step, input.history);
@@ -113,8 +99,8 @@ export function workflowStepMeta(
   // A reached step's outcome is on its exit line below the row.
   const parts =
     step.status === 'current' && input.run.viewerHolds
-      ? [step.kind === 'gate' ? 'Your call' : 'Waiting on you', step.kind === 'gate' ? 'gate' : undefined, round]
-      : [automatic, step.status === 'current' ? round : undefined];
+      ? [step.kind === 'gate' ? 'Your call' : 'Waiting on you', step.kind === 'gate' ? 'gate' : undefined]
+      : [automatic];
   return capitalized(parts.filter((part): part is string => Boolean(part)).join(' · '));
 }
 

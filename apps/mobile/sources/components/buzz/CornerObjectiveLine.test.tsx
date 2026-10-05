@@ -69,7 +69,6 @@ const RUN: WorkflowRunSummaryView = {
   viewerHolds: true,
   startedAt: 1,
   updatedAt: 2,
-  earlierRunCount: 0,
 };
 
 const flatText = (node: any): string =>

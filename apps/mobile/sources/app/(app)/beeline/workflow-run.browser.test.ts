@@ -167,7 +167,11 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const page = await proof(detail, '?eyebrow=Issues%20triage&title=Feedback%20triage');
     // The same title role as the corner, with no previous-run count.
     expect(page.text.slice(0, 2)).toEqual(['Issues triage', 'Feedback triage']);
-    expect(page).toMatchObject({ overview: false, earlier: false, summary: null });
+    expect(page).toMatchObject({
+      overview: false,
+      earlier: false,
+      summary: 'Report merged fixes, rank new feedback, ask a person, and open fix corners.',
+    });
     expect(page.text).not.toContain('#14');
     expect(page).toMatchObject({
       eyebrowFont: '13px SpaceGrotesk-Regular',
@@ -192,7 +196,9 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     });
     expect(page.assignees.approve!.color).toBe(BRASS);
     expect(page.assignees.pull!.color).not.toBe(BRASS);
-    expect(page.labels).toContain('Approve, current step, Owner, Your call · gate');
+    expect(page.labels).toContain(
+      'Approve, A person approves dispatching the ranked problems, or skips them., current step, Owner, Your call · gate',
+    );
     for (const role of ROLE_NAMES) expect(page.text.join(' ')).not.toContain(role);
     // Every step of the contract draws, in order: done, current, and the
     // predicted path onward (pending, dimmed) to its first guessed terminal.
@@ -247,7 +253,11 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       done: 'done',
     });
     expect(page.lines).toEqual(['notify-below-brass', 'pull-above-brass', 'pull-below-brass', 'done-above-brass']);
-    expect(page.labels).toEqual(['Notify, done, Candy', 'Pull, done, Candy', 'Done, done, Ended by Pull']);
+    expect(page.labels).toEqual([
+      'Notify, Tell reporters about fixes that merged since the last run., done, Candy',
+      'Pull, Read new feedback and rank it by problem., done, Candy',
+      'Done, The sweep finished., done, Ended by Pull',
+    ]);
     expect(page.halo).toBe(0);
   }, 120_000);
 
@@ -304,7 +314,9 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       rightAligned: true,
       color: BRASS,
     });
-    expect(gate.labels).toContain('Approve, done, Owner');
+    expect(gate.labels).toContain(
+      'Approve, A person approves dispatching the ranked problems, or skips them., done, Owner',
+    );
     // The gate's record is read-only: the chosen answer and who chose it,
     // never the question, options, or a note.
     expect(gate.gate).toEqual({ approve: 'dispatch · Owner' });

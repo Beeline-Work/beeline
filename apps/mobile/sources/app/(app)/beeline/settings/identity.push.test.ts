@@ -118,7 +118,6 @@ vi.mock('@/buzz/runtime-config', () => ({
 vi.mock('@/sync/appConfig', () => ({
   loadAppConfig: () => ({ releaseVersion: 'v0.0.1', releaseSha: null }),
 }));
-vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/constants/Typography', () => ({
   Typography: {
     default: () => ({}),

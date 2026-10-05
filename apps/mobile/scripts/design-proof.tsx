@@ -20,7 +20,6 @@ import {
   NotificationLifecycleCard,
 } from '../sources/app/(app)/beeline/chat/RoomMessageVariants';
 import WorkflowsScreen from '../sources/app/(app)/beeline/settings/workflows';
-import LanguageScreen from '../sources/app/(app)/settings/language';
 import TextSelectionScreen from '../sources/app/(app)/text-selection';
 import { Typography } from '../sources/constants/Typography';
 
@@ -28,7 +27,7 @@ import { Typography } from '../sources/constants/Typography';
  * The design-inconsistency proof (DESIGN.md, PR #2044). Paints the changed
  * surfaces with the real components in the theme the shimmed Unistyles hands
  * them; `scripts/render-design-proof.mjs` captures every page in Obsidian and
- * Bone. Pages (`?page=`): board, frames, workflows, language, text-selection,
+ * Bone. Pages (`?page=`): board, frames, workflows, text-selection,
  * members, welcome-1 … welcome-4.
  */
 const page = new URLSearchParams(location.search).get('page') ?? 'board';
@@ -263,7 +262,6 @@ const pages: Record<string, React.ComponentType> = {
   board: Board,
   frames: Frames,
   workflows: WorkflowsScreen,
-  language: LanguageScreen,
   'text-selection': TextSelectionScreen,
   members: Members,
   'welcome-1': Welcome,

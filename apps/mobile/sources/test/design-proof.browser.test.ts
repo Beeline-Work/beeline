@@ -23,7 +23,6 @@ const PAGES: { page: string; width: number; height: number }[] = [
   { page: 'board', width: 1200, height: 1100 },
   { page: 'frames', width: 1200, height: 760 },
   { page: 'workflows', width: 390, height: 640 },
-  { page: 'language', width: 390, height: 640 },
   { page: 'text-selection', width: 390, height: 640 },
   { page: 'members', width: 390, height: 640 },
   { page: 'welcome-1', width: 1200, height: 900 },
@@ -69,11 +68,9 @@ function shims(mobile: string, theme: 'obsidian' | 'bone'): Record<string, strin
     '@/sync/persistence': `export const loadLocalSettings = () => ({}); export const saveLocalSettings = () => {};
     export const loadSettings = () => ({ settings: {}, version: null });
     export const retrieveTempText = () => 'Select any part of this message to copy it.\\n\\nThe page header is the shared PageHeader.';`,
-    '@/sync/storage': `import React from 'react';
-    export const useSettingMutable = () => React.useState(null);
+    '@/sync/storage': `
     const state = { settings: {}, localSettings: {} };
     export const storage = Object.assign((select) => select(state), { getState: () => state, subscribe: () => () => undefined });`,
-    'expo-localization': `export const getLocales = () => [{ languageCode: 'en' }];`,
     '@/buzz/welcome-cards': `export const completeWelcomeCards = async () => {}; export const readWelcomeCards = async () => ({});`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ({ publicKey: '${'a'.repeat(64)}' });`,

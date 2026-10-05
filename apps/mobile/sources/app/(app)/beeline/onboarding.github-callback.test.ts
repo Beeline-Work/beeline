@@ -129,7 +129,6 @@ vi.mock('@/components/buzz/YouStep', async () => {
     YouStep: (props: any) => ReactModule.createElement('YouStep', props),
   };
 });
-vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/push/buzz-push-registration', () => ({
   registerBuzzPushNotifications: vi.fn(async () => undefined),
 }));

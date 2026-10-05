@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
-import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { BubblePressable } from './BubblePressable';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
@@ -154,7 +153,7 @@ export const Item = React.memo<ItemProps>((props) => {
         
         try {
             await Clipboard.setStringAsync(textToCopy);
-            Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: title }));
+            Modal.alert("Copied", `${title} copied to clipboard`);
         } catch (error) {
             console.error('Failed to copy:', error);
         }

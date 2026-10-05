@@ -312,6 +312,13 @@ describe('using-beeline human instruction ranking', () => {
 describe('beeline-review reviewer skill', () => {
   const markdown = beelineReviewSkillMarkdown('test-release');
 
+  it('accepts server-confirmed zero-check heads for review (ZC-3)', () => {
+    expect(markdown).toContain('checks="passed" with checkCount=0');
+    expect(markdown).toContain('Do not refuse review because no literal green check exists');
+    expect(markdown).toContain('An empty rollup alone is not proof');
+    expect(markdown).not.toContain('An empty CI rollup is not proof of passing checks.');
+  });
+
   it("ends the reviewer's authority at approval and leaves the merge to the server", () => {
     expect(markdown).toContain('## 8. Gate and verdict');
     expect(markdown).toContain(

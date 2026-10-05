@@ -188,8 +188,8 @@ export function WorkflowRunLine({
   testID?: string;
 }) {
   const line = useMemo(
-    () => workflowRunLine(detail.contract, detail.history),
-    [detail.contract, detail.history],
+    () => workflowRunLine(detail.contract, detail.history, detail.run.status),
+    [detail.contract, detail.history, detail.run.status],
   );
   return (
     <View style={styles.list} testID={testID}>

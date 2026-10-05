@@ -9,7 +9,7 @@ import { createAgentCommand, claimAgentCommand, readAgentCommands, type CommandR
 import { advanceCorner } from './corner-lifecycle.js';
 import { PhoneService } from './phone-service.js';
 import { answerRoomChoice, postRoomChoice } from './room-choice.js';
-import { handoff, saveWorkflow, startWorkflow } from './workflow-runs.js';
+import { handoff, saveWorkflow, startWorkflow, settleWorkflowGate, fireWorkflowTimer, cancelWorkflowRun, assignWorkflowRole } from './workflow-runs.js';
 
 /**
  * The phone's workflow run reads over real `workflow-handoff` cards written by
@@ -136,6 +136,20 @@ async function triageRun(): Promise<string> {
 }
 
 describe('listRoomWorkflowRuns', () => {
+  it('Reproduction display-8: keeps the Room run beside a newer corner run of the same workflow', async () => {
+    await saveWorkflow(database, await command(ROOM, TRIAGER), { contract: describedWorkflow(TRIAGE) });
+    const roomRun = await startWorkflow(database, await command(ROOM, TRIAGER), {
+      name: 'feedback-triage', roleBindings: { triager: TRIAGER },
+    });
+    const cornerRun = await startWorkflow(database, await command(CORNER, TRIAGER), {
+      name: 'feedback-triage', roleBindings: { triager: TRIAGER },
+    });
+    const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
+    console.log('Reproduction display-8: listRoomWorkflowRuns →', listed.workflows.map(run => ({ roomId: run.roomId, runId: run.runId })));
+    expect(listed.workflows.filter(run => run.roomId === ROOM).map(run => run.runId)).toEqual([roomRun.runId]);
+    expect(listed.workflows.filter(run => run.roomId === CORNER).map(run => run.runId)).toEqual([cornerRun.runId]);
+  });
+
   it("lists each workflow's newest run in the Room and its corners, with its state and holder", async () => {
     const runId = await triageRun();
     await advanceCorner(database, CORNER, {
@@ -237,6 +251,70 @@ describe('listRoomWorkflowRuns', () => {
 });
 
 describe('readWorkflowRun', () => {
+  it('sends visit display status for live, deadline-failed, and cancelled runs without changing card status', async () => {
+    const starter = await command(CORNER, TRIAGER);
+    await saveWorkflow(database, starter, { contract: describedWorkflow(TRIAGE) });
+    const first = await startWorkflow(database, starter, { name: 'feedback-triage', roleBindings: { triager: TRIAGER } });
+    const live = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: first.runId }, OWNER);
+    expect(live.run.status).toBe('live');
+    expect(live.history[0]).toMatchObject({ displayStatus: 'current' });
+    expect(live.history[0]).not.toHaveProperty('status');
+    const timer = (await database.query<{ id: string; room_id: string; workflow_run: { runId: string; workflowSlug: string; timer: 'deadline' } }>(
+      `SELECT id,room_id,workflow_run FROM agent_schedules WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='deadline'`, [first.runId],
+    )).rows[0]!;
+    await fireWorkflowTimer(database, timer);
+    const failed = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: first.runId }, OWNER);
+    expect(failed.run.status).toBe('failed');
+    expect(failed.history.map(step => step.displayStatus)).toEqual(['failed', 'failed']);
+    expect(failed.history[1]).toMatchObject({ status: 'failed', outcome: 'deadline' });
+    const second = await startWorkflow(database, starter, { name: 'feedback-triage', roleBindings: { triager: TRIAGER } });
+    await cancelWorkflowRun(database, starter, { runId: second.runId, reason: 'No longer needed' });
+    const cancelled = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: second.runId }, OWNER);
+    expect(cancelled.run.status).toBe('abandoned');
+    expect(cancelled.history.map(step => step.displayStatus)).toEqual(['done', 'done']);
+  });
+
+  it('preserves the prompt and visit-window fallback for gate cards without a run id', async () => {
+    const runId = await triageRun();
+    const changed = await database.query(`UPDATE messages SET card=card-'runId'-'attempt' WHERE card_type='choice' AND room_id=$1 RETURNING id`, [CORNER]);
+    expect(changed.rows).toHaveLength(1);
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(detail.history[2]?.gate).toMatchObject({ status: 'open', question: 'feedback-triage: approve' });
+  });
+
+  it('matches a reassigned gate attempt to the original visit', async () => {
+    const runId = await triageRun();
+    await assignWorkflowRole(database, await command(CORNER, TRIAGER), { runId, role: 'triager', targetAgentId: REVIEWER });
+    const choice = (await database.query<{ id: string; option_id: string }>(
+      `SELECT id,options->1->>'optionId' option_id FROM room_choices WHERE room_id=$1 AND status='open'`, [CORNER],
+    )).rows[0]!;
+    await phone.execute('answerChoice', { choiceId: choice.id, optionId: choice.option_id }, OWNER);
+    const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(detail.history.map(step => step.toState)).toEqual(['pull', 'pull', 'approve', 'done']);
+    expect(detail.history[2]?.gate).toMatchObject({ status: 'answered', answer: 'skip' });
+  });
+
+  it('Reproduction display-9: separates two gates with the same prompt and timestamp by their recorded run', async () => {
+    const starter = await command(CORNER, TRIAGER);
+    await saveWorkflow(database, starter, { contract: describedWorkflow(TRIAGE) });
+    const runs = await database.transaction(async tx => {
+      const first = await startWorkflow(tx, starter, { name: 'feedback-triage', roleBindings: { triager: TRIAGER } });
+      await handoff(tx, starter, { runId: first.runId, outcome: 'ranked', contents: {} });
+      const choice = (await tx.query<{ id: string; option_id: string }>(
+        `SELECT id,options->1->>'optionId' option_id FROM room_choices WHERE room_id=$1 AND status='open'`, [CORNER],
+      )).rows[0]!;
+      await settleWorkflowGate(tx, { choiceId: choice.id, viewerId: OWNER, optionId: choice.option_id });
+      const second = await startWorkflow(tx, starter, { name: 'feedback-triage', roleBindings: { triager: TRIAGER } });
+      await handoff(tx, starter, { runId: second.runId, outcome: 'ranked', contents: {} });
+      return [first.runId, second.runId];
+    });
+    const first = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: runs[0]! }, OWNER);
+    const second = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: runs[1]! }, OWNER);
+    console.log('Reproduction display-9: readWorkflowRun →', { first: first.history[1]?.gate, second: second.history[1]?.gate });
+    expect(first.history[1]?.gate).toMatchObject({ status: 'answered', answer: 'skip' });
+    expect(second.history[1]?.gate).toMatchObject({ status: 'open' });
+  });
+
   it('S05-1 lists the head and history in sequence for same-transaction descending IDs', async () => {
     const starter = await command(CORNER, TRIAGER);
     await saveWorkflow(database, starter, { contract: describedWorkflow(TRIAGE)});

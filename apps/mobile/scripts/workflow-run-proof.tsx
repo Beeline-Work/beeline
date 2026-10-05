@@ -2,6 +2,7 @@ import React from 'react';
 // @ts-expect-error Standalone proof harness uses the installed react-dom.
 import { createRoot } from 'react-dom/client';
 import WorkflowRun from '../sources/app/(app)/beeline/workflow-run';
+import Workflow from '../sources/app/(app)/beeline/workflow';
 
 /**
  * Paints the real workflow run page over the run the shimmed
@@ -27,7 +28,7 @@ const ids = (pattern: RegExp) =>
 
 async function run() {
   const query = new URLSearchParams(location.search);
-  createRoot(document.getElementById('root')!).render(<WorkflowRun />);
+  createRoot(document.getElementById('root')!).render(query.has('list') ? <Workflow /> : <WorkflowRun />);
   for (let i = 0; i < 6; i += 1) await pause();
   const root = document.getElementById('root');
   const prefix = 'workflow-run-line-step-';

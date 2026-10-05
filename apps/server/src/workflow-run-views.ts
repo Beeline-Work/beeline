@@ -10,6 +10,7 @@ import type {
   WorkflowRunStepView,
   WorkflowRunSummaryView,
 } from '@beeline/api-contract/phone';
+import { workflowRunStatus, workflowStepDisplayStatus } from '@beeline/api-contract/phone';
 import { isAgentIdentityReference } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
@@ -236,11 +237,6 @@ function stateRole(contract: WorkflowContract, state: string): string | undefine
   return declared.role;
 }
 
-function runStatus(contract: WorkflowContract, state: string): WorkflowRunStatus {
-  const declared = contract.handoffs[state];
-  return declared?.kind === 'terminal' ? declared.status : 'live';
-}
-
 /**
  * Who the list should name. A live state uses its own role. A terminal has
  * none, so the row keeps the role that handed the run off, and otherwise the
@@ -249,7 +245,7 @@ function runStatus(contract: WorkflowContract, state: string): WorkflowRunStatus
 function holderIdentityId(head: RunHead, contract: WorkflowContract): string | undefined {
   const current = stateRole(contract, head.state);
   if (current) return boundIdentityId(head.roleBindings[current]);
-  if ((head.status ?? runStatus(contract, head.state)) === 'live') return undefined;
+  if (workflowRunStatus(contract, head.state, head.status) === 'live') return undefined;
   const left = head.fromState ? stateRole(contract, head.fromState) : undefined;
   const leftHolder = left ? boundIdentityId(head.roleBindings[left]) : undefined;
   if (leftHolder) return leftHolder;
@@ -264,7 +260,7 @@ function summarize(
   earlierRunCount: number,
   activeRunIds: readonly string[] = [],
 ): WorkflowRunSummaryView {
-  const status = (head.status ?? runStatus(contract, head.state));
+  const status = workflowRunStatus(contract, head.state, head.status);
   const holderId = holderIdentityId(head, contract);
   const holder = holderId ? actors.get(holderId) : undefined;
   const isGate = contract.handoffs[head.state]?.kind === 'gate';
@@ -296,7 +292,7 @@ function liveRunIdsByFamily(
   const byFamily = new Map<string, string[]>();
   for (const head of heads) {
     const contract = contracts.get(head.key);
-    if (!contract || (head.status ?? runStatus(contract, head.state)) !== 'live') continue;
+    if (!contract || workflowRunStatus(contract, head.state, head.status) !== 'live') continue;
     const list = byFamily.get(head.family) ?? [];
     list.push(head.runId);
     byFamily.set(head.family, list);
@@ -339,7 +335,7 @@ function earlierThan(heads: readonly RunHead[], head: RunHead): number {
 }
 
 /**
- * The newest run of each workflow in `roomId` and its corners: a live run
+ * The newest run of each workflow within each Room or corner: a live run
  * before an ended one, then the most recently moved. Ordered live first, then
  * by last movement.
  */
@@ -360,16 +356,17 @@ export async function listRoomWorkflowRuns(
   const workspaceId = heads[0]!.workspaceId;
   const contracts = await loadContracts(db, workspaceId, heads);
   const readable = heads.filter((head) => contracts.has(head.key));
-  const isLive = (head: RunHead) => (head.status ?? runStatus(contracts.get(head.key)!, head.state)) === 'live';
+  const isLive = (head: RunHead) => workflowRunStatus(contracts.get(head.key)!, head.state, head.status) === 'live';
   const newest = new Map<string, RunHead>();
   for (const head of readable) {
-    const current = newest.get(head.family);
+    const scopeKey = `${head.roomId}:${head.family}`;
+    const current = newest.get(scopeKey);
     if (
       !current ||
       Number(isLive(head)) > Number(isLive(current)) ||
       (isLive(head) === isLive(current) && head.updatedAtMs > current.updatedAtMs)
     )
-      newest.set(head.family, head);
+      newest.set(scopeKey, head);
   }
   const chosen = workflowSlug ? readable : [...newest.values()];
   const [actors, viewer] = await Promise.all([
@@ -404,6 +401,7 @@ const MICROS = (column: string) => `(extract(epoch FROM ${column})*1000000)::big
 
 type RunCardRow = {
   id: string;
+  seq: number | null;
   output_turns: string[] | null;
   live_output: string | null;
   final_reply: WorkflowRunStepView['finalReply'] | null;
@@ -428,28 +426,35 @@ type RunCardRow = {
 };
 
 /** One stay in a state: the card that entered it, until the next card that moved the run. */
-type Visit = { card: RunCardRow; from: number; until?: number };
+type Visit = { card: RunCardRow; attempts: number[]; from: number; until?: number };
 
 function visitsOf(cards: readonly RunCardRow[]): Visit[] {
-  const moves = cards.filter((card) => !card.reassigned);
-  return moves.map((card, index) => ({
-    card,
-    from: Number(card.created_us),
-    ...(moves[index + 1] ? { until: Number(moves[index + 1]!.created_us) } : {}),
-  }));
+  const visits: Visit[] = [];
+  for (const card of cards) {
+    const previous = visits[visits.length - 1];
+    if (card.reassigned) {
+      previous?.attempts.push(card.seq ?? 0);
+    } else {
+      if (previous) previous.until = Number(card.created_us);
+      visits.push({ card, attempts: [card.seq ?? 0], from: Number(card.created_us) });
+    }
+  }
+  return visits;
 }
 
 const within = (visit: Visit, at: number) =>
   at >= visit.from && (visit.until === undefined || at < visit.until);
 
 /**
- * Each gate visit's choice card. The card does not name its run, so it is the
- * card with the gate's prompt posted in the run's Room during that visit;
- * a reassigned gate posts a second card, and the answered one wins.
+ * Match gate cards by their recorded run and attempt, including reassignments
+ * during the visit. Cards predating run ids use the prompt and visit window;
+ * cards with a run id but no attempt use that run's visit window. An answered
+ * card wins over the other cards posted during the same visit.
  */
 async function loadGateRecords(
   db: SqlDatabase,
   roomId: string,
+  runId: string,
   contract: WorkflowContract,
   visits: readonly Visit[],
   publicOrigin: string,
@@ -460,6 +465,8 @@ async function loadGateRecords(
   const prompts = [...new Set(gates.map((visit) => workflowGatePrompt(contract, visit.card.to_state)))];
   const choices = (
     await db.query<{
+      run_id: string | null;
+      attempt: number | null;
       prompt: string;
       options: Array<{ optionId: string; letter: string; label: string; consequence: string }>;
       status: WorkflowGateRecordView['status'];
@@ -474,26 +481,32 @@ async function loadGateRecords(
       voter_avatar: string | null;
       voter_face_id: string | null;
     }>(
-      `SELECT choice.prompt,choice.options,choice.status,${MICROS('choice.created_at')} created_us,
+      `SELECT message.card->>'runId' run_id,(message.card->>'attempt')::int attempt,
+              choice.prompt,choice.options,choice.status,${MICROS('choice.created_at')} created_us,
               vote.option_id,vote.created_at answered_at,vote.note,
               voter.id voter_id,voter.name voter_name,voter.kind voter_kind,
               voter.handle voter_handle,voter.avatar voter_avatar,voter.face_id voter_face_id
        FROM room_choices choice
+       JOIN messages message ON message.id=choice.message_id AND message.room_id=choice.room_id
        LEFT JOIN LATERAL (
          SELECT option_id,voter_id,created_at,note FROM room_choice_votes
          WHERE choice_id=choice.id ORDER BY created_at,voter_id LIMIT 1
        ) vote ON choice.mode='question'
        LEFT JOIN identities voter ON voter.id=vote.voter_id
-       WHERE choice.room_id=$1 AND choice.prompt=ANY($2::text[])
-         AND choice.created_at>=$3
+       WHERE choice.room_id=$1 AND (message.card->>'runId'=$4 OR
+         (message.card->>'runId' IS NULL AND choice.prompt=ANY($2::text[]) AND choice.created_at>=$3))
        ORDER BY choice.created_at,choice.id`,
-      [roomId, prompts, gates[0]!.card.created_at],
+      [roomId, prompts, gates[0]!.card.created_at, runId],
     )
   ).rows;
   for (const visit of gates) {
     const prompt = workflowGatePrompt(contract, visit.card.to_state);
     const mine = choices.filter(
-      (choice) => choice.prompt === prompt && within(visit, Number(choice.created_us)),
+      (choice) => choice.run_id !== null
+        ? choice.run_id === runId && (choice.attempt !== null
+          ? visit.attempts.includes(choice.attempt)
+          : within(visit, Number(choice.created_us)))
+        : choice.prompt === prompt && within(visit, Number(choice.created_us)),
     );
     const choice = mine.find((entry) => entry.status === 'answered') ?? mine[mine.length - 1];
     if (!choice) continue;
@@ -592,7 +605,7 @@ export async function readWorkflowRun(
   const topRoomId = room.parent_id ?? input.roomId;
   const cards = (
     await db.query<RunCardRow>(
-      `SELECT message.id,output.output_turns,output.live_output,output.final_reply,
+      `SELECT message.id,(message.card->>'seq')::int seq,output.output_turns,output.live_output,output.final_reply,
               message.card->>'fromState' from_state,message.card->>'outcome' outcome,
               message.card->>'toState' to_state,message.card->>'status' status,
               COALESCE((message.card->>'reassigned')::boolean,false) reassigned,
@@ -650,7 +663,7 @@ export async function readWorkflowRun(
   const [actors, viewer, gates, corners] = await Promise.all([
     loadActors(db, headBindingIds(head), publicOrigin),
     loadViewer(db, viewerId, publicOrigin),
-    loadGateRecords(db, input.roomId, contract, visits, publicOrigin),
+    loadGateRecords(db, input.roomId, input.runId, contract, visits, publicOrigin),
     loadOpenedCorners(db, topRoomId, viewerId, visits),
   ]);
   const roleHolders: Record<string, WorkflowActorView> = {};
@@ -658,8 +671,12 @@ export async function readWorkflowRun(
     const holder = actors.get(boundIdentityId(binding) ?? '');
     if (holder) roleHolders[role] = holder;
   }
-  const history: WorkflowRunStepView[] = visits.map((visit) => {
+  const status = workflowRunStatus(contract, head.state, head.status);
+  const history: WorkflowRunStepView[] = visits.map((visit, index) => {
     const { card } = visit;
+    const next = visits[index + 1]?.card;
+    const closedHere = next && next.to_state === card.to_state &&
+      next.from_state === next.to_state && (next.status === 'failed' || next.status === 'abandoned');
     const gate = gates.get(visit);
     const opened = corners.get(visit);
     return {
@@ -670,6 +687,7 @@ export async function readWorkflowRun(
       ...(card.live_output ? { liveOutput: card.live_output } : {}),
       ...(card.final_reply ? { finalReply: card.final_reply } : {}),
       toState: card.to_state,
+      displayStatus: workflowStepDisplayStatus(contract, card.to_state, status, Boolean(next && !closedHere)),
       ...(card.status ? { status: card.status } : {}),
       actor: actorView(
         {

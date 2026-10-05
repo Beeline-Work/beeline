@@ -3580,8 +3580,13 @@ export class DaemonService {
         source_name: string;
         source_parent_id: string | null;
         owner_agent_id: string;
+        source_owner_agent_id: string | null;
       }>(
-        `SELECT source.name source_name,source.parent_id source_parent_id,f.owner_agent_id
+        // A sibling corner's reports wake the agent who opened it when that agent is in the destination.
+        `SELECT source.name source_name,source.parent_id source_parent_id,f.owner_agent_id,
+         (SELECT sf.owner_agent_id FROM corner_facts sf
+          JOIN memberships om ON om.room_id=corner.id AND om.identity_id=sf.owner_agent_id AND om.removed_at IS NULL
+          WHERE sf.corner_id=source.id AND source.parent_id IS NOT NULL AND sf.owner_agent_id<>$3) source_owner_agent_id
        FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
        JOIN rooms source ON source.id=$2 AND (source.id=parent.id OR source.parent_id=parent.id)
        JOIN corner_facts f ON f.corner_id=corner.id
@@ -3598,7 +3603,7 @@ export class DaemonService {
     if (!pair) throw new Error('relay requires current Room and corner membership');
     if (pair.source_parent_id !== null && relay.reply === 'once')
       throw new Error('corner questions require a Room source');
-    const target = pair.owner_agent_id;
+    const target = pair.source_owner_agent_id ?? pair.owner_agent_id;
     const received = Boolean(
       (
         await this.database.query(

@@ -43,9 +43,9 @@ describe('androidAgentEnv', () => {
     });
   });
 
-  it('gives each agent home its own adb server and an emulator port outside the 5554-5585 scan', () => {
+  it('gives each agent home stable adb and emulator ports outside the 5554-5585 scan', () => {
     const home = operatorHomeWithSdk();
-    const ports = new Set<string>();
+    // Hash slots can collide; random temporary homes cannot guarantee unique ports.
     for (const agent of ['agent-a', 'agent-b', 'agent-c']) {
       const env = androidAgentEnv({ root: join(home, agent), operatorHome: home, env: {} });
       const emulatorPort = Number(env.BEELINE_ANDROID_EMULATOR_PORT);
@@ -53,12 +53,10 @@ describe('androidAgentEnv', () => {
       expect(emulatorPort).toBeGreaterThanOrEqual(ANDROID_FIRST_EMULATOR_PORT);
       expect(emulatorPort).toBeLessThan(ANDROID_FIRST_EMULATOR_PORT + ANDROID_PORT_SLOTS * 4);
       expect(Number(env.ANDROID_ADB_SERVER_PORT)).toBe(emulatorPort + 2);
-      ports.add(env.ANDROID_ADB_SERVER_PORT!);
       expect(androidAgentEnv({ root: join(home, agent), operatorHome: home, env: {} })).toEqual(
         env,
       );
     }
-    expect(ports.size).toBe(3);
   });
 
   it("prefers the daemon's own ANDROID_HOME", () => {

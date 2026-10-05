@@ -274,7 +274,7 @@ describe('agent schedule background posting', () => {
                  WHERE source_message_id=messages.id) woke
          FROM messages ORDER BY created_at`,
       );
-      expect(messages.rowCount).toBe(2);
+      expect(messages.rowCount).toBe(3);
       // Never authored by the agent itself: the scheduler identity posts a
       // system-presentation line mentioning the agent.
       expect(messages.rows[0]).toEqual({
@@ -293,6 +293,11 @@ describe('agent schedule background posting', () => {
         },
       });
       expect(messages.rows[1]).toEqual(messages.rows[0]);
+      expect(messages.rows[2]).toMatchObject({
+        text: 'The schedule expired · reached its limit of 2 runs',
+        presentation: 'system',
+        woke: [],
+      });
       // The scheduler identity is hidden from rosters.
       expect(
         (

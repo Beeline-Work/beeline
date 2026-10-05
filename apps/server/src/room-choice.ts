@@ -288,6 +288,8 @@ export async function postRoomChoice(
     constraint?: unknown;
     options: unknown;
     ttlSeconds?: unknown;
+    /** Internal workflow gate exemption; never accepted from ask_choice callers. */
+    workflowRunId?: string;
     /** The asking turn, so the card counts toward that turn's one push per recipient. */
     requestId?: string;
   },
@@ -325,19 +327,16 @@ export async function postRoomChoice(
       );
     }
   }
-  // A gate's card left open when its run ended would refuse this insert
-  // forever: both this one-open-choice rule and the
-  // `room_choices_open_agent_room` partial unique index key on
-  // `status='open'`. Close those rows first — the runtime equivalent of a
-  // one-time cleanup migration, covering any past path that ended a run.
+  // Sweep ended gates before posting. Only ordinary choices participate in
+  // the per-agent limit; workflow gates have their own run/attempt authority.
   await closeEndedRunChoices(database, { roomId: input.roomId, agentId: input.agentId });
   const open = (
     await database.query<{ id: string }>(
-      `SELECT id FROM room_choices WHERE agent_id=$1 AND room_id=$2 AND status='open' LIMIT 1`,
+      `SELECT id FROM room_choices WHERE agent_id=$1 AND room_id=$2 AND status='open' AND workflow_run_id IS NULL LIMIT 1`,
       [input.agentId, input.roomId],
     )
   ).rows[0];
-  if (open) throw new Error('choice conflict: you already have an open choice in this Room');
+  if (open && !input.workflowRunId) throw new Error('choice conflict: you already have an open choice in this Room');
   const agent = await loadIdentity(database, input.agentId);
   const requesterRow = agent.kind === 'agent' ? (await database.query<IdentityRow>(
       `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar,identity.face_id
@@ -383,8 +382,8 @@ export async function postRoomChoice(
   await database.query(
     `INSERT INTO room_choices(
        id,room_id,workspace_id,agent_id,message_id,mode,prompt,constraint_text,options,
-       electorate,closes_at,status
-     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::text[],$11,'open')`,
+       electorate,closes_at,status,workflow_run_id
+     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::text[],$11,'open',$12)`,
     [
       choiceId,
       input.roomId,
@@ -397,6 +396,7 @@ export async function postRoomChoice(
       JSON.stringify(options),
       electorate,
       closesAt,
+      input.workflowRunId ?? null,
     ],
   );
   return {

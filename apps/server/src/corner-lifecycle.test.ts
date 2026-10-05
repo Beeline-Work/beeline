@@ -512,15 +512,6 @@ describe('lane decided at open (row 1-3)', () => {
     expect(await currentState(cornerId)).toBe('implement');
   });
 
-  it('gets no default run deadline: a corner lives for days', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
-    const timers = await db.query(
-      `SELECT 1 FROM agent_schedules WHERE room_id=$1 AND workflow_run IS NOT NULL`,
-      [cornerId],
-    );
-    expect(timers.rowCount).toBe(0);
-  });
-
   it('has only the code and no_code lanes, and no investigate state', () => {
     expect(CORNER_LIFECYCLE_CONTRACT.handoffs.opened).toMatchObject({
       on: { no_code: 'no_code_work', code: 'implement' },

@@ -20,6 +20,7 @@ import {
   handoff,
   getWorkflowRun,
   cancelWorkflowRun,
+  failOverUnansweredTurn,
   reassignFailedWorkflowRole,
   fireWorkflowTimer,
   saveWorkflow,
@@ -757,7 +758,7 @@ describe('handoff', () => {
     const command = await commandFor(IMPLEMENTER);
     for (const contents of [{}, null]) {
       await expect(handoff(database, command, { runId, outcome: 'unknown', contents }))
-        .rejects.toThrow('summary is required; prUrl is required; outcome must be one of: pushed -> checks, stuck -> ask_human, or blocked with contents.reason');
+        .rejects.toThrow('summary is required; prUrl is required; outcome must be one of: pushed -> checks, stuck -> ask_human, timeout -> failed, or blocked with contents.reason');
     }
   });
   it('rejects a caller not bound to the current state role', async () => {
@@ -1033,13 +1034,12 @@ describe('handoff', () => {
       outcome: 'pushed',
       contents: { summary: 'x', prUrl: 'y' },
     });
-    // The implement state's own timeout is cancelled once it resolves normally;
-    // the run's deadline stays.
-    expect((await database.query(stepTimer, [ROOM])).rows).toHaveLength(0);
-    const left = await database.query<{ timer: string }>(
-      `SELECT workflow_run->>'timer' timer FROM agent_schedules WHERE room_id=$1`, [ROOM],
+    // The implement state's own timeout is replaced by the next step's; the
+    // run's deadline stays.
+    const left = await database.query<{ timer: string; attempt: string | null }>(
+      `SELECT workflow_run->>'timer' timer,workflow_run->>'attempt' attempt FROM agent_schedules WHERE room_id=$1 ORDER BY 1`, [ROOM],
     );
-    expect(left.rows).toEqual([{ timer: 'deadline' }]);
+    expect(left.rows).toEqual([{ timer: 'deadline', attempt: null }, { timer: 'step', attempt: '1' }]);
   });
 
   it('applies timeout itself as the system once the role list is used up, skipping the state requires', async () => {
@@ -2083,6 +2083,21 @@ describe('backfillWorkflowSkillDescriptions', () => {
   });
 });
 
+/** Rewrite a saved version as an older one would be: this state with no timeout or default. */
+async function withoutTimeouts(slug: string, stateName: string): Promise<void> {
+  const row = (await database.query<{ skill_id: string; version: number; markdown: string }>(
+    `SELECT version.skill_id,version.version,version.markdown FROM workspace_skill_versions version
+     JOIN workspace_skills skill ON skill.id=version.skill_id WHERE skill.slug=$1 AND skill.kind='workflow'
+     ORDER BY version.version DESC LIMIT 1`, [slug],
+  )).rows[0]!;
+  const contract = JSON.parse(row.markdown);
+  const { timeoutSeconds: _timeout, default: _default, ...state } = contract.handoffs[stateName];
+  if (state.on?.timeout) delete state.on.timeout;
+  contract.handoffs[stateName] = state;
+  await database.query(`UPDATE workspace_skill_versions SET markdown=$3 WHERE skill_id=$1 AND version=$2`,
+    [row.skill_id, row.version, JSON.stringify(contract)]);
+}
+
 /** Every card of a run, oldest first. */
 async function runCards(runId: string): Promise<Array<{ id: string; author_id: string; text: string; card: any }>> {
   return (
@@ -2263,18 +2278,18 @@ describe('blocked: an agent that cannot do its step hands it on', () => {
     const checks = await listRunCard(runId) as any;
     expect(checks).toMatchObject({ toState: 'checks', roleBindings: { implementer: REVIEWER } });
     expect(checks.tried).toBeUndefined();
-    // checks has no timeout outcome: with nobody after REVIEWER the run waits and says why.
+    // Nobody after REVIEWER on the list: the engine applies timeout with each agent's reason.
     await handoff(database, await commandFor(REVIEWER), { runId, outcome: 'blocked', contents: { reason: 'red CI' }, attempt: 2 });
-    const line = (await database.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%implementer role''s list%'`, [ROOM],
-    )).rows;
-    expect(line).toHaveLength(1);
-    expect(line[0]!.text).toContain('@impy earlier on the list, @ravi blocked (red CI)');
-    expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('checks');
+    const read = await getWorkflowRun(database, ROOM, runId);
+    expect(read.history.at(-1)).toMatchObject({
+      fromState: 'checks', outcome: 'timeout',
+      contents: { reason: '@impy earlier on the list, @ravi blocked (red CI)' },
+    });
   });
 
-  it('exhausts a single-agent role on blocked and waits when the state has no timeout outcome', async () => {
+  it('exhausts a single-agent role on blocked and waits when its pinned older version has no timeout outcome', async () => {
     const { runId } = await startedListRun();
+    await withoutTimeouts('list-flow', 'close');
     await handoff(database, await commandFor(WORKER_A), { runId, outcome: 'done', contents: { note: 'ok' }, attempt: 0 });
     const result = await handoff(database, await commandFor(APPROVER), {
       runId, outcome: 'blocked', contents: { reason: 'cannot close' }, attempt: 1,
@@ -2285,6 +2300,35 @@ describe('blocked: an agent that cannot do its step hands it on', () => {
     )).rows;
     expect(notice).toHaveLength(1);
     expect(notice[0]!.text).toContain('@ada blocked (cannot close)');
+  });
+});
+
+describe('no handoff: a turn that answered the step and ended without moving it', () => {
+  it('moves the step to the next agent with reason no handoff', async () => {
+    const { runId } = await startedListRun();
+    await failOverUnansweredTurn(database, { roomId: ROOM, agentId: WORKER_A, sourceMessageId: runId });
+    const card = await listRunCard(runId) as any;
+    expect(card).toMatchObject({ seq: 1, roleBindings: { worker: WORKER_B } });
+    expect(card.tried).toEqual([{ agentId: WORKER_A, reason: 'its turn ended with no handoff' }]);
+  });
+
+  it('ignores a turn that handed off, a stale wake, and an unrelated turn by the same agent', async () => {
+    const { runId } = await startedListRun();
+    const unrelated = await rootMessage(OWNER, '@workera what time is it');
+    await failOverUnansweredTurn(database, { roomId: ROOM, agentId: WORKER_A, sourceMessageId: unrelated });
+    expect((await listRunCard(runId)).seq).toBe(0);
+    await handoff(database, await commandFor(WORKER_A, runId), { runId, outcome: 'retry', contents: { note: 'again' } });
+    // The turn's wake (attempt 0) is no longer current: its end changes nothing.
+    await failOverUnansweredTurn(database, { roomId: ROOM, agentId: WORKER_A, sourceMessageId: runId });
+    expect(await listRunCard(runId)).toMatchObject({ seq: 1, roleBindings: { worker: WORKER_A } });
+  });
+
+  it('applies timeout at once for a single-agent role', async () => {
+    const { runId } = await startedListRun(WORKER_A);
+    await failOverUnansweredTurn(database, { roomId: ROOM, agentId: WORKER_A, sourceMessageId: runId });
+    const read = await getWorkflowRun(database, ROOM, runId);
+    expect(read).toMatchObject({ state: 'failed', status: 'failed' });
+    expect(read.history.at(-1)).toMatchObject({ outcome: 'timeout', contents: { reason: '@workera its turn ended with no handoff' } });
   });
 });
 
@@ -2396,6 +2440,21 @@ async function ownerNotices(personId: string): Promise<string[]> {
 }
 
 describe('gates with a timeout and a default', () => {
+  it('refuses a new save whose agent step has no timeout or whose gate has no timeout and default', async () => {
+    const command = await commandFor(WORKER_A);
+    const without = (name: string, ...keys: string[]) => ({ ...GATED, handoffs: { ...GATED.handoffs,
+      [name]: Object.fromEntries(Object.entries(GATED.handoffs[name as 'work']).filter(([key]) => !keys.includes(key))) } });
+    const described = (contract: unknown) => ({ ...(contract as object), summary: 'Work and sign off.',
+      handoffs: Object.fromEntries(Object.entries((contract as typeof GATED).handoffs).map(([name, state]) => [name, { does: `Do ${name}.`, ...state }])) });
+    const timedWork = { ...GATED.handoffs.work, on: { done: 'sign_off', timeout: 'failed' }, timeoutSeconds: 600 };
+    const compliant = { ...GATED, handoffs: { ...GATED.handoffs, work: timedWork } };
+    await expect(saveWorkflow(database, command, { contract: described(GATED) }))
+      .rejects.toThrow('handoffs.work: timeoutSeconds is required, with a "timeout" outcome in on');
+    await expect(saveWorkflow(database, command, { contract: described({ ...without('sign_off', 'default', 'timeoutSeconds'), handoffs: { ...without('sign_off', 'default', 'timeoutSeconds').handoffs, work: timedWork } }) }))
+      .rejects.toThrow('handoffs.sign_off: a gate needs timeoutSeconds and default');
+    await expect(saveWorkflow(database, command, { contract: described(compliant) })).resolves.toMatchObject({ slug: 'gated' });
+  });
+
   it('validates timeoutSeconds and default together on new saves', async () => {
     const command = await commandFor(WORKER_A);
     const gate = GATED.handoffs.sign_off;
@@ -2444,6 +2503,7 @@ describe('gates with a timeout and a default', () => {
       `The sign_off gate of gated took its default stop · @owner skipped it in run ${runId}`,
     ]);
     const plain = await startedRun(OWNER);
+    await withoutTimeouts('corner', 'human_approve');
     await driveToApprovalGate(plain.runId);
     await expect(answerGate(plain.runId)).rejects.toThrow('this gate needs an answer');
   });

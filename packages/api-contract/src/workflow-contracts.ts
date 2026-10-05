@@ -525,7 +525,11 @@ export type WorkflowRunReadResult = {
   }[];
 };
 
-/** New saves require human descriptions; pinned legacy reads keep their original contract. */
+/**
+ * New saves require human descriptions, a timeout on every agent step and a
+ * timeout with a default on every gate, so no run can wait on nobody;
+ * pinned legacy reads keep their original contract.
+ */
 export function workflowSaveError(value: unknown): string | null {
   const error = workflowContractError(value);
   if (error) return error;
@@ -535,6 +539,10 @@ export function workflowSaveError(value: unknown): string | null {
     if (!state.does?.trim()) return `handoffs.${name}: does is required and must be nonempty`;
     if ('on' in state && Object.hasOwn(state.on, WORKFLOW_BLOCKED_OUTCOME))
       return `handoffs.${name}: "${WORKFLOW_BLOCKED_OUTCOME}" is built in; name this outcome something else`;
+    if (state.kind === undefined && state.timeoutSeconds === undefined)
+      return `handoffs.${name}: timeoutSeconds is required, with a "timeout" outcome in on`;
+    if (state.kind === 'gate' && (state.timeoutSeconds === undefined || state.default === undefined))
+      return `handoffs.${name}: a gate needs timeoutSeconds and default`;
   }
   return null;
 }

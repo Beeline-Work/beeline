@@ -192,6 +192,7 @@ import {
   getWorkflowRun,
   cancelWorkflowRun,
   saveWorkflow,
+  failOverUnansweredTurn,
   startWorkflow,
 } from './workflow-runs.js';
 import { activeWorkflowRunIds, scheduleWorkflowName } from './workflow-admin.js';
@@ -708,6 +709,12 @@ export class DaemonService {
               candidate.status === 'complete',
               String(candidate.status),
             );
+            if (candidate.status === 'complete')
+              await failOverUnansweredTurn(db, {
+                roomId: scopedRoom!,
+                agentId: authenticatedAgentId,
+                sourceMessageId: command.source_message_id,
+              });
           }
         }
         return result;

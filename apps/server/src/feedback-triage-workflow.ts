@@ -15,23 +15,42 @@ export const FEEDBACK_TRIAGE_CONTRACT: WorkflowContract = {
   version: 1,
   name: FEEDBACK_TRIAGE_SLUG,
   description: 'Daily Beeline feedback sweep; steps: feedback-triage-steps',
+  summary: 'Report merged fixes, rank new feedback, ask a person, and open fix corners.',
   roles: ['triager'],
   start: 'notify',
   handoffs: {
     notify: {
+      does: 'Tell reporters about fixes that merged since the last run.',
       role: 'triager',
       requires: ['fixedPullRequests', 'skipReason', 'unnotifiedPullRequests'],
-      on: { notified: 'pull', skipped: 'pull' },
+      on: { notified: 'pull', skipped: 'pull', timeout: 'failed' },
+      timeoutSeconds: 1800,
     },
-    pull: { role: 'triager', requires: ['problems'], on: { ranked: 'approve', nothing_new: 'done' } },
+    pull: {
+      does: 'Read new feedback and rank it by problem.',
+      role: 'triager',
+      requires: ['problems'],
+      on: { ranked: 'approve', nothing_new: 'done', timeout: 'failed' },
+      timeoutSeconds: 1800,
+    },
     approve: {
+      does: 'A person approves dispatching the ranked problems, or skips them.',
       kind: 'gate',
       role: 'triager',
       requires: ['decision'],
       on: { dispatch: 'dispatch', skip: 'done' },
+      timeoutSeconds: 43200,
+      default: 'skip',
     },
-    dispatch: { role: 'triager', requires: ['corners'], on: { dispatched: 'done' } },
-    done: { kind: 'terminal', status: 'done' },
+    dispatch: {
+      does: 'Open a fix corner for each approved problem.',
+      role: 'triager',
+      requires: ['corners'],
+      on: { dispatched: 'done', timeout: 'failed' },
+      timeoutSeconds: 1800,
+    },
+    done: { does: 'The sweep finished.', kind: 'terminal', status: 'done' },
+    failed: { does: 'The sweep stopped before it finished.', kind: 'terminal', status: 'failed' },
   },
 };
 
@@ -42,6 +61,9 @@ export const FEEDBACK_TRIAGE_STEPS = `# Feedback triage steps
 The procedure for the \`feedback-triage\` workflow (\`docs/workflows/feedback-triage.json\`).
 Start it with \`start_workflow\` and bind \`triager\` to yourself. Every step is yours. The
 \`approve\` step is a card a person answers.
+
+End every step with its handoff in the same turn. A turn that ends without one hands
+the step on, and once nobody is left the run takes \`timeout\` and fails.
 
 You need the read-only feedback database command your owner granted (see
 \`docs/feedback-loop.md\`). Without it, stop at \`pull\` and say the grant is missing.

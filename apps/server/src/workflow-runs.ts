@@ -1417,6 +1417,41 @@ export async function fireWorkflowTimer(
   });
 }
 
+/**
+ * A turn that answered the step's current attempt ended and the run did not
+ * move: the agent did not hand off, so the step moves on as `blocked` with
+ * reason no handoff. A turn woken by anything else, or by an older attempt,
+ * is unrelated and changes nothing. Called from the turn's terminal
+ * `complete` receipt, in its transaction.
+ */
+export async function failOverUnansweredTurn(
+  db: SqlDatabase,
+  input: { roomId: string; agentId: string; sourceMessageId: string },
+): Promise<void> {
+  const source = (
+    await db.query<{ run_id: string }>(
+      `SELECT card->>'runId' run_id FROM messages WHERE id=$1 AND room_id=$2 AND card->>'runId' IS NOT NULL`,
+      [input.sourceMessageId, input.roomId],
+    )
+  ).rows[0];
+  if (!source) return;
+  const run = await db.query(
+    `SELECT 1 FROM messages WHERE id=$1 AND room_id=$2 AND card_type=$3`,
+    [source.run_id, input.roomId, WORKFLOW_HANDOFF_CARD_TYPE],
+  );
+  if (!run.rowCount) return;
+  const scope = await openRun(db, input.roomId, source.run_id);
+  if (scope.ended || !isHandoffState(scope.state)) return;
+  if (scope.run.roleBindings[scope.state.role] !== input.agentId) return;
+  const attempt = await provenanceAttempt(db, input.roomId, scope.runId, input.sourceMessageId);
+  if (attempt !== attemptOf(scope.run)) return;
+  await failOver(db, scope, {
+    leaving: input.agentId,
+    why: 'its turn ended with no handoff',
+    whenExhausted: 'timeout',
+  });
+}
+
 /** The live run of `workflowName` in this Room, if one exists. */
 export async function liveWorkflowRun(
   db: SqlDatabase,

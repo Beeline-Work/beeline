@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { migrate } from '../../server/src/database.js';
-import { PgliteDatabase } from '../../server/src/test-support.js';
+import { describedWorkflow, PgliteDatabase } from '../../server/src/test-support.js';
 import { TokenAuth } from '../../server/src/auth.js';
 import { PhoneService } from '../../server/src/phone-service.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
@@ -207,7 +207,9 @@ beforeEach(async () => {
   await saveWorkflow(
     database,
     seedCommand,
-    { contract: describedLegacyWorkflowContract(CONTRACT) },
+    // New saves also need a timeout on every step; the run below never
+    // reaches one, so every path it takes is the real contract's.
+    { contract: describedWorkflow(describedLegacyWorkflowContract(CONTRACT)) },
     undefined,
   );
 }, HOOK_TIMEOUT_MS);

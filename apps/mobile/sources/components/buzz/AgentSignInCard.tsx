@@ -183,7 +183,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
   const waitLine = (text: string) => (
     <View style={styles.wait}>
       <StateDot kind="pulse" />
-      <Text style={styles.meta}>{text}</Text>
+      <Text style={[styles.meta, styles.waitText]}>{text}</Text>
     </View>
   );
 
@@ -330,12 +330,17 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
       tier={ask ? 'ask' : 'record'}
       title={title}
     >
-      {steps}
+      {steps ? <View style={styles.body} testID={`${testID}-body`}>{steps}</View> : null}
     </TranscriptCard>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  body: {
+    paddingHorizontal: theme.buzz.transcriptCard.side,
+    paddingVertical: theme.buzz.space.sm,
+    minWidth: 0,
+  },
   step: {
     flexDirection: 'row',
     gap: theme.buzz.space.md,
@@ -349,10 +354,11 @@ const styles = StyleSheet.create((theme) => ({
   stepTitleAhead: { color: theme.buzz.textMuted },
   url: { ...theme.buzz.type.machine, color: theme.buzz.textSecondary },
   meta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
-  field: { flexDirection: 'row', gap: theme.buzz.space.sm },
+  field: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.buzz.space.sm },
   input: {
     ...theme.buzz.type.body,
     flex: 1,
+    flexBasis: 120,
     minWidth: 0,
     minHeight: 44,
     paddingHorizontal: theme.buzz.space.sm,
@@ -363,9 +369,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.textPrimary,
   },
   inputFilled: { ...theme.buzz.type.machine, color: theme.buzz.textPrimary },
-  code: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
-  codeText: { ...theme.buzz.type.machine, flex: 1, color: theme.buzz.textPrimary },
+  code: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.buzz.space.sm },
+  codeText: { ...theme.buzz.type.machine, flex: 1, flexBasis: 120, minWidth: 0, color: theme.buzz.textPrimary },
   wait: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
+  waitText: { flex: 1, minWidth: 0 },
   failure: { flexDirection: 'row', gap: theme.buzz.space.sm },
   failureMark: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   failureText: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textSecondary },

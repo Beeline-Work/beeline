@@ -64,3 +64,7 @@ describe('sessionConfigFingerprint', () => {
     expect(sessionConfigFingerprint({ model: 'model', devices: [] })).toBe(without);
   });
 });
+
+it('invalidates a retained coding session when a brief becomes runtime-only', () => {
+  expect(sessionConfigFingerprint({ repositoryWork: true })).not.toBe(sessionConfigFingerprint({ repositoryWork: false }));
+});

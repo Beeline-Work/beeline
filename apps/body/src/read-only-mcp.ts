@@ -285,6 +285,10 @@ const READ_ONLY_TOOLS: ToolDefinition[] = [
 const WORKFLOW_GUIDE_URL = 'https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md';
 
 export const CORNER_BRIEF_PROPERTIES = {
+  repositoryWork: {
+    type: 'boolean',
+    description: 'Set false when no repository files are assigned or repository edits or pull requests are forbidden. Set true for assigned repository work. Attachments are not repository assignments.',
+  },
   spec: {
     type: 'string',
     minLength: 1,
@@ -2394,6 +2398,7 @@ async function reviseCornerBrief(args: JsonObject): Promise<string> {
       expectedRevision: args.expectedRevision as number,
       brief: {
         spec: args.spec as string,
+        repositoryWork: args.repositoryWork as boolean | undefined,
         approval: args.approval as import('@beeline/api-contract/daemon').CornerBriefDraft['approval'],
         change: args.change as string | undefined,
         attachments:

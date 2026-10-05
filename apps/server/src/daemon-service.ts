@@ -5631,6 +5631,7 @@ export class DaemonService {
         );
         if (current) {
           if (input.brief && (current.spec !== input.brief.spec.trim() ||
+              current.repositoryWork !== input.brief.repositoryWork ||
               current.approval?.sourceMessageId !== input.brief.approval.sourceMessageId))
             throw new Error('corner brief already exists; revise the current brief instead');
           if (objective !== undefined) await db.query(

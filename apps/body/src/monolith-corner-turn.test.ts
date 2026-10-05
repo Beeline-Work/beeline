@@ -696,7 +696,7 @@ describe('corner close-request delivery', () => {
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 
-  it('closes on a pushed completion immediately after a turn completes', async () => {
+  it.each([true, false])('Reproduction runtime-brief-5: repositoryWork=%s delivers a turn without an inappropriate nudge', async (repositoryWork) => {
     // The socket completion arrives after the turn's terminal receipt; no
     // idle timer or close-request read is involved.
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-immediate-'));
@@ -761,6 +761,7 @@ describe('corner close-request delivery', () => {
         }
         return { items: [], cursor: 'latest', closeRequested: true };
       }
+      if (name === 'getCornerRestoreState') return { brief: { id: 'corner-id', revision: 1, authorId: 'author', sourceRoomId: 'room-id', attachments: [], repositoryWork, spec: '## Intent\nRun the desk\n## Non-goals\nNo interval changes' } };
       if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
       return { id: 'write-id', createdAt: 1 };
@@ -775,13 +776,13 @@ describe('corner close-request delivery', () => {
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-    vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+    const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
     const sessionPrompt = vi
       .spyOn(acp, 'sessionPrompt')
       .mockResolvedValueOnce({
         stopReason: 'end_turn',
         updates: [],
-        agentText: 'PR opened: https://github.com/acme/widgets/pull/7',
+        agentText: repositoryWork ? 'PR opened: https://github.com/acme/widgets/pull/7' : 'Desk report delivered.',
         toolCalls: [],
       })
       .mockResolvedValueOnce({
@@ -817,7 +818,7 @@ describe('corner close-request delivery', () => {
         closePushAfterReceipt(api, () => loop),
         'corner-id',
         runtime.agent.publicKey,
-        'Implement the widget',
+        repositoryWork ? 'Implement the widget' : 'How is the desk doing?',
       ),
       scheduler,
       signal: abort.signal,
@@ -829,14 +830,21 @@ describe('corner close-request delivery', () => {
     });
     await loop.run();
     await scheduler.dispose();
-    expect(sessionPrompt).toHaveBeenCalledTimes(2);
-    expect(sessionPrompt.mock.calls[1]?.[1]).toBe(CORNER_DELIVERY_NUDGE);
+    expect(sessionPrompt).toHaveBeenCalledTimes(repositoryWork ? 2 : 1);
+    if (repositoryWork) expect(sessionPrompt.mock.calls[1]?.[1]).toContain(CORNER_DELIVERY_NUDGE);
+    else {
+      const delivered = sessionNew.mock.calls[0]?.[0].systemPrompt + '\n' + sessionPrompt.mock.calls[0]?.[1];
+      for (const instruction of ['corner:prepare', 'record_validation_stage', '## Reproduced', '## Demonstrated', 'Use its file manifest', 'Once the pull request exists', 'pr_checks_status']) expect(delivered).not.toContain(instruction);
+      expect(delivered).toContain('post_artifact');
+      expect(delivered).toContain('The human approval quote wins any conflict');
+      expect(delivered).toContain('How is the desk doing?');
+      console.log('Reproduction runtime-brief-5 demonstrated: runtime corner delivered brief authority and chat, no coding routine, and no dirty-work delivery nudge');
+    }
     expect(execute).toHaveBeenCalledWith(
       'postRoomMessage',
       expect.objectContaining({
         text:
-          'PR opened: https://github.com/acme/widgets/pull/7\n\n' +
-          'Kept retained-agent-work.txt for the next turn.',
+          repositoryWork ? 'PR opened: https://github.com/acme/widgets/pull/7\n\nKept retained-agent-work.txt for the next turn.' : 'Desk report delivered.',
       }),
     );
     expect(execute).not.toHaveBeenCalledWith(

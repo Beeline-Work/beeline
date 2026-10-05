@@ -40,6 +40,8 @@ export function validateCornerBrief(draft: CornerBriefDraft): void {
     (typeof draft.change !== 'string' || draft.change.length > 1_000)
   )
     throw new Error('corner brief change must be at most 1000 characters');
+  if (draft.repositoryWork !== undefined && typeof draft.repositoryWork !== 'boolean')
+    throw new Error('corner brief repositoryWork must be a boolean');
   const attachments = draft.attachments;
   if (!Array.isArray(attachments) && attachments !== undefined)
     throw new Error('corner brief attachments must be a list');
@@ -295,6 +297,7 @@ export function cornerBriefRevisionHash(
     .update(
       JSON.stringify({
         spec: draft.spec.trim(),
+        ...(draft.repositoryWork !== undefined ? { repositoryWork: draft.repositoryWork } : {}),
         approval: draft.approval.sourceMessageId,
         attachments: attachments.map((attachment) => ({
           objectId: attachment.objectId,
@@ -321,6 +324,7 @@ type StoredCornerBriefApproval = {
   snapshot: string;
   approvedBy: string;
   briefHash: string;
+  repositoryWork?: boolean;
 };
 
 /**
@@ -360,6 +364,7 @@ export async function resolveCornerBriefApproval(
       snapshot: message.text,
       approvedBy: message.author_id,
       briefHash: revisionHash,
+      ...(draft.repositoryWork !== undefined ? { repositoryWork: draft.repositoryWork } : {}),
     },
     revisionHash,
     sourceRoomId: message.room_id,
@@ -450,6 +455,7 @@ export function projectCornerBrief(cornerId: string, row: CornerBriefRow): Corne
     id: cornerId,
     revision: row.revision,
     spec: row.spec ?? foldCornerBriefSpec(row),
+    ...(basis?.repositoryWork !== undefined ? { repositoryWork: basis.repositoryWork } : {}),
     ...(basis?.sourceMessageId && basis.approvedBy
       ? {
           approval: {

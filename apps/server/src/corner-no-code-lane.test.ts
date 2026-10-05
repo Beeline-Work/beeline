@@ -958,3 +958,22 @@ it('reads only the newest slice of a long corner and says the rest was left out'
   expect(brief?.spec).not.toContain('note 0\n');
   expect(brief?.spec).toContain('earlier history omitted for length');
 });
+
+
+it.each([false, true])('persists repositoryWork=%s through opening, restore, history and revision', async (repositoryWork) => {
+  const command = await commissioned(CODE_ROOM);
+  const draft = { ...brief(command.sourceMessageId, '## Intent\nDeliver the assigned task'), repositoryWork };
+  const { cornerId } = await daemon.execute('createCorner', {
+    roomId: CODE_ROOM, requestId: command.turnRequestId, generationId: 'g1',
+    name: 'Delivery scope', objective: 'Deliver the assigned task', brief: draft,
+  }, AGENT);
+  expect((await daemon.execute('getCornerRestoreState', { cornerId }, AGENT)).brief?.repositoryWork).toBe(repositoryWork);
+  expect((await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions[0]?.repositoryWork).toBe(repositoryWork);
+  const revisionCommand = await commissioned(cornerId);
+  await daemon.execute('reviseCornerBrief', {
+    cornerId, requestId: revisionCommand.turnRequestId, generationId: 'g1', expectedRevision: 1,
+    brief: { ...draft, approval: { sourceMessageId: revisionCommand.sourceMessageId }, repositoryWork: !repositoryWork, change: 'Correct the delivery capability' },
+  }, AGENT);
+  const restored = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
+  expect(restored.brief).toMatchObject({ revision: 2, repositoryWork: !repositoryWork, spec: draft.spec });
+});

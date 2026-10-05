@@ -2580,6 +2580,7 @@ describe('thin monolith corner turn', () => {
             items: [
               {
                 id: 'checks-event',
+                fixtureCommandReason: 'corner_check',
                 authorId: runtime.agent.publicKey,
                 createdAt: 2,
                 type: 'system',
@@ -2747,9 +2748,7 @@ describe('thin monolith corner turn', () => {
       config,
       api: commandFixtureApi(
         closePushAfterReceipt(api, () => loop, 2),
-        'corner-id',
-        runtime.agent.publicKey,
-        'Implement the widget',
+        'corner-id', runtime.agent.publicKey, 'Implement the widget', 'schedule',
       ),
       scheduler,
       signal: abort.signal,
@@ -2774,6 +2773,9 @@ describe('thin monolith corner turn', () => {
     // The first turn on a cold session renders the whole transcript window.
     const firstPrompt = String(sessionPrompt.mock.calls[0]?.[1]);
     const secondPrompt = String(sessionPrompt.mock.calls[1]?.[1]);
+    expect(firstPrompt).not.toContain('say nothing unless you push a fix');
+    expect(secondPrompt).toContain('say nothing unless you push a fix');
+    if (status === 'completed') console.info('Reproduction schedule-silence-4: schedule command → harness prompt has no silence rule; next CI command → harness prompt retains silence; scheduled reply persisted');
     expect(firstPrompt).toContain('Corner transcript:');
     expect(firstPrompt).toContain('Corner institutional snapshot 1');
     expect(secondPrompt).toContain('Corner institutional snapshot 2');
@@ -2878,31 +2880,12 @@ describe('thin monolith corner turn', () => {
         ),
       }),
     );
-    expect(sessionNew).toHaveBeenCalledWith(
-      expect.objectContaining({
-        systemPrompt: expect.stringContaining('Never restate server check or merge notes'),
-      }),
-    );
-    // Item 2: no schedule may poll the merge gate, and a schedule-triggered
-    // turn stays as silent as a checks turn unless it is actionable.
+    expect(repositorySystemPrompt).not.toContain('say nothing unless you push a fix');
+    // Polling stays forbidden on ordinary task turns too.
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
           'Never schedule polls of pr_checks_status or the merge gate',
-        ),
-      }),
-    );
-    expect(sessionNew).toHaveBeenCalledWith(
-      expect.objectContaining({
-        systemPrompt: expect.stringContaining(
-          'On it, say nothing unless you push a fix or report checks="unknown", and then use one short line.',
-        ),
-      }),
-    );
-    expect(sessionNew).toHaveBeenCalledWith(
-      expect.objectContaining({
-        systemPrompt: expect.stringContaining(
-          'If a schedule wakes you here anyway, treat it as a checks turn.',
         ),
       }),
     );

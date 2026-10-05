@@ -520,7 +520,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: ['code-corner'],
     render: () =>
-      'A checks turn is one that wakes you about CI or the merge gate. On it, say nothing unless you push a fix or report checks="unknown", and then use one short line. Never restate server check or merge notes. When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never schedule polls of pr_checks_status or the merge gate; the server wakes you when it changes. If a schedule wakes you here anyway, treat it as a checks turn.',
+      'When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never schedule polls of pr_checks_status or the merge gate; the server wakes you when it changes.',
   },
   {
     id: 'corner.review',
@@ -671,6 +671,8 @@ export interface TurnPromptContext {
     readonly fromName?: string;
     readonly cornerAskId?: string;
     readonly reactionTargetId?: string;
+    /** Authoritative server command provenance, never inferred from task text. */
+    readonly commandReason?: string;
     readonly outsideEvent?: SystemEvent;
     readonly body: string;
     readonly attachmentLines?: readonly string[];
@@ -688,6 +690,20 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     layer: 'turn',
     surfaces: EVERYWHERE,
     render: ({ sessionPrefix }) => sessionPrefix ?? '',
+  },
+  {
+    id: 'turn.checks',
+    topic: 'checks-turns',
+    why: 'Only CI or merge-gate wakes suppress ordinary reporting; user schedules must deliver their task results.',
+    budgetBytes: 350,
+    layer: 'turn',
+    surfaces: ['code-corner'],
+    when: ({ task }) => task.commandReason !== 'schedule' && (
+      ['corner_check', 'corner_merge_refused', 'corner_merge_conflict'].includes(task.commandReason ?? '') ||
+      ['check-passed', 'check-failed'].includes(task.outsideEvent?.kind ?? '')
+    ),
+    render: () =>
+      'This is a checks turn about CI or the merge gate. On it, say nothing unless you push a fix or report checks="unknown", and then use one short line. Never restate server check or merge notes.',
   },
   {
     id: 'turn.objective',

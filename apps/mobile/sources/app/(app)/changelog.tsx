@@ -6,7 +6,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { getChangelogEntries, getLatestTitle, setLastViewedTitle } from '@/changelog';
 import { layout } from '@/components/layout';
-import { t } from '@/text';
 import { useLayoutClass } from '@/utils/responsive';
 import { PageHeader } from '@/components/buzz/PageHeader';
 
@@ -28,7 +27,7 @@ export default function ChangelogScreen() {
                 <ChangelogHeader />
                 <View style={styles.emptyState}>
                     <Text style={styles.emptyText}>
-                        {t('changelog.noEntriesAvailable')}
+                        {"No changelog entries available."}
                     </Text>
                 </View>
             </View>
@@ -75,11 +74,11 @@ export default function ChangelogScreen() {
 function ChangelogHeader() {
     return (
         <PageHeader
-            backAccessibilityLabel={t('common.back')}
+            backAccessibilityLabel={"Back"}
             meta="RELEASE LEDGER"
             onBack={() => router.back()}
             prominent
-            title={t('navigation.whatsNew')}
+            title={"What's New"}
         />
     );
 }

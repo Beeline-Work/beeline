@@ -1,4 +1,3 @@
-import { t } from '@/text';
 import { AlertButton, ModalConfig, CustomModalConfig, IModal , PromptDraft } from './types';
 
 class ModalManagerClass implements IModal {
@@ -28,7 +27,7 @@ class ModalManagerClass implements IModal {
       type: 'alert',
       title,
       message,
-      buttons: buttons || [{ text: t('common.ok') }],
+      buttons: buttons || [{ text: "OK" }],
     } as Omit<ModalConfig, 'id'>);
   }
 

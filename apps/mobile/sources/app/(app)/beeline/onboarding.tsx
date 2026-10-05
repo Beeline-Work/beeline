@@ -87,7 +87,6 @@ import { GitHubAccountMismatchError, monolithSession } from '@/auth/monolith-ses
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { YouStep } from '@/components/buzz/YouStep';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import { t } from '@/text';
 import { isTauri } from '@/utils/isTauri';
 import { accountSignInAvailable } from '@/auth/account-sign-in-platform';
 import {
@@ -695,8 +694,8 @@ export default function BuzzOnboarding() {
     if (!normalized) {
       setNotice({
         status: 'bind_retry',
-        title: t('beelineIdentity.handleInvalidTitle'),
-        message: t('beelineIdentity.handleInvalidMessage'),
+        title: "HANDLE NOT AVAILABLE",
+        message: "Use 3–30 lowercase letters, numbers, or dashes.",
         retryable: false,
       });
       return;
@@ -729,10 +728,10 @@ export default function BuzzOnboarding() {
       setNotice({
         status: 'bind_retry',
         title: taken
-          ? t('beelineIdentity.handleTakenTitle')
-          : t('beelineIdentity.handleClaimFailedTitle'),
+          ? "HANDLE ALREADY CLAIMED"
+          : "HANDLE NOT CLAIMED",
         message: taken
-          ? t('beelineIdentity.handleTakenMessage', { handle: normalized })
+          ? `@${normalized} belongs to someone else. Choose another handle.`
           : error instanceof Error
             ? error.message
             : String(error),
@@ -780,7 +779,7 @@ export default function BuzzOnboarding() {
         testID="onboarding-handle-ceremony"
       >
         <PixelGateReveal style={styles.namePanel}>
-          <Text style={styles.sectionLabel}>{t('beelineIdentity.handleCeremonyLabel')}</Text>
+          <Text style={styles.sectionLabel}>{"IDENTITY · HANDLE CEREMONY"}</Text>
           <View style={styles.nameAvatar}>
             <IdentityMark
               kind="human"
@@ -789,10 +788,10 @@ export default function BuzzOnboarding() {
               size={82}
             />
           </View>
-          <Text style={styles.nameTitle}>{t('beelineIdentity.handleCeremonyTitle')}</Text>
-          <Text style={styles.nameBody}>{t('beelineIdentity.handleCeremonyBody')}</Text>
+          <Text style={styles.nameTitle}>{"Choose your handle"}</Text>
+          <Text style={styles.nameBody}>{"This name is bound to your key. It becomes your verified Beeline identity everywhere."}</Text>
           <TextInput
-            accessibilityLabel={t('beelineIdentity.handleAccessibility')}
+            accessibilityLabel={"Choose your Beeline handle"}
             autoCapitalize="none"
             autoCorrect={false}
             autoFocus
@@ -802,7 +801,7 @@ export default function BuzzOnboarding() {
             onChangeText={(value) => setNameInput(value.toLowerCase())}
             onFocus={() => setNameFocused(true)}
             onSubmitEditing={() => void handleNameContinue()}
-            placeholder={t('beelineIdentity.handlePlaceholder')}
+            placeholder={"ada-labs"}
             placeholderTextColor={theme.buzz.textDisabled}
             returnKeyType="done"
             style={[styles.nameInput, nameFocused && styles.inputFocused]}
@@ -810,7 +809,7 @@ export default function BuzzOnboarding() {
             value={nameInput}
           />
           <Text style={styles.nameHandle}>
-            {normalized ? `@${normalized}` : t('beelineIdentity.handleRules')}
+            {normalized ? `@${normalized}` : "3–30 · a–z · 0–9 · dash"}
           </Text>
           {notice && (
             <View accessibilityRole="alert" style={styles.noticePanel}>
@@ -820,7 +819,7 @@ export default function BuzzOnboarding() {
           )}
           <Button
             disabled={!normalized || loading}
-            label={t('beelineIdentity.claimHandle')}
+            label={"Claim handle"}
             loading={loadingAction === 'name'}
             onPress={() => void handleNameContinue()}
             testID="onboarding-claim-handle"

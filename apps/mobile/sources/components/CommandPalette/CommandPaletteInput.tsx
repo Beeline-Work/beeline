@@ -1,7 +1,6 @@
 import React from 'react';
 import { View, TextInput, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { t } from '@/text';
 
 interface CommandPaletteInputProps {
   value: string;
@@ -40,7 +39,7 @@ export function CommandPaletteInput({
         style={styles.input}
         value={value}
         onChangeText={onChangeText}
-        placeholder={t('commandPalette.placeholder')}
+        placeholder={"Type a command or search..."}
         placeholderTextColor={theme.buzz.textDisabled}
         autoFocus
         autoCorrect={false}

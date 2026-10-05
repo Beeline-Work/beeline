@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, StyleProp, Text, View, ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { t } from '@/text';
 import {
     formatShortcut,
     GLOBAL_SHORTCUTS,
@@ -88,9 +87,9 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 const shortcutLabels: Record<GlobalShortcutId, () => string> = {
-    commandPalette: () => t('settingsFeatures.commandPalette'),
-    newSession: () => t('sidebar.newSession'),
-    settings: () => t('settings.title'),
+    commandPalette: () => "Command Palette",
+    newSession: () => "New session",
+    settings: () => "Settings",
 };
 
 export function useShortcutHints() {

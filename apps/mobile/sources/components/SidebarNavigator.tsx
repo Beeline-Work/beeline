@@ -9,7 +9,6 @@ import { usePathname, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
-import { t } from '@/text';
 import { isTauri } from '@/utils/isTauri';
 import { APP_UI_SIZE_SCALE } from '@/ui-size';
 import {
@@ -280,7 +279,7 @@ const PersistentHeader = React.memo(() => {
             onPress={handleZenToggle}
             hitSlop={10}
             style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}
-            accessibilityLabel={t('zen.toggle')}
+            accessibilityLabel={"Zen mode"}
           >
             <Image
               source={require('@/assets/images/zen-icon.png')}

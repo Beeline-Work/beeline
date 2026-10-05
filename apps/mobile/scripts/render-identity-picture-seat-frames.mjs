@@ -96,10 +96,6 @@ const shims = {
   '@/push/push-level-storage': `export const saveStoredPushLevel = async () => undefined;`,
   '@/push/presented-notifications': `export const reconcilePresentedNotificationBadge = async () => undefined;`,
   '@/sync/pushRegistration': `export const getPushPermissionInfo = async () => ({ status: 'granted', granted: true, canAskAgain: true });`,
-  '@/text': `export const t = (key) => ({
-      'settings.privacyPolicy': 'Privacy policy',
-      'settings.termsOfService': 'Terms of service',
-    }[key] ?? key);`,
   '@/utils/open-external-url': `export const openExternalUrl = async () => undefined;`,
   '@/components/buzz/FacePickerSheet': `export const FacePickerSheet = () => null;`,
   '@/components/buzz/PushLevelSetting': `export const PushLevelSetting = () => null;`,

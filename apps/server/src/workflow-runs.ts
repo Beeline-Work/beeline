@@ -752,47 +752,51 @@ export async function backfillWorkflowRunTimers(database: SqlDatabase): Promise<
   );
   let armed = 0;
   for (const start of starts.rows) {
-    armed += await database.transaction(async (db) => {
-      const scope = await openRun(db, start.room_id, start.id);
-      if (scope.ended) return 0;
-      const deadlineId = workflowTimerId(start.id, 'deadline');
-      const stepId = workflowTimerId(start.id, 'step');
-      const legacyStepId = legacyTimeoutScheduleId(start.id, scope.stateName);
-      const existing = await db.query<{ id: string }>(
-        `SELECT id FROM agent_schedules WHERE id=ANY($1::uuid[])`,
-        [[deadlineId, stepId, legacyStepId]],
-      );
-      const ids = new Set(existing.rows.map((row) => row.id));
-      let changed = 0;
-      if (!ids.has(deadlineId)) {
-        const seconds = scope.contract.deadlineSeconds ?? WORKFLOW_DEFAULT_DEADLINE_SECONDS;
-        await scheduleRunTimer(db, {
-          workspaceId: scope.workspaceId,
-          roomId: scope.roomId,
-          runId: start.id,
-          workflowSlug: scope.run.workflowSlug,
-          timer: 'deadline',
-          seconds,
-          fireAt: new Date(Math.max(Date.now(), start.created_at.getTime() + seconds * 1_000)),
-        });
-        changed++;
-      }
-      if (isHandoffState(scope.state) && !ids.has(stepId) && !ids.has(legacyStepId)) {
-        // Give the current attempt a full lease from recovery, so an old
-        // timestamp cannot expire a step immediately while its agent works.
-        await scheduleRunTimer(db, {
-          workspaceId: scope.workspaceId,
-          roomId: scope.roomId,
-          runId: start.id,
-          workflowSlug: scope.run.workflowSlug,
-          timer: 'step',
-          seconds: scope.state.timeoutSeconds ?? WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS,
-          attempt: attemptOf(scope.run),
-        });
-        changed++;
-      }
-      return changed;
-    });
+    try {
+      armed += await database.transaction(async (db) => {
+        const scope = await openRun(db, start.room_id, start.id);
+        if (scope.ended) return 0;
+        const deadlineId = workflowTimerId(start.id, 'deadline');
+        const stepId = workflowTimerId(start.id, 'step');
+        const legacyStepId = legacyTimeoutScheduleId(start.id, scope.stateName);
+        const existing = await db.query<{ id: string }>(
+          `SELECT id FROM agent_schedules WHERE id=ANY($1::uuid[])`,
+          [[deadlineId, stepId, legacyStepId]],
+        );
+        const ids = new Set(existing.rows.map((row) => row.id));
+        let changed = 0;
+        if (!ids.has(deadlineId)) {
+          const seconds = scope.contract.deadlineSeconds ?? WORKFLOW_DEFAULT_DEADLINE_SECONDS;
+          await scheduleRunTimer(db, {
+            workspaceId: scope.workspaceId,
+            roomId: scope.roomId,
+            runId: start.id,
+            workflowSlug: scope.run.workflowSlug,
+            timer: 'deadline',
+            seconds,
+            fireAt: new Date(Math.max(Date.now(), start.created_at.getTime() + seconds * 1_000)),
+          });
+          changed++;
+        }
+        if (isHandoffState(scope.state) && !ids.has(stepId) && !ids.has(legacyStepId)) {
+          // Give the current attempt a full lease from recovery, so an old
+          // timestamp cannot expire a step immediately while its agent works.
+          await scheduleRunTimer(db, {
+            workspaceId: scope.workspaceId,
+            roomId: scope.roomId,
+            runId: start.id,
+            workflowSlug: scope.run.workflowSlug,
+            timer: 'step',
+            seconds: scope.state.timeoutSeconds ?? WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS,
+            attempt: attemptOf(scope.run),
+          });
+          changed++;
+        }
+        return changed;
+      });
+    } catch (error) {
+      console.error(`backfillWorkflowRunTimers: failed to recover run ${start.id}`, error);
+    }
   }
   if (armed) console.log(`backfillWorkflowRunTimers: armed ${armed} missing workflow timer(s)`);
   return armed;

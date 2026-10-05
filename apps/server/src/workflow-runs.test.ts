@@ -2812,6 +2812,33 @@ describe('legacy run timer recovery', () => {
     console.log('Demonstrated legacy-timers: deadline closed the gate once; the next schedule tick started a fresh run');
   });
 
+  it('Reproduction orphaned-run: migrates a healthy legacy run alongside an unreadable run', async () => {
+    const orphaned = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(orphaned);
+    const { runId } = await startedListRun();
+    await removeStepTimeout('list-flow', 'work');
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=ANY($1::text[])`, [[orphaned, runId]]);
+    await database.query(`UPDATE messages SET card=card-'active' WHERE id=ANY($1::text[])`, [[orphaned, runId]]);
+    await database.query(`DELETE FROM workspace_skills WHERE slug='gated'`);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(migrateData(database)).resolves.toBeUndefined();
+      expect(errors).toHaveBeenCalledWith(
+        `backfillWorkflowRunTimers: failed to recover run ${orphaned}`,
+        expect.objectContaining({ message: 'workflow contract version is unavailable' }),
+      );
+      const timers = await timersFor(runId);
+      expect(timers.map((row) => row.workflow_run.timer)).toEqual(['deadline', 'step']);
+      expect(await timersFor(orphaned)).toEqual([]);
+      await expect(migrateData(database)).resolves.toBeUndefined();
+      expect(await timersFor(runId)).toEqual(timers);
+      expect(await timersFor(orphaned)).toEqual([]);
+      console.log('Demonstrated orphaned-run: boot migration completed despite a missing contract; the healthy legacy run received deadline and step timers, unchanged on repeat boot');
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it('gives a legacy current attempt a full lease, fails over, and takes its declared timeout after exhaustion', async () => {
     const { runId } = await startedListRun();
     await removeStepTimeout('list-flow', 'work');

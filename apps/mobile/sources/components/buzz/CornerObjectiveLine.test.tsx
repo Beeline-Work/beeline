@@ -51,7 +51,7 @@ vi.mock('react-native-unistyles', async () => {
   };
 });
 
-const external = vi.hoisted(() => ({ openExternalUrl: vi.fn(async () => undefined) }));
+const external = vi.hoisted(() => ({ openExternalUrl: vi.fn(async (_url: string) => undefined) }));
 vi.mock('@/utils/open-external-url', () => external);
 
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';

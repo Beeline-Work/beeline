@@ -154,7 +154,8 @@ export function isWebhookKind(value: unknown): value is WebhookEventKind {
   return typeof value === 'string' && /^webhook:[a-z0-9-]{1,40}$/.test(value);
 }
 
-const AGENT_KIND = /^agent:[a-z0-9-]{1,40}$/;
+export const AGENT_EVENT_SLUG_MAX_LENGTH = 40;
+const AGENT_KIND = new RegExp(`^agent:[a-z0-9-]{1,${AGENT_EVENT_SLUG_MAX_LENGTH}}$`);
 
 export function isServerEventKind(value: unknown): value is ServerEventKind {
   return (SERVER_EVENT_KINDS as readonly string[]).includes(value as string);

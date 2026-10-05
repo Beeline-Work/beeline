@@ -6528,9 +6528,8 @@ export class DaemonService {
       row.owner_identity_id, composioToolkitForApp(row.app_key))))
       throw new Error('App account is unavailable; reconnect it');
     const tools = await this.composio.listTools(composioToolkitForApp(row.app_key), input.query);
-    if (!tools.length)
-      throw new Error(input.query ? 'No tools matched the app tool query'
-        : 'App provider returned no tools');
+    if (!tools.length && !input.query)
+      throw new Error('App provider returned no tools');
     return { tools };
   }
 

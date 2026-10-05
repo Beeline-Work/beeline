@@ -1,6 +1,8 @@
 import { webhookPromptBody } from './room-webhooks.js';
 import {
   AGENT_SIGN_IN_SERVICE_LABELS,
+  boundReplyExcerpt,
+  REPLY_EXCERPT_MAX_LENGTH,
   agentSignInUsesKey,
   isAgentSignInHarness,
 } from '@beeline/api-contract/daemon';
@@ -985,6 +987,8 @@ export async function readAgentCommands(
       corner_ask_id: string | null;
       reply_to_message_id: string | null;
       reply_to_author_id: string | null;
+      reply_to_author_name: string | null;
+      reply_to_excerpt: string | null;
       merge_card: MergeCard | null;
       wake_card_type: string | null;
       wake_card: WorkflowWakeCard | null;
@@ -996,7 +1000,9 @@ export async function readAgentCommands(
       created_at: Date;
     }
   >(
-    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,CASE WHEN workflow_latest.card IS NOT NULL THEN workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->>'hint' ELSE COALESCE(m.card->>'receiptHint',choice_message.card->>'receiptHint') END receipt_hint,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,(SELECT author_id FROM messages WHERE id=m.reply_to_message_id) reply_to_author_id,m.card_type wake_card_type,m.card wake_card,workflow_latest.card->>'toState' workflow_state,workflow_latest.card->>'status' workflow_status,workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->'on' workflow_outcomes,watched_corner.id watched_corner_id,watched_corner.name watched_corner_name FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,CASE WHEN workflow_latest.card IS NOT NULL THEN workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->>'hint' ELSE COALESCE(m.card->>'receiptHint',choice_message.card->>'receiptHint') END receipt_hint,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,reply_parent.author_id reply_to_author_id,reply_author.name reply_to_author_name,left(reply_parent.text,${REPLY_EXCERPT_MAX_LENGTH + 1}) reply_to_excerpt,m.card_type wake_card_type,m.card wake_card,workflow_latest.card->>'toState' workflow_state,workflow_latest.card->>'status' workflow_status,workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->'on' workflow_outcomes,watched_corner.id watched_corner_id,watched_corner.name watched_corner_name FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+ LEFT JOIN messages reply_parent ON reply_parent.id=m.reply_to_message_id
+ LEFT JOIN identities reply_author ON reply_author.id=reply_parent.author_id
  LEFT JOIN rooms watched_corner ON watched_corner.id=m.room_id AND c.reason='watched_corner'
  LEFT JOIN room_choices choice ON choice.id::text=m.card->>'choiceId' AND choice.room_id=c.room_id
  LEFT JOIN messages choice_message ON choice_message.id=choice.message_id
@@ -1065,6 +1071,8 @@ export async function readAgentCommands(
         systemEvent: r.system_event,
         ...(r.reply_to_message_id ? { replyToMessageId: r.reply_to_message_id } : {}),
         ...(r.reply_to_author_id ? { replyToAuthorId: r.reply_to_author_id } : {}),
+        ...(r.reply_to_author_name ? { replyToAuthorName: r.reply_to_author_name } : {}),
+        ...(r.reply_to_excerpt !== null ? { replyToExcerpt: boundReplyExcerpt(r.reply_to_excerpt) } : {}),
       },
     })),
   };

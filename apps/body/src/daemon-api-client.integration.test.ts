@@ -87,6 +87,26 @@ describe('daemon API client against the local monolith', () => {
     });
   };
 
+  it.each(['createRoomSchedule', 'updateRoomSchedule'])(
+    'Reproduction schedules-13-removal: rejects removed phone operation %s',
+    async (operation) => {
+      const token = await auth.exchangeGitHubOidc('schedule-removal');
+      const response = await fetch(`${origin}/v1/phone/operations/${operation}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token.accessToken}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ roomId: ROOM }),
+      });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: 'unknown_phone_operation' });
+      console.log(
+        `Demonstrated schedules-13-removal: ${operation} returned 404 unknown_phone_operation`,
+      );
+    },
+  );
+
   it("reads an agent reply's tags from its text and the Room roster", async () => {
     const exchange = await auth.createDaemonExchange(AGENT);
     const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
@@ -1534,7 +1554,6 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       });
       const daemonToken = (await daemonGrant.json()) as { daemonToken: string };
       const api = new DaemonApiClient(origin, daemonToken.daemonToken, AGENT);
-      const phoneToken = await auth.exchangeGitHubOidc('schedule-proof');
       const configPath = join(supervisorRoot, 'schedule-runtime.json');
       const runtime: AgentRuntimeRecord = {
         version: 2,
@@ -1609,23 +1628,21 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       try {
         await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 5_000 });
         const startsAt = Math.floor(Date.now() / 1_000) + 60;
-        const response = await fetch(`${origin}/v1/phone/operations/createRoomSchedule`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${phoneToken.accessToken}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            workspaceId: WORKSPACE,
-            roomId: ROOM,
-            agentId: AGENT,
-            cadence: { kind: 'interval', everyMinutes: 60, startsAt },
-            message: 'Reply with exactly: SCHEDULE PROOF COMPLETE',
-          }),
-        });
-        expect(response.status).toBe(200);
-        const schedule = (await response.json()) as { id: string; nextRunAt: number };
-        expect(schedule.nextRunAt).toBe(startsAt);
+        const schedule = { id: '44444444-4444-4444-8444-444444444444' };
+        await database.query(
+          `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+           VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,to_timestamp($8))`,
+          [
+            schedule.id,
+            WORKSPACE,
+            ROOM,
+            AGENT,
+            HUMAN,
+            JSON.stringify({ kind: 'interval', everyMinutes: 60, startsAt }),
+            'Reply with exactly: SCHEDULE PROOF COMPLETE',
+            startsAt,
+          ],
+        );
 
         let requestId = '';
         let reply = '';

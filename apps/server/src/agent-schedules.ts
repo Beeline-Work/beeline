@@ -169,7 +169,7 @@ export class AgentScheduleLoop {
             verb: 'skipped a run',
             consequence: `run ${shortRunId(live.runId)} is still live at ${live.state}`,
           });
-          await this.advance(database, current, now);
+          await this.advance(database, current, now, false);
           return current.room_id;
         }
         // A schedule created by the target agent itself must not be authored by
@@ -221,7 +221,7 @@ export class AgentScheduleLoop {
           sourceMessageId: messageId,
           reason: 'schedule',
         });
-        await this.advance(database, current, now);
+        await this.advance(database, current, now, true);
         return current.room_id;
       });
       if (!roomId) continue;
@@ -231,16 +231,23 @@ export class AgentScheduleLoop {
     return posted;
   }
 
-  private async advance(database: SqlDatabase, current: DueSchedule, now: Date): Promise<void> {
-    const finished = current.max_runs !== null && current.run_count + 1 >= current.max_runs;
+  private async advance(
+    database: SqlDatabase,
+    current: DueSchedule,
+    now: Date,
+    started: boolean,
+  ): Promise<void> {
+    const increment = started ? 1 : 0;
+    const finished =
+      started && current.max_runs !== null && current.run_count + increment >= current.max_runs;
     if (finished) {
       await database.query(`DELETE FROM agent_schedules WHERE id=$1`, [current.id]);
       return;
     }
     const next = nextScheduleOccurrence(current.cadence, now, current.next_run_at);
     await database.query(
-      `UPDATE agent_schedules SET next_run_at=$2,run_count=run_count+1,updated_at=now() WHERE id=$1`,
-      [current.id, next],
+      `UPDATE agent_schedules SET next_run_at=$2,run_count=run_count+$3,updated_at=now() WHERE id=$1`,
+      [current.id, next, increment],
     );
   }
 

@@ -1,3 +1,4 @@
+import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { ROOM_WEBHOOK_SCHEMA } from './room-webhooks.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
 import { workflowBackfillOnce } from './migrations/workflow-cleanup.js';
@@ -1675,12 +1676,12 @@ CREATE TABLE IF NOT EXISTS workflow_owner_transfers (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS workflow_owner_transfers_room_idx ON workflow_owner_transfers(room_id);
-UPDATE agent_schedules schedule SET workflow_slug=skill.slug
-FROM workspace_skills skill
-WHERE skill.workspace_id=schedule.workspace_id AND skill.kind='workflow'
-  AND schedule.workflow_slug IS NULL
-  AND (schedule.message ~ ('(?i)(start_workflow|start workflow|workflow)[[:space:]]+["\`]?' || skill.slug || '([[:space:][:punct:]]|$)')
-    OR schedule.message ~ ('(?i)\\m' || skill.slug || '["\`]?[[:space:]]+workflow\\M'));
+WITH resolved AS (
+  SELECT schedule.id,${scheduleWorkflowSlugSql('schedule.workspace_id', 'schedule.message')} slug
+  FROM agent_schedules schedule WHERE schedule.workflow_slug IS NULL
+)
+UPDATE agent_schedules schedule SET workflow_slug=resolved.slug
+FROM resolved WHERE schedule.id=resolved.id AND resolved.slug IS NOT NULL;
 CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(next_run_at, id);
 CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, created_at, id);
 CREATE INDEX IF NOT EXISTS agent_schedules_workspace_idx ON agent_schedules(workspace_id);

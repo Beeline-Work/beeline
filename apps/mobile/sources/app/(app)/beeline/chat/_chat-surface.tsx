@@ -289,7 +289,6 @@ import {
 import {
   GitHubEventCard,
   DaemonFactCard,
-  NotificationLifecycleCard,
   GrantRequestCard,
   SquireApprovalCard,
   ConnectorOfferCard,
@@ -5686,16 +5685,6 @@ export function BuzzChatSurface({
         return null;
       }
 
-      if (item.notificationLifecycleRun) {
-        return (
-          <NotificationLifecycleCard
-            message={item}
-            onOpenCorner={openCorner}
-            onOpenUrl={handleOpenGitHubEvent}
-          />
-        );
-      }
-
       if (item.githubEvent) {
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
@@ -5736,7 +5725,6 @@ export function BuzzChatSurface({
             id={item.id}
             text={item.text}
             {...(item.systemEvent ? { event: item.systemEvent } : {})}
-            {...(item.systemSubjects ? { subjects: item.systemSubjects } : {})}
             stamp={ledgerStamp(item.timestamp)}
             onOpenIdentity={handleOpenSystemIdentity}
             onOpenUrl={handleOpenGitHubEvent}

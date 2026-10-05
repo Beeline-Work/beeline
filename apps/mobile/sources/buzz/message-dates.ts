@@ -89,7 +89,6 @@ function hasTranscriptByline(message: ChatDisplayMessage): boolean {
     message.cornerApp ||
     message.relay ||
     message.corner ||
-    message.notificationLifecycleRun ||
     message.githubEvent ||
     message.daemonFact ||
     message.isArchivedNotice ||

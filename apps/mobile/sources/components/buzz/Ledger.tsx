@@ -741,8 +741,6 @@ export function LedgerSystemLine({
   id,
   text,
   event,
-  subjects,
-  summaryItems,
   stamp,
   onOpenIdentity,
   onOpenUrl,
@@ -751,15 +749,12 @@ export function LedgerSystemLine({
   id: string;
   text: string;
   event?: SystemEvent;
-  subjects?: readonly SystemSubject[];
-  summaryItems?: readonly { id: string; title: string; url?: string }[];
   stamp: string;
   onOpenIdentity?: (identityId: string) => void;
   onOpenUrl?: (url: string) => void;
   /** Opens the corner's latest brief; a revision notice links to it. */
   onOpenBrief?: () => void;
 }) {
-  const names = event ? (subjects?.length ? subjects : [event.subject]) : [];
   const name = (subject: SystemSubject, index: number) => (
     <Text
       key={`${subject.id ?? subject.name}-${index}`}
@@ -772,11 +767,7 @@ export function LedgerSystemLine({
   );
   const spans: React.ReactNode[] = [];
   if (event) {
-    names.forEach((subject, index) => {
-      if (index > 0) spans.push(index === names.length - 1 ? ' and ' : ', ');
-      spans.push(name(subject, index));
-    });
-    spans.push(names.length ? ` ${event.verb}` : event.verb);
+    spans.push(name(event.subject, 0), ` ${event.verb}`);
     const object = event.object;
     if (object?.text) {
       spans.push(' ');
@@ -832,20 +823,6 @@ export function LedgerSystemLine({
       <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`system-line-stamp-${id}`}>
         {stamp}
       </Text>
-      {summaryItems ? (
-        <View style={styles.systemLineItems}>
-          {summaryItems.map((item) => (
-            <Text
-              key={item.id}
-              style={item.url ? styles.systemLineLink : styles.systemLineText}
-              onPress={item.url && onOpenUrl ? () => onOpenUrl(item.url!) : undefined}
-              testID={`github-lifecycle-item-${item.id}`}
-            >
-              {item.title}
-            </Text>
-          ))}
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -1108,10 +1085,6 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.buzz.proseRegular,
     color: theme.buzz.ledgerBody,
     textDecorationLine: 'underline',
-  },
-  systemLineItems: {
-    marginTop: theme.buzz.space.xs,
-    gap: theme.buzz.space.xs,
   },
   roomUpdateDigest: {
     ...theme.buzz.type.meta,

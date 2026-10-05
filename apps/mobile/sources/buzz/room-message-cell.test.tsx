@@ -222,7 +222,6 @@ describe('RoomMessageCell', () => {
       text: 'New fact',
       isUser: false,
       timestamp: 1,
-      foldedIds: ['host', 'first-new'],
     };
     const render: RoomMessageRenderer = (item) =>
       React.createElement('message-row', { id: item.id });

@@ -15,10 +15,7 @@ import { TranscriptCard } from '../sources/components/buzz/TranscriptCard';
 import { MonoMarkdown } from '../sources/components/buzz/MonoMarkdown';
 import { WelcomeCards } from '../sources/components/buzz/WelcomeCards';
 import { ArtifactCard } from '../sources/components/buzz/ArtifactCard';
-import {
-  AppSignInCard,
-  NotificationLifecycleCard,
-} from '../sources/app/(app)/beeline/chat/RoomMessageVariants';
+import { AppSignInCard } from '../sources/app/(app)/beeline/chat/RoomMessageVariants';
 import WorkflowsScreen from '../sources/app/(app)/beeline/settings/workflows';
 import TextSelectionScreen from '../sources/app/(app)/text-selection';
 import { Typography } from '../sources/constants/Typography';
@@ -163,7 +160,7 @@ function Board() {
   );
 }
 
-/** Class 5: the artifact, connector and notification cards on the TranscriptCard frame. */
+/** Class 5: the artifact and connector cards on the TranscriptCard frame. */
 function Frames() {
   return (
     <Canvas>
@@ -200,24 +197,6 @@ function Frames() {
             canConnect
             onConnect={() => undefined}
             busy={false}
-          />
-        </Section>
-      </View>
-      <View>
-        <Section title="5 · Notification card on the TranscriptCard frame">
-          <NotificationLifecycleCard
-            message={message({
-              notificationLifecycleRun: {
-                headline: 'Check 2 passed',
-                subline: '11:07 – 11:07',
-                items: [
-                  { id: 'build', title: 'Build', state: 'Checks passed', kindLine: 'check', kind: 'check' },
-                  { id: 'lint', title: 'Lint', state: 'Checks passed', kindLine: 'check', kind: 'check' },
-                ],
-              },
-            })}
-            onOpenCorner={() => undefined}
-            onOpenUrl={() => undefined}
           />
         </Section>
       </View>

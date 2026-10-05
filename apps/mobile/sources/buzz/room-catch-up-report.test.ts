@@ -26,7 +26,7 @@ describe('the catch-up report', () => {
     const messages = [
       said('read-0', 'Sol', 0),
       said('new-0', 'Sol', 10),
-      { ...said('new-1', 'Nerd', 30), foldedIds: ['new-1', 'new-1-fact'] },
+      { ...said('new-1', 'Nerd', 30), relayReports: [said('new-1-fact', 'Nerd', 31)] },
       said('new-2', 'Sol', 102),
     ];
     const report = buildCatchUpReport({

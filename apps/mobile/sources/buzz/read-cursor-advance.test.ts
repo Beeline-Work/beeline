@@ -28,8 +28,8 @@ describe('newestVisibleMessageId', () => {
     expect(newestVisibleMessageId(TRANSCRIPT, [TRANSCRIPT[2]!, TRANSCRIPT[0]!])).toBe('c');
   });
 
-  it('credits every durable id a folded row carries', () => {
-    const folded = [row('a'), row('b', { foldedIds: ['b1', 'b2'] })];
+  it('credits every durable relay report a host row carries', () => {
+    const folded = [row('a'), row('b', { relayReports: [row('b1'), row('b2')] })];
     expect(newestVisibleMessageId(folded, [folded[1]!])).toBe('b2');
   });
 

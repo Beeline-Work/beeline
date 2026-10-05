@@ -17,14 +17,12 @@ import {
   ROOM_VIEW_MESSAGE_LIMIT,
   ROOM_VIEW_TOOL_ROW_LIMIT,
   type SystemEvent,
-  type SystemSubject,
 } from '@beeline/api-contract/phone';
 import type { AgentActivityItem } from '@/sync/transport';
 import type { DisplayableAgent } from '@/buzz/agent-display';
 import type { CornerSummary } from '@/buzz/corners';
 import type { CornerState } from '@beeline/api-contract/phone';
 import { cornerName } from '@/buzz/corners';
-import type { NotificationLifecycleRun } from '@/buzz/system-lines';
 
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
 export type CornerProcessState = 'live' | 'suspended' | 'waiting-for-slot';
@@ -290,12 +288,6 @@ export type ChatDisplayMessage = {
   deleted?: boolean;
   /** The server-phrased event behind a system line or card header (`buzz/system-lines.ts`). */
   systemEvent?: SystemEvent;
-  /** Every subject of a folded run of system lines, oldest first. */
-  systemSubjects?: SystemSubject[];
-  /** The ids of every row folded into this one. */
-  foldedIds?: string[];
-  /** A render-time-only run of adjacent repository notification cards. */
-  notificationLifecycleRun?: NotificationLifecycleRun;
   isAgentAuthor?: boolean;
   isAgentActivity?: boolean;
   isAgentLiveTurn?: boolean;

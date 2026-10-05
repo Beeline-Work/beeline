@@ -1314,29 +1314,16 @@ describe('full system notices', () => {
   it('renders native recovery text and every detail without line caps or expansion', () => {
     const text =
       'Ruby could not answer · the helper could not authenticate with Claude. Its owner can run beeline connect on its machine.';
-    const items = Array.from({ length: 5 }, (_, index) => ({
-      id: String(index),
-      title: `Full lifecycle detail ${index}`,
-    }));
     const renderer = render(
       React.createElement(LedgerSystemLine, {
         id: 'notice',
         text,
         stamp: '17:14',
-        summaryItems: items,
       }),
     );
     expect(
       renderer.root.findByProps({ testID: 'system-line-text-notice' }).props.numberOfLines,
     ).toBeUndefined();
     expect(renderedText(renderer)).toContain(text);
-    for (const item of items)
-      expect(
-        renderer.root.findByProps({ testID: `github-lifecycle-item-${item.id}` }).props
-          .numberOfLines,
-      ).toBeUndefined();
-    expect(renderer.root.findAllByProps({ testID: 'github-lifecycle-expand-notice' })).toHaveLength(
-      0,
-    );
   });
 });

@@ -85,7 +85,6 @@ describe('system lines on the phone', () => {
       joined('c', '@codex', 6),
     ]);
     expect(folded.map((row) => row.id)).toEqual(['a', 'm', 'b', 'l', 'old', 'c']);
-    expect(folded.every((row) => !row.foldedIds)).toBe(true);
   });
 
   it('keeps repeated notices and all recovery details', () => {
@@ -150,6 +149,4 @@ it('keeps a corner opened from a message out of a folded lifecycle run', () => {
   // Lifecycle notices and a source-message marker retain their own anchors.
   const folded = anchorRelayReports([opened('a', 1), opened('b', 2), opened('m', 3, 'message')]);
   expect(folded.map((m) => m.id)).toEqual(['a', 'b', 'm']);
-  expect(folded.every((row) => !row.notificationLifecycleRun)).toBe(true);
-  expect(folded[1]!.notificationLifecycleRun).toBeUndefined();
 });

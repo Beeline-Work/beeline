@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { anchorRelayReports, formatNotificationHeadlines } from './system-lines';
+import { anchorRelayReports } from './system-lines';
 
 function github(
   id: string,
@@ -56,50 +56,6 @@ function corner(
   };
 }
 
-describe('notification headline grammar', () => {
-  const row = (
-    id: string,
-    state: Parameters<typeof formatNotificationHeadlines>[0][number]['state'],
-    kindLine: string,
-  ) => ({ id, state, kindLine, title: id });
-
-  it('formats a single kind in lifecycle order and omits zeros', () => {
-    expect(
-      formatNotificationHeadlines([
-        row('opened', 'PR opened', 'PR #2'),
-        row('merged-1', 'Merged', 'PR #1'),
-        row('merged-2', 'Merged', 'PR #3'),
-      ]),
-    ).toEqual(['PR 1 opened, 2 merged']);
-  });
-
-  it('orders mixed kinds as PR, Issue, Star, Workflow', () => {
-    expect(
-      formatNotificationHeadlines([
-        row('workflow-failed', 'Failed', 'run #4 · smoke check'),
-        row('star-1', 'Starred', 'star'),
-        row('issue-closed', 'Closed', 'issue'),
-        row('pr-opened', 'PR opened', 'PR #7'),
-        row('workflow-ran', 'Ran', 'workflow'),
-        row('workflow-succeeded', 'Succeeded', 'run #3'),
-        row('star-2', 'Starred', 'star'),
-        row('issue-opened', 'Opened', 'issue'),
-      ]),
-    ).toEqual([
-      'PR 1 opened',
-      'Issue 1 opened, 1 closed',
-      'Star 2',
-      'Workflow 1 ran, 1 succeeded, 1 failed',
-    ]);
-  });
-
-  it('uses the same fold grammar for one row', () => {
-    expect(formatNotificationHeadlines([row('merged', 'Merged', 'corner · PR #1156')])).toEqual([
-      'PR 1 merged',
-    ]);
-  });
-});
-
 function check(
   id: string,
   result: 'started' | 'passed' | 'failed',
@@ -149,8 +105,5 @@ describe('separate lifecycle notifications', () => {
       corner('9', 'worktree-cleaned', '1'),
     ];
     expect(anchorRelayReports(messages)).toEqual(messages);
-    expect(anchorRelayReports(messages).every((message) => !message.notificationLifecycleRun)).toBe(
-      true,
-    );
   });
 });

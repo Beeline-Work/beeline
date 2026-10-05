@@ -100,8 +100,8 @@ describe('new-message boundary', () => {
     expect(boundaryRowIndex(rows, 'missing')).toBe(-1);
   });
 
-  it('resolves and queues a new fact folded into an existing virtualized row', () => {
-    const folded = { ...message('old'), foldedIds: ['old', 'new-fact'] };
+  it('resolves and queues a relay report attached to an existing virtualized row', () => {
+    const folded = { ...message('old'), relayReports: [message('new-fact')] };
     expect(boundaryRowIndex([folded], 'new-fact')).toBe(0);
     expect(messageBoundaryIds(folded)).toEqual(['old', 'new-fact']);
     expect(

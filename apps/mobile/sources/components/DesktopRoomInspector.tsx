@@ -56,7 +56,6 @@ import { LedgerRoomUpdate, LedgerSystemLine, withLedgerDayCaption } from '@/comp
 import {
   DaemonFactCard,
   GitHubEventCard,
-  NotificationLifecycleCard,
   OrdinaryLedgerMessage,
 } from '@/app/(app)/beeline/chat/RoomMessageVariants';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
@@ -419,7 +418,6 @@ function messageMatchesFocus(message: ChatDisplayMessage, focusMessageId: string
 function inspectorMessageKind(message: ChatDisplayMessage) {
   if (message.corner) return 'hidden';
   if (message.roomUpdate) return 'room-update';
-  if (message.notificationLifecycleRun) return 'notification';
   if (message.githubEvent) return 'github';
   if (message.daemonFact) return 'daemon';
   if (message.isSystemNotice) return 'system';
@@ -621,12 +619,6 @@ function CornerCockpit({
       const node =
         kind === 'room-update' ? (
           <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
-        ) : kind === 'notification' ? (
-          <NotificationLifecycleCard
-            message={item}
-            onOpenCorner={onOpenCorner}
-            onOpenUrl={openUrl}
-          />
         ) : kind === 'github' ? (
           <GitHubEventCard message={item} onOpenUrl={openUrl} />
         ) : kind === 'daemon' ? (

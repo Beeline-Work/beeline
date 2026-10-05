@@ -86,7 +86,7 @@ it('Demonstration draft-send-R1: browser composer retains and submits only appen
       '@/components/buzz/corner-brief-viewer':
         'export const openCornerBriefViewer = () => undefined;',
       '@/app/(app)/beeline/chat/RoomMessageVariants':
-        'export const DaemonFactCard = () => null; export const GitHubEventCard = () => null; export const NotificationLifecycleCard = () => null; export const OrdinaryLedgerMessage = () => null;',
+        'export const DaemonFactCard = () => null; export const GitHubEventCard = () => null; export const OrdinaryLedgerMessage = () => null;',
       '@/utils/open-external-url': 'export const openExternalUrl = async () => undefined;',
     };
     const { result, status, stderr } = await runBrowserProof({ entry, mobile, shims, width: 1100 });

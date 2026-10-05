@@ -91,7 +91,7 @@ describe('resource observers in the desktop web renderer', () => {
         '@/components/buzz/corner-brief-viewer': `export const openCornerBriefViewer = () => undefined;`,
         '@/components/buzz/IdentityMark': `export const IdentityMark = () => null;`,
         '@/components/buzz/ConversationComposer': `export const COMPOSER_MAX_INPUT_HEIGHT = 115; export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26; export const ConversationComposer = props => { globalThis.__composer = props; return null; };`,
-        '@/app/(app)/beeline/chat/RoomMessageVariants': `export const DaemonFactCard = () => null; export const GitHubEventCard = () => null; export const NotificationLifecycleCard = () => null; export const OrdinaryLedgerMessage = ({ message }) => <span>{message.text}</span>;`,
+        '@/app/(app)/beeline/chat/RoomMessageVariants': `export const DaemonFactCard = () => null; export const GitHubEventCard = () => null; export const OrdinaryLedgerMessage = ({ message }) => <span>{message.text}</span>;`,
         '@/buzz/desktop-workbench-state': `export const DESKTOP_INSPECTOR_DEFAULT_WIDTH = 400; export const DESKTOP_INSPECTOR_MIN_WIDTH = 320; export const DESKTOP_TRANSCRIPT_MIN_WIDTH = 300;
           export const clampDesktopPaneWidth = (_, width) => width; export const desktopComposerKeyAction = () => null; export const loadDesktopPaneWidth = async () => 400; export const saveDesktopPaneWidth = async () => undefined;`,
       } });

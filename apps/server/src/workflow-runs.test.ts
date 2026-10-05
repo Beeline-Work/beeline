@@ -563,7 +563,7 @@ describe('start_workflow', () => {
     );
   });
 
-  it('shows the full run id on the handoff card: the stored text a human reads carries it verbatim', async () => {
+  it('shows a short run id in start text and keeps the full id in the card', async () => {
     // `messages.text` (not just the structured `card`) is what the mobile app
     // renders for this card: `workflow-handoff` is not a card type
     // `phone-service.ts`'s `toRoomViewMessage` gives a dedicated field, and it
@@ -575,10 +575,11 @@ describe('start_workflow', () => {
       name: 'corner',
       roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER, approver: APPROVER },
     });
-    const row = await database.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [
+    const row = await database.query<{ text: string; card: { runId: string } }>(`SELECT text,card FROM messages WHERE id=$1`, [
       started.runId,
     ]);
-    expect(row.rows[0]?.text).toContain(started.runId);
+    expect(row.rows[0]?.text).toBe(`Impy started workflow corner · run ${started.runId.slice(0, 8)}`);
+    expect(row.rows[0]?.card.runId).toBe(started.runId);
   });
 
   it('rejects start_workflow from an agent currently acting inside an active run of the same workflow, naming the run id', async () => {
@@ -823,12 +824,13 @@ describe('handoff', () => {
     expect(result.state).toBe('checks');
     expect(await pendingCommandsFor(IMPLEMENTER)).toBeGreaterThan(0);
     // The handoff card's stored text (what the mobile app renders for it,
-    // same fallback as the start card) carries the full run id too.
-    const rows = await database.query<{ text: string }>(
-      `SELECT text FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1 ORDER BY created_at DESC LIMIT 1`,
+    // same fallback as the start card) uses a short run id.
+    const rows = await database.query<{ text: string; card: { runId: string } }>(
+      `SELECT text,card FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1 ORDER BY created_at DESC LIMIT 1`,
       [runId],
     );
-    expect(rows.rows[0]?.text).toContain(runId);
+    expect(rows.rows[0]?.text).toBe(`Impy handed off checks · run ${runId.slice(0, 8)} of corner`);
+    expect(rows.rows[0]?.card.runId).toBe(runId);
   });
 
   it('rejects a handoff on a run that has already ended', async () => {
@@ -1238,7 +1240,7 @@ describe('stuck/escalation gates route to the run starter, not a human, when an 
     const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
     const woken = inbox.commands.find((c) => c.source.systemEvent?.verb === 'reached a gate at');
     expect(woken).toBeDefined();
-    expect(woken!.source.body).toContain(runId);
+    expect(woken!.source.body).toContain(`corner run ${runId.slice(0, 8)}`);
     expect(woken!.source.body).toContain('human_approve');
     expect(woken!.source.body).toContain(APPROVER);
   });
@@ -1293,8 +1295,9 @@ describe('stuck/escalation gates route to the run starter, not a human, when an 
     });
     expect((await listRunCard(runId)).roleBindings.closer).toBe(APPROVER);
     const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
-    const woken = inbox.commands.find((c) => c.source.body.includes(runId));
+    const woken = inbox.commands.find((c) => c.source.systemEvent?.verb === 'got no answer at');
     expect(woken).toBeDefined();
+    expect(woken!.source.body).toContain(`list-flow run ${runId.slice(0, 8)}`);
     expect(woken!.source.body).toContain('closer');
     expect(woken!.source.body).toContain(APPROVER);
     expect(woken!.source.body).toContain('provider timeout');

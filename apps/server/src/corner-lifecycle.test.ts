@@ -854,6 +854,7 @@ async function fallback(cornerId: string, online = true) {
 
 it.each(['passing', 'unknown', 'unreachable'])('Reproduction F1-2: ask_human revision resumes %s', async checks => {
   const cornerId = await approved();
+  await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, A]);
   await db.query(`UPDATE messages SET card=jsonb_set(card,'{toState}','"ask_human"') WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId]);
   await db.query(`UPDATE corner_facts SET workflow_state='ask_human',lifecycle=jsonb_set(lifecycle,'{checks}',$2::jsonb) WHERE corner_id=$1`, [cornerId, JSON.stringify(checks === 'unknown' ? 'unknown' : 'passing')]);
   if (checks === 'unreachable') await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
@@ -869,6 +870,7 @@ it('Reproduction F1-7: opener revises a delegated sibling from its own command',
   const command = await commissioned(source);
   const input = { roomId: source, requestId: command.turnRequestId, generationId: 'g1', name: 'Delegate widget', objective: 'Ship the widget', repository: 'owner/widgets', implementer: 'goosy', brief: brief(command.sourceMessageId) };
   const { cornerId } = await daemon.execute('createCorner', input, A);
+  await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, B]);
   const result = await daemon.execute('reviseCornerBrief', { roomId: source, cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 1, brief: { ...input.brief, spec: 'Corrected widget', change: 'Correct scope' } }, A);
   console.info(`Reproduction F1-7: wrong=revision denied; right=revision 2; observed=${result.revision}`);
   expect(result).toMatchObject({ revision: 2, wake: { queued: true, agentId: B } });
@@ -940,15 +942,23 @@ describe('Reproduction S-03: revised briefs use the lifecycle reviewer resolver'
     expect(lock).toBeLessThan(write);
   });
 
-  it.each(['implement', 'checks', 'review'])('reviews a green revision from %s', async (state) => {
+  it.each(['implement', 'checks', 'review', 'land', 'ask_human'])('reviews a green revision from %s', async (state) => {
     const cornerId = state === 'review' ? await inReview() : await open(undefined, 'owner/widgets');
     if (state !== 'review') {
       await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
       if (state === 'checks') await pushToCorner(cornerId, SHA);
       await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [cornerId, JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 7, headSha: SHA } })]);
     }
+    if (state === 'land' || state === 'ask_human') {
+      await db.query(`UPDATE messages SET card=jsonb_set(card,'{toState}',to_jsonb($2::text)) WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId, state]);
+      await db.query(`UPDATE corner_facts SET workflow_state=$2 WHERE corner_id=$1`, [cornerId, state]);
+    }
     expect(await currentState(cornerId)).toBe(state);
-    await revise(cornerId);
+    expect(await revise(cornerId)).toMatchObject({ wake: { queued: true, agentId: B } });
+    expect((await db.query<{ agent_id: string }>(
+      `SELECT command.agent_id FROM agent_commands command JOIN messages note ON note.id=command.source_message_id
+       WHERE command.room_id=$1 AND note.text LIKE '%revised the corner brief%'`, [cornerId],
+    )).rows).toEqual([{ agent_id: B }]);
     expect(await reasons(cornerId, B)).toContain('corner_check');
     expect(await currentState(cornerId)).toBe('review');
   });

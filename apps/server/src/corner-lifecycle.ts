@@ -622,13 +622,14 @@ async function applyEvent(
       return checksReported(db, cornerId, corner, transition, event);
     case 'brief-revised': {
       const resuming = transition.state === 'ask_human';
-      if (corner.lifecycle.checks !== 'passing' && !resuming) return no('checks are not green');
-      if (!transition.allows('brief_revised')) return no('no brief revision review edge');
-      const reviewerAgentId = corner.lifecycle.checks === 'passing' ? await reachableReviewer(
+      const reviewerAgentId = corner.lifecycle.checks === 'passing' && transition.allows('brief_revised') ? await reachableReviewer(
         db, cornerId, corner, event.sourceMessageId, corner.lifecycle.pr?.headSha ?? null, event.authorAgentId,
       ) : undefined;
-      if (!reviewerAgentId && !resuming) return no('no reachable reviewer for the revision');
-      const agentId = reviewerAgentId ?? corner.worker_agent_id;
+      // loadCorner resolves the current worker through cornerImplementerSql.
+      // A revision still commits when that worker cannot take a turn.
+      const agentId = reviewerAgentId ?? (corner.worker_agent_id
+        ? await firstHealthyAgent(db, cornerId, [corner.worker_agent_id])
+        : null);
       if (!agentId) return { ok: true, wake: { queued: false, reason: 'No reachable implementer for the revision' } };
       const command = await createAgentCommand(db, {
         roomId: cornerId,
@@ -639,7 +640,8 @@ async function applyEvent(
         retainDepth: true,
       });
       if (!command) return { ok: true, wake: { queued: false, reason: 'The revision recipient cannot be woken' } };
-      await transition.take(reviewerAgentId ? 'brief_revised' : 'revision_work', { briefRevision: event.revision });
+      if (reviewerAgentId || resuming)
+        await transition.take(reviewerAgentId ? 'brief_revised' : 'revision_work', { briefRevision: event.revision });
       return { ok: true, wake: { queued: true, agentId } };
     }
     case 'checks-pending': {

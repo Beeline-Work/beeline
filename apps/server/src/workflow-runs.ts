@@ -52,6 +52,9 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
  */
 export const WORKFLOW_HANDOFF_CARD_TYPE = 'workflow-handoff';
 
+/** Agent steps pinned before timeouts were required still get a bounded lease. */
+export const WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS = 3600;
+
 /** One agent tried during a state visit, and why it left the step. */
 type TriedAgent = { agentId: string; reason: string };
 
@@ -557,10 +560,11 @@ async function scheduleRunTimer(
     timer: WorkflowTimerKind;
     seconds: number;
     attempt?: number;
+    fireAt?: Date;
   },
 ): Promise<void> {
   await ensureSystemIdentity(db);
-  const fireAt = new Date(Date.now() + input.seconds * 1_000);
+  const fireAt = input.fireAt ?? new Date(Date.now() + input.seconds * 1_000);
   const cadence = {
     kind: 'interval' as const,
     everyMinutes: Math.max(1, Math.ceil(input.seconds / 60)),
@@ -726,17 +730,72 @@ async function dispatchState(
   }
   // A parked handoff state keeps its timer too: when it fires, the engine
   // looks for an eligible agent again and otherwise applies `timeout`.
-  if (isHandoffState(state) && state.timeoutSeconds) {
+  if (isHandoffState(state)) {
     await scheduleRunTimer(db, {
       workspaceId: input.workspaceId,
       roomId: input.roomId,
       runId: input.runId,
       workflowSlug: input.contract.name,
       timer: 'step',
-      seconds: state.timeoutSeconds,
+      seconds: state.timeoutSeconds ?? WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS,
       attempt: input.attempt,
     });
   }
+}
+
+/** Restore missing timers without resetting a live lease or changing its pinned workflow. */
+export async function backfillWorkflowRunTimers(database: SqlDatabase): Promise<number> {
+  const starts = await database.query<{ id: string; room_id: string; created_at: Date }>(
+    `SELECT id,room_id,created_at FROM messages
+     WHERE card_type='workflow-handoff' AND id=card->>'runId'
+       AND card->>'active' IS DISTINCT FROM 'false'`,
+  );
+  let armed = 0;
+  for (const start of starts.rows) {
+    armed += await database.transaction(async (db) => {
+      const scope = await openRun(db, start.room_id, start.id);
+      if (scope.ended) return 0;
+      const deadlineId = workflowTimerId(start.id, 'deadline');
+      const stepId = workflowTimerId(start.id, 'step');
+      const legacyStepId = legacyTimeoutScheduleId(start.id, scope.stateName);
+      const existing = await db.query<{ id: string }>(
+        `SELECT id FROM agent_schedules WHERE id=ANY($1::uuid[])`,
+        [[deadlineId, stepId, legacyStepId]],
+      );
+      const ids = new Set(existing.rows.map((row) => row.id));
+      let changed = 0;
+      if (!ids.has(deadlineId)) {
+        const seconds = scope.contract.deadlineSeconds ?? WORKFLOW_DEFAULT_DEADLINE_SECONDS;
+        await scheduleRunTimer(db, {
+          workspaceId: scope.workspaceId,
+          roomId: scope.roomId,
+          runId: start.id,
+          workflowSlug: scope.run.workflowSlug,
+          timer: 'deadline',
+          seconds,
+          fireAt: new Date(Math.max(Date.now(), start.created_at.getTime() + seconds * 1_000)),
+        });
+        changed++;
+      }
+      if (isHandoffState(scope.state) && !ids.has(stepId) && !ids.has(legacyStepId)) {
+        // Give the current attempt a full lease from recovery, so an old
+        // timestamp cannot expire a step immediately while its agent works.
+        await scheduleRunTimer(db, {
+          workspaceId: scope.workspaceId,
+          roomId: scope.roomId,
+          runId: start.id,
+          workflowSlug: scope.run.workflowSlug,
+          timer: 'step',
+          seconds: scope.state.timeoutSeconds ?? WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS,
+          attempt: attemptOf(scope.run),
+        });
+        changed++;
+      }
+      return changed;
+    });
+  }
+  if (armed) console.log(`backfillWorkflowRunTimers: armed ${armed} missing workflow timer(s)`);
+  return armed;
 }
 
 type CardLine = {

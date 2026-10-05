@@ -1379,6 +1379,25 @@ describe('handoff run-level locking (P0-1)', () => {
     expect(readIndex).toBeGreaterThan(0);
   });
 
+  it('resolves a prefix before locking the canonical run ID and reading its state', async () => {
+    const { runId } = await startedRun();
+    const recording = new RecordingDatabase(database);
+    const command = await commandFor(IMPLEMENTER, runId);
+    const result = await handoff(recording, command, {
+      runId: runId.slice(0, 8), outcome: 'pushed', contents: { summary: 'ready', prUrl: 'proof' },
+    });
+    expect(result.runId).toBe(runId);
+    const lockIndex = recording.calls.findIndex(call => call.sql.includes('pg_advisory_xact_lock'));
+    expect(recording.calls[lockIndex]!.values).toEqual([workflowRunLockKey(runId)]);
+    const stateIndex = recording.calls.findIndex(call => call.sql.includes('ORDER BY (card->>'));
+    expect(stateIndex).toBeGreaterThan(lockIndex);
+    expect(recording.calls[stateIndex]!.values).toContain(runId);
+    expect(await handoff(recording, command, {
+      runId: runId.slice(0, 8), outcome: 'pushed', contents: { summary: 'ready', prUrl: 'proof' },
+    })).toEqual(result);
+    expect((await getWorkflowRun(database, ROOM, runId)).history).toHaveLength(2);
+  });
+
   it("start_workflow locks its freshly minted run id before writing the run's start card", async () => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT)});

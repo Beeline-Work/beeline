@@ -313,12 +313,31 @@ function runEnded(run: WorkflowRunCard, state: WorkflowState | undefined): boole
   return Boolean(run.cancellation || run.status || !state || state.kind === 'terminal');
 }
 
+// The daemon authorizes this Room before lookup; never search outside it.
+async function resolveWorkflowRunId(db: SqlDatabase, roomId: string, runId: string): Promise<string> {
+  if (typeof runId !== 'string' || !runId) throw new Error('runId is required');
+  // Run IDs are 32 random bytes encoded as hex. Keep full-ID callers on the
+  // existing path, including taking the write lock before reading run state.
+  if (runId.length === 64) return runId;
+  if (runId.length < 8) throw new Error('workflow run ID prefixes must contain at least 8 characters');
+  const matches = (await db.query<{ run_id: string }>(
+    `SELECT DISTINCT card->>'runId' AS run_id FROM messages
+     WHERE room_id=$1 AND card_type=$2
+       AND left(card->>'runId',length($3::text))=$3
+     ORDER BY run_id`,
+    [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId],
+  )).rows;
+  if (!matches.length) throw new Error('workflow run is unavailable in this Room');
+  if (matches.length > 1) throw new Error(`workflow run ID prefix is ambiguous: ${matches.map(row => row.run_id).join(', ')}`);
+  return matches[0]!.run_id;
+}
+
 export async function getWorkflowRun(
   db: SqlDatabase,
   roomId: string,
   runId: string,
 ): Promise<WorkflowRunReadResult> {
-  if (typeof runId !== 'string' || !runId) throw new Error('runId is required');
+  runId = await resolveWorkflowRunId(db, roomId, runId);
   const rows = (await db.query<{ id: string; author_id: string; created_at: Date; card: WorkflowRunCard }>(
     `SELECT id,author_id,created_at,card FROM messages
      WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$3
@@ -489,6 +508,7 @@ async function lockWorkflowRun(db: SqlDatabase, runId: string): Promise<void> {
 
 /** Lock the run, then read its newest card and pinned contract. */
 async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<RunScope> {
+  runId = await resolveWorkflowRunId(db, roomId, runId);
   await lockWorkflowRun(db, runId);
   const room = (
     await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [roomId])
@@ -1157,6 +1177,7 @@ export async function cancelWorkflowRun(
     throw new Error('cancellation reason must contain 1-4000 characters');
   return database.transaction(async (db) => {
     const scope = await openRun(db, command.room_id, input.runId);
+    input = { ...input, runId: scope.runId };
     const { run } = scope;
     const actorId = await authorizeRunControl(db, command, run, 'cancel this run');
     if (scope.ended) throw new Error('this workflow run has already ended');
@@ -1274,9 +1295,10 @@ export async function handoff(
   if (input.attempt !== undefined && (!Number.isSafeInteger(input.attempt) || input.attempt < 0))
     throw new Error('attempt must be a whole number from the run wake');
   return database.transaction(async (db) => {
-    // First statement, before any read: serializes this run's whole
-    // read-validate-write critical section against every other writer.
+    // Resolve prefixes before locking, then serialize the run's state reads
+    // and writes against every other writer on the canonical ID.
     const scope = await openRun(db, command.room_id, input.runId);
+    input = { ...input, runId: scope.runId };
     const { run, stateName } = scope;
     const current = attemptOf(run);
     let attempt =

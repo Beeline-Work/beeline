@@ -163,3 +163,83 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
     expect(archived.body).toEqual({ slug: name, archived: true });
   });
 });
+
+describe('Reproduction run-id-prefix: authenticated run lookup and control', () => {
+  async function started() {
+    const { context, name } = await savedWorkflow();
+    const result = await call(SAVER, 'startWorkflow', { ...context, name, roleBindings: { worker: WORKER } });
+    expect(result.status).toBe(200);
+    return result.body.runId as string;
+  }
+
+  it.each(['getWorkflowRun', 'handoff', 'cancelWorkflowRun', 'assignWorkflowRole'])(
+    'resolves a unique eight-character prefix for %s and returns the canonical ID', async (operation) => {
+      const runId = await started();
+      const context = operation === 'handoff' ? await turn(REQUESTER, WORKER) : await turn(REQUESTER);
+      const agent = operation === 'handoff' ? WORKER : SAVER;
+      const result = await call(agent, operation, { ...context, runId: runId.slice(0, 8),
+        ...(operation === 'handoff' ? { outcome: 'done', contents: {}, attempt: 0 } : {}),
+        ...(operation === 'cancelWorkflowRun' ? { reason: 'Prefix proof' } : {}),
+        ...(operation === 'assignWorkflowRole' ? { role: 'worker', targetAgentId: DELEGATE } : {}),
+      });
+      console.log('Reproduction run-id-prefix:', operation, JSON.stringify({ status: result.status, runId: result.body.runId, state: result.body.state, error: result.body.error }));
+      expect(result.status, JSON.stringify(result.body)).toBe(200);
+      expect(result.body.runId).toBe(runId);
+      const read = await call(SAVER, 'getWorkflowRun', { roomId: ROOM, runId });
+      expect(read.status).toBe(200);
+      expect(read.body.runId).toBe(runId);
+      if (operation === 'handoff') expect(read.body.status).toBe('done');
+      if (operation === 'cancelWorkflowRun') expect(read.body.status).toBe('abandoned');
+      if (operation === 'assignWorkflowRole') expect(read.body.boundAgentId).toBe(DELEGATE);
+    });
+
+  it('rejects short and ambiguous prefixes and excludes other Rooms and workspaces', async () => {
+    const runId = await started();
+    const prefix = runId.slice(0, 8);
+    const second = prefix + (runId[8] === 'a' ? 'b' : 'a') + runId.slice(9);
+    const hidden = prefix + 'f'.repeat(56);
+    const foreignWorkspace = randomUUID(), foreignRoom = randomUUID();
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hidden')`, [foreignWorkspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Hidden')`, [foreignRoom, foreignWorkspace]);
+    for (const [id, room] of [[second, ROOM], [hidden, foreignRoom]]) await db.query(
+      `INSERT INTO messages(id,room_id,author_id,card_type,card,text)
+       SELECT $1,$2,author_id,card_type,jsonb_set(card,'{runId}',to_jsonb($1::text)),text FROM messages WHERE id=$3`,
+      [id, room, runId]);
+    const context = await turn(REQUESTER);
+    for (const operation of ['getWorkflowRun', 'handoff', 'cancelWorkflowRun', 'assignWorkflowRole']) {
+      const before = await runSnapshot(runId);
+      const extra = { outcome: 'done', contents: {}, reason: 'Stop', role: 'worker', targetAgentId: DELEGATE };
+      const ambiguous = await call(SAVER, operation, { ...context, ...extra, runId: prefix });
+      expect(ambiguous.status).toBeGreaterThanOrEqual(400);
+      const error = JSON.stringify(ambiguous.body);
+      expect(error).toContain('ambiguous');
+      expect(error).toContain(runId);
+      expect(error).toContain(second);
+      expect(error).not.toContain(hidden);
+      const short = await call(SAVER, operation, { ...context, ...extra, runId: prefix.slice(0, 7) });
+      expect(short.status).toBeGreaterThanOrEqual(400);
+      expect(JSON.stringify(short.body)).toContain('at least 8 characters');
+      const unavailable = await call(SAVER, operation, { ...context, ...extra, runId: hidden.slice(0, 12) });
+      expect(JSON.stringify(unavailable.body)).toContain('unavailable in this Room');
+      expect(JSON.stringify(unavailable.body)).not.toContain(hidden);
+      expect(await runSnapshot(runId)).toEqual(before);
+    }
+    const exactDespiteAmbiguity = await call(SAVER, 'getWorkflowRun', { roomId: ROOM, runId });
+    expect(exactDespiteAmbiguity.status).toBe(200);
+    expect(exactDespiteAmbiguity.body.runId).toBe(runId);
+    await db.query(`DELETE FROM messages WHERE id=$1`, [second]);
+    const uniqueDespiteHidden = await call(SAVER, 'getWorkflowRun', { roomId: ROOM, runId: prefix });
+    expect(uniqueDespiteHidden.status).toBe(200);
+    expect(uniqueDespiteHidden.body.runId).toBe(runId);
+    const deniedControl = await call(DELEGATE, 'cancelWorkflowRun', { ...await turn(OUTSIDER, DELEGATE), runId: prefix, reason: 'Not authorized' });
+    expect(deniedControl.status).toBe(403);
+    const longer = await call(SAVER, 'getWorkflowRun', { roomId: ROOM, runId: runId.slice(0, 9) });
+    expect(longer.status).toBe(200);
+    expect(longer.body.runId).toBe(runId);
+    const otherRoom = await call(SAVER, 'getWorkflowRun', { roomId: OTHER_ROOM, runId: prefix });
+    expect(JSON.stringify(otherRoom.body)).toContain('unavailable in this Room');
+    const deniedRoom = await call(SAVER, 'getWorkflowRun', { roomId: foreignRoom, runId: prefix });
+    expect(deniedRoom.status).toBe(403);
+    expect(JSON.stringify(deniedRoom.body)).not.toContain(hidden);
+  });
+});

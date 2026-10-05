@@ -446,7 +446,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
     description: 'Read any saved workflow run in this Room by its runId. Returns its pinned contract and version, current state, role and bound agent, allowed outcomes with next states, required fields, receipt hint, and handoff history. Use this before handoff; the saved workflow or repository copy may have changed since this run started.',
     inputSchema: {
       type: 'object',
-      properties: { runId: { type: 'string' } },
+      properties: { runId: { description: 'Full run ID or a unique prefix of at least 8 characters in this Room', type: 'string' } },
       required: ['runId'],
       additionalProperties: false,
     },
@@ -456,7 +456,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
     description: 'End an active saved workflow run with a recorded reason and no further wakes. Authorized only on behalf of the active turn requester when they requested the run, own a bound role agent, or administer the Room. Cancels the run timeout, pending workflow wakes and open gate. Archiving a workflow does not cancel its runs.',
     inputSchema: {
       type: 'object',
-      properties: { runId: { type: 'string' }, reason: { type: 'string', minLength: 1, maxLength: 4000 } },
+      properties: { runId: { description: 'Full run ID or a unique prefix of at least 8 characters in this Room', type: 'string' }, reason: { type: 'string', minLength: 1, maxLength: 4000 } },
       required: ['runId', 'reason'],
       additionalProperties: false,
     },
@@ -471,7 +471,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       type: 'object',
       required: ['runId', 'outcome', 'contents'],
       properties: {
-        runId: { type: 'string', minLength: 1, maxLength: 128 },
+        runId: { description: 'Full run ID or a unique prefix of at least 8 characters in this Room', type: 'string', minLength: 1, maxLength: 128 },
         outcome: { type: 'string', minLength: 1, maxLength: 64 },
         contents: { type: 'object' },
         attempt: { type: 'integer', minimum: 0 },
@@ -515,7 +515,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       type: 'object',
       required: ['runId', 'role', 'agentId'],
       properties: {
-        runId: { type: 'string', minLength: 1, maxLength: 128 },
+        runId: { description: 'Full run ID or a unique prefix of at least 8 characters in this Room', type: 'string', minLength: 1, maxLength: 128 },
         role: { type: 'string', minLength: 1, maxLength: 64 },
         agentId: { type: 'string', minLength: 1, maxLength: 64 },
       },

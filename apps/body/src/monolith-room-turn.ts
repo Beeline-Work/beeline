@@ -1,3 +1,4 @@
+import { isWebhookKind, quoteOutsideData } from '@beeline/api-contract/daemon';
 import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
@@ -273,6 +274,7 @@ export function inboxItemPromptBody(item: {
   body: string;
   systemEvent?: SystemEvent;
 }): string {
+  if (isWebhookKind(item.systemEvent?.kind)) return quoteOutsideData(item.systemEvent.kind, item.systemEvent.payload);
   return isScheduledPrompt(item) ? (item.systemEvent?.consequence ?? item.body) : item.body;
 }
 
@@ -281,13 +283,13 @@ export function inboxItemPromptBody(item: {
  * posted pauses the turn: the person's answer on that card resumes it (a
  * `grant-decided` or `connector-offer-decided` RESUME kind).
  */
-type PendingCardKind = 'grant' | 'connector';
+type PendingCardKind = 'grant' | 'connector' | 'webhook';
 function pendingCardKind(call: { title?: string; content?: unknown }): PendingCardKind | undefined {
-  const kind = /(?:^|[._:/-])(request_grant|offer_connector)$/i.exec(call.title ?? '')?.[1];
+  const kind = /(?:^|[._:/-])(request_grant|offer_connector|request_webhook)$/i.exec(call.title ?? '')?.[1];
   if (!kind || !/(?:pending|already offered), card (?:posted|still open)/i.test(
     typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? ''),
   )) return undefined;
-  return kind.toLowerCase() === 'request_grant' ? 'grant' : 'connector';
+  return kind.toLowerCase() === 'request_webhook' ? 'webhook' : kind.toLowerCase() === 'request_grant' ? 'grant' : 'connector';
 }
 
 export function pendingGrantToolCall(call: { title?: string; content?: unknown }): boolean {
@@ -329,6 +331,9 @@ export function deviceGrantResumePrompt(device: string, earlierReply: string): s
  * on with the work that needed the tool, not to look for a grant verdict.
  */
 export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }): string {
+  if (item.systemEvent?.kind === 'webhook-request-decided') {
+    return `${item.body}. Your webhook request has settled. If approved, use the URL delivered in this resume to configure the sender; it is shown once. Never repeat the URL in a Room reply.`;
+  }
   if (item.systemEvent?.kind === 'squire-approval-decided') {
     return [
       `This is Trusty Squire's answer to the approval you were waiting on: ${item.body}.`,
@@ -1458,7 +1463,8 @@ export class MonolithRoomTurnLoop {
               const decisionResume = grantDecision &&
                 command.turnRequestId === this.pausedOnGrantRequestId &&
                 ((decisionKind === 'grant-decided' && this.pausedOnGrantKind === 'grant') ||
-                  (decisionKind === 'connector-offer-decided' && this.pausedOnGrantKind === 'connector'));
+                  (decisionKind === 'connector-offer-decided' && this.pausedOnGrantKind === 'connector') ||
+                  (decisionKind === 'webhook-request-decided' && this.pausedOnGrantKind === 'webhook'));
               const resumedRequestId = decisionResume ? this.pausedOnGrantRequestId : undefined;
               if (decisionResume) {
                 this.pausedOnGrantRequestId = undefined;
@@ -1506,6 +1512,7 @@ export class MonolithRoomTurnLoop {
                   closedCorners,
                   task: {
                     fromName: inboxItemAuthorName(item, names),
+                    outsideEvent: this.commandContext.current?.source.systemEvent,
                     ...(item.cornerAskId ? { cornerAskId: item.cornerAskId } : {}),
                     body: roomMessagePrompt(
                       '',

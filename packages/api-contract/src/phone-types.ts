@@ -1,3 +1,4 @@
+import type { WebhookRequestCard } from './room-webhooks.js';
 import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './agent-grants.js';
 import type { ChoiceMode, ChoiceOptionView, ChoiceStatus } from './room-choices.js';
@@ -275,6 +276,7 @@ export type RoomViewMessage = {
   };
   /** One grant card: the agent asks its owner; several asks in one turn share a card. */
   readonly grantRequest?: GrantRequestCardView;
+  readonly webhookRequest?: WebhookRequestCard;
   /** One Squire-owned approval page relayed into the owner's connector DM.
    * Beeline presents the link but never decides the request. */
   readonly squireApproval?: SquireApprovalCardView;

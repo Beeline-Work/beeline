@@ -52,6 +52,7 @@ export interface SystemLineInput {
    * kind is one nothing subscribes to.
    */
   readonly kind?: SystemEventKind;
+  readonly payload?: unknown;
   readonly object?: string | SystemObject;
   readonly consequence?: string;
   /** A second named actor in the consequence slot (currently the inviter on a join). */
@@ -189,7 +190,7 @@ export interface SystemLineResult {
 
 export type SystemPhrase = Pick<
   SystemLineInput,
-  'subject' | 'verb' | 'object' | 'consequence' | 'attribution' | 'kind'
+  'subject' | 'verb' | 'object' | 'consequence' | 'attribution' | 'kind' | 'payload'
 >;
 
 const CLEAN = /[\s ]+/g;
@@ -218,6 +219,7 @@ export function composeSystemLine(phrase: SystemPhrase): { text: string; event: 
     ...(object && object.text ? { object } : {}),
     ...(consequence ? { consequence } : {}),
     ...(phrase.kind ? { kind: phrase.kind } : {}),
+    ...(phrase.kind?.startsWith('webhook:') ? { payload: phrase.payload } : {}),
   };
   // The kind never reaches the text: `formatSystemLine` reads subject, verb,
   // object and consequence, so a line's wording is exactly what it was before

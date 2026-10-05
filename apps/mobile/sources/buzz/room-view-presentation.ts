@@ -356,6 +356,7 @@ export type ChatDisplayMessage = {
   cornerMarkers?: ChatDisplayMessage[];
   /** An agent asking its owner for reach; rendered as the grant card. */
   grantRequest?: NonNullable<RoomViewMessage['grantRequest']>;
+  webhookRequest?: RoomViewMessage['webhookRequest'];
   /** Trusty Squire's own approval page, relayed into its owner DM. */
   squireApproval?: NonNullable<RoomViewMessage['squireApproval']>;
   /** An agent offering to add a Workbench tool it needs (R5); rendered as the offer card. */
@@ -486,6 +487,7 @@ export function displayRoomMessage(
     ...(githubEvent ? { githubEvent } : {}),
     ...(daemonFact ? { daemonFact } : {}),
     ...(message.relay ? { relay: message.relay } : {}),
+    ...(message.webhookRequest ? { webhookRequest: message.webhookRequest } : {}),
     ...(message.grantRequest
       ? {
           grantRequest: {

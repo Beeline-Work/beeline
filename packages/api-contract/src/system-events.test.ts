@@ -104,6 +104,7 @@ describe('the event kinds beside the prose', () => {
       'choice-skipped',
       'poll-closed',
       'workflow-handoff',
+      'webhook-request-decided',
     ]);
     expect(isServerEventKind('joined')).toBe(true);
     expect(isServerEventKind('agent:handoff')).toBe(false);
@@ -131,6 +132,7 @@ describe('the event kinds beside the prose', () => {
       'grant-decided',
       'squire-approval-decided',
       'connector-offer-decided',
+      'webhook-request-decided',
     ]);
     expect(isResumeKind('grant-decided')).toBe(true);
     expect(isResumeKind('squire-approval-decided')).toBe(true);
@@ -173,6 +175,7 @@ describe('the event kinds beside the prose', () => {
       'choice-answered',
       'choice-skipped',
       'poll-closed',
+      'webhook-request-decided',
     ]);
     for (const kind of PER_ITEM_EVENT_KINDS) {
       expect(isPerItemEventKind(kind)).toBe(true);

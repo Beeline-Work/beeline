@@ -1599,6 +1599,7 @@ export class MonolithCornerTurnLoop {
                   task: {
                     ...(sourceMessageId ? { reactionTargetId: sourceMessageId } : {}),
                     body: trigger,
+                    outsideEvent: this.commandContext.current?.source.systemEvent,
                     attachmentLines: attachmentPromptLines(
                       attachments,
                       delivered,

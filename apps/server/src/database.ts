@@ -1,3 +1,4 @@
+import { ROOM_WEBHOOK_SCHEMA } from './room-webhooks.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
 import {
   AGENT_COMMAND_SCHEMA,
@@ -180,7 +181,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 19;
+export const REQUIRED_SCHEMA_VERSION = 20;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2679,6 +2680,7 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await ddlScript('room webhooks', ROOM_WEBHOOK_SCHEMA);
   await ddlScript('github star prompt schema', GITHUB_STAR_PROMPT_SCHEMA);
   await retryMigrationStep('message cursor index', () => createIndexConcurrently(
     database, 'messages_room_cursor_idx',

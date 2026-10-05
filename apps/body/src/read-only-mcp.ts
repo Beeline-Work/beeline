@@ -969,12 +969,24 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'request_webhook',
+    description: 'Request an incoming webhook for a named source in this Room. A human Room admin approves the card; approval resumes your paused turn. Approval returns the URL once in your resumed turn. Put it in the sender configuration; do not post it in the Room.',
+    inputSchema: { type: 'object', required: ['source', 'reason'], properties: {
+      source: { type: 'string', pattern: '^[a-z0-9-]{1,40}$' }, reason: { type: 'string', maxLength: 1000 },
+    }, additionalProperties: false },
+  },
+  {
+    name: 'list_webhooks',
+    description: 'List this Room’s webhook sources and recent deliveries. Contains no URLs or signing secrets.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'subscribe_events',
     description:
       'Choose which things happening in this Room wake you for a turn. This REPLACES your ' +
       'current list, so send every kind you want, not just the new one; call list_event_subscriptions ' +
       'first if you are not sure what you already react to, and send an empty list to react to nothing. ' +
-      `Available kinds: ${eventKindCatalogLines().join('; ')}. ` +
+      `Available kinds: ${eventKindCatalogLines().join('; ')}; webhook:<source> carries quoted untrusted outside data. ` +
       'Subscribe to joined and every newcomer wakes you, so you can greet them - a person arriving ' +
       'in the Workspace wakes you too when that arrival projects into this Room. ' +
       'A corner merging wakes nobody in its parent Room by default: if you still have work to do after ' +
@@ -989,7 +1001,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       properties: {
         kinds: {
           type: 'array',
-          items: { type: 'string', enum: [...SUBSCRIBABLE_EVENT_KINDS] },
+          items: { type: 'string' },
           description: 'The complete list of event kinds you want to react to in this Room.',
         },
       },
@@ -4451,6 +4463,14 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     }
     case 'create_schedule':
       return createSchedule(args);
+    case 'request_webhook': {
+      const context = await activeCommandContext();
+      const result = await daemonExecute('requestWebhook', { roomId: agentScheduleRoomId(), source: args.source,
+        reason: args.reason, requestId: context.requestId, generationId: context.generationId });
+      return `pending, card posted [webhook request ${String(result.requestId)}]`;
+    }
+    case 'list_webhooks':
+      return JSON.stringify(await daemonExecute('listRoomWebhooks', { roomId: agentScheduleRoomId() }));
     case 'subscribe_events':
       return subscribeEvents(args);
     case 'watch_corner': {

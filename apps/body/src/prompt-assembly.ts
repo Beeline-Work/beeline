@@ -1,3 +1,4 @@
+import { quoteOutsideData, type SystemEvent } from '@beeline/api-contract/daemon';
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { CornerGitHubCli } from './corner-github-auth.js';
@@ -654,6 +655,7 @@ export interface TurnPromptContext {
     readonly fromName?: string;
     readonly cornerAskId?: string;
     readonly reactionTargetId?: string;
+    readonly outsideEvent?: SystemEvent;
     readonly body: string;
     readonly attachmentLines?: readonly string[];
   };
@@ -822,6 +824,9 @@ export function assembleTurnPrompt(context: TurnPromptContext): {
   readonly text: string;
   readonly report: readonly SectionReport[];
 } {
+  if (context.task.outsideEvent?.kind?.startsWith('webhook:')) {
+    context = { ...context, task: { ...context.task, body: quoteOutsideData(context.task.outsideEvent.kind, context.task.outsideEvent.payload) } };
+  }
   const boundedContext = ROOMS.includes(context.surface)
     ? {
         ...context,

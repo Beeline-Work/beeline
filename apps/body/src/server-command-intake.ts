@@ -195,7 +195,7 @@ export async function runServerCommandIntake(options: {
     while (!signal?.aborted) {
       if (reconciliationError) throw reconciliationError;
       if (options.closed && (await options.closed())) return;
-      for (const command of [...pending.values()]) {
+      for (let command of [...pending.values()]) {
         validateServerCommand(command, roomId, agentId);
         if (busy && command.action !== 'stop' && command.action !== 'restart') continue;
         if (
@@ -222,11 +222,17 @@ export async function runServerCommandIntake(options: {
           for (let attempt = 0; ; attempt += 1) {
             if (signal?.aborted) break;
             try {
-              await api.execute('claimAgentCommand', {
+              const claim = await api.execute('claimAgentCommand', {
                 roomId,
                 commandId: command.id,
                 generationId: context.generationId,
               });
+              if (claim?.webhookResult?.url) {
+                command = { ...command, source: { ...command.source,
+                  body: command.source.body + '\nApproved webhook URL (shown once): ' + claim.webhookResult.url +
+                    (claim.webhookResult.signingSecret ? '\nSigning secret explicitly shared by the approver: ' + JSON.stringify(claim.webhookResult.signingSecret) : ''),
+                } };
+              }
               claimSucceeded = true;
               break;
             } catch (error) {

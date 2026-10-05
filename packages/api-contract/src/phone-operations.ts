@@ -1,3 +1,4 @@
+import type { RoomWebhooksResult } from './room-webhooks.js';
 import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
@@ -72,6 +73,9 @@ export type CornerMergeHold = {
 };
 
 export type PhoneOperationMap = {
+  readRoomWebhooks: { input: { roomId: string }; output: RoomWebhooksResult };
+  manageRoomWebhook: { input: { roomId: string; action: 'create' | 'rotate' | 'revoke' | 'secret'; source?: string; webhookId?: string; signingSecret?: string | null }; output: { url?: string } };
+  decideWebhookRequest: { input: { roomId: string; webhookRequestId: string; approve: boolean; signingSecret?: string; revealSecret?: boolean }; output: { status: string } };
   setCornerHold: { input: CornerHoldInput; output: { holdId: string; roomId: string } };
   readWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
   completeWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };

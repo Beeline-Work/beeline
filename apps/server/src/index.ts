@@ -1,3 +1,4 @@
+import { RoomWebhooks } from './room-webhooks.js';
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { retryMigrationStep } from './migration-retry.js';
@@ -374,6 +375,7 @@ async function main() {
       if (push) await backgroundJobs.run('push', () => push.runIfDue());
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
+      await backgroundJobs.run('webhook-expiry', () => new RoomWebhooks(jobsDatabase).expireRequests());
       // The corner lifecycle's server merge: a `land` handoff card (or a human
       // lifting a hold) is a new message, which wakes this loop.
       if (githubJobs) await backgroundJobs.run('corner-merge-recovery', () => githubJobs.recoverUnfinishedMergeClaims());

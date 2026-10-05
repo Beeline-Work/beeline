@@ -1,3 +1,4 @@
+import { RoomWebhooks, webhookPromptBody } from './room-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
 import { setCornerHold } from './corner-holds.js';
 import { renderAgentAvatar } from './agent-avatar.js';
@@ -19,6 +20,7 @@ import type {
   DaemonAttachment,
   DaemonOperationMap,
   SystemEvent,
+  EventSubscriptionsResult,
 } from '@beeline/api-contract/daemon';
 import {
   CornerVerdictRejectedError,
@@ -386,6 +388,7 @@ export class DaemonService {
       'upgradeCornerLane',
       'postRoomEvent',
       'requestAgentGrant',
+      'requestWebhook',
       'authorizeSquireCall',
       'authorizeResourceCall',
       'authorizeRepositoryCall',
@@ -931,21 +934,21 @@ export class DaemonService {
           scopedRoom!,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'claimAgentCommand':
-        await claimAgentCommand(
-          this.database,
-          scopedRoom!,
-          authenticatedAgentId,
-          String(candidate.commandId),
-          typeof candidate.generationId === 'string' ? candidate.generationId : '',
-        );
-        this.live.publish({
-          type: 'invalidate',
-          roomId: scopedRoom!,
-          reason: 'turn',
-          agentId: authenticatedAgentId,
+      case 'claimAgentCommand': {
+        const webhookResult = await this.database.transaction(async (db) => {
+          const command = await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
+            String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '');
+          if (command.action !== 'resume') return undefined;
+          const source = await db.query<{ system_event: SystemEvent | null }>(
+            `SELECT system_event FROM messages WHERE id=$1`, [command.source_message_id]);
+          const event = source.rows[0]?.system_event;
+          if (event?.kind !== 'webhook-request-decided' || !event.object?.id) return undefined;
+          const result = await new RoomWebhooks(db).takeUrl(scopedRoom!, authenticatedAgentId, event.object.id);
+          return result.url ? { url: result.url, ...(result.signingSecret ? { signingSecret: result.signingSecret } : {}) } : undefined;
         });
-        return this.writeResult() as Output<Name>;
+        this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
+        return { ...this.writeResult(), ...(webhookResult ? { webhookResult } : {}) } as Output<Name>;
+      }
       case 'acknowledgeAgentCommand': {
         const acknowledged = await this.database.query(
           `UPDATE agent_commands SET state='complete',completed_at=now()
@@ -1013,6 +1016,12 @@ export class DaemonService {
           input as Input<'createAgentSchedule'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'requestWebhook': {
+        const i = input as Input<'requestWebhook'>;
+        return await new RoomWebhooks(this.database).request(i.roomId, authenticatedAgentId, i.source, i.reason, this.authorizedCommand!.turn_request_id) as Output<Name>;
+      }
+      case 'listRoomWebhooks':
+        return await new RoomWebhooks(this.database).list((input as Input<'listRoomWebhooks'>).roomId, authenticatedAgentId) as Output<Name>;
       case 'setEventSubscriptions':
         return (await this.setEventSubscriptions(
           input as Input<'setEventSubscriptions'>,
@@ -2681,7 +2690,7 @@ export class DaemonService {
         authorId: row.author_id,
         createdAt: seconds(row.created_at),
         type: row.presentation,
-        body: row.text,
+        body: webhookPromptBody(row.text, row.system_event),
         ...(row.corner_ask_id ? { cornerAskId: row.corner_ask_id } : {}),
         ...(row.agent_author ? { agentAuthor: true } : {}),
         ...(row.reply_to_message_id ? { replyToMessageId: row.reply_to_message_id } : {}),
@@ -4926,15 +4935,15 @@ export class DaemonService {
     const requested = Array.isArray(input.kinds) ? input.kinds : [];
     const perItem = requested.filter(isPerItemEventKind);
     if (perItem.length) throw new Error(perItemSubscriptionRefusal(perItem[0]!));
-    const unknown = requested.filter((kind) => !isServerEventKind(kind));
+    const unknown = requested.filter((kind) => !isSubscribableEventKind(kind));
     if (unknown.length) {
       throw new Error(
         `not an event kind you can subscribe to: ${unknown.join(', ')}. ` +
           `The kinds are ${SUBSCRIBABLE_EVENT_KINDS.join(', ')}.`,
       );
     }
-    const kinds = [...new Set(requested)] as ServerEventKind[];
-    const updated = await this.database.query<{ event_subscriptions: ServerEventKind[] }>(
+    const kinds = [...new Set(requested)] as EventSubscriptionsResult['kinds'];
+    const updated = await this.database.query<{ event_subscriptions: EventSubscriptionsResult['kinds'] }>(
       `UPDATE memberships member
        SET event_subscriptions=CASE WHEN parent.reviewer_agent_id=$2
          AND NOT $3::jsonb @> '["check-passed"]'::jsonb
@@ -7807,6 +7816,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listAgentToolSchedules: true,
   createAgentSchedule: true,
   setEventSubscriptions: true,
+  requestWebhook: true,
+  listRoomWebhooks: true,
   watchCorner: true,
   listEventSubscriptions: true,
   postRoomEvent: true,

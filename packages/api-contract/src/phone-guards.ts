@@ -1103,6 +1103,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('cornerApp', readMessageCornerApp(item.cornerApp)),
     ...field('permission', readPermission(item.permission)),
     ...field('grantRequest', readGrantRequest(item.grantRequest)),
+    ...field('webhookRequest', readWebhookRequest(item.webhookRequest)),
     ...field('squireApproval', readSquireApproval(item.squireApproval)),
     ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
     ...field('appSignIn', readAppSignInCard(item.appSignIn)),
@@ -2032,4 +2033,14 @@ export function readAgentPairingAbandonView(value: unknown): AgentPairingAbandon
 
 export function isAgentPairingAbandonView(value: unknown): value is AgentPairingAbandonView {
   return readAgentPairingAbandonView(value) !== null;
+}
+
+function readWebhookRequest(value: unknown) {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (typeof v.requestId !== 'string' || typeof v.agentId !== 'string' ||
+      typeof v.agentName !== 'string' || typeof v.source !== 'string' || !/^[a-z0-9-]{1,40}$/.test(v.source) ||
+      typeof v.reason !== 'string' || typeof v.expiresAt !== 'number' ||
+      !['pending', 'approved', 'denied', 'expired'].includes(String(v.status))) return undefined;
+  return v as unknown as import('./room-webhooks.js').WebhookRequestCard;
 }

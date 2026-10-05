@@ -1,3 +1,4 @@
+import { RoomWebhooks } from './room-webhooks.js';
 import {
   beginAgentSignInCards,
   AGENT_SIGN_IN_NO_ANSWER_MESSAGE,
@@ -726,6 +727,8 @@ function projectedMessage(
       return { ...base, relay: row.card as NonNullable<RoomViewMessage['relay']> };
     case 'permission':
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
+    case 'webhook-request':
+      return { ...base, webhookRequest: row.card as NonNullable<RoomViewMessage['webhookRequest']> };
     case 'grant-request':
       return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
     case 'squire-approval':
@@ -3639,6 +3642,16 @@ export class PhoneService {
       if (spectator.rowCount) throw new Error('spectator access is read-only (access denied)');
     }
     switch (name) {
+      case 'readRoomWebhooks':
+        return await new RoomWebhooks(this.database, this.publicOrigin).list((input as Input<'readRoomWebhooks'>).roomId, viewerId) as Output<Name>;
+      case 'manageRoomWebhook': {
+        const i = input as Input<'manageRoomWebhook'>;
+        return await new RoomWebhooks(this.database, this.publicOrigin).manage(i.roomId, viewerId, i) as Output<Name>;
+      }
+      case 'decideWebhookRequest': {
+        const i = input as Input<'decideWebhookRequest'>;
+        return await new RoomWebhooks(this.database, this.publicOrigin).decide(i.roomId, viewerId, i.webhookRequestId, i.approve, i.signingSecret, i.revealSecret) as Output<Name>;
+      }
       case 'readWelcomeCards':
         return (await this.readWelcomeCards(viewerId)) as Output<Name>;
       case 'completeWelcomeCards':
@@ -9550,6 +9563,9 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'setCornerHold',
   'decideWritePermission',
   'decideAgentGrant',
+  'readRoomWebhooks',
+  'manageRoomWebhook',
+  'decideWebhookRequest',
   'revokeAgentGrant',
   'acceptConnectorOffer',
   'createRoomPoll',

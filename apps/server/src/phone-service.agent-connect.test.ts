@@ -176,6 +176,19 @@ describe('PhoneService agent connect pairing claim', () => {
     });
   });
 
+  it('projects login only for the owner with a supported harness', async () => {
+    await insertCode(new Date(Date.now() + 60_000));
+    await phone.claimAgentConnectPairing({ code: CODE, agentPubkey: AGENT });
+    const other = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [other]);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'admin')`, [WORKSPACE, other]);
+    for (const harness of ['claude', 'codex', 'pi', 'cursor', 'goose', 'grok', 'opencode', 'unsupported']) {
+      await database.query(`UPDATE agents SET harness=$2 WHERE agent_id=$1`, [AGENT, harness]);
+      expect((await phone.readAgent(WORKSPACE, AGENT, OWNER))?.canLogin).toBe(harness !== 'unsupported');
+      expect((await phone.readAgent(WORKSPACE, AGENT, other))?.canLogin).toBe(false);
+    }
+  });
+
   it('rolls the agent claim back when its daemon exchange cannot be minted', async () => {
     await insertCode(new Date(Date.now() + 60_000));
     await expect(

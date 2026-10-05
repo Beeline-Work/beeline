@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
+import type { CornerBrief } from '@beeline/api-contract/daemon';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient, AcpTurnBackstopError, TURN_BACKSTOP_MS } from './acp.js';
 import type { BodyConfig } from './config.js';
@@ -353,6 +355,7 @@ describe('corner merge instructions', () => {
         if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
         if (name.startsWith('post')) return { id: 'write-id', createdAt: 1 };
         if (name === 'listRoomCorners') return { corners: [] };
+        if (name === 'listCornerBriefRevisions') return { revisions: [] };
         if (name === 'retractAgentLiveOutput') return { id: 'write-id', createdAt: 1 };
         throw new Error(`unexpected operation ${name}`);
       }),
@@ -1156,6 +1159,7 @@ describe('corner close-request delivery', () => {
     liveSubscribe?: DaemonApiClient['liveSubscribe'],
     closePollMs?: number,
     configOverrides?: Partial<BodyConfig>,
+    fetchImpl?: typeof fetch,
     sourceOverrides?: Partial<InboxItem>,
   ) {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-wake-'));
@@ -1192,6 +1196,7 @@ describe('corner close-request delivery', () => {
     let loop: MonolithCornerTurnLoop;
     let inboxSent = false;
     const api = {
+      baseUrl: 'https://server.example',
       execute: async (name: string, input: Record<string, unknown>) => {
         if (!liveSubscribe && name === 'getRoomInbox') {
           if (inboxSent) return { items: [], cursor: 'human-msg' };
@@ -1266,10 +1271,162 @@ describe('corner close-request delivery', () => {
         onFailure: vi.fn(),
         onCloseRequested: async () => undefined,
         createAcpClient: () => acp,
+        ...(fetchImpl ? { fetchImpl } : {}),
       })),
       scheduler,
     };
   }
+
+  it.each(['context', 'retry', 'first brief'])(
+    'Reproduction BP-01: refreshes the next prompt after a revision during %s', async (timing) => {
+      let brief = {
+        id: 'corner-id', revision: 1, spec: 'Original widget spec',
+        authorId: TEST_AGENT_PUBLIC_KEY, sourceRoomId: 'room-id', attachments: [],
+      };
+      let restoreRead!: () => void;
+      const restored = new Promise<void>((resolve) => { restoreRead = resolve; });
+      const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+        if (name === 'getAgentConfiguration') return { commands: [] };
+        if (name === 'getWorkspaceRoster') return { members: [] };
+        if (name === 'getCornerRestoreState') {
+          const snapshot = brief;
+          restoreRead();
+          return {
+            cornerId: 'corner-id', closeRequested: false,
+            ...(timing === 'first brief' ? {} : { brief: snapshot }),
+          };
+        }
+        if (name === 'getRoomConversation') {
+          await restored;
+          if (timing !== 'retry')
+            brief = { ...brief, revision: 2, spec: 'Revised widget spec: keep the label amber' };
+          return { items: [], cursor: 'latest' };
+        }
+        if (name === 'listCornerBriefRevisions')
+          return { revisions: brief.revision > Number(input.afterRevision ?? 0) ? [brief] : [] };
+        return { id: 'write', createdAt: 1 };
+      });
+      const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+      if (timing === 'retry') {
+        vi.mocked(acp.sessionPrompt).mockImplementationOnce(async () => {
+          brief = { ...brief, revision: 2, spec: 'Revised widget spec: keep the label amber' };
+          throw new Error('refresh token expired');
+        });
+      }
+      await loop.run();
+      await scheduler.dispose();
+      const prompt = String(vi.mocked(acp.sessionPrompt).mock.calls.at(-1)?.[1]);
+      expect(prompt).toContain('Brief revision 2:');
+      expect(prompt).toContain('Revised widget spec: keep the label amber');
+      expect(prompt).not.toContain('Original widget spec');
+      expect(execute).toHaveBeenCalledWith('listCornerBriefRevisions', expect.objectContaining({
+        cornerId: 'corner-id', afterRevision: 2, limit: 1,
+      }));
+      console.info(`Reproduction BP-01 (${timing}): stored revision 2; ACP received revision 2 and the revised amber-label spec`);
+    },
+  );
+
+  it('Reproduction BP-01: keeps the current manifest when a revision arrives during file delivery', async () => {
+    const file = (revision: number) => ({
+      objectId: `00000000-0000-4000-8000-${String(revision).padStart(12, '0')}`,
+      title: `revision-${revision}.txt`, purpose: 'Approved reference', required: true,
+      mime: 'text/plain', size: 1, sha256: createHash('sha256').update(String(revision)).digest('hex'),
+    });
+    let brief: CornerBrief = {
+      id: 'corner-id', revision: 1, spec: 'Original widget spec',
+      authorId: TEST_AGENT_PUBLIC_KEY, sourceRoomId: 'room-id', attachments: [file(1)],
+    };
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', brief };
+      if (name === 'listCornerBriefRevisions')
+        return { revisions: brief.revision > Number(input.afterRevision ?? 0) ? [brief] : [] };
+      return { id: 'write', createdAt: 1 };
+    });
+    const downloads: number[] = [];
+    const fetchImpl = vi.fn(async () => {
+      const revision = brief.revision;
+      downloads.push(revision);
+      if (revision < 3) brief = {
+        ...brief, revision: revision + 1, spec: `Approved spec ${revision + 1}`,
+        attachments: [file(revision + 1)],
+      };
+      return new Response(String(revision));
+    }) as unknown as typeof fetch;
+    const scratch = await mkdtemp(join(tmpdir(), 'beeline-brief-files-'));
+    roots.push(scratch);
+    const { acp, loop, scheduler } = await cornerHarness(
+      execute, 60_000, undefined, undefined, { agentEnv: { TMPDIR: scratch } }, fetchImpl,
+    );
+    await loop.run();
+    await scheduler.dispose();
+    const prompt = String(vi.mocked(acp.sessionPrompt).mock.calls[0]?.[1]);
+    expect(prompt).toContain('Brief revision 3:');
+    expect(prompt).toContain('Approved spec 3');
+    expect(prompt).toContain('revision-3.txt (Approved reference; required;');
+    expect(prompt).not.toContain('revision-1.txt');
+    expect(prompt).not.toContain('revision-2.txt');
+    expect(prompt).not.toContain('UNAVAILABLE');
+    expect(downloads).toEqual([1, 2, 3]);
+    console.info('Reproduction BP-01 (files): ACP received revision 3, Approved spec 3 and its verified revision-3.txt; revisions 1 and 2 were absent');
+  });
+
+  it.each(['spec.pdf', ''])(
+    'Reproduction BP-02: preserves task and brief bytes with matching name %j', async (name) => {
+      const taskBytes = 'Task attachment content';
+      const briefBytes = 'Approved brief content';
+      const taskUrl = 'https://server.example/v1/media/task-file';
+      const brief: CornerBrief = {
+        id: 'corner-id', revision: 2, spec: 'Approved widget spec',
+        authorId: TEST_AGENT_PUBLIC_KEY, sourceRoomId: 'room-id',
+        attachments: [{
+          objectId: '00000000-0000-4000-8000-000000000002',
+          title: name, purpose: 'Approved reference', required: true,
+          mime: 'application/pdf', size: briefBytes.length,
+          sha256: createHash('sha256').update(briefBytes).digest('hex'),
+        }],
+      };
+      const execute = vi.fn(async (operation: string) => {
+        if (operation === 'getAgentConfiguration') return { commands: [] };
+        if (operation === 'getWorkspaceRoster') return { members: [] };
+        if (operation === 'getRoomConversation') return { items: [], cursor: 'latest' };
+        if (operation === 'getCornerRestoreState') return { cornerId: 'corner-id', brief };
+        if (operation === 'listCornerBriefRevisions') return { revisions: [] };
+        return { id: 'write', createdAt: 1 };
+      });
+      const scratch = await mkdtemp(join(tmpdir(), 'beeline-brief-collision-'));
+      roots.push(scratch);
+      const fetchImpl = vi.fn(async (url: string | URL | Request) =>
+        new Response(String(url) === taskUrl ? taskBytes : briefBytes),
+      ) as unknown as typeof fetch;
+      const { acp, loop, scheduler } = await cornerHarness(
+        execute, 60_000, undefined, undefined, { agentEnv: { TMPDIR: scratch } }, fetchImpl,
+        { attachments: [{ url: taskUrl, ...(name ? { name } : {}), mimeType: 'application/pdf' }] },
+      );
+      vi.mocked(acp.sessionPrompt).mockImplementationOnce(async (_sessionId, prompt) => {
+        const text = String(prompt);
+        const taskPath = text.match(/local file (.+) \(source https:\/\/server.example\/v1\/media\/task-file\)/)?.[1];
+        const briefPath = text.match(/\(Approved reference; required; sha256 [a-f0-9]+\): (.+)/)?.[1];
+        expect(taskPath).toBeDefined();
+        expect(briefPath).toBeDefined();
+        const observedTask = await readFile(taskPath!, 'utf8');
+        const observedBrief = await readFile(briefPath!, 'utf8');
+        console.info(`Reproduction BP-02 (${name || 'unnamed'}): task path reads ${JSON.stringify(observedTask)}; brief path reads ${JSON.stringify(observedBrief)}`);
+        expect(observedTask).toBe(taskBytes);
+        expect(observedBrief).toBe(briefBytes);
+        expect(taskPath).not.toBe(briefPath);
+        expect(briefPath).toBe(join(scratch, 'beeline-attachments', 'human-msg', 'brief', '2', name || 'attachment-1'));
+        expect(text).toContain('Brief revision 2:');
+        return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [] };
+      });
+      await loop.run();
+      await scheduler.dispose();
+      expect(acp.sessionPrompt).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledWith('postRoomMessage', expect.objectContaining({ text: 'Done.' }));
+    },
+  );
 
   it('Reproduction reply-context: renders reply provenance in a corner turn and transcript', async () => {
     const reply = {
@@ -1286,7 +1443,7 @@ describe('corner close-request delivery', () => {
       };
       return { id: 'write', createdAt: 1 };
     });
-    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000, undefined, undefined, undefined, reply);
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000, undefined, undefined, undefined, undefined, reply);
     await loop.run();
     await scheduler.dispose();
     const prompt = String(vi.mocked(acp.sessionPrompt).mock.calls[0]?.[1]);
@@ -2580,6 +2737,7 @@ describe('thin monolith corner turn', () => {
             items: [
               {
                 id: 'checks-event',
+                fixtureCommandReason: 'corner_check',
                 authorId: runtime.agent.publicKey,
                 createdAt: 2,
                 type: 'system',
@@ -2747,9 +2905,7 @@ describe('thin monolith corner turn', () => {
       config,
       api: commandFixtureApi(
         closePushAfterReceipt(api, () => loop, 2),
-        'corner-id',
-        runtime.agent.publicKey,
-        'Implement the widget',
+        'corner-id', runtime.agent.publicKey, 'Implement the widget', 'schedule',
       ),
       scheduler,
       signal: abort.signal,
@@ -2770,10 +2926,13 @@ describe('thin monolith corner turn', () => {
     expect(sessionPrompt.mock.calls[1]?.[1]).toContain('passed a check');
     if (status === 'completed')
       expect(sessionPrompt.mock.calls.map((call) => call[1])).not.toContain(CORNER_YOLO_MERGE_NUDGE);
-    else expect(sessionPrompt.mock.calls[2]?.[1]).toBe(CORNER_YOLO_MERGE_NUDGE);
+    else expect(sessionPrompt.mock.calls[2]?.[1]).toContain(CORNER_YOLO_MERGE_NUDGE);
     // The first turn on a cold session renders the whole transcript window.
     const firstPrompt = String(sessionPrompt.mock.calls[0]?.[1]);
     const secondPrompt = String(sessionPrompt.mock.calls[1]?.[1]);
+    expect(firstPrompt).not.toContain('say nothing unless you push a fix');
+    expect(secondPrompt).toContain('say nothing unless you push a fix');
+    if (status === 'completed') console.info('Reproduction schedule-silence-4: schedule command → harness prompt has no silence rule; next CI command → harness prompt retains silence; scheduled reply persisted');
     expect(firstPrompt).toContain('Corner transcript:');
     expect(firstPrompt).toContain('Corner institutional snapshot 1');
     expect(secondPrompt).toContain('Corner institutional snapshot 2');
@@ -2878,31 +3037,12 @@ describe('thin monolith corner turn', () => {
         ),
       }),
     );
-    expect(sessionNew).toHaveBeenCalledWith(
-      expect.objectContaining({
-        systemPrompt: expect.stringContaining('Never restate server check or merge notes'),
-      }),
-    );
-    // Item 2: no schedule may poll the merge gate, and a schedule-triggered
-    // turn stays as silent as a checks turn unless it is actionable.
+    expect(repositorySystemPrompt).not.toContain('say nothing unless you push a fix');
+    // Polling stays forbidden on ordinary task turns too.
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
           'Never schedule polls of pr_checks_status or the merge gate',
-        ),
-      }),
-    );
-    expect(sessionNew).toHaveBeenCalledWith(
-      expect.objectContaining({
-        systemPrompt: expect.stringContaining(
-          'On it, say nothing unless you push a fix or report checks="unknown", and then use one short line.',
-        ),
-      }),
-    );
-    expect(sessionNew).toHaveBeenCalledWith(
-      expect.objectContaining({
-        systemPrompt: expect.stringContaining(
-          'If a schedule wakes you here anyway, treat it as a checks turn.',
         ),
       }),
     );

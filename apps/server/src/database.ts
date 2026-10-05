@@ -1665,6 +1665,7 @@ ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS creator_agent_id text REFE
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS ownership_initialized boolean NOT NULL DEFAULT false;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_slug text;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS last_reported_blocking_run_id text;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS updated_by text REFERENCES identities(id);
 CREATE TABLE IF NOT EXISTS workflow_owner_transfers (
   id bigserial PRIMARY KEY,

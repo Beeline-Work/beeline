@@ -121,6 +121,22 @@ describe('SlashVerbPicker agent command palette', () => {
     );
   });
 
+  it('demonstrates owner login selection without harness commands', () => {
+    let composer = '@bee /lo';
+    const renderer = render(React.createElement(SlashVerbPicker, {
+      verbs: [], query: 'lo', highlightedIndex: 0,
+      onDismiss: () => undefined, onSelect: () => undefined,
+      commands: availableAgentMentionCommands([], 'lo', null, true),
+      agentName: 'bee', agentLacksCommands: true,
+      onSelectCommand: (name: string) => { composer = insertAgentSlashCommand(composer, name); },
+    }));
+    const login = find_by_test_id(renderer, 'slash-agent-command-login');
+    expect(login).toHaveLength(1);
+    login[0].props.onPress();
+    expect(composer).toBe('@bee /login ');
+    console.log(`Reproduction login-suggestion (shared phone/desktop picker): /lo → login row → ${composer}`);
+  });
+
   it('shows the owner Fast mode as an ON/OFF switch and selects it by name', () => {
     const onCommand = vi.fn();
     const picker = (enabled: boolean) =>

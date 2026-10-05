@@ -458,7 +458,7 @@ describe('save_workflow error reasons', () => {
 });
 
 describe('start_workflow', () => {
-  it('Reproduction workflow-line-1: reads short workflow lines without a self-mention through the phone service', async () => {
+  it('Reproduction workflow-notice-1: reads workflow system lines through the phone service, retaining text and wakes (workflow-line-1)', async () => {
     await database.query(`UPDATE identities SET handle='impy' WHERE id=$1`, [IMPLEMENTER]);
     await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, OWNER]);
     const command = await commandFor(IMPLEMENTER);
@@ -472,6 +472,7 @@ describe('start_workflow', () => {
     const wakes = (await database.query<{ agent_id: string }>(
       `SELECT agent_id FROM agent_commands WHERE source_message_id=$1`, [runId],
     )).rows.map(row => row.agent_id);
+    await assignWorkflowRole(database, command, { runId, role: 'implementer', targetAgentId: REVIEWER });
     await handoff(database, await commandFor(REVIEWER), {
       runId, outcome: 'stuck', contents: { summary: 'stuck', prUrl: 'none' },
     });
@@ -479,16 +480,21 @@ describe('start_workflow', () => {
     const messages = (await phone.readRoom(ROOM, OWNER))!.messages;
     const cancel = messages.find(message => message.text.includes('cancelled workflow'))!;
     const handoffLine = messages.find(message => message.text.includes('handed off'))!;
+    const moved = messages.find(message => message.text.includes('moved'))!;
     expect(start.text).toBe(`Impy started workflow corner · run ${runId.slice(0, 8)}`);
     expect(start.systemEvent?.subject).toMatchObject({ id: IMPLEMENTER, name: 'Impy' });
     expect(wakes).toEqual([REVIEWER]);
     expect(handoffLine.text).toBe(`Ravi handed off ask_human · run ${runId.slice(0, 8)} of corner`);
     expect(cancel.text).toBe(`@impy cancelled workflow corner · run ${runId.slice(0, 8)}`);
-    const cards = (await database.query<{ id: string; card: { runId: string } }>(
-      `SELECT id,card FROM messages WHERE id=ANY($1::text[])`, [[start.id, cancel.id]],
+    const cards = (await database.query<{ id: string; presentation: string; card: { runId: string } }>(
+      `SELECT id,presentation,card FROM messages WHERE id=ANY($1::text[])`, [[start.id, moved.id, handoffLine.id, cancel.id]],
     )).rows;
     expect(cards.every(row => row.card.runId === runId)).toBe(true);
     expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('abandoned');
+    console.log(`Reproduction workflow-notice-1: start workflow → reassign → hand off → cancel → read Room; stored=${cards.map(row => row.presentation).join(',')}; phone=${[start, moved, handoffLine, cancel].map(message => message.presentation).join(',')}`);
+    expect(cards.map(row => row.presentation)).toEqual(['system', 'system', 'system', 'system']);
+    expect([start, moved, handoffLine, cancel].map(message => message.presentation)).toEqual(['system', 'system', 'system', 'system']);
+    expect(messages.find(message => message.choice)?.presentation).toBe('card');
   });
 
   it('rejects a role with no binding', async () => {
@@ -1372,6 +1378,25 @@ describe('handoff run-level locking (P0-1)', () => {
     });
     const readIndex = recording.calls.findIndex((call) => call.sql.includes('FROM messages'));
     expect(readIndex).toBeGreaterThan(0);
+  });
+
+  it('resolves a prefix before locking the canonical run ID and reading its state', async () => {
+    const { runId } = await startedRun();
+    const recording = new RecordingDatabase(database);
+    const command = await commandFor(IMPLEMENTER, runId);
+    const result = await handoff(recording, command, {
+      runId: runId.slice(0, 8), outcome: 'pushed', contents: { summary: 'ready', prUrl: 'proof' },
+    });
+    expect(result.runId).toBe(runId);
+    const lockIndex = recording.calls.findIndex(call => call.sql.includes('pg_advisory_xact_lock'));
+    expect(recording.calls[lockIndex]!.values).toEqual([workflowRunLockKey(runId)]);
+    const stateIndex = recording.calls.findIndex(call => call.sql.includes('ORDER BY (card->>'));
+    expect(stateIndex).toBeGreaterThan(lockIndex);
+    expect(recording.calls[stateIndex]!.values).toContain(runId);
+    expect(await handoff(recording, command, {
+      runId: runId.slice(0, 8), outcome: 'pushed', contents: { summary: 'ready', prUrl: 'proof' },
+    })).toEqual(result);
+    expect((await getWorkflowRun(database, ROOM, runId)).history).toHaveLength(2);
   });
 
   it("start_workflow locks its freshly minted run id before writing the run's start card", async () => {
@@ -2681,6 +2706,42 @@ describe('one live run per workflow per Room', () => {
       .resolves.toMatchObject({ state: 'work' });
   });
 
+  it('reports a blocking run once across three slots without changing its cards or timers', async () => {
+    const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(runId);
+    const scheduleId = '30000000-0000-4000-8000-000000000005';
+    const now = new Date();
+    await database.query(`UPDATE messages SET created_at=$2 WHERE id=$1`, [runId, new Date(now.getTime()-30*60_000)]);
+    await database.query(
+      `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug)
+       VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":60}'::jsonb,'run gated',$6,'gated')`,
+      [scheduleId, WORKSPACE, ROOM, WORKER_B, OWNER, now],
+    );
+    const snapshot = async () => ({
+      cards: await runCards(runId),
+      timers: (await database.query(`SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`, [runId])).rows,
+    });
+    const before = await snapshot();
+    const commands = await pendingCommandsFor(WORKER_B);
+    for (let slot=0; slot<3; slot++) {
+      await database.query(`UPDATE agent_schedules SET next_run_at=$2 WHERE id=$1`, [scheduleId, new Date(now.getTime()+slot*60_000)]);
+      const tick = new Date(now.getTime()+slot*60_000);
+      await Promise.all([new AgentScheduleLoop(database).runOnce(tick), new AgentScheduleLoop(database).runOnce(tick)]);
+    }
+    const skips = async () => (await database.query<{text:string}>(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%skipped a run%' ORDER BY created_at,id`, [ROOM])).rows;
+    expect(await snapshot()).toEqual(before);
+    expect(await pendingCommandsFor(WORKER_B)).toBe(commands);
+    expect(await skips()).toEqual([{text: `The gated schedule skipped a run · run ${runId} is active at step sign_off in state live for 30 min`}]);
+    await cancelWorkflowRun(database, {room_id: ROOM, agent_id: OWNER} as CommandRow, {runId, reason:'next blocking run'});
+    const next = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await database.query(`UPDATE messages SET created_at=$2 WHERE id=$1`, [next, now]);
+    await database.query(`UPDATE agent_schedules SET next_run_at=$2 WHERE id=$1`, [scheduleId, new Date(now.getTime()+3*60_000)]);
+    await new AgentScheduleLoop(database).runOnce(new Date(now.getTime()+3*60_000));
+    expect(await skips()).toHaveLength(2);
+    expect((await skips())[1]!.text).toContain(`run ${next} is active at step work in state live for 3 min`);
+    console.log('Reproduction blocking-run-notice: three blocked slots produced one full-ID/step/state/elapsed notice; different run produced a new notice; cards and timers unchanged');
+  });
+
   it('posts one skip line on a schedule tick that finds a live run, and wakes no one', async () => {
     const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
     await database.query(
@@ -2694,7 +2755,7 @@ describe('one live run per workflow per Room', () => {
     const skips = (await database.query<{ text: string }>(
       `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%skipped a run%'`, [ROOM],
     )).rows;
-    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId.slice(0, 8)} is still live at work` }]);
+    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId} is active at step work in state live for 0 min` }]);
   });
 });
 
@@ -2790,7 +2851,7 @@ describe('legacy run timer recovery', () => {
     const skips = (await database.query<{ text: string }>(
       `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%skipped a run%'`, [ROOM],
     )).rows;
-    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId.slice(0, 8)} is still live at sign_off` }]);
+    expect(skips).toEqual([{ text: `The gated schedule skipped a run · run ${runId} is active at step sign_off in state live for 180 min` }]);
     expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 30_000))).toBe(0);
     expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('live');
     console.log('Reproduction legacy-timers: overdue gate stayed live without timers; schedule skipped at sign_off');

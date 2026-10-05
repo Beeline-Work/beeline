@@ -45,7 +45,8 @@ vi.mock('expo-clipboard', () => ({
 
 import { groknight } from '@/buzz/groknight';
 import { ActivityTimeline } from './ActivityTimeline';
-import { LedgerEntry, provisionalProseStyle } from './Ledger';
+import { LedgerEntry, LedgerSystemLine, provisionalProseStyle } from './Ledger';
+import { displayRoomMessage } from '@/buzz/room-view-presentation';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -77,6 +78,32 @@ const MARK = { seed: 'a'.repeat(64), kind: 'agent' as const, alive: true };
 const BYLINE = { name: 'Clara', role: 'agent', stamp: '09:41', mark: MARK };
 /** Two sentences, so the settled turn has both a lead and a body to compare. */
 const REPLY = 'Done. The answer is 42.';
+
+it.each(['web', 'ios', 'android'])('renders a workflow system notice without a speaker byline on %s', async (platform) => {
+  const { Platform } = await import('react-native');
+  Platform.OS = platform as typeof Platform.OS;
+  const text = 'Impy started workflow corner · run 7a434a73';
+  const message = displayRoomMessage({
+    id: 'workflow-start', text, createdAt: 1, presentation: 'system',
+    author: { pubkey: 'impy', name: 'Impy', kind: 'agent' },
+    systemEvent: { subject: { kind: 'agent', id: 'impy', name: 'Impy' },
+      verb: 'started workflow', object: { text: 'corner', url: '/beeline/workflow-run?runId=7a434a73' },
+      consequence: 'run 7a434a73' },
+  }, 'viewer');
+  expect(message.isSystemNotice).toBe(true);
+  expect(message.text).toBe(text);
+  const onOpenUrl = vi.fn();
+  const renderer = render(<LedgerSystemLine id={message.id} text={message.text}
+    event={message.systemEvent} stamp="09:41" onOpenUrl={onOpenUrl} />);
+  expect(renderer.root.findAllByType('MonoMarkdown')).toEqual([]);
+  expect(renderer.root.findAllByProps({ testID: 'chat-byline-profile' })).toEqual([]);
+  const object = renderer.root.findByProps({ testID: 'system-line-object-workflow-start' });
+  act(() => object.props.onPress());
+  expect(onOpenUrl).toHaveBeenCalledWith('/beeline/workflow-run?runId=7a434a73');
+  expect(JSON.stringify(renderer.toJSON())).toContain('started workflow');
+  act(() => renderer.unmount());
+  Platform.OS = 'android';
+});
 
 function streamingRow(draft = REPLY) {
   return render(

@@ -44,6 +44,7 @@
     "prove:connector-adapters": "node --import tsx scripts/prove-connector-adapters.ts",
     "prove:squire-login-wall": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-squire-login-wall.ts",
     "prove:workflow-run": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-workflow-run.ts",
+    "prove:workflow-notices": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-workflow-notices.mjs",
     "prove:agent-list-run": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-agent-list-run.ts",
     "prove:reviewer-list": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-reviewer-list.ts",
     "dry-run:agent-class-retirement": "node --import tsx scripts/dry-run-agent-class-retirement.ts",

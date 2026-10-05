@@ -1937,6 +1937,7 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
     ...field('selected', readModelSelection(item.selected)),
     ...field('modelUnavailable', oneOf(item.modelUnavailable, ['model', 'effort', 'selection'])),
     ...field('fastMode', typeof item.fastMode === 'boolean' ? item.fastMode : undefined),
+    ...field('canLogin', typeof item.canLogin === 'boolean' ? item.canLogin : undefined),
     ...field('yolo', readAgentYolo(item.yolo)),
     ...field('access', readAgentAccess(item.access)),
     ...field('grants', readList(item.grants, readAgentGrantView)),

@@ -2001,6 +2001,59 @@ describe('the gate stays shut (AC-8)', () => {
     expect(await github.landReadyCorners()).toBe(1);
   });
 
+  it('Reproduction H1: the holder’s release order in the parent Room releases the hold from that Room turn', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+    const cornerId = await open(undefined, 'owner/widgets', true);
+    const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
+    await greenHead(cornerId, 7, SHA);
+    githubHead = SHA; githubRollupState = 'passed';
+    expect(await github.landReadyCorners()).toBe(0);
+    await say(R, '@hoots release the hold');
+    const order = (await commands(A, R)).at(-1)!;
+    await claim(order);
+    await daemon.execute('setCornerHold', { cornerId, roomId: R, requestId: order.turnRequestId,
+      generationId: 'g1', releaseHoldId: holdId }, A);
+    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
+    expect(await github.landReadyCorners()).toBe(1);
+  });
+
+  it('a parent Room release order relayed by steer lets the corner agent release the hold', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
+    const cornerId = await open(undefined, 'owner/widgets', true);
+    const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
+    await greenHead(cornerId, 7, SHA);
+    githubHead = SHA; githubRollupState = 'passed';
+    await say(R, '@hoots release the hold');
+    const order = (await commands(A, R)).at(-1)!;
+    await claim(order);
+    await daemon.execute('postRoomMessage', { roomId: R, requestId: order.turnRequestId, generationId: 'g1',
+      text: 'The holder said: release the hold', relay: { fromRoomId: R, toRoomId: cornerId, direction: 'down' } }, A);
+    const steer = (await commands(A, cornerId)).at(-1)!;
+    expect(steer.reason).toBe('relay_steer');
+    await claim(steer);
+    expect(await github.landReadyCorners()).toBe(0);
+    await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: steer.turnRequestId,
+      generationId: 'g1', releaseHoldId: holdId }, A);
+    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
+    expect(await github.landReadyCorners()).toBe(1);
+  });
+
+  it('a member-standing parent Room release order still fails the standing check', async () => {
+    const cornerId = await open(undefined, 'owner/widgets', true);
+    const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
+    const peer = 'f'.repeat(64);
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human',$1) ON CONFLICT DO NOTHING`, [peer]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,$4,$2,'member')
+      ON CONFLICT DO NOTHING`, [W, peer, R, cornerId]);
+    await phone.execute('sendRoomMessage', { roomId: R, messageId: randomBytes(32).toString('hex'),
+      text: '@hoots release the hold' }, peer);
+    const order = (await commands(A, R)).at(-1)!;
+    await claim(order);
+    await expect(daemon.execute('setCornerHold', { cornerId, roomId: R, requestId: order.turnRequestId,
+      generationId: 'g1', releaseHoldId: holdId }, A)).rejects.toThrow(/above their owner standing/);
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, open: false });
+  });
+
   it('Reproduction R5d: a delegated command cannot inherit the human holder’s release authority', async () => {
     const cornerId = await approved();
     const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);

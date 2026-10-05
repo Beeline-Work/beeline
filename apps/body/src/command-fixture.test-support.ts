@@ -9,6 +9,7 @@ export function commandFixtureApi(
   roomId: string,
   agentId: string,
   objective?: string | null,
+  objectiveReason = 'corner_objective',
 ): DaemonApiClient {
   const pending = new Map<string, AgentCommand>(),
     seen = new Set<string>();
@@ -31,6 +32,7 @@ export function commandFixtureApi(
   function add(source: InboxItem, reason = 'human_tag') {
     const fixture = source as InboxItem & {
       fixtureCommand?: boolean;
+      fixtureCommandReason?: string;
       fixtureCommandAction?: 'input' | 'resume' | 'stop';
       fixtureTurnRequestId?: string;
     };
@@ -43,7 +45,7 @@ export function commandFixtureApi(
       sourceMessageId: source.id,
       turnRequestId: fixture.fixtureTurnRequestId ?? source.id,
       action: fixture.fixtureCommandAction ?? 'input',
-      reason,
+      reason: fixture.fixtureCommandReason ?? reason,
       rootCommandId: source.id,
       rootSourceMessageId: source.id,
       agentDepth: 0,
@@ -62,7 +64,7 @@ export function commandFixtureApi(
         body: objective,
         attachments: [],
       },
-      'corner_objective',
+      objectiveReason,
     );
   return new Proxy(api, {
     get(target, key) {
@@ -104,6 +106,10 @@ export function commandFixtureApi(
         if (name === 'acknowledgeAgentCommand') return { id: input.commandId, createdAt: 1 };
         if (name === 'getCornerRestoreState' && closed && settled && !pending.size)
           return { cornerId: roomId, closeRequested: true };
+        if (name === 'listCornerBriefRevisions') {
+          const result = await target.execute(name, input as never);
+          return { ...result, revisions: result.revisions ?? [] };
+        }
         const pendingResult = target.execute(name, input as never);
         if (name === 'postRoomMessage') queueMicrotask(() => void pump());
         const result = await pendingResult;

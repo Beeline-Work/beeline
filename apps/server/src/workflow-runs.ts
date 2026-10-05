@@ -459,6 +459,7 @@ async function postWorkflowGate(
         `${input.state.role} is ${askerAgentId}; assign_workflow_role or cancel_workflow_run`.slice(0, 200),
       kind: 'workflow-handoff',
       wakes: [starter.id],
+      card: { runId: input.runId, workflowSlug: input.contract.name },
     });
     return;
   }
@@ -1071,6 +1072,7 @@ export async function reassignFailedWorkflowRole(
           `${input.agentId} did not answer${reason ? ` (${reason})` : ''}; assign_workflow_role or cancel_workflow_run`.slice(0, 200),
         kind: 'workflow-handoff',
         wakes: [starter.id],
+        card: { runId: run.runId, workflowSlug: run.workflowSlug },
       });
     }
     return;

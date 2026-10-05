@@ -1240,9 +1240,17 @@ describe('stuck/escalation gates route to the run starter, not a human, when an 
     const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
     const woken = inbox.commands.find((c) => c.source.systemEvent?.verb === 'reached a gate at');
     expect(woken).toBeDefined();
+    console.log('Reproduction workflow-recovery-1 gate:', woken!.source.body);
+    expect(woken!.source.body).toContain(`You are in run ${runId} of corner.`);
     expect(woken!.source.body).toContain(`corner run ${runId.slice(0, 8)}`);
     expect(woken!.source.body).toContain('human_approve');
     expect(woken!.source.body).toContain(APPROVER);
+    const recoveryRunId = /You are in run ([a-f0-9]{64}) of corner/.exec(woken!.source.body)![1]!;
+    const recovered = await assignWorkflowRole(database, await commandFor(IMPLEMENTER), {
+      runId: recoveryRunId, role: 'approver', targetAgentId: REVIEWER,
+    });
+    expect(recovered).toEqual({ runId, state: 'human_approve' });
+    console.log('Reproduction workflow-recovery-1 gate recovery:', JSON.stringify(recovered));
   });
 
   it('still posts the human choice card and wakes nobody else when a human started the run', async () => {
@@ -1297,10 +1305,19 @@ describe('stuck/escalation gates route to the run starter, not a human, when an 
     const inbox = await readAgentCommands(database, ROOM, IMPLEMENTER);
     const woken = inbox.commands.find((c) => c.source.systemEvent?.verb === 'got no answer at');
     expect(woken).toBeDefined();
+    console.log('Reproduction workflow-recovery-1 silence:', woken!.source.body);
+    expect(woken!.source.body).toContain(`You are in run ${runId} of list-flow.`);
     expect(woken!.source.body).toContain(`list-flow run ${runId.slice(0, 8)}`);
     expect(woken!.source.body).toContain('closer');
     expect(woken!.source.body).toContain(APPROVER);
     expect(woken!.source.body).toContain('provider timeout');
+    const recoveryRunId = /You are in run ([a-f0-9]{64}) of list-flow/.exec(woken!.source.body)![1]!;
+    const recovered = await assignWorkflowRole(database, await commandFor(IMPLEMENTER), {
+      runId: recoveryRunId, role: 'closer', targetAgentId: REVIEWER,
+    });
+    expect(recovered.runId).toBe(runId);
+    expect((await listRunCard(runId)).roleBindings.closer).toBe(REVIEWER);
+    console.log('Reproduction workflow-recovery-1 silence recovery:', JSON.stringify(recovered));
   });
 });
 

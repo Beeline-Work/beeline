@@ -293,6 +293,20 @@ describe('prompt assembly guards', () => {
     );
   });
 
+  it.each(['code-corner-reviewed', 'code-corner-rest'])(
+    '%s skips the missing remote branch on first push and requires rebase on later pushes',
+    (name) => {
+      const prompt = assembleSessionPrompt(SESSION_VARIANTS[name]!).systemPrompt;
+      expect(prompt).toContain(
+        'Before pushing, rebase on origin/feature/corner-abc only if that remote branch exists;',
+      );
+      expect(prompt).not.toContain('Before pushing, rebase on origin/feature/corner-abc;');
+      expect(prompt).toContain(
+        'resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests.',
+      );
+    },
+  );
+
   it('never tells an author or reviewer to run gh pr merge', () => {
     const texts: Array<[string, string]> = [
       ...Object.entries(SESSION_VARIANTS).map(

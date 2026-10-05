@@ -13,6 +13,7 @@ import {
   WORKFLOW_BLOCKED_OUTCOME,
   WORKFLOW_DEFAULT_DEADLINE_SECONDS,
   WORKFLOW_ROLE_AGENTS_MAX,
+  type WorkflowContract,
   type WorkflowReadContract,
   type WorkflowGateState,
   type WorkflowHandoffState,
@@ -1563,7 +1564,7 @@ export async function saveWorkflow(
 ): Promise<{ slug: string; version: number }> {
   const reason = workflowSaveError(input.contract);
   if (reason !== null) throw new Error(`workflow contract is invalid: ${reason}`);
-  const contract = input.contract as WorkflowReadContract;
+  const contract = input.contract as WorkflowContract;
   const room = (
     await database.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
       command.room_id,

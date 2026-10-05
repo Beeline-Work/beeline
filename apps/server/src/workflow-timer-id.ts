@@ -11,4 +11,3 @@ function scheduleUuid(key: string): string {
 export function workflowTimerId(runId: string, timer: 'step' | 'deadline'): string {
   return scheduleUuid(`beeline:workflow-timer:v2:${runId}:${timer}`);
 }
-

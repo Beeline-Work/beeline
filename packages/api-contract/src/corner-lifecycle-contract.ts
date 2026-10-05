@@ -50,4 +50,3 @@ export type CornerWaitingState = {
   /** Advisory only, exactly like `CornerServerState.role` — who is conceptually active here. */
   readonly role?: string;
 };
-

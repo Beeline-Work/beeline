@@ -4,7 +4,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { retrieveTempText } from '@/sync/persistence';
-import { t } from '@/text';
 import * as Clipboard from 'expo-clipboard';
 import { HullDialog } from '@/components/buzz/HullDialog';
 import { PageHeader } from '@/components/buzz/PageHeader';
@@ -25,23 +24,23 @@ export default function TextSelectionScreen() {
 
     const handleCopyAll = React.useCallback(async () => {
         if (!fullText) {
-            setNotice({ title: t('common.error'), message: t('textSelection.noTextToCopy') });
+            setNotice({ title: "Error", message: "No text available to copy" });
             return;
         }
 
         try {
             await Clipboard.setStringAsync(fullText);
-            setNotice({ title: t('textSelection.textCopied') });
+            setNotice({ title: "Text copied to clipboard" });
         } catch {
-            setNotice({ title: t('common.error'), message: t('textSelection.failedToCopy') });
+            setNotice({ title: "Error", message: "Failed to copy text to clipboard" });
         }
     }, [fullText]);
 
     React.useEffect(() => {
         if (!textId) {
             setNotice({
-                title: t('common.error'),
-                message: t('textSelection.noTextProvided'),
+                title: "Error",
+                message: "No text provided",
                 exitsScreen: true,
             });
             setLoading(false);
@@ -53,8 +52,8 @@ export default function TextSelectionScreen() {
             setFullText(content);
         } else {
             setNotice({
-                title: t('common.error'),
-                message: t('textSelection.textNotFound'),
+                title: "Error",
+                message: "Text not found or expired",
                 exitsScreen: true,
             });
         }
@@ -76,7 +75,7 @@ export default function TextSelectionScreen() {
             <PageHeader
                 action={
                     <Pressable
-                        accessibilityLabel={t('common.copy')}
+                        accessibilityLabel={"Copy"}
                         accessibilityRole="button"
                         disabled={copyDisabled}
                         onPress={handleCopyAll}
@@ -89,13 +88,13 @@ export default function TextSelectionScreen() {
                         <Text style={[styles.copyGlyph, copyDisabled && styles.copyGlyphDisabled]}>⧉</Text>
                     </Pressable>
                 }
-                backAccessibilityLabel={t('common.back')}
+                backAccessibilityLabel={"Back"}
                 onBack={() => router.back()}
                 testID="text-selection-header"
-                title={t('textSelection.title')}
+                title={"Select Text"}
             />
             {loading ? (
-                <Text style={styles.loadingText}>{t('common.loading')}</Text>
+                <Text style={styles.loadingText}>{"Loading..."}</Text>
             ) : (
                 <ScrollView
                     style={styles.textContainer}
@@ -106,7 +105,7 @@ export default function TextSelectionScreen() {
                     ]}
                 >
                     <Text
-                        accessibilityLabel={t('textSelection.title')}
+                        accessibilityLabel={"Select Text"}
                         selectable
                         style={styles.textContent}
                     >
@@ -122,7 +121,7 @@ export default function TextSelectionScreen() {
                 title={notice?.title ?? ''}
                 body={notice?.message}
                 testID="text-selection-notice"
-                actions={[{ label: t('common.ok'), onPress: dismissNotice }]}
+                actions={[{ label: "OK", onPress: dismissNotice }]}
             />
         </View>
     );

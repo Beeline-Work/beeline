@@ -45,7 +45,6 @@ vi.mock('react-native-unistyles', () => ({
     theme: { buzz: { bgBase: '#14091A' }, colors: { header: { tint: '#fff' }, textLink: '#b08a4a' } },
   }),
 }));
-vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/utils/isTauri', () => ({ isTauri: () => false }));
 vi.mock('@/utils/platform', () => ({ isDesktopPlatform: () => true }));
 vi.mock('@/utils/responsive', () => ({

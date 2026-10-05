@@ -53,7 +53,6 @@ import { useLocalSettingMutable } from '@/sync/storage';
 import { roomOpenTraceEnabled } from '@/buzz/room-open-trace';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { monolithSession } from '@/auth/monolith-session';
-import { t } from '@/text';
 import { clearMobileSurfaceStorage } from '@/buzz/surface-storage';
 import { saveStoredPushLevel } from '@/push/push-level-storage';
 import { reconcilePresentedNotificationBadge } from '@/push/presented-notifications';
@@ -483,20 +482,20 @@ export default function BuzzIdentitySettings() {
           <Text style={styles.sectionLabel}>Account</Text>
           <View testID="legal-settings">
             <SettingsRow
-              accessibilityLabel={t('settings.privacyPolicy')}
+              accessibilityLabel={"Privacy Policy"}
               accessibilityRole="link"
               chevron="right"
               onPress={() => void openExternalUrl(PRIVACY_URL).catch(() => undefined)}
               testID="settings-privacy-row"
-              title={t('settings.privacyPolicy')}
+              title={"Privacy Policy"}
             />
             <SettingsRow
-              accessibilityLabel={t('settings.termsOfService')}
+              accessibilityLabel={"Terms of Service"}
               accessibilityRole="link"
               chevron="right"
               onPress={() => void openExternalUrl(TERMS_URL).catch(() => undefined)}
               testID="settings-terms-row"
-              title={t('settings.termsOfService')}
+              title={"Terms of Service"}
             />
             <SettingsRow
               accessibilityLabel="Send feedback"

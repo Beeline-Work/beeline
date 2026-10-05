@@ -92,8 +92,8 @@ describe('Settings reads as the Members page', () => {
     expect(settings).toContain('testID="settings-privacy-row"');
     expect(settings).toContain('testID="settings-terms-row"');
     expect(settings).toContain('testID="settings-feedback-row"');
-    expect(settings).toContain("t('settings.privacyPolicy')");
-    expect(settings).toContain("t('settings.termsOfService')");
+    expect(settings).toContain('title={"Privacy Policy"}');
+    expect(settings).toContain('title={"Terms of Service"}');
     expect(settings).toContain('https://usebeeline.app/privacy/');
     expect(settings).toContain('https://usebeeline.app/terms/');
     expect(settings).toContain('mailto:hello@usebeeline.app');

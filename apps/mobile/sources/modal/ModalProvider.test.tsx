@@ -33,7 +33,6 @@ vi.mock('@/components/buzz/HullActionSheet', async () => {
   };
 });
 
-vi.mock('@/text', () => ({ t: () => 'OK' }));
 
 import { Modal } from './ModalManager';
 import { ModalProvider } from './ModalProvider';

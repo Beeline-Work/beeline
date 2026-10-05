@@ -1,12 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const settings = Object.fromEntries(
-  ['language'].map((name) => [
-    name,
-    readFileSync(new URL(`../app/(app)/settings/${name}.tsx`, import.meta.url), 'utf8'),
-  ]),
-);
 const item = readFileSync(new URL('./Item.tsx', import.meta.url), 'utf8');
 const itemGroup = readFileSync(new URL('./ItemGroup.tsx', import.meta.url), 'utf8');
 const itemList = readFileSync(new URL('./ItemList.tsx', import.meta.url), 'utf8');
@@ -22,7 +16,7 @@ const workflows = readFileSync(
 
 describe('retained settings leaves use the Beeline design contract', () => {
   it('keeps leaf screens free of glass, generic icon packs, and local palette colors', () => {
-    for (const [name, source] of Object.entries(settings)) {
+    for (const [name, source] of Object.entries({ workflows, textSelection })) {
       expect(source, `${name} reintroduced legacy glass or Ionicons`).not.toMatch(
         /MobileGlass|Ionicons|@expo\/vector-icons/,
       );
@@ -49,18 +43,16 @@ describe('retained settings leaves use the Beeline design contract', () => {
     expect(existsSync(new URL('./navigation/Header.tsx', import.meta.url))).toBe(false);
     expect(appLayout).not.toContain('createHeader');
     expect(appLayout).toMatch(/screenOptions=\{\{[\s\S]*?headerShown: false/);
-    for (const source of [settings.language, textSelection, workflows]) {
+    for (const source of [textSelection, workflows]) {
       expect(source).toContain('<PageHeader');
     }
     expect(textSelection).not.toContain('navigation.setOptions');
   });
 
   it('reuses the shared navigation and dialog idioms on migrated leaves', () => {
-    expect(settings.language).toContain('<HullDialog');
     expect(textSelection).toContain('<HullDialog');
     expect(textSelection).not.toMatch(/MobileGlass|Ionicons|@expo\/vector-icons|@\/modal/);
-    expect(appLayout).toContain('name="settings/language"');
-    expect(appLayout).toContain('<Stack.Screen name="settings/language" options={{ headerShown: false }} />');
-    expect(settings.language).toContain("title={t('settingsLanguage.title')}");
+    expect(appLayout).not.toContain('name="settings/language"');
+    expect(existsSync(new URL('../app/(app)/settings/language.tsx', import.meta.url))).toBe(false);
   });
 });

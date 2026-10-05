@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/text', () => ({ t: () => 'OK' }));
 
 import { Modal } from './ModalManager';
 import type { ModalConfig } from './types';

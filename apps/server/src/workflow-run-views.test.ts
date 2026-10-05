@@ -211,12 +211,11 @@ describe('listRoomWorkflowRuns', () => {
       handoff(database, await command(CORNER, TRIAGER), { runId, outcome: 'nothing_new', contents: {} });
     await end(await start());
     const live = await start();
-    // A later run that already ended does not displace the live one.
+    // While it is live, a person cannot start another run of it either.
     await database.query(`UPDATE memberships SET role='admin' WHERE room_id=$1 AND identity_id=$2`, [CORNER, OWNER]);
-    const later = await phone.execute('startOwnedWorkflow', {
+    await expect(phone.execute('startOwnedWorkflow', {
       roomId: CORNER, name: 'feedback-triage', roleBindings: { triager: TRIAGER },
-    }, OWNER);
-    await end(later.runId);
+    }, OWNER)).rejects.toThrow(`feedback-triage already has a live run ${live}`);
     const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
     const triage = listed.workflows.find((run) => run.workflowSlug === 'feedback-triage')!;
     expect(triage).toMatchObject({ runId: live, status: 'live', state: 'pull', earlierRunCount: 1, activeRunIds: [live] });
@@ -380,16 +379,10 @@ describe('readWorkflowRun', () => {
         [CORNER],
       )
     ).rows[0]!;
-    await answerRoomChoice(database, {
+    await phone.execute('answerChoice', {
       choiceId: choice.id,
       optionId: choice.options.find((option) => option.label === 'dispatch')!.optionId,
-      viewerId: OWNER,
-    });
-    await handoff(database, await command(CORNER, TRIAGER), {
-      runId,
-      outcome: 'dispatch',
-      contents: {},
-    });
+    }, OWNER);
     // The triager opens two fix corners in the top Room; the owner is only in
     // one. It also opens an unrelated corner the handoff does not list.
     await database.query(
@@ -514,24 +507,24 @@ describe('optional workflow receipts end to end', () => {
     expect(detail.history[1]?.receipt).toEqual({ ...receipt, exit: { gate: 'retry', actorId: TRIAGER } });
     expect(detail.history[2]?.receipt).toEqual({ exit: { gate: 'ranked', actorId: TRIAGER } });
     const choice = (await database.query<{ id: string; option_id: string }>(
-      `SELECT id::text id,options->0->>'optionId' option_id FROM room_choices WHERE room_id=$1`, [CORNER],
+      `SELECT id::text id,options->1->>'optionId' option_id FROM room_choices WHERE room_id=$1`, [CORNER],
     )).rows[0]!;
-    await answerRoomChoice(database, { choiceId: choice.id, viewerId: OWNER, optionId: choice.option_id });
-    const answered = await readAgentCommands(database, CORNER, TRIAGER);
-    expect(answered.commands.some((entry) => entry.source.body.includes('Receipt hint for this state: the human decision'))).toBe(true);
-    // Missing is equally optional: no outcome text or refs are invented.
-    await handoff(database, await command(CORNER, TRIAGER), { runId, outcome: 'skip', contents: {} });
+    // A person's answer leaves the gate; no outcome text or refs are invented.
+    await phone.execute('answerChoice', { choiceId: choice.id, optionId: choice.option_id }, OWNER);
     const ended = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
-    expect(ended.history[3]?.receipt).toEqual({ exit: { gate: 'skip', actorId: TRIAGER } });
+    expect(ended.history[3]?.receipt).toEqual({ exit: { gate: 'skip', actorId: OWNER } });
   });
 
   it('rejects invalid receipts without advancing the run', async () => {
-    const runId = await triageRun();
+    await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: describedWorkflow(TRIAGE)});
+    const { runId } = await startWorkflow(database, await command(CORNER, TRIAGER), {
+      name: 'feedback-triage', roleBindings: { triager: TRIAGER },
+    });
     const worker = await command(CORNER, TRIAGER);
     for (const receipt of [{ line: 'x'.repeat(141) }, { refs: Array(4).fill({ kind: 'url', label: 'link', url: 'https://beeline.test' }) }])
-      await expect(handoff(database, worker, { runId, outcome: 'skip', contents: {}, receipt })).rejects.toThrow(/receipt/);
+      await expect(handoff(database, worker, { runId, outcome: 'ranked', contents: {}, receipt })).rejects.toThrow(/receipt/);
     const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
-    expect(detail.run.state).toBe('approve');
+    expect(detail.run.state).toBe('pull');
   });
 });
 
@@ -548,7 +541,7 @@ describe('a workflow gate answer with a note', () => {
     return { runId, choiceId: choice.id, dispatch };
   }
 
-  it('stores the note, wakes the gate agent with it, and shows it on the run', async () => {
+  it("stores the note, wakes the next step's agent with it, and shows it on the run", async () => {
     const { runId, choiceId, dispatch } = await openGate();
     await phone.execute(
       'answerChoice',
@@ -561,7 +554,7 @@ describe('a workflow gate answer with a note', () => {
     );
     expect(stored.rows).toEqual([{ note: 'only the dropdown one, skip the rest' }]);
     const inbox = await readAgentCommands(database, CORNER, TRIAGER);
-    const woken = inbox.commands.find((c) => c.source.systemEvent?.kind === 'choice-answered');
+    const woken = inbox.commands.find((c) => c.source.systemEvent?.verb === 'picked');
     expect(woken?.source.body).toContain(
       'Their note with the answer: "only the dropdown one, skip the rest"',
     );
@@ -578,7 +571,8 @@ describe('a workflow gate answer with a note', () => {
     const { runId, choiceId, dispatch } = await openGate();
     await phone.execute('answerChoice', { choiceId, optionId: dispatch, note: '   ' }, OWNER);
     const inbox = await readAgentCommands(database, CORNER, TRIAGER);
-    const woken = inbox.commands.find((c) => c.source.systemEvent?.kind === 'choice-answered');
+    const woken = inbox.commands.find((c) => c.source.systemEvent?.verb === 'picked');
+    expect(woken?.source.body).toBeDefined();
     expect(woken?.source.body).not.toContain('note');
     const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
     expect(detail.history[2]!.gate).toMatchObject({ status: 'answered', answer: 'dispatch' });
@@ -621,10 +615,10 @@ describe('a workflow gate answer with a note', () => {
 });
 
 describe('visit output through daemon completion and phone GET', () => {
-  async function start(roomId = CORNER, starter = TRIAGER) {
-    await saveWorkflow(database, await command(roomId, TRIAGER), { contract: describedWorkflow(TRIAGE) });
+  async function start(roomId = CORNER, starter = TRIAGER, name = TRIAGE.name) {
+    await saveWorkflow(database, await command(roomId, TRIAGER), { contract: describedWorkflow({ ...TRIAGE, name }) });
     return (await startWorkflow(database, await command(roomId, starter), {
-      name: TRIAGE.name, roleBindings: { triager: TRIAGER },
+      name, roleBindings: { triager: TRIAGER },
     })).runId;
   }
   async function wake(runId: string, roomId = CORNER) {
@@ -649,7 +643,8 @@ describe('visit output through daemon completion and phone GET', () => {
 
   it('Reproduction wf-human-1: isolates two runs and repeated visits, including late final and duplicate delivery', async () => {
     const one = await start();
-    const two = await start(CORNER, REVIEWER);
+    // One live run per workflow per Room: the second run is of a second workflow.
+    const two = await start(CORNER, REVIEWER, 'feedback-triage-two');
     const first = await wake(one);
     const second = await wake(two);
     const daemon = new DaemonService(database, new LiveHub());

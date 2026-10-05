@@ -12,7 +12,7 @@ const contract = {
     implement: {
       role: 'implementer',
       requires: ['summary', 'prUrl'],
-      on: { pushed: 'checks', blocked: 'ask_human' },
+      on: { pushed: 'checks', stuck: 'ask_human' },
     },
     checks: {
       role: 'implementer',
@@ -95,7 +95,7 @@ describe('workflow contract validation', () => {
       loop: undefined,
       on: { passing: 'review', failing: 'implement' },
     };
-    const implement = { ...contract.handoffs.implement, on: { pushed: 'checks', blocked: 'checks' } };
+    const implement = { ...contract.handoffs.implement, on: { pushed: 'checks', stuck: 'checks' } };
     // implement -> checks -> implement with no loop cap anywhere is a real cycle.
     expect(
       readWorkflowContract({
@@ -113,7 +113,7 @@ describe('workflow contract validation', () => {
   });
 
   it('rejects a handoff naming a target state that does not exist', () => {
-    const implement = { ...contract.handoffs.implement, on: { pushed: 'nowhere', blocked: 'ask_human' } };
+    const implement = { ...contract.handoffs.implement, on: { pushed: 'nowhere', stuck: 'ask_human' } };
     expect(
       readWorkflowContract({ ...contract, handoffs: { ...contract.handoffs, implement } }),
     ).toBeNull();
@@ -419,5 +419,33 @@ describe('human descriptions at the save boundary', () => {
   });
   it('counts Unicode characters consistently at 140', () => {
     expect(workflowSaveError({ ...described, summary: '🦊'.repeat(140) })).toBeNull();
+  });
+});
+
+describe('self-healing contract keys', () => {
+  const described = { ...contract, summary: 'Build and review the agreed change.',
+    handoffs: Object.fromEntries(Object.entries(contract.handoffs).map(([name, state]) =>
+      [name, { ...state, does: `Perform ${name.replace(/_/g, ' ')}.` }])) };
+  const withGate = (gate: Record<string, unknown>) => ({ ...described, handoffs: { ...described.handoffs,
+    human_approve: { ...described.handoffs.human_approve, ...gate } } });
+
+  it('accepts a gate timeout with a default, and a run deadline', () => {
+    expect(workflowSaveError(withGate({ timeoutSeconds: 3600, default: 'rejected' }))).toBeNull();
+    expect(workflowSaveError({ ...described, deadlineSeconds: 86400 })).toBeNull();
+  });
+
+  it('requires a gate timeout and default together, the default to be an outcome, and a deadline in range', () => {
+    expect(workflowSaveError(withGate({ timeoutSeconds: 3600 }))).toContain('together');
+    expect(workflowSaveError(withGate({ default: 'rejected' }))).toContain('together');
+    expect(workflowSaveError(withGate({ timeoutSeconds: 3600, default: 'later' }))).toContain('is not an outcome in on');
+    expect(workflowSaveError(withGate({ timeoutSeconds: 10, default: 'rejected' }))).toContain('timeoutSeconds must be');
+    expect(workflowSaveError({ ...described, deadlineSeconds: 30 })).toContain('deadlineSeconds must be');
+  });
+
+  it('reserves blocked on new saves but still reads a pinned version that declares it', () => {
+    const declared = { ...described, handoffs: { ...described.handoffs,
+      implement: { ...described.handoffs.implement, on: { pushed: 'checks', blocked: 'ask_human' } } } };
+    expect(workflowSaveError(declared)).toContain('"blocked" is built in');
+    expect(readWorkflowContract(declared)).not.toBeNull();
   });
 });

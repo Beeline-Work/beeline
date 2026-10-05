@@ -204,10 +204,11 @@ async function writeChoiceCard(
   messageId: string,
   card: ChoiceCardView,
 ): Promise<void> {
-  // A workflow gate's hint, run id and workflow name must survive settlement
-  // for the answering agent's eventual wake.
+  // A workflow gate's hint, run id, workflow name and attempt must survive
+  // settlement: the run reads them back to tell a current card from a stale one.
   await database.query(`UPDATE messages SET card=jsonb_strip_nulls(jsonb_build_object(
-    'receiptHint',card->'receiptHint','runId',card->'runId','workflowSlug',card->'workflowSlug'
+    'receiptHint',card->'receiptHint','runId',card->'runId','workflowSlug',card->'workflowSlug',
+    'attempt',card->'attempt'
   )) || $2::jsonb WHERE id=$1`, [
     messageId,
     JSON.stringify(card),
@@ -557,6 +558,7 @@ async function skipOpenChoice(
   choice: ChoiceRow,
   viewer: IdentityRow | undefined,
   reason: 'skip' | 'expired',
+  wake = true,
 ): Promise<void> {
   const status: ChoiceStatus = 'skipped';
   const agent = await loadIdentity(database, choice.agent_id);
@@ -580,6 +582,7 @@ async function skipOpenChoice(
     footer,
   });
   await writeChoiceCard(database, choice.message_id, card);
+  if (!wake) return;
   await wakeChoice(database, {
     roomId: choice.room_id,
     authorId: viewer?.id ?? choice.agent_id,
@@ -598,9 +601,15 @@ function handleOf(identity: IdentityRow | undefined): string {
   return handle || identity?.name || 'someone';
 }
 
+/**
+ * `wake: false` settles the card without the asking agent's wake or its
+ * answer line: a workflow gate's answer is written as the run's own card
+ * (`settleWorkflowGate`, `workflow-runs.ts`).
+ */
 export async function answerRoomChoice(
   database: SqlDatabase,
   input: { choiceId: string; optionId: string; viewerId: string; note?: unknown },
+  { wake = true }: { wake?: boolean } = {},
 ): Promise<{ choiceId: string; status: ChoiceStatus; roomId: string }> {
   const note = normalizeChoiceNote(input.note);
   const choice = await loadChoice(database, input.choiceId);
@@ -694,6 +703,7 @@ export async function answerRoomChoice(
     note,
   });
   await writeChoiceCard(database, choice.message_id, card);
+  if (!wake) return { choiceId: choice.id, status: 'answered', roomId: choice.room_id };
   await wakeChoice(database, {
     roomId: choice.room_id,
     authorId: input.viewerId,
@@ -717,6 +727,7 @@ export async function answerRoomChoice(
 export async function skipRoomChoice(
   database: SqlDatabase,
   input: { choiceId: string; viewerId: string },
+  { wake = true }: { wake?: boolean } = {},
 ): Promise<{ choiceId: string; status: ChoiceStatus; roomId: string }> {
   const choice = await loadChoice(database, input.choiceId);
   if (!choice) throw new Error('choice not found');
@@ -732,6 +743,6 @@ export async function skipRoomChoice(
     )
   ).rows[0];
   if (!member) throw new Error('room access denied');
-  await skipOpenChoice(database, choice, viewer, 'skip');
+  await skipOpenChoice(database, choice, viewer, 'skip', wake);
   return { choiceId: choice.id, status: 'skipped', roomId: choice.room_id };
 }

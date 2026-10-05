@@ -413,7 +413,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'start_workflow',
     description:
-      'Start a run of a saved workflow, binding its named roles to current members of this Room (by agent id, or by a handle from your member list - a word matching a member\'s handle binds that member, with or without the @). Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding: one current Room member agent, or an ordered list of up to 16 agents. A list role goes to the first healthy agent on the list when it is first dispatched, skipping offline/recently-failed/out-of-credit agents, and stays with that agent for the rest of the run unless it later fails or goes silent, in which case it moves to the next healthy agent on the list automatically. If nobody on the list is healthy, the run names this in the Room and waits for a human (see assign_workflow_role).' +
+      'Start a run of a saved workflow, binding its named roles to current members of this Room (by agent id, or by a handle from your member list - a word matching a member\'s handle binds that member, with or without the @). Posts one message whose id is the run id and pins the contract version; call handoff with that runId to move the run forward. Every declared role needs a binding: one current Room member agent, or an ordered list of up to 16 agents. A list role goes to the first healthy agent on the list when it is first dispatched, skipping offline/recently-failed/out-of-credit agents, and stays with that agent for the rest of the run unless it later fails or goes silent, in which case it moves to the next healthy agent on the list automatically. If nobody on the list is healthy, the run names this in the Room and waits for a human (see assign_workflow_role). Refused while another run of the same workflow is live in this Room; the refusal names that run and its state.' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
@@ -461,7 +461,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'handoff',
     description:
-      'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A state that reaches a human decision point posts a card instead of waking anyone directly; that role\'s agent is woken once a human answers it.' +
+      'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Pass the attempt number your wake states; if the step has moved since, nothing changes and you get alreadyAdvanced with the current state. A repeat of the same handoff changes nothing. If you cannot do the step, use outcome "blocked" with contents {"reason"}: the step moves to the next agent on its role list. Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A gate is answered by a person on its card and cannot be handed off.' +
       ' You may attach an optional receipt: line is one line of plaintext up to 140 characters; refs is 0-3 links with kind (brief, file, message, pr, checks, memory, url), label and an http(s) url. Omit either or both to leave them empty; never generate a fallback. The engine records the exit and actor. The run keeps the committed final reply from the turn that worked each step, including a reply posted after handoff; do not copy it into an optional receipt. Live output shows only the newest chunk. Follow the current state’s receipt hint when supplied.' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
@@ -471,6 +471,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
         runId: { type: 'string', minLength: 1, maxLength: 128 },
         outcome: { type: 'string', minLength: 1, maxLength: 64 },
         contents: { type: 'object' },
+        attempt: { type: 'integer', minimum: 0 },
         receipt: {
           type: 'object', additionalProperties: false,
           properties: {
@@ -4061,6 +4062,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           outcome: args.outcome,
           contents: args.contents,
           ...(args.receipt !== undefined ? { receipt: args.receipt } : {}),
+          ...(args.attempt !== undefined ? { attempt: args.attempt } : {}),
         }),
       );
     case 'archive_workflow':

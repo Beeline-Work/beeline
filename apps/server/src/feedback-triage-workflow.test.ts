@@ -198,10 +198,14 @@ describe('feedback-triage workflow', () => {
           unnotifiedPullRequests: [1968, 1970],
         },
       }),
-    ).resolves.toEqual({ runId, state: 'pull' });
+    ).resolves.toEqual({ runId, state: 'pull', attempt: 1 });
+    // The same turn moves the next step only by naming its attempt.
     await expect(
       handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] } }),
-    ).resolves.toEqual({ runId, state: 'done', status: 'done' });
+    ).resolves.toEqual({ alreadyAdvanced: true, runId, state: 'pull', seq: 1 });
+    await expect(
+      handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] }, attempt: 1 }),
+    ).resolves.toEqual({ runId, state: 'done', attempt: 2, status: 'done' });
   });
 
   it("refreshes its own outdated seed but never a team's own workflow of the same name", async () => {

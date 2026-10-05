@@ -27,7 +27,7 @@ The owner-required audit exclusion changes the Phase A result. The verified Phas
 
 ## Exact post-rehearsal breakdown
 
-This table is the exact `pg_total_relation_size` result after the Phase B capacity rehearsal, including each table's heap, TOAST, and indexes. It is deliberately distinguished from a real-user import: Phase A supplied aggregate production byte counts, not an offline snapshot, and Phase B is forbidden from querying the live production containers. The importer and `npm run measure -w @beeline/server` now emit this same breakdown automatically for the eventual offline snapshot.
+This table is the exact `pg_total_relation_size` result after the Phase B capacity rehearsal, including each table's heap, TOAST, and indexes. It is deliberately distinguished from a real-user import: Phase A supplied aggregate production byte counts, not an offline snapshot, and Phase B is forbidden from querying the live production containers. `npm run measure -w @beeline/server` emits this same breakdown for the current database.
 
 | Top table               |      Bytes |
 | ----------------------- | ---------: |

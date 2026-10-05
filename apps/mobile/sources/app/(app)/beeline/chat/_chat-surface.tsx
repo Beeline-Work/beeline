@@ -98,7 +98,7 @@ import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
-import { anchorRelayReports, foldSystemLines } from '@/buzz/system-lines';
+import { anchorRelayReports } from '@/buzz/system-lines';
 import { cornerProposalDecision } from '@/buzz/corner-proposal';
 import { anchorCornerMarkers } from '@/buzz/corner-markers';
 import { cornerName } from '@/buzz/corners';
@@ -1365,17 +1365,17 @@ export function BuzzChatSurface({
   const foldedMessages = useMemo(() => {
     const anchored = anchorCornerMarkers(anchorRelayReports(combinedMessages));
     const boundary = boundaryRowIndex(anchored, isCorner ? null : firstUnreadMessageId);
-    if (boundary < 0) return foldSystemLines(foldSettledActivityRuns(anchored));
+    if (boundary < 0) return foldSettledActivityRuns(anchored);
     // Folding cannot swallow the one exact server-owned unread boundary.
     return [
-      ...foldSystemLines(foldSettledActivityRuns(anchored.slice(0, boundary))),
-      ...foldSystemLines(foldSettledActivityRuns(anchored.slice(boundary))),
+      ...foldSettledActivityRuns(anchored.slice(0, boundary)),
+      ...foldSettledActivityRuns(anchored.slice(boundary)),
     ];
   }, [combinedMessages, firstUnreadMessageId, isCorner]);
   const arrivalMessages = useMemo(() => {
     if (!anchoredSegmentActive) return foldedMessages;
     const tail = mergeDisplayPages(cachedMessages, liveMessages, roomSendFrame.optimistic);
-    return foldSystemLines(foldSettledActivityRuns(anchorCornerMarkers(anchorRelayReports(tail))));
+    return foldSettledActivityRuns(anchorCornerMarkers(anchorRelayReports(tail)));
   }, [
     anchoredSegmentActive,
     cachedMessages,

@@ -436,6 +436,7 @@ describe('Room message variant components', () => {
       const renderer = render(
         <GitHubEventCard message={message({ githubEvent })} onOpenUrl={onOpenUrl} />,
       );
+      expect(renderer.root.findByProps({ testID: `github-event-card-${githubEvent.type}-${githubEvent.action}-title` }).props.numberOfLines).toBeUndefined();
       act(() =>
         renderer.root
           .findByProps({

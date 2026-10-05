@@ -734,7 +734,7 @@ export function LedgerHistoryLine({ text, onPress }: { text: string; onPress?: (
  * The one renderer for a server-phrased system line (`buzz/system-lines.ts`):
  * `<subject> <verb>[ <object>][ · <consequence>]` in the quiet `meta` role,
  * no avatar, the stamp pinned right. Names are brass and tappable; an object
- * with a URL is a link. A folded run passes every subject in `subjects`. A row
+ * with a URL is a link. Every message remains a separate row. A row
  * from before the grammar has no event and shows its text verbatim.
  */
 export function LedgerSystemLine({
@@ -759,7 +759,6 @@ export function LedgerSystemLine({
   /** Opens the corner's latest brief; a revision notice links to it. */
   onOpenBrief?: () => void;
 }) {
-  const [summaryExpanded, setSummaryExpanded] = useState(false);
   const names = event ? (subjects?.length ? subjects : [event.subject]) : [];
   const name = (subject: SystemSubject, index: number) => (
     <Text
@@ -825,7 +824,6 @@ export function LedgerSystemLine({
   return (
     <View style={styles.systemLine} testID={`system-line-${id}`}>
       <Text
-        numberOfLines={summaryItems ? 1 : 2}
         style={styles.systemLineText}
         testID={`system-line-text-${id}`}
       >
@@ -836,10 +834,9 @@ export function LedgerSystemLine({
       </Text>
       {summaryItems ? (
         <View style={styles.systemLineItems}>
-          {(summaryExpanded ? summaryItems : summaryItems.slice(0, 3)).map((item) => (
+          {summaryItems.map((item) => (
             <Text
               key={item.id}
-              numberOfLines={1}
               style={item.url ? styles.systemLineLink : styles.systemLineText}
               onPress={item.url && onOpenUrl ? () => onOpenUrl(item.url!) : undefined}
               testID={`github-lifecycle-item-${item.id}`}
@@ -847,22 +844,6 @@ export function LedgerSystemLine({
               {item.title}
             </Text>
           ))}
-          {summaryItems.length > 3 ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                summaryExpanded
-                  ? 'Show fewer GitHub events'
-                  : `Show ${summaryItems.length - 3} more GitHub events`
-              }
-              onPress={() => setSummaryExpanded((value) => !value)}
-              testID={`github-lifecycle-expand-${id}`}
-            >
-              <Text style={styles.systemLineName}>
-                {summaryExpanded ? 'show less' : `and ${summaryItems.length - 3} more`}
-              </Text>
-            </Pressable>
-          ) : null}
         </View>
       ) : null}
     </View>

@@ -906,6 +906,7 @@ const RepositoryFactCard = React.memo(function RepositoryFactCard({
   return (
     <TranscriptCard
       tier="record"
+      wrapTitle
       title={title}
       subline={subline}
       stamp={stamp}

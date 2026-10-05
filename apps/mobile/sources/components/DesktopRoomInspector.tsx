@@ -19,7 +19,7 @@ import { ledgerDayCaption, transcriptBylineOpeners } from '@/buzz/message-dates'
 import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { inspectorCornerObjective, inspectorCornerWindow } from '@/buzz/inspector-corners';
 import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
-import { foldSystemLines } from '@/buzz/system-lines';
+import { anchorRelayReports } from '@/buzz/system-lines';
 import {
   createRoomMessageProjector,
   roomViewTranscriptMessages,
@@ -519,7 +519,7 @@ function CornerCockpit({
   const messages = React.useMemo(
     () =>
       detail
-        ? foldSystemLines(
+        ? anchorRelayReports(
             projector.project(
               roomViewTranscriptMessages({
                 messages: [...olderPages.flat(), ...detail.messages],

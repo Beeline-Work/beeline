@@ -22,7 +22,7 @@ The new server must receive the same GitHub OAuth client secret used by the old 
 
 ## Push
 
-The importer joins registry pubkeys to the same stable identity IDs and inserts devices plus OTA receipts into PostgreSQL. A phone may re-register the same device token: the unique token row moves atomically to the current identity. Push delivery claims are unique by `(message_id, device_token)`, so advisory-lock failover cannot duplicate a delivery attempt.
+The completed legacy migration joined registry pubkeys to stable identity IDs and inserted devices plus OTA receipts into PostgreSQL. A phone may re-register the same device token: the unique token row moves atomically to the current identity. Push delivery claims are unique by `(message_id, device_token)`, so advisory-lock failover cannot duplicate a delivery attempt.
 
 ## Phase C verification
 

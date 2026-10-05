@@ -1,7 +1,9 @@
-# Production monolith cutover hooks
+# Historical production monolith cutover hooks
 
-These scripts implement every site-specific hook required by
-`apps/server/docs/cutover-monolith.md`. They are operator tools, not CI jobs.
+The one-time migration is complete, and execute/rehearse modes are retired.
+The sequence below records the completed cutover; it is not a current run
+instruction. These retained hooks are operator tools, not CI jobs.
+Current release guidance is in `apps/server/docs/cutover-monolith.md`.
 Nothing here should be run during review against production.
 
 1. Copy `cutover.env.template` to a protected path, replace every placeholder,

@@ -92,18 +92,5 @@ npm run typecheck -w @beeline/server
 npm test -w @beeline/server
 ```
 
-## Import
-
-The importer reads a transaction-consistent old PostgreSQL snapshot directly from `channels`, `channel_members`, `users`, `events`, server-owned read marks, and the auth/GitHub tables. It applies the existing push-gateway `projectEvent` rules. It never discovers data through RoomView HTTP and never selects the relay audit table.
-
-```sh
-OLD_DATABASE_URL=postgresql://... \
-DATABASE_URL=postgresql://... \
-OLD_PUSH_REGISTRY_JSON=/snapshot/registrations.json \
-OLD_MEDIA_MANIFEST_JSON=/snapshot/media.json \
-npm run import -w @beeline/server
-```
-
-`import_runs` and `import_items` make the command restartable with the same `IMPORT_ID`. Media is imported before messages so legacy attachment URLs are rewritten to PostgreSQL-backed `/v1/media/:id` URLs. The command exits `2` if the measured new database reaches the 500,000,000-byte Neon ceiling.
-
-See [credential-ceremony.md](docs/credential-ceremony.md), [import-format.md](docs/import-format.md), and [neon-fit.md](docs/neon-fit.md). `fly.toml` is configuration only; provisioning and deployment are Phase C owner actions.
+The one-time legacy workspace migration is complete. Historical results are recorded in
+[production-import-rehearsal-2026-08-31.md](docs/production-import-rehearsal-2026-08-31.md).

@@ -97,7 +97,6 @@ export type PhoneOperationMap = {
   countNeedsYou: { input: WorkspaceInput; output: NeedsYouCountResult };
   /** Tapped or dismissed: the cell leaves the viewer's tray on every device. */
   clearNeedsYou: { input: ClearNeedsYouInput; output: void };
-  createRoomSchedule: { input: CreateRoomScheduleInput; output: RoomScheduleView };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
   /** The newest run of each agent workflow in a Room and its corners, live runs first. */
@@ -107,7 +106,6 @@ export type PhoneOperationMap = {
   readWorkflowDefinition: { input: RoomInput & { readonly name: string }; output: { readonly contract: WorkflowContract; readonly runs: readonly WorkflowRunSummaryView[] } };
   /** A human Room/Workspace admin starts a run directly, attributed to that human (`startKind: 'human_admin'`). */
   startOwnedWorkflow: { input: RoomInput & { readonly name: string; readonly roleBindings: Readonly<Record<string, string | readonly string[]>> }; output: { readonly runId: string; readonly state: string } };
-  updateRoomSchedule: { input: RoomInput & { readonly scheduleId: string; readonly message?: string; readonly cadence?: RoomScheduleCadence; readonly workflowName?: string }; output: { readonly scheduleId: string; readonly nextRunAt: number } };
   readWorkflowRun: { input: ReadWorkflowRunInput; output: WorkflowRunDetailView };
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
   createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
@@ -305,13 +303,6 @@ export type RoomScheduleView = {
   readonly createdAt: number;
   /** Present when the schedule runs in a child corner of the Room being listed. */
   readonly corner?: { readonly id: string; readonly name: string };
-};
-export type CreateRoomScheduleInput = RoomInput & {
-  readonly workflowName?: string;
-  readonly workspaceId: string;
-  readonly agentId: string;
-  readonly cadence: RoomScheduleCadence;
-  readonly message: string;
 };
 export type RoomScheduleListResult = { readonly schedules: readonly RoomScheduleView[] };
 export type DeleteRoomScheduleInput = RoomInput & { readonly scheduleId: string };

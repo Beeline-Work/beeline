@@ -173,39 +173,50 @@ it('Reproduction schedules-12: resolves Start the daily workflow with… and ski
   );
 });
 
-it('Reproduction schedules-13: Room admin creates, lists and deletes only their Room schedules', async () => {
+it('Reproduction schedules-13: Room admin lists and deletes only their Room schedules', async () => {
   const input = {
-    workspaceId: WORKSPACE,
     roomId: ROOM,
     agentId: AGENT,
-    message: 'Run daily',
+    prompt: 'Run daily',
     cadence: { kind: 'interval' as const, everyMinutes: 1 },
   };
-  const created = await phone.execute('createRoomSchedule', input, ADMIN);
-  const other = await phone.execute('createRoomSchedule', { ...input, roomId: OTHER_ROOM }, OWNER);
+  const created = await daemon.execute('createAgentSchedule', input, AGENT);
+  const other = await daemon.execute(
+    'createAgentSchedule',
+    { ...input, roomId: OTHER_ROOM },
+    AGENT,
+  );
   expect(
     (await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules.map(
       (row) => row.id,
     ),
-  ).toEqual([created.id]);
+  ).toEqual([created.scheduleId]);
   await expect(phone.execute('listRoomSchedules', { roomId: OTHER_ROOM }, ADMIN)).rejects.toThrow(
     'room manager required',
   );
   await expect(
-    phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId: other.id }, ADMIN),
+    phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId: other.scheduleId }, ADMIN),
   ).rejects.toThrow('schedule not found');
   await expect(
-    phone.execute('deleteRoomSchedule', { roomId: OTHER_ROOM, scheduleId: other.id }, ADMIN),
+    phone.execute(
+      'deleteRoomSchedule',
+      { roomId: OTHER_ROOM, scheduleId: other.scheduleId },
+      ADMIN,
+    ),
   ).rejects.toThrow('room manager required');
-  await phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId: created.id }, ADMIN);
+  await phone.execute(
+    'deleteRoomSchedule',
+    { roomId: ROOM, scheduleId: created.scheduleId },
+    ADMIN,
+  );
   expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules).toEqual([]);
   expect(
     (await phone.execute('listRoomSchedules', { roomId: OTHER_ROOM }, OWNER)).schedules.map(
       (row) => row.id,
     ),
-  ).toEqual([other.id]);
+  ).toEqual([other.scheduleId]);
   console.log(
-    'Demonstrated schedules-13: Room admin created, listed and deleted their schedule; other Room schedules stayed hidden and could not be deleted',
+    'Demonstrated schedules-13: Room admin listed and deleted their schedule; other Room schedules stayed hidden and could not be deleted',
   );
 });
 

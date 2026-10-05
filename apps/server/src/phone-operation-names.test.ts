@@ -39,7 +39,6 @@ const ALL_PHONE_OPERATION_NAMES = {
   createInvite: true,
   createRoom: true,
   createRoomPoll: true,
-  createRoomSchedule: true,
   createWallet: true,
   createWorkspace: true,
   decideAgentGrant: true,

@@ -65,34 +65,40 @@ describe('agent schedule cadence', () => {
 });
 
 describe('manager schedule phone operations', () => {
-  it('creates, lists, and deletes a Room schedule', async () => {
+  it('lists and deletes an agent-created Room schedule', async () => {
     const database = await fixture();
     try {
       const phone = new PhoneService(database, 'http://local.test');
+      const daemon = new DaemonService(database, new LiveHub());
       const startsAt = Math.floor(Date.now() / 1_000) + 120;
-      const created = await phone.execute(
-        'createRoomSchedule',
+      const created = await daemon.execute(
+        'createAgentSchedule',
         {
-          workspaceId: WORKSPACE,
           roomId: ROOM,
           agentId: AGENT,
           cadence: { kind: 'interval', everyMinutes: 15, startsAt },
-          message: 'Review the launch queue.',
+          prompt: 'Review the launch queue.',
         },
+        AGENT,
+      );
+      await expect(phone.execute('listRoomSchedules', { roomId: ROOM }, OWNER)).resolves.toEqual({
+        schedules: [
+          expect.objectContaining({
+            id: created.scheduleId,
+            workspaceId: WORKSPACE,
+            roomId: ROOM,
+            agentId: AGENT,
+            creatorId: AGENT,
+            message: 'Review the launch queue.',
+            nextRunAt: startsAt,
+          }),
+        ],
+      });
+      await phone.execute(
+        'deleteRoomSchedule',
+        { roomId: ROOM, scheduleId: created.scheduleId },
         OWNER,
       );
-      expect(created).toMatchObject({
-        workspaceId: WORKSPACE,
-        roomId: ROOM,
-        agentId: AGENT,
-        creatorId: OWNER,
-        message: 'Review the launch queue.',
-        nextRunAt: startsAt,
-      });
-      await expect(phone.execute('listRoomSchedules', { roomId: ROOM }, OWNER)).resolves.toEqual({
-        schedules: [created],
-      });
-      await phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId: created.id }, OWNER);
       await expect(phone.execute('listRoomSchedules', { roomId: ROOM }, OWNER)).resolves.toEqual({
         schedules: [],
       });
@@ -155,35 +161,26 @@ describe('manager schedule phone operations', () => {
     const database = await fixture();
     try {
       const phone = new PhoneService(database, 'http://local.test');
-      await expect(
-        phone.execute(
-          'createRoomSchedule',
-          {
-            workspaceId: WORKSPACE,
-            roomId: ROOM,
-            agentId: AGENT,
-            cadence: { kind: 'interval', everyMinutes: 1 },
-            message: 'Run this.',
-          },
-          MEMBER,
-        ),
-      ).rejects.toThrow('room manager required');
       await expect(phone.execute('listRoomSchedules', { roomId: ROOM }, MEMBER)).rejects.toThrow(
         'room manager required',
       );
-      const created = await phone.execute(
-        'createRoomSchedule',
+      const daemon = new DaemonService(database, new LiveHub());
+      const created = await daemon.execute(
+        'createAgentSchedule',
         {
-          workspaceId: WORKSPACE,
           roomId: ROOM,
           agentId: AGENT,
           cadence: { kind: 'interval', everyMinutes: 1 },
-          message: 'Run this.',
+          prompt: 'Run this.',
         },
-        OWNER,
+        AGENT,
       );
       await expect(
-        phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId: created.id }, MEMBER),
+        phone.execute(
+          'deleteRoomSchedule',
+          { roomId: ROOM, scheduleId: created.scheduleId },
+          MEMBER,
+        ),
       ).rejects.toThrow('room manager required');
     } finally {
       await database.close();
@@ -476,17 +473,18 @@ describe('agent tool schedule daemon operations', () => {
 
       // A person's schedule for an agent runs in that person's name, so no
       // agent may rewrite it, and only the agent it mentions may see or delete it.
-      const phone = new PhoneService(database, 'http://local.test');
-      const managerSchedule = await phone.execute(
-        'createRoomSchedule',
-        {
-          workspaceId: WORKSPACE,
-          roomId: ROOM,
-          agentId: AGENT,
-          message: 'Daily digest.',
-          cadence: { kind: 'interval', everyMinutes: 1440 },
-        },
-        OWNER,
+      const managerSchedule = { id: '44444444-4444-4444-8444-444444444444' };
+      await database.query(
+        `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+         VALUES($1,$2,$3,$4,$5,$6::jsonb,'Daily digest.',now() + interval '1 day')`,
+        [
+          managerSchedule.id,
+          WORKSPACE,
+          ROOM,
+          AGENT,
+          OWNER,
+          JSON.stringify({ kind: 'interval', everyMinutes: 1440 }),
+        ],
       );
       for (const agentId of [AGENT, OTHER_AGENT]) {
         await expect(

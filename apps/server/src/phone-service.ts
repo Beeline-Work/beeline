@@ -5,7 +5,7 @@ import {
   completeAgentSignInCard,
 } from './agent-sign-in.js';
 import { settleWorkflowGate, startWorkflow } from './workflow-runs.js';
-import { humanRoomAdmin, scheduleWorkflowName } from './workflow-admin.js';
+import { humanRoomAdmin } from './workflow-admin.js';
 import { setCornerHold } from './corner-holds.js';
 import {
   createAgentCommand,
@@ -55,6 +55,7 @@ import type {
   RoomHistoryOutline,
   RoomHistoryView,
   RoomView,
+  RoomScheduleView,
   RoomViewIdentity,
   RoomViewMember,
   RoomViewMessage,
@@ -153,7 +154,6 @@ import {
   workspaceSystemLine,
 } from './system-line.js';
 export { directMessageRoomId } from './system-line.js';
-import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import {
   answerRoomChoice,
   hiddenWakeCardSql,
@@ -415,7 +415,7 @@ interface RoomScheduleRow {
   room_id: string;
   agent_id: string;
   creator_id: string;
-  cadence: Input<'createRoomSchedule'>['cadence'];
+  cadence: RoomScheduleView['cadence'];
   message: string;
   next_run_at: Date;
   created_at: Date;
@@ -839,7 +839,7 @@ function titledDaemonFact(card: unknown): NonNullable<RoomViewMessage['daemonFac
   return title ? { ...fact, name: title } : fact;
 }
 
-function roomSchedule(row: RoomScheduleRow): Output<'createRoomSchedule'> {
+function roomSchedule(row: RoomScheduleRow): RoomScheduleView {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -3707,64 +3707,6 @@ export class PhoneService {
       case 'clearNeedsYou':
         await this.clearNeedsYou(input as Input<'clearNeedsYou'>, viewerId);
         return undefined as Output<Name>;
-      case 'createRoomSchedule': {
-        if (!this.routingTransaction)
-          return this.database.transaction((db) =>
-            new PhoneService(
-              db,
-              this.publicOrigin,
-              this.github,
-              this.sendPushTest,
-              this.live,
-              true,
-            ).execute('createRoomSchedule', input as Input<'createRoomSchedule'>, viewerId),
-          ) as Promise<Output<Name>>;
-        const request = input as Input<'createRoomSchedule'>;
-        const db = this.database;
-        const target = await this.requireTopLevelRoom(request.roomId);
-        if (target.workspace_id !== request.workspaceId) throw new Error('room is not in workspace');
-        if (!(await humanRoomAdmin(db, request.roomId, viewerId)))
-          throw new Error('room manager required');
-        if (typeof request.message !== 'string' || !request.message.trim())
-          throw new Error('schedule message is required');
-        if (!request.cadence || typeof request.cadence !== 'object')
-          throw new Error('schedule cadence is invalid');
-        validateScheduleCadence(request.cadence);
-        const agent = await db.query(
-          `SELECT 1 FROM identities identity
-           JOIN memberships membership ON membership.identity_id=identity.id
-           WHERE identity.id=$1 AND identity.kind='agent' AND membership.room_id=$2
-             AND membership.workspace_id=$3 AND membership.removed_at IS NULL`,
-          [request.agentId, request.roomId, request.workspaceId],
-        );
-        if (!agent.rowCount) throw new Error('agent not found in room');
-        const workflowName = await scheduleWorkflowName(
-          db,
-          request.roomId,
-          request.message,
-          request.workflowName,
-        );
-        const id = randomUUID();
-        const nextRunAt = nextScheduleOccurrence(request.cadence, new Date());
-        const inserted = await db.query<RoomScheduleRow>(
-          `INSERT INTO agent_schedules(
-             id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug
-           ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)
-           RETURNING id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,created_at`,
-          [
-            id,
-            request.workspaceId,
-            request.roomId,
-            request.agentId,
-            viewerId,
-            JSON.stringify(request.cadence),
-            request.message.trim(),
-            nextRunAt,
-            workflowName ?? null,
-          ],
-        );
-        return roomSchedule(inserted.rows[0]!) as Output<Name>;
-      }
       case 'listRoomSchedules':
         return (await this.listRoomSchedules(
           (input as Input<'listRoomSchedules'>).roomId,
@@ -3828,58 +3770,6 @@ export class PhoneService {
           { room_id: request.roomId, agent_id: viewerId },
           request,
         )) as Output<Name>;
-      }
-      case 'updateRoomSchedule': {
-        if (!this.routingTransaction)
-          return this.database.transaction((db) =>
-            new PhoneService(
-              db,
-              this.publicOrigin,
-              this.github,
-              this.sendPushTest,
-              this.live,
-              true,
-            ).execute('updateRoomSchedule', input as Input<'updateRoomSchedule'>, viewerId),
-          ) as Promise<Output<Name>>;
-        const db = this.database;
-        const request = input as Input<'updateRoomSchedule'>;
-        if (!(await humanRoomAdmin(this.database, request.roomId, viewerId)))
-          throw new Error('human Room/Workspace admin required');
-        if (request.message !== undefined && !request.message.trim())
-          throw new Error('schedule message is required');
-        if (request.cadence) validateScheduleCadence(request.cadence);
-        const existing = (
-          await db.query<{ message: string; workflow_slug: string | null }>(
-            `SELECT message,workflow_slug FROM agent_schedules WHERE id=$1 AND room_id=$2`,
-            [request.scheduleId, request.roomId],
-          )
-        ).rows[0];
-        if (!existing) throw new Error('schedule not found');
-        const workflowName =
-          (await scheduleWorkflowName(
-            db,
-            request.roomId,
-            request.message ?? existing.message,
-            request.workflowName,
-          )) ?? existing.workflow_slug;
-        const updated = await db.query<{ next_run_at: Date }>(
-          `UPDATE agent_schedules SET message=COALESCE($3,message),
-                  cadence=COALESCE($4::jsonb,cadence),next_run_at=COALESCE($5,next_run_at),updated_by=$6,updated_at=now(),workflow_slug=$7
-                  WHERE id=$1 AND room_id=$2 RETURNING next_run_at`,
-          [
-            request.scheduleId,
-            request.roomId,
-            request.message?.trim() ?? null,
-            request.cadence ? JSON.stringify(request.cadence) : null,
-            request.cadence ? nextScheduleOccurrence(request.cadence, new Date()) : null,
-            viewerId,
-            workflowName ?? null,
-          ],
-        );
-        return {
-          scheduleId: request.scheduleId,
-          nextRunAt: Math.floor(updated.rows[0]!.next_run_at.getTime() / 1000),
-        } as Output<Name>;
       }
       case 'readWorkflowRun':
         return (await this.readWorkflowRun(
@@ -9552,7 +9442,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'readNeedsYou',
   'countNeedsYou',
   'clearNeedsYou',
-  'createRoomSchedule',
   'listRoomSchedules',
   'deleteRoomSchedule',
   'listRoomWorkflowRuns',
@@ -9560,7 +9449,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'readWorkflowDefinition',
   'listWorkflowDefinitions',
   'startOwnedWorkflow',
-  'updateRoomSchedule',
   'cancelAgentTurn',
   'createHumanCorner',
   'requestCornerClose',

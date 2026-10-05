@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Linking, Pressable, Text, View } from 'react-native';
-import Svg, { Circle, Line, Path } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { StyleSheet } from 'react-native-unistyles';
 import type {
   WorkflowActorView,
@@ -44,22 +44,20 @@ const STATUS_WORD: Record<WorkflowLineStatus, string> = {
   done: 'done',
   current: 'current step',
   pending: 'not yet reached',
-  skipped: 'skipped',
   failed: 'failed',
 };
 
 const reached = (step: WorkflowLineStep) =>
   step.status === 'done' || step.status === 'current' || step.status === 'failed';
 
-type SegmentTone = 'brass' | 'quiet' | 'dashed';
+type SegmentTone = 'brass' | 'quiet';
 
-/** Brass where the run went, dashed past a skipped step, quiet ahead. */
+/** Brass where the run went, quiet ahead. */
 function segmentTone(above: WorkflowLineStep, below: WorkflowLineStep): SegmentTone {
-  if (above.status === 'skipped' || below.status === 'skipped') return 'dashed';
   return reached(above) && reached(below) ? 'brass' : 'quiet';
 }
 
-/** One step's circle: brass check, breathing brass ring, hollow, ghost slash, or ink x. */
+/** One step's circle: brass check, breathing brass ring, hollow, or ink x. */
 export function WorkflowStepCircle({
   status,
   size = CIRCLE,
@@ -69,7 +67,7 @@ export function WorkflowStepCircle({
   size?: number;
   testID?: string;
 }) {
-  const { brass, ground, hollow, ghost, ink } = palette();
+  const { brass, ground, hollow, ink } = palette();
   return (
     <Svg
       {...DECORATIVE_GLYPH_PROPS}
@@ -95,19 +93,6 @@ export function WorkflowStepCircle({
           <Circle cx={10} cy={10} fill={ground} r={8.25} stroke={brass} strokeWidth={1.5} />
           <Circle cx={10} cy={10} fill={brass} r={4} />
         </>
-      ) : status === 'skipped' ? (
-        <>
-          <Circle
-            cx={10}
-            cy={10}
-            fill={ground}
-            r={8}
-            stroke={ghost}
-            strokeDasharray="2.5 2.2"
-            strokeWidth={1.5}
-          />
-          <Path d="M6.5 13.5l7-7" stroke={ghost} strokeLinecap="round" strokeWidth={1.5} />
-        </>
       ) : status === 'failed' ? (
         <>
           <Circle cx={10} cy={10} fill={ground} r={8.25} stroke={ink} strokeWidth={1.5} />
@@ -126,46 +111,15 @@ function palette() {
     quiet: styles.quietLine.color,
     ground: styles.ground.color,
     hollow: styles.hollow.color,
-    ghost: styles.ghost.color,
     ink: styles.ink.color,
   };
 }
 
-/** A 2pt piece of the line: solid brass or quiet, or a dashed ghost past a skip. */
-function Segment({
-  tone,
-  vertical,
-  style,
-  testID,
-}: {
-  tone: SegmentTone;
-  vertical: boolean;
-  style: object;
-  testID?: string;
-}) {
-  const { brass, quiet, ghost } = palette();
-  if (tone !== 'dashed')
-    return (
-      <View
-        style={[style, { backgroundColor: tone === 'brass' ? brass : quiet }]}
-        testID={testID ? `${testID}-${tone}` : undefined}
-      />
-    );
-  return (
-    <View style={style} testID={testID ? `${testID}-dashed` : undefined}>
-      <Svg {...DECORATIVE_GLYPH_PROPS} height="100%" width="100%">
-        <Line
-          stroke={ghost}
-          strokeDasharray="3 4"
-          strokeWidth={2}
-          x1={vertical ? 1 : 0}
-          x2={vertical ? 1 : '100%'}
-          y1={vertical ? 0 : 1}
-          y2={vertical ? '100%' : 1}
-        />
-      </Svg>
-    </View>
-  );
+/** A 2pt piece of the line, solid brass or quiet. */
+function Segment({ tone, style, testID }: { tone: SegmentTone; vertical: boolean; style: object; testID?: string }) {
+  const { brass, quiet } = palette();
+  return <View style={[style, { backgroundColor: tone === 'brass' ? brass : quiet }]}
+    testID={testID ? `${testID}-${tone}` : undefined} />;
 }
 
 /**
@@ -331,7 +285,7 @@ function StepRow({
   const seconds = stepSeconds(step, now);
   // The terminal that ends the run reads by the clock it was reached, not an elapsed span.
   const reachedAt = step.kind === 'terminal' ? visit?.enteredAt : undefined;
-  const dimmed = step.status === 'pending' || step.status === 'skipped' ? styles.dimmed : null;
+  const dimmed = step.status === 'pending' ? styles.dimmed : null;
   // Every step starts open; a tap collapses it to its one-line description,
   // and a second tap reopens it.
   const hasDetail = Boolean(draft || final || gateLine || visit?.openedCorners?.length);
@@ -405,7 +359,6 @@ const styles = StyleSheet.create((theme) => {
     quietLine: { color: theme.buzz.borderStrong },
     ground: { color: theme.buzz.bgBase },
     hollow: { color: theme.buzz.textMuted },
-    ghost: { color: theme.buzz.ledgerGhost },
     quiet: { color: theme.buzz.ledgerQuiet },
     ink: { color: theme.buzz.textSecondary },
     // The current step's halo (HALO, wider than the circle it rings) would

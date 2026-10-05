@@ -1,11 +1,11 @@
 import type {
   WorkflowActorView,
-  WorkflowContract,
+  WorkflowReadContract,
   WorkflowGateRecordView,
   WorkflowOpenedCornerView,
   WorkflowRunStepView,
   WorkflowRunStatus,
-  WorkflowState,
+  WorkflowReadState,
   WorkflowReceipt,
 } from '@beeline/api-contract/phone';
 import { workflowRunStatus, workflowStepDisplayStatus } from '@beeline/api-contract/phone';
@@ -18,7 +18,7 @@ import { workflowRunStatus, workflowStepDisplayStatus } from '@beeline/api-contr
  * the ones the run has reached so far.
  */
 
-export type WorkflowLineStatus = 'done' | 'current' | 'pending' | 'skipped' | 'failed';
+export type WorkflowLineStatus = 'done' | 'current' | 'pending' | 'failed';
 
 export type WorkflowLineKind = 'handoff' | 'gate' | 'server' | 'waiting' | 'terminal';
 
@@ -34,8 +34,6 @@ export type WorkflowLineVisit = {
   readonly nextState?: string;
   /** Who wrote the card that left the state. */
   readonly leftBy?: WorkflowActorView;
-  /** What the state handed off with. */
-  readonly delivered?: Readonly<Record<string, unknown>>;
   readonly receipt?: WorkflowReceipt;
   readonly gate?: WorkflowGateRecordView;
   readonly openedCorners?: readonly WorkflowOpenedCornerView[];
@@ -47,22 +45,17 @@ export type WorkflowLineStep = {
   readonly kind: WorkflowLineKind;
   readonly terminalStatus?: 'done' | 'failed' | 'abandoned';
   readonly status: WorkflowLineStatus;
-  /** False for a state spliced in because the run went through it. */
-  readonly onMainPath: boolean;
   readonly visits: readonly WorkflowLineVisit[];
-  /** For a skipped state: the visited state whose outcome went around it. */
-  readonly skippedBy?: { readonly state: string; readonly outcome?: string };
-  /** For a state that owns a capped loop: times its loop edge was taken, and the cap. */
-  readonly loop?: { readonly taken: number; readonly cap: number };
+
 };
 
-function kindOf(state: WorkflowState | undefined): WorkflowLineKind {
+function kindOf(state: WorkflowReadState | undefined): WorkflowLineKind {
   return state?.kind ?? 'handoff';
 }
 
 /** The state `state`'s first declared outcome not already in `seen`, or a fresh implicit terminal. */
 function nextPredicted(
-  contract: WorkflowContract,
+  contract: WorkflowReadContract,
   state: string,
   seen: ReadonlySet<string>,
 ): string | undefined {
@@ -79,7 +72,7 @@ function nextPredicted(
 
 /** The contract's predicted path onward from the run's current state, every row `pending`. */
 function predictedTail(
-  contract: WorkflowContract,
+  contract: WorkflowReadContract,
   current: string,
   reachedStates: ReadonlySet<string>,
 ): WorkflowLineStep[] {
@@ -94,7 +87,6 @@ function predictedTail(
       kind: kindOf(declared),
       ...(declared.kind === 'terminal' ? { terminalStatus: declared.status } : {}),
       status: 'pending',
-      onMainPath: true,
       visits: [],
     });
     if (declared.kind === 'terminal') break;
@@ -104,7 +96,7 @@ function predictedTail(
 }
 
 export function workflowRunLine(
-  contract: WorkflowContract,
+  contract: WorkflowReadContract,
   history: readonly WorkflowRunStepView[] = [],
   runStatus?: WorkflowRunStatus,
 ): WorkflowLineStep[] {
@@ -124,7 +116,6 @@ export function workflowRunLine(
         outcome: next.outcome,
         nextState: next.toState,
         leftBy: next.actor,
-        delivered: next.contents,
         receipt: next.receipt,
       } : terminal ? { leftAt: entry.at } : {}),
       gate: entry.gate,
@@ -139,7 +130,6 @@ export function workflowRunLine(
       kind: kindOf(declared),
       ...(terminal ? { terminalStatus: declared.status } : {}),
       status: entry.displayStatus ?? workflowStepDisplayStatus(contract, entry.toState, status, Boolean(next && !closedHere)),
-      onMainPath: false,
       visits: [visit],
     };
   }).filter((_step, index) => {

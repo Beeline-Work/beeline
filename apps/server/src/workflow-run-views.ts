@@ -1,6 +1,6 @@
 import type {
   WorkflowActorView,
-  WorkflowContract,
+  WorkflowReadContract,
   WorkflowGateRecordView,
   WorkflowOpenedCornerView,
   WorkflowRunDetailView,
@@ -49,6 +49,8 @@ type RunHeadRow = {
   from_state: string | null;
   author_id: string;
   role_bindings: Record<string, string> | null;
+  started_by: WorkflowActorView;
+  start_kind: WorkflowRunSummaryView['startKind'];
   started_at: Date;
   updated_at: Date;
 };
@@ -63,8 +65,6 @@ type RunHead = {
   version: number;
   /** Its contract: the pinned `slug@version`. */
   key: string;
-  /** Runs of one workflow share this: the slug. */
-  family: string;
   state: string;
   status?: WorkflowRunStatus;
   /** The state the newest card left, when it is a handoff rather than the start. */
@@ -72,10 +72,11 @@ type RunHead = {
   /** Author of the newest card. */
   authorId: string;
   roleBindings: Record<string, string>;
+  startedBy: WorkflowActorView;
+  startKind?: WorkflowRunSummaryView['startKind'];
   startedAt: number;
   updatedAt: number;
   /** Millisecond times for ordering runs that started within the same second. */
-  startedAtMs: number;
   updatedAtMs: number;
 };
 
@@ -120,10 +121,14 @@ async function loadRunHeads(
               cards.run_id,cards.room_id,cards.card_type,scope.name room_name,scope.parent_id,
               scope.workspace_id,cards.workflow_slug,
               cards.workflow_version,cards.to_state,cards.from_state,cards.author_id,cards.status,
-              cards.role_bindings,started.started_at,cards.created_at updated_at
+              cards.role_bindings,started.started_at,cards.created_at updated_at,
+              jsonb_build_object('id',starter.id,'name',starter.name,'kind',starter.kind) started_by,
+              start.card->>'startKind' start_kind
        FROM cards
        JOIN scope ON scope.id=cards.room_id
        JOIN started ON started.room_id=cards.room_id AND started.run_id=cards.run_id
+       JOIN messages start ON start.id=cards.run_id AND start.room_id=cards.room_id
+       JOIN identities starter ON starter.id=start.author_id
        ORDER BY cards.room_id,cards.run_id,cards.seq DESC NULLS LAST,cards.created_at DESC,
                 cards.id DESC`,
       [topRoomId, viewerId, RUN_CARD_TYPES, only?.cardType ?? null, only?.slug ?? null],
@@ -139,15 +144,15 @@ async function loadRunHeads(
       slug: row.workflow_slug,
       version: row.workflow_version,
       key: `${row.workflow_slug}@${row.workflow_version}`,
-      family: row.workflow_slug,
       state: row.to_state,
       ...(row.status ? { status: row.status } : {}),
       ...(row.from_state ? { fromState: row.from_state } : {}),
       authorId: row.author_id,
       roleBindings: row.role_bindings ?? {},
+      startedBy: row.started_by,
+      ...(row.start_kind ? { startKind: row.start_kind } : {}),
       startedAt: unix(row.started_at),
       updatedAt: unix(row.updated_at),
-      startedAtMs: new Date(row.started_at).getTime(),
       updatedAtMs: new Date(row.updated_at).getTime(),
     };
   });
@@ -158,8 +163,8 @@ async function loadContracts(
   db: SqlDatabase,
   workspaceId: string,
   heads: readonly RunHead[],
-): Promise<Map<string, WorkflowContract>> {
-  const contracts = new Map<string, WorkflowContract>();
+): Promise<Map<string, WorkflowReadContract>> {
+  const contracts = new Map<string, WorkflowReadContract>();
   const pins = [
     ...new Map(heads.map((head) => [head.key, head])).values(),
   ];
@@ -178,7 +183,7 @@ async function loadContracts(
   ).rows;
   for (const row of rows) {
     try {
-      contracts.set(`${row.slug}@${row.version}`, JSON.parse(row.markdown) as WorkflowContract);
+      contracts.set(`${row.slug}@${row.version}`, JSON.parse(row.markdown) as WorkflowReadContract);
     } catch {
       // An unreadable stored contract leaves the run out rather than failing the list.
     }
@@ -231,7 +236,7 @@ function boundIdentityId(binding: string | undefined): string | undefined {
   return isAgentIdentityReference(binding) ? binding : undefined;
 }
 
-function stateRole(contract: WorkflowContract, state: string): string | undefined {
+function stateRole(contract: WorkflowReadContract, state: string): string | undefined {
   const declared = contract.handoffs[state];
   if (!declared || declared.kind === 'terminal') return undefined;
   return declared.role;
@@ -242,7 +247,7 @@ function stateRole(contract: WorkflowContract, state: string): string | undefine
  * none, so the row keeps the role that handed the run off, and otherwise the
  * person who wrote that card. The system identity is not a holder.
  */
-function holderIdentityId(head: RunHead, contract: WorkflowContract): string | undefined {
+function holderIdentityId(head: RunHead, contract: WorkflowReadContract): string | undefined {
   const current = stateRole(contract, head.state);
   if (current) return boundIdentityId(head.roleBindings[current]);
   if (workflowRunStatus(contract, head.state, head.status) === 'live') return undefined;
@@ -254,11 +259,9 @@ function holderIdentityId(head: RunHead, contract: WorkflowContract): string | u
 
 function summarize(
   head: RunHead,
-  contract: WorkflowContract,
+  contract: WorkflowReadContract,
   actors: ReadonlyMap<string, WorkflowActorView>,
   viewer: Pick<WorkflowActorView, 'id' | 'kind'>,
-  earlierRunCount: number,
-  activeRunIds: readonly string[] = [],
 ): WorkflowRunSummaryView {
   const status = workflowRunStatus(contract, head.state, head.status);
   const holderId = holderIdentityId(head, contract);
@@ -279,25 +282,9 @@ function summarize(
       status === 'live' && (holderId === viewer.id || (isGate && viewer.kind === 'human')),
     startedAt: head.startedAt,
     updatedAt: head.updatedAt,
-    earlierRunCount,
-    ...(activeRunIds.length ? { activeRunIds: [...activeRunIds] } : {}),
+    startedBy: head.startedBy,
+    ...(head.startKind ? { startKind: head.startKind } : {}),
   };
-}
-
-/** Every live run id, grouped by workflow family, among the given heads. */
-function liveRunIdsByFamily(
-  heads: readonly RunHead[],
-  contracts: ReadonlyMap<string, WorkflowContract>,
-): Map<string, string[]> {
-  const byFamily = new Map<string, string[]>();
-  for (const head of heads) {
-    const contract = contracts.get(head.key);
-    if (!contract || workflowRunStatus(contract, head.state, head.status) !== 'live') continue;
-    const list = byFamily.get(head.family) ?? [];
-    list.push(head.runId);
-    byFamily.set(head.family, list);
-  }
-  return byFamily;
 }
 
 /** Every bound role holder, and the newest card's author when it is a person or agent. */
@@ -322,16 +309,6 @@ async function loadViewer(
     )
   ).rows[0];
   return row ? actorView(row, publicOrigin) : { id: viewerId, name: '', kind: 'human' };
-}
-
-function earlierThan(heads: readonly RunHead[], head: RunHead): number {
-  return heads.filter(
-    (other) =>
-      other.family === head.family &&
-      other.runId !== head.runId &&
-      (other.startedAtMs < head.startedAtMs ||
-        (other.startedAtMs === head.startedAtMs && other.runId < head.runId)),
-  ).length;
 }
 
 /**
@@ -359,7 +336,7 @@ export async function listRoomWorkflowRuns(
   const isLive = (head: RunHead) => workflowRunStatus(contracts.get(head.key)!, head.state, head.status) === 'live';
   const newest = new Map<string, RunHead>();
   for (const head of readable) {
-    const scopeKey = `${head.roomId}:${head.family}`;
+    const scopeKey = `${head.roomId}:${head.slug}`;
     const current = newest.get(scopeKey);
     if (
       !current ||
@@ -373,22 +350,7 @@ export async function listRoomWorkflowRuns(
     loadActors(db, chosen.flatMap(headBindingIds), publicOrigin),
     loadViewer(db, viewerId, publicOrigin),
   ]);
-  const liveByFamily = liveRunIdsByFamily(readable, contracts);
-  const workflows = (
-    await Promise.all(
-      chosen.map(async (head) => ({
-        ...summarize(
-          head,
-          contracts.get(head.key)!,
-          actors,
-          viewer,
-          earlierThan(readable, head),
-          liveByFamily.get(head.family) ?? [],
-        ),
-        ...(await workflowStartInfo(db, head.roomId, head.runId)),
-      })),
-    )
-  ).sort(
+  const workflows = chosen.map((head) => summarize(head, contracts.get(head.key)!, actors, viewer)).sort(
     (left, right) =>
       Number(right.status === 'live') - Number(left.status === 'live') ||
       right.updatedAt - left.updatedAt,
@@ -401,7 +363,7 @@ const MICROS = (column: string) => `(extract(epoch FROM ${column})*1000000)::big
 
 type RunCardRow = {
   id: string;
-  seq: number | null;
+  seq: number;
   output_turns: string[] | null;
   live_output: string | null;
   final_reply: WorkflowRunStepView['finalReply'] | null;
@@ -433,10 +395,10 @@ function visitsOf(cards: readonly RunCardRow[]): Visit[] {
   for (const card of cards) {
     const previous = visits[visits.length - 1];
     if (card.reassigned) {
-      previous?.attempts.push(card.seq ?? 0);
+      previous?.attempts.push(card.seq);
     } else {
       if (previous) previous.until = Number(card.created_us);
-      visits.push({ card, attempts: [card.seq ?? 0], from: Number(card.created_us) });
+      visits.push({ card, attempts: [card.seq], from: Number(card.created_us) });
     }
   }
   return visits;
@@ -448,14 +410,14 @@ const within = (visit: Visit, at: number) =>
 /**
  * Match gate cards by their recorded run and attempt, including reassignments
  * during the visit. Cards predating run ids use the prompt and visit window;
- * cards with a run id but no attempt use that run's visit window. An answered
+ * migrated run-linked cards always carry an attempt. An answered
  * card wins over the other cards posted during the same visit.
  */
 async function loadGateRecords(
   db: SqlDatabase,
   roomId: string,
   runId: string,
-  contract: WorkflowContract,
+  contract: WorkflowReadContract,
   visits: readonly Visit[],
   publicOrigin: string,
 ): Promise<Map<Visit, WorkflowGateRecordView>> {
@@ -476,20 +438,19 @@ async function loadGateRecords(
       voter_id: string | null;
       voter_name: string | null;
       voter_kind: 'human' | 'agent' | null;
-      note: string | null;
       voter_handle: string | null;
       voter_avatar: string | null;
       voter_face_id: string | null;
     }>(
       `SELECT message.card->>'runId' run_id,(message.card->>'attempt')::int attempt,
               choice.prompt,choice.options,choice.status,${MICROS('choice.created_at')} created_us,
-              vote.option_id,vote.created_at answered_at,vote.note,
+              vote.option_id,vote.created_at answered_at,
               voter.id voter_id,voter.name voter_name,voter.kind voter_kind,
               voter.handle voter_handle,voter.avatar voter_avatar,voter.face_id voter_face_id
        FROM room_choices choice
        JOIN messages message ON message.id=choice.message_id AND message.room_id=choice.room_id
        LEFT JOIN LATERAL (
-         SELECT option_id,voter_id,created_at,note FROM room_choice_votes
+         SELECT option_id,voter_id,created_at FROM room_choice_votes
          WHERE choice_id=choice.id ORDER BY created_at,voter_id LIMIT 1
        ) vote ON choice.mode='question'
        LEFT JOIN identities voter ON voter.id=vote.voter_id
@@ -503,17 +464,13 @@ async function loadGateRecords(
     const prompt = workflowGatePrompt(contract, visit.card.to_state);
     const mine = choices.filter(
       (choice) => choice.run_id !== null
-        ? choice.run_id === runId && (choice.attempt !== null
-          ? visit.attempts.includes(choice.attempt)
-          : within(visit, Number(choice.created_us)))
+        ? choice.run_id === runId && choice.attempt !== null && visit.attempts.includes(choice.attempt)
         : choice.prompt === prompt && within(visit, Number(choice.created_us)),
     );
     const choice = mine.find((entry) => entry.status === 'answered') ?? mine[mine.length - 1];
     if (!choice) continue;
     const picked = choice.options.find((option) => option.optionId === choice.option_id);
     records.set(visit, {
-      question: choice.prompt,
-      options: choice.options.map(({ letter, label, consequence }) => ({ letter, label, consequence })),
       status: choice.status,
       ...(picked ? { answer: picked.label } : {}),
       ...(picked && choice.voter_id && choice.voter_name && choice.voter_kind
@@ -532,7 +489,6 @@ async function loadGateRecords(
           }
         : {}),
       ...(picked && choice.answered_at ? { answeredAt: unix(choice.answered_at) } : {}),
-      ...(picked && choice.note ? { note: choice.note } : {}),
     });
   }
   return records;
@@ -701,46 +657,16 @@ export async function readWorkflowRun(
         publicOrigin,
       ),
       at: unix(card.created_at),
-      ...(card.contents ? { contents: card.contents } : {}),
       ...(card.receipt ? { receipt: card.receipt } : {}),
       ...(gate ? { gate } : {}),
       ...(opened ? { openedCorners: opened } : {}),
     };
   });
-  const activeRunIds = liveRunIdsByFamily(heads, contracts).get(head.family) ?? [];
   return {
-    run: {
-      ...summarize(head, contract, actors, viewer, earlierThan(heads, head), activeRunIds),
-      ...(await workflowStartInfo(db, head.roomId, head.runId)),
-    },
+    run: summarize(head, contract, actors, viewer),
     contract,
     history,
     roleHolders,
     viewer,
   };
-}
-
-async function workflowStartInfo(
-  db: SqlDatabase,
-  roomId: string,
-  runId: string,
-): Promise<Pick<WorkflowRunSummaryView, 'startedBy' | 'startKind'>> {
-  const row = (
-    await db.query<{
-      id: string;
-      name: string;
-      kind: 'human' | 'agent';
-      start_kind: 'direct' | 'schedule' | 'human_admin' | null;
-    }>(
-      `SELECT identity.id,identity.name,identity.kind,message.card->>'startKind' start_kind FROM messages message
-    JOIN identities identity ON identity.id=message.author_id WHERE message.room_id=$1 AND message.id=$2`,
-      [roomId, runId],
-    )
-  ).rows[0];
-  return row
-    ? {
-        startedBy: { id: row.id, name: row.name, kind: row.kind },
-        ...(row.start_kind ? { startKind: row.start_kind } : {}),
-      }
-    : {};
 }

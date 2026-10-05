@@ -125,7 +125,7 @@ describe('resource observers in the desktop web renderer', () => {
           reads: globalThis.__reads, errors: globalThis.__console });
         }, 1600);`);
       const detail = {
-        run: { runId: 'run', workflowSlug: 'demo', description: 'Demo', roomId: 'corner', roomName: 'Corner', state: 'work', status: 'live', viewerHolds: false, startedAt: 1790000000, updatedAt: 1790000001, earlierRunCount: 0 },
+        run: { runId: 'run', workflowSlug: 'demo', description: 'Demo', roomId: 'corner', roomName: 'Corner', state: 'work', status: 'live', viewerHolds: false, startedAt: 1790000000, updatedAt: 1790000001, },
         contract: { slug: 'demo', description: 'Demo', initial: 'work', roles: {}, states: { work: { kind: 'terminal' } } }, history: [],
       };
       const result = await runBrowserProof({ entry, mobile, width: 1000, shims: {

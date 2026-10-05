@@ -13,3 +13,5 @@ export * from './institutional-memory.js';
 export * from './workflow-contracts.js';
 export * from './feedback.js';
 export * from './agent-sign-in.js';
+
+export * from './corner-lifecycle-contract.js';

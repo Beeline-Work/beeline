@@ -1,3 +1,4 @@
+import { workflowRunLiveSql } from './workflow-run-live.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ChoiceCardView, RoomViewIdentity } from '@beeline/api-contract/phone';
 import {
@@ -266,7 +267,7 @@ async function closeEndedRunChoices(
      WHERE choice.message_id=message.id AND choice.room_id=$1 AND choice.agent_id=$2
        AND choice.status='open'
        AND message.card->>'runId' IS NOT NULL
-       AND COALESCE(run.card->>'active','false') <> 'true'
+       AND ${workflowRunLiveSql('run.card')} IS NOT TRUE
      RETURNING choice.message_id`,
     [input.roomId, input.agentId],
   );
@@ -444,18 +445,8 @@ async function wakeChoice(
     consequence?: string;
     kind: ChoiceWakeCardType;
     card: Record<string, unknown>;
-    /** The settled choice card's message id: a workflow gate's run id and workflow name ride along on this wake. */
-    settledMessageId?: string;
   },
 ): Promise<void> {
-  const workflow = input.settledMessageId
-    ? (
-        await database.query<{ run_id: string | null; workflow_slug: string | null }>(
-          `SELECT card->>'runId' run_id,card->>'workflowSlug' workflow_slug FROM messages WHERE id=$1`,
-          [input.settledMessageId],
-        )
-      ).rows[0]
-    : undefined;
   await systemLine(database, {
     roomId: input.roomId,
     authorId: input.authorId,
@@ -470,12 +461,7 @@ async function wakeChoice(
     kind: input.kind,
     wakes: [input.agentId],
     cardType: input.kind,
-    card: {
-      ...input.card,
-      ...(workflow?.run_id && workflow.workflow_slug
-        ? { runId: workflow.run_id, workflowSlug: workflow.workflow_slug }
-        : {}),
-    },
+    card: input.card,
   });
 }
 
@@ -548,7 +534,6 @@ async function closeOpenPoll(database: SqlDatabase, choice: ChoiceRow): Promise<
       consequence,
       kind: 'poll-closed',
       card: { choiceId: choice.id, outcome: tally.outcome, votedCount: responses.length },
-      settledMessageId: choice.message_id,
     });
   }
 }
@@ -592,7 +577,6 @@ async function skipOpenChoice(
     ...(reason === 'expired' ? { consequence: 'expired · no answer' } : {}),
     kind: 'choice-skipped',
     card: { choiceId: choice.id, status, reason },
-    settledMessageId: choice.message_id,
   });
 }
 
@@ -719,7 +703,6 @@ export async function answerRoomChoice(
       letter: option.letter,
       ...(note ? { note } : {}),
     },
-    settledMessageId: choice.message_id,
   });
   return { choiceId: choice.id, status: 'answered', roomId: choice.room_id };
 }

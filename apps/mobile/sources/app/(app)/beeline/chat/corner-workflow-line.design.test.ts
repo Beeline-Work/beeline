@@ -21,7 +21,6 @@ const run = (overrides: Partial<WorkflowRunSummaryView>): WorkflowRunSummaryView
   viewerHolds: false,
   startedAt: 1,
   updatedAt: 1,
-  earlierRunCount: 0,
   ...overrides,
 });
 

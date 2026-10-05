@@ -1,11 +1,11 @@
-import type { WorkflowContract } from './workflow-contracts.js';
+import type { WorkflowReadContract } from './workflow-contracts.js';
 import type { WorkflowRunStatus } from './phone-operations.js';
 
 export type WorkflowStepDisplayStatus = 'current' | 'done' | 'failed';
 
 /** A recorded close overrides the definition, including a close in a nonterminal state. */
 export function workflowRunStatus(
-  contract: WorkflowContract,
+  contract: WorkflowReadContract,
   state: string,
   recorded?: WorkflowRunStatus,
 ): WorkflowRunStatus {
@@ -15,7 +15,7 @@ export function workflowRunStatus(
 
 /** Only the last visit of a live run can be current. */
 export function workflowStepDisplayStatus(
-  contract: WorkflowContract,
+  contract: WorkflowReadContract,
   state: string,
   runStatus: WorkflowRunStatus,
   left: boolean,

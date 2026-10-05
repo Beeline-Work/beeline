@@ -16,7 +16,7 @@ it('CWM1: the latest handoff stays primary, including a live state named stuck',
   const run = (fields: Partial<WorkflowRunSummaryView>): WorkflowRunSummaryView => ({
     runId: 'default', roomId: 'corner-multi', roomName: 'MM desk',
     workflowSlug: 'mm-desk-steer', description: '', state: 'scout', status: 'live',
-    startedAt: 1, updatedAt: 1, viewerHolds: false, earlierRunCount: 0, ...fields,
+    startedAt: 1, updatedAt: 1, viewerHolds: false, ...fields,
   });
   const runs = [
     run({ runId: 'recent-start', workflowSlug: 'macro-paper-desk', startedAt: 20, updatedAt: 20 }),
@@ -65,8 +65,8 @@ it('lists the corner\'s other live saved-workflow runs beside the one it names, 
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   read.mockResolvedValue({
     workflows: [
-      { runId: 'a', workflowSlug: 'mm-desk', roomId: 'corner-multi', status: 'live', updatedAt: 10, state: 's', description: '', roomName: '', startedAt: 0, viewerHolds: false, earlierRunCount: 0 },
-      { runId: 'b', workflowSlug: 'macro-paper-desk', roomId: 'corner-multi', status: 'live', updatedAt: 20, state: 's', description: '', roomName: '', startedAt: 0, viewerHolds: false, earlierRunCount: 0 },
+      { runId: 'a', workflowSlug: 'mm-desk', roomId: 'corner-multi', status: 'live', updatedAt: 10, state: 's', description: '', roomName: '', startedAt: 0, viewerHolds: false, },
+      { runId: 'b', workflowSlug: 'macro-paper-desk', roomId: 'corner-multi', status: 'live', updatedAt: 20, state: 's', description: '', roomName: '', startedAt: 0, viewerHolds: false, },
     ],
   } as any);
   let current: any;

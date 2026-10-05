@@ -40,7 +40,6 @@ function feedbackTriageDetail(
       parentRoomId: 'room-1',
       holder: candy,
       startedAt: STARTED,
-      earlierRunCount: 13,
       ...run,
     },
     contract,
@@ -73,7 +72,7 @@ function workflowRunShims(
       replace: (href) => { (globalThis.__replaced ??= []).push(href); }, back: () => undefined };`,
     '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
     export const monolithPhoneOperation = async (name) =>
-      name === 'listRoomWorkflowRuns' ? { workflows: ${JSON.stringify(siblingRuns)} } : name === 'readWorkflowDefinition' ? { contract: ${JSON.stringify(view.contract)}, runs: [${JSON.stringify(view.run)}] } : (${JSON.stringify(detail)});`,
+      name === 'listRoomWorkflowRuns' ? { workflows: ${JSON.stringify(siblingRuns)} } : name === 'readWorkflowDefinition' ? { contract: ${JSON.stringify(view.contract)}, runs: [${JSON.stringify(view.run)}] } : (${JSON.stringify(detail, (key, value) => ['earlierRunCount', 'activeRunIds', 'contents', 'question', 'options', 'note'].includes(key) ? undefined : value)});`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ({ publicKey: '${'a'.repeat(64)}' });`,
   };
@@ -370,7 +369,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const detail = {
       run: { runId: 'run-1', workflowSlug: 'research', description: 'Research and review',
         roomId: 'corner-2', roomName: 'Research', state: 'review', status: 'live', viewerHolds: false,
-        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 17 },
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, },
       contract: { version: 1, name: 'research', description: 'Research and review',
         summary: 'Collect evidence, then review the result.', roles: ['analyst'], start: 'collect',
         handoffs: {
@@ -403,7 +402,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const detail = {
       run: { runId: 'run-1', workflowSlug: 'ship', description: 'Implement and check',
         roomId: 'corner-2', roomName: 'Ship', state: 'implement', status: 'live', viewerHolds: false,
-        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, },
       contract: { version: 1, name: 'ship', description: 'Implement and check', roles: ['implementer'],
         start: 'opened',
         handoffs: {
@@ -467,7 +466,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const detail = {
       run: { runId: 'run-1', workflowSlug: 'research', description: 'Research and review',
         roomId: 'corner-2', roomName: 'Research', state: 'collect', status: 'live', viewerHolds: false,
-        holder: candy, startedAt: STARTED, updatedAt: STARTED + 20, earlierRunCount: 0 },
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 20, },
       contract: { version: 1, name: 'research', description: 'Research and review',
         summary: 'Collect evidence and review it.', roles: ['analyst'], start: 'collect', handoffs: {
           collect: { does: 'Collect the evidence.', role: 'analyst', requires: [], on: { collected: 'review' } },
@@ -507,7 +506,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const detail = {
       run: { runId: 'run-1', workflowSlug: 'mm-desk', description: 'MM desk', roomId: 'corner-2',
         roomName: 'MM desk', state: 'verify', status: 'live', viewerHolds: false,
-        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, },
       contract: { version: 1, name: 'mm-desk', description: 'MM desk', roles: ['scout', 'verify'],
         start: 'scout', handoffs: {
           scout: { does: 'Scans markets.', role: 'scout', requires: [], on: { done: 'verify' } },
@@ -523,11 +522,11 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const siblingRuns = [
       { runId: 'run-1', workflowSlug: 'mm-desk', description: 'MM desk', roomId: 'corner-2',
         roomName: 'MM desk', state: 'verify', status: 'live', viewerHolds: false, holder: candy,
-        startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+        startedAt: STARTED, updatedAt: STARTED + 10, },
       // A different workflow entirely, concurrently live in the same corner.
       { runId: 'run-2', workflowSlug: 'macro-paper-desk', description: 'Macro desk', roomId: 'corner-2',
         roomName: 'MM desk', state: 'draft', status: 'live', viewerHolds: false, holder: owner,
-        startedAt: STARTED + 50, updatedAt: STARTED + 60, earlierRunCount: 0 },
+        startedAt: STARTED + 50, updatedAt: STARTED + 60, },
     ];
     const page = await proof(detail, '', 390, [], siblingRuns);
     expect(page.text).toContain('Also running in this corner');
@@ -547,7 +546,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const detail = {
       run: { runId: 'run-1', workflowSlug: 'mm-desk', description: 'MM desk', roomId: 'corner-2',
         roomName: 'MM desk', state: 'verify', status: 'live', viewerHolds: false,
-        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, },
       contract: { version: 1, name: 'mm-desk', description: 'MM desk', roles: ['scout', 'verify'],
         start: 'scout', handoffs: {
           scout: { does: 'Scans markets.', role: 'scout', requires: [], on: { done: 'verify' } },
@@ -583,7 +582,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const detail = {
       run: { runId: 'run-1', workflowSlug: 'mm-desk', description: 'MM desk', roomId: 'corner-2',
         roomName: 'MM desk', state: 'scout', status: 'live', viewerHolds: false,
-        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, },
       contract: { version: 1, name: 'mm-desk', description: 'MM desk', roles: ['scout'],
         start: 'scout', handoffs: {
           scout: { does: 'Scans markets.', role: 'scout', requires: [], on: { done: 'done' } },
@@ -637,7 +636,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     const detail = {
       run: { runId: 'run-1', workflowSlug: 'research', description: 'Research and review',
         roomId: 'corner-2', roomName: 'Research', state: 'review', status: 'live', viewerHolds: false,
-        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, earlierRunCount: 0 },
+        holder: candy, startedAt: STARTED, updatedAt: STARTED + 10, },
       contract: { version: 1, name: 'research', description: 'Research and review',
         roles: ['analyst'], start: 'collect', handoffs: {
           collect: { does: 'Collect the evidence.', role: 'analyst', requires: [], on: { collected: 'review' } },

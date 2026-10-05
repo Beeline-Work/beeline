@@ -41,7 +41,7 @@ it('Reproduction C1: a plain corner has no workflow glyph or link; a saved workf
           '@/sync/transport/live-connection': 'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
           '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (_, { roomId }) => ({ workflows: roomId === 'plain' ? [] : [{
             runId: 'saved-run', roomId, workflowSlug: 'corner', state: 'approve', status: 'live',
-            roomName: 'Saved workflow', startedAt: 1, updatedAt: 1, viewerHolds: true, earlierRunCount: 0,
+            roomName: 'Saved workflow', startedAt: 1, updatedAt: 1, viewerHolds: true,
           }] });`,
         } });
         expect(proof.status, proof.stderr).toBe(0);
@@ -123,7 +123,7 @@ it('Reproduction CWM1: +N running lists the other live workflows and opens the s
             { runId: 'elsewhere', roomId: 'other-corner', workflowSlug: 'elsewhere', state: 'scout', updatedAt: 90 },
             { runId: 'feedback-run', workflowSlug: 'feedback-triage', state: 'approve', updatedAt: 20 },
           ].map(run => ({ roomId: 'mm-corner', status: 'live', roomName: 'MM desk', startedAt: 1,
-            viewerHolds: false, earlierRunCount: 0, ...run })) });`,
+            viewerHolds: false, ...run })) });`,
         } });
         expect(proof.status, proof.stderr).toBe(0);
         const result = JSON.parse(proof.result);

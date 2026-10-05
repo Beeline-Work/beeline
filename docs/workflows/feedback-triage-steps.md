@@ -4,6 +4,9 @@ The procedure for the `feedback-triage` workflow (`docs/workflows/feedback-triag
 Start it with `start_workflow` and bind `triager` to yourself. Every step is yours. The
 `approve` step is a card a person answers.
 
+End every step with its handoff in the same turn. A turn that ends without one hands
+the step on, and once nobody is left the run takes `timeout` and fails.
+
 You need the read-only feedback database command your owner granted (see
 `docs/feedback-loop.md`). Without it, stop at `pull` and say the grant is missing.
 Only the person who holds production access can grant it.

@@ -2,30 +2,41 @@
   "version": 1,
   "name": "feedback-triage",
   "description": "Daily Beeline feedback sweep; steps: feedback-triage-steps",
+  "summary": "Report merged fixes, rank new feedback, ask a person, and open fix corners.",
   "roles": ["triager"],
   "start": "notify",
   "handoffs": {
     "notify": {
+      "does": "Tell reporters about fixes that merged since the last run.",
       "role": "triager",
       "requires": ["fixedPullRequests", "skipReason", "unnotifiedPullRequests"],
-      "on": { "notified": "pull", "skipped": "pull" }
+      "on": { "notified": "pull", "skipped": "pull", "timeout": "failed" },
+      "timeoutSeconds": 1800
     },
     "pull": {
+      "does": "Read new feedback and rank it by problem.",
       "role": "triager",
       "requires": ["problems"],
-      "on": { "ranked": "approve", "nothing_new": "done" }
+      "on": { "ranked": "approve", "nothing_new": "done", "timeout": "failed" },
+      "timeoutSeconds": 1800
     },
     "approve": {
+      "does": "A person approves dispatching the ranked problems, or skips them.",
       "kind": "gate",
       "role": "triager",
       "requires": ["decision"],
-      "on": { "dispatch": "dispatch", "skip": "done" }
+      "on": { "dispatch": "dispatch", "skip": "done" },
+      "timeoutSeconds": 43200,
+      "default": "skip"
     },
     "dispatch": {
+      "does": "Open a fix corner for each approved problem.",
       "role": "triager",
       "requires": ["corners"],
-      "on": { "dispatched": "done" }
+      "on": { "dispatched": "done", "timeout": "failed" },
+      "timeoutSeconds": 1800
     },
-    "done": { "kind": "terminal", "status": "done" }
+    "done": { "does": "The sweep finished.", "kind": "terminal", "status": "done" },
+    "failed": { "does": "The sweep stopped before it finished.", "kind": "terminal", "status": "failed" }
   }
 }

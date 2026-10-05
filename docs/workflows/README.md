@@ -4,7 +4,7 @@ A workflow is a saved contract that passes work between named roles in a Room. E
 
 A workflow does not start on a timer. It moves when a bound agent calls `handoff`, a person answers a gate, or one of the run's own timers fires: a step's `timeoutSeconds`, a gate's `timeoutSeconds`, or the run's deadline. For work that repeats (a check every few minutes, a daily start), target `create_schedule` at it with `workflowName`, and have that scheduled turn call `start_workflow`. Other agents join an existing run through `handoff` with its full run ID.
 
-A run heals itself without a person stepping in: an agent that goes silent loses the step when its timeout passes, an agent that cannot do a step reports `blocked`, a failed turn moves the step on, and a run that outlives its deadline closes as failed. Each automatic move posts one line in the Room naming what moved, from whom, to whom, and why.
+A run heals itself without a person stepping in: an agent that goes silent loses the step when its timeout passes, an agent that cannot do a step reports `blocked`, a turn that ends without a handoff or fails moves the step on, and a run that outlives its deadline closes as failed. Each automatic move posts one line in the Room naming what moved, from whom, to whom, and why.
 
 ## Tools
 
@@ -40,8 +40,9 @@ A run heals itself without a person stepping in: an agent that goes silent loses
     "review": { "does": "Review the note and request changes if needed.",
       "role": "reviewer",
       "requires": ["verdict", "notes"],
-      "on": { "approved": "sign_off", "changes_requested": "draft" },
-      "loop": { "onEdge": "changes_requested", "cap": 3, "onExceeded": "stuck" }
+      "on": { "approved": "sign_off", "changes_requested": "draft", "timeout": "stuck" },
+      "loop": { "onEdge": "changes_requested", "cap": 3, "onExceeded": "stuck" },
+      "timeoutSeconds": 3600
     },
     "sign_off": { "does": "Ask a person for permission to publish.",
       "kind": "gate",
@@ -55,7 +56,9 @@ A run heals itself without a person stepping in: an agent that goes silent loses
       "kind": "gate",
       "role": "approver",
       "requires": ["decision"],
-      "on": { "retry": "draft", "abandon": "failed" }
+      "on": { "retry": "draft", "abandon": "failed" },
+      "timeoutSeconds": 86400,
+      "default": "abandon"
     },
     "done": { "does": "The note is ready to publish.", "kind": "terminal", "status": "done" },
     "failed": { "does": "The note will not be published.", "kind": "terminal", "status": "failed" }
@@ -74,7 +77,7 @@ A run heals itself without a person stepping in: an agent that goes silent loses
 | `roles` | 1-16 unique role names. Lowercase letters, digits, `_` or `-`, starting with a letter. |
 | `start` | The state a run begins in. It must not be a terminal. |
 | `handoffs` | 2-64 states, keyed by state name. State names follow the role-name rule. |
-| `deadlineSeconds` | Optional, 60 to 2592000. How long a run may stay live; when it passes, the run closes as `failed` with reason `deadline`, even while it waits at a gate. A run started with `start_workflow` gets 86400 (24 hours) when this is omitted. Moving a step to another agent does not reset it. |
+| `deadlineSeconds` | Optional, 60 to 2592000. How long a run may stay live; when it passes, the run closes as `failed` with reason `deadline`, even while it waits at a gate. Every run gets 86400 (24 hours) when this is omitted, so a longer workflow must declare it. Moving a step to another agent does not reset it. |
 
 Unknown top-level keys are rejected.
 
@@ -92,13 +95,13 @@ Every state may have an optional free-text `hint` describing the outcome or arti
 | `requires` | Field names that `handoff` must include in `contents`, up to 32. Letters, digits and `_`. Use `[]` for none. |
 | `on` | Outcome to next state, 1-16 outcomes. Each target must be a declared state. `blocked` is built in and cannot be declared. |
 | `loop` | Optional cap on one outcome: `{ "onEdge": <outcome>, "cap": 1-100, "onExceeded": <state> }`. `onExceeded` must differ from where `onEdge` normally goes. |
-| `timeoutSeconds` | Optional, 60 to 2592000. Needs a `timeout` outcome in `on`. Each agent on the role's list gets this long. When it passes, the step moves to the next eligible agent; once the list is used up, the engine applies `timeout` itself, with `contents: { reason }` naming each agent and why it left. A three-agent list can take up to three times this long. |
+| `timeoutSeconds` | Required on a new save, 60 to 2592000. Needs a `timeout` outcome in `on`. Each agent on the role's list gets this long. When it passes, the step moves to the next eligible agent; once the list is used up, the engine applies `timeout` itself, with `contents: { reason }` naming each agent and why it left. A three-agent list can take up to three times this long. |
 
-**Gate** (`"kind": "gate"`): a person decides. It allows only `kind`, `role`, `requires`, `on`, `does`, optional `hint`, and optional `timeoutSeconds` with `default` (declare both or neither; `default` is one of `on`). It needs 2-4 outcomes of at most 32 characters each. The run posts a choice card with one option per outcome, however the run was started. A person's answer moves the run straight to that outcome's state, with `contents: { decision, note, answeredBy }`. **Skip** applies `default`; a gate with no `default` refuses Skip with "this gate needs an answer". When `timeoutSeconds` passes with no answer, the engine applies `default`. Skip and the timeout each send one notice to the run's owner. The gate role's agent is not woken at a gate and cannot `handoff` out of it.
+**Gate** (`"kind": "gate"`): a person decides. It allows only `kind`, `role`, `requires`, `on`, `does`, optional `hint`, and `timeoutSeconds` with `default` (both required on a new save; `default` is one of `on`). It needs 2-4 outcomes of at most 32 characters each. The run posts a choice card with one option per outcome, however the run was started. A person's answer moves the run straight to that outcome's state, with `contents: { decision, note, answeredBy }`. **Skip** applies `default`; a gate saved before defaults were required has none and refuses Skip with "this gate needs an answer". When `timeoutSeconds` passes with no answer, the engine applies `default`. Skip and the timeout each send one notice to the run's owner. The gate role's agent is not woken at a gate and cannot `handoff` out of it.
 
 **Terminal** (`"kind": "terminal"`): the run ends. It allows only `kind`, `status`, `does` and optional `hint`, where status is `done`, `failed` or `abandoned`.
 
-Unknown keys on a state are rejected. The `server` and `waiting` kinds, `roleBinding`, `implicitEdges` and `externalOutcomes` exist for Beeline's built-in workflows and are not needed for your own.
+Unknown keys on a state are rejected. A new save is refused, naming the state, when an agent step has no `timeoutSeconds` or a gate lacks `timeoutSeconds` and `default`. Versions saved before this rule keep running as saved; the rule applies when they are next saved. The `server` and `waiting` kinds, `roleBinding`, `implicitEdges` and `externalOutcomes` exist for Beeline's built-in workflows and are not needed for your own.
 
 ### Graph rules
 
@@ -137,9 +140,9 @@ Any current agent member of the Room can start a run or create/update a schedule
 
    **Repeats and stale wakes do nothing.** If `attempt` no longer matches the run, nothing changes and the call returns `{ "alreadyAdvanced": true, "state", "seq" }` with the current state. An identical repeat of the handoff that moved the run returns that handoff's result again. Without `attempt`, the engine reads it from the wake the turn answers; a turn with no wake from this run may move the current step once. Every move cancels the run's pending wakes for older attempts.
 
-   **Blocked.** An agent that cannot do its step calls `handoff` with outcome `blocked` and `contents: { "reason": "..." }` (1-500 characters); no other `requires` field is needed. The step moves to the next eligible agent on its role list. A failed or stalled turn does the same. The list only moves forward, and each agent is tried once per visit to a state; entering a state again through an `on` edge starts a fresh list.
+   **Blocked.** An agent that cannot do its step calls `handoff` with outcome `blocked` and `contents: { "reason": "..." }` (1-500 characters); no other `requires` field is needed. The step moves to the next eligible agent on its role list. A failed or stalled turn does the same, and so does a turn that answered the step's current attempt and ended without the run moving: end every step with its handoff in the same turn. A turn woken by something else does not count. The list only moves forward, and each agent is tried once per visit to a state; entering a state again through an `on` edge starts a fresh list.
 4. **Gates.** When a run reaches a gate, a choice card is posted for a person, carrying the run id and attempt. Their answer moves the run to the chosen outcome's state and wakes that state's agent; an answer on a card the gate has already left is refused. The person may add an optional one-line note (at most 140 characters) with their pick. The next agent's wake quotes it (`Their note with the answer: "..."`), and the run page shows it under the answer. The outcome still comes from the picked option. Skip and the gate's timeout apply its `default`, as described under **Gate** above.
-5. **No eligible agent.** When nobody on a role's list is left, the run posts one line naming every agent on the list with its reason (offline, out of credit, recent failure, blocked, lease expired, turn failed, earlier on the list, or not in this Room). After `blocked` or an expired lease, a step with a `timeout` outcome takes it; otherwise the run waits, and only its deadline closes it. A human can ask an agent to call `assign_workflow_role` with `{ "runId", "role", "agentId" }` to bind any agent in the Room.
+5. **No eligible agent.** When nobody on a role's list is left, the run posts one line naming every agent on the list with its reason (offline, out of credit, recent failure, blocked, lease expired, no handoff, turn failed, earlier on the list, or not in this Room). After `blocked` or an expired lease, a step with a `timeout` outcome takes it; otherwise the run waits, and only its deadline closes it. A human can ask an agent to call `assign_workflow_role` with `{ "runId", "role", "agentId" }` to bind any agent in the Room.
 6. **End or cancel.** The run ends when it reaches a terminal state. To stop an active run, call `cancel_workflow_run` with `{ "runId", "reason" }` (a nonempty reason, at most 4000 characters). The server derives the caller from the active turn's root requester; an agent cannot nominate someone else or borrow its owner's authority. Cancellation is allowed for the run's recorded requester, a human owner of any currently bound role agent, or a human Room/Workspace admin. Other callers are refused. The cancellation card records the actor and reason, leaves the run at its last declared state with status `abandoned`, removes its timeout and pending wakes, and closes an open gate without dispatching another agent. The run read returns `cancellation`, no allowed outcomes and no required fields. `handoff` and role reassignment on an ended run are refused.
 7. **Retire.** `archive_workflow` with `{ "name" }` stops new runs of that workflow.
 

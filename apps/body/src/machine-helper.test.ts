@@ -97,16 +97,30 @@ describe('one helper process hosts every agent on the machine', () => {
 
   it('restarts only the agent that failed, and stops only the one in distress', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-    const { configPaths, env, signals } = await machine(2);
+    const { root, configPaths, env, signals } = await machine(2);
     const failing = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
     const sibling = (await readRuntimeRecord(configPaths[1]!)).agent.publicKey;
     const fake = fakeRuntimes((agentId) =>
       agentId === failing ? Promise.reject(new Error('harness exploded')) : undefined);
     const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
+    const waitForRestart = async (previousSince?: string) => {
+      let since = '';
+      await vi.waitFor(async () => {
+        const status = JSON.parse(await readFile(helperStatusPath(root), 'utf8'));
+        const agent = status.agents[failing];
+        expect(agent.state).toBe('restarting');
+        expect(agent.since).not.toBe(previousSince);
+        since = agent.since;
+      });
+      return since;
+    };
     await vi.waitFor(() => expect(fake.runs.get(failing)).toBe(1));
+    // A run starts before its failure is recorded and restart timer is armed.
+    const firstRestart = await waitForRestart();
     // Restarted in this process, 5 s then 10 s later, like the unit used to be.
     await vi.advanceTimersByTimeAsync(5_000);
     await vi.waitFor(() => expect(fake.runs.get(failing)).toBe(2));
+    await waitForRestart(firstRestart);
     await vi.advanceTimersByTimeAsync(10_000);
     await vi.waitFor(() => expect(fake.runs.get(failing)).toBe(3));
     // Three counted failures in the window: distress, recorded as before, and no more restarts.
@@ -118,9 +132,12 @@ describe('one helper process hosts every agent on the machine', () => {
     // The sibling started once and was never touched.
     expect(fake.runs.get(sibling)).toBe(1);
     expect(fake.signals.get(sibling)!.aborted).toBe(false);
-    const lines = await helperStatusLines(env);
-    expect(lines.find((line) => line.includes(failing.slice(0, 12)))).toMatch(/distressed/);
-    expect(lines.find((line) => line.includes(sibling.slice(0, 12)))).toMatch(/serving/);
+    // The distress record is written before the helper status is persisted.
+    await vi.waitFor(async () => {
+      const lines = await helperStatusLines(env);
+      expect(lines.find((line) => line.includes(failing.slice(0, 12)))).toMatch(/distressed/);
+      expect(lines.find((line) => line.includes(sibling.slice(0, 12)))).toMatch(/serving/);
+    });
     signals.emit('SIGTERM');
     expect((await running).reason).toBe('stopped');
   });

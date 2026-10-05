@@ -449,7 +449,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     id: 'corner.worktree',
     topic: 'place',
     why: 'The agent must know its branch and target; only a code-corner author is told to push and open the pull request.',
-    budgetBytes: 600,
+    budgetBytes: 900,
     layer: 'surface',
     surfaces: ['code-corner', 'review-corner'],
     render: ({ worktree, surface, githubCli }) =>
@@ -458,8 +458,8 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
         surface !== 'code-corner'
           ? ''
           : githubCli === 'rest'
-            ? `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, rebase on origin/${worktree?.featureBranch} only if that remote branch exists; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
-            : `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, rebase on origin/${worktree?.featureBranch} only if that remote branch exists; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Open the pull request with gh.`,
+            ? `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push. Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
+            : `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push. Open the pull request with gh.`,
       ]
         .filter(Boolean)
         .join('\n'),

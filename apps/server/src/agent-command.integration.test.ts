@@ -1807,15 +1807,50 @@ describe('sibling corner steers', () => {
     },
   );
 
-  it('lets a source member who is not its opener steer the destination opener', async () => {
+  it('wakes the source opener, not the destination opener, for a worker steer', async () => {
     const source = await sourceCommand(B);
     const delivery = await steer(source, 'Member steer');
-    expect(await commands(A, C)).toEqual([]);
-    expect(await commands(B, C)).toHaveLength(1);
-    expect((await commands(B, C))[0]).toMatchObject({
+    expect(await commands(B, C)).toEqual([]);
+    expect(await commands(A, C)).toHaveLength(1);
+    expect((await commands(A, C))[0]).toMatchObject({
+      reason: 'relay_steer',
       sourceMessageId: delivery.id,
       parentCommandId: source.id,
     });
+  });
+
+  it('falls back to the destination opener when the source opener is not a member', async () => {
+    const source = await sourceCommand(B);
+    await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [
+      C,
+      A,
+    ]);
+    try {
+      const delivery = await steer(source, 'Fallback steer');
+      expect(
+        (
+          await db.query('SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2', [C, A])
+        ).rowCount,
+      ).toBe(0);
+      expect(await commands(B, C)).toHaveLength(1);
+      expect((await commands(B, C))[0]).toMatchObject({ sourceMessageId: delivery.id });
+    } finally {
+      await db.query('UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2', [
+        C,
+        A,
+      ]);
+    }
+  });
+
+  it('wakes the destination opener for a Room steer even when another opener is a member', async () => {
+    await send('@hoots steer the corner');
+    const root = (await commands(A))[0]!;
+    await claim(root);
+    const delivery = await result(root, 'Room steer', 'g1', {
+      relay: { fromRoomId: R, toRoomId: C, direction: 'down' },
+    });
+    expect(await commands(A, C)).toEqual([]);
+    expect((await commands(B, C))[0]).toMatchObject({ sourceMessageId: delivery.id });
   });
 
   it.each(['source', 'destination', 'parent'] as const)(

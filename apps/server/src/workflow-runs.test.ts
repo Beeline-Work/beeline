@@ -455,7 +455,7 @@ describe('save_workflow error reasons', () => {
 });
 
 describe('start_workflow', () => {
-  it('Reproduction workflow-line-1: reads short workflow lines without a self-mention through the phone service', async () => {
+  it('Reproduction workflow-notice-1: reads workflow system lines through the phone service, retaining text and wakes (workflow-line-1)', async () => {
     await database.query(`UPDATE identities SET handle='impy' WHERE id=$1`, [IMPLEMENTER]);
     await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, OWNER]);
     const command = await commandFor(IMPLEMENTER);
@@ -469,6 +469,7 @@ describe('start_workflow', () => {
     const wakes = (await database.query<{ agent_id: string }>(
       `SELECT agent_id FROM agent_commands WHERE source_message_id=$1`, [runId],
     )).rows.map(row => row.agent_id);
+    await assignWorkflowRole(database, command, { runId, role: 'implementer', targetAgentId: REVIEWER });
     await handoff(database, await commandFor(REVIEWER), {
       runId, outcome: 'stuck', contents: { summary: 'stuck', prUrl: 'none' },
     });
@@ -476,16 +477,21 @@ describe('start_workflow', () => {
     const messages = (await phone.readRoom(ROOM, OWNER))!.messages;
     const cancel = messages.find(message => message.text.includes('cancelled workflow'))!;
     const handoffLine = messages.find(message => message.text.includes('handed off'))!;
+    const moved = messages.find(message => message.text.includes('moved'))!;
     expect(start.text).toBe(`Impy started workflow corner · run ${runId.slice(0, 8)}`);
     expect(start.systemEvent?.subject).toMatchObject({ id: IMPLEMENTER, name: 'Impy' });
     expect(wakes).toEqual([REVIEWER]);
     expect(handoffLine.text).toBe(`Ravi handed off ask_human · run ${runId.slice(0, 8)} of corner`);
     expect(cancel.text).toBe(`@impy cancelled workflow corner · run ${runId.slice(0, 8)}`);
-    const cards = (await database.query<{ id: string; card: { runId: string } }>(
-      `SELECT id,card FROM messages WHERE id=ANY($1::text[])`, [[start.id, cancel.id]],
+    const cards = (await database.query<{ id: string; presentation: string; card: { runId: string } }>(
+      `SELECT id,presentation,card FROM messages WHERE id=ANY($1::text[])`, [[start.id, moved.id, handoffLine.id, cancel.id]],
     )).rows;
     expect(cards.every(row => row.card.runId === runId)).toBe(true);
     expect((await getWorkflowRun(database, ROOM, runId)).status).toBe('abandoned');
+    console.log(`Reproduction workflow-notice-1: start workflow → reassign → hand off → cancel → read Room; stored=${cards.map(row => row.presentation).join(',')}; phone=${[start, moved, handoffLine, cancel].map(message => message.presentation).join(',')}`);
+    expect(cards.map(row => row.presentation)).toEqual(['system', 'system', 'system', 'system']);
+    expect([start, moved, handoffLine, cancel].map(message => message.presentation)).toEqual(['system', 'system', 'system', 'system']);
+    expect(messages.find(message => message.choice)?.presentation).toBe('card');
   });
 
   it('rejects a role with no binding', async () => {

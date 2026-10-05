@@ -135,10 +135,16 @@ describe('end-to-end agent schedule proof', () => {
                WHERE source_message_id=messages.id) woke
        FROM messages ORDER BY created_at`,
     );
-    console.log(`[proof] wall-clock ${(finishedAt.getTime() - startedAt.getTime()) / 1_000}s; fired ${stored.rowCount} runs`);
+    console.log(`[proof] wall-clock ${(finishedAt.getTime() - startedAt.getTime()) / 1_000}s; stored ${stored.rowCount} messages`);
     for (const row of stored.rows) console.log(`[proof] fired: ${JSON.stringify(row)}`);
-    expect(stored.rowCount).toBe(5);
-    for (const row of stored.rows) {
+    const starts = stored.rows.filter((row) => row.author_id === SCHEDULE_SCHEDULER_ID);
+    const expiration = stored.rows.filter((row) => row.text.includes('schedule expired'));
+    expect(stored.rowCount).toBe(6);
+    expect(starts).toHaveLength(5);
+    expect(expiration).toHaveLength(1);
+    expect(expiration[0]?.text).toContain('reached its limit of 5 runs');
+    expect(expiration[0]?.woke).toEqual([]);
+    for (const row of starts) {
       expect(row.author_id).toBe(SCHEDULE_SCHEDULER_ID);
       expect(row.woke).toEqual([AGENT]);
     }

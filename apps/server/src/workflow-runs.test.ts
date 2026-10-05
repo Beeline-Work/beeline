@@ -3071,6 +3071,42 @@ describe('Reproduction workflow-stalls', () => {
 });
 
 describe('workflow cleanup migration', () => {
+  it('Reproduction cleanup-transaction: a SQL recovery error leaves other runs and the startup marker intact', async () => {
+    const failed = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    const { runId: healthy } = await startedListRun();
+    await database.query(`DELETE FROM workflow_backfills WHERE name='workflow-storage-v1'`);
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=ANY($1::text[])`, [[failed, healthy]]);
+    await database.query(`CREATE FUNCTION reject_gated_recovery() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.workflow_run->>'workflowSlug' = 'gated' THEN
+          RAISE EXCEPTION 'broken run recovery' USING ERRCODE = '22000';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await database.query(`CREATE TRIGGER reject_gated_recovery BEFORE INSERT ON agent_schedules
+      FOR EACH ROW EXECUTE FUNCTION reject_gated_recovery()`);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await migrateData(database);
+      expect(errors).toHaveBeenCalledWith(
+        `backfillWorkflowRunTimers: failed to recover run ${failed}`,
+        expect.objectContaining({ code: '22000' }),
+      );
+      expect((await database.query(`SELECT workflow_run->>'timer' timer FROM agent_schedules
+        WHERE workflow_run->>'runId'=$1 ORDER BY timer`, [healthy])).rows)
+        .toEqual([{ timer: 'deadline' }, { timer: 'step' }]);
+      expect((await database.query(`SELECT id FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [failed])).rows).toEqual([]);
+      expect((await database.query(`SELECT name FROM workflow_backfills WHERE name='workflow-storage-v1'`)).rows)
+        .toEqual([{ name: 'workflow-storage-v1' }]);
+      const failures = errors.mock.calls.length;
+      await migrateData(database);
+      expect(errors.mock.calls).toHaveLength(failures);
+      console.log('Demonstrated cleanup-transaction: startup isolated a real SQL error, recovered the healthy run, and persisted its completion marker');
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it('Demonstrated cleanup-storage: migrates every legacy shape once and a person can still answer the live gate', async () => {
     const ended = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
     await reachGate(ended);

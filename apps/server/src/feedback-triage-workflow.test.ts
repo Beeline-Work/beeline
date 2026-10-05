@@ -141,15 +141,15 @@ describe('feedback-triage workflow', () => {
     console.log('Demonstrated cleanup-boot: second migration startup made no feedback seed or workflow description writes');
   });
 
-  it('rolls a failed backfill back with its marker and allows a retry', async () => {
-    const prompt = (await schedules()).find((row) => row.id === TRIAGE_SCHEDULE)!.message;
+  it('leaves an interrupted backfill unmarked and allows an idempotent retry', async () => {
     await expect(workflowBackfillOnce(database, 'test-retry', async (db) => {
       await db.query(`UPDATE agent_schedules SET message='failed migration' WHERE id=$1`, [TRIAGE_SCHEDULE]);
       throw new Error('interrupted');
     })).rejects.toThrow('interrupted');
-    expect((await schedules()).find((row) => row.id === TRIAGE_SCHEDULE)!.message).toBe(prompt);
+    expect((await schedules()).find((row) => row.id === TRIAGE_SCHEDULE)!.message).toBe('failed migration');
     expect((await database.query(`SELECT name FROM workflow_backfills WHERE name='test-retry'`)).rows).toEqual([]);
     await workflowBackfillOnce(database, 'test-retry', backfillFeedbackTriageWorkflow);
+    expect((await schedules()).find((row) => row.id === TRIAGE_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
     await workflowBackfillOnce(database, 'test-retry', async () => { throw new Error('ran twice'); });
   });
 

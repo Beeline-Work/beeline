@@ -686,6 +686,7 @@ export function BuzzChatSurface({
   const [agentFastModeByScope, setAgentFastModeByScope] = useState<
     Record<string, FastModeCommandState | null>
   >({});
+  const [agentCanLoginByScope, setAgentCanLoginByScope] = useState<Record<string, boolean>>({});
   const [sending, setSending] = useState(false);
   const [cornerProposalAction, setCornerProposalAction] = useState<{
     messageId: string;
@@ -1939,7 +1940,7 @@ export function BuzzChatSurface({
     return mentionedAgentPubkey(`@${mentionSlash.mention}`, mentionableAgents) ?? null;
   }, [mentionSlash, mentionableAgents]);
   const mentionAgentCommandScope = mentionSlashAgentPubkey
-    ? `${decodedId}:${mentionSlashAgentPubkey}`
+    ? `${decodedId}:${viewerPubkey}:${mentionSlashAgentPubkey}`
     : null;
   const mentionAgentCommands = useMemo(() => {
     if (!mentionSlash || !mentionAgentCommandScope) return [];
@@ -1948,8 +1949,9 @@ export function BuzzChatSurface({
       published ?? [],
       mentionSlash.query,
       agentFastModeByScope[mentionAgentCommandScope],
+      agentCanLoginByScope[mentionAgentCommandScope],
     );
-  }, [agentCommandsByScope, agentFastModeByScope, mentionAgentCommandScope, mentionSlash]);
+  }, [agentCommandsByScope, agentFastModeByScope, agentCanLoginByScope, mentionAgentCommandScope, mentionSlash]);
   // True only once the read RESOLVED (absent or empty list): an in-flight or
   // failed read is unknown, never "does not advertise".
   const mentionAgentLacksCommands = Boolean(
@@ -1989,13 +1991,13 @@ export function BuzzChatSurface({
     return undefined;
   }, [combinedMessages, roomRepository?.targetBranch]);
   // Load the addressed agent's published command list on demand — the palette
-  // renders ONLY from this published record, never a hardcoded inventory. A
+  // combines this record with server-authorized Beeline actions. A
   // failed read stays unknown and never blocks typing.
   useEffect(() => {
     const pubkey = mentionSlashAgentPubkey;
     const scope = mentionAgentCommandScope;
     if (!pubkey || !scope || !roomClient || !activeCommunityId) return;
-    if (agentCommandsByScope[scope] !== undefined && agentFastModeByScope[scope] !== undefined) {
+    if (agentCommandsByScope[scope] !== undefined && agentFastModeByScope[scope] !== undefined && agentCanLoginByScope[scope] !== undefined) {
       return;
     }
     let cancelled = false;
@@ -2007,6 +2009,7 @@ export function BuzzChatSurface({
             ...current,
             [scope]: detail.commands ?? [],
           }));
+          setAgentCanLoginByScope((current) => ({ ...current, [scope]: detail.canLogin === true }));
           setAgentFastModeByScope((current) => ({
             ...current,
             [scope]: fastModeCommandState(detail, viewerPubkey),
@@ -2024,17 +2027,19 @@ export function BuzzChatSurface({
     activeCommunityId,
     agentCommandsByScope,
     agentFastModeByScope,
+    agentCanLoginByScope,
     decodedId,
     mentionAgentCommandScope,
     mentionSlashAgentPubkey,
     roomClient,
     viewerPubkey,
   ]);
-  // Fast mode can change on the agent's profile, so each opening of an
-  // agent's palette reads it again rather than trusting an earlier answer.
+  // Re-read owner actions each time the palette opens so profile changes
+  // cannot leave an earlier permission or toggle state on screen.
   useEffect(() => {
     if (mentionSlashAgentPubkey) return;
     setAgentFastModeByScope((current) => (Object.keys(current).length ? {} : current));
+    setAgentCanLoginByScope((current) => (Object.keys(current).length ? {} : current));
   }, [mentionSlashAgentPubkey]);
   // `null` means "show a skeleton": the channel kind or its name is still
   // resolving and no honest word exists yet. A corner never renders the Room

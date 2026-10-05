@@ -29,6 +29,7 @@ import {
   createAgentPairingCode,
   HUMAN_CORNER_TITLE_MAX_LENGTH,
   isServerEventKind,
+  isAgentSignInHarness,
   ROOM_VIEW_AGENT_LIMIT,
   SUBSCRIBABLE_EVENT_KINDS,
   ROOM_VIEW_BRIEFING_LIMIT,
@@ -2848,12 +2849,13 @@ export class PhoneService {
         avatar_generation_pending: boolean;
         can_change_yolo: boolean;
         can_manage_grants: boolean;
+        harness: string | null;
         access_policy: unknown;
         owner_id: string | null;
         owner_name: string | null;
         owner_handle: string | null;
       }>(
-        `SELECT a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.fast_mode,a.model_unavailable,
+        `SELECT a.harness,a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.fast_mode,a.model_unavailable,
                 (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
                 EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=a.agent_id AND c.avatar_job AND c.state IN ('pending','claimed')) avatar_generation_pending,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
@@ -2991,6 +2993,7 @@ export class PhoneService {
       ),
       // Grant decisions retain their separate owner-or-Workspace-manager axis.
       canManageGrants: config?.can_manage_grants ?? false,
+      canLogin: config?.owner_id === viewerId && isAgentSignInHarness(config?.harness),
       watchFilters: [],
     };
   }

@@ -955,6 +955,8 @@ export type AgentDetailView = {
   readonly grants?: readonly AgentGrantView[];
   /** Server verdict: this viewer may decide and revoke this agent's grants. */
   readonly canManageGrants?: boolean;
+  /** Server verdict: this viewer owns the agent and its harness supports Room sign-in. */
+  readonly canLogin?: boolean;
   readonly watchFilters: readonly SurfaceWatchFilter[];
 };
 

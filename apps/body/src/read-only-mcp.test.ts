@@ -9,6 +9,15 @@ import {
 } from './prompt-assembly.js';
 
 describe('direct message helper surface', () => {
+  it('advertises the enforced event and history input limits in tool descriptions', () => {
+    const tools = agentToolsFor(true, false);
+    const event = tools.find(tool => tool.name === 'emit_event')!;
+    const history = tools.find(tool => tool.name === 'search_history')!;
+    expect(event.description).toContain('consequence must be 1–200 characters');
+    expect(event.description).toContain('slug must be 1–40 characters');
+    expect(history.description).toContain('limit must be an integer from 1 to 10');
+  });
+
   it('opens no corners from a direct message', () => {
     const tools = agentToolsFor(true, true);
     const names = tools.map((tool) => tool.name);

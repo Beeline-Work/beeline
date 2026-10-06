@@ -7442,7 +7442,10 @@ describe('monolith integration', () => {
           text: '@GitHub started a check typecheck',
           systemEvent: expect.objectContaining({ verb: 'started a check' }),
         }),
-        expect.objectContaining({ text: '@GitHub failed a check Beeline CI check suite' }),
+        expect.objectContaining({
+          text: '@GitHub found failing checks on Ship the widget · failing typecheck',
+          systemEvent: expect.objectContaining({ verb: 'found failing checks on' }),
+        }),
         expect.objectContaining({
           text: '@GitHub passed a check Beeline CI check suite',
           systemEvent: expect.objectContaining({

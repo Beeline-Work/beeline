@@ -724,7 +724,14 @@ async function checksReported(
   if (from !== 'checks' && transition.run.headSha === (headSha ?? undefined)) {
     const repeat =
       (from === 'implement' && transition.run.outcome === plan.outcome) ||
-      ((from === 'review' || from === 'land') && plan.outcome === 'passing');
+      ((from === 'review' || from === 'land') && plan.outcome === 'passing') ||
+      // The reviewer already ended a review on this head with a
+      // changes-requested handback. A re-reported green for the same head is
+      // not a new review: the implementer still owes a push, so do not wake
+      // the reviewer again.
+      (from === 'implement' &&
+        plan.outcome === 'passing' &&
+        transition.run.outcome === 'changes_requested');
     if (repeat) return no(`${plan.outcome} already holds on this head`);
   }
   const failingRound =

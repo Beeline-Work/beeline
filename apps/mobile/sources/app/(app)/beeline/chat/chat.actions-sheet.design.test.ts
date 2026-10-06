@@ -27,7 +27,6 @@ const messageSheet = sheet('testID="message-actions-sheet"', 'message actions sh
 
 const ROOM_ROWS = [
   'room-participant-roster-trigger',
-  'room-github-events-toggle',
   'room-schedules-action',
   'delete-room-action',
   'leave-room-action',
@@ -82,6 +81,15 @@ describe('Room and corner actions sheets', () => {
     }
   });
 
+  it('keeps notification mute on the Room sheet only, and no repo notifications switch', () => {
+    // Mute is a Room setting; a corner follows its Room's mute.
+    expect(row(roomSheet, 'room-push-mute')).toContain('Tags, replies and DMs still reach you.');
+    expect(cornerSheet).not.toContain('room-push-mute');
+    // GitHub events drive the PR flow, so no Room can turn them off.
+    expect(chat).not.toContain('room-github-events-toggle');
+    expect(chat).not.toContain('Repo notifications');
+  });
+
   it('shows Room actions without row subtitles', () => {
     for (const testID of ROOM_ROWS) {
       expect(row(roomSheet, testID)).not.toContain('description=');
@@ -124,9 +132,9 @@ describe('Room and corner actions sheets', () => {
 
   it('spends the trailing column on the closed vocabulary and nothing else', () => {
     // A row that toggles gets the switch, never a filled/empty circle.
-    const notifications = row(roomSheet, 'room-github-events-toggle');
+    const notifications = row(roomSheet, 'room-push-mute');
     expect(notifications).toContain('toggle={{');
-    expect(notifications).toContain('value: roomRepository.githubEventsEnabled !== false');
+    expect(notifications).toContain('value: pushMuted');
     expect(notifications).not.toContain('chevron');
     // A row that leaves for a screen gets the chevron; Members also carries
     // the live count in metadata.
@@ -150,7 +158,7 @@ describe('Room and corner actions sheets', () => {
   });
 
   it('keeps values and section-head capitals out of the row titles', () => {
-    expect(chat).toContain('label="Repo notifications"');
+    expect(chat).toContain('label="Mute notifications"');
     expect(chat).toContain('label="Scheduled work"');
     expect(chat).toContain('label="Members"');
     expect(chat).toContain('<RoomReviewerActions');
@@ -194,9 +202,7 @@ describe('Room and corner actions sheets', () => {
 
   it('leaves every action wired to exactly what it called before', () => {
     expect(row(roomSheet, 'room-participant-roster-trigger')).toContain('setRosterVisible(true)');
-    expect(row(roomSheet, 'room-github-events-toggle')).toContain(
-      'onPress={() => void handleToggleGitHubEvents()}',
-    );
+    expect(row(roomSheet, 'room-push-mute')).toContain('onPress={() => void togglePushMute()}');
     expect(row(roomSheet, 'room-schedules-action')).toContain(
       "pathname: '/beeline/settings/schedules'",
     );

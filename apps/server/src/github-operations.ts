@@ -1105,7 +1105,7 @@ export class GitHubOperations {
            COALESCE(parent.repository_remote,parent.repository_key,''),
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
        WHERE fact.lane='code' AND corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND parent.github_events_enabled AND fact.lifecycle->'pr' IS NULL
+         AND fact.lifecycle->'pr' IS NULL
          AND (fact.lifecycle->>'branch' IS NULL OR fact.lifecycle->>'branch'=
            'feature/corner-' || left(replace(corner.id::text,'-',''),12))
          AND fact.feature_branch IS DISTINCT FROM
@@ -1389,7 +1389,6 @@ export class GitHubOperations {
            COALESCE(parent.repository_remote,parent.repository_key,''),
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND parent.github_events_enabled
          AND COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) IS NOT NULL
          AND fact.feature_branch IS NOT NULL
          AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'`,
@@ -1460,7 +1459,7 @@ export class GitHubOperations {
        JOIN github_repositories github ON github.installation_id=$1
          AND lower(github.full_name)=lower($2) AND github.active
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND parent.github_events_enabled AND parent.github_installation_id=$1
+         AND parent.github_installation_id=$1
          AND lower(regexp_replace(regexp_replace(
            COALESCE(parent.repository_remote,parent.repository_key,''),
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)
@@ -1553,7 +1552,7 @@ export class GitHubOperations {
          ORDER BY membership.joined_at LIMIT 1
        )author ON true
        WHERE room.parent_id IS NULL AND room.archived_at IS NULL
-         AND room.github_events_enabled AND room.github_installation_id=$1
+         AND room.github_installation_id=$1
          AND COALESCE(room.created_by,author.identity_id) IS NOT NULL
          AND lower(regexp_replace(regexp_replace(
            COALESCE(room.repository_remote,room.repository_key,''),
@@ -1622,7 +1621,6 @@ export class GitHubOperations {
          ORDER BY message.created_at,message.id LIMIT 1
        )first_agent ON fact.owner_agent_id IS NULL
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND parent.github_events_enabled
          AND (fact.feature_branch=$3 OR (fact.lane='code' AND $4::text IS NOT NULL
            AND left(replace(corner.id::text,'-',''),12)=$4))
          AND parent.github_installation_id=$1

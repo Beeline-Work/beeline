@@ -34,7 +34,7 @@ describe('PushLevelSetting', () => {
     });
     const row = renderer.root.findByProps({ testID: 'push-notifications-setting' });
     expect(row.props.title).toBe('Notifications');
-    expect(row.props.value).toBe('My work');
+    expect(row.props.value).toBe('Followed');
 
     act(() => row.props.onPress());
     expect(renderer.root.findByProps({ testID: 'push-notifications-sheet' }).props.visible).toBe(
@@ -55,14 +55,14 @@ describe('PushLevelSetting', () => {
       }),
     ).toEqual([
       ['Off', undefined],
-      ['Mentions only', 'Tags, DMs, replies to you, and decisions addressed to you'],
+      ['Mentions', 'Tags, DMs, replies to you, and decisions addressed to you'],
       [
-        'My work',
-        'Mentions plus human messages and finished agent turns in corners you opened or requested',
+        'Followed',
+        'Mentions plus human messages and finished agent turns in corners you follow. You follow a corner when you open or request it, post or steer in it, or get tagged in it.',
       ],
       [
-        'All activity',
-        'My work plus human messages and finished agent turns in every Room and corner you belong to',
+        'All',
+        'Mentions plus human messages and finished agent turns in every Room and corner you belong to',
       ],
     ]);
 

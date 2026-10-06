@@ -3954,11 +3954,6 @@ export class PhoneService {
           input as Input<'setRoomTargetBranch'>,
           viewerId,
         )) as Output<Name>;
-      case 'setRoomGitHubEvents':
-        return (await this.setGitHubEvents(
-          input as Input<'setRoomGitHubEvents'>,
-          viewerId,
-        )) as Output<Name>;
       case 'removeRoomRepository':
         await this.removeRepositoryBinding(input as Input<'removeRoomRepository'>, viewerId);
         return undefined as Output<Name>;
@@ -7583,15 +7578,6 @@ export class PhoneService {
     if (!updated.rowCount) throw new Error('room repository not configured');
     return this.roomRepository(input.roomId);
   }
-  private async setGitHubEvents(input: Input<'setRoomGitHubEvents'>, viewerId: string) {
-    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
-    const updated = await this.database.query(
-      `UPDATE rooms SET github_events_enabled=$2,repository_updated_at=now(),updated_at=now() WHERE id=$1 AND repository_key IS NOT NULL AND repository_remote IS NOT NULL`,
-      [input.roomId, input.enabled],
-    );
-    if (!updated.rowCount) throw new Error('room repository not configured');
-    return this.roomRepository(input.roomId);
-  }
   private async managedIdentity(viewerId: string) {
     const id = await this.requireIdentity(viewerId);
     const pushLevel = (
@@ -9577,7 +9563,6 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updateIdentityPushLevel',
   'setRoomRepository',
   'setRoomTargetBranch',
-  'setRoomGitHubEvents',
   'removeRoomRepository',
   'listRoomWorkflows',
   'dispatchRoomWorkflow',

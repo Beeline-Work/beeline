@@ -4951,22 +4951,6 @@ export function BuzzChatSurface({
     [confirmRoomRepoReplacement, handleCreateGitHubRepository],
   );
 
-  /** Toggle ambient GitHub repository notifications (stars/issues/PRs) for this Room. */
-  const handleToggleGitHubEvents = useCallback(async () => {
-    if (!transport || !roomRepository || roomRepoBusy) return;
-    const nextEnabled = roomRepository.githubEventsEnabled === false; // off → on
-    setRoomRepoBusy(true);
-    setRoomRepoError(null);
-    try {
-      await transport.roomGitHubEventsSet(decodedId, nextEnabled);
-      refreshSignal.force();
-    } catch {
-      setRoomRepoError('Could not change repository notification settings.');
-    } finally {
-      setRoomRepoBusy(false);
-    }
-  }, [decodedId, roomRepoBusy, roomRepository, transport]);
-
   // Unassigning the repo is the inverse of linking it: the Room becomes
   // chat-only. It is confirmed like the other destructive Room actions, and
   // the confirm text carries the one room-side consequence that matters —
@@ -7106,28 +7090,11 @@ export function BuzzChatSurface({
               roomName={displayRoomName}
               updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
             />
-            {roomRepository ? (
-              <HullActionSheetRow
-                accessibilityLabel={
-                  roomRepository.githubEventsEnabled === false
-                    ? 'Turn repository notifications on'
-                    : 'Turn repository notifications off'
-                }
-                disabled={roomRepoBusy}
-                label="Repo notifications"
-                onPress={() => void handleToggleGitHubEvents()}
-                testID="room-github-events-toggle"
-                toggle={{
-                  disabled: roomRepoBusy,
-                  onValueChange: () => void handleToggleGitHubEvents(),
-                  value: roomRepository.githubEventsEnabled !== false,
-                }}
-              />
-            ) : null}
             {getBuzzRuntimeConfig().monolithEnabled && (
               <HullActionSheetRow
                 label="Mute notifications"
-                accessibilityLabel="Mute notifications in this conversation"
+                accessibilityLabel={`Mute notifications in this ${ROOM_LABEL} and its ${CORNER_LABEL}s`}
+                description={`Silences this ${ROOM_LABEL} and its ${CORNER_LABEL}s. Tags, replies and DMs still reach you.`}
                 disabled={pushMuteWorking}
                 onPress={() => void togglePushMute()}
                 toggle={{
@@ -7217,20 +7184,6 @@ export function BuzzChatSurface({
         title={headerTitle ?? cornerOwnerDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
       >
-        {getBuzzRuntimeConfig().monolithEnabled && (
-          <HullActionSheetRow
-            label="Mute notifications"
-            accessibilityLabel="Mute notifications in this conversation"
-            disabled={pushMuteWorking}
-            onPress={() => void togglePushMute()}
-            toggle={{
-              value: pushMuted,
-              disabled: pushMuteWorking,
-              onValueChange: () => void togglePushMute(),
-            }}
-            testID="room-push-mute"
-          />
-        )}
         <HullActionSheetRow
           accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
           chevron="right"

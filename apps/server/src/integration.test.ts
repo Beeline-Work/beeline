@@ -7225,12 +7225,12 @@ describe('monolith integration', () => {
       },
       sender: { login: 'octocat' },
     });
+    // A stale false from the retired Room switch no longer drops events.
     await database.query(`UPDATE rooms SET github_events_enabled=false WHERE id=$1`, [ROOM]);
     await webhook('issues', 'room-issue-closed-disabled', {
       ...issuePayload,
       action: 'closed',
     });
-    await database.query(`UPDATE rooms SET github_events_enabled=true WHERE id=$1`, [ROOM]);
     expect(
       (
         await webhook('pull_request', 'corner-pr-open', {
@@ -7268,6 +7268,12 @@ describe('monolith integration', () => {
         branch: 'docs/readme',
         targetBranch: 'main',
       }),
+      expect.objectContaining({
+        type: 'issue',
+        action: 'closed',
+        actor: 'octocat',
+        title: 'Handle narrow screens',
+      }),
     ]);
     // Room-level repository activity: issues and pull requests only. A
     // raw push and mainline CI never become a Room card.
@@ -7302,6 +7308,7 @@ describe('monolith integration', () => {
     expect(mainlineCards.rows.map((row) => row.card)).toEqual([
       expect.objectContaining({ type: 'issue', action: 'opened' }),
       expect.objectContaining({ type: 'pull-request', action: 'opened' }),
+      expect.objectContaining({ type: 'issue', action: 'closed' }),
     ]);
     // A push or mainline CI result on the default branch posted no card.
     expect(mainlineCards.rows.some((row) => row.card.type === 'push')).toBe(false);
@@ -8674,20 +8681,13 @@ describe('monolith integration', () => {
     expect(targeted.status).toBe(200);
     expect((await targeted.json()).targetBranch).toBe('release');
 
-    const events = await request('/v1/phone/operations/setRoomGitHubEvents', 'POST', {
-      roomId: ROOM,
-      enabled: false,
-    });
-    expect(events.status).toBe(200);
-    expect((await events.json()).githubEventsEnabled).toBe(false);
-
     const room = await request(`/v1/phone/rooms/${ROOM}`);
     expect((await room.json()).repository).toEqual(
       expect.objectContaining({
         key: 'github:101',
         name: 'owner/widgets',
         targetBranch: 'release',
-        githubEventsEnabled: false,
+        githubEventsEnabled: true,
       }),
     );
 

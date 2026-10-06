@@ -98,7 +98,6 @@ const ALL_PHONE_OPERATION_NAMES = {
   sendRoomMessage: true,
   sendRoomReply: true,
   setMessageBookmark: true,
-  setRoomGitHubEvents: true,
   setRoomRepository: true,
   setRoomTargetBranch: true,
   skipChoice: true,

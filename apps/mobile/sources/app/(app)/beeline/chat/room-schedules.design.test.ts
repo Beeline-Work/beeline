@@ -47,10 +47,8 @@ describe('scheduled Agent work', () => {
     expect(screen).not.toContain('cadence.expression');
   });
 
-  it('calls repository activity Repo notifications everywhere it is presented to people', () => {
-    expect(chat).toContain('label="Repo notifications"');
-    expect(chat).toContain('Turn repository notifications on');
-    expect(chat).toContain('Turn repository notifications off');
+  it('offers no Room switch for repository activity', () => {
+    expect(chat).not.toContain('label="Repo notifications"');
     expect(chat).not.toContain('REPO ACTIVITY');
     expect(chat).not.toContain('repository activity notices');
     // C102: the value is the switch on the trailing axis, so the broken

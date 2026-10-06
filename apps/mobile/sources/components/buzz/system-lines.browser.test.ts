@@ -6,7 +6,7 @@ for (const theme of ['obsidian', 'bone'])
   for (const width of [320, 1280])
     for (const large of [false, true]) {
       it.skipIf(!existsSync(CHROME))(
-        `shows full separate notices: ${theme}, ${width}px, large=${large}`,
+        `shows expandable two-line notices: ${theme}, ${width}px, large=${large}`,
         async () => {
           const mobile = process.cwd();
           const shims = webProofShims(mobile);
@@ -23,7 +23,13 @@ for (const theme of ['obsidian', 'bone'])
             mobile,
             shims,
             width,
-            query: large ? '?large' : '',
+            query: `?${theme}${large ? '&large' : ''}`,
+            screenshotPath: process.env.SYSTEM_LINES_SCREENSHOT_DIR
+              ? path.join(
+                  process.env.SYSTEM_LINES_SCREENSHOT_DIR,
+                  `${theme}-${width}-${large ? 'large' : 'normal'}.png`,
+                )
+              : undefined,
           });
           console.log(proof.result);
           expect(proof.status, proof.stderr).toBe(0);

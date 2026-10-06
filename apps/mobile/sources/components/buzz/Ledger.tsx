@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -755,6 +756,23 @@ export function LedgerSystemLine({
   /** Opens the corner's latest brief; a revision notice links to it. */
   onOpenBrief?: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const measurementRef = useRef<Text>(null);
+  const fullText = event
+    ? `${event.subject.name} ${event.verb}${event.object?.text ? ` ${event.object.text}` : ''}${event.consequence ? ` · ${event.consequence}` : ''}`
+    : text;
+  const measureWebOverflow = () => {
+    const element = measurementRef.current as unknown as HTMLElement | null;
+    if (element) {
+      const lineHeight = parseFloat(getComputedStyle(element).lineHeight);
+      setOverflows(element.getBoundingClientRect().height > lineHeight * 2 + 1);
+    }
+  };
+  useEffect(() => {
+    setExpanded(false);
+    if (Platform.OS === 'web') measureWebOverflow();
+  }, [id, fullText]);
   const name = (subject: SystemSubject, index: number) => (
     <Text
       key={`${subject.id ?? subject.name}-${index}`}
@@ -773,14 +791,17 @@ export function LedgerSystemLine({
       spans.push(' ');
       // The brief keeps no history on the phone: any revision notice opens
       // the latest brief.
-      const briefRevision = event.verb === 'revised the corner brief'
-        && /^Revision [1-9]\d*$/.test(object.text);
+      const briefRevision =
+        event.verb === 'revised the corner brief' && /^Revision [1-9]\d*$/.test(object.text);
       if (briefRevision && onOpenBrief) {
         spans.push(
-          <Text key="object" style={styles.systemLineLink}
+          <Text
+            key="object"
+            style={styles.systemLineLink}
             accessibilityRole="link"
             onPress={onOpenBrief}
-            testID={`system-line-object-${id}`}>
+            testID={`system-line-object-${id}`}
+          >
             {object.text}
           </Text>,
         );
@@ -814,12 +835,50 @@ export function LedgerSystemLine({
   }
   return (
     <View style={styles.systemLine} testID={`system-line-${id}`}>
-      <Text
-        style={styles.systemLineText}
-        testID={`system-line-text-${id}`}
-      >
-        {event ? spans : text}
-      </Text>
+      <View>
+        {/* Measure unclamped copy: native reports lines, web reports its laid-out height. */}
+        <Text
+          ref={measurementRef}
+          testID={`system-line-measurement-${id}`}
+          style={[styles.systemLineText, styles.systemLineMeasurement]}
+          pointerEvents="none"
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          aria-hidden
+          onTextLayout={
+            Platform.OS === 'web'
+              ? undefined
+              : ({ nativeEvent }) => {
+                  setOverflows(nativeEvent.lines.length > 2);
+                }
+          }
+          onLayout={Platform.OS === 'web' ? measureWebOverflow : undefined}
+        >
+          {fullText}
+        </Text>
+        <Text
+          style={styles.systemLineText}
+          numberOfLines={expanded ? undefined : 2}
+          ellipsizeMode="tail"
+          testID={`system-line-text-${id}`}
+        >
+          {event ? spans : text}
+        </Text>
+      </View>
+      {overflows && (
+        <Pressable
+          style={styles.systemLineToggle}
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? 'Show less of system message' : 'Show full system message'}
+          accessibilityState={{ expanded }}
+          aria-expanded={expanded}
+          onPress={() => setExpanded((value) => !value)}
+          testID={`system-line-toggle-${id}`}
+        >
+          <Text style={styles.systemLineToggleText}>{expanded ? 'Less' : 'More'}</Text>
+        </Pressable>
+      )}
       <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`system-line-stamp-${id}`}>
         {stamp}
       </Text>
@@ -1079,6 +1138,25 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.meta,
     fontFamily: theme.buzz.proseRegular,
     color: theme.buzz.ledgerQuiet,
+  },
+  systemLineMeasurement: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    opacity: 0,
+  },
+  systemLineToggle: {
+    alignSelf: 'flex-start',
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  systemLineToggleText: {
+    ...theme.buzz.type.meta,
+    fontFamily: theme.buzz.proseMedium,
+    color: theme.buzz.accent,
+    textDecorationLine: 'underline',
   },
   systemLineName: { fontFamily: theme.buzz.proseRegular, color: theme.buzz.accent },
   systemLineLink: {

@@ -399,7 +399,8 @@ export async function dashboardOps(
   const tokens = tokenResult.status === 'fulfilled' ? tokenResult.value.rows[0] : undefined;
   const active = number(receipts?.active),
     latest = number(receipts?.latest),
-    unknown = number(receipts?.unknown);
+    unknown = number(receipts?.unknown),
+    known = active - unknown;
   const storeMeasurable =
     receiptResult.status === 'fulfilled' &&
     minRuntimes.ios !== undefined &&
@@ -425,14 +426,15 @@ export async function dashboardOps(
       activePhones: privateCount(active),
       latestPhones: privateCount(latest),
       unknownBuildPhones: privateCount(unknown),
+      // Receipts without a build version are reported as unknownBuildPhones
+      // and left out of the share instead of blanking it.
       latestShare:
         receiptResult.status !== 'fulfilled' ||
         releaseVersion === 'development' ||
-        unknown > 0 ||
         latest < MIN_COHORT ||
-        active - latest < MIN_COHORT
+        known - latest < MIN_COHORT
           ? null
-          : privateCount(latest)! / privateCount(active)!,
+          : privateCount(latest)! / privateCount(known)!,
       storeUpdateOnlyPhones: storeMeasurable ? privateCount(receipts?.store_only) : null,
       storeUpdateState: storeMeasurable ? ('measured' as const) : ('unmeasured' as const),
     },
@@ -448,19 +450,20 @@ export async function dashboardOps(
             ? (privateCount(current)! - privateCount(prior)!) / privateCount(prior)!
             : null,
       },
+      // Serves without a token count (Codex turns) are reported as
+      // missingServes and left out of the share instead of blanking it.
       tokenShare: {
         windowDays: 30,
         share:
           tokenResult.status === 'fulfilled' &&
           sampled >= MIN_COHORT &&
-          missing === 0 &&
           totalTokens > 0
             ? number(tokens?.memory_tokens) / totalTokens
             : null,
         state:
           tokenResult.status !== 'fulfilled'
             ? ('unavailable' as const)
-            : sampled >= MIN_COHORT && missing === 0 && totalTokens > 0
+            : sampled >= MIN_COHORT && totalTokens > 0
               ? ('measured' as const)
               : ('unmeasured' as const),
         sampledServes: tokenResult.status === 'fulfilled' ? privateCount(sampled) : null,

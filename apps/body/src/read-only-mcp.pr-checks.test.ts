@@ -310,6 +310,8 @@ describe('tool descriptions agree with what the server will accept', () => {
   it('record_validation_stage accepts a short SHA and reserves review for the reviewer', () => {
     const description = tool('record_validation_stage').description;
     expect(description).toContain('short prefix');
+    expect(description).toContain('until this corner has a published pull request');
+    expect(description).toContain('full 40-character SHA');
     expect(description).toContain('configured reviewer records the review stage');
   });
 });

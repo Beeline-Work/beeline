@@ -1175,7 +1175,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'record_validation_stage',
     description:
-      `Record one observed stage with concrete evidence. Use headSha="draft" before publication, then the current PR head (full SHA or unambiguous short prefix). ${VALIDATION_STAGE_OWNERSHIP}`,
+      `Record one observed stage with concrete evidence. Pass headSha="draft" until this corner has a published pull request; after publication pass this corner's current PR head as a full 40-character SHA or an unambiguous short prefix. ${VALIDATION_STAGE_OWNERSHIP}`,
     inputSchema: {
       type: 'object',
       required: ['briefRevision', 'headSha', 'stage', 'status', 'evidence'],

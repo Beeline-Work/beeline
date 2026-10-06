@@ -11,14 +11,18 @@ interface NotificationLifecycleCardProps {
   onOpenUrl(url: string): void;
 }
 function cellDisplayState(state: NotificationLifecycleState): string {
-  return state === 'PR opened' ? 'opened' : state.toLowerCase();
+  return state === 'PR opened' ? 'opened' : state.replace(/^Checks /, '').toLowerCase();
 }
-function cellTone(state: NotificationLifecycleState): 'waiting' | 'settled' {
-  return state === 'PR opened' ? 'waiting' : 'settled';
+function cellTone(state: NotificationLifecycleState): 'waiting' | 'settled' | 'failed' {
+  return state === 'Checks failed'
+    ? 'failed'
+    : state === 'PR opened' || state === 'Checks running'
+      ? 'waiting'
+      : 'settled';
 }
 /** One raised card for one uninterrupted run of repository notifications.
  *
- * Accordion model (one cell per PR): the most recently updated PR is presented
+ * Accordion model (one cell per PR or check): the most recently updated item is presented
  * with full controls (state column, title, kind line, author, per-cell
  * footer). Other items are contracted (state column, title, kind line with author).
  * Tapping a contracted cell presents it and contracts the previous one.
@@ -43,7 +47,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
     [theme],
   );
 
-  // Items are already deduplicated by foldPrLifecycleRuns — one cell per PR.
+  // Items are already deduplicated by foldPrLifecycleRuns — one cell per identity.
   const items = useMemo(() => run.items, [run.items]);
 
   // Presented cell state: the most recently updated item is the face (index 0).
@@ -60,7 +64,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   const hiddenCount = otherItems.length;
   const hasExpandStrip = items.length > 1;
 
-  // Header: kind + per-state summary over UNIQUE PRs, each state counted once.
+  // Header: kind + latest-state summary, each identity counted once.
   const headline = useMemo(() => {
     const stateCounts = new Map<string, number>();
     for (const item of items) {
@@ -70,7 +74,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
     const parts = Array.from(stateCounts.entries())
       .sort()
       .map(([state, count]) => `${count} ${state}`);
-    return `PR · ${parts.join(', ')}`;
+    return `${items[0]?.kind === 'check' ? 'Check' : 'PR'} · ${parts.join(', ')}`;
   }, [items]);
 
   // One settle lane covers incoming events and row selection; history does not flash.

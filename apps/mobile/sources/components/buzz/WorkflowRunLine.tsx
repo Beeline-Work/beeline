@@ -132,6 +132,7 @@ export function WorkflowRunLine({
   now,
   liveDrafts,
   onOpenCorner,
+  onOpenMessage,
   testID = 'workflow-run-line',
 }: {
   detail: WorkflowRunDetailView;
@@ -139,6 +140,8 @@ export function WorkflowRunLine({
   /** Newest chunks keyed by agent id and turn request id. */
   liveDrafts?: ReadonlyMap<string, string>;
   onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
+  /** Opens the source message a gate was answered from, when the run records one. */
+  onOpenMessage?: (messageId: string) => void;
   testID?: string;
 }) {
   const line = useMemo(
@@ -156,6 +159,7 @@ export function WorkflowRunLine({
           liveDrafts={liveDrafts}
           now={now}
           onOpenCorner={onOpenCorner}
+          onOpenMessage={onOpenMessage}
           step={step}
           testID={`${testID}-step-${step.state}${line.slice(0, index).some((previous) => previous.state === step.state) ? `-visit-${index}` : ''}`}
         />
@@ -242,6 +246,7 @@ function StepRow({
   above,
   below,
   onOpenCorner,
+  onOpenMessage,
   testID,
 }: {
   step: WorkflowLineStep;
@@ -251,6 +256,7 @@ function StepRow({
   above?: SegmentTone;
   below?: SegmentTone;
   onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
+  onOpenMessage?: (messageId: string) => void;
   testID: string;
 }) {
   const visit = step.visits[0];
@@ -275,7 +281,7 @@ function StepRow({
   const gateLine =
     step.kind === 'gate'
       ? gate?.answer !== undefined
-        ? `${gate.answer}${gate.answeredBy ? ` · ${gate.answeredBy.name}` : ''}`
+        ? `${gate.answer}${gate.answeredBy ? ` · ${gate.answeredBy.name}` : ''}${gate.sourceMessageId ? ' answered by message' : ''}`
         : current
           ? `Waiting on ${gateWaitingOn}`
           : undefined
@@ -343,7 +349,20 @@ function StepRow({
         {open && final ? (
           <Text style={[settledAgentProseStyle(), styles.final]} testID={`${testID}-final`}>{final.text}</Text>
         ) : null}
-        {open && gateLine ? <Text style={styles.gateLine} testID={`${testID}-gate`}>{gateLine}</Text> : null}
+        {open && gateLine ? (
+          gate?.sourceMessageId && onOpenMessage ? (
+            <Text
+              accessibilityRole="link"
+              onPress={() => onOpenMessage(gate.sourceMessageId!)}
+              style={[styles.gateLine, styles.gateLink]}
+              testID={`${testID}-gate`}
+            >
+              {gateLine}
+            </Text>
+          ) : (
+            <Text style={styles.gateLine} testID={`${testID}-gate`}>{gateLine}</Text>
+          )
+        ) : null}
         {open && visit?.openedCorners?.length ? (
           <OpenedCorners corners={visit.openedCorners} onOpenCorner={onOpenCorner} testID={testID} />
         ) : null}
@@ -417,6 +436,7 @@ const styles = StyleSheet.create((theme) => {
     live: { ...type.meta, marginTop: space.xs, fontStyle: 'italic' },
     final: { ...type.meta, marginTop: space.xs },
     gateLine: { ...type.meta, color: theme.buzz.textSecondary, marginTop: space.xs },
+    gateLink: { color: theme.buzz.accent, textDecorationLine: 'underline' },
     duration: { ...type.machine, color: theme.buzz.ledgerGhost },
     corners: { marginTop: space.sm },
     cornerLink: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.sm },

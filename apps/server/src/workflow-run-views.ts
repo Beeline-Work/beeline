@@ -425,6 +425,13 @@ async function loadGateRecords(
   const records = new Map<Visit, WorkflowGateRecordView>();
   const gates = visits.filter((visit) => contract.handoffs[visit.card.to_state]?.kind === 'gate');
   if (gates.length === 0) return records;
+  // The card that left a gate carries the exit receipt; when a person settled
+  // the gate from chat, its `exit.sourceMessageId` is the answer's message.
+  const transition = new Map<Visit, RunCardRow>();
+  visits.forEach((visit, index) => {
+    const next = visits[index + 1]?.card;
+    if (next) transition.set(visit, next);
+  });
   const prompts = [...new Set(gates.map((visit) => workflowGatePrompt(contract, visit.card.to_state)))];
   const choices = (
     await db.query<{
@@ -471,9 +478,11 @@ async function loadGateRecords(
     const choice = mine.find((entry) => entry.status === 'answered') ?? mine[mine.length - 1];
     if (!choice) continue;
     const picked = choice.options.find((option) => option.optionId === choice.option_id);
+    const sourceMessageId = transition.get(visit)?.receipt?.exit?.sourceMessageId;
     records.set(visit, {
       status: choice.status,
       ...(picked ? { answer: picked.label } : {}),
+      ...(sourceMessageId ? { sourceMessageId } : {}),
       ...(picked && choice.voter_id && choice.voter_name && choice.voter_kind
         ? {
             answeredBy: actorView(

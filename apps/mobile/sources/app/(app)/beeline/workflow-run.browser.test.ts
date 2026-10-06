@@ -368,6 +368,56 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     ]);
   }, 120_000);
 
+  it('says a gate was answered by message and links the source message', async () => {
+    const detail = feedbackTriageDetail(
+      repo(),
+      { state: 'done', status: 'done', viewerHolds: false, updatedAt: STARTED + 220 },
+      [
+        { toState: 'pull', actor: candy, at: STARTED },
+        {
+          fromState: 'pull',
+          outcome: 'ranked',
+          toState: 'approve',
+          actor: candy,
+          at: STARTED + 100,
+          gate: {
+            question: 'feedback-triage: approve',
+            options: GATE_OPTIONS,
+            status: 'answered',
+            answer: 'dispatch',
+            answeredBy: owner,
+            answeredAt: STARTED + 200,
+            sourceMessageId: 'message-42',
+          },
+        },
+        {
+          fromState: 'approve',
+          outcome: 'dispatch',
+          toState: 'done',
+          status: 'done',
+          actor: candy,
+          at: STARTED + 210,
+          receipt: { exit: { gate: 'dispatch', actorId: owner.id, sourceMessageId: 'message-42' } },
+        },
+      ],
+    );
+    const gate = await proof(detail, '');
+    // A message answer reads differently from a card press.
+    expect(gate.gate).toEqual({ approve: 'dispatch · Owner answered by message' });
+    // Tapping the gate line opens the person's answer message in the Room.
+    const linked = await proof(detail, '?gateLink=approve');
+    expect(linked.pushed).toEqual([
+      {
+        pathname: '/beeline/chat/[channelId]',
+        params: {
+          channelId: 'corner-2',
+          notificationMessageId: 'message-42',
+          notificationResponseId: 'workflow-gate:message-42',
+        },
+      },
+    ]);
+  }, 120_000);
+
   it('Reproduction wf-human-1: saved descriptions replace exits at phone and desktop widths', async () => {
     const detail = {
       run: { runId: 'run-1', workflowSlug: 'research', description: 'Research and review',

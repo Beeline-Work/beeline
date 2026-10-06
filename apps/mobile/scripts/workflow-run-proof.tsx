@@ -86,6 +86,11 @@ async function run() {
     document.querySelector<HTMLElement>(`[data-testid="${prefix}${toggle}-header"]`)?.click();
     await pause();
   }
+  const gateLink = query.get('gateLink');
+  if (gateLink) {
+    document.querySelector<HTMLElement>(`[data-testid="${prefix}${gateLink}-gate"]`)?.click();
+    await pause();
+  }
   const corner = query.get('corner');
   if (corner) {
     document.querySelector<HTMLElement>(`[data-testid="workflow-run-corner-${corner}"]`)?.click();

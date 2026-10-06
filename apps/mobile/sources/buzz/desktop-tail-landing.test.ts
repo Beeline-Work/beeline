@@ -75,10 +75,10 @@ describe('desktop tail-follow wiring (2026-09, superseding eight prior scroll-ti
 
   it('holds older-history prepends using row displacement, excluding live tail growth', () => {
     const prepend = chatSource.slice(
-      chatSource.indexOf('desktopPrependOldestIdRef.current'),
+      chatSource.indexOf('// Older history paging and rolling live windows'),
       chatSource.indexOf('const landAtNewMessageBoundary ='),
     );
-    expect(prepend).toContain('node.scrollTop += rowOffset(previousRow) - previousOffset');
+    expect(prepend).toMatch(/node\.scrollTop \+=\s*row\.getBoundingClientRect\(\)\.top/);
     expect(prepend).not.toContain('node.scrollHeight - previousScrollHeight');
     expect(chatSource).toContain("overflowAnchor: 'none'");
   });

@@ -2586,10 +2586,21 @@ export function BuzzChatSurface({
   // armed the anchor.
   const transcriptLandingAnchorIdRef = useRef(transcriptLandingAnchorId);
   transcriptLandingAnchorIdRef.current = transcriptLandingAnchorId;
-  // Track the old first row's position so prepend compensation excludes
-  // concurrent growth at the live end of the transcript.
-  const desktopPrependOldestIdRef = useRef<string | null>(null);
-  const desktopPrependOffsetRef = useRef<number | null>(null);
+  const desktopReadingAnchorRef = useRef<{ id: string; offset: number } | null>(null);
+  const captureDesktopReadingAnchor = useCallback(() => {
+    const node = desktopScrollNodeRef.current;
+    desktopReadingAnchorRef.current = null;
+    if (!node || isPinnedToTailRef.current || transcriptLandingAnchorIdRef.current) return;
+    const viewport = node.getBoundingClientRect();
+    let firstTop = Infinity;
+    for (const [id, row] of desktopRowNodesRef.current) {
+      const bounds = row.getBoundingClientRect();
+      if (bounds.bottom > viewport.top && bounds.top < viewport.bottom && bounds.top < firstTop) {
+        firstTop = bounds.top;
+        desktopReadingAnchorRef.current = { id, offset: bounds.top - viewport.top };
+      }
+    }
+  }, []);
   const pendingNewMessageLandingRef = useRef<{
     boundaryId: string;
     acknowledgeQueue: boolean;
@@ -2671,8 +2682,7 @@ export function BuzzChatSurface({
     pendingOwnSendTailIdRef.current = null;
     desktopRowRefCallbacksRef.current.clear();
     desktopIntersectingIdsRef.current.clear();
-    desktopPrependOldestIdRef.current = null;
-    desktopPrependOffsetRef.current = null;
+    desktopReadingAnchorRef.current = null;
     locatingMessageSourceIdRef.current = null;
     requestedAroundMessageIdRef.current = null;
     activeMessageSourceAnchorRef.current = null;
@@ -2910,6 +2920,7 @@ export function BuzzChatSurface({
       isPinnedToTailRef.current =
         node.scrollHeight - node.scrollTop - node.clientHeight <= TAIL_PIN_THRESHOLD;
       observeTailPinned(isPinnedToTailRef.current);
+      captureDesktopReadingAnchor();
       if (
         anchoredSegmentActive &&
         isPinnedToTailRef.current &&
@@ -2924,7 +2935,13 @@ export function BuzzChatSurface({
         loadOlderTranscriptMessages();
       }
     },
-    [anchoredSegmentActive, loadNewerAround, loadOlderTranscriptMessages, observeTailPinned],
+    [
+      anchoredSegmentActive,
+      captureDesktopReadingAnchor,
+      loadNewerAround,
+      loadOlderTranscriptMessages,
+      observeTailPinned,
+    ],
   );
   // Pinned? Native offset 0 is the visual bottom of the inverted list. iOS
   // drops `onScroll` ticks inside the throttle window and never sends the
@@ -2939,33 +2956,27 @@ export function BuzzChatSurface({
     },
     [observeTailPinned],
   );
-  // Browser anchoring is disabled on this scroll node; compensate once for
-  // actual rows inserted above the previous first row, not total height.
-  // Older history paging preserves the reader even when live work appends.
+  // Older history paging and rolling live windows can both change rows above
+  // the reader. Restore a visible row's screen offset, with browser anchoring
+  // disabled so this is the only correction. Tail and explicit landings retain
+  // their own authority.
   useLayoutEffect(() => {
     if (!desktopTranscript) return;
     const node = desktopScrollNodeRef.current;
-    const oldestId = transcriptMessages[0]?.id ?? null;
-    const previousOldestId = desktopPrependOldestIdRef.current;
-    const previousOffset = desktopPrependOffsetRef.current;
-    const previousRow = previousOldestId
-      ? desktopRowNodesRef.current.get(previousOldestId)
-      : undefined;
-    const rowOffset = (row: HTMLElement) =>
-      row.getBoundingClientRect().top - node!.getBoundingClientRect().top + node!.scrollTop;
+    const anchor = desktopReadingAnchorRef.current;
+    const row = anchor ? desktopRowNodesRef.current.get(anchor.id) : undefined;
     if (
       node &&
-      previousRow &&
-      oldestId !== null &&
-      oldestId !== previousOldestId &&
-      previousOffset !== null
+      row &&
+      anchor &&
+      !isPinnedToTailRef.current &&
+      !transcriptLandingAnchorIdRef.current
     ) {
-      node.scrollTop += rowOffset(previousRow) - previousOffset;
+      node.scrollTop +=
+        row.getBoundingClientRect().top - node.getBoundingClientRect().top - anchor.offset;
     }
-    desktopPrependOldestIdRef.current = oldestId;
-    const firstRow = oldestId ? desktopRowNodesRef.current.get(oldestId) : undefined;
-    desktopPrependOffsetRef.current = node && firstRow ? rowOffset(firstRow) : null;
-  }, [desktopTranscript, transcriptMessages]);
+    captureDesktopReadingAnchor();
+  }, [captureDesktopReadingAnchor, desktopTranscript, transcriptMessages]);
   // A send promises to show its own row at the live end. The scheduled scroll
   // can run before a burst's final row commits, and the resulting scroll event
   // may mark the viewport unpinned. Land once more when this exact row exists

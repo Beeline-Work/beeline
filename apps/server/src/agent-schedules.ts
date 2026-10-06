@@ -105,9 +105,10 @@ export class AgentScheduleLoop {
   }
 
   async runOnce(now = new Date()): Promise<number> {
-    const due = await this.database.query<DueSchedule>(
+    const due = await this.database.query<DueSchedule & { updated_at: string }>(
       `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.owner_id,schedule.workflow_slug,
-        schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
+        schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at,
+        schedule.updated_at::text updated_at
        FROM agent_schedules schedule
        JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
        JOIN identities creator ON creator.id=schedule.creator_id
@@ -123,114 +124,132 @@ export class AgentScheduleLoop {
     );
     let posted = await this.fireWorkflowTimers(now);
     for (const candidate of due.rows) {
-      const roomId = await this.database.transaction(async (database) => {
-        const current = (
-          await database.query<DueSchedule>(
-            `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.owner_id,schedule.workflow_slug,
-              schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at,
-              agent.name agent_name
-             FROM agent_schedules schedule
-             JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
-             JOIN identities creator ON creator.id=schedule.creator_id
-               AND (creator.kind='human' OR creator.id=schedule.agent_id)
-             JOIN identities agent ON agent.id=schedule.agent_id AND agent.kind='agent'
-             JOIN memberships creator_membership ON creator_membership.room_id=schedule.room_id
-               AND creator_membership.identity_id=schedule.creator_id
-               AND creator_membership.removed_at IS NULL
-             JOIN memberships agent_membership ON agent_membership.room_id=schedule.room_id
-               AND agent_membership.identity_id=schedule.agent_id
-               AND agent_membership.removed_at IS NULL
-             WHERE schedule.id=$1 AND schedule.next_run_at <= $2 AND schedule.workflow_run IS NULL
-             FOR UPDATE OF schedule`,
-            [candidate.id, now],
-          )
-        ).rows[0];
-        if (!current) return undefined;
-        const messageId = randomBytes(32).toString('hex');
-        const claim = await database.query(
-          `INSERT INTO agent_schedule_occurrences(schedule_id,scheduled_for,message_id)
-           VALUES($1,$2,$3) ON CONFLICT(schedule_id,scheduled_for) DO NOTHING RETURNING schedule_id`,
-          [current.id, current.next_run_at, messageId],
-        );
-        if (!claim.rowCount) return undefined;
-        const live = current.workflow_slug
-          ? await liveWorkflowRun(database, current.room_id, current.workflow_slug)
-          : undefined;
-        if (live) {
-          // The schedule row lock serializes this durable notice claim with the tick.
-          const notice = await database.query(
-            `UPDATE agent_schedules SET last_reported_blocking_run_id=$2
-             WHERE id=$1 AND last_reported_blocking_run_id IS DISTINCT FROM $2
-             RETURNING id`,
-            [current.id, live.runId],
+      let roomId: string | undefined;
+      try {
+        roomId = await this.database.transaction(async (database) => {
+          const current = (
+            await database.query<DueSchedule>(
+              `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.owner_id,schedule.workflow_slug,
+                schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at,
+                agent.name agent_name
+               FROM agent_schedules schedule
+               JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
+               JOIN identities creator ON creator.id=schedule.creator_id
+                 AND (creator.kind='human' OR creator.id=schedule.agent_id)
+               JOIN identities agent ON agent.id=schedule.agent_id AND agent.kind='agent'
+               JOIN memberships creator_membership ON creator_membership.room_id=schedule.room_id
+                 AND creator_membership.identity_id=schedule.creator_id
+                 AND creator_membership.removed_at IS NULL
+               JOIN memberships agent_membership ON agent_membership.room_id=schedule.room_id
+                 AND agent_membership.identity_id=schedule.agent_id
+                 AND agent_membership.removed_at IS NULL
+               WHERE schedule.id=$1 AND schedule.next_run_at <= $2 AND schedule.workflow_run IS NULL
+               FOR UPDATE OF schedule`,
+              [candidate.id, now],
+            )
+          ).rows[0];
+          if (!current) return undefined;
+          const messageId = randomBytes(32).toString('hex');
+          const claim = await database.query(
+            `INSERT INTO agent_schedule_occurrences(schedule_id,scheduled_for,message_id)
+             VALUES($1,$2,$3) ON CONFLICT(schedule_id,scheduled_for) DO NOTHING RETURNING schedule_id`,
+            [current.id, current.next_run_at, messageId],
           );
-          if (notice.rowCount) {
-            await ensureSystemIdentity(database);
-            const elapsedMinutes = Math.max(0, Math.floor((now.getTime() - live.startedAt.getTime()) / MINUTE_MS));
+          if (!claim.rowCount) return undefined;
+          const live = current.workflow_slug
+            ? await liveWorkflowRun(database, current.room_id, current.workflow_slug)
+            : undefined;
+          if (live) {
+            // The schedule row lock serializes this durable notice claim with the tick.
+            const notice = await database.query(
+              `UPDATE agent_schedules SET last_reported_blocking_run_id=$2
+               WHERE id=$1 AND last_reported_blocking_run_id IS DISTINCT FROM $2
+               RETURNING id`,
+              [current.id, live.runId],
+            );
+            if (notice.rowCount) {
+              await ensureSystemIdentity(database);
+              const elapsedMinutes = Math.max(0, Math.floor((now.getTime() - live.startedAt.getTime()) / MINUTE_MS));
+              await systemLine(database, {
+                id: messageId,
+                roomId: current.room_id,
+                authorId: SYSTEM_IDENTITY_ID,
+                subject: { kind: 'system', name: `The ${current.workflow_slug} schedule` },
+                verb: 'skipped a run',
+                consequence: `run ${live.runId} is active at step ${live.state} in state ${live.status} for ${elapsedMinutes} min`,
+              });
+            }
+            await this.advance(database, current, now, false);
+            return current.room_id;
+          }
+          // A schedule created by the target agent itself must not be authored by
+          // that agent: its own-authored rows never reach the agent's inbox and the
+          // transcript would show the agent talking to itself. A human creator
+          // keeps authoring its schedule posts exactly as before.
+          const selfCreated = current.creator_id === current.agent_id;
+          if (selfCreated) {
+            await database.query(
+              `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
+               VALUES($1,'human',$2,$3,true)
+               ON CONFLICT(id) DO UPDATE SET handle=EXCLUDED.handle`,
+              [SCHEDULE_SCHEDULER_ID, SCHEDULE_SCHEDULER_NAME, SCHEDULE_SCHEDULER_HANDLE],
+            );
+          }
+          if (selfCreated) {
             await systemLine(database, {
               id: messageId,
               roomId: current.room_id,
-              authorId: SYSTEM_IDENTITY_ID,
-              subject: { kind: 'system', name: `The ${current.workflow_slug} schedule` },
-              verb: 'skipped a run',
-              consequence: `run ${live.runId} is active at step ${live.state} in state ${live.status} for ${elapsedMinutes} min`,
+              subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: SCHEDULE_SCHEDULER_NAME },
+              verb: SCHEDULE_RAN_VERB,
+              kind: 'schedule-ran',
+              object: { text: current.agent_name, id: current.agent_id },
+              consequence: current.message,
+              wakes: [current.agent_id],
             });
+          } else {
+            // The agent is woken by the command created just below, never by a
+            // tag: a scheduled prompt is the creator's words, and those words
+            // need not name anybody.
+            await database.query(
+              `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
+              [messageId, current.room_id, current.creator_id, current.message],
+            );
           }
-          await this.advance(database, current, now, false);
-          return current.room_id;
-        }
-        // A schedule created by the target agent itself must not be authored by
-        // that agent: its own-authored rows never reach the agent's inbox and the
-        // transcript would show the agent talking to itself. A human creator
-        // keeps authoring its schedule posts exactly as before.
-        const selfCreated = current.creator_id === current.agent_id;
-        if (selfCreated) {
           await database.query(
-            `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
-             VALUES($1,'human',$2,$3,true)
-             ON CONFLICT(id) DO UPDATE SET handle=EXCLUDED.handle`,
-            [SCHEDULE_SCHEDULER_ID, SCHEDULE_SCHEDULER_NAME, SCHEDULE_SCHEDULER_HANDLE],
+            `UPDATE messages SET card=COALESCE(card,'{}'::jsonb) || jsonb_build_object('trigger',jsonb_build_object('scheduleId',$2::text,'period',$3::text)) || $4::jsonb WHERE id=$1`,
+            [
+              messageId,
+              current.id,
+              current.next_run_at.toISOString(),
+              // The person a run started from this tick reports to.
+              JSON.stringify(current.owner_id ? { ownerId: current.owner_id } : {}),
+            ],
           );
-        }
-        if (selfCreated) {
-          await systemLine(database, {
-            id: messageId,
+          await createAgentCommand(database, {
             roomId: current.room_id,
-            subject: { kind: 'system', id: SCHEDULE_SCHEDULER_ID, name: SCHEDULE_SCHEDULER_NAME },
-            verb: SCHEDULE_RAN_VERB,
-            kind: 'schedule-ran',
-            object: { text: current.agent_name, id: current.agent_id },
-            consequence: current.message,
-            wakes: [current.agent_id],
+            agentId: current.agent_id,
+            sourceMessageId: messageId,
+            reason: 'schedule',
           });
-        } else {
-          // The agent is woken by the command created just below, never by a
-          // tag: a scheduled prompt is the creator's words, and those words
-          // need not name anybody.
-          await database.query(
-            `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
-            [messageId, current.room_id, current.creator_id, current.message],
-          );
-        }
-        await database.query(
-          `UPDATE messages SET card=COALESCE(card,'{}'::jsonb) || jsonb_build_object('trigger',jsonb_build_object('scheduleId',$2::text,'period',$3::text)) || $4::jsonb WHERE id=$1`,
-          [
-            messageId,
-            current.id,
-            current.next_run_at.toISOString(),
-            // The person a run started from this tick reports to.
-            JSON.stringify(current.owner_id ? { ownerId: current.owner_id } : {}),
-          ],
-        );
-        await createAgentCommand(database, {
-          roomId: current.room_id,
-          agentId: current.agent_id,
-          sourceMessageId: messageId,
-          reason: 'schedule',
+          await this.advance(database, current, now, true);
+          return current.room_id;
         });
-        await this.advance(database, current, now, true);
-        return current.room_id;
-      });
+      } catch (error) {
+        // Posting, the occurrence claim and advancement rolled back together.
+        // Preserve any edit or firing committed since the due snapshot.
+        console.error(`schedule ${candidate.id} failed; retrying in one minute`, error);
+        try {
+          await this.database.query(
+            `UPDATE agent_schedules SET next_run_at=$2,updated_at=now()
+             WHERE id=$1 AND workflow_run IS NULL AND next_run_at=$3
+               AND updated_at::text=$4`,
+            [candidate.id, new Date(now.getTime() + MINUTE_MS), candidate.next_run_at, candidate.updated_at],
+          );
+        } catch (backoffError) {
+          console.error(`schedule ${candidate.id} retry backoff failed`, backoffError);
+        }
+        continue;
+      }
       if (!roomId) continue;
       posted += 1;
       this.onPosted?.(roomId);

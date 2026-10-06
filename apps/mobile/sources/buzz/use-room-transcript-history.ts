@@ -3,6 +3,7 @@ import { addRoomPage, type RoomHistoryView, type RoomViewMessage } from '@beelin
 
 import {
   advanceRoomHistoryCursor,
+  displacedTailRows,
   retainRoomHistoryCursor,
   type RoomHistoryCursorState,
 } from '@/buzz/room-history-pagination';
@@ -55,7 +56,28 @@ export function useRoomTranscriptHistory({
   const requestVersionRef = useRef(0);
   const previousRoomIdRef = useRef(roomId);
   const completedTailIdRef = useRef<string | null>(null);
+  const previousTailRef = useRef<{ roomId: string; rows: readonly RoomViewMessage[] } | null>(null);
 
+  const previousTail = previousTailRef.current;
+  if (tailMessages) previousTailRef.current = { roomId, rows: tailMessages };
+  if (tailMessages && previousTail?.roomId === roomId && previousTail.rows !== tailMessages) {
+    // The phone paints a cached tail, then a fresh one (and live reads keep
+    // replacing it). The rows a replaced tail held must stay reachable.
+    const displaced = displacedTailRows(previousTail.rows, tailMessages);
+    if (displaced === null) {
+      // Nothing joins the two tails: page from the fresh tail, not the old one.
+      requestVersionRef.current += 1;
+      loadingRef.current = false;
+      cursorRef.current = null;
+      completedTailIdRef.current = null;
+      statusRef.current = 'idle';
+      setOlderPages([]);
+    } else if (displaced.length) {
+      setOlderPages((current) => addRoomPage({ pages: current }, displaced).pages);
+      visibleCountRef.current += displaced.length;
+      setVisibleMessageCount(visibleCountRef.current);
+    }
+  }
   cursorRef.current = retainRoomHistoryCursor(cursorRef.current, roomId, tailMessages);
   if (
     statusRef.current === 'complete' &&

@@ -2,7 +2,11 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { RoomViewHttpError, type RoomHistoryView, type RoomViewMessage } from '@beeline/buzz-client';
+import {
+  RoomViewHttpError,
+  type RoomHistoryView,
+  type RoomViewMessage,
+} from '@beeline/buzz-client';
 
 import { useRoomTranscriptHistory } from './use-room-transcript-history';
 
@@ -203,6 +207,63 @@ describe('Room transcript history', () => {
     expect(textRows(renderer, 'HistoryLine')).toEqual([]);
     await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
     expect(history).toHaveBeenLastCalledWith('corner', { createdAt: 10, id: '1'.repeat(64) });
+  });
+
+  it('pages from the server tail, not a cached tail that shares no row with it', async () => {
+    // A corner painted from an earlier visit's cache, then replaced by a fresh
+    // read whose 30-row tail starts after everything the cache held.
+    const history = vi.fn(async (_roomId: string, before?: { createdAt: number; id: string }) =>
+      before?.id === '5'.repeat(64)
+        ? {
+            roomId: 'corner',
+            messages: [message('1', 10), message('2', 20), message('3', 30), message('4', 40)],
+          }
+        : { roomId: 'corner', messages: [] },
+    );
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <Transcript tail={[message('1', 10), message('2', 20)]} history={history} />,
+      );
+    });
+    await act(async () => {
+      renderer.update(<Transcript tail={[message('5', 50), message('6', 60)]} history={history} />);
+    });
+    await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
+
+    expect(history).toHaveBeenCalledWith('corner', { createdAt: 50, id: '5'.repeat(64) });
+    expect(textRows(renderer, 'Message')).toEqual([
+      'message-1',
+      'message-2',
+      'message-3',
+      'message-4',
+      'message-5',
+      'message-6',
+    ]);
+    expect(textRows(renderer, 'HistoryLine')).toEqual(['Beginning of corner']);
+  });
+
+  it('keeps rows that slide out of the tail on screen and pages from before them', async () => {
+    const history = vi.fn(async () => ({ roomId: 'corner', messages: [message('1', 10)] }));
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <Transcript tail={[message('2', 20), message('3', 30)]} history={history} />,
+      );
+    });
+    await act(async () => {
+      renderer.update(<Transcript tail={[message('3', 30), message('4', 40)]} history={history} />);
+    });
+    expect(textRows(renderer, 'Message')).toEqual(['message-2', 'message-3', 'message-4']);
+
+    await act(async () => renderer.root.findByType('Transcript').props.onEndReached());
+    expect(history).toHaveBeenCalledWith('corner', { createdAt: 20, id: '2'.repeat(64) });
+    expect(textRows(renderer, 'Message')).toEqual([
+      'message-1',
+      'message-2',
+      'message-3',
+      'message-4',
+    ]);
   });
 
   it('does not turn a reset or a short seeded quote window into server completion', async () => {

@@ -428,6 +428,13 @@ describe('human descriptions at the save boundary', () => {
   it('counts Unicode characters consistently at 140', () => {
     expect(validateSavedWorkflow({ ...described, summary: '🦊'.repeat(140) })).toBeNull();
   });
+  it('refuses a saved abandoned ending while pinned contracts with one still read', () => {
+    const abandonedEnding = { ...described, handoffs: { ...described.handoffs,
+      failed: { ...described.handoffs.failed, status: 'abandoned' } } };
+    expect(validateSavedWorkflow(abandonedEnding)).toBe(
+      "handoffs.failed: a saved workflow's ending must be done or failed");
+    expect(readWorkflowContract(abandonedEnding)).not.toBeNull();
+  });
 });
 
 describe('self-healing contract keys', () => {

@@ -1,4 +1,7 @@
-import { normalizeLegacyWorkflowRuns } from './migrations/workflow-cleanup.js';
+import { normalizeLegacyWorkflowRuns, saveUnsavedWorkflowRunStatus } from './migrations/workflow-cleanup.js';
+import { workflowRunIsLiveSql, workflowRunStatusUnsavedSql } from './workflow-run-saved-status.js';
+import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
+import { activeWorkflowRunIds } from './workflow-admin.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { describedWorkflow } from './test-support.js';
@@ -24,6 +27,7 @@ import {
   handoff,
   getWorkflowRun,
   cancelWorkflowRun,
+  liveWorkflowRun,
   failOverUnansweredTurn,
   reassignFailedWorkflowRole,
   fireWorkflowTimer,
@@ -707,7 +711,7 @@ describe('start_workflow schedule/trigger duplicate-run refusal', () => {
       );
       if (index < 4) {
         await database.query(
-          `UPDATE messages SET card=card || '{"active":false}'::jsonb WHERE id=$1`,
+          `UPDATE messages SET card=card || '{"runStatus":"done"}'::jsonb WHERE id=$1`,
           [runId],
         );
       }
@@ -899,10 +903,10 @@ describe('handoff', () => {
     expect(gateCard.rows[0]?.card).toMatchObject({ runId, workflowSlug: 'corner' });
     await answerGate(runId, 'approved');
     expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({ state: 'land', status: 'done' });
-    const start = await database.query<{ active: string }>(
-      `SELECT card->>'active' active FROM messages WHERE id=$1`, [runId],
+    const start = await database.query<{ run_status: string }>(
+      `SELECT card->>'runStatus' run_status FROM messages WHERE id=$1`, [runId],
     );
-    expect(start.rows[0]?.active).toBe('false');
+    expect(start.rows[0]?.run_status).toBe('done');
     command = await commandFor(APPROVER);
     await expect(
       handoff(database, command, { runId, outcome: 'approved', contents: { decision: 'approved' } }),
@@ -2040,7 +2044,6 @@ describe('agent workflow run reads and cancellation', () => {
     await cancelWorkflowRun(database, cancelCommand, { runId, reason: 'Stop waiting' });
     expect((await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [choice.id])).rows[0]?.status).toBe('closed');
     await expect(answerRoomChoice(database, { choiceId: choice.id, optionId: choice.options[0]!.optionId, viewerId: OWNER })).rejects.toThrow('already decided');
-    const { activeWorkflowRunIds } = await import('./workflow-admin.js');
     expect(await activeWorkflowRunIds(database, ROOM, 'corner', OWNER)).not.toContain(runId);
   });
 
@@ -2908,7 +2911,7 @@ describe('legacy run timer recovery', () => {
     const { runId } = await startedListRun();
     await removeStepTimeout('list-flow', 'work');
     await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=ANY($1::text[])`, [[orphaned, runId]]);
-    await database.query(`UPDATE messages SET card=card-'active' WHERE id=ANY($1::text[])`, [[orphaned, runId]]);
+    await database.query(`UPDATE messages SET card=card-'runStatus' WHERE id=ANY($1::text[])`, [[orphaned, runId]]);
     await database.query(`DELETE FROM workspace_skills WHERE slug='gated'`);
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
@@ -2934,8 +2937,10 @@ describe('legacy run timer recovery', () => {
     await removeStepTimeout('list-flow', 'work');
     await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId]);
     await database.query(
-      `UPDATE messages SET card=card-'seq'-'deadlineSeconds'-'active',created_at=now()-interval '2 hours' WHERE id=$1`, [runId],
+      `UPDATE messages SET card=card-'seq'-'deadlineSeconds'-'runStatus',created_at=now()-interval '2 hours' WHERE id=$1`, [runId],
     );
+    await normalizeLegacyWorkflowRuns(database);
+    expect(await saveUnsavedWorkflowRunStatus(database)).toBe(1);
     const before = Date.now();
     expect(await backfillWorkflowRunTimers(database)).toBe(2);
     const timers = await timersFor(runId);
@@ -3003,13 +3008,14 @@ describe('legacy run timer recovery', () => {
     expect((await database.query(`SELECT markdown,content_hash FROM workspace_skill_versions ORDER BY version`)).rows).toEqual(versions);
   });
 
-  it('does not arm ended or cancelled legacy runs, even when their start cards lack the active flag', async () => {
+  it('does not arm ended or cancelled legacy runs whose start cards lacked a saved status', async () => {
     const ended = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
     await reachGate(ended);
     await answerGate(ended, 'publish');
     const cancelled = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
     await cancelWorkflowRun(database, { room_id: ROOM, agent_id: OWNER } as CommandRow, { runId: cancelled, reason: 'stop' });
-    await database.query(`UPDATE messages SET card=card-'active' WHERE id=ANY($1::text[])`, [[ended, cancelled]]);
+    await database.query(`UPDATE messages SET card=card-'runStatus' WHERE id=ANY($1::text[])`, [[ended, cancelled]]);
+    expect(await saveUnsavedWorkflowRunStatus(database)).toBe(2);
     expect(await backfillWorkflowRunTimers(database)).toBe(0);
     expect(await backfillWorkflowRunTimers(database)).toBe(0);
     expect(await timersFor(ended)).toEqual([]);
@@ -3182,7 +3188,13 @@ describe('workflow cleanup migration', () => {
         .toEqual([{ name: 'workflow-storage-v1' }]);
       const failures = errors.mock.calls.length;
       await migrateData(database);
-      expect(errors.mock.calls).toHaveLength(failures);
+      // Timer recovery runs every boot, so only the broken run is retried.
+      expect(errors.mock.calls.slice(failures)).toEqual([
+        [`backfillWorkflowRunTimers: failed to recover run ${failed}`, expect.objectContaining({ code: '22000' })],
+      ]);
+      expect((await database.query(`SELECT workflow_run->>'timer' timer FROM agent_schedules
+        WHERE workflow_run->>'runId'=$1 ORDER BY timer`, [healthy])).rows)
+        .toEqual([{ timer: 'deadline' }, { timer: 'step' }]);
       console.log('Demonstrated cleanup-transaction: startup isolated a real SQL error, recovered the healthy run, and persisted its completion marker');
     } finally {
       errors.mockRestore();
@@ -3196,7 +3208,7 @@ describe('workflow cleanup migration', () => {
     const live = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
     await reachGate(live);
     await database.query(`DELETE FROM workflow_backfills WHERE name='workflow-storage-v1'`);
-    await database.query(`UPDATE messages SET card=card-'active' WHERE id=ANY($1::text[])`, [[ended, live]]);
+    await database.query(`UPDATE messages SET card=card-'runStatus' || '{"active":true}'::jsonb WHERE id=ANY($1::text[])`, [[ended, live]]);
     await database.query(`UPDATE messages SET card=card-'seq' WHERE card_type='workflow-handoff' AND card->>'runId'=$1`, [live]);
     await database.query(`UPDATE messages SET card=card-'attempt' WHERE id IN (SELECT message_id FROM room_choices) AND card->>'runId'=$1`, [live]);
     const oldId = randomUUID();
@@ -3205,8 +3217,8 @@ describe('workflow cleanup migration', () => {
     const due = (await database.query(`SELECT next_run_at FROM agent_schedules WHERE id=$1`, [oldId])).rows[0]!;
     const commandsBefore = (await database.query(`SELECT * FROM agent_commands ORDER BY id`)).rows;
     await migrateData(database);
-    expect((await database.query(`SELECT id,card->>'active' active FROM messages WHERE id=ANY($1::text[]) ORDER BY id`, [[ended, live]])).rows)
-      .toEqual([{ id: ended, active: 'false' }, { id: live, active: 'true' }].sort((a,b) => a.id.localeCompare(b.id)));
+    expect((await database.query(`SELECT id,card->>'runStatus' run_status,card ? 'active' active FROM messages WHERE id=ANY($1::text[]) ORDER BY id`, [[ended, live]])).rows)
+      .toEqual([{ id: ended, run_status: 'done', active: false }, { id: live, run_status: 'live', active: false }].sort((a,b) => a.id.localeCompare(b.id)));
     expect((await database.query(`SELECT card->>'seq' seq FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1 ORDER BY (card->>'seq')::int`, [live])).rows)
       .toEqual([{ seq: '-1' }, { seq: '0' }]);
     const timer = (await database.query<{ id: string; next_run_at: Date; workflow_run: unknown }>(`SELECT id,next_run_at,workflow_run FROM agent_schedules
@@ -3230,5 +3242,113 @@ describe('workflow cleanup migration', () => {
     await answerGate(live, 'publish');
     expect(await getWorkflowRun(database, ROOM, live)).toMatchObject({ status: 'done' });
     console.log('Demonstrated cleanup-storage: legacy live gate kept its lease and received no new wake; second startup skipped backfills; human answer completed the run');
+  });
+});
+
+describe('Reproduction run-status: one saved status for every reader', () => {
+  beforeEach(async () => {
+    // The app's run views also require the viewer's Workspace membership.
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
+  });
+
+  async function savedStatus(runId: string): Promise<string | null> {
+    return (await database.query<{ run_status: string | null }>(
+      `SELECT card->>'runStatus' run_status FROM messages WHERE id=$1`, [runId],
+    )).rows[0]!.run_status;
+  }
+
+  /** The start card, the agent read, the app's run page and list, and every SQL live check agree. */
+  async function expectStatus(runId: string, expected: 'live' | 'done' | 'failed' | 'abandoned') {
+    const live = expected === 'live';
+    expect(await savedStatus(runId)).toBe(expected);
+    expect((await getWorkflowRun(database, ROOM, runId)).status).toBe(expected);
+    expect((await readWorkflowRun(database, { roomId: ROOM, runId }, OWNER))?.run.status).toBe(expected);
+    const listed = (await listRoomWorkflowRuns(database, ROOM, OWNER, 'gated')).workflows;
+    expect(listed.find((run) => run.runId === runId)?.status).toBe(expected);
+    expect((await liveWorkflowRun(database, ROOM, 'gated'))?.runId === runId).toBe(live);
+    expect((await activeWorkflowRunIds(database, ROOM, 'gated', OWNER)).includes(runId)).toBe(live);
+    await database.query(
+      `UPDATE messages SET card=card || jsonb_build_object('trigger',jsonb_build_object('scheduleId','status-schedule','period','p')) WHERE id=$1`,
+      [runId],
+    );
+    expect((await activeRunIdsForSchedule(database, ROOM, 'status-schedule')).includes(runId)).toBe(live);
+  }
+
+  async function everyEnding(): Promise<Record<'done' | 'failed' | 'deadline' | 'cancelled', string>> {
+    const done = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await expectStatus(done, 'live');
+    await reachGate(done);
+    await expectStatus(done, 'live');
+    await answerGate(done, 'publish');
+    await expectStatus(done, 'done');
+
+    const failed = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(failed);
+    await answerGate(failed, 'stop');
+    await expectStatus(failed, 'failed');
+
+    const deadline = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    expect(await fireTimer(deadline, 'deadline')).toBe(1);
+    await expectStatus(deadline, 'failed');
+
+    const cancelled = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await cancelWorkflowRun(database, { room_id: ROOM, agent_id: OWNER } as CommandRow, { runId: cancelled, reason: 'stop' });
+    await expectStatus(cancelled, 'abandoned');
+    return { done, failed, deadline, cancelled };
+  }
+
+  it('saves the status at start, on each move and at every ending, and every live check agrees', async () => {
+    await everyEnding();
+    console.log('Demonstrated run-status: start, handoff, done, failed, deadline and cancel each saved one status that every reader and live check returned');
+  });
+
+  it('fills a missing or legacy saved status from the run itself and drops the retired flag', async () => {
+    const runs = await everyEnding();
+    const live = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await reachGate(live);
+    const all = [...Object.values(runs), live];
+    // Legacy start cards: no saved status, or a stale `active` written by an older release.
+    await database.query(`UPDATE messages SET card=card-'runStatus' || '{"active":true}'::jsonb WHERE id=ANY($1::text[])`, [[runs.done, runs.deadline, live]]);
+    await database.query(`UPDATE messages SET card=card || '{"active":true}'::jsonb WHERE id=$1`, [runs.failed]);
+    await database.query(`UPDATE messages SET card=card-'runStatus' WHERE id=$1`, [runs.cancelled]);
+    expect(await saveUnsavedWorkflowRunStatus(database)).toBe(5);
+    expect(await saveUnsavedWorkflowRunStatus(database)).toBe(0);
+    await expectStatus(runs.done, 'done');
+    await expectStatus(runs.failed, 'failed');
+    await expectStatus(runs.deadline, 'failed');
+    await expectStatus(runs.cancelled, 'abandoned');
+    await expectStatus(live, 'live');
+    expect((await database.query(`SELECT 1 FROM messages WHERE id=ANY($1::text[]) AND card ? 'active'`, [all])).rowCount).toBe(0);
+  });
+
+  it('re-arms a live run timer lost after deploy on every boot, exactly once', async () => {
+    const runId = await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    const timers = async () => (await database.query<{ id: string; timer: string }>(
+      `SELECT id,workflow_run->>'timer' timer FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY timer`, [runId],
+    )).rows;
+    const armed = await timers();
+    await migrateData(database);
+    await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='step'`, [runId]);
+    await migrateData(database);
+    await migrateData(database);
+    expect(await timers()).toEqual(armed);
+    console.log('Demonstrated run-timers: a step timer deleted after the one-time backfills ran was re-armed once by the next boot');
+  });
+
+  it('reads live runs through the partial index on the saved status', async () => {
+    await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
+    await database.query(`SET enable_seqscan=off`);
+    try {
+      const plan = async (sql: string) => JSON.stringify(
+        (await database.query<Record<string, unknown>>(`EXPLAIN (FORMAT JSON) ${sql}`)).rows[0]?.['QUERY PLAN']);
+      expect(await plan(`SELECT id FROM messages WHERE room_id='${ROOM}' AND card_type='workflow-handoff'
+        AND ${workflowRunIsLiveSql('card')} AND card->>'workflowSlug'='gated'`)).toContain('messages_workflow_run_live_idx');
+      expect(await plan(`SELECT id FROM messages WHERE card_type='workflow-handoff' AND id=card->>'runId'
+        AND ${workflowRunIsLiveSql('card')}`)).toContain('messages_workflow_run_live_idx');
+      expect(await plan(`SELECT id FROM messages WHERE card_type='workflow-handoff'
+        AND ${workflowRunStatusUnsavedSql('card', 'id')}`)).toContain('messages_workflow_run_status_backfill_idx');
+    } finally {
+      await database.query(`SET enable_seqscan=on`);
+    }
   });
 });

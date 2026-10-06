@@ -338,6 +338,13 @@ export class LiveConnection {
       return;
     }
     if (!('roomId' in live)) return;
+    if (live.type === 'invalidate' && live.roomId === '' && live.reason === 'postgres:memberships') {
+      for (const registration of this.registrations.values()) {
+        if (!registration.closed && registration.roomIds.size === 0)
+          registration.listener({ monolithLive: live });
+      }
+      return;
+    }
     if (!this.refcount.has(live.roomId)) {
       if (live.type !== 'subscribed') return;
       this.pendingSubscribe.delete(live.roomId);

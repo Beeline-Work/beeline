@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { QueryResultRow } from 'pg';
 import { validateCornerWorkflow } from '@beeline/api-contract/daemon';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { describedWorkflow, PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
@@ -28,9 +28,10 @@ import {
   repairReviewerCornerMembership,
   queueCornerMergeConflict,
   reconcileCornerMergeBlockers,
+  type CommandRow,
 } from './agent-command.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
-import { workflowRunLockKey } from './workflow-runs.js';
+import { getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey } from './workflow-runs.js';
 
 /** Records every SQL statement issued, in order — matches workflow-runs.test.ts's own. */
 type RecordedCall = { sql: string; values?: unknown[] };
@@ -744,6 +745,26 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     const cornerId = await open(undefined, 'owner/widgets');
     await phone.execute('requestCornerClose', { roomId: cornerId }, H);
     expect(await currentState(cornerId)).toBe('closed');
+  });
+
+  it('a human close request abandons a live saved workflow run inside the corner', async () => {
+    const cornerId = await open('no_code');
+    const starter = { room_id: cornerId, agent_id: A } as CommandRow;
+    await saveWorkflow(db, starter, { contract: describedWorkflow({
+      version: 1, name: 'corner-chore', description: 'One step inside a corner', roles: ['worker'], start: 'work',
+      handoffs: {
+        work: { role: 'worker', requires: ['note'], on: { done: 'finished', timeout: 'failed' }, timeoutSeconds: 3600 },
+        finished: { kind: 'terminal', status: 'done' },
+        failed: { kind: 'terminal', status: 'failed' },
+      },
+    }) });
+    const { runId } = await startWorkflow(db, starter, { name: 'corner-chore', roleBindings: { worker: A } });
+    expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('live');
+    await phone.execute('requestCornerClose', { roomId: cornerId }, H);
+    expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('abandoned');
+    expect(await liveWorkflowRun(db, cornerId, 'corner-chore')).toBeUndefined();
+    expect((await db.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
+    console.log('Demonstrated corner-close-run: closing the corner saved the saved workflow run inside it as abandoned and removed its timers');
   });
 
   it('never posts a second terminal card for an already-landed corner', async () => {

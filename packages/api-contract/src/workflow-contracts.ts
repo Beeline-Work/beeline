@@ -229,6 +229,9 @@ export function validateSavedWorkflow(value: unknown): string | null {
   for (const [name, state] of Object.entries(contract.handoffs)) {
     const at = `handoffs.${name}`;
     if (!state.does?.trim()) return `${at}: does is required and must be nonempty`;
+    // Only a person's cancel or a corner close abandons a run; an author's ending succeeds or fails.
+    if (state.kind === 'terminal' && state.status === 'abandoned')
+      return `${at}: a saved workflow's ending must be done or failed`;
     if ('on' in state && Object.hasOwn(state.on, WORKFLOW_BLOCKED_OUTCOME))
       return `${at}: "${WORKFLOW_BLOCKED_OUTCOME}" is built in; name this outcome something else`;
     if (state.kind === undefined && state.timeoutSeconds === undefined)

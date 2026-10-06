@@ -1,4 +1,4 @@
-import { workflowRunLiveSql } from './workflow-run-live.js';
+import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ChoiceCardView, RoomViewIdentity } from '@beeline/api-contract/phone';
 import {
@@ -267,7 +267,7 @@ async function closeEndedRunChoices(
      WHERE choice.message_id=message.id AND choice.room_id=$1 AND choice.agent_id=$2
        AND choice.status='open'
        AND message.card->>'runId' IS NOT NULL
-       AND ${workflowRunLiveSql('run.card')} IS NOT TRUE
+       AND ${workflowRunIsLiveSql('run.card')} IS NOT TRUE
      RETURNING choice.message_id`,
     [input.roomId, input.agentId],
   );

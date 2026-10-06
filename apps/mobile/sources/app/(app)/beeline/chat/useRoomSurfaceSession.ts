@@ -56,6 +56,12 @@ import { takePrefetchedPushRoom } from '@/push/push-room-prefetch';
 const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
 /** A socket that never answers must not hold the open's one Room read. */
 const SUBSCRIBE_HANDSHAKE_TIMEOUT_MS = 2_000;
+/**
+ * A phone socket can stop delivering without closing, and a frame the server
+ * fails to send is never resent. Without a periodic read, an open Room would
+ * miss that message until it is opened again.
+ */
+const OPEN_ROOM_COVERING_READ_MS = 30_000;
 
 type ReceivedLiveTrace = LiveWireTrace & {
   reason: string;
@@ -440,6 +446,7 @@ export function useRoomSurfaceSession({
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<RoomView> | undefined;
+    let coveringReadTimer: ReturnType<typeof setInterval> | undefined;
     // A backgrounded app reads nothing: returning to the foreground replaces
     // the socket, and that resubscribe's `subscribed` frame is the covering read.
     const visibleScheduler = () =>
@@ -1108,6 +1115,12 @@ export function useRoomSurfaceSession({
           },
         });
         schedulerRef.current = scheduler;
+        // A read that finds a message the socket never delivered also
+        // replaces the socket (`missedLive` above).
+        coveringReadTimer = setInterval(
+          () => visibleScheduler()?.signal(),
+          OPEN_ROOM_COVERING_READ_MS,
+        );
         if (notificationResponseId) {
           scheduler.refreshNow();
           await scheduler.startAfter(Promise.resolve());
@@ -1134,6 +1147,7 @@ export function useRoomSurfaceSession({
       cancelled = true;
       watchGeneration += 1;
       abandonHandshakeWait?.();
+      if (coveringReadTimer) clearInterval(coveringReadTimer);
       scheduler?.dispose();
       unsubscribe?.();
       outboxRef.current = null;

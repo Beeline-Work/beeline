@@ -5,7 +5,7 @@ import { humanRoomAdmin, WorkflowAuthorizationError } from './workflow-admin.js'
 import { createHash, randomBytes } from 'node:crypto';
 import {
   shortRunId,
-  workflowSaveError,
+  validateSavedWorkflow,
   workflowContentsError,
   workflowReceiptError,
   type WorkflowReceiptInput,
@@ -1584,7 +1584,7 @@ export async function saveWorkflow(
   input: { contract: unknown },
   afterCommit?: AfterCommit,
 ): Promise<{ slug: string; version: number }> {
-  const reason = workflowSaveError(input.contract);
+  const reason = validateSavedWorkflow(input.contract);
   if (reason !== null) throw new Error(`workflow contract is invalid: ${reason}`);
   const contract = input.contract as WorkflowContract;
   const room = (
@@ -1991,7 +1991,7 @@ function describedLegacyWorkflowState(name: string, raw: unknown): unknown {
  * `summary`/per-step `does` a contract is missing, with the exact
  * placeholders the backfill writes to storage, leaving every edge, role
  * binding and loop rule untouched. Every `handoffs` entry gets a `does`,
- * terminal states included: `workflowSaveError` (PR #2083) requires one on
+ * terminal states included: `validateSavedWorkflow` (PR #2083) requires one on
  * every state with no exception, so a contract missing it on even one
  * terminal state would still be refused the next time it is saved. Exported
  * so a caller that must describe a legacy contract before saving it through
@@ -2017,7 +2017,7 @@ export function describedLegacyWorkflowContract(contract: WorkflowReadContract):
 }
 
 /**
- * `workflowSaveError` (PR #2083) made a NEW save require a `summary` and
+ * `validateSavedWorkflow` (PR #2083) made a NEW save require a `summary` and
  * every state's `does`; every workflow skill version saved before that rule
  * existed has neither, and a pinned run keeps reading its exact saved
  * version forever (`loadPinnedContract`), so those old versions are never

@@ -38,7 +38,7 @@ import { callAgentTool } from './read-only-mcp.js';
  * `BEELINE_DAEMON_CORNER_ID` is the corner — never the other way around.
  *
  * PR #2083 made a NEW `save_workflow` require a `summary` and a per-step
- * `does` (`workflowSaveError`); `database.ts`'s `backfillWorkflowSkillDescriptions`
+ * `does` (`validateSavedWorkflow`); `database.ts`'s `backfillWorkflowSkillDescriptions`
  * migration fills those in for every workflow saved before that rule
  * existed. The contract here is saved through the NORMAL save path
  * (`saveWorkflow`, the same function `save_workflow` calls), described with

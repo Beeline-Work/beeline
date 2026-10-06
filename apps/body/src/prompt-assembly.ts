@@ -505,6 +505,16 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'Use steer_corner during a turn to send input to a member sibling under this parent. Membership alone grants no turn.',
   },
   {
+    id: 'corner.handover',
+    topic: 'corner-handover',
+    why: 'An agent asked to hand the corner on opened a duplicate sibling corner instead of tagging the other agent.',
+    budgetBytes: 360,
+    layer: 'surface',
+    surfaces: ['code-corner', 'no-code-corner'],
+    render: () =>
+      'When a person asks you to hand this corner to another agent, tag in your reply only an agent that person named by handle or display name: it moves the implementer role here. A tag for any other reason does not move the role. Do not open a second corner for a hand-over.',
+  },
+  {
     id: 'corner.worktree',
     topic: 'place',
     why: 'The agent must know its branch and target; only a code-corner author is told to push and open the pull request.',

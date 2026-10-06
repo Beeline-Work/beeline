@@ -141,7 +141,7 @@ BEGIN
     WHEN 'memberships' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
-        'roomId', COALESCE(NEW.room_id, OLD.room_id),
+        'roomId', COALESCE(NEW.room_id::text, OLD.room_id::text, ''),
         'identityId', COALESCE(NEW.identity_id, OLD.identity_id),
         'removed', CASE
           WHEN TG_OP = 'DELETE' THEN true
@@ -688,6 +688,9 @@ export class PostgresLiveListener {
       roomId: payload.roomId,
       reason: `postgres:${payload.table}`,
       operation: payload.operation,
+      ...(payload.table === 'memberships' && !payload.roomId && payload.identityId
+        ? { readerId: payload.identityId }
+        : {}),
       ...(payload.messageId ? { messageId: payload.messageId } : {}),
       ...(payload.requestId ? { requestId: payload.requestId } : {}),
       ...(payload.table === 'agent_commands' ? { targetAgentId: payload.agentId } : {}),

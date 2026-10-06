@@ -644,6 +644,13 @@ export function createBeelineServer(options: ServerOptions): Server {
         return;
       }
       options.live.humanConnected(principal.identityId);
+      // Workspace membership notifications survive the deletion cascade and
+      // reach the affected identity without requiring a readable Room.
+      const releaseWorkspaces = options.live.subscribeAll((event) => {
+        if (event.type === 'invalidate' && event.roomId === '' &&
+            event.reason === 'postgres:memberships' && event.readerId === principal.identityId)
+          sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: event.reason }));
+      });
       const releases = new Map<string, () => void>();
       socketSubscriptions.set(client, () => releases.size);
       let socketTasks = 0;
@@ -954,6 +961,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       client.on('close', () => {
         socketSubscriptions.delete(client);
         options.live.humanDisconnected(principal.identityId);
+        releaseWorkspaces();
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();

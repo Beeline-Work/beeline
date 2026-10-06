@@ -102,6 +102,26 @@ describe('LiveConnection', () => {
     vi.unstubAllGlobals();
   });
 
+  it('dispatches identity-scoped workspace changes only to workspace registrations', async () => {
+    const { connection } = createConnection();
+    const workspace = vi.fn();
+    const room = vi.fn();
+    const stop = await connection.register([], workspace);
+    await connection.register([{ '#h': [ROOM_A] }], room);
+    sockets[0]!.open();
+    workspace.mockClear();
+    room.mockClear();
+    const invalidation = { type: 'invalidate', roomId: '', reason: 'postgres:memberships' };
+    sockets[0]!.emit(invalidation);
+    expect(workspace).toHaveBeenCalledWith({ monolithLive: invalidation });
+    expect(room).not.toHaveBeenCalled();
+    stop();
+    workspace.mockClear();
+    sockets[0]!.emit(invalidation);
+    expect(workspace).not.toHaveBeenCalled();
+    connection.dispose();
+  });
+
   it('starts the first room read while live authorization is still pending', async () => {
     let authorize!: (token: string) => void;
     const authorization = vi.fn(() => new Promise<string>((resolve) => { authorize = resolve; }));

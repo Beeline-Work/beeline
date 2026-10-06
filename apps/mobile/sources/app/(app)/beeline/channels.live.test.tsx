@@ -11,6 +11,7 @@ const deck = vi.hoisted(() => ({
   bottomInset: 0,
   renderRows: false,
   chatsReads: 0,
+  workspacesResponse: null as WorkspaceListView | null,
   chatsResponse: null as unknown,
   reconnects: 0,
   createRepository: vi.fn(
@@ -143,7 +144,7 @@ vi.mock('@/buzz/community-storage', () => ({
   saveActiveCommunityId: vi.fn(async () => undefined),
 }));
 vi.mock('@/buzz/surface-storage', () => ({
-  mobileSurfaceCache: { read: vi.fn(async () => null), write: vi.fn(async () => undefined) },
+  mobileSurfaceCache: { read: vi.fn(async () => null), write: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) },
   surfaceAddress: vi.fn(() => 'surface-address'),
 }));
 vi.mock('@/buzz/room-open-prefetch', () => ({ dispatchRoomOpenTap: vi.fn() }));
@@ -176,6 +177,7 @@ vi.mock('@/sync/transport', () => ({
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     async workspaces(): Promise<WorkspaceListView> {
+      if (deck.workspacesResponse) return deck.workspacesResponse;
       return {
         workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }],
         viewer,
@@ -192,6 +194,8 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 
 import BuzzChannels from './channels';
 import { router } from 'expo-router';
+import { saveActiveCommunityId } from '@/buzz/community-storage';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 
@@ -286,7 +290,9 @@ beforeEach(() => {
   deck.appStateListeners = [];
   deck.bottomInset = 0;
   deck.renderRows = false;
+  vi.mocked(saveActiveCommunityId).mockClear();
   deck.chatsReads = 0;
+  deck.workspacesResponse = null;
   deck.reconnects = 0;
   deck.storedInvite = null;
   vi.mocked(router.replace).mockClear();
@@ -301,6 +307,71 @@ beforeEach(() => {
 afterEach(() => {
   deck.focusEffect = null;
   deck.blur = null;
+});
+
+describe('Deleted workspace removal', () => {
+  it('removes a cached deleted workspace on the first read after an offline session', async () => {
+    vi.mocked(mobileSurfaceCache.read)
+      .mockResolvedValueOnce({ workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }], viewer, truncated: false, watchFilters: [] } as never)
+      .mockResolvedValueOnce(chatList({ id: 'cached', text: 'old room', createdAt: 1 }) as never);
+    deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
+    const renderer = await mountDeck();
+    expect(router.replace).toHaveBeenCalledWith('/beeline/community');
+    expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', null);
+    expect(mobileSurfaceCache.remove).toHaveBeenCalled();
+    expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('does not repaint deleted rooms when an older chats read finishes late', async () => {
+    const renderer = await mountDeck();
+    let finish!: (value: ChatListView) => void;
+    deck.chatsResponse = new Promise<ChatListView>((resolve) => { finish = resolve; });
+    act(() => roomWatch().emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'resync' } }));
+    await quiet();
+    deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
+    const workspaceWatch = deck.subscriptions.find((entry) => !entry.filters.some((filter) => filter['#h']?.length));
+    act(() => workspaceWatch!.emit({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } }));
+    await quiet();
+    await act(async () => finish(chatList({ id: 'late', text: 'deleted data', createdAt: 1 })));
+    expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
+    expect(router.replace).toHaveBeenCalledWith('/beeline/community');
+    await act(async () => renderer.unmount());
+  });
+
+  it('drops a deleted workspace tile and opens the remaining workspace', async () => {
+    const renderer = await mountDeck();
+    deck.workspacesResponse = { workspaces: [{ id: 'remaining', name: 'Remaining', role: 'member', updatedAt: 1 }],
+      viewer, truncated: false, watchFilters: [] };
+    const workspaceWatch = deck.subscriptions.find((entry) => !entry.filters.some((filter) => filter['#h']?.length));
+    act(() => workspaceWatch!.emit({ monolithLive: {
+      type: 'invalidate', roomId: '', reason: 'postgres:memberships',
+    } }));
+    await quiet();
+    expect(mobileSurfaceCache.write).toHaveBeenCalledWith(expect.anything(), deck.workspacesResponse, expect.any(Function));
+    expect(vi.mocked(router.replace)).toHaveBeenCalledWith({ pathname: '/beeline/channels', params: { communityId: 'remaining' } });
+    expect(vi.mocked(saveActiveCommunityId)).toHaveBeenCalledWith('viewer', 'remaining');
+    expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('clears the last workspace rooms and persisted selection after live deletion', async () => {
+    const renderer = await mountDeck();
+    expect(paintedRows(renderer)).toHaveLength(1);
+    deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [],
+      deletedNotices: [{ workspaceId: 'workspace', workspaceName: 'Work' }] };
+    const workspaceWatch = deck.subscriptions.find((entry) =>
+      !entry.filters.some((filter) => filter['#h']?.length));
+    act(() => workspaceWatch!.emit({ monolithLive: {
+      type: 'invalidate', roomId: '', reason: 'postgres:memberships',
+    } }));
+    await quiet();
+    expect(vi.mocked(router.replace)).toHaveBeenCalledWith('/beeline/community');
+    expect(vi.mocked(saveActiveCommunityId)).toHaveBeenCalledWith('viewer', null);
+    expect(renderer.root.findAllByType('BuzzCommunityShell')).toHaveLength(0);
+    expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
 });
 
 describe('Room list gestures', () => {

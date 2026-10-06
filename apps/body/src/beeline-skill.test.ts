@@ -381,17 +381,29 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('proof of that reproduction (or none obtained + regression):');
   });
 
+  it('grades every acceptance criterion and blocks PASS on an unmet one', () => {
+    expect(markdown).toContain(
+      'list every `## User stories` and `## Acceptance criteria` line exactly once',
+    );
+    expect(markdown).toContain('the named test run against the PR head');
+    expect(markdown).toContain('Any missing, unmet, unverified story or acceptance criterion');
+    expect(markdown).toContain(
+      'outline ledger (every user story, acceptance criterion, non-goal and risk + status + evidence;',
+    );
+  });
+
   it('treats the spec outline as scope and lets the approval quote win', () => {
     expect(markdown).toContain('Quote the approval with its message ID and approver');
-    expect(markdown).toContain("The spec's outline (user stories, non-goals, risks) is the scope");
+    expect(markdown).toContain(
+      "The spec's outline (user stories, acceptance criteria, non-goals, risks) is the scope",
+    );
     expect(markdown).toContain('it wins any conflict with the spec');
     expect(markdown).toContain('short objective is navigation-only text');
-    expect(markdown).toContain('list every `## User stories` line exactly once');
     expect(markdown).toContain(
-      'outline ledger (every user story, non-goal and risk + status + evidence; mock-vs-screen notes for frontend work):',
+      'outline ledger (every user story, acceptance criterion, non-goal and risk + status + evidence; mock-vs-screen notes for frontend work):',
     );
     expect(markdown).toContain('the affected outline line or `engineering`');
-    expect(markdown).not.toMatch(/criteri|AC-\d|revision and hash/);
+    expect(markdown).not.toMatch(/AC-\d|revision and hash/);
     expect(markdown).toContain('product-completeness findings (block):');
     expect(markdown).toContain('engineering findings (block):');
     expect(markdown).toContain('stable ID that survives rereview');
@@ -424,6 +436,7 @@ describe('beeline-spec planning skill', () => {
       '`spec`',
       '`## Intent`',
       '`## User stories`',
+      '`## Acceptance criteria`',
       '`## Non-goals`',
       '`## Risks`',
       '`## References`',
@@ -432,6 +445,9 @@ describe('beeline-spec planning skill', () => {
     ])
       expect(markdown).toContain(part);
     expect(markdown).not.toMatch(/intentVerbatim|buildSpec|approvalBasis|criteria\[\]/);
+    expect(markdown).toContain(
+      "the requester's own rules from `## Intent`, quoted verbatim and numbered, each naming the test",
+    );
     expect(markdown).toContain('Do not infer approval from silence');
     expect(markdown).not.toContain('Dispatch without a proposal/go ceremony');
     expect(markdown).toContain('Always compose the full outline and post it to the Room before calling open_corner');

@@ -1804,11 +1804,14 @@ describe('skill provision reuse', () => {
       expect(spec).toContain('name: beeline-spec');
       expect(spec).toContain('If one unresolved choice would materially change behavior');
       expect(spec).toContain('`## User stories`');
+      expect(spec).toContain('`## Acceptance criteria`');
       expect(spec).toContain('Bounded adversarial second read (default on)');
       expect(spec).toContain('Do not infer approval from silence');
       expect(review).toContain('Read the server-assigned brief and its current revision');
       expect(review).toContain('Quote the approval with its message ID and approver');
-      expect(review).toContain('list every `## User stories` line exactly once');
+      expect(review).toContain(
+        'list every `## User stories` and `## Acceptance criteria` line exactly once',
+      );
       expect(review).toContain(
         'Build one visible validation record for the brief revision and code head.',
       );

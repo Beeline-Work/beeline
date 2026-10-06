@@ -73,12 +73,14 @@ describe('desktop tail-follow wiring (2026-09, superseding eight prior scroll-ti
     );
   });
 
-  it('holds older-history prepends in place by the real measured growth at the top', () => {
+  it('holds older-history prepends using row displacement, excluding live tail growth', () => {
     const prepend = chatSource.slice(
       chatSource.indexOf('desktopPrependOldestIdRef.current'),
       chatSource.indexOf('const landAtNewMessageBoundary ='),
     );
-    expect(prepend).toContain('node.scrollTop += node.scrollHeight - previousScrollHeight');
+    expect(prepend).toContain('node.scrollTop += rowOffset(previousRow) - previousOffset');
+    expect(prepend).not.toContain('node.scrollHeight - previousScrollHeight');
+    expect(chatSource).toContain("overflowAnchor: 'none'");
   });
 
   it('no longer imports the retired heuristic decisions', () => {

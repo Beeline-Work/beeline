@@ -339,6 +339,8 @@ export type ChatDisplayMessage = {
     requesterPubkey?: string;
   };
   /** Repository activity is a typed surface, never a transcript speaker. */
+  foldedIds?: string[];
+  notificationLifecycleRun?: import('./pr-lifecycle').NotificationLifecycleRun;
   githubEvent?: NonNullable<RoomViewMessage['githubEvent']>;
   /** Daemon lifecycle facts are server-projected cards, never prose rows. */
   relay?: RoomViewMessage['relay'];

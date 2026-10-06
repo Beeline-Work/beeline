@@ -68,17 +68,20 @@ describe('desktop tail-follow wiring (2026-09, superseding eight prior scroll-ti
     // content, so a fresh read at that instant says "not pinned" and the
     // first landing never happens — reproduced and fixed in this corner.
     expect(follow).toContain('isPinnedToTail: isPinnedToTailRef.current');
+    expect(follow).toContain('restoreDesktopReadingAnchor();');
     expect(follow).not.toMatch(
       /const isPinnedToTail =\s*\n\s*scrollNode\.scrollHeight - scrollNode\.scrollTop/,
     );
   });
 
-  it('holds older-history prepends in place by the real measured growth at the top', () => {
+  it('holds older-history prepends using row displacement, excluding live tail growth', () => {
     const prepend = chatSource.slice(
-      chatSource.indexOf('desktopPrependOldestIdRef.current'),
+      chatSource.indexOf('const restoreDesktopReadingAnchor ='),
       chatSource.indexOf('const landAtNewMessageBoundary ='),
     );
-    expect(prepend).toContain('node.scrollTop += node.scrollHeight - previousScrollHeight');
+    expect(prepend).toMatch(/node\.scrollTop \+=\s*row\.getBoundingClientRect\(\)\.top/);
+    expect(prepend).not.toContain('node.scrollHeight - previousScrollHeight');
+    expect(chatSource).toContain("overflowAnchor: 'none'");
   });
 
   it('no longer imports the retired heuristic decisions', () => {

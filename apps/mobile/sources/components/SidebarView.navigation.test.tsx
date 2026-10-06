@@ -770,7 +770,7 @@ describe('desktop Workspace navigation', () => {
     expect(createHumanCorner).toHaveBeenCalledOnce();
     const [roomId, title] = createHumanCorner.mock.calls[0]!;
     expect(roomId).toBe('room-a');
-    expect(title).toMatch(/ corner$/);
+    expect(title).toMatch(/-corner$/);
     expect(selectDesktopWorkCorner).toHaveBeenCalledWith({
       roomId: 'room-a',
       cornerId: 'corner-new',

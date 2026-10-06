@@ -18,6 +18,7 @@ vi.mock('react-native', async () => {
       ReactModule.createElement(
         'FlatList',
         props,
+        props.ListHeaderComponent,
         ...(props.data ?? []).map((item: any, index: number) =>
           ReactModule.createElement(
             ReactModule.Fragment,
@@ -68,6 +69,16 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
 vi.mock('@/components/buzz/MonoHull', async () => {
   const ReactModule = await import('react');
   return { StateCircle: (props: any) => ReactModule.createElement('StateCircle', props) };
+});
+vi.mock('@/components/buzz/Button', async () => {
+  const ReactModule = await import('react');
+  return { Button: (props: any) => ReactModule.createElement('Button', props) };
+});
+vi.mock('@/components/buzz/CornerObjectiveLine', async () => {
+  const ReactModule = await import('react');
+  return {
+    CornerObjectiveLine: (props: any) => ReactModule.createElement('CornerObjectiveLine', props),
+  };
 });
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');
@@ -411,6 +422,97 @@ describe('RoomCornersList', () => {
 function resolvedStyle(style: any): Record<string, any> {
   return Object.assign({}, ...[style].flat(Infinity).filter(Boolean));
 }
+
+describe('RoomCornersList on desktop', () => {
+  const corners = [
+    { ...corner('c-waits', 'waiting'), corner: { ...corner('c-waits', 'waiting').corner, about: 'Ship the corners overview for desktop.' }, briefRevision: 4 },
+    { ...theirs('c-theirs', 'working'), corner: { ...theirs('c-theirs', 'working').corner, about: 'Fix the clipped Settings title.' } },
+    { ...theirs('c-asks-me', 'waiting'), awaitsViewer: true as const },
+  ] as CornerListItem[];
+  const run = { runId: 'run-1', roomId: 'c-theirs', status: 'live' } as never;
+
+  function cells(tree: ReactTestRenderer) {
+    return tree.root
+      .findAllByType('Pressable' as any)
+      .map((node: any) => node.props.testID)
+      .filter((id: string) => id?.startsWith('room-corner-c-'));
+  }
+
+  it('lists every corner under Waiting / Mine / All filters, All selected, with no folds', () => {
+    const tree = render(corners, { desktop: true });
+    const buttons = tree.root.findAllByType('Button' as any);
+    expect(buttons.map((node: any) => [node.props.label, node.props.variant])).toEqual([
+      ['Waiting · 2', 'secondary'],
+      ['Mine · 2', 'secondary'],
+      ['All · 3', 'brass'],
+    ]);
+    expect(cells(tree)).toEqual(['room-corner-c-waits', 'room-corner-c-theirs', 'room-corner-c-asks-me']);
+    expect(pressable(tree, 'room-corners-mine')).toBeUndefined();
+    expect(pressable(tree, 'room-corners-others')).toBeUndefined();
+  });
+
+  it('narrows to waiting corners, and to the viewer\'s own, on the filters', () => {
+    const tree = render(corners, { desktop: true });
+    const filter = (key: string) =>
+      tree.root.findAllByType('Button' as any).find((node: any) => node.props.testID === `room-corners-filter-${key}`)!;
+    act(() => filter('waiting').props.onPress());
+    expect(cells(tree)).toEqual(['room-corner-c-waits', 'room-corner-c-asks-me']);
+    act(() => filter('mine').props.onPress());
+    expect(cells(tree)).toEqual(['room-corner-c-waits', 'room-corner-c-asks-me']);
+    act(() => filter('all').props.onPress());
+    expect(cells(tree)).toHaveLength(3);
+  });
+
+  it("hands each cell the corner's objective, live workflow and a brief only when it has one", () => {
+    const onOpenBrief = vi.fn();
+    const onOpenWorkflow = vi.fn();
+    const tree = render(corners, {
+      desktop: true,
+      liveRuns: (cornerId) => (cornerId === 'c-theirs' ? [run] : []),
+      onOpenWorkflow,
+      onOpenBrief,
+    });
+    const panels = tree.root.findAllByType('CornerObjectiveLine' as any);
+    expect(panels.map((node: any) => node.props.objective)).toEqual([
+      'Ship the corners overview for desktop.',
+      'Fix the clipped Settings title.',
+      undefined,
+    ]);
+    expect(panels.map((node: any) => node.props.workflow)).toEqual([undefined, run, undefined]);
+    expect(panels.map((node: any) => Boolean(node.props.onOpenBrief))).toEqual([true, false, false]);
+    panels[0]!.props.onOpenBrief();
+    expect(onOpenBrief).toHaveBeenCalledWith(corners[0]);
+    expect(panels[1]!.props.onOpenWorkflow).toBe(onOpenWorkflow);
+  });
+
+  it("leads each cell with the corner's own agent and keeps the state word beside its circle", () => {
+    const tree = render(corners, { desktop: true });
+    const marks = tree.root.findAllByType('IdentityMark' as any);
+    expect(marks.map((node: any) => [node.props.seed, node.props.kind])).toEqual([
+      ['agent-c-waits', 'agent'],
+      ['agent-c-theirs', 'agent'],
+      ['agent-c-asks-me', 'agent'],
+    ]);
+    expect(text(tree)).toContain('#alpha/c-waits');
+    expect(tree.root.findAllByType('StateCircle' as any)).toHaveLength(3);
+  });
+
+  it('says a filter is empty rather than calling the Room empty', () => {
+    const tree = render([theirs('c-theirs', 'working')], { desktop: true });
+    act(() =>
+      tree.root.findAllByType('Button' as any).find((node: any) => node.props.testID === 'room-corners-filter-waiting')!.props.onPress(),
+    );
+    expect(text(tree)).toContain('No corner here is waiting.');
+    expect(text(tree)).not.toContain('yet');
+  });
+
+  it('opens a cell into its corner the way a phone row does', () => {
+    routerPush.mockClear();
+    const tree = render(corners, { desktop: true });
+    act(() => pressable(tree, 'room-corner-c-waits')!.props.onPress());
+    expect(routerPush).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('RoomCornersList archived footer', () => {
   const NOW_MS = 1_000_000_000_000;

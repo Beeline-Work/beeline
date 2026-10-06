@@ -21,6 +21,15 @@ export function pickRoomWorkflowRun(
   return liveRoomRuns(roomId, runs)[0];
 }
 
+/** Every saved-workflow run in a Room and its corners, for a list that names each corner's live run. */
+export function useRoomWorkflowRuns(roomId: string | undefined): readonly WorkflowRunSummaryView[] {
+  const observed = useObservedResource(roomId ? `room-workflows:${roomId}` : undefined, {
+    load: async () => (await monolithPhoneOperation('listRoomWorkflowRuns', { roomId: roomId! })).workflows,
+    subscribe: roomId ? observeRoomResource(roomId) : undefined,
+  });
+  return observed.data ?? [];
+}
+
 /** Reads workflow changes independently of the visible transcript. */
 export function useRoomWorkflowRun(
   roomId: string | undefined,

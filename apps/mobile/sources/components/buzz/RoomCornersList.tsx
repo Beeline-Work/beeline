@@ -3,6 +3,7 @@ import { FlatList, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router } from 'expo-router';
 import type { CornerListItem } from '@beeline/buzz-client';
+import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { isMineCorner } from '@/buzz/mine-corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
@@ -19,6 +20,9 @@ import { StateCircle } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { Typography } from '@/constants/Typography';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { Button } from '@/components/buzz/Button';
+import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
+import { inspectorCornerObjective } from '@/buzz/inspector-corners';
 
 /**
  * The Room's dedicated corners index, in three folding sections: Mine (the
@@ -41,7 +45,22 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
  * no corners at all: closed work is not in this surface's read, so the row is
  * the only sign the Room has a past. Its list arrives on tap and lands under
  * the live rows, newest closure first, each stamped with its age.
+ *
+ * On desktop the page has the width for more than a name, so each corner is
+ * one cell instead: the corner's own agent and the full name as the title
+ * line, the state on the right, and under them the same objective panel the
+ * corner page opens with (objective, live workflow, Read brief). Waiting /
+ * Mine / All filters replace the Mine and Others folds; All is the default so
+ * every corner in the Room stays one click away.
  */
+type DesktopFilter = 'waiting' | 'mine' | 'all';
+
+const DESKTOP_FILTERS: readonly { readonly key: DesktopFilter; readonly label: string; readonly empty: string }[] = [
+  { key: 'waiting', label: 'Waiting', empty: 'No corner here is waiting.' },
+  { key: 'mine', label: 'Mine', empty: 'None of these corners are yours.' },
+  { key: 'all', label: 'All', empty: '' },
+];
+
 type Entry =
   | {
       readonly kind: 'fold';
@@ -63,6 +82,10 @@ export function RoomCornersList({
   onMoreArchived,
   viewerPubkey,
   nowMs,
+  desktop = false,
+  liveRuns,
+  onOpenWorkflow,
+  onOpenBrief,
 }: {
   corners: readonly CornerListItem[];
   parentRoomName: string;
@@ -80,15 +103,33 @@ export function RoomCornersList({
   viewerPubkey?: string;
   /** Clock for the closure stamps; defaults to now at paint. */
   nowMs?: number;
+  /** One cell per corner with filters, instead of the phone rows and folds. */
+  desktop?: boolean;
+  /** A corner's live saved-workflow runs, newest first; its desktop cell names the first. */
+  liveRuns?: (cornerId: string) => readonly WorkflowRunSummaryView[];
+  onOpenWorkflow?: (run: WorkflowRunSummaryView) => void;
+  /** Opens a corner's brief; offered only on a corner that has one. */
+  onOpenBrief?: (item: CornerListItem) => void;
 }) {
   const [mineOpen, setMineOpen] = useState(true);
   // Until the viewer folds Others, derive its default from the current list.
   // This also handles corners arriving after the initial empty render.
   const [othersOpen, setOthersOpen] = useState<boolean | undefined>();
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [filter, setFilter] = useState<DesktopFilter>('all');
   // FlatList compares `data` by identity, so it is rebuilt only when the
   // corners or a fold change, not on every parent render.
   const data = useMemo(() => {
+    if (desktop) {
+      const rows = corners.filter((item) =>
+        filter === 'waiting'
+          ? item.state === 'waiting'
+          : filter === 'mine'
+            ? isMineCorner(item, viewerPubkey)
+            : true,
+      );
+      return rows.map((item): Entry => ({ kind: 'row', item }));
+    }
     const mine = corners.filter((item) => isMineCorner(item, viewerPubkey));
     const others = corners.filter((item) => !isMineCorner(item, viewerPubkey));
     const section = (
@@ -107,12 +148,89 @@ export function RoomCornersList({
       ...section('mine', 'Mine', mine, mineOpen),
       ...section('others', 'Others', others, othersOpen ?? mine.length === 0),
     ];
-  }, [corners, viewerPubkey, mineOpen, othersOpen]);
+  }, [corners, viewerPubkey, mineOpen, othersOpen, desktop, filter]);
   const stampedAt = nowMs ?? Date.now();
   const archivedRows = archived.status === 'ready' && archivedOpen ? archived.corners : [];
   const more = archived.status === 'ready' ? archived.more : undefined;
 
+  const openCorner = (item: CornerListItem) => {
+    const humanUi = item.app?.manifest.humanUi;
+    if (humanUi) {
+      router.push({
+        pathname: '/beeline/corner-app/[slug]',
+        params: { slug: item.app!.manifest.slug, roomId: item.corner.id },
+      });
+      return;
+    }
+    router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name, 'corners'));
+  };
+
+  const stateWord = (display: ReturnType<typeof cornerDisplayState>) => (
+    <CornerWaitingPulse state={display.word}>
+      <Text
+        style={[
+          styles.state,
+          display.tone === 'brass'
+            ? styles.stateBrass
+            : display.tone === 'ghost'
+              ? styles.stateGhost
+              : styles.stateQuiet,
+        ]}
+      >
+        {display.word}
+      </Text>
+    </CornerWaitingPulse>
+  );
+
+  const ownerMark = (item: CornerListItem) => {
+    const owner = item.agent ?? item.initiator;
+    return (
+      <IdentityMark
+        kind={owner?.kind === 'agent' ? 'agent' : 'human'}
+        seed={owner?.pubkey ?? item.corner.id}
+        avatarUrl={owner?.avatar}
+        face={owner?.face}
+        name={owner?.name ?? 'Corner'}
+        size={26}
+      />
+    );
+  };
+
+  // The desktop cell. The face is the corner's own agent, the one its page
+  // header shows (`owner_agent_id`), falling back to the person who opened it.
+  const cell = (item: CornerListItem) => {
+    const label = fullCornerTitle(parentRoomName, item.corner.name, item.corner.id);
+    const display = cornerDisplayState(item);
+    const objective = inspectorCornerObjective(label, item.corner.about);
+    const runs = liveRuns?.(item.corner.id) ?? [];
+    return (
+      <Pressable
+        accessibilityLabel={`${label}. ${display.word}${objective ? `. ${objective}` : ''}`}
+        accessibilityRole="button"
+        onPress={() => openCorner(item)}
+        style={({ pressed }) => [styles.cell, pressed && styles.cellPressed]}
+        testID={`room-corner-${item.corner.id}`}
+      >
+        <View style={styles.cellTitle}>
+          {ownerMark(item)}
+          <Text style={[styles.rowTitle, styles.cellName]}>{label}</Text>
+          {stateWord(display)}
+          <StateCircle state={display.visual} tone={display.tone} />
+        </View>
+        <CornerObjectiveLine
+          objective={objective}
+          onOpenBrief={item.briefRevision && onOpenBrief ? () => onOpenBrief(item) : undefined}
+          workflow={runs[0]}
+          onOpenWorkflow={onOpenWorkflow}
+          otherLiveRuns={runs.slice(1)}
+          testID={`room-corner-objective-${item.corner.id}`}
+        />
+      </Pressable>
+    );
+  };
+
   const row = (item: CornerListItem) => {
+    if (desktop) return cell(item);
     const label = fullCornerTitle(parentRoomName, item.corner.name, item.corner.id);
     const display = cornerDisplayState(item);
     const owner = item.agent ?? item.initiator;
@@ -121,33 +239,15 @@ export function RoomCornersList({
     // else, so its closure age joins the same quiet line.
     const closed = cornerClosedStamp(item.closedAt, stampedAt);
     const line = [opener, display.detail, closed].filter(Boolean).join(' · ') || 'No activity yet';
-    const open = () => {
-      const humanUi = item.app?.manifest.humanUi;
-      if (humanUi) {
-        router.push({
-          pathname: '/beeline/corner-app/[slug]',
-          params: { slug: item.app!.manifest.slug, roomId: item.corner.id },
-        });
-        return;
-      }
-      router.push(cornerHref(item.corner.id, parentRoomId, item.corner.name, 'corners'));
-    };
     return (
       <Pressable
         accessibilityLabel={`${label}. ${display.word}. ${line}`}
         accessibilityRole="button"
-        onPress={open}
+        onPress={() => openCorner(item)}
         style={styles.row}
         testID={`room-corner-${item.corner.id}`}
       >
-        <IdentityMark
-          kind={owner?.kind === 'agent' ? 'agent' : 'human'}
-          seed={owner?.pubkey ?? item.corner.id}
-          avatarUrl={owner?.avatar}
-          face={owner?.face}
-          name={owner?.name ?? 'Corner'}
-          size={26}
-        />
+        {ownerMark(item)}
         <View style={styles.rowCopy}>
           {/* Captain 2026-09-20: a corner's name is never truncated. It
             wraps to as many lines as it needs and the row grows with it;
@@ -160,20 +260,7 @@ export function RoomCornersList({
         </View>
         {/* The state, twice over: the word carries it for everyone, the
           circle carries its motion for the glance. */}
-        <CornerWaitingPulse state={display.word}>
-          <Text
-            style={[
-              styles.state,
-              display.tone === 'brass'
-                ? styles.stateBrass
-                : display.tone === 'ghost'
-                  ? styles.stateGhost
-                  : styles.stateQuiet,
-            ]}
-          >
-            {display.word}
-          </Text>
-        </CornerWaitingPulse>
+        {stateWord(display)}
         <StateCircle state={display.visual} tone={display.tone} />
       </Pressable>
     );
@@ -219,6 +306,30 @@ export function RoomCornersList({
         { paddingBottom: bottomInset },
       ]}
       testID="room-corners-list"
+      ListHeaderComponent={
+        desktop ? (
+          <View style={styles.filters} testID="room-corners-filters">
+            {DESKTOP_FILTERS.map((option) => {
+              const count =
+                option.key === 'waiting'
+                  ? corners.filter((item) => item.state === 'waiting').length
+                  : option.key === 'mine'
+                    ? corners.filter((item) => isMineCorner(item, viewerPubkey)).length
+                    : corners.length;
+              return (
+                <Button
+                  key={option.key}
+                  label={`${option.label} · ${count}`}
+                  variant={filter === option.key ? 'brass' : 'secondary'}
+                  accessibilityState={{ selected: filter === option.key }}
+                  onPress={() => setFilter(option.key)}
+                  testID={`room-corners-filter-${option.key}`}
+                />
+              );
+            })}
+          </View>
+        ) : null
+      }
       renderItem={({ item: entry, index }) =>
         entry.kind === 'row'
           ? row(entry.item)
@@ -269,7 +380,11 @@ export function RoomCornersList({
       ListEmptyComponent={
         // A Room whose only work is closed is not an empty Room: once the
         // archived rows are on screen the invitation to start would be a lie.
-        archivedRows.length ? null : (
+        archivedRows.length ? null : desktop && corners.length > 0 ? (
+          <Text style={styles.filterEmpty} testID="room-corners-filter-empty">
+            {DESKTOP_FILTERS.find((option) => option.key === filter)?.empty}
+          </Text>
+        ) : (
           <View style={styles.empty} testID="room-corners-empty">
             <Text style={styles.emptyTitle}>No {CHANGES_LABEL} yet</Text>
             <Text style={styles.emptyText}>
@@ -298,6 +413,31 @@ const styles = StyleSheet.create((theme) => {
       borderBottomColor: hull.border,
     },
     rowCopy: { flex: 1, minWidth: 0 },
+    // Desktop: one cell per corner, hairline-divided like every index.
+    cell: {
+      paddingHorizontal: hull.space.md,
+      paddingVertical: hull.space.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
+    },
+    cellPressed: { backgroundColor: hull.bgPressed },
+    cellName: { flex: 1, minWidth: 0 },
+    cellTitle: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm, minHeight: 44 },
+    filters: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: hull.space.sm,
+      paddingHorizontal: hull.space.md,
+      paddingVertical: hull.space.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: hull.border,
+    },
+    filterEmpty: {
+      ...Typography.default(),
+      ...hull.type.meta,
+      color: hull.ledgerQuiet,
+      padding: hull.space.md,
+    },
     rowTitle: { ...Typography.default('semiBold'), ...hull.type.body, color: hull.textPrimary },
     agent: {
       ...Typography.default(),

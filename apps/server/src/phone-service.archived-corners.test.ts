@@ -18,7 +18,7 @@ const OPENED_SECOND = '33333333-3333-4333-8333-333333333333';
 const OPENED_FIRST_CLOSED_AT = '2026-03-02T00:00:00Z';
 const OPENED_SECOND_CLOSED_AT = '2026-03-01T00:00:00Z';
 
-async function fixture() {
+async function fixture(seed?: (database: PgliteDatabase) => Promise<unknown>) {
   const database = new PgliteDatabase();
   await migrate(database);
   await database.query(
@@ -52,6 +52,7 @@ async function fixture() {
       ($1,$5,$2,'owner'),($1,$6,$2,'owner')`,
     [WORKSPACE, VIEWER, ROOM, LIVE, OPENED_FIRST, OPENED_SECOND],
   );
+  await seed?.(database);
   return new PhoneService(database, 'http://local.test');
 }
 
@@ -74,6 +75,20 @@ describe('readCorners', () => {
       unix(OPENED_FIRST_CLOSED_AT),
       unix(OPENED_SECOND_CLOSED_AT),
     ]);
+  });
+
+  it("names each corner's latest brief revision, and none on a corner without a brief", async () => {
+    const phone = await fixture((database) =>
+      database.query(
+        `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+         VALUES($1,1,'First brief',$2,$3),($1,2,'Revised brief',$2,$3)`,
+        [LIVE, VIEWER, ROOM],
+      ),
+    );
+    const live = await phone.readCorners(ROOM, VIEWER);
+    expect(live?.corners.map((item) => [item.corner.id, item.briefRevision])).toEqual([[LIVE, 2]]);
+    const archived = await phone.readCorners(ROOM, VIEWER, false, true);
+    expect(archived?.corners.every((item) => !('briefRevision' in item))).toBe(true);
   });
 
   it('keeps the Room header and viewer on the archived read', async () => {

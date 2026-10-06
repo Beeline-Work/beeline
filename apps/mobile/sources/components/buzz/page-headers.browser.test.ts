@@ -40,6 +40,9 @@ function shims(mobile: string): Record<string, string> {
     '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({
       readWorkbench: () => new Promise(() => undefined) });`,
     '@/buzz/wallet-source': 'export const getWalletSource = () => ({});',
+    '@/components/buzz/corner-brief-viewer': 'export const openCornerBriefViewer = () => undefined;',
+    '@/sync/transport/live-connection':
+      'export const sharedLiveConnection = () => ({ register: () => () => undefined });',
     '@/buzz/wallet-workspace': 'export const resolveWalletWorkspaceId = () => undefined;',
     '@/buzz/runtime-config': `export const getBuzzRuntimeConfig = () => ({ monolithUrl: 'https://relay.test' });`,
     '@/components/buzz/CommunityRail': `export const BuzzCommunityShell = ({ children }) => children;`,

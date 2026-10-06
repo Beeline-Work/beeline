@@ -42,6 +42,13 @@ vi.mock('@/components/buzz/RoomCornersHeader', () => hostModule('RoomCornersHead
 vi.mock('@/components/buzz/RoomCornersList', () => hostModule('RoomCornersList'));
 vi.mock('@/components/buzz/CommunityRail', () => hostModule('BuzzCommunityShell'));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
+vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
+vi.mock('@/buzz/use-room-workflow-run', () => ({
+  liveRoomRuns: () => [],
+  useRoomWorkflowRuns: () => [],
+}));
+vi.mock('@/buzz/workflow-run-copy', () => ({ workflowRunHref: () => '/workflow' }));
+vi.mock('@/components/buzz/corner-brief-viewer', () => ({ openCornerBriefViewer: vi.fn() }));
 vi.mock('expo-haptics', () => ({
   notificationAsync: vi.fn(),
   NotificationFeedbackType: { Success: 'success', Error: 'error' },

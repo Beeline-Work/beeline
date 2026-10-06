@@ -398,6 +398,8 @@ interface CornerRow extends RoomRow {
   app_installation_id: string | null;
   app_instance_id: string | null;
   app_manifest: unknown | null;
+  /** The corner's latest brief revision; null when it has no brief. */
+  brief_revision: number | null;
 }
 interface TopLevelRoomReadRow {
   room: RoomRow & {
@@ -2690,7 +2692,8 @@ export class PhoneService {
         app_binding.installation_id app_installation_id,
         app_binding.instance_id app_instance_id,app_installation.manifest app_manifest,
         ${archived ? 'NULL::boolean owed,NULL::boolean owed_viewer' : 'owed.owed,owed.owed_viewer'},
-        ${archivedMicros}::text archived_us
+        ${archivedMicros}::text archived_us,
+        (SELECT max(brief.revision) FROM corner_brief_revisions brief WHERE brief.corner_id=c.id) brief_revision
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
       LEFT JOIN identities initiator
         ON initiator.id=f.commissioned_by AND initiator.kind='human'
@@ -2786,6 +2789,7 @@ export class PhoneService {
               },
             }
           : {}),
+        ...(corner.brief_revision !== null ? { briefRevision: corner.brief_revision } : {}),
         ...(corner.app_installation_id && corner.app_instance_id && appManifest
           ? {
               app: {

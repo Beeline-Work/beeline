@@ -1373,6 +1373,10 @@ function readCorner(value: unknown): CornerListItem | null {
     ...field('awaitsViewer', item.awaitsViewer === true ? (true as const) : undefined),
     ...field('agent', readIdentityOnly(item.agent)),
     ...field('app', readCornerAppBinding(item.app)),
+    ...field(
+      'briefRevision',
+      integer(item.briefRevision) && item.briefRevision > 0 ? item.briefRevision : undefined,
+    ),
     ...field('latestMessage', readLatest(item.latestMessage)),
   };
 }

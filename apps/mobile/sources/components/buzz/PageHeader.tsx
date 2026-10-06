@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, Text, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from './ChevronGlyph';
 
@@ -103,12 +103,7 @@ const styles = StyleSheet.create((theme) => ({
   headerCopy: { flex: 1, minWidth: 0 },
   headerEyebrow: { ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   headerTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
-  headerHero: {
-    ...theme.buzz.type.hero,
-    // iOS sizes text with negative letter spacing too narrow and clips the
-    // last glyph ("Settings" lost its "s"); give the title that width back.
-    ...(Platform.OS === 'ios' ? { paddingRight: Math.abs(theme.buzz.type.hero.letterSpacing) } : null),
-  },
+  headerHero: { ...theme.buzz.type.hero },
   headerMeta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: theme.buzz.space.xs },
   // Reserved and right-aligned so a count ends at the same x for 9 and for 10.
   headerTrailing: {

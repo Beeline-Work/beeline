@@ -16,6 +16,25 @@ describe('typedMentionHandles', () => {
     );
   });
 
+  it('skips handles inside inline code spans and fenced code blocks', () => {
+    expect(typedMentionHandles('The probe reads `@goosy and @hoots take it`.')).toEqual(new Set());
+    expect(typedMentionHandles('Probe:\n```ts\nsend("@goosy fix it");\n```\nDone.')).toEqual(
+      new Set(),
+    );
+    expect(typedMentionHandles('```\n@goosy never closed\n@hoots')).toEqual(new Set());
+  });
+
+  it('reads a handle in prose next to code', () => {
+    expect(typedMentionHandles('@candy see `@goosy` in the probe')).toEqual(new Set(['candy']));
+    expect(typedMentionHandles('```\n@goosy\n```\n@candy fix R1')).toEqual(new Set(['candy']));
+    expect(typedMentionHandles('Run `npm test`, then @candy merge')).toEqual(new Set(['candy']));
+  });
+
+  it('keeps reading mentions after an unclosed backtick', () => {
+    expect(typedMentionHandles('a stray ` backtick, @candy take it')).toEqual(new Set(['candy']));
+    expect(typedMentionHandles('stray `\n@candy take it')).toEqual(new Set(['candy']));
+  });
+
   it('reads a literal @channel token through the same tokenizer path as a handle', () => {
     expect(typedMentionHandles('@channel please review')).toEqual(new Set(['channel']));
   });

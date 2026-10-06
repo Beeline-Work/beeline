@@ -1562,6 +1562,35 @@ async function unansweredRun(
   return scope;
 }
 
+/** A closing corner abandons every live saved run inside it. Call within the close transaction. */
+export async function abandonCornerWorkflowRuns(db: SqlDatabase, cornerId: string): Promise<number> {
+  const live = await db.query<{ id: string }>(
+    `SELECT id FROM messages
+     WHERE room_id=$1 AND card_type='workflow-handoff' AND ${workflowRunIsLiveSql('card')}
+     ORDER BY id`,
+    [cornerId],
+  );
+  let abandoned = 0;
+  for (const { id } of live.rows) {
+    const scope = await openRun(db, cornerId, id);
+    if (scope.ended) continue;
+    await closeRun(db, scope, {
+      status: 'abandoned',
+      outcome: 'corner_closed',
+      reason: 'corner closed',
+      line: {
+        authorId: SYSTEM_IDENTITY_ID,
+        subject: { kind: 'system', name: 'the workflow' },
+        verb: 'closed',
+        object: `run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`,
+        consequence: `as abandoned at ${scope.stateName} because its corner closed`,
+      },
+    });
+    abandoned += 1;
+  }
+  return abandoned;
+}
+
 /** The live run of `workflowName` in this Room, if one exists. */
 export async function liveWorkflowRun(
   db: SqlDatabase,

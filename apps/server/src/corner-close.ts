@@ -2,6 +2,7 @@ import type { SqlDatabase } from './database.js';
 import { randomBytes } from 'node:crypto';
 import { createAgentCommand } from './agent-command.js';
 import { advanceCorner } from './corner-lifecycle.js';
+import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 
 /** The terminal corner state shared by helper completion and a human close request. */
 export async function closeCornerState(database: SqlDatabase, cornerId: string) {
@@ -35,6 +36,7 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
     [cornerId, corner.parent_id],
   );
   await reportUnansweredCornerAsks(database, cornerId, corner.parent_id, corner.name);
+  await abandonCornerWorkflowRuns(database, cornerId);
   await advanceCorner(database, cornerId, { kind: 'closed' });
   return { parentId: corner.parent_id };
 }

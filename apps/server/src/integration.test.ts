@@ -13561,13 +13561,22 @@ describe('monolith integration', () => {
       text: '@owner the question card above needs your pick.',
     });
     expect(replied.status).toBe(200);
+    const reply = (await replied.json()) as { id: string };
+    expect(reply.id).toMatch(/^[a-f0-9]{64}$/);
+    expect(reply.id).not.toBe(card.messageId);
 
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(
       'owner-choice-turn-device-token-1234567890',
-      expect.objectContaining({ messageId: card.messageId }),
+      expect.objectContaining({
+        messageId: reply.id,
+        collapseId: reply.id,
+        text: 'Bee: @owner the question card above needs your pick.',
+      }),
     );
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it('posts a choice card, settles it in place, shows the pick as a line, and refuses an undersized poll', async () => {

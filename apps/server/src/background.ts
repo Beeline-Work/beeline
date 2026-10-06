@@ -209,6 +209,9 @@ export class PushDeliveryLoop {
           AND m.card_type IS DISTINCT FROM 'workspace-member-joined'
           AND m.deleted_at IS NULL
           AND btrim(m.text)<>''
+          -- A closed corner is done: nothing posted there may push anyone.
+          AND NOT EXISTS (SELECT 1 FROM rooms closed WHERE closed.id=m.room_id
+            AND closed.parent_id IS NOT NULL AND closed.archived_at IS NOT NULL)
           AND NOT EXISTS (
             SELECT 1 FROM push_delivery_claims claim
             WHERE claim.message_id=m.id AND claim.device_token=d.token

@@ -1209,6 +1209,61 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+  it('sends nothing for activity in a closed corner, even a tag', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const owner = 'a'.repeat(64),
+        agent = 'c'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        open = '33333333-3333-4333-8333-333333333333',
+        closed = '44444444-4444-4444-8444-444444444444';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle,push_level) VALUES
+         ($1,'human','Owner','owner','all'),($2,'agent','Miso','miso','off')`,
+        [owner, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,parent_id,archived_at) VALUES
+         ($1,$4,'Room',NULL,NULL),($2,$4,'Open',$1,NULL),($3,$4,'Closed',$1,now())`,
+        [room, open, closed, workspace],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,$2,$5,'owner'),($1,$2,$6,'member'),($1,$3,$5,'owner'),($1,$3,$6,'member'),
+         ($1,$4,$5,'owner'),($1,$4,$6,'member')`,
+        [workspace, room, open, closed, owner, agent],
+      );
+      await db.query(
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective) VALUES
+         ($1,$3,$4,'Open work'),($2,$3,$4,'Closed work')`,
+        [open, closed, agent, owner],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment)
+         VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
+        [owner],
+      );
+      const send = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(db, { send });
+      expect(await loop.runOnce()).toBe(0);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES
+         ($1,$3,$5,'Still here after close','message'),
+         ($2,$3,$5,'@owner one more thing','message'),
+         ($4,$6,$5,'Open corner update','message')`,
+        ['1'.repeat(64), '2'.repeat(64), closed, '3'.repeat(64), agent, open],
+      );
+
+      expect(await loop.runOnce()).toBe(1);
+      expect(send.mock.calls.map(([, message]) => message.messageId)).toEqual(['3'.repeat(64)]);
+      expect(await loop.runOnce()).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
   it('pushes finished messages in commissioned code and no-code corners', async () => {
     const db = new PgliteDatabase();
     try {

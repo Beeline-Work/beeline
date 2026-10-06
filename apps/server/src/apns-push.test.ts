@@ -68,7 +68,7 @@ describe('APNs provider token and request', () => {
       aps: {
         alert: { title: 'Beeline', body: 'hello' },
         sound: 'default',
-        'thread-id': 'room-1',
+        'thread-id': 'message-1',
       },
       type: 'channel-activity',
       target: 'corner',
@@ -81,7 +81,7 @@ describe('APNs provider token and request', () => {
     });
   });
 
-  it('keeps Room grouping while giving distinct messages distinct collapse IDs', () => {
+  it('keeps attention messages separate in grouping and collapse', () => {
     const base = {
       workspaceId: 'workspace-1',
       roomId: 'room-1',
@@ -104,8 +104,8 @@ describe('APNs provider token and request', () => {
     );
     expect(first.headers['apns-collapse-id']).toBe('first');
     expect(second.headers['apns-collapse-id']).toBe('second');
-    expect((first.payload.aps as Record<string, unknown>)['thread-id']).toBe('room-1');
-    expect((second.payload.aps as Record<string, unknown>)['thread-id']).toBe('room-1');
+    expect((first.payload.aps as Record<string, unknown>)['thread-id']).toBe('first');
+    expect((second.payload.aps as Record<string, unknown>)['thread-id']).toBe('second');
     const longId = 'long-message-id-'.repeat(8);
     const longRequest = apnsPushRequest(
       'device-token',
@@ -246,4 +246,31 @@ describe('APNs HTTP/2 provider', () => {
       );
     }
   });
+});
+
+it('uses the same activity slot for APNs collapse and grouping, separate from attention', () => {
+  const base = {
+    type: 'message' as const,
+    workspaceId: 'workspace',
+    roomId: 'room',
+    channelId: 'corner',
+    target: 'message' as const,
+    text: 'Finished',
+  };
+  const activity = apnsPushRequest(
+    'token',
+    { ...base, messageId: 'first', collapseId: 'agent:corner' },
+    'app',
+    'provider',
+  );
+  const next = apnsPushRequest(
+    'token',
+    { ...base, messageId: 'next', collapseId: 'agent:corner' },
+    'app',
+    'provider',
+  );
+  const mention = apnsPushRequest('token', { ...base, messageId: 'mention' }, 'app', 'provider');
+  expect(activity.headers['apns-collapse-id']).toBe(next.headers['apns-collapse-id']);
+  expect((activity.payload.aps as Record<string, unknown>)['thread-id']).toBe('agent:corner');
+  expect(mention.headers['apns-collapse-id']).toBe('mention');
 });

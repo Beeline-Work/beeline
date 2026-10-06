@@ -116,6 +116,7 @@ export function createWebPushSender(
             body: message.text.slice(0, 200),
             url,
             messageId: message.messageId,
+            tag: message.collapseId ?? message.messageId,
             ...(message.type === 'message'
               ? { channelId: message.channelId, roomId: message.roomId }
               : {}),

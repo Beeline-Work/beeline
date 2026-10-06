@@ -131,6 +131,14 @@ export type PhoneOperationMap = {
   addWorkspaceMember: { input: WorkspaceMemberInput; output: MembershipResult };
   removeWorkspaceMember: { input: RemoveWorkspaceMemberInput; output: void };
   createRoom: { input: CreateRoomInput; output: IdResult };
+  updateRoomPushState: {
+    input: RoomInput & {
+      readonly muted?: boolean;
+      readonly viewing?: boolean;
+      readonly sessionId?: string;
+    };
+    output: { muted: boolean };
+  };
   updateRoom: { input: UpdateRoomInput; output: void };
   deleteRoom: { input: RoomInput; output: void };
   leaveRoom: { input: RoomInput & { readonly confirmDelete?: true }; output: void };

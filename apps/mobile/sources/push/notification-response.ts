@@ -65,6 +65,10 @@ function parseConsumedResponseIds(raw: string | null): string[] {
 }
 
 function readIdentifier(response: TappedNotificationResponse): string | undefined {
+  const data = response.notification?.request?.content?.data as
+    { messageId?: unknown; collapseId?: unknown } | undefined;
+  if (typeof data?.collapseId === 'string' && typeof data.messageId === 'string' && data.messageId)
+    return data.messageId;
   const identifier = response.notification?.request?.identifier;
   return typeof identifier === 'string' && identifier ? identifier : undefined;
 }

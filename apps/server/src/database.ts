@@ -601,7 +601,7 @@ CREATE TABLE IF NOT EXISTS identities (
   handle text,
   avatar text,
   hidden_from_roster boolean NOT NULL DEFAULT false,
-  push_level text NOT NULL DEFAULT 'mine' CHECK(push_level IN ('off','direct','mine')),
+  push_level text NOT NULL DEFAULT 'mine' CHECK(push_level IN ('off','direct','mine','all')),
   github_subject text UNIQUE,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -614,14 +614,10 @@ ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
 ALTER TABLE identities ALTER COLUMN welcome_cards_due SET DEFAULT true;
 ALTER TABLE identities DROP COLUMN IF EXISTS tour_seen_tips;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'mine';
--- The 'all' level is retired: its only remaining meaning (member lifecycle)
--- moved onto 'mine', so every stored 'all' maps to the nearest surviving
--- level before the CHECK tightens to three values.
-UPDATE identities SET push_level='mine' WHERE push_level='all';
 ALTER TABLE identities DROP CONSTRAINT IF EXISTS identities_push_level_check;
 DO $$ BEGIN
   ALTER TABLE identities ADD CONSTRAINT identities_push_level_check
-    CHECK(push_level IN ('off','direct','mine'));
+    CHECK(push_level IN ('off','direct','mine','all'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
@@ -783,6 +779,7 @@ ALTER TABLE memberships ADD COLUMN IF NOT EXISTS invited_by text;
 ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_invited_by_fkey;
 ALTER TABLE memberships ADD CONSTRAINT memberships_invited_by_fkey
   FOREIGN KEY (invited_by) REFERENCES identities(id) ON DELETE SET NULL;
+ALTER TABLE memberships ADD COLUMN IF NOT EXISTS push_muted boolean NOT NULL DEFAULT false;
 -- What this member reacts to in THIS Room. An event happens in a Room, so the
 -- subscription lives on the Room membership row and not on the identity: an
 -- agent in several Rooms would otherwise inherit one Room's job everywhere.
@@ -803,6 +800,15 @@ CREATE TABLE IF NOT EXISTS chat_dismissals (
 );
 CREATE INDEX IF NOT EXISTS chat_dismissals_identity_idx
   ON chat_dismissals(identity_id, dismissed_at DESC);
+
+CREATE TABLE IF NOT EXISTS room_push_views (
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  session_id text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  PRIMARY KEY (room_id,identity_id,session_id)
+);
+CREATE INDEX IF NOT EXISTS room_push_views_identity_idx ON room_push_views(identity_id);
 
 CREATE TABLE IF NOT EXISTS agents (
   agent_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,

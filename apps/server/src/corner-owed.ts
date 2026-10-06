@@ -30,6 +30,7 @@ export function addressedToPersonSql(
   personIdExpr: string,
   personHandleExpr: string,
   personKindExpr: string,
+  includeCommissioned = true,
 ): string {
   return `(
     EXISTS (
@@ -55,9 +56,10 @@ export function addressedToPersonSql(
     -- its worker posted a deliverable (files on a reply in a corner
     -- with no pull request), its checks are failing with nobody left
     -- to fix them, or it stopped at the review handback limit.
-    OR EXISTS (
+    OR (${includeCommissioned} AND EXISTS (
       SELECT 1 FROM corner_facts finished
-      WHERE finished.commissioned_by=${personIdExpr}
+      WHERE (finished.commissioned_by=${personIdExpr} OR EXISTS (
+        SELECT 1 FROM rooms opened WHERE opened.id=finished.corner_id AND opened.created_by=${personIdExpr}))
         AND (
           (${m}.card_type='daemon-fact' AND ${m}.card->>'type'='corner-complete'
             AND finished.corner_id::text=${m}.card->>'cornerId')
@@ -69,7 +71,7 @@ export function addressedToPersonSql(
               '${CORNER_REVIEW_DEADLOCK_CARD_TYPE}')
             AND finished.corner_id=${m}.room_id)
         )
-    )
+    ))
   )`;
 }
 

@@ -1209,7 +1209,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
-  it('pushes a deliverable in a corner without a pull request to its commissioner', async () => {
+  it('pushes finished messages in commissioned code and no-code corners', async () => {
     const db = new PgliteDatabase();
     try {
       await migrate(db);
@@ -1286,7 +1286,7 @@ describe('background advisory-lock ownership', () => {
         ],
       );
 
-      expect(await loop.runOnce()).toBe(1);
+      expect(await loop.runOnce()).toBe(4);
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
         expect.objectContaining({
@@ -1423,7 +1423,7 @@ describe('background advisory-lock ownership', () => {
       expect(await loop.runOnce()).toBe(2);
       expect(send.mock.calls.map(([token, message]) => [token, message.messageId]).sort()).toEqual([
         ['other-device-token-12345678901234567890', '3'.repeat(64)],
-        ['owner-device-token-12345678901234567890', '1'.repeat(64)],
+        ['owner-device-token-12345678901234567890', '3'.repeat(64)],
       ]);
       await db.query(
         `INSERT INTO messages(id,room_id,author_id,text,request_id) VALUES

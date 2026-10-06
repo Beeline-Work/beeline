@@ -598,3 +598,22 @@ describe('notification response wiring', () => {
     expect(firstReplace).toBeGreaterThan(suppressCheck);
   });
 });
+
+it('routes a new message reusing a collapsed Android tag and skips only replay of that message', async () => {
+  const consumed = memoryConsumed();
+  const { routing: deps, openStack } = routing({ consumedResponses: consumed });
+  await routeBuzzNotificationResponse(
+    tap('room-tag', 'room', { messageId: 'first', collapseId: 'room' }),
+    deps,
+  );
+  await routeBuzzNotificationResponse(
+    tap('room-tag', 'room', { messageId: 'second', collapseId: 'room' }),
+    deps,
+  );
+  await routeBuzzNotificationResponse(
+    tap('room-tag', 'room', { messageId: 'second', collapseId: 'room' }),
+    deps,
+  );
+  expect(openStack).toHaveBeenCalledTimes(2);
+  expect(consumed.ids).toEqual(new Set(['first', 'second']));
+});

@@ -1065,15 +1065,14 @@ describe('the three-level push migration', () => {
   });
   afterEach(() => database.close());
 
-  it('maps every stored all level to mine and refuses new all rows', async () => {
+  it('preserves all activity across repeated migrations', async () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
       OWNER,
     ]);
-    // Simulate a legacy database still carrying the retired level.
+    // Simulate a stored preference before repeating the migration.
     await database.query(`ALTER TABLE identities DROP CONSTRAINT identities_push_level_check`);
     await database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [OWNER]);
-    // The migration maps it to the nearest surviving level, and the CHECK
-    // constraint no longer accepts 'all'.
+    // Repeated migration must preserve the chosen sensitivity.
     await migrate(database);
     expect(
       (
@@ -1082,10 +1081,8 @@ describe('the three-level push migration', () => {
           [OWNER],
         )
       ).rows[0]?.push_level,
-    ).toBe('mine');
-    await expect(
-      database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [OWNER]),
-    ).rejects.toThrow();
+    ).toBe('all');
+    await database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [OWNER]);
   });
 });
 

@@ -9,3 +9,5 @@ Before the first fix: older-history plus live append moved m18 from 8px to -542p
 After the visible-row fix: both cases keep m18 at 8px (zero drift). Live-only appends and reader scroll before removal also preserve their screen position. The pinned guard performs no history correction; existing tail-follow tests verify tail following.
 
 The correction captures the top visible row on scroll and after each commit, then restores its screen offset in the next layout effect. Browser anchoring stays disabled so compensation runs once. This isolates the desktop history path; it is not a signed-in full-app or native-device reproduction.
+
+Review R2 extended the same reproduction: grow m10 from 50px to 200px above m18 without changing transcript messages. Before: m18 moved from 8px to 158px (+150px drift). After: the real content ResizeObserver restores m18 to 8px before another message arrives; a subsequent live update leaves it at 8px, with no snap-back. The layout effect and resize observer now call one shared restore helper, then capture the anchor again.

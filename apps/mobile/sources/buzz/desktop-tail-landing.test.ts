@@ -68,6 +68,7 @@ describe('desktop tail-follow wiring (2026-09, superseding eight prior scroll-ti
     // content, so a fresh read at that instant says "not pinned" and the
     // first landing never happens — reproduced and fixed in this corner.
     expect(follow).toContain('isPinnedToTail: isPinnedToTailRef.current');
+    expect(follow).toContain('restoreDesktopReadingAnchor();');
     expect(follow).not.toMatch(
       /const isPinnedToTail =\s*\n\s*scrollNode\.scrollHeight - scrollNode\.scrollTop/,
     );
@@ -75,7 +76,7 @@ describe('desktop tail-follow wiring (2026-09, superseding eight prior scroll-ti
 
   it('holds older-history prepends using row displacement, excluding live tail growth', () => {
     const prepend = chatSource.slice(
-      chatSource.indexOf('// Older history paging and rolling live windows'),
+      chatSource.indexOf('const restoreDesktopReadingAnchor ='),
       chatSource.indexOf('const landAtNewMessageBoundary ='),
     );
     expect(prepend).toMatch(/node\.scrollTop \+=\s*row\.getBoundingClientRect\(\)\.top/);

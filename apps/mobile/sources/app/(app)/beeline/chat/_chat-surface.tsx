@@ -2601,6 +2601,22 @@ export function BuzzChatSurface({
       }
     }
   }, []);
+  const restoreDesktopReadingAnchor = useCallback(() => {
+    const node = desktopScrollNodeRef.current;
+    const anchor = desktopReadingAnchorRef.current;
+    const row = anchor ? desktopRowNodesRef.current.get(anchor.id) : undefined;
+    if (
+      node &&
+      row &&
+      anchor &&
+      !isPinnedToTailRef.current &&
+      !transcriptLandingAnchorIdRef.current
+    ) {
+      node.scrollTop +=
+        row.getBoundingClientRect().top - node.getBoundingClientRect().top - anchor.offset;
+    }
+    captureDesktopReadingAnchor();
+  }, [captureDesktopReadingAnchor]);
   const pendingNewMessageLandingRef = useRef<{
     boundaryId: string;
     acknowledgeQueue: boolean;
@@ -2844,11 +2860,13 @@ export function BuzzChatSurface({
         })
       ) {
         scrollNode.scrollTop = scrollNode.scrollHeight;
+      } else {
+        restoreDesktopReadingAnchor();
       }
     });
     observer.observe(node);
     desktopContentObserverRef.current = observer;
-  }, []);
+  }, [restoreDesktopReadingAnchor]);
   const setDesktopScrollNode = useCallback(
     (node: HTMLElement | null) => {
       desktopScrollNodeRef.current = node;
@@ -2962,21 +2980,8 @@ export function BuzzChatSurface({
   // their own authority.
   useLayoutEffect(() => {
     if (!desktopTranscript) return;
-    const node = desktopScrollNodeRef.current;
-    const anchor = desktopReadingAnchorRef.current;
-    const row = anchor ? desktopRowNodesRef.current.get(anchor.id) : undefined;
-    if (
-      node &&
-      row &&
-      anchor &&
-      !isPinnedToTailRef.current &&
-      !transcriptLandingAnchorIdRef.current
-    ) {
-      node.scrollTop +=
-        row.getBoundingClientRect().top - node.getBoundingClientRect().top - anchor.offset;
-    }
-    captureDesktopReadingAnchor();
-  }, [captureDesktopReadingAnchor, desktopTranscript, transcriptMessages]);
+    restoreDesktopReadingAnchor();
+  }, [restoreDesktopReadingAnchor, desktopTranscript, transcriptMessages]);
   // A send promises to show its own row at the live end. The scheduled scroll
   // can run before a burst's final row commits, and the resulting scroll event
   // may mark the viewport unpinned. Land once more when this exact row exists

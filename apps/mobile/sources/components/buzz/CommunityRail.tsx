@@ -1,3 +1,4 @@
+import { useIsDesktop } from '@/utils/responsive';
 import React, { createContext, useCallback, useContext, useState } from 'react';
 import { Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -343,6 +344,7 @@ export function CommunitySwitcherTrigger({
   attention = false,
   pickerTitle,
 }: CommunitySwitcherTriggerProps) {
+  const desktop = useIsDesktop();
   const showingPickerTitle = expanded && pickerTitle;
   return (
     <TouchableOpacity
@@ -369,7 +371,7 @@ export function CommunitySwitcherTrigger({
               testID="workspace-avatar-header"
             />
           </View>
-          {attention && <View style={styles.workspaceAttentionMark} testID="workspace-attention" />}
+          {attention && !desktop && <View style={styles.workspaceAttentionMark} testID="workspace-attention" />}
         </View>
       )}
       <Text

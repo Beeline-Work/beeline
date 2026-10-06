@@ -110,7 +110,6 @@ describe('desktop layout mode', () => {
     expect(messages).not.toContain('<Text style={styles.replyDesktopLabel}>REPLY</Text>');
     expect(room).toContain('const desktopExperience = isDesktop || isDesktopShell();');
     expect(room).toContain('const desktopTranscript = desktopExperience;');
-    expect(room).toContain('const workPaneWindowClass = desktopWorkPaneWindowClass(windowWidth);');
     expect(room).not.toContain('screen?.availWidth');
     expect(room).not.toContain('const desktopExperience = isDesktopPlatform();');
   });

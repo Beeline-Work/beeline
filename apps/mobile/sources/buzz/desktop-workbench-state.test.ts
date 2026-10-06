@@ -13,47 +13,19 @@ import {
   clampDesktopPaneWidth,
   desktopComposerKeyAction,
   desktopDraftKey,
-  desktopWorkPaneEventApplies,
-  desktopWorkPaneMode,
+  desktopWorkPaneVisibleContent,
   desktopWorkPaneWidthMode,
-  desktopWorkPaneWindowClass,
   desktopWorkspaceRoute,
   DESKTOP_WORK_PANE_HYSTERESIS,
-  DESKTOP_WORK_PANE_COMMAND,
   DESKTOP_WORK_PANE_THRESHOLD,
-  desktopWorkPaneHasLiveCorners,
   initialDesktopWorkPaneState,
-  isDesktopWorkPaneCommand,
-  type DesktopWorkPaneEvent,
-  loadDesktopWorkPanePreference,
   loadDesktopPaneWidth,
-  saveDesktopWorkPanePreference,
   saveDesktopPaneWidth,
   transitionDesktopWorkPane,
 } from './desktop-workbench-state';
 
 describe('desktop workbench state', () => {
   beforeEach(() => values.clear());
-
-  it('a direct message lets through only hydration and window resizes', () => {
-    const events: DesktopWorkPaneEvent[] = [
-      { type: 'hydrate', preference: 'present' },
-      { type: 'resize', width: 1400 },
-      { type: 'dismiss' },
-      { type: 'toggle' },
-      { type: 'open-overview' },
-      { type: 'open-corner', cornerId: 'c1' },
-      { type: 'open-artifact' },
-      { type: 'drop-corner', cornerId: 'c1' },
-      { type: 'open-corner-in-main' },
-    ];
-    for (const event of events) {
-      expect(desktopWorkPaneEventApplies(event, true)).toBe(
-        event.type === 'hydrate' || event.type === 'resize',
-      );
-      expect(desktopWorkPaneEventApplies(event, false)).toBe(true);
-    }
-  });
 
   it('derives the threshold from the three minimum readable regions', () => {
     expect(DESKTOP_WORK_PANE_THRESHOLD).toBe(240 + 440 + 320);
@@ -70,147 +42,112 @@ describe('desktop workbench state', () => {
     expect(desktopWorkPaneWidthMode(high + 1, 'narrow')).toBe('wide');
   });
 
-  it('opens a corner card in the work pane and re-presents a dismissed pane around it', () => {
-    const wide = initialDesktopWorkPaneState(DESKTOP_WORK_PANE_THRESHOLD + 100);
-    expect(wide.preference).toBe('dismissed');
-    const inWork = transitionDesktopWorkPane(wide, { type: 'open-corner', cornerId: 'c1' });
-    expect(inWork).toMatchObject({
-      placement: 'work',
-      state: { preference: 'present', selectedCornerId: 'c1' },
-    });
-    const dismissed = transitionDesktopWorkPane(inWork.state, { type: 'dismiss' }).state;
-    expect(desktopWorkPaneMode(dismissed)).toBe('dismissed');
-    expect(transitionDesktopWorkPane(dismissed, { type: 'open-corner', cornerId: 'c2' })).toMatchObject(
-      {
-        placement: 'work',
-        state: { preference: 'present', selectedCornerId: 'c2' },
-      },
-    );
-    const suppressed = transitionDesktopWorkPane(wide, {
-      type: 'resize',
-      width: DESKTOP_WORK_PANE_THRESHOLD - DESKTOP_WORK_PANE_HYSTERESIS - 1,
-    }).state;
-    expect(desktopWorkPaneMode(suppressed)).toBe('suppressed');
-    expect(
-      transitionDesktopWorkPane(suppressed, { type: 'open-corner', cornerId: 'c3' }).placement,
-    ).toBe('main');
+  const WIDE = DESKTOP_WORK_PANE_THRESHOLD + 200;
+  const NARROW = DESKTOP_WORK_PANE_THRESHOLD - 200;
+  const artifact = {
+    attachment: { id: 'a1', name: 'board.html', mimeType: 'text/html', size: 1, url: '/a1' },
+  } as never;
+
+  it('starts closed and holds nothing', () => {
+    expect(initialDesktopWorkPaneState(WIDE)).toEqual({ widthMode: 'wide', content: null });
   });
 
-  it('re-presents the pane around an artifact and hands a suppressed pane to the caller', () => {
-    const wide = initialDesktopWorkPaneState(DESKTOP_WORK_PANE_THRESHOLD + 100);
-    const presented = transitionDesktopWorkPane(wide, { type: 'open-overview' }).state;
-    expect(transitionDesktopWorkPane(presented, { type: 'open-artifact' })).toEqual({
-      state: presented,
-      placement: 'work',
-    });
-    const dismissed = transitionDesktopWorkPane(presented, { type: 'dismiss' }).state;
-    const rePresented = transitionDesktopWorkPane(dismissed, { type: 'open-artifact' });
-    expect(rePresented).toMatchObject({ placement: 'work', state: { preference: 'present' } });
-    expect(desktopWorkPaneMode(rePresented.state)).toBe('present');
-    const suppressed = transitionDesktopWorkPane(wide, {
-      type: 'resize',
-      width: DESKTOP_WORK_PANE_THRESHOLD - DESKTOP_WORK_PANE_HYSTERESIS - 1,
-    }).state;
-    expect(transitionDesktopWorkPane(suppressed, { type: 'open-artifact' })).toEqual({
-      state: suppressed,
-      placement: 'main',
-    });
-  });
-
-  it('keeps responsive suppression separate from present and dismissed memory', () => {
-    const wide = initialDesktopWorkPaneState(DESKTOP_WORK_PANE_THRESHOLD + 100);
-    const presented = transitionDesktopWorkPane(wide, { type: 'open-overview' }).state;
-    const narrowWidth = DESKTOP_WORK_PANE_THRESHOLD - DESKTOP_WORK_PANE_HYSTERESIS - 1;
-    const wideWidth = DESKTOP_WORK_PANE_THRESHOLD + DESKTOP_WORK_PANE_HYSTERESIS + 1;
-    const suppressedPresent = transitionDesktopWorkPane(presented, {
-      type: 'resize',
-      width: narrowWidth,
-    }).state;
-    expect(desktopWorkPaneMode(suppressedPresent)).toBe('suppressed');
-    expect(
-      desktopWorkPaneMode(
-        transitionDesktopWorkPane(suppressedPresent, { type: 'resize', width: wideWidth }).state,
-      ),
-    ).toBe('present');
-    const dismissed = transitionDesktopWorkPane(presented, { type: 'dismiss' }).state;
-    const suppressedDismissed = transitionDesktopWorkPane(dismissed, {
-      type: 'resize',
-      width: narrowWidth,
-    }).state;
-    expect(
-      desktopWorkPaneMode(
-        transitionDesktopWorkPane(suppressedDismissed, { type: 'resize', width: wideWidth }).state,
-      ),
-    ).toBe('dismissed');
-  });
-
-  it('restores the corner list from the handle, restores a dropped corner, and leaves maximize as a zoom', () => {
-    const dismissed = initialDesktopWorkPaneState(DESKTOP_WORK_PANE_THRESHOLD + 100);
-    expect(dismissed.preference).toBe('dismissed');
-    expect(transitionDesktopWorkPane(dismissed, { type: 'open-overview' }).state).toMatchObject({
-      preference: 'present',
-      selectedCornerId: null,
-    });
-    const dropped = transitionDesktopWorkPane(dismissed, {
-      type: 'drop-corner',
+  it('opens a corner of the Room in the primary view in the pane', () => {
+    const opened = transitionDesktopWorkPane(initialDesktopWorkPaneState(WIDE), {
+      type: 'open-corner',
       cornerId: 'c1',
+      primary: 'room',
     });
-    expect(dropped).toMatchObject({
-      placement: 'work',
-      state: { preference: 'present', selectedCornerId: 'c1' },
-    });
-    expect(transitionDesktopWorkPane(dropped.state, { type: 'open-corner-in-main' })).toMatchObject(
-      {
-        placement: 'main',
-        state: { preference: 'present', selectedCornerId: 'c1' },
-      },
-    );
-    expect(transitionDesktopWorkPane(dismissed, { type: 'open-corner-in-main' })).toEqual({
-      state: dismissed,
-      placement: 'main',
-    });
+    expect(opened.placement).toBe('pane');
+    expect(opened.state.content).toEqual({ kind: 'corner', cornerId: 'c1' });
   });
 
-  it('toggles the remembered preference even while responsive suppression is active', () => {
-    const narrow = initialDesktopWorkPaneState(DESKTOP_WORK_PANE_THRESHOLD - 100);
-    expect(narrow.preference).toBe('dismissed');
-    const presented = transitionDesktopWorkPane(narrow, { type: 'toggle' }).state;
-    expect(desktopWorkPaneMode(presented)).toBe('suppressed');
-    expect(presented.preference).toBe('present');
+  it('opens a corner in the primary view when a corner is already there', () => {
+    const state = initialDesktopWorkPaneState(WIDE);
+    const opened = transitionDesktopWorkPane(state, {
+      type: 'open-corner',
+      cornerId: 'c1',
+      primary: 'corner',
+    });
+    expect(opened.placement).toBe('primary');
+    expect(opened.state).toBe(state);
   });
 
-  it('defines one keyboard command with the same toggle semantics', () => {
-    expect(DESKTOP_WORK_PANE_COMMAND.title).toBe('Toggle work pane');
+  it('opens an artifact in the pane whether a Room or a corner is in the primary view', () => {
+    for (const primary of ['room', 'corner'] as const) {
+      const opened = transitionDesktopWorkPane(initialDesktopWorkPaneState(WIDE), {
+        type: 'open-artifact',
+        artifact,
+        primary,
+      });
+      expect(opened.placement).toBe('pane');
+      expect(opened.state.content).toEqual({ kind: 'artifact', artifact });
+    }
+  });
+
+  it('holds one thing: opening something new replaces it', () => {
+    let state = initialDesktopWorkPaneState(WIDE);
+    state = transitionDesktopWorkPane(state, { type: 'open-artifact', artifact, primary: 'room' })
+      .state;
+    state = transitionDesktopWorkPane(state, {
+      type: 'open-corner',
+      cornerId: 'c2',
+      primary: 'room',
+    }).state;
+    expect(state.content).toEqual({ kind: 'corner', cornerId: 'c2' });
+    state = transitionDesktopWorkPane(state, { type: 'open-artifact', artifact, primary: 'room' })
+      .state;
+    expect(state.content).toEqual({ kind: 'artifact', artifact });
+  });
+
+  it('closes on close and on expand, and an artifact never comes back afterwards', () => {
+    let state = transitionDesktopWorkPane(initialDesktopWorkPaneState(WIDE), {
+      type: 'open-artifact',
+      artifact,
+      primary: 'room',
+    }).state;
+    state = transitionDesktopWorkPane(state, { type: 'close' }).state;
+    expect(state.content).toBeNull();
+    state = transitionDesktopWorkPane(state, {
+      type: 'open-corner',
+      cornerId: 'c1',
+      primary: 'room',
+    }).state;
+    expect(state.content).toEqual({ kind: 'corner', cornerId: 'c1' });
+    const expanded = transitionDesktopWorkPane(state, { type: 'expand' });
+    expect(expanded.placement).toBe('primary');
+    expect(expanded.state.content).toBeNull();
+  });
+
+  it('falls back to the primary view in a narrow window or a direct message', () => {
+    const narrow = initialDesktopWorkPaneState(NARROW);
     expect(
-      isDesktopWorkPaneCommand({
-        key: 'i',
-        code: 'KeyI',
-        metaKey: true,
-        ctrlKey: false,
-        altKey: false,
-        shiftKey: false,
-      }),
-    ).toBe(true);
+      transitionDesktopWorkPane(narrow, { type: 'open-corner', cornerId: 'c1', primary: 'room' })
+        .placement,
+    ).toBe('primary');
     expect(
-      isDesktopWorkPaneCommand({
-        key: 'i',
-        code: 'KeyI',
-        metaKey: false,
-        ctrlKey: true,
-        altKey: false,
-        shiftKey: false,
-      }),
-    ).toBe(true);
+      transitionDesktopWorkPane(narrow, { type: 'open-artifact', artifact, primary: 'room' })
+        .placement,
+    ).toBe('primary');
     expect(
-      isDesktopWorkPaneCommand({
-        key: 'i',
-        code: 'KeyI',
-        metaKey: true,
-        ctrlKey: false,
-        altKey: false,
-        shiftKey: true,
-      }),
-    ).toBe(false);
+      transitionDesktopWorkPane(initialDesktopWorkPaneState(WIDE), {
+        type: 'open-artifact',
+        artifact,
+        primary: 'direct-message',
+      }).placement,
+    ).toBe('primary');
+  });
+
+  it('hides its content while the window is narrow', () => {
+    const open = transitionDesktopWorkPane(initialDesktopWorkPaneState(WIDE), {
+      type: 'open-corner',
+      cornerId: 'c1',
+      primary: 'room',
+    }).state;
+    const narrowed = transitionDesktopWorkPane(open, { type: 'resize', width: NARROW }).state;
+    expect(desktopWorkPaneVisibleContent(narrowed)).toBeNull();
+    const widened = transitionDesktopWorkPane(narrowed, { type: 'resize', width: WIDE }).state;
+    expect(desktopWorkPaneVisibleContent(widened)).toEqual({ kind: 'corner', cornerId: 'c1' });
   });
 
   it('bounds and persists both pane widths', async () => {
@@ -226,24 +163,6 @@ describe('desktop workbench state', () => {
     expect(desktopDraftKey('room/one')).not.toBe(desktopDraftKey('corner two'));
     expect(desktopDraftKey('room/one')).toContain('room%2Fone');
     expect(desktopDraftKey('corner two')).toContain('corner%20two');
-  });
-
-  it('persists pane preference independently for regular and wide device windows', async () => {
-    expect(desktopWorkPaneWindowClass(1100)).toBe('regular-window');
-    expect(desktopWorkPaneWindowClass(1400)).toBe('wide-window');
-    expect(await loadDesktopWorkPanePreference('regular-window')).toBe('dismissed');
-    await saveDesktopWorkPanePreference('regular-window', 'present');
-    expect(await loadDesktopWorkPanePreference('regular-window')).toBe('present');
-    expect(await loadDesktopWorkPanePreference('wide-window')).toBe('dismissed');
-  });
-
-  it('treats only non-archived corners as live work the handle may present', () => {
-    expect(desktopWorkPaneHasLiveCorners(undefined)).toBe(false);
-    expect(desktopWorkPaneHasLiveCorners([])).toBe(false);
-    expect(desktopWorkPaneHasLiveCorners([{ state: 'archived' }])).toBe(false);
-    expect(
-      desktopWorkPaneHasLiveCorners([{ state: 'archived' }, { state: 'working' }]),
-    ).toBe(true);
   });
 
   it('sends on desktop Enter while Shift+Enter remains a newline', () => {

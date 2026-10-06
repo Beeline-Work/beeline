@@ -143,7 +143,6 @@ export default function Harness() {
                   item={item}
                   mobile
                   onOpen={() => undefined}
-                  renderDrag={(_, children) => children}
                 />
               )}
             </View>

@@ -12,12 +12,10 @@ import { CornerWaitingPulse } from './CornerWaitingPulse';
 export function DesktopRoomCorners({
   item,
   onOpen,
-  renderDrag,
   mobile = false,
 }: {
   item: ChatListItem;
   onOpen: (cornerId: string) => void;
-  renderDrag: (cornerId: string, children: React.ReactNode) => React.ReactNode;
   mobile?: boolean;
 }) {
   // The chat list carries each Room's open corners; no per-Room corners read.
@@ -33,27 +31,23 @@ export function DesktopRoomCorners({
       {corners.map((corner) => {
         const ready = corner.state === 'waiting';
         return (
-          <React.Fragment key={corner.id}>
-            {renderDrag(
-              corner.id,
-              <Pressable
-                onPress={() => onOpen(corner.id)}
-                accessibilityRole="button"
-                accessibilityLabel={`Open corner ${corner.name}, ${corner.state}`}
-                style={styles.corner}
-                testID={`desktop-corner-${corner.id}`}
-              >
-                <CornerGlyph size={CORNER_META_SIZE} testID={`desktop-corner-glyph-${corner.id}`} />
-                <Text numberOfLines={1} style={styles.name}>
-                  <Text style={styles.sigil}>#</Text>
-                  {displayGroupedCornerTitle(item.room.name, corner.name, corner.id)}
-                </Text>
-                <CornerWaitingPulse state={corner.state}>
-                  <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>
-                </CornerWaitingPulse>
-              </Pressable>,
-            )}
-          </React.Fragment>
+          <Pressable
+            key={corner.id}
+            onPress={() => onOpen(corner.id)}
+            accessibilityRole="button"
+            accessibilityLabel={`Open corner ${corner.name}, ${corner.state}`}
+            style={styles.corner}
+            testID={`desktop-corner-${corner.id}`}
+          >
+            <CornerGlyph size={CORNER_META_SIZE} testID={`desktop-corner-glyph-${corner.id}`} />
+            <Text numberOfLines={1} style={styles.name}>
+              <Text style={styles.sigil}>#</Text>
+              {displayGroupedCornerTitle(item.room.name, corner.name, corner.id)}
+            </Text>
+            <CornerWaitingPulse state={corner.state}>
+              <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>
+            </CornerWaitingPulse>
+          </Pressable>
         );
       })}
     </View>
@@ -67,8 +61,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   mobileList: { paddingLeft: theme.buzz.space.md, paddingRight: theme.buzz.space.md },
   corner: {
-    // On web the row is a <button>; inside the rail's draggable <div> it would
-    // shrink to its content and pull the status in beside the name.
+    // On web the row is a <button>; without a full width it would shrink to
+    // its content and pull the status in beside the name.
     width: '100%',
     minHeight: 32,
     paddingVertical: theme.buzz.space.xs,

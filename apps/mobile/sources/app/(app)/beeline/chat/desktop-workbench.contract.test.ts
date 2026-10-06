@@ -10,7 +10,6 @@ const inspector = readFileSync(
   'utf8',
 );
 const navigator = readFileSync(join(here, '../../../../components/SidebarNavigator.tsx'), 'utf8');
-import { desktopWorkPaneEventApplies } from '../../../../buzz/desktop-workbench-state';
 
 describe('desktop workbench wiring', () => {
   it('keeps drafts, send status, file drop, and desktop key semantics on the Room composer', () => {
@@ -28,52 +27,33 @@ describe('desktop workbench wiring', () => {
     expect(room).toContain("setDesktopDeliveryState('failed')");
   });
 
-  it('mounts the work pane beside the transcript and exposes a focused recovery handle', () => {
+  it('mounts the one-content work pane beside the transcript, with no handle or list', () => {
     expect(room).toContain('<DesktopRoomInspector');
-    expect(room).toContain('<DesktopWorkPaneHandle');
-    expect(room).toContain("workPaneMode === 'present'");
-    expect(room).toContain("workPaneMode === 'dismissed'");
-    expect(room).toContain('workPaneHandleRef.current?.focus()');
-    expect(room).not.toContain('desktop-inspector-toggle');
+    expect(room).toContain('content={desktopWorkPaneContent}');
+    expect(room).not.toContain('DesktopWorkPaneHandle');
+    expect(room).not.toContain('isDesktopWorkPaneCommand');
+    expect(room).not.toContain('WorkPanePreference');
     expect(inspector).toMatch(/client!?\.room\(selectedCornerId!?\)/);
-    expect(inspector).toContain('desktop-work-corners-header');
+    expect(inspector).not.toContain('desktop-work-corners-header');
+    expect(inspector).not.toContain('desktop-artifact-pane');
     expect(inspector).toContain('desktop-work-cockpit');
     expect(inspector).toContain('desktop-work-objective');
-    expect(inspector).toContain('inspectorCornerObjective(');
     expect(inspector).not.toContain('BRANCH · PR · CHECKS');
-    expect(inspector).not.toContain('desktop-work-overview-header');
     expect(inspector).not.toContain('desktop-work-members');
     expect(inspector).not.toContain('desktop-work-reviewer');
-    expect(inspector).not.toContain('<SectionHeader title="WORKFLOWS" />');
-    expect(inspector).not.toContain('<SectionHeader title="MEMBERS" />');
   });
 
-  it('marks a newly announced corner on the handle instead of auto-opening the pane', () => {
-    expect(room).toContain('observedCornerCountRef');
-    expect(room).toContain('setWorkPaneArrived(true)');
-    expect(room).toContain('arrived={workPaneArrived}');
-    expect(room).toContain('hasLiveDesktopCorners');
-    expect(room).toContain('liveDesktopCornerCount');
-    expect(room).not.toContain("commitDesktopWorkPane({ type: 'open-corner', cornerId: opened })");
-    expect(room).not.toContain(
-      "observedCornerCardsRef.current = { roomId: roomSurface.room.id, ids };\n      commitDesktopWorkPane({ type: 'open-overview' });",
+  it('never opens the pane for a corner nobody opened, and closes it on a room switch', () => {
+    expect(room).not.toContain('observedCornerCountRef');
+    expect(room).toMatch(
+      /commitDesktopWorkPane\(\{ type: 'close' \}\);\n  \}, \[commitDesktopWorkPane, decodedId\]\);/,
     );
   });
 
-  it('ignores direct-message pane events while preserving hydration and resize', () => {
-    expect(desktopWorkPaneEventApplies({ type: 'open-overview' }, true)).toBe(false);
-    expect(desktopWorkPaneEventApplies({ type: 'dismiss' }, true)).toBe(false);
-    expect(desktopWorkPaneEventApplies({ type: 'hydrate', preference: 'present' }, true)).toBe(true);
-    expect(desktopWorkPaneEventApplies({ type: 'resize', width: 1400 }, true)).toBe(true);
-    expect(desktopWorkPaneEventApplies({ type: 'toggle' }, false)).toBe(true);
-  });
-
-  it('re-presents the work pane when an artifact opens while it is dismissed', () => {
+  it('takes an artifact into the pane only when the pane can show it', () => {
     expect(room).toContain('subscribeDesktopArtifact');
-    expect(room).toContain("commitDesktopWorkPane({ type: 'open-artifact' })");
-    // A suppressed pane cannot host the artifact, so the press must still land:
-    // the same browser handoff the pane itself uses for unsandboxable formats.
-    expect(room).toContain('openArtifactInBrowserOrExplain(selection.attachment)');
+    expect(room).toContain("type: 'open-artifact', artifact, primary: desktopWorkPanePrimary");
+    expect(room).toContain(".placement === 'pane'");
   });
 
   it('keeps members, workflows, and reviewer out of the work pane', () => {
@@ -86,22 +66,6 @@ describe('desktop workbench wiring', () => {
     expect(room).not.toContain('onOpenRoster=');
   });
 
-  it('keeps repository lifecycle vocabulary out of overview corner rows', () => {
-    // Only CornerRow's own body is under this contract. Slicing to the next
-    // top-level declaration keeps unrelated helpers that happen to sit between
-    // it and CornerCockpit out of the assertion.
-    const cornerRowStart = inspector.indexOf('function CornerRow');
-    const cornerRow = inspector.slice(
-      cornerRowStart,
-      inspector.indexOf('\nfunction ', cornerRowStart + 1),
-    );
-    expect(cornerRow).toContain('inspectorCornerObjective(');
-    expect(cornerRow).not.toContain('corner.corner.about ?? corner.corner.name');
-    expect(cornerRow).toContain('cornerDisplayState(corner)');
-    expect(cornerRow).toContain('{display.word}');
-    expect(cornerRow).not.toMatch(/pull request|github|branch|checks|\bPR\b/i);
-  });
-
   it('opens inspector links through the shared external URL boundary', () => {
     // The desktop shell is a webview: Linking.openURL never reaches a browser,
     // so transcript lifecycle cards keep the shared Tauri/Expo boundary.
@@ -112,12 +76,9 @@ describe('desktop workbench wiring', () => {
     expect(inspector).toContain('<DaemonFactCard');
   });
 
-  it('promotes a corner into main without forcing the work pane present', () => {
-    expect(room).toContain("commitDesktopWorkPane({ type: 'open-corner-in-main' })");
+  it('expands a corner into main and closes the work pane', () => {
+    expect(room).toContain("commitDesktopWorkPane({ type: 'expand' })");
     expect(room).toContain('router.push(cornerHref(cornerId, desktopWorkRoomId))');
-    expect(room).not.toContain(
-      'void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);\n      router.push(cornerHref(cornerId, desktopWorkRoomId))',
-    );
     expect(inspector).toContain('desktop-work-open-in-main');
     expect(inspector).toContain('label="Open in the main pane"');
     expect(inspector).toContain('title: label');

@@ -157,10 +157,6 @@ vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
   saveDesktopPaneWidth: vi.fn(async () => undefined),
 }));
 
-import {
-  clearDesktopArtifactPane,
-  openArtifactInDesktopWorkPane,
-} from '@/buzz/desktop-artifact-pane';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { textDraftKey } from '@/buzz/text-draft-store';
@@ -271,14 +267,14 @@ function cornersClient(
 function props(overrides: Record<string, unknown> = {}) {
   const nextRoom = (overrides.room as ReturnType<typeof room> | undefined) ?? room();
   const extraClient = (overrides.client as Record<string, unknown> | null | undefined) ?? {};
+  const { selectedCornerId = 'working', ...rest } = overrides;
   return {
     room: nextRoom,
-    selectedCornerId: null,
-    onSelectCorner: vi.fn(),
+    content: { kind: 'corner', cornerId: selectedCornerId },
+    onOpenCorner: vi.fn(),
     onOpenInMain: vi.fn(),
     onClose: vi.fn(),
-    onNewCorner: vi.fn(),
-    ...overrides,
+    ...rest,
     client: cornersClient(nextRoom.corners ?? corners, extraClient ?? {}),
   } as unknown as React.ComponentProps<typeof DesktopRoomInspector>;
 }
@@ -350,139 +346,7 @@ describe('DesktopRoomInspector work pane', () => {
     await act(async () => release(detail));
   });
 
-  it('renders the corner list with full objectives and one concluded row', async () => {
-    const tree = await render();
-    const copy = text(tree);
-    expect(copy).toContain(
-      'Repair the complete boundary fixture without truncating this objective.',
-    );
-    // The state word is written; the chevron beside it is drawn, so it is no
-    // longer part of the row's copy.
-    expect(copy).toContain('review');
-    expect(copy).toContain('archived · 1');
-    expect(copy).toContain('@codex');
-    expect(copy).not.toMatch(/BRANCH|CHECKS|PR #/);
-    expect(copy).not.toContain('MEMBERS');
-    expect(copy).not.toContain('WORKFLOWS');
-    expect(copy).not.toContain('Reviewer');
-    expect(tree.root.findAllByProps({ testID: 'desktop-work-members' })).toHaveLength(0);
-    expect(tree.root.findAllByProps({ testID: 'desktop-work-reviewer' })).toHaveLength(0);
-    const objective = tree.root.findByProps({ testID: 'desktop-work-corner-objective-working' });
-    expect(objective.props.numberOfLines).toBe(2);
-    expect(objective.props.ellipsizeMode).toBe('tail');
-    expect(() => tree.root.findByProps({ testID: 'desktop-work-corner-done' })).toThrow();
-  });
-
-  it('never repeats the corner title as its subtitle, even when about is missing or identical', async () => {
-    const duplicateRoom = room();
-    duplicateRoom.corners = [
-      {
-        ...corners[0],
-        corner: {
-          ...corners[0].corner,
-          id: 'same-text',
-          name: 'Desktop Update Diagnosis',
-          about: 'Desktop Update Diagnosis',
-        },
-      },
-      {
-        ...corners[1],
-        corner: {
-          ...corners[1].corner,
-          id: 'name-only',
-          name: 'Desktop Update Diagnosis',
-        },
-      },
-    ];
-    delete duplicateRoom.corners[1].corner.about;
-    const tree = await render(props({ room: duplicateRoom }));
-    expect(tree.root.findAllByProps({ testID: 'desktop-work-corner-objective-same-text' })).toHaveLength(
-      0,
-    );
-    expect(tree.root.findAllByProps({ testID: 'desktop-work-corner-objective-name-only' })).toHaveLength(
-      0,
-    );
-    const sameRow = tree.root.findByProps({ testID: 'desktop-work-corner-same-text' });
-    expect(nodeText(sameRow).match(/Desktop Update Diagnosis/g)).toHaveLength(1);
-  });
-
-  it('caps the live list at five and expands the rest, including archived corners', async () => {
-    const crowded = room();
-    crowded.corners = [
-      ...Array.from({ length: 6 }, (_, index) => ({
-        ...corners[0],
-        corner: { ...corners[0].corner, id: `live-${index}`, name: `Live ${index}` },
-      })),
-      corners[2],
-    ];
-    const tree = await render(props({ room: crowded }));
-    for (const id of ['live-0', 'live-1', 'live-2', 'live-3', 'live-4']) {
-      expect(tree.root.findByProps({ testID: `desktop-work-corner-${id}` })).toBeTruthy();
-    }
-    expect(() => tree.root.findByProps({ testID: 'desktop-work-corner-live-5' })).toThrow();
-    expect(() => tree.root.findByProps({ testID: 'desktop-work-corner-done' })).toThrow();
-    const more = tree.root.findByProps({ testID: 'desktop-work-corners-more' });
-    expect(nodeText(more)).toContain('2 more');
-    act(() => more.props.onPress());
-    expect(tree.root.findByProps({ testID: 'desktop-work-corner-live-5' })).toBeTruthy();
-    expect(tree.root.findByProps({ testID: 'desktop-work-corner-done' })).toBeTruthy();
-    expect(tree.root.findByProps({ testID: 'desktop-work-corner-state-done' }).props.children).toBe(
-      'archived',
-    );
-    expect(tree.root.findAllByProps({ testID: 'desktop-work-corners-more' })).toHaveLength(0);
-  });
-
-  it('shows archived corners when the Room has no live work, instead of an empty section', async () => {
-    const archivedOnly = room();
-    archivedOnly.corners = [corners[2], { ...corners[2], corner: { ...corners[2].corner, id: 'older', name: 'Older work' } }];
-    const tree = await render(props({ room: archivedOnly }));
-    expect(tree.root.findByProps({ testID: 'desktop-work-corner-done' })).toBeTruthy();
-    expect(tree.root.findByProps({ testID: 'desktop-work-corner-older' })).toBeTruthy();
-    expect(tree.root.findByProps({ testID: 'desktop-work-corner-state-done' }).props.children).toBe(
-      'archived',
-    );
-    expect(tree.root.findAllByProps({ testID: 'desktop-work-corners-more' })).toHaveLength(0);
-    expect(text(tree)).not.toContain('archived · 2');
-  });
-
-  it('marks the corner the viewer opened with gold ME text beside the row chevron', async () => {
-    const ownRoom = room();
-    ownRoom.corners = [{ ...corners[0], initiator: person }, corners[1]];
-    const tree = await render(props({ room: ownRoom }));
-    const meMark = tree.root.findByProps({ testID: 'desktop-work-corner-me-working' });
-    expect(meMark.props.children).toBe('ME');
-    expect(meMark.props.style.color).toBe(theme.buzz.accent);
-    // ME is the last WRITTEN part of the headline; the chevron after it is a
-    // drawn shape in its own box.
-    expect(
-      meMark.parent?.findAllByType('Text' as any).map((node: any) => node.props.children).slice(-1),
-    ).toEqual(['ME']);
-    expect(meMark.parent?.findAllByType('Polyline' as any)).toHaveLength(1);
-    const ownRow = tree.root.findByProps({ testID: 'desktop-work-corner-working' });
-    expect(ownRow.findAllByType('IdentityMark' as any)).toHaveLength(1);
-    expect(ownRow.findByType('IdentityMark' as any).props.seed).toBe(agent.pubkey);
-    const otherRow = tree.root.findByProps({ testID: 'desktop-work-corner-review' });
-    const otherSeeds = otherRow
-      .findAllByType('IdentityMark' as any)
-      .map((node: any) => node.props.seed);
-    expect(otherSeeds).toContain(agent.pubkey);
-  });
-
-  it('shows only corner titles beneath the parent Room in the list', async () => {
-    const prefixedRoom = room();
-    prefixedRoom.corners = [
-      {
-        ...corners[0],
-        corner: { ...corners[0].corner, name: '#CloverGTO/Fix fixture' },
-      },
-    ];
-    const copy = text(await render(props({ room: prefixedRoom })));
-    expect(copy).toContain('Fix fixture');
-    expect(copy).not.toContain('#CloverGTO/Fix fixture');
-  });
-
-  it('presents an artifact opened while the pane was away, so the press never lands silently', async () => {
-    clearDesktopArtifactPane();
+  it('shows the one artifact it holds, and its Close closes the pane', async () => {
     const attachment = {
       id: 'artifact-1',
       name: 'board.html',
@@ -490,24 +354,19 @@ describe('DesktopRoomInspector work pane', () => {
       size: 12,
       url: '/v1/media/artifact-1',
     } as any;
-    // The press landed while the pane was dismissed: only the module event fired.
-    openArtifactInDesktopWorkPane({ attachment, authorHandle: 'goosy' });
-    let tree!: ReactTestRenderer;
-    await act(async () => {
-      tree = create(<DesktopRoomInspector {...props()} />);
-    });
-    // The pane comes back showing the artifact, not the silent overview.
+    const onClose = vi.fn();
+    const tree = await render(
+      props({ content: { kind: 'artifact', artifact: { attachment, authorHandle: 'goosy' } }, onClose }),
+    );
     const panes = tree.root.findAllByType('DesktopArtifactPane' as any);
     expect(panes).toHaveLength(1);
     expect(panes[0]!.props.attachment).toBe(attachment);
     expect(panes[0]!.props.authorHandle).toBe('goosy');
-    // Closing hands the pane back to its overview.
+    expect(tree.root.findAllByProps({ testID: 'desktop-work-cockpit-header' })).toHaveLength(0);
     await act(async () => {
       panes[0]!.props.onClose();
     });
-    expect(tree.root.findAllByType('DesktopArtifactPane' as any)).toHaveLength(0);
-    expect(text(tree)).toContain('CORNERS');
-    clearDesktopArtifactPane();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('never renders members, workflows, or reviewer in the pane', async () => {
@@ -532,7 +391,6 @@ describe('DesktopRoomInspector work pane', () => {
     });
 
     const copy = text(tree);
-    expect(copy).toContain('CORNERS');
     expect(copy).not.toContain('WORKFLOWS');
     expect(copy).not.toContain('Release');
     expect(copy).not.toContain('MEMBERS');

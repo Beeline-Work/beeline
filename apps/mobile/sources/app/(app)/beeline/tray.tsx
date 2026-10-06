@@ -442,16 +442,15 @@ export default function TrayScreen() {
     ? bookmarks.find((bookmark) => bookmark.messageId === selected.messageId)
     : undefined;
   const pane =
-    desktop && selected && inspectRoom && client ? (
+    desktop && selected && inspectRoom && client && paneCornerId ? (
       <DesktopRoomInspector
         room={inspectRoom}
         client={client}
-        selectedCornerId={paneCornerId}
+        content={{ kind: 'corner', cornerId: paneCornerId }}
         focusMessageId={paneCornerId === selected.roomId ? selected.messageId : null}
-        onSelectCorner={setPaneCornerId}
+        onOpenCorner={setPaneCornerId}
         onOpenInMain={openInMain}
         onClose={() => setSelected(null)}
-        onNewCorner={() => undefined}
       />
     ) : desktop ? (
       <View style={styles.paneFallback} testID="tray-pane">

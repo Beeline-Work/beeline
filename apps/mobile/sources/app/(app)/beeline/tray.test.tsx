@@ -318,7 +318,7 @@ describe('Bookmarks desktop second pane', () => {
     await act(async () => undefined);
 
     const pane = tree.root.findByType('DesktopRoomInspector' as any);
-    expect(pane.props.selectedCornerId).toBe('corner-1');
+    expect(pane.props.content).toEqual({ kind: 'corner', cornerId: 'corner-1' });
     expect(pane.props.focusMessageId).toBe('msg-2');
     expect(pane.props.room.room.id).toBe('room-1');
     expect(textOf(tree)).not.toContain('OPEN IN');

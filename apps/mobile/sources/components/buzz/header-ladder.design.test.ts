@@ -15,10 +15,6 @@ const chatSource = readFileSync(
   'utf8',
 );
 const ladderSource = readFileSync(path.join(__dirname, './HeaderLadder.tsx'), 'utf8');
-const workPaneHandleSource = readFileSync(
-  path.join(__dirname, '../DesktopWorkPaneHandle.tsx'),
-  'utf8',
-);
 const repositorySubtitleSource = readFileSync(
   path.join(__dirname, './RoomRepositorySubtitle.tsx'),
   'utf8',
@@ -198,20 +194,6 @@ describe('Chat header — one language for Room and Corner', () => {
     // the list behind it does the counting.
     expect(chatSource).not.toMatch(/roomCorners(?:Badge|Count|Plate)/);
     expect(chatSource).not.toContain('backgroundColor: groknight.brassWash');
-  });
-
-  it('leaves one quiet, overlaid tab when the desktop work pane is dismissed', () => {
-    const handle = workPaneHandleSource.match(/\n  handle:\s*\{[\s\S]*?\n  \},/);
-    expect(handle, 'missing work pane handle style').toBeTruthy();
-    expect(handle![0]).toContain('width: 14');
-    expect(handle![0]).toContain('height: 40');
-    expect(handle![0]).toContain('backgroundColor: theme.buzz.bgRaised');
-    expect(handle![0]).toContain('borderTopLeftRadius: theme.buzz.radius');
-    expect(handle![0]).toContain('borderBottomLeftRadius: theme.buzz.radius');
-    expect(handle![0]).not.toMatch(/alignSelf:\s*'stretch'|borderRight/);
-    expect(workPaneHandleSource).toContain('backgroundColor: theme.buzz.bgHighlight');
-    expect(workPaneHandleSource).toContain('color: theme.buzz.accent');
-    expect(workPaneHandleSource).toContain('width: 0');
   });
 
   it('lets the corner’s agent name give before the facts beside it do', () => {

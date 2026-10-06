@@ -559,6 +559,7 @@ describe('the artifact card is the preview (mock 1b)', () => {
 
   it('Open on desktop sends a document to the work pane, never the modal', async () => {
     mocks.probeArtifactPreview.mockResolvedValue(null);
+    mocks.openArtifactInDesktopWorkPane.mockReturnValueOnce(true);
     const renderer = render(<ArtifactCard attachment={artifactAttachment()} isDesktop />);
     await flush();
     await act(async () => {
@@ -566,6 +567,18 @@ describe('the artifact card is the preview (mock 1b)', () => {
     });
     expect(mocks.modalShow).not.toHaveBeenCalled();
     expect(mocks.openArtifactInDesktopWorkPane).toHaveBeenCalled();
+  });
+
+  it('Open on desktop falls back to the full-screen viewer when no work pane takes it', async () => {
+    mocks.probeArtifactPreview.mockResolvedValue(null);
+    mocks.openArtifactInDesktopWorkPane.mockReturnValueOnce(false);
+    const renderer = render(<ArtifactCard attachment={artifactAttachment()} isDesktop />);
+    await flush();
+    await act(async () => {
+      hostNodes(renderer, 'artifact-open')[0]!.props.onPress();
+    });
+    expect(mocks.openArtifactInDesktopWorkPane).toHaveBeenCalled();
+    expect(mocks.modalShow).toHaveBeenCalled();
   });
 
   it('the sandbox props ride the preview render', async () => {

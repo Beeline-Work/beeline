@@ -56,11 +56,7 @@ async function run() {
       {view.chats.map((item) => (
         <div key={item.room.id} data-testid={`room-${item.room.name}`}>
           <div>{item.room.name}</div>
-          <DesktopRoomCorners
-            item={item}
-            onOpen={() => undefined}
-            renderDrag={(_, children) => children}
-          />
+          <DesktopRoomCorners item={item} onOpen={() => undefined} />
         </div>
       ))}
     </div>,

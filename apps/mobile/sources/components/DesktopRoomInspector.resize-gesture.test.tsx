@@ -143,11 +143,15 @@ async function renderInspector(): Promise<void> {
       React.createElement(DesktopRoomInspector, {
         room,
         client: null,
-        selectedCornerId: null,
-        onSelectCorner: () => undefined,
+        content: {
+          kind: 'artifact',
+          artifact: {
+            attachment: { id: 'a', name: 'a.html', mimeType: 'text/html', size: 1, url: '/a' } as never,
+          },
+        },
+        onOpenCorner: () => undefined,
         onOpenInMain: () => undefined,
         onClose: () => undefined,
-        onNewCorner: () => undefined,
       }),
     );
     // Let the loadDesktopPaneWidth() effect resolve before dragging.

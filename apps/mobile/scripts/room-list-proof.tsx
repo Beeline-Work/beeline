@@ -200,7 +200,6 @@ function Proof() {
                 <DesktopRoomCorners
                   item={item}
                   onOpen={(id) => action(`corner/${id}`)}
-                  renderDrag={(_, children) => children}
                 />
               ) : (
                 <RoomCornerSummary

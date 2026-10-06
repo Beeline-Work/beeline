@@ -30,8 +30,6 @@ import { inspectorCornerObjective } from '@/buzz/inspector-corners';
  * starts open when Mine is empty and otherwise folded, and Archived starts
  * folded and pages ten at a time from the server. Fold state lives only as
  * long as the screen does.
- * The desktop work pane's corner list keeps its own five-row window
- * (`inspectorCornerWindow`); this screen does not share that cap.
  *
  * The row reads in the index vocabulary `DESIGN.md` gives the Room list: the
  * opener's small face tile, the name at the brightest tier, one quiet line

@@ -29,7 +29,7 @@ describe('resource observers in the desktop web renderer', () => {
           const [id, select] = React.useState('original'); globalThis.__select = select;
           const workflow = useRoomWorkflowRun('corner');
           return <><CornerObjectiveLine objective="Observer proof" workflow={workflow.workflow} workflowError={workflow.error} onRetryWorkflow={workflow.retry} onOpenWorkflow={() => {}} />
-            <SignIn /><Installer /><DesktopRoomInspector room={room} client={client} selectedCornerId={id} onSelectCorner={() => {}} onOpenInMain={() => {}} onNewCorner={() => {}} onClose={() => {}} /></>;
+            <SignIn /><Installer /><DesktopRoomInspector room={room} client={client} content={{ kind: 'corner', cornerId: id }} onOpenCorner={() => {}} onOpenInMain={() => {}} onClose={() => {}} /></>;
         }
         createRoot(document.getElementById('root')).render(<App />);
         const output = {};

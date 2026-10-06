@@ -91,13 +91,17 @@ export const ArtifactCard = React.memo(function ArtifactCard({
     // full-screen viewer, so desktop reads an image the way mobile does. The
     // work pane keeps its documents — its sandboxed iframe is the right shape
     // for markup and PDFs, not for a raster.
-    if (isDesktop && format !== 'image') {
+    // When no second pane can take it (a narrow window, a direct message),
+    // the document opens in the same full-screen viewer.
+    if (
+      isDesktop &&
+      format !== 'image' &&
       openArtifactInDesktopWorkPane({
         attachment: activeAttachment,
         authorHandle: activeAuthorHandle,
-      });
+      })
+    )
       return;
-    }
     Modal.show({
       component: ArtifactViewerScreen,
       props: {

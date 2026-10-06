@@ -111,9 +111,6 @@ function RoomList({ desktop }: { desktop: boolean }) {
               item={item}
               mobile={!desktop}
               onOpen={() => undefined}
-              renderDrag={(_, children) =>
-                desktop ? React.createElement('div', { draggable: true }, children) : children
-              }
             />
           )}
         </div>
@@ -337,7 +334,7 @@ async function pulse() {
   const render = (withPage: boolean) =>
     root.render(
       <div>
-        <DesktopRoomCorners item={waitingItem} onOpen={() => undefined} renderDrag={(_, c) => c} />
+        <DesktopRoomCorners item={waitingItem} onOpen={() => undefined} />
         {withPage && (
           <RoomCornersList
             parentRoomId={alpha}

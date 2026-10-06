@@ -1231,7 +1231,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       const corner = await client.execute('createCorner', {
         roomId: ROOM,
         requestId: 'a'.repeat(64),
-        name: 'Live steering',
+        name: 'Live-steering',
         objective: 'Prove live steering reaches a running corner harness session.',
       });
       const configPath = join(supervisorRoot, 'runtime.json');

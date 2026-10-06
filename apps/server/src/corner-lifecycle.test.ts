@@ -215,7 +215,7 @@ async function open(lane?: 'code' | 'no_code', repository?: string, hold?: boole
       roomId: R,
       requestId: command.turnRequestId,
       generationId: 'g1',
-      name: 'Ship widget',
+      name: 'Ship-widget',
       objective: 'Ship the widget end to end',
       ...(hold ? { hold } : {}),
       ...(lane ? { lane } : {}),
@@ -868,7 +868,7 @@ it.each(['passing', 'unknown', 'unreachable'])('Reproduction F1-2: ask_human rev
 it('Reproduction F1-7: opener revises a delegated sibling from its own command', async () => {
   const source = await open(undefined, 'owner/widgets');
   const command = await commissioned(source);
-  const input = { roomId: source, requestId: command.turnRequestId, generationId: 'g1', name: 'Delegate widget', objective: 'Ship the widget', repository: 'owner/widgets', implementer: 'goosy', brief: brief(command.sourceMessageId) };
+  const input = { roomId: source, requestId: command.turnRequestId, generationId: 'g1', name: 'Delegate-widget', objective: 'Ship the widget', repository: 'owner/widgets', implementer: 'goosy', brief: brief(command.sourceMessageId) };
   const { cornerId } = await daemon.execute('createCorner', input, A);
   await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, B]);
   const result = await daemon.execute('reviseCornerBrief', { roomId: source, cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 1, brief: { ...input.brief, spec: 'Corrected widget', change: 'Correct scope' } }, A);
@@ -898,7 +898,7 @@ it('Reproduction F1-9: brief history defaults to one revision with a cursor', as
 
 it('Reproduction F1-11: exact replay survives implementer departure', async () => {
   const command = await commissioned(R);
-  const input = { roomId: R, requestId: command.turnRequestId, generationId: 'g1', idempotencyKey: 'f1-replay', name: 'Delegate widget', objective: 'Ship widget', repository: 'owner/widgets', implementer: 'goosy', brief: brief(command.sourceMessageId) };
+  const input = { roomId: R, requestId: command.turnRequestId, generationId: 'g1', idempotencyKey: 'f1-replay', name: 'Delegate-widget', objective: 'Ship widget', repository: 'owner/widgets', implementer: 'goosy', brief: brief(command.sourceMessageId) };
   const first = await daemon.execute('createCorner', input, A);
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
   const replay = await daemon.execute('createCorner', input, A);
@@ -1062,7 +1062,7 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
     } else if (path === 'create') {
       const command = await commissioned(R);
       const created = await recordedDaemon.execute('createCorner', { roomId: R, requestId: command.turnRequestId,
-        generationId: 'g1', name: 'Another widget', objective: 'Ship another widget', repository: 'owner/widgets',
+        generationId: 'g1', name: 'Another-widget', objective: 'Ship another widget', repository: 'owner/widgets',
         brief: brief(command.sourceMessageId) }, A);
       lockId = created.cornerId;
     } else if (path === 'zero-check') {
@@ -2080,7 +2080,7 @@ describe('the gate stays shut (AC-8)', () => {
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, H]);
     try {
       await expect(daemon.execute('createCorner', { roomId: R, requestId: command.turnRequestId,
-        generationId: 'g1', name: 'Held work', objective: 'Keep this corner held', lane: 'no_code', hold: true }, A))
+        generationId: 'g1', name: 'Held-work', objective: 'Keep this corner held', lane: 'no_code', hold: true }, A))
         .rejects.toThrow(/current human corner membership required/);
       expect((await db.query(`SELECT count(*) n FROM rooms WHERE parent_id=$1`, [R])).rows).toEqual(count);
       expect((await db.query(`SELECT count(*) n FROM corner_merge_holds`)).rows).toEqual([{ n: 0 }]);

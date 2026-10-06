@@ -169,6 +169,18 @@ function mount({
 }
 
 describe('New Room sheet', () => {
+  it('replaces typed and pasted whitespace before submitting a continuous name', () => {
+    const { renderer, host, name, submit } = mount();
+    name('continuous ');
+    expect(host('create-room-name')?.props.value).toBe('continuous-');
+    name('continuous\tamber\u00a0corner');
+    expect(host('create-room-name')?.props.value).toBe('continuous-amber-corner');
+    expect(host('create-room-submit')?.props.disabled).toBe(false);
+    act(() => host('create-room-submit')?.props.onPress());
+    expect(submit).toHaveBeenCalledWith('continuous-amber-corner', null, false);
+    console.log('Reproduction name-whitespace: typed space → continuous-; pasted tab/NBSP → continuous-amber-corner; submitted continuous name');
+    act(() => renderer.unmount());
+  });
   it('starts with Name, a collapsed Repository row, and Public on', () => {
     const { renderer, host, text, sheet, submit, name, load } = mount();
     expect(sheet().title).toBe('New Room');

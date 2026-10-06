@@ -1,18 +1,5 @@
-/**
- * A corner carries two texts and they do different jobs.
- *
- *   - the NAME titles the corner on every surface — the Room-list child row,
- *     the corner header, the corner card, the archived card. It is
- *     at most three words because those places are one line wide (C89);
- *   - the OBJECTIVE is the fixed statement of the work. It stays at 24 words,
- *     is shown in the card body, and is the corner's opening line.
- *
- * Both are NORMALISED before they are judged. A brief handed over with line
- * breaks, a tab, or a double space is untidy, not wrong, and refusing it cost
- * two silent turns: the refusal reached the model only as "failed via
- * use_tool" and the helper logged nothing at all (C90). What survives here is
- * one rule — too many words — and it refuses in a sentence that names the
- * limit and the actual count.
+/** Corner names are continuous titles; objectives remain normalized paragraphs.
+ * Legacy display names retain their original word-based truncation.
  */
 
 export const CORNER_NAME_MAX_WORDS = 3;
@@ -47,6 +34,9 @@ export function cornerTextRefusal(field: CornerTextField, value: unknown): strin
     } of at most ${limit.words} words`;
   }
   const normalized = normalizeCornerText(value);
+  if (field === 'name' && /\s/.test(value)) {
+    return 'the name must not contain whitespace; use hyphens between words';
+  }
   if (normalized.length > limit.characters) {
     return `the ${field} is ${normalized.length} characters; the limit is ${limit.characters}`;
   }

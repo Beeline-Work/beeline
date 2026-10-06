@@ -221,10 +221,11 @@ it('lets the corner agent retitle its corner during its turn', async () => {
     );
 
   await expect(rename('too many words for a title')).rejects.toThrow(
-    'the name is 6 words; the limit is 3',
+    'the name must not contain whitespace; use hyphens between words',
   );
-  await expect(rename('  Launch\n plan ')).resolves.toEqual({ cornerId: C, name: 'Launch plan' });
-  expect((await phone.readRoom(C, H))?.room.name).toBe('Launch plan');
+  await expect(rename('  Launch\n plan ')).rejects.toThrow(/whitespace/);
+  await expect(rename('Launch-plan')).resolves.toEqual({ cornerId: C, name: 'Launch-plan' });
+  expect((await phone.readRoom(C, H))?.room.name).toBe('Launch-plan');
   await result(command!, 'Renamed.');
   await expect(rename('Too late')).rejects.toThrow();
   await db.query(`UPDATE rooms SET name='Corner' WHERE id=$1`, [C]);

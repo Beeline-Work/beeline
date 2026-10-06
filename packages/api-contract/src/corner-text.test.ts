@@ -21,18 +21,22 @@ describe('corner text normalisation', () => {
 
   it('accepts a normalised objective that only looked malformed', () => {
     expect(cornerTextRefusal('objective', 'Fix the ledger drift\nin the room list')).toBeUndefined();
-    expect(cornerTextRefusal('name', ' ledger  drift ')).toBeUndefined();
+    expect(cornerTextRefusal('name', 'ledger-drift')).toBeUndefined();
   });
 });
 
 describe('corner text refusals', () => {
+  it.each([' ', '\t', '\n', '\r', '\u00a0', '\u2003', '\u2028', '\ufeff'])('rejects whitespace %j in names', (separator) => {
+    expect(cornerTextRefusal('name', `continuous${separator}amber-corner`)).toBe('the name must not contain whitespace; use hyphens between words');
+  });
+
   it('names the limit and the actual count', () => {
     const objective = Array.from({ length: 61 }, (_, index) => `word${index}`).join(' ');
     expect(cornerTextRefusal('objective', objective)).toBe(
       'the objective is 61 words; the limit is 24',
     );
     expect(cornerTextRefusal('name', 'far too many words here')).toBe(
-      'the name is 5 words; the limit is 3',
+      'the name must not contain whitespace; use hyphens between words',
     );
   });
 

@@ -248,6 +248,8 @@ function normalizeAgentName(value: string): string {
 }
 
 function normalizeHumanCornerTitle(value: unknown): string {
+  if (typeof value === 'string' && /\s/.test(value))
+    throw new Error('corner title must not contain whitespace; use hyphens between words');
   const title = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
   if (!title) throw new Error('corner title is required');
   if (title.length > HUMAN_CORNER_TITLE_MAX_LENGTH)

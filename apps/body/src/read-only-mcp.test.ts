@@ -266,7 +266,7 @@ describe('open_corner arguments', () => {
     );
     expect(openCorner().description).toContain('after any material unresolved choice is settled');
     expect(schema.properties.name?.description).toBe(
-      "The corner's title: at most 3 words, no line breaks.",
+      "The corner's title: at most 3 words joined by hyphens, no whitespace.",
     );
     const brief = schema.properties.brief as unknown as {
       required: string[];
@@ -307,11 +307,11 @@ describe('open_corner arguments', () => {
     // A grok-shaped call: the brief arrives with its line breaks intact.
     expect(
       cornerCallText({
-        name: ' widget \n ledger ',
+        name: 'widget-ledger',
         objective: 'Ship the corner name parameter.\nMake grok able to open a corner.',
       }),
     ).toEqual({
-      name: 'widget ledger',
+      name: 'widget-ledger',
       objective: 'Ship the corner name parameter. Make grok able to open a corner.',
     });
   });
@@ -322,10 +322,10 @@ describe('open_corner arguments', () => {
         name: 'far too many words here',
         objective: 'Ship the widget',
       }),
-    ).toThrow('the name is 5 words; the limit is 3');
+    ).toThrow('the name must not contain whitespace; use hyphens between words');
     expect(() =>
       cornerCallText({
-        name: 'widget ledger',
+        name: 'widget-ledger',
         objective: Array.from({ length: 61 }, (_, index) => `word${index}`).join(' '),
       }),
     ).toThrow('the objective is 61 words; the limit is 24');

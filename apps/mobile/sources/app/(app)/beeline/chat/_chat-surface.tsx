@@ -124,7 +124,7 @@ import {
   type DesktopArtifactSelection,
 } from '@/buzz/desktop-artifact-pane';
 import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
-import { ROOM_SLUG_HINT, validRoomSlug } from '@/buzz/room-name';
+import { ROOM_SLUG_HINT, roomNameEntry, validRoomSlug } from '@/buzz/room-name';
 import {
   desktopComposerKeyAction,
   desktopWorkPaneMode,
@@ -7092,7 +7092,7 @@ export function BuzzChatSurface({
                   autoCorrect={false}
                   editable={!renameBusy}
                   onChangeText={(value) => {
-                    setRenameDraft(value);
+                    setRenameDraft(roomNameEntry(value));
                     if (value.trim()) setRenameError(null);
                   }}
                   onSubmitEditing={() => void handleRenameRoom()}

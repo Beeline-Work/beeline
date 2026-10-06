@@ -24,11 +24,11 @@ describe('forwardMessageToNewCorner', () => {
         openCorner,
         random: () => 0,
       }),
-    ).resolves.toEqual({ id: 'corner-1', title: 'quiet amber corner' });
+    ).resolves.toEqual({ id: 'corner-1', title: 'quiet-amber-corner' });
 
     // The swiped message rides the create so the server can mark it.
-    expect(createCorner).toHaveBeenCalledWith('room-1', 'quiet amber corner', 'message-1');
-    expect(openCorner).toHaveBeenCalledWith('corner-1', 'quiet amber corner');
+    expect(createCorner).toHaveBeenCalledWith('room-1', 'quiet-amber-corner', 'message-1');
+    expect(openCorner).toHaveBeenCalledWith('corner-1', 'quiet-amber-corner');
     expect(draftWhenOpened).toBe('> hello\n\nFORWARDED FROM #general · @alice');
     expect(takeCornerComposerDraft('corner-1')).toBeUndefined();
   });

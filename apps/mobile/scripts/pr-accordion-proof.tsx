@@ -42,6 +42,7 @@ function render() {
   root.render(
     <NotificationLifecycleCard
       message={rows[0]}
+      onOpenCorner={() => undefined}
       onOpenUrl={(url) => {
         openedUrl = url;
       }}

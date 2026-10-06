@@ -453,7 +453,11 @@ function CornerCockpit({
       if (kind === 'hidden') return null;
       const node =
         item.notificationLifecycleRun ? (
-          <NotificationLifecycleCard message={item} onOpenUrl={openUrl} />
+          <NotificationLifecycleCard
+            message={item}
+            onOpenCorner={onOpenCorner}
+            onOpenUrl={openUrl}
+          />
         ) : kind === 'room-update' ? (
           <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
         ) : kind === 'github' ? (

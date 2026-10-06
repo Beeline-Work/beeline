@@ -8,6 +8,7 @@ import { TRANSCRIPT_SETTLE_MS, transcriptSteadyColors } from '@/buzz/transcript-
 import { ledgerStamp } from '@/buzz/relative-time';
 interface NotificationLifecycleCardProps {
   message: ChatDisplayMessage;
+  onOpenCorner(cornerId: string): void;
   onOpenUrl(url: string): void;
 }
 function cellDisplayState(state: NotificationLifecycleState): string {
@@ -16,19 +17,20 @@ function cellDisplayState(state: NotificationLifecycleState): string {
 function cellTone(state: NotificationLifecycleState): 'waiting' | 'settled' | 'failed' {
   return state === 'Checks failed'
     ? 'failed'
-    : state === 'PR opened' || state === 'Checks running'
+    : state === 'PR opened' || state === 'Opened' || state === 'Checks running'
       ? 'waiting'
       : 'settled';
 }
 /** One raised card for one uninterrupted run of repository notifications.
  *
- * Accordion model (one cell per PR or check): the most recently updated item is presented
+ * Accordion model (one cell per PR, issue, corner or check): the most recently updated item is presented
  * with full controls (state column, title, kind line, author, per-cell
  * footer). Other items are contracted (state column, title, kind line with author).
  * Tapping a contracted cell presents it and contracts the previous one.
  */
 export const NotificationLifecycleCard = React.memo(function NotificationLifecycleCard({
   message,
+  onOpenCorner,
   onOpenUrl,
 }: NotificationLifecycleCardProps) {
   const run = message.notificationLifecycleRun!;
@@ -202,6 +204,15 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
           </View>
           <View style={styles.ncCellFooter}>
             <View style={styles.ncFooterSpacer} />
+            {presentedItem.cornerId ? (
+              <Pressable
+                accessibilityRole="link"
+                onPress={() => onOpenCorner(presentedItem.cornerId!)}
+                testID={`notification-run-cell-corner-${presentedItem.id}`}
+              >
+                <Text style={styles.ncAction}>Corner →</Text>
+              </Pressable>
+            ) : null}
             {presentedItem.url ? (
               <Pressable
                 accessibilityRole="link"

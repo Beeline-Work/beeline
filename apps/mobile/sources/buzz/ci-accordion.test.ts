@@ -142,6 +142,6 @@ describe('Reproduction CI-ACCORDION-1', () => {
     }
     const rows = foldPrLifecycleRuns([check('1'), boundary, check('3', 'SERVER SUITE', 'passed')]);
     expect(rows.map((row) => row.id)).toEqual(['1', 'boundary', '3']);
-    if (kind !== 'pr') expect(rows[1]).toBe(boundary);
+    if (kind !== 'pr' && kind !== 'issue') expect(rows[1]).toBe(boundary);
   });
 });

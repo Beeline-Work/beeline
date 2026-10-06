@@ -1485,11 +1485,13 @@ export async function settleWorkflowGate(
     line: (toState) => ({
       authorId: input.viewerId,
       subject: identitySubject(viewer),
-      verb: input.skip ? 'skipped' : 'picked',
+      verb: input.skip ? 'skipped' : input.sourceMessageId ? 'answered' : 'picked',
       object: input.skip ? scope.stateName : label,
       consequence: input.skip
         ? `so ${label} applied and run ${shortRunId(scope.runId)} went to ${toState}`
-        : `at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`,
+        : input.sourceMessageId
+          ? `by message at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`
+          : `at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`,
     }),
   });
   if (input.skip) {

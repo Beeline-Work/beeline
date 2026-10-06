@@ -1033,10 +1033,30 @@ describe('handoff', () => {
     // The only pending command is this turn's own; settling wakes the next state, not the gate role.
     expect(await pendingCommandsFor(APPROVER)).toBe(1);
     const woken = (await readAgentCommands(database, ROOM, IMPLEMENTER)).commands
-      .find((entry) => entry.source.systemEvent?.verb === 'picked');
+      .find((entry) => entry.source.systemEvent?.verb === 'answered');
     expect(woken?.source.body).toContain(
       `You are in run ${runId} of corner. Continue this run; do not start a new one.`,
     );
+    // A chat answer reads differently from a card press, and names the message.
+    const transition = (
+      await database.query<{ text: string }>(
+        `SELECT text FROM messages WHERE card_type='workflow-handoff' AND card->>'runId'=$1
+           AND card->>'fromState'='human_approve'`,
+        [runId],
+      )
+    ).rows[0];
+    expect(transition?.text).toBe(
+      `Owner answered rejected · by message at human_approve so run ${runId.slice(0, 8)} went to implement`,
+    );
+    // The run view also requires the viewer's Workspace membership.
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+      [WORKSPACE, OWNER],
+    );
+    // The run view carries the source message on the gate record.
+    const detail = await readWorkflowRun(database, { roomId: ROOM, runId }, OWNER);
+    const gateRecord = detail?.history.find((entry) => entry.toState === 'human_approve')?.gate;
+    expect(gateRecord).toMatchObject({ answer: 'rejected', sourceMessageId: source });
   });
 
   it('refuses a message-settled gate when the author is not a Room member', async () => {

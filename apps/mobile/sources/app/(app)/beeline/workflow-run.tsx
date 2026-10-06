@@ -6,7 +6,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
 import type { WorkflowRunDetailView, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { cornerHref } from '@/buzz/corner-navigation';
+import { cornerHref, messageJumpHref } from '@/buzz/corner-navigation';
 import { useRoomLiveDrafts } from '@/buzz/room-live-drafts';
 import { previewHandle } from '@/buzz/room-list-row';
 import { liveRoomRuns } from '@/buzz/use-room-workflow-run';
@@ -149,6 +149,9 @@ export default function WorkflowRun() {
             now={now}
             onOpenCorner={(corner) =>
               router.push(cornerHref(corner.id, corner.parentRoomId, corner.name))
+            }
+            onOpenMessage={(messageId) =>
+              router.push(messageJumpHref(run.roomId, messageId, `workflow-gate:${messageId}`))
             }
           />
           {roomId ? <AlsoRunning current={run} now={now} roomId={roomId} /> : null}

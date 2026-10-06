@@ -1067,15 +1067,15 @@ describe('connect_app', () => {
         const path = new URL(href).pathname;
         if (path.endsWith('/connected_accounts/ca_youtube')) return Response.json({
           id: 'ca_youtube', user_id: OWNER, status: 'ACTIVE', toolkit: { slug: 'youtube' } });
-        if (path.endsWith('/tools/YOUTUBE_UPLOAD_VIDEO')) return Response.json({
-          slug: 'YOUTUBE_UPLOAD_VIDEO', version: '20260930_00', toolkit: { slug: 'youtube' },
+        if (path.endsWith('/tools/YOUTUBE_MULTIPART_UPLOAD_VIDEO')) return Response.json({
+          slug: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', version: '20260930_00', toolkit: { slug: 'youtube' },
           input_parameters: { type: 'object', properties: { title: { type: 'string' },
             videoFile: { type: 'object', file_uploadable: true } } } });
         if (path.endsWith('/tools/YOUTUBE_LIST_CHANNEL_VIDEOS')) return Response.json({
           slug: 'YOUTUBE_LIST_CHANNEL_VIDEOS', version: '20260930_00', toolkit: { slug: 'youtube' } });
         if (path === '/api/v3.1/files/upload/request') return Response.json({
           id: 'file-1', key: S3KEY, new_presigned_url: PRESIGNED, type: 'new' });
-        if (path.endsWith('/tools/execute/YOUTUBE_UPLOAD_VIDEO')) return Response.json({
+        if (path.endsWith('/tools/execute/YOUTUBE_MULTIPART_UPLOAD_VIDEO')) return Response.json({
           data: { id: 'yt-1', privacyStatus: 'private', source: S3KEY } });
         if (path.endsWith('/tools/execute/YOUTUBE_LIST_CHANNEL_VIDEOS'))
           return Response.json({ data: { items: [] } });
@@ -1090,7 +1090,7 @@ describe('connect_app', () => {
       const daemon = daemonWith(fakeRegistry([]).client,
         new ComposioApps('composio-project-key', transport as typeof fetch), objects);
       const upload = (objectId: string) => daemon.execute('executeAppTool', { ...turn,
-        appId: YOUTUBE_APP, tool: 'YOUTUBE_UPLOAD_VIDEO',
+        appId: YOUTUBE_APP, tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO',
         arguments: { title: 'Song', videoFile: { beelineObjectId: objectId } } }, HELPER);
       return { daemon, upload, calls, transport, getObject };
     }
@@ -1103,19 +1103,29 @@ describe('connect_app', () => {
       expect(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
         'GET /api/v3/connected_accounts/ca_youtube',
         'GET /api/v3/connected_accounts/ca_youtube',
-        'GET /api/v3/tools/YOUTUBE_UPLOAD_VIDEO',
+        'GET /api/v3/tools/YOUTUBE_MULTIPART_UPLOAD_VIDEO',
         'POST /api/v3.1/files/upload/request',
         'PUT /uploads/youtube/staged-fixture.mp4',
-        'POST /api/v3/tools/execute/YOUTUBE_UPLOAD_VIDEO',
+        'POST /api/v3/tools/execute/YOUTUBE_MULTIPART_UPLOAD_VIDEO',
       ]);
       expect(calls[3]!.body).toMatchObject({ toolkit_slug: 'youtube',
-        tool_slug: 'YOUTUBE_UPLOAD_VIDEO', filename: 'song-take-2.mp4', mimetype: 'video/mp4' });
+        tool_slug: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', filename: 'song-take-2.mp4', mimetype: 'video/mp4' });
       expect(calls[4]!.body).toEqual(VIDEO);
       expect((calls[5]!.body as { arguments: unknown }).arguments).toEqual({ title: 'Song',
         videoFile: { name: 'song-take-2.mp4', mimetype: 'video/mp4', s3key: S3KEY } });
       const returned = JSON.stringify(result);
       for (const hidden of ['composio-project-key', S3KEY, PRESIGNED, 'composio-files'])
         expect(returned).not.toContain(hidden);
+    });
+
+    it('refuses YOUTUBE_UPLOAD_VIDEO and points the agent to the multipart tool', async () => {
+      const { daemon, calls } = await youtubeRoom();
+      await expect(daemon.execute('executeAppTool', { ...turn, appId: YOUTUBE_APP,
+        tool: 'YOUTUBE_UPLOAD_VIDEO',
+        arguments: { title: 'Song', videoFile: { beelineObjectId: IN_ROOM } } }, HELPER))
+        .rejects.toThrow('use YOUTUBE_MULTIPART_UPLOAD_VIDEO instead');
+      expect(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
+        'GET /api/v3/connected_accounts/ca_youtube']);
     });
 
     it('refuses an oversize Room file with no Composio request', async () => {

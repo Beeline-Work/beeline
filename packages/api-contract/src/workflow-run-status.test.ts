@@ -17,7 +17,8 @@ describe('workflow run display status', () => {
     expect(workflowRunStatus(contract, 'work', 'failed')).toBe('failed');
     expect(workflowRunStatus(contract, 'work', 'abandoned')).toBe('abandoned');
     expect(workflowStepDisplayStatus(contract, 'work', 'failed', false)).toBe('failed');
-    expect(workflowStepDisplayStatus(contract, 'work', 'abandoned', false)).toBe('done');
+    expect(workflowStepDisplayStatus(contract, 'work', 'abandoned', false)).toBe('failed');
+    expect(workflowStepDisplayStatus(contract, 'work', 'done', false)).toBe('done');
   });
 
   it('keeps only the last live visit current and preserves earlier completed visits', () => {

@@ -104,6 +104,13 @@ export interface SessionPromptContext {
   readonly reviewerHandle?: string;
   readonly selfReviewer?: boolean;
   readonly yoloMode?: boolean;
+  /**
+   * Whether this checkout's own package.json defines a `corner:prepare`
+   * script (`corner-prepare-script.ts`). Beeline's own checkout does; another
+   * repository does not, and a corner told to run it would fail on its first
+   * command. Undefined means no.
+   */
+  readonly cornerPrepareScript?: boolean;
   /** A no-code corner's requester, tagged once in its reply. */
   readonly requesterHandle?: string;
   readonly agentMayUpgradeCorner?: boolean;
@@ -180,7 +187,6 @@ Before any code or build action, the brief must hold this ask's outline; opening
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
 Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
 Fix only the spec and approval quote. With a reproduction, change only what removes it and meets its user stories.
-Run npm run corner:prepare first.
 Only when the brief calls for repository changes, follow the PR procedure below. Otherwise do not commit, push or open a PR; deliver with post_artifact.
 Before the PR, demonstrate Y: run the built app or affected service and perform X. If no interactive surface is reachable, run the narrowest test or script exercising the exact user path and printing Y. An inner-function unit test, log line or code read is not a demonstration.
 The PR body MUST have ## Reproduced and ## Demonstrated. Cite Reproduction <id> in both, with steps, the wrong result and the now-passing result. In ## Demonstrated, when none was obtained, state that plainly ("not obtained") and show the regression; for feature work say "not a defect report".
@@ -522,6 +528,17 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     when: ({ android }) => Boolean(android),
     render: ({ android }) =>
       `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME, AVDs are in $ANDROID_AVD_HOME, and /dev/kvm works. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android?.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`,
+  },
+  {
+    id: 'corner.prepare',
+    topic: 'corner-prepare',
+    why: 'Only a checkout that defines the command can run it; another repository fails on its first step.',
+    budgetBytes: 60,
+    layer: 'surface',
+    surfaces: ['code-corner'],
+    when: ({ brief, cornerPrepareScript }) =>
+      cornerHasRepositoryWork(brief) && cornerPrepareScript === true,
+    render: () => 'Run npm run corner:prepare first.',
   },
   {
     id: 'corner.contract',

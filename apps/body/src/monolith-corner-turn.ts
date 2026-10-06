@@ -54,6 +54,7 @@ import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
+import { hasCornerPrepareScript } from './corner-prepare-script.js';
 import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
@@ -744,7 +745,7 @@ export class MonolithCornerTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, grants, restored] = await Promise.all([
+    const [configuration, roster, grants, restored, cornerPrepareScript] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
@@ -752,6 +753,7 @@ export class MonolithCornerTurnLoop {
       this.roster(),
       this.grantedResources(),
       this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId }),
+      hasCornerPrepareScript(this.options.worktreePath),
     ]);
     const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
@@ -765,6 +767,7 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
       repositoryWork: cornerHasRepositoryWork(restored.brief),
+      cornerPrepareScript,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
         [
@@ -855,6 +858,7 @@ export class MonolithCornerTurnLoop {
         ? 'review-corner'
         : 'code-corner';
     this.repositoryWork = cornerHasRepositoryWork(restored.brief);
+    const cornerPrepareScript = await hasCornerPrepareScript(this.options.worktreePath);
     this.sessionPromptContext = {
       brief: restored.brief,
       surface: this.sessionSurface,
@@ -862,6 +866,7 @@ export class MonolithCornerTurnLoop {
       ...(configuration.reviewerHandle ? { reviewerHandle: configuration.reviewerHandle } : {}),
       selfReviewer: Boolean(selfReviewerInstruction),
       yoloMode: configuration.yoloMode,
+      cornerPrepareScript,
     };
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection = {
@@ -1095,6 +1100,7 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
       repositoryWork: cornerHasRepositoryWork(restored.brief),
+      cornerPrepareScript,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
         [

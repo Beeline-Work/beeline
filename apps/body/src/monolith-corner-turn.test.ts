@@ -3024,6 +3024,10 @@ describe('thin monolith corner turn', () => {
       ).map((tool) => tool.name),
     ).toContain('approve_merge');
     expect(repositorySystemPrompt).toContain(CORNER_AUTHOR_CONTRACT);
+    // This checkout has no package.json, so it defines no corner:prepare: the
+    // session must not name a command that would fail on its first step.
+    expect(repositorySystemPrompt).not.toContain('Run npm run corner:prepare first.');
+    expect(repositorySystemPrompt).not.toContain('corner:prepare');
     expect(repositorySystemPrompt).toContain("beeline-triage skill's bugfix execution contract");
     expect(repositorySystemPrompt).toContain('record it under Reproduction <id>');
     expect(repositorySystemPrompt).toContain(

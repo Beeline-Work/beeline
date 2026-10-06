@@ -2586,12 +2586,10 @@ export function BuzzChatSurface({
   // armed the anchor.
   const transcriptLandingAnchorIdRef = useRef(transcriptLandingAnchorId);
   transcriptLandingAnchorIdRef.current = transcriptLandingAnchorId;
-  // The oldest row id and real scrollHeight the previous commit left, so a
-  // prepend (older history paging in above the reader) can hold the
-  // reader's place by the real measured growth at the top — what
-  // `maintainVisibleContentPosition` does on native.
+  // Track the old first row's position so prepend compensation excludes
+  // concurrent growth at the live end of the transcript.
   const desktopPrependOldestIdRef = useRef<string | null>(null);
-  const desktopPrependScrollHeightRef = useRef<number | null>(null);
+  const desktopPrependOffsetRef = useRef<number | null>(null);
   const pendingNewMessageLandingRef = useRef<{
     boundaryId: string;
     acknowledgeQueue: boolean;
@@ -2674,7 +2672,7 @@ export function BuzzChatSurface({
     desktopRowRefCallbacksRef.current.clear();
     desktopIntersectingIdsRef.current.clear();
     desktopPrependOldestIdRef.current = null;
-    desktopPrependScrollHeightRef.current = null;
+    desktopPrependOffsetRef.current = null;
     locatingMessageSourceIdRef.current = null;
     requestedAroundMessageIdRef.current = null;
     activeMessageSourceAnchorRef.current = null;
@@ -2941,26 +2939,32 @@ export function BuzzChatSurface({
     },
     [observeTailPinned],
   );
-  // Older history paging in above the reader grows the content from the
-  // top, not the bottom — hold the reader's place by the real measured
-  // growth instead of letting it silently shift what they were reading.
+  // Browser anchoring is disabled on this scroll node; compensate once for
+  // actual rows inserted above the previous first row, not total height.
+  // Older history paging preserves the reader even when live work appends.
   useLayoutEffect(() => {
     if (!desktopTranscript) return;
     const node = desktopScrollNodeRef.current;
     const oldestId = transcriptMessages[0]?.id ?? null;
     const previousOldestId = desktopPrependOldestIdRef.current;
-    const previousScrollHeight = desktopPrependScrollHeightRef.current;
+    const previousOffset = desktopPrependOffsetRef.current;
+    const previousRow = previousOldestId
+      ? desktopRowNodesRef.current.get(previousOldestId)
+      : undefined;
+    const rowOffset = (row: HTMLElement) =>
+      row.getBoundingClientRect().top - node!.getBoundingClientRect().top + node!.scrollTop;
     if (
       node &&
+      previousRow &&
       oldestId !== null &&
-      previousOldestId !== null &&
       oldestId !== previousOldestId &&
-      previousScrollHeight !== null
+      previousOffset !== null
     ) {
-      node.scrollTop += node.scrollHeight - previousScrollHeight;
+      node.scrollTop += rowOffset(previousRow) - previousOffset;
     }
     desktopPrependOldestIdRef.current = oldestId;
-    desktopPrependScrollHeightRef.current = node?.scrollHeight ?? null;
+    const firstRow = oldestId ? desktopRowNodesRef.current.get(oldestId) : undefined;
+    desktopPrependOffsetRef.current = node && firstRow ? rowOffset(firstRow) : null;
   }, [desktopTranscript, transcriptMessages]);
   // A send promises to show its own row at the live end. The scheduled scroll
   // can run before a burst's final row commits, and the resulting scroll event
@@ -7630,6 +7634,7 @@ const styles = StyleSheet.create((theme) => {
     desktopScroll: {
       overflowX: 'hidden',
       overflowY: 'auto',
+      overflowAnchor: 'none',
     } as any,
     messageListContent: {
       paddingHorizontal: groknight.space.md,

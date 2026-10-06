@@ -252,7 +252,7 @@ describe('managed app provider boundary', () => {
     const PRESIGNED = 'https://composio-files.s3.amazonaws.com/uploads/youtube/fixture-s3key.mp4?X-Amz-Signature=sig';
     const VIDEO = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]);
     const youtubeDefinition = {
-      slug: 'YOUTUBE_UPLOAD_VIDEO', version: '20260930_00', toolkit: { slug: 'youtube' },
+      slug: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', version: '20260930_00', toolkit: { slug: 'youtube' },
       input_parameters: { type: 'object', properties: {
         title: { type: 'string' },
         privacyStatus: { type: 'string' },
@@ -280,12 +280,12 @@ describe('managed app provider boundary', () => {
         if (path.endsWith(`/connected_accounts/${ACCOUNT}`)) return json({
           id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'youtube' },
         });
-        if (path.endsWith('/tools/YOUTUBE_UPLOAD_VIDEO')) return json(youtubeDefinition);
+        if (path.endsWith('/tools/YOUTUBE_MULTIPART_UPLOAD_VIDEO')) return json(youtubeDefinition);
         if (path === '/api/v3.1/files/upload/request') return json({
           id: 'file-1', key: S3KEY, new_presigned_url: PRESIGNED, type: 'new',
           metadata: { storage_backend: 's3' },
         });
-        if (path.endsWith('/tools/execute/YOUTUBE_UPLOAD_VIDEO')) return json({ data: executeData });
+        if (path.endsWith('/tools/execute/YOUTUBE_MULTIPART_UPLOAD_VIDEO')) return json({ data: executeData });
         throw new Error('unexpected request');
       });
       return { transport, calls };
@@ -302,15 +302,15 @@ describe('managed app provider boundary', () => {
       });
       const args = { title: 'Song', privacyStatus: 'private', videoFile: { beelineObjectId: OBJECT } };
       const result = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
-        tool: 'YOUTUBE_UPLOAD_VIDEO', arguments: args, files: await resolveAppFiles(args, files) });
+        tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: args, files: await resolveAppFiles(args, files) });
       expect(calls.map((call) => `${call.method} ${call.url.split('?')[0]}`)).toEqual([
         `GET https://backend.composio.dev/api/v3/connected_accounts/${ACCOUNT}`,
-        'GET https://backend.composio.dev/api/v3/tools/YOUTUBE_UPLOAD_VIDEO',
+        'GET https://backend.composio.dev/api/v3/tools/YOUTUBE_MULTIPART_UPLOAD_VIDEO',
         'POST https://backend.composio.dev/api/v3.1/files/upload/request',
         `PUT ${PRESIGNED.split('?')[0]}`,
-        'POST https://backend.composio.dev/api/v3/tools/execute/YOUTUBE_UPLOAD_VIDEO',
+        'POST https://backend.composio.dev/api/v3/tools/execute/YOUTUBE_MULTIPART_UPLOAD_VIDEO',
       ]);
-      expect(calls[2]!.body).toEqual({ toolkit_slug: 'youtube', tool_slug: 'YOUTUBE_UPLOAD_VIDEO',
+      expect(calls[2]!.body).toEqual({ toolkit_slug: 'youtube', tool_slug: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO',
         filename: 'clip.mp4', mimetype: 'video/mp4',
         md5: createHash('md5').update(VIDEO).digest('hex') });
       expect(calls[3]!.body).toEqual(VIDEO);
@@ -334,7 +334,7 @@ describe('managed app provider boundary', () => {
       const provider = new ComposioApps('fixture-only', failing as typeof fetch);
       const args = { videoFile: { beelineObjectId: OBJECT } };
       const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
-        tool: 'YOUTUBE_UPLOAD_VIDEO', arguments: args,
+        tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: args,
         files: await resolveAppFiles(args, async () => video()) }).catch((e: unknown) => e as Error);
       expect(error.message).toBe('provider rejected [staged file] from [staged file]');
     });
@@ -365,7 +365,7 @@ describe('managed app provider boundary', () => {
       const { transport } = youtubeTransport();
       const provider = new ComposioApps('fixture-only', transport as typeof fetch);
       await expect(provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
-        tool: 'YOUTUBE_UPLOAD_VIDEO', arguments: { videoFile: { beelineObjectId: OBJECT } } }))
+        tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: { videoFile: { beelineObjectId: OBJECT } } }))
         .rejects.toThrow('Room files are unavailable for app tools');
       expect(transport).not.toHaveBeenCalled();
     });
@@ -375,10 +375,21 @@ describe('managed app provider boundary', () => {
       const provider = new ComposioApps('fixture-only', transport as typeof fetch);
       const args = { title: { beelineObjectId: OBJECT } };
       await expect(provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
-        tool: 'YOUTUBE_UPLOAD_VIDEO', arguments: args,
+        tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: args,
         files: await resolveAppFiles(args, async () => video()) }))
         .rejects.toThrow('A Room file was passed for a parameter that does not take a file');
       expect(calls.map((call) => call.method)).toEqual(['GET', 'GET']);
+    });
+
+    it('refuses YOUTUBE_UPLOAD_VIDEO before any provider request and names the multipart tool', async () => {
+      const { transport } = youtubeTransport();
+      const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+      const args = { title: 'Song', videoFile: { beelineObjectId: OBJECT } };
+      await expect(provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
+        tool: 'YOUTUBE_UPLOAD_VIDEO', arguments: args,
+        files: await resolveAppFiles(args, async () => video()) }))
+        .rejects.toThrow('use YOUTUBE_MULTIPART_UPLOAD_VIDEO instead');
+      expect(transport).not.toHaveBeenCalled();
     });
 
     it('leaves a call without Room files exactly as before', async () => {
@@ -391,7 +402,7 @@ describe('managed app provider boundary', () => {
       expect(files.size).toBe(0);
       expect(resolve).not.toHaveBeenCalled();
       await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
-        tool: 'YOUTUBE_UPLOAD_VIDEO', arguments: args, files });
+        tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: args, files });
       expect(calls.map((call) => call.method)).toEqual(['GET', 'GET', 'POST']);
       expect(calls[2]!.body).toEqual({ connected_account_id: ACCOUNT, user_id: PERSON,
         arguments: { title: 'Song', videoFile: descriptor }, version: '20260930_00' });
@@ -441,6 +452,16 @@ describe('managed app provider boundary', () => {
     const run = (provider: ComposioApps, args: Record<string, unknown>) => provider.execute({
       accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube', tool: YOUTUBE_ANALYTICS_TOOL,
       arguments: args });
+
+    it('hides YOUTUBE_UPLOAD_VIDEO and keeps the multipart upload tool', async () => {
+      const transport = vi.fn(async () => json({ items: [
+        { slug: 'YOUTUBE_UPLOAD_VIDEO', name: 'Upload video', toolkit: { slug: 'youtube' } },
+        { slug: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', name: 'Multipart upload video',
+          toolkit: { slug: 'youtube' } }] }));
+      const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+      expect((await provider.listTools('youtube')).map((tool) => tool.slug))
+        .toEqual([YOUTUBE_ANALYTICS_TOOL, 'YOUTUBE_MULTIPART_UPLOAD_VIDEO']);
+    });
 
     it('lists the report tool with the YouTube tools and nowhere else', async () => {
       const { provider } = fixture({ status: 200, data: {} });

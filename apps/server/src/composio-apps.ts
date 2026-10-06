@@ -113,6 +113,12 @@ function stripSecrets(value: unknown, depth = 0): unknown {
  * stays in Composio.
  */
 export const YOUTUBE_ANALYTICS_TOOL = 'BEELINE_YOUTUBE_ANALYTICS_REPORT';
+/**
+ * Composio's YOUTUBE_UPLOAD_VIDEO returns a video id but never delivers the file, so the video
+ * stays in processing forever. It is hidden and refused; the multipart tool works.
+ */
+const YOUTUBE_BROKEN_UPLOAD_TOOL = 'YOUTUBE_UPLOAD_VIDEO';
+const YOUTUBE_UPLOAD_TOOL = 'YOUTUBE_MULTIPART_UPLOAD_VIDEO';
 const YOUTUBE_ANALYTICS_REPORTS = 'https://youtubeanalytics.googleapis.com/v2/reports';
 const REPORT_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -515,7 +521,8 @@ export class ComposioApps {
     const result = await this.request(`/tools?${params}`, 'GET');
     if (!Array.isArray(result.items)) throw new Error('App provider returned an invalid response');
     const tools = result.items.map(object).filter((row) =>
-      safeToolSlug(String(row.slug ?? '')) && object(row.toolkit).slug === toolkit,
+      safeToolSlug(String(row.slug ?? '')) && object(row.toolkit).slug === toolkit &&
+      !(toolkit === 'youtube' && row.slug === YOUTUBE_BROKEN_UPLOAD_TOOL),
     ).map((row) => ({
       slug: requiredString(row.slug), name: requiredString(row.name),
       description: typeof row.description === 'string' ? row.description : '',
@@ -561,6 +568,9 @@ export class ComposioApps {
   private async executeStaged(input: { accountId: string; userId: string; toolkit: string;
     tool: string; arguments: Json; files?: AppFiles }, hidden: string[]): Promise<unknown> {
     if (!safeToolSlug(input.tool)) throw new Error('Invalid app tool');
+    if (input.toolkit === 'youtube' && input.tool === YOUTUBE_BROKEN_UPLOAD_TOOL)
+      throw new Error(`${YOUTUBE_BROKEN_UPLOAD_TOOL} does not deliver the video file; ` +
+        `use ${YOUTUBE_UPLOAD_TOOL} instead`);
     const files = input.files ?? new Map<unknown, never>();
     if (fileReferences(input.arguments).some((reference) => !files.has(reference)))
       throw new Error('Room files are unavailable for app tools');

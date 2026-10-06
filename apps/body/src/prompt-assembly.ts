@@ -111,6 +111,12 @@ export interface SessionPromptContext {
    * command. Undefined means no.
    */
   readonly cornerPrepareScript?: boolean;
+  /**
+   * True while a human hold stands on this corner. A held corner must not be
+   * told to commit, push or open a pull request, the same as one whose brief
+   * forbids repository work.
+   */
+  readonly repositoryHeld?: boolean;
   /** A no-code corner's requester, tagged once in its reply. */
   readonly requesterHandle?: string;
   readonly agentMayUpgradeCorner?: boolean;
@@ -156,19 +162,33 @@ The server merge gate is the authority: pr_checks_status reports mergeAllowed tr
 export function cornerHasRepositoryWork(brief?: CornerBrief): boolean {
   if (!brief) return true;
   if (brief.repositoryWork !== undefined) return brief.repositoryWork;
-  const nonGoals = brief.spec.match(/^## Non-goals\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/mi)?.[1] ?? '';
-  const prohibition = /^(?:repository edits?|pull requests?|(?:edit|modify|change) (?:the )?repository)[.!;]*$/i;
-  for (const line of nonGoals.split('\n')) {
-    const bullet = /^\s*[-*]\s+/.test(line);
-    const clause = line.trim().replace(/^[-*]\s+/, '');
-    const negative = /^(?:no|never|do not|forbid(?:s|den)?)\s+/i;
-    if (!bullet && !negative.test(clause)) continue;
-    const items = clause.replace(negative, '').split(/,\s*|\s+(?:and|or)\s+/i);
-    if (items.some((item) => prohibition.test(item.trim()))) return false;
+  const nonGoalsSections = [
+    ...brief.spec.matchAll(/^## (?:Non-goals|Not doing)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/gim),
+  ].map((match) => match[1] ?? '');
+  const prohibition =
+    /^(?:repository edits?|repository changes?|pull requests?|(?:edit|modify|change) (?:the )?(?:repository|repo|code)|push(?:es)?|commit(?:s)?|merge(?: (?:the )?(?:code|repository|repo|changes?|work|commits?|pushes?))?)[.!;]*$/i;
+  for (const nonGoals of nonGoalsSections) {
+    for (const line of nonGoals.split('\n')) {
+      const bullet = /^\s*[-*]\s+/.test(line);
+      const clause = line.trim().replace(/^[-*]\s+/, '');
+      const negative = /^(?:no|never|do not|forbid(?:s|den)?)\s+/i;
+      if (!bullet && !negative.test(clause)) continue;
+      const items = clause.replace(negative, '').split(/,\s*|\s+(?:and|or)\s+/i);
+      if (items.some((item) => prohibition.test(item.trim()))) return false;
+    }
   }
   const assigned = brief.spec.match(/^## Assigned files\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/mi)?.[1];
   if (assigned !== undefined && (!assigned.trim() || /^(?:\s*[-*]?\s*)(?:\(?none\)?|no assigned files)\b/i.test(assigned))) return false;
   return true;
+}
+
+/**
+ * Whether a corner may publish repository work: the brief assigns repository
+ * work and no human hold stands. A hold suppresses every commit, push and pull
+ * request instruction, exactly as a brief that forbids repository changes does.
+ */
+export function cornerPublishesRepositoryWork(brief?: CornerBrief, held?: boolean): boolean {
+  return cornerHasRepositoryWork(brief) && held !== true;
 }
 
 export const CORNER_RUNTIME_AUTHOR_CONTRACT = `The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
@@ -506,10 +526,10 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 900,
     layer: 'surface',
     surfaces: ['code-corner', 'review-corner'],
-    render: ({ worktree, surface, githubCli, brief }) =>
+    render: ({ worktree, surface, githubCli, brief, repositoryHeld }) =>
       [
         `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
-        surface !== 'code-corner' || !cornerHasRepositoryWork(brief)
+        surface !== 'code-corner' || !cornerPublishesRepositoryWork(brief, repositoryHeld)
           ? ''
           : githubCli === 'rest'
             ? `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push. Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
@@ -547,7 +567,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 2_600,
     layer: 'surface',
     surfaces: ['code-corner'],
-    render: ({ brief }) => cornerHasRepositoryWork(brief) ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
+    render: ({ brief, repositoryHeld }) => cornerPublishesRepositoryWork(brief, repositoryHeld) ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
   },
   {
     id: 'corner.merge',
@@ -556,7 +576,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 520,
     layer: 'surface',
     surfaces: ['code-corner'],
-    when: ({ brief }) => cornerHasRepositoryWork(brief),
+    when: ({ brief, repositoryHeld }) => cornerPublishesRepositoryWork(brief, repositoryHeld),
     render: ({ yoloMode, reviewerHandle, selfReviewer }) =>
       (selfReviewer
         ? cornerSelfReviewerInstruction({ isReviewer: true, openedByAgent: true })!
@@ -570,7 +590,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 900,
     layer: 'surface',
     surfaces: ['code-corner'],
-    when: ({ brief }) => cornerHasRepositoryWork(brief),
+    when: ({ brief, repositoryHeld }) => cornerPublishesRepositoryWork(brief, repositoryHeld),
     render: () =>
       'When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never schedule polls of pr_checks_status or the merge gate; the server wakes you when it changes.',
   },

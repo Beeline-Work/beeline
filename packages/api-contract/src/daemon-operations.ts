@@ -826,6 +826,8 @@ export type CornerRestoreResult = {
   readonly closeRequested: boolean;
   /** The corner's current lane, after any `upgradeCornerLane`. A restarted helper must not cut a worktree for `no_code`. */
   readonly lane: CornerLane;
+  /** True while a human hold stands on this corner; a held corner publishes nothing. */
+  readonly held?: boolean;
   /** The human who commissioned the corner, as a bare handle. Who a no-code corner reports delivery to. */
   readonly requesterHandle?: string;
   /** Server-indexed GitHub facts retained across a helper restart. */

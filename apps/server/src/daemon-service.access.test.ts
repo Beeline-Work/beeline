@@ -34,6 +34,23 @@ describe('daemon room access', () => {
     expect(query.mock.calls.filter(([sql]) => sql.includes('FROM memberships WHERE room_id=$1')))
       .toHaveLength(1);
   });
+  it('reports an active human hold on the restore state', async () => {
+    const query = vi.fn(async <Row>(sql: string): Promise<QueryResult<Row>> => {
+      if (sql.includes('FROM memberships WHERE room_id=$1'))
+        return { rows: [{ corner_reviewer: false, is_corner: true }] as Row[], rowCount: 1 };
+      if (sql.includes('FROM corner_merge_holds WHERE corner_id=$1'))
+        return {
+          rows: [{ id: 'hold-1', actorId: 'a'.repeat(64), standing: 'owner', setAt: 'now' }] as Row[],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    const daemon = new DaemonService({ query } as unknown as SqlDatabase, new LiveHub());
+
+    await expect(
+      daemon.execute('getCornerRestoreState', { cornerId: ROOM }, AGENT),
+    ).resolves.toMatchObject({ held: true });
+  });
   it('denies a malformed Room id before the UUID access query', async () => {
     const query = vi.fn(async () => {
       throw Object.assign(new Error('invalid input syntax for type uuid'), { code: '22P02' });

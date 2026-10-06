@@ -527,6 +527,8 @@ export class MonolithCornerTurnLoop {
   private sessionSurface: PromptSurface = 'code-corner';
   private sessionPromptContext?: SessionPromptContext;
   private repositoryWork = true;
+  /** A human hold suppresses every publish prompt for this corner. */
+  private repositoryHeld = false;
   /** Whether this corner's gh launcher uses a host binary or the REST fallback. */
   private cornerGitHubCli: CornerGitHubCli = 'host';
   private busy = false;
@@ -767,6 +769,7 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
       repositoryWork: cornerHasRepositoryWork(restored.brief),
+      repositoryHeld: restored.held === true,
       cornerPrepareScript,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
@@ -858,6 +861,7 @@ export class MonolithCornerTurnLoop {
         ? 'review-corner'
         : 'code-corner';
     this.repositoryWork = cornerHasRepositoryWork(restored.brief);
+    this.repositoryHeld = restored.held === true;
     const cornerPrepareScript = await hasCornerPrepareScript(this.options.worktreePath);
     this.sessionPromptContext = {
       brief: restored.brief,
@@ -867,6 +871,7 @@ export class MonolithCornerTurnLoop {
       selfReviewer: Boolean(selfReviewerInstruction),
       yoloMode: configuration.yoloMode,
       cornerPrepareScript,
+      repositoryHeld: this.repositoryHeld,
     };
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection = {
@@ -1100,6 +1105,7 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
       repositoryWork: cornerHasRepositoryWork(restored.brief),
+      repositoryHeld: restored.held === true,
       cornerPrepareScript,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
@@ -1534,6 +1540,7 @@ export class MonolithCornerTurnLoop {
                 );
               }
               let repositoryWork = cornerHasRepositoryWork(restored.brief);
+              let repositoryHeld = restored.held === true;
               let assignedBrief = restored.brief;
               const taskDelivered: DeliveredAttachment[] =
                 this.attachmentDir && attachments.length
@@ -1636,11 +1643,12 @@ export class MonolithCornerTurnLoop {
                   await deliverBrief();
                 }
                 repositoryWork = cornerHasRepositoryWork(assignedBrief);
+                repositoryHeld = restored.held === true;
                 if (this.repositoryWork !== repositoryWork) {
                   await this.discardSession();
                   await trace.measure('activation', () => this.activate(trace));
                 }
-                if (followup === CORNER_DELIVERY_NUDGE && !repositoryWork)
+                if (followup === CORNER_DELIVERY_NUDGE && !(repositoryWork && !repositoryHeld))
                   followup = 'Deliver files with post_artifact; answer plain chat questions directly.';
                 if (followup && !assignedBrief) return followup;
                 const briefContext = {
@@ -2042,8 +2050,9 @@ export class MonolithCornerTurnLoop {
               // work belongs to the objective and whether to retain or dispose
               // of it; the daemon never rewrites the worktree after a turn.
               const checksTurn = isCornerChecksTurn(trigger, restates);
+              const mayPublish = repositoryWork && !repositoryHeld;
               const deliveryState =
-                !checksTurn && repositoryWork && this.options.repository
+                !checksTurn && mayPublish && this.options.repository
                   ? await cornerUndeliveredRepositoryState(
                       this.options.worktreePath,
                       this.options.repository.featureBranch,
@@ -2074,7 +2083,7 @@ export class MonolithCornerTurnLoop {
                   (checksTurn &&
                     (this.reviewerInstructionInput
                       ? reviewerSecondPass
-                      : repositoryWork && this.yoloMode &&
+                      : repositoryWork && !repositoryHeld && this.yoloMode &&
                         !result.toolCalls.some(
                           (call) =>
                             /(?:^|[._:/-])pr_checks_status$/i.test(call.title ?? '') &&

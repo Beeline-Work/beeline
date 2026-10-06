@@ -492,8 +492,8 @@ describe('monolith integration', () => {
       const create = async (title: string) =>
         ((await phone.execute('createHumanCorner', { roomId: ROOM, title }, HUMAN)) as { id: string })
           .id;
-      const cornerId = await create('Unbriefed work');
-      const unrelated = await create('Other work');
+      const cornerId = await create('Unbriefed-work');
+      const unrelated = await create('Other-work');
       const approvals = new Map<string, string>();
       for (const roomId of [ROOM, cornerId, unrelated]) {
         const messageId = createHash('sha256').update(roomId).digest('hex');

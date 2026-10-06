@@ -73,7 +73,6 @@ function lifecycleItem(message: SystemLineMessage): LifecycleEvent | undefined {
         ...(state ? { state } : {}),
         kindLine: prNumber ? `corner · PR #${prNumber}` : 'corner',
         kind: 'corner',
-        ...(fact.pullRequest?.url ? { url: fact.pullRequest.url } : {}),
         cornerId: fact.cornerId,
         actor: message.authorIdentity
           ? (message.authorIdentity.handle ?? message.authorIdentity.name)
@@ -186,7 +185,7 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
     }
     run.ids.push(message.id);
     const matches = run.cells.filter((cell) => lifecycle.keys.some((key) => cell.keys.has(key)));
-    const { state, ...item } = lifecycle.item;
+    const { state, url: eventUrl, ...item } = lifecycle.item;
     if (matches.length || state) {
       // Ids join the run in order, so the earliest cell keeps a stable accordion key.
       const first = matches.length
@@ -203,7 +202,10 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
       const keepTitle = titled && titled.titleRank > lifecycle.titleRank;
       const cornerId = item.cornerId ?? matches.find((cell) => cell.item.cornerId)?.item.cornerId;
       const prNumber = lifecycle.prNumber ?? matches.find((cell) => cell.prNumber)?.prNumber;
-      const url = item.url ?? matches.find((cell) => cell.item.url)?.item.url;
+      // A corner cell links to its corner, not to the PR it absorbed.
+      const url = cornerId
+        ? undefined
+        : (eventUrl ?? matches.find((cell) => cell.item.url)?.item.url);
       const actor = item.actor || matches.find((cell) => cell.item.actor)?.item.actor || '';
       const merged: Cell = {
         keys: new Set([...matches.flatMap((cell) => [...cell.keys]), ...lifecycle.keys]),

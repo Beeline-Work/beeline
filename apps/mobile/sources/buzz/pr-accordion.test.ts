@@ -250,6 +250,7 @@ describe('corner and issue lifecycle stacking', () => {
       cornerId: 'corner-a',
       updatedBy: '5',
     });
+    expect(run.items[1]).not.toHaveProperty('url');
   });
 
   it('never joins a corner to a same-numbered PR in another repository', () => {

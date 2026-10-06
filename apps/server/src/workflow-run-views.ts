@@ -10,7 +10,7 @@ import type {
   WorkflowRunStepView,
   WorkflowRunSummaryView,
 } from '@beeline/api-contract/phone';
-import { workflowRunStatus, workflowStepDisplayStatus } from '@beeline/api-contract/phone';
+import { workflowStepDisplayStatus } from '@beeline/api-contract/phone';
 import { isAgentIdentityReference } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
@@ -45,7 +45,7 @@ type RunHeadRow = {
   workflow_slug: string;
   workflow_version: number;
   to_state: string;
-  status: WorkflowRunStatus | null;
+  run_status: WorkflowRunStatus;
   from_state: string | null;
   author_id: string;
   role_bindings: Record<string, string> | null;
@@ -66,7 +66,8 @@ type RunHead = {
   /** Its contract: the pinned `slug@version`. */
   key: string;
   state: string;
-  status?: WorkflowRunStatus;
+  /** Saved on the start card whenever the run moves. */
+  status: WorkflowRunStatus;
   /** The state the newest card left, when it is a handoff rather than the start. */
   fromState?: string;
   /** Author of the newest card. */
@@ -105,7 +106,7 @@ async function loadRunHeads(
          SELECT message.id,message.room_id,message.created_at,message.card_type,
                 message.card->>'runId' run_id,message.card->>'workflowSlug' workflow_slug,
                 COALESCE((message.card->>'workflowVersion')::int,1) workflow_version,
-                message.card->>'toState' to_state,message.card->>'fromState' from_state,message.card->>'status' status,
+                message.card->>'toState' to_state,message.card->>'fromState' from_state,
                 message.author_id,message.card->'roleBindings' role_bindings,
                 (message.card->>'seq')::int seq
          FROM messages message
@@ -120,7 +121,7 @@ async function loadRunHeads(
        SELECT DISTINCT ON (cards.room_id,cards.run_id)
               cards.run_id,cards.room_id,cards.card_type,scope.name room_name,scope.parent_id,
               scope.workspace_id,cards.workflow_slug,
-              cards.workflow_version,cards.to_state,cards.from_state,cards.author_id,cards.status,
+              cards.workflow_version,cards.to_state,cards.from_state,cards.author_id,start.card->>'runStatus' run_status,
               cards.role_bindings,started.started_at,cards.created_at updated_at,
               jsonb_build_object('id',starter.id,'name',starter.name,'kind',starter.kind) started_by,
               start.card->>'startKind' start_kind
@@ -145,7 +146,7 @@ async function loadRunHeads(
       version: row.workflow_version,
       key: `${row.workflow_slug}@${row.workflow_version}`,
       state: row.to_state,
-      ...(row.status ? { status: row.status } : {}),
+      status: row.run_status,
       ...(row.from_state ? { fromState: row.from_state } : {}),
       authorId: row.author_id,
       roleBindings: row.role_bindings ?? {},
@@ -250,7 +251,7 @@ function stateRole(contract: WorkflowReadContract, state: string): string | unde
 function holderIdentityId(head: RunHead, contract: WorkflowReadContract): string | undefined {
   const current = stateRole(contract, head.state);
   if (current) return boundIdentityId(head.roleBindings[current]);
-  if (workflowRunStatus(contract, head.state, head.status) === 'live') return undefined;
+  if (head.status === 'live') return undefined;
   const left = head.fromState ? stateRole(contract, head.fromState) : undefined;
   const leftHolder = left ? boundIdentityId(head.roleBindings[left]) : undefined;
   if (leftHolder) return leftHolder;
@@ -263,7 +264,7 @@ function summarize(
   actors: ReadonlyMap<string, WorkflowActorView>,
   viewer: Pick<WorkflowActorView, 'id' | 'kind'>,
 ): WorkflowRunSummaryView {
-  const status = workflowRunStatus(contract, head.state, head.status);
+  const { status } = head;
   const holderId = holderIdentityId(head, contract);
   const holder = holderId ? actors.get(holderId) : undefined;
   const isGate = contract.handoffs[head.state]?.kind === 'gate';
@@ -333,7 +334,7 @@ export async function listRoomWorkflowRuns(
   const workspaceId = heads[0]!.workspaceId;
   const contracts = await loadContracts(db, workspaceId, heads);
   const readable = heads.filter((head) => contracts.has(head.key));
-  const isLive = (head: RunHead) => workflowRunStatus(contracts.get(head.key)!, head.state, head.status) === 'live';
+  const isLive = (head: RunHead) => head.status === 'live';
   const newest = new Map<string, RunHead>();
   for (const head of readable) {
     const scopeKey = `${head.roomId}:${head.slug}`;
@@ -627,7 +628,7 @@ export async function readWorkflowRun(
     const holder = actors.get(boundIdentityId(binding) ?? '');
     if (holder) roleHolders[role] = holder;
   }
-  const status = workflowRunStatus(contract, head.state, head.status);
+  const { status } = head;
   const history: WorkflowRunStepView[] = visits.map((visit, index) => {
     const { card } = visit;
     const next = visits[index + 1]?.card;

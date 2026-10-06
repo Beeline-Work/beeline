@@ -432,6 +432,9 @@ export function workflowContractError(value: unknown, saved = false): string | n
       if (Object.hasOwn(state, 'roleBinding'))
         return `handoffs.${name}: roleBinding is corner-only and cannot be saved in a workflow`;
       if (!state.does?.trim()) return `handoffs.${name}: does is required and must be nonempty`;
+      // Only a person's cancel or a corner close abandons a run; an author's ending succeeds or fails.
+      if (state.kind === 'terminal' && state.status === 'abandoned')
+        return `handoffs.${name}: a saved workflow's ending must be done or failed`;
       if ('on' in state && Object.hasOwn(state.on, WORKFLOW_BLOCKED_OUTCOME))
         return `handoffs.${name}: "${WORKFLOW_BLOCKED_OUTCOME}" is built in; name this outcome something else`;
       if (state.kind === undefined && state.timeoutSeconds === undefined)

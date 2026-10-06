@@ -64,9 +64,9 @@ describe('workflowRunLine execution history', () => {
     const history = [{ toState: 'notify', at: 100 },
       { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 112 },
       { fromState: 'pull', outcome: 'nothing_new', toState: 'done', at: 212 }];
-    expect(rowsOf(workflowRunLine(feedbackTriage, history))).toEqual([
+    expect(rowsOf(workflowRunLine(feedbackTriage, history, 'done'))).toEqual([
       ['notify', 'done'], ['pull', 'done'], ['done', 'done']]);
-    expect(workflowRunLine(feedbackTriage)).toEqual([]);
+    expect(workflowRunLine(feedbackTriage, [], 'live')).toEqual([]);
   });
   it('preserves separate repeated visits, output, actors, and stable finished durations', () => {
     const history = [{ visitId: 'one', toState: 'pull', at: 100,
@@ -74,7 +74,7 @@ describe('workflowRunLine execution history', () => {
       { visitId: 'two', fromState: 'pull', outcome: 'ranked', toState: 'approve', actor: candy, at: 112 },
       { visitId: 'three', fromState: 'approve', outcome: 'dispatch', toState: 'dispatch', at: 212,
         outputTurns: ['turn-three'], liveOutput: 'Newest chunk' }];
-    const line = workflowRunLine(feedbackTriage, history);
+    const line = workflowRunLine(feedbackTriage, history, 'live');
     const reached = line.slice(0, 3);
     expect(rowsOf(reached)).toEqual([['pull', 'done'], ['approve', 'done'], ['dispatch', 'current']]);
     expect(reached.map((step) => step.visitId)).toEqual(['one', 'two', 'three']);
@@ -87,7 +87,7 @@ describe('workflowRunLine execution history', () => {
     expect(stepSeconds(reached[2]!, 500)).toBe(288);
   });
   it('predicts the rest of the path from the current state, stopping at the first predicted terminal', () => {
-    const line = workflowRunLine(feedbackTriage, [{ toState: 'notify', at: 100 }]);
+    const line = workflowRunLine(feedbackTriage, [{ toState: 'notify', at: 100 }], 'live');
     expect(rowsOf(line)).toEqual([
       ['notify', 'current'], ['pull', 'pending'], ['approve', 'pending'],
       ['dispatch', 'pending'], ['done', 'pending'],
@@ -96,7 +96,7 @@ describe('workflowRunLine execution history', () => {
     // A terminal run has nothing left to predict.
     const ended = workflowRunLine(feedbackTriage, [{ toState: 'notify', at: 100 },
       { fromState: 'notify', outcome: 'notified', toState: 'pull', at: 110 },
-      { fromState: 'pull', outcome: 'nothing_new', toState: 'done', at: 120 }]);
+      { fromState: 'pull', outcome: 'nothing_new', toState: 'done', at: 120 }], 'done');
     expect(rowsOf(ended)).toEqual([['notify', 'done'], ['pull', 'done'], ['done', 'done']]);
   });
   it('keeps gate records and opened corners on their own visit', () => {
@@ -105,7 +105,7 @@ describe('workflowRunLine execution history', () => {
     const line = workflowRunLine(feedbackTriage, [
       { toState: 'approve', at: 100, gate },
       { fromState: 'approve', outcome: 'dispatch', toState: 'dispatch', at: 120, openedCorners },
-      { fromState: 'dispatch', outcome: 'dispatched', toState: 'done', at: 200 }]);
+      { fromState: 'dispatch', outcome: 'dispatched', toState: 'done', at: 200 }], 'done');
     expect(line[0]!.visits[0]!.gate).toBe(gate);
     expect(line[1]!.visits[0]!.openedCorners).toBe(openedCorners);
     expect(line[2]!.visits[0]!.gate).toBeUndefined();
@@ -113,7 +113,7 @@ describe('workflowRunLine execution history', () => {
   });
   it('keeps a cancellation exit stable without adding a second visit', () => {
     const line = workflowRunLine(feedbackTriage, [{ toState: 'pull', at: 100 },
-      { fromState: 'pull', toState: 'pull', status: 'abandoned', at: 120 }]);
+      { fromState: 'pull', toState: 'pull', status: 'abandoned', at: 120 }], 'abandoned');
     expect(rowsOf(line)).toEqual([['pull', 'done']]);
     expect(stepSeconds(line[0]!, 300)).toBe(20);
   });

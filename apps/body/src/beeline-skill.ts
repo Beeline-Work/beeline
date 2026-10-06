@@ -115,9 +115,9 @@ Follow these steps in order. Do not skip or reorder them.
 
 ## 2. P0 - OUTLINE FULFILLED, DEMONSTRATED
 
-Read the server-assigned brief and its current revision, including every required file. Quote the approval with its message ID and approver before considering the short objective. The spec's outline (user stories, non-goals, risks) is the scope, and the approval quote is the human's own words: it wins any conflict with the spec. The short objective is navigation-only text and the PR description cannot add, remove, or narrow scope. A revision with no recorded approval is reviewed against its spec alone. If a required file is unavailable, or the revision changes during review, refuse approval and describe what is missing. A requirement may become out of scope only through a new human-authorized brief revision; reviewer discretion, implementation difficulty, and silence never remove it. A passing narrow test does not prove a broader requirement. Review a deliberate human choice as written, even if it is unusual.
+Read the server-assigned brief and its current revision, including every required file. Quote the approval with its message ID and approver before considering the short objective. The spec's outline (user stories, acceptance criteria, non-goals, risks) is the scope, and the approval quote is the human's own words: it wins any conflict with the spec. The short objective is navigation-only text and the PR description cannot add, remove, or narrow scope. A revision with no recorded approval is reviewed against its spec alone. If a required file is unavailable, or the revision changes during review, refuse approval and describe what is missing. A requirement may become out of scope only through a new human-authorized brief revision; reviewer discretion, implementation difficulty, and silence never remove it. A passing narrow test does not prove a broader requirement. Review a deliberate human choice as written, even if it is unusual.
 
-Before general correctness, produce an outline ledger in spec order: list every \`## User stories\` line exactly once as met, unmet, unverified, or out of scope, followed by concrete evidence - no stories to list is a FAIL, sent back to the author to write the outline; confirm nothing under \`## Non-goals\` was done; confirm every \`## Risks\` line was addressed or explicitly accepted with a stated reason. For a frontend change, open the rendered screens and compare them against the attached mock, noting every visible deviation. Any missing, unmet, unverified story, done non-goal, unaddressed risk, or unreviewed mock mismatch blocks PASS. Out of scope is valid only when the current revision itself records the human-authorized removal.
+Before general correctness, produce an outline ledger in spec order: list every \`## User stories\` and \`## Acceptance criteria\` line exactly once as met, unmet, unverified, or out of scope, followed by concrete evidence (for a criterion, the named test run against the PR head) - no stories to list is a FAIL, sent back to the author to write the outline; confirm nothing under \`## Non-goals\` was done; confirm every \`## Risks\` line was addressed or explicitly accepted with a stated reason. For a frontend change, open the rendered screens and compare them against the attached mock, noting every visible deviation. Any missing, unmet, unverified story or acceptance criterion, done non-goal, unaddressed risk, or unreviewed mock mismatch blocks PASS. Out of scope is valid only when the current revision itself records the human-authorized removal.
 
 Before judging the implementation, independently repeat the two judgment legs from request triage:
 
@@ -190,7 +190,7 @@ When the diff touches UI and the repository has a DESIGN.md, check every changed
 \`how Y was demonstrated (or FAIL):\`
 \`commands run + results:\`
 \`brief revision:\`
-\`outline ledger (every user story, non-goal and risk + status + evidence; mock-vs-screen notes for frontend work):\`
+\`outline ledger (every user story, acceptance criterion, non-goal and risk + status + evidence; mock-vs-screen notes for frontend work):\`
 \`validation stages and evidence:\`
 \`product-completeness findings (block):\`
 \`engineering findings (block):\`
@@ -221,6 +221,7 @@ Create an assignment a fresh session can execute without the parent transcript. 
 - \`spec\`: one Markdown doc you write, with these headings:
   - \`## Intent\`: the human's own words, quoted exactly, each with its Room message ID. Never substitute a summary.
   - \`## User stories\`: what this enables, one per line as "a person who does X sees Y". Only stories traceable to the quoted Intent; never import a plan, a teammate's suggestion, or your own idea as a story. Keep unaffected lines as they are across revisions.
+  - \`## Acceptance criteria\`: the requester's own rules from \`## Intent\`, quoted verbatim and numbered, each naming the test (existing or to be written) that fails if the rule is broken anywhere. Criteria are the invariant; stories are examples of it. Write "None beyond the stories." when the request states no rule.
   - \`## Non-goals\`: explicit exclusions.
   - \`## Risks\`: what could go wrong, and for whom.
   - \`## References\`: each reference or mock with what it is and whose call it is; the mock posted here (DESIGN.md, else existing app styles) is the reviewer's acceptance reference, not any other optional or agent-generated mock.

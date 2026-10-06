@@ -164,7 +164,7 @@ export function cornerHasRepositoryWork(brief?: CornerBrief): boolean {
   return true;
 }
 
-export const CORNER_RUNTIME_AUTHOR_CONTRACT = `The current brief's spec — stories, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
+export const CORNER_RUNTIME_AUTHOR_CONTRACT = `The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
 Meet every story; respect every non-goal and risk.
 Before any code or build action, the brief must hold this ask's outline; opening and prompting inside it is not that outline. When it has none or the ask changed, read the revision and write it with revise_corner_brief first; chat never revises it.
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
@@ -173,7 +173,7 @@ Fix only the spec and approval quote. With a reproduction, change only what remo
 Deliver files with post_artifact; answer plain chat questions directly.
 No unrequested features, flags, compatibility shims or refactors.`;
 
-export const CORNER_AUTHOR_CONTRACT = `The current brief's spec — stories, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
+export const CORNER_AUTHOR_CONTRACT = `The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
 Meet every story; respect every non-goal and risk. Use its file manifest. Use record_validation_stage for this revision and head. Do not call a missing stage passed.
 ${VALIDATION_STAGE_OWNERSHIP}
 Before any code or build action, the brief must hold this ask's outline; opening and prompting inside it is not that outline. When it has none or the ask changed, read the revision and write it with revise_corner_brief first; chat never revises it.

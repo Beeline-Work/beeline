@@ -9420,7 +9420,7 @@ describe('monolith integration', () => {
     await database.query(`INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
       VALUES($1,$2,'artifact','f1-artifact','text/plain','Plan',4,$3,'ready',now()+interval '1 day')`, [mediaId, AGENT, 'a'.repeat(64)]);
     expect((await daemonOperation('postAgentAttachment', { roomId: ROOM, requestId, attachment: { url: `${origin}/v1/media/${mediaId}`, name: 'Plan', mimeType: 'text/plain', size: 4 } })).status).toBe(200);
-    const input = { roomId: ROOM, requestId, name: 'Artifact work', objective: 'Apply plan', brief: { content: 'Apply the plan', attachments: [{ objectId: mediaId, purpose: 'Plan', required: true }] } };
+    const input = { roomId: ROOM, requestId, name: 'Artifact-work', objective: 'Apply plan', brief: { content: 'Apply the plan', attachments: [{ objectId: mediaId, purpose: 'Plan', required: true }] } };
     const opened = await daemonOperation('createCorner', input);
     console.info(`Reproduction F1-8: wrong=503; right=200 for pending artifact; observed=${opened.status}`);
     expect(opened.status).toBe(200);
@@ -9518,7 +9518,7 @@ describe('monolith integration', () => {
     const input = {
       roomId: ROOM,
       requestId: 'durable-brief-open',
-      name: 'Render size',
+      name: 'Render-size',
       objective: 'Match the approved dimensions',
       brief,
     };

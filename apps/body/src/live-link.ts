@@ -1,5 +1,8 @@
 import type { IncomingMessage } from 'node:http';
 import WebSocket from 'ws';
+import { isNetworkFailure } from './network-failure.js';
+
+export { isNetworkFailure };
 
 /**
  * The helper machine's one live socket to the server.
@@ -49,38 +52,6 @@ export const LIVE_LINK_TIMING: Readonly<LiveLinkTiming> = Object.freeze({
   keepAliveDelayMs: 5 * 60_000,
   heartbeatTimeoutMs: 75_000,
 });
-
-const NETWORK_ERROR_CODES = new Set([
-  'ECONNRESET',
-  'ECONNREFUSED',
-  'ENOTFOUND',
-  'EAI_AGAIN',
-  'ETIMEDOUT',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  'EPIPE',
-  'ECONNABORTED',
-]);
-
-/**
- * Whether a failure carries a network-class code anywhere in its cause chain
- * (or is an AggregateError made only of such failures). A response the server
- * actually sent is never one of these.
- */
-export function isNetworkFailure(error: unknown): boolean {
-  const seen = new Set<unknown>();
-  const visit = (value: unknown): boolean => {
-    if (!value || typeof value !== 'object' || seen.has(value)) return false;
-    seen.add(value);
-    const code = (value as { code?: unknown }).code;
-    if (typeof code === 'string' && (NETWORK_ERROR_CODES.has(code) || code.startsWith('UND_ERR_')))
-      return true;
-    if (value instanceof AggregateError && value.errors.length > 0 && value.errors.every(visit))
-      return true;
-    return visit((value as { cause?: unknown }).cause);
-  };
-  return visit(error);
-}
 
 /** Retry-After may be seconds or an HTTP date. Clamp malformed/remote values. */
 export function retryAfterMs(value: string | null | undefined): number | undefined {

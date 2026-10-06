@@ -87,6 +87,7 @@ vi.mock('@/components/buzz/Ledger', () => ({
 }));
 vi.mock('@/app/(app)/beeline/chat/RoomMessageVariants', () => ({
   DaemonFactCard: () => null,
+  NotificationLifecycleCard: () => null,
   GitHubEventCard: () => null,
   OrdinaryLedgerMessage: () => null,
 }));

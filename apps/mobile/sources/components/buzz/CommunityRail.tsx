@@ -668,8 +668,13 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textSecondary,
       textAlign: 'center',
     },
+    /* Tracking is drawn after every letter, the last one included, so a
+     * centred label sits one tracking step left of centre. The left padding
+     * of the same width re-centres the glyphs, keeping SETTINGS' first "S"
+     * clear of the iPhone's rounded bottom-left corner. */
     railCommandLabel: {
       ...theme.buzz.type.sectionHead,
+      paddingLeft: theme.buzz.type.sectionHead.letterSpacing,
       fontFamily: groknight.monoSemibold,
       color: groknight.textMuted,
     },

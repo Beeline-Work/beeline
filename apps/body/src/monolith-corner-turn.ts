@@ -54,6 +54,7 @@ import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
+import { hasCornerPrepareScript } from './corner-prepare-script.js';
 import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
@@ -744,7 +745,7 @@ export class MonolithCornerTurnLoop {
   }
 
   private async currentSessionFingerprint(): Promise<string> {
-    const [configuration, roster, grants, restored] = await Promise.all([
+    const [configuration, roster, grants, restored, cornerPrepareScript] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
@@ -752,6 +753,7 @@ export class MonolithCornerTurnLoop {
       this.roster(),
       this.grantedResources(),
       this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId }),
+      hasCornerPrepareScript(this.options.worktreePath),
     ]);
     const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
@@ -765,6 +767,7 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
       repositoryWork: cornerHasRepositoryWork(restored.brief),
+      cornerPrepareScript,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
         [
@@ -855,6 +858,7 @@ export class MonolithCornerTurnLoop {
         ? 'review-corner'
         : 'code-corner';
     this.repositoryWork = cornerHasRepositoryWork(restored.brief);
+    const cornerPrepareScript = await hasCornerPrepareScript(this.options.worktreePath);
     this.sessionPromptContext = {
       brief: restored.brief,
       surface: this.sessionSurface,
@@ -862,6 +866,7 @@ export class MonolithCornerTurnLoop {
       ...(configuration.reviewerHandle ? { reviewerHandle: configuration.reviewerHandle } : {}),
       selfReviewer: Boolean(selfReviewerInstruction),
       yoloMode: configuration.yoloMode,
+      cornerPrepareScript,
     };
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection = {
@@ -1095,6 +1100,7 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
       repositoryWork: cornerHasRepositoryWork(restored.brief),
+      cornerPrepareScript,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
         [
@@ -1528,6 +1534,7 @@ export class MonolithCornerTurnLoop {
                 );
               }
               let repositoryWork = cornerHasRepositoryWork(restored.brief);
+              let repositoryHeld = restored.held === true;
               let assignedBrief = restored.brief;
               const taskDelivered: DeliveredAttachment[] =
                 this.attachmentDir && attachments.length
@@ -1634,7 +1641,7 @@ export class MonolithCornerTurnLoop {
                   await this.discardSession();
                   await trace.measure('activation', () => this.activate(trace));
                 }
-                if (followup === CORNER_DELIVERY_NUDGE && !repositoryWork)
+                if (followup === CORNER_DELIVERY_NUDGE && !(repositoryWork && !repositoryHeld))
                   followup = 'Deliver files with post_artifact; answer plain chat questions directly.';
                 if (followup && !assignedBrief) return followup;
                 const briefContext = {
@@ -2036,8 +2043,9 @@ export class MonolithCornerTurnLoop {
               // work belongs to the objective and whether to retain or dispose
               // of it; the daemon never rewrites the worktree after a turn.
               const checksTurn = isCornerChecksTurn(trigger, restates);
+              const mayPublish = repositoryWork && !repositoryHeld;
               const deliveryState =
-                !checksTurn && repositoryWork && this.options.repository
+                !checksTurn && mayPublish && this.options.repository
                   ? await cornerUndeliveredRepositoryState(
                       this.options.worktreePath,
                       this.options.repository.featureBranch,
@@ -2068,7 +2076,7 @@ export class MonolithCornerTurnLoop {
                   (checksTurn &&
                     (this.reviewerInstructionInput
                       ? reviewerSecondPass
-                      : repositoryWork && this.yoloMode &&
+                      : repositoryWork && !repositoryHeld && this.yoloMode &&
                         !result.toolCalls.some(
                           (call) =>
                             /(?:^|[._:/-])pr_checks_status$/i.test(call.title ?? '') &&

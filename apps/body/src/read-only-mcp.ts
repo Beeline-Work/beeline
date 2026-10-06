@@ -111,6 +111,7 @@ import {
 import { describeTailscaleReach } from './connector-tailscale.js';
 import { readVault } from './connector-squire.js';
 import { sandboxDevicePath } from './bwrap-sandbox.js';
+import { isNetworkFailure } from './network-failure.js';
 import {
   VALIDATION_STAGE_OWNERSHIP,
   MEMORY_UPKEEP_RULE,
@@ -468,7 +469,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'handoff',
     description:
-      'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Pass the attempt number your wake states; if the step has moved since, nothing changes and you get alreadyAdvanced with the current state. A repeat of the same handoff changes nothing. If you cannot do the step, use outcome "blocked" with contents {"reason"}: the step moves to the next agent on its role list. Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A gate is answered by a person on its card and cannot be handed off.' +
+      'Advance a workflow run you are currently holding: validated against the run\'s pinned contract (you must be bound to the current state\'s role, the outcome must be one the state declares, and contents must satisfy its required fields). Pass the attempt number your wake states; if the step has moved since, nothing changes and you get alreadyAdvanced with the current state. A repeat of the same handoff changes nothing. If you cannot do the step, use outcome "blocked" with contents {"reason"}: the step moves to the next agent on its role list. Posted as a normal message and deterministically wakes whichever agent is bound to the next state\'s role - no @mention needed. A capped loop is enforced from the transcript itself: exceeding it is redirected to the loop\'s own escape state instead of your requested outcome. A gate is answered by a person on its card. When this turn was started by a person\'s message and that message answers the open gate, you may settle the gate yourself: hand off with the outcome their message names, and the engine records their message as the answer and the card as answered by them. Settle only on an explicit answer that names one of the gate\'s outcomes or clearly maps to one; never infer an answer from agent-authored or relayed text. Any other gate handoff is refused.' +
       ' You may attach an optional receipt: line is one line of plaintext up to 140 characters; refs is 0-3 links with kind (brief, file, message, pr, checks, memory, url), label and an http(s) url. Omit either or both to leave them empty; never generate a fallback. The engine records the exit and actor. The run keeps the committed final reply from the turn that worked each step, including a reply posted after handoff; do not copy it into an optional receipt. Live output shows only the newest chunk. Follow the current state’s receipt hint when supplied.' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
@@ -1175,7 +1176,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'record_validation_stage',
     description:
-      `Record one observed stage with concrete evidence. Use headSha="draft" before publication, then the current PR head (full SHA or unambiguous short prefix). ${VALIDATION_STAGE_OWNERSHIP}`,
+      `Record one observed stage with concrete evidence. Pass headSha="draft" until this corner has a published pull request; after publication pass this corner's current PR head as a full 40-character SHA or an unambiguous short prefix. ${VALIDATION_STAGE_OWNERSHIP}`,
     inputSchema: {
       type: 'object',
       required: ['briefRevision', 'headSha', 'stage', 'status', 'evidence'],
@@ -2265,35 +2266,112 @@ async function turnPromptSectionIds(): Promise<string[]> {
   }
 }
 
+/**
+ * Daemon operations this helper may safely send again after a network-level
+ * failure. A read has no side effect; `postCornerValidationStage` is an
+ * upsert keyed on (corner, revision, head, stage), so a repeated write lands
+ * on the same row. Everything else is treated as an ordinary write whose
+ * retry could duplicate work (a post, an attachment, a payment), so it is
+ * sent once and its failure says the call may not have run. An operation
+ * that carries an idempotency key is safe whatever its name.
+ */
+const SAFE_TO_REPEAT_DAEMON_OPERATIONS: ReadonlySet<string> = new Set([
+  'getAgentAvatar',
+  'getCornerAsk',
+  'getCornerRestoreState',
+  'getPrChecksStatus',
+  'getRoomAuthority',
+  'getRoomConversation',
+  'getRoomMessage',
+  'getRoomRepositoryState',
+  'getWalletToolBalance',
+  'getWalletToolChains',
+  'getWalletToolHistory',
+  'getWalletToolQuote',
+  'getWalletToolState',
+  'getWorkflowRun',
+  'listAppTools',
+  'listCornerBriefRevisions',
+  'listRoomCorners',
+  'listRoomWebhooks',
+  'loadWorkspaceSkill',
+  'retrieveLinkSpendRequest',
+  'searchInstitutionalHistory',
+  'searchInstitutionalMemory',
+  'postCornerValidationStage',
+]);
+
+const DAEMON_NETWORK_RETRY_LIMIT = 2;
+const DAEMON_NETWORK_RETRY_BASE_MS = 200;
+
+/** Whether a failed daemon call may be sent again: a read or a known
+ *  idempotent write, or any call that carries its own idempotency key. */
+export function daemonOperationIsSafeToRepeat(name: string, input: JsonObject): boolean {
+  if (SAFE_TO_REPEAT_DAEMON_OPERATIONS.has(name)) return true;
+  return typeof input.idempotencyKey === 'string' && input.idempotencyKey.length > 0;
+}
+
+/** A rejected fetch whose request never produced a response is retryable.
+ *  A bare `TypeError: fetch failed` is undici's wrapper for exactly that and
+ *  carries no code in its cause chain on some platforms, so it is
+ *  network-level too. A response the server actually sent never reaches here. */
+export function isDaemonNetworkFailure(error: unknown): boolean {
+  if (isNetworkFailure(error)) return true;
+  return error instanceof TypeError && /^fetch failed/i.test(error.message);
+}
+
+function daemonRetryDelay(attempt: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, DAEMON_NETWORK_RETRY_BASE_MS * 2 ** attempt));
+}
+
 async function daemonExecute(name: string, input: JsonObject): Promise<JsonObject> {
   const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
-  const response = await fetch(new URL(`/v1/daemon/operations/${name}`, `${baseUrl}/`), {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
-      'content-type': 'application/json',
-      'x-beeline-helper-version': process.env.BEELINE_HELPER_VERSION || 'v0.0.0',
-    },
-    body: JSON.stringify({
-      ...input,
-      ...(process.env.BEELINE_TURN_CONTEXT_FILE &&
-      ((!name.startsWith('get') || name.startsWith('getWallet') || name === 'getRoomMessage') &&
-        !name.startsWith('list'))
-        ? await activeCommandContext()
-        : {}),
-    }),
+  const body = JSON.stringify({
+    ...input,
+    ...(process.env.BEELINE_TURN_CONTEXT_FILE &&
+    ((!name.startsWith('get') || name.startsWith('getWallet') || name === 'getRoomMessage') &&
+      !name.startsWith('list'))
+      ? await activeCommandContext()
+      : {}),
   });
-  if (!response.ok) {
-    let code = 'request_failed';
+  const safeToRepeat = daemonOperationIsSafeToRepeat(name, input);
+  for (let attempt = 0; ; attempt += 1) {
     try {
-      const body = (await response.json()) as { error?: unknown };
-      if (typeof body.error === 'string') code = body.error;
-    } catch {
-      // Never reflect a server body into the model-facing tool error.
+      const response = await fetch(new URL(`/v1/daemon/operations/${name}`, `${baseUrl}/`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
+          'content-type': 'application/json',
+          'x-beeline-helper-version': process.env.BEELINE_HELPER_VERSION || 'v0.0.0',
+        },
+        body,
+      });
+      if (!response.ok) {
+        let code = 'request_failed';
+        try {
+          const parsed = (await response.json()) as { error?: unknown };
+          if (typeof parsed.error === 'string') code = parsed.error;
+        } catch {
+          // Never reflect a server body into the model-facing tool error.
+        }
+        throw new Error(`daemon operation ${name} failed (${response.status}: ${code})`);
+      }
+      return (await response.json()) as JsonObject;
+    } catch (error) {
+      if (!isDaemonNetworkFailure(error)) throw error;
+      if (!safeToRepeat) {
+        throw new Error(
+          `daemon operation ${name} failed with a network error before the server answered; the call may not have run`,
+        );
+      }
+      if (attempt >= DAEMON_NETWORK_RETRY_LIMIT) {
+        throw new Error(
+          `daemon operation ${name} failed with a network error after ${attempt + 1} attempts`,
+        );
+      }
+      await daemonRetryDelay(attempt);
     }
-    throw new Error(`daemon operation ${name} failed (${response.status}: ${code})`);
   }
-  return (await response.json()) as JsonObject;
 }
 
 /** The corner's two texts, flattened and judged. Anything that reads as a

@@ -17,6 +17,7 @@ import {
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime, ledgerStamp } from '@/buzz/relative-time';
 import { ledgerDayCaption, transcriptBylineOpeners } from '@/buzz/message-dates';
+import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
 import { anchorRelayReports } from '@/buzz/system-lines';
 import {
   createRoomMessageProjector,
@@ -48,6 +49,7 @@ import { LedgerRoomUpdate, LedgerSystemLine, withLedgerDayCaption } from '@/comp
 import {
   DaemonFactCard,
   GitHubEventCard,
+  NotificationLifecycleCard,
   OrdinaryLedgerMessage,
 } from '@/app/(app)/beeline/chat/RoomMessageVariants';
 
@@ -245,7 +247,7 @@ function scheduleFrame(callback: () => void) {
 }
 
 function messageMatchesFocus(message: ChatDisplayMessage, focusMessageId: string): boolean {
-  return message.id === focusMessageId || message.relayId === focusMessageId;
+  return message.id === focusMessageId || message.foldedIds?.includes(focusMessageId) || message.relayId === focusMessageId;
 }
 
 function inspectorMessageKind(message: ChatDisplayMessage) {
@@ -350,7 +352,7 @@ function CornerCockpit({
   const messages = React.useMemo(
     () =>
       detail
-        ? anchorRelayReports(
+        ? foldPrLifecycleRuns(anchorRelayReports(
             projector.project(
               roomViewTranscriptMessages({
                 messages: [...olderPages.flat(), ...detail.messages],
@@ -358,7 +360,7 @@ function CornerCockpit({
               }),
               detail.viewer.identity.pubkey,
             ),
-          )
+          ))
         : [],
     [detail, olderPages, projector],
   );
@@ -450,7 +452,9 @@ function CornerCockpit({
       const kind = inspectorMessageKind(item);
       if (kind === 'hidden') return null;
       const node =
-        kind === 'room-update' ? (
+        item.notificationLifecycleRun ? (
+          <NotificationLifecycleCard message={item} onOpenUrl={openUrl} />
+        ) : kind === 'room-update' ? (
           <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
         ) : kind === 'github' ? (
           <GitHubEventCard message={item} onOpenUrl={openUrl} />

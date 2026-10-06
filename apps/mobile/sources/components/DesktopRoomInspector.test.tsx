@@ -120,6 +120,7 @@ vi.mock('@/app/(app)/beeline/chat/RoomMessageVariants', async () => {
   const ReactModule = await import('react');
   return {
     DaemonFactCard: (props: any) => ReactModule.createElement('DaemonFactCard', props),
+    NotificationLifecycleCard: () => null,
     GitHubEventCard: (props: any) => ReactModule.createElement('GitHubEventCard', props),
     OrdinaryLedgerMessage: (props: any) =>
       ReactModule.createElement('OrdinaryLedgerMessage', props),

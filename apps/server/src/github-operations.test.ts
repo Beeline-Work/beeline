@@ -1255,6 +1255,15 @@ describe('GitHub phone operations', () => {
         merged: false,
       },
     };
+    // A webhook alone never wakes; the live read confirms the conflict.
+    const readPullRequest = app.readPullRequest as ReturnType<typeof vi.fn>;
+    const confirmDirty = {
+      number: 1,
+      url: dirty.pull_request.html_url,
+      headSha,
+      mergeability: 'dirty' as const,
+    };
+    readPullRequest.mockResolvedValueOnce(confirmDirty);
     await operations.processWebhook('pull_request', dirty);
     expect(
       (
@@ -1264,11 +1273,13 @@ describe('GitHub phone operations', () => {
         )
       ).rows,
     ).toEqual([{ reason: 'corner_merge_conflict' }]);
+    readPullRequest.mockResolvedValueOnce(confirmDirty);
     await operations.processWebhook('pull_request', dirty);
     expect(
       (await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rowCount,
     ).toBe(1);
     await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    readPullRequest.mockResolvedValueOnce(confirmDirty);
     await operations.processWebhook('pull_request', dirty);
     expect(
       (await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rowCount,
@@ -1310,7 +1321,6 @@ describe('GitHub phone operations', () => {
         mergeable_state: 'unknown',
       },
     };
-    const readPullRequest = app.readPullRequest as ReturnType<typeof vi.fn>;
     readPullRequest.mockResolvedValueOnce({
       number: 1,
       url: dirty.pull_request.html_url,
@@ -1622,6 +1632,8 @@ describe('GitHub phone operations', () => {
       mergeability: 'dirty',
     });
     await operations.refreshStaleMergeability(corner);
+    // The same head is already woken; a later live read against a newer base
+    // does not add a second conflict wake for it.
     expect(
       (
         await database.query(
@@ -1630,7 +1642,7 @@ describe('GitHub phone operations', () => {
           [corner],
         )
       ).rowCount,
-    ).toBe(5);
+    ).toBe(4);
   });
   it("reconverges a stored-dirty PR to GitHub's cleared verdict and stops the conflict wake", async () => {
     const { corners, headSha, app } = await checksFixture();
@@ -1718,6 +1730,151 @@ describe('GitHub phone operations', () => {
         )
       ).rowCount,
     ).toBe(1);
+  });
+  it('Reproduction C1-1: a clean PR is never woken from a webhook payload alone', async () => {
+    const { corners, headSha, app } = await checksFixture();
+    const corner = corners[0]!;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`,
+      [corner, REVIEWER],
+    );
+    const readPullRequest = app.readPullRequest as unknown as ReturnType<typeof vi.fn>;
+    readPullRequest.mockResolvedValue({
+      number: 1,
+      url: 'https://github.com/owner/widgets/pull/1',
+      headSha,
+      mergeability: 'clean',
+    });
+    const operations = new GitHubOperations(
+      database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret',
+    );
+    await operations.processWebhook('pull_request', {
+      action: 'synchronize',
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      pull_request: {
+        number: 1,
+        title: 'Fix checks',
+        html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: 'feature/checks-1', sha: headSha },
+        base: { ref: 'main', sha: '4'.repeat(40) },
+        mergeable_state: 'dirty',
+        merged: false,
+      },
+    });
+    const count = (
+      await database.query(
+        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict'`,
+        [corner],
+      )
+    ).rowCount;
+    console.info(
+      `Reproduction C1-1: wrong=1 conflict wake from a stale payload; right=0; observed=${count}`,
+    );
+    expect(count).toBe(0);
+  });
+  it('Reproduction C1-2: a new base does not wake the same head a second time', async () => {
+    const { corners, headSha, app } = await checksFixture();
+    const corner = corners[0]!;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`,
+      [corner, REVIEWER],
+    );
+    await database.query(
+      `UPDATE corner_facts
+       SET lifecycle=jsonb_set(
+         jsonb_set(
+           jsonb_set(lifecycle,'{pr,baseSha}',to_jsonb($2::text)),
+           '{pr,mergeability}','"dirty"'),
+         '{pr,targetBranch}','"main"')
+       WHERE corner_id=$1`,
+      [corner, '4'.repeat(40)],
+    );
+    const appWithHead = app as unknown as { readBranchHead: ReturnType<typeof vi.fn> };
+    appWithHead.readBranchHead = vi.fn(async () => '4'.repeat(40));
+    const readPullRequest = app.readPullRequest as unknown as ReturnType<typeof vi.fn>;
+    readPullRequest.mockResolvedValue({
+      number: 1,
+      url: 'https://github.com/owner/widgets/pull/1',
+      headSha,
+      baseSha: '4'.repeat(40),
+      mergeability: 'dirty',
+    });
+    const operations = new GitHubOperations(
+      database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret',
+    );
+    // The live read confirms the conflict at the current base and wakes once.
+    await operations.refreshStaleMergeability(corner);
+    expect(
+      (
+        await database.query(
+          `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict'`,
+          [corner],
+        )
+      ).rowCount,
+    ).toBe(1);
+    // main advances; GitHub still reports the OLD dirty verdict for the same head.
+    appWithHead.readBranchHead.mockResolvedValue('5'.repeat(40));
+    await operations.processWebhook('push', {
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      ref: 'refs/heads/main',
+      after: '5'.repeat(40),
+    });
+    const count = (
+      await database.query(
+        `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_merge_conflict'`,
+        [corner],
+      )
+    ).rowCount;
+    console.info(`Reproduction C1-2: wrong=2 wakes for one head; right=1; observed=${count}`);
+    expect(count).toBe(1);
+  });
+  it('Reproduction C2-1: a failing check wake names the failing check, not the passing trigger', async () => {
+    const { corners, headSha, app } = await checksFixture();
+    const corner = corners[0]!;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`,
+      [corner, REVIEWER],
+    );
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
+    app.readCommitCheckRollup.mockResolvedValue({
+      state: 'failed',
+      total: 2,
+      failing: ['typecheck'],
+      checks: [
+        { name: 'lint', status: 'passed' },
+        { name: 'typecheck', status: 'failed' },
+      ],
+    });
+    const operations = new GitHubOperations(
+      database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret',
+    );
+    await operations.processWebhook('check_run', {
+      action: 'completed',
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      check_run: {
+        name: 'lint',
+        status: 'completed',
+        conclusion: 'success',
+        head_sha: headSha,
+        check_suite: { head_branch: 'feature/checks-1', head_sha: headSha },
+      },
+    });
+    const command = (
+      await database.query<{ body: string }>(
+        `SELECT message.text body
+         FROM agent_commands command JOIN messages message ON message.id=command.source_message_id
+         WHERE command.room_id=$1 AND command.reason='corner_check'`,
+        [corner],
+      )
+    ).rows[0];
+    console.info(`Reproduction C2-1: failing wake body="${command?.body ?? ''}"`);
+    expect(command?.body).toContain('typecheck');
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
+export { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
 import { Swipeable } from 'react-native-gesture-handler';
 import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';

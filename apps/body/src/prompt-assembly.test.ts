@@ -148,6 +148,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     soul,
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    cornerPrepareScript: true,
     reviewerHandle: 'sol',
     yoloMode: true,
   },
@@ -157,6 +158,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     soul,
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    cornerPrepareScript: true,
     reviewerHandle: 'sol',
     yoloMode: true,
     githubCli: 'rest',
@@ -167,6 +169,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     soul,
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    cornerPrepareScript: true,
     reviewerHandle: 'sol',
   },
   'code-corner-android': {
@@ -175,6 +178,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     soul,
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    cornerPrepareScript: true,
     reviewerHandle: 'sol',
     yoloMode: true,
     android: { emulatorPort: '5600' },
@@ -185,6 +189,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     soul,
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    cornerPrepareScript: true,
     yoloMode: true,
   },
   'code-corner-self-reviewer': {
@@ -192,12 +197,14 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     agentName: 'Sol',
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    cornerPrepareScript: true,
     reviewerHandle: 'sol',
     selfReviewer: true,
   },
   'code-corner-runtime': {
     surface: 'code-corner', agentName: 'Bee', soul, agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    cornerPrepareScript: true,
     reviewerHandle: 'sol', yoloMode: true,
     brief: { id: 'corner', revision: 2, authorId: 'author', sourceRoomId: 'room', attachments: [], repositoryWork: false, spec: '## Intent\nRun the desk\n## Non-goals\nNo repository edits or pull requests' },
   },
@@ -206,6 +213,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     agentName: 'Sol',
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
+    cornerPrepareScript: true,
   },
   'no-code-corner': {
     surface: 'no-code-corner',
@@ -687,6 +695,12 @@ describe('Reproduction runtime-brief-5: delivery capability', () => {
     ['legacy none', { spec: '## Intent\nRun the desk\n## Assigned files\nNone; standalone runtime artifact outside git checkout' }, false],
     ['prohibited edits', { spec: '## Non-goals\nNo repository edits.\n## References\napps/body/src/prompt-assembly.ts' }, false],
     ['prohibited PRs', { spec: '## Non-goals\nNo pull requests.\n## References\napps/body/src/prompt-assembly.ts' }, false],
+    ['prohibited pushes', { spec: '## Non-goals\nNo commits or pushes.' }, false],
+    ['prohibited repository changes', { spec: '## Intent\nRun the release\n## Not doing\nNo repository changes.' }, false],
+    ['prohibited change push merge code', { spec: '## Non-goals\nNever change, push or merge code.' }, false],
+    ['not doing after permissive non-goals', { spec: '## Intent\nFix code\n## Non-goals\nNo interval changes.\n## Not doing\nNo pushes.' }, false],
+    ['merge prohibition keeps repository work', { spec: '## Non-goals\n- Do not merge.' }, true],
+    ['scoped push stays repository work', { repositoryWork: true, spec: '## Non-goals\nNo pushes to main other than this fix.' }, true],
   ])('%s', (_name, fields, coding) => {
     const brief = { ...base, ...fields } as CornerBrief;
     const context = { ...SESSION_VARIANTS['code-corner-reviewed']!, brief };
@@ -706,5 +720,32 @@ describe('Reproduction runtime-brief-5: delivery capability', () => {
     const withAttachment = assembleTurnPrompt({ surface: 'code-corner', brief: { brief, fileLines: ['reference.pdf: /scratch/reference.pdf'] }, task: { body: 'How is the desk doing?' } }).text;
     expect(withAttachment).toContain('reference.pdf');
     if (!coding) expect(withAttachment).toContain('Brief attachments:');
+  });
+});
+
+describe('corner:prepare is gated on the checkout script', () => {
+  const reviewed = SESSION_VARIANTS['code-corner-reviewed']!;
+
+  it('tells a code corner to run the command its checkout defines', () => {
+    const prompt = assembleSessionPrompt({ ...reviewed, cornerPrepareScript: true }).systemPrompt;
+    expect(prompt).toContain('Run npm run corner:prepare first.');
+  });
+
+  it('does not tell a code corner whose checkout lacks the command', () => {
+    const prompt = assembleSessionPrompt({ ...reviewed, cornerPrepareScript: false }).systemPrompt;
+    expect(prompt).not.toContain('corner:prepare');
+  });
+
+  it('stays silent when the checkout was never read', () => {
+    const prompt = assembleSessionPrompt({ ...reviewed, cornerPrepareScript: undefined }).systemPrompt;
+    expect(prompt).not.toContain('corner:prepare');
+  });
+
+  it('stays silent for a runtime-only brief even when the checkout defines the command', () => {
+    const prompt = assembleSessionPrompt({
+      ...SESSION_VARIANTS['code-corner-runtime']!,
+      cornerPrepareScript: true,
+    }).systemPrompt;
+    expect(prompt).not.toContain('corner:prepare');
   });
 });

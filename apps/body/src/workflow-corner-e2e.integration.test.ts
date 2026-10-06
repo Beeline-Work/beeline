@@ -651,3 +651,101 @@ it(
     console.log(`Demonstrated: run ${runId} reached done with no human action.\n${transcript.join('\n')}`);
   },
 );
+
+it(
+  "settles a gate from the person's chat message through the real handoff tool",
+  { timeout: 60_000 },
+  async () => {
+    const scratchRoot = await mkdtemp(join(tmpdir(), 'beeline-workflow-chat-gate-'));
+    roots.push(scratchRoot);
+    const CHAT_GATE = {
+      version: 1,
+      name: 'chat-gate',
+      description: 'Ask a person to approve, then work',
+      summary: 'A person approves and a worker runs.',
+      roles: ['approver', 'worker'],
+      start: 'approve',
+      handoffs: {
+        approve: {
+          does: 'Ask a person to approve.',
+          kind: 'gate',
+          role: 'approver',
+          requires: ['decision'],
+          on: { go: 'work', stop: 'done' },
+          timeoutSeconds: 86400,
+          default: 'stop',
+        },
+        work: {
+          does: 'Do the approved work.',
+          role: 'worker',
+          requires: ['result'],
+          on: { finished: 'done', timeout: 'done' },
+          timeoutSeconds: 3600,
+        },
+        done: { does: 'The work is done.', kind: 'terminal', status: 'done' },
+      },
+    } as const;
+
+    const saver = await seedHumanTag(AUDITOR, '@jellybean save the chat-gate workflow');
+    const saverTurn = await claimTurn(AUDITOR, saver, scratchRoot);
+    await useTool(AUDITOR, saverTurn, 'save_workflow', { contract: CHAT_GATE });
+
+    const starter = await seedHumanTag(AUDITOR, '@jellybean start the chat-gate workflow');
+    const starterTurn = await claimTurn(AUDITOR, starter, scratchRoot);
+    const started = await useTool(AUDITOR, starterTurn, 'start_workflow', {
+      name: 'chat-gate',
+      roleBindings: { approver: 'trey', worker: 'baby' },
+    });
+    const runId = started.runId as string;
+
+    // The start state is a gate: it posts the choice card and wakes nobody.
+    const gate = (
+      await database.query<{ id: string }>(
+        `SELECT choice.id FROM room_choices choice JOIN messages message ON message.id=choice.message_id
+         WHERE choice.room_id=$1 AND message.card->>'runId'=$2 AND choice.status='open'`,
+        [CORNER, runId],
+      )
+    ).rows[0]!;
+    expect(gate?.id).toBeTruthy();
+    expect(await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [CORNER, SCOUT]))
+      .toMatchObject({ rowCount: 0 });
+
+    // The person answers in chat instead of pressing the card.
+    const ask = await seedHumanTag(TRADER, '@trey yes, approved - go ahead');
+    const approverTurn = await claimTurn(TRADER, ask, scratchRoot);
+    const settled = await useTool(TRADER, approverTurn, 'handoff', {
+      runId, outcome: 'go', contents: {},
+    });
+    expect(settled).toEqual({ runId, state: 'work', attempt: 1 });
+
+    const source = (
+      await database.query<{ source_message_id: string }>(
+        `SELECT source_message_id FROM agent_commands WHERE id=$1`,
+        [ask.id],
+      )
+    ).rows[0]!.source_message_id;
+    const choice = (
+      await database.query<{ status: string; voter_id: string }>(
+        `SELECT choice.status,vote.voter_id FROM room_choices choice
+         LEFT JOIN room_choice_votes vote ON vote.choice_id=choice.id WHERE choice.id=$1`,
+        [gate.id],
+      )
+    ).rows[0]!;
+    expect(choice).toEqual({ status: 'answered', voter_id: HUMAN });
+
+    const read = await useTool(AUDITOR, starterTurn, 'get_workflow_run', { runId });
+    expect(read.history).toContainEqual(
+      expect.objectContaining({
+        fromState: 'approve',
+        toState: 'work',
+        outcome: 'go',
+        actorId: HUMAN,
+        receipt: { exit: { gate: 'go', actorId: HUMAN, sourceMessageId: source } },
+      }),
+    );
+
+    const workerCommand = await pendingCommandFor(SCOUT);
+    expect(workerCommand.room_id).toBe(CORNER);
+    console.log(`Demonstrated: run ${runId} left the approve gate on the person's chat message and woke the worker.`);
+  },
+);

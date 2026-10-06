@@ -7442,7 +7442,10 @@ describe('monolith integration', () => {
           text: '@GitHub started a check typecheck',
           systemEvent: expect.objectContaining({ verb: 'started a check' }),
         }),
-        expect.objectContaining({ text: '@GitHub failed a check Beeline CI check suite' }),
+        expect.objectContaining({
+          text: '@GitHub found failing checks on Ship the widget · failing typecheck',
+          systemEvent: expect.objectContaining({ verb: 'found failing checks on' }),
+        }),
         expect.objectContaining({
           text: '@GitHub passed a check Beeline CI check suite',
           systemEvent: expect.objectContaining({
@@ -9796,6 +9799,20 @@ describe('monolith integration', () => {
         },
       ]),
     });
+    const headBeforePr = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-full-head-before-pr',
+      briefRevision: 2,
+      headSha: '3'.repeat(40),
+      stage: 'intent',
+      status: 'passed',
+      evidence: 'Claimed a head that is not published yet.',
+    });
+    expect(headBeforePr.status).not.toBe(200);
+    expect(await headBeforePr.json()).toEqual({
+      error: expect.stringContaining('"draft"'),
+    });
     const falsePass = await daemonOperation('postCornerValidationStage', {
       roomId: cornerId,
       cornerId,
@@ -9876,7 +9893,7 @@ describe('monolith integration', () => {
       status: 'passed',
     });
     // A short SHA naming no head this corner has is refused, and the error
-    // says to pass the full SHA.
+    // names the current head.
     const badShort = await daemonOperation('postCornerValidationStage', {
       roomId: cornerId,
       cornerId,
@@ -9889,7 +9906,23 @@ describe('monolith integration', () => {
     });
     expect(badShort.status).not.toBe(200);
     expect(await badShort.json()).toEqual({
-      error: expect.stringContaining('full 40-character SHA'),
+      error: expect.stringContaining(reviewedHead),
+    });
+    // A full SHA that is not the current head is refused, and the refusal names
+    // the current head.
+    const movedHead = await daemonOperation('postCornerValidationStage', {
+      roomId: cornerId,
+      cornerId,
+      requestId: 'brief-stage-moved-head',
+      briefRevision: 2,
+      headSha: '3'.repeat(40),
+      stage: 'docs',
+      status: 'failed',
+      evidence: 'A different full head.',
+    });
+    expect(movedHead.status).not.toBe(200);
+    expect(await movedHead.json()).toEqual({
+      error: expect.stringContaining(reviewedHead),
     });
     await database.query(
       `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,

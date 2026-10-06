@@ -368,6 +368,11 @@ export type WorkflowGateRecordView = {
   readonly answer?: string;
   readonly answeredBy?: WorkflowActorView;
   readonly answeredAt?: number;
+  /**
+   * The person's message the engine took as the answer, when it settled the
+   * gate from chat instead of the card. Absent for a card answer.
+   */
+  readonly sourceMessageId?: string;
 };
 /** A corner opened by the step's holder while the run was in that step. */
 export type WorkflowOpenedCornerView = {

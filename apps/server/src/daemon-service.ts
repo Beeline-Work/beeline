@@ -1,6 +1,6 @@
 import { RoomWebhooks, webhookPromptBody } from './room-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
-import { setCornerHold } from './corner-holds.js';
+import { activeCornerHolds, setCornerHold } from './corner-holds.js';
 import { renderAgentAvatar } from './agent-avatar.js';
 import {
   authorizeCommandOutput,
@@ -3099,10 +3099,12 @@ export class DaemonService {
         [cornerId],
       )
     ).rows[0];
+    const held = (await activeCornerHolds(this.database, cornerId)).length > 0;
     return {
       cornerId,
       ...(row ? { archived: row.archived, parentRoomId: row.parent_room_id } : {}),
       objective: row?.objective ?? '',
+      ...(held ? { held: true } : {}),
       ...(brief ? { brief } : {}),
       ...(brief
         ? {
@@ -7351,23 +7353,25 @@ export class DaemonService {
       if ((current?.revision ?? 0) !== input.briefRevision)
         throw new Error('validation brief revision changed');
       const currentHead = corner.lifecycle?.pr?.headSha;
-      // A short SHA is accepted only when it unambiguously names the one head
-      // this corner can be recording against; otherwise the error says to pass
-      // the full SHA (or `draft` while no pull request is published).
+      // The accepted value is `draft` until this corner has a published pull
+      // request, and this corner's current head (full SHA, or an unambiguous
+      // short prefix of it) after publication. Every refusal names what is
+      // expected so an implementer never has to guess.
       let headSha: string;
       if (rawHeadSha === 'draft') headSha = 'draft';
-      else if (/^[0-9a-f]{40}$/.test(rawHeadSha)) headSha = rawHeadSha;
+      else if (currentHead && /^[0-9a-f]{40}$/.test(rawHeadSha)) headSha = rawHeadSha;
       else if (currentHead && /^[0-9a-f]{7,39}$/.test(rawHeadSha) && currentHead.startsWith(rawHeadSha))
         headSha = currentHead;
       else
         throw new Error(
           currentHead
-            ? `validation head must be the full 40-character SHA (this corner's head is ${currentHead}) or "draft"`
+            ? `validation head must be this corner's current head (full 40-character SHA or an unambiguous short prefix): ${currentHead}`
             : 'validation head must be "draft" until this corner has a published pull request',
         );
-      if (currentHead && headSha !== currentHead) throw new Error('validation head changed');
-      if (!currentHead && headSha !== 'draft')
-        throw new Error('validation head is not published');
+      if (currentHead && headSha !== currentHead)
+        throw new Error(
+          `validation head changed: this corner's current head is ${currentHead}`,
+        );
       if (input.stage === 'review' && !(await isCornerReviewer(db, input.cornerId, agentId)))
         throw new Error('only the configured reviewer records the review stage');
       if (

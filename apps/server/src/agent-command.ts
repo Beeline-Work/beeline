@@ -1310,7 +1310,6 @@ export async function reconcileCornerMergeBlockers(
     checks: string;
     mergeability: string;
     head_sha: string;
-    base_sha: string | null;
     number: number;
     title: string;
     url: string;
@@ -1319,7 +1318,6 @@ export async function reconcileCornerMergeBlockers(
             fact.lifecycle->>'checks' checks,
             fact.lifecycle->'pr'->>'mergeability' mergeability,
             fact.lifecycle->'pr'->>'headSha' head_sha,
-            fact.lifecycle->'pr'->>'baseSha' base_sha,
             (fact.lifecycle->'pr'->>'number')::integer number,
             fact.lifecycle->'pr'->>'title' title,
             fact.lifecycle->'pr'->>'url' url
@@ -1381,7 +1379,9 @@ export async function reconcileCornerMergeBlockers(
         }
       }
       if (row.mergeability === 'dirty') {
-        const generation = `${row.number}:${row.head_sha}${row.base_sha ? `:${row.base_sha}` : ''}`;
+        // Keyed on the head only, matching mergeConflictKey: a moved base must
+        // not turn one stale 'dirty' verdict into a fresh wake.
+        const generation = `${row.number}:${row.head_sha}`;
         const id = createHash('sha256')
           .update(`beeline:${row.corner_id}:github:merge-conflict:${generation}`)
           .digest('hex');

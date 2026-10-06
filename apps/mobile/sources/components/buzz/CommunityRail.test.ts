@@ -306,6 +306,26 @@ describe('Workspace drawer', () => {
     expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
   });
 
+  it('centres the rail SETTINGS label so its first letter clears the rounded screen corner', () => {
+    const renderer = renderShell();
+    act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
+    const label = renderer.root
+      .findAllByType('Text' as any)
+      .find((node) => node.props.children === 'SETTINGS')!;
+    const style = [label.props.style].flat(Infinity).reduce((all, s) => ({ ...all, ...s }), {});
+
+    // The label is centred in the 72pt rail. iOS draws the tracking after every
+    // letter, the last included, and IBM Plex Mono advances 0.6em per letter.
+    const tracking = style.letterSpacing as number;
+    const paddingLeft = (style.paddingLeft as number | undefined) ?? 0;
+    const box = paddingLeft + 'SETTINGS'.length * (style.fontSize * 0.6 + tracking);
+    const firstLetterInset = (72 - box) / 2 + paddingLeft;
+    const lastLetterInset = (72 - box) / 2 + tracking;
+
+    expect(firstLetterInset).toBe(lastLetterInset);
+    expect(firstLetterInset).toBeGreaterThan(4);
+  });
+
   it('uses the person avatar as the global Settings identity affordance', () => {
     const renderer = renderShell(vi.fn(), vi.fn(), vi.fn(), {
       pubkey: 'person-pubkey',

@@ -288,6 +288,15 @@ describe('phone contract', () => {
         { corner: header, lifecycle, state, initiator: identity },
       ]);
     }
+    // The latest brief revision rides along; anything but a positive integer is dropped.
+    expect(cornersFor({ corner: header, lifecycle, state: 'working', briefRevision: 3 })).toEqual([
+      { corner: header, lifecycle, state: 'working', briefRevision: 3 },
+    ]);
+    for (const briefRevision of [0, -1, 1.5, '2', null]) {
+      expect(cornersFor({ corner: header, lifecycle, state: 'working', briefRevision })).toEqual([
+        { corner: header, lifecycle, state: 'working' },
+      ]);
+    }
     // The retired state words are not the contract: the corner is dropped,
     // and the list it sits in survives.
     for (const state of ['open', 'concluded', 'closed']) {

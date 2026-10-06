@@ -27,6 +27,10 @@ import { openRoomListCorner } from '@/buzz/room-list-new-corner';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 import { Modal } from '@/modal';
 import { archivedCornersByClosure, type ArchivedCornersState } from '@/buzz/archived-corners';
+import { useIsDesktop } from '@/utils/responsive';
+import { liveRoomRuns, useRoomWorkflowRuns } from '@/buzz/use-room-workflow-run';
+import { workflowRunHref } from '@/buzz/workflow-run-copy';
+import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 
 /** Parent-Room hints that change this list: a corner's status, a corner
  *  opened, renamed, or closed, and the server's own resync. */
@@ -43,6 +47,9 @@ export default function BuzzCorners() {
   const creatingRef = useRef(false);
   const [archived, setArchived] = useState<ArchivedCornersState>({ status: 'idle' });
   const schedulerRef = useRef<SurfaceRefreshScheduler<CornerListView> | null>(null);
+  const desktop = useIsDesktop();
+  // Desktop cells name each corner's live workflow; one read covers the Room.
+  const workflows = useRoomWorkflowRuns(desktop && decodedId ? decodedId : undefined);
 
   useEffect(() => {
     if (!decodedId) return;
@@ -130,6 +137,19 @@ export default function BuzzCorners() {
       archived: true,
       ...(before ? { before } : {}),
     });
+  };
+  /** The list knows only that a brief exists; its text comes with the corner's own view. */
+  const openBrief = async (cornerId: string) => {
+    try {
+      const identity = (await loadBuzzIdentity()) as Identity | null;
+      if (!identity) throw new Error('Beeline identity is unavailable');
+      const relayUrl = await getEffectiveRelayUrl();
+      const view = await new RoomViewClient({ baseUrl: relayUrl, identity }).room(cornerId);
+      if (!view.cornerBrief) throw new Error('This corner has no brief yet');
+      openCornerBriefViewer(view.cornerBrief);
+    } catch (reason) {
+      Modal.alert('Could not open the brief', phoneOperationFailureReason(reason));
+    }
   };
   const loadArchived = async () => {
     if (archived.status === 'loading' || archived.status === 'ready') return;
@@ -252,6 +272,10 @@ export default function BuzzCorners() {
           onShowArchived={() => void loadArchived()}
           onMoreArchived={() => void loadMoreArchived()}
           viewerPubkey={surface.viewer.identity.pubkey}
+          desktop={desktop}
+          liveRuns={(cornerId) => liveRoomRuns(cornerId, workflows)}
+          onOpenWorkflow={(run) => router.push(workflowRunHref(run))}
+          onOpenBrief={(item) => void openBrief(item.corner.id)}
           onRefresh={() => {
             setRefreshing(true);
             schedulerRef.current?.force();

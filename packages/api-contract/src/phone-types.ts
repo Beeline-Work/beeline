@@ -1045,6 +1045,8 @@ export type CornerListItem = {
   readonly awaitsViewer?: true;
   readonly agent?: RoomViewIdentity;
   readonly app?: CornerAppBindingView;
+  /** The corner's latest brief revision. Absent when it has no brief. */
+  readonly briefRevision?: number;
   readonly latestMessage?: {
     readonly id: string;
     readonly text: string;

@@ -239,7 +239,7 @@ describe('a Room turn that opens a corner, read back through the server', () => 
       ask: 'fix the widget',
       prompt: async ({ onChunk, onToolCalls, openCorner }) => {
         onChunk(answer, answer, answer);
-        await openCorner('Widget fix', 'Fix the widget end to end');
+        await openCorner('Widget-fix', 'Fix the widget end to end');
         onToolCalls([OPEN_CORNER_CALL]);
         return {
           stopReason: 'end_turn',
@@ -260,7 +260,7 @@ describe('a Room turn that opens a corner, read back through the server', () => 
     const { view } = await runScenario({
       ask: 'take the widget fix away',
       prompt: async ({ onToolCalls, openCorner }) => {
-        await openCorner('Widget fix', 'Fix the widget end to end');
+        await openCorner('Widget-fix', 'Fix the widget end to end');
         onToolCalls([OPEN_CORNER_CALL]);
         return {
           stopReason: 'end_turn',
@@ -284,7 +284,7 @@ describe('a Room turn that opens a corner, read back through the server', () => 
       ask: 'why do the cards go stale',
       prompt: async ({ onChunk, onToolCalls, openCorner }) => {
         onChunk(narration, narration, narration);
-        await openCorner('Stale cards', 'Find why the cards go stale');
+        await openCorner('Stale-cards', 'Find why the cards go stale');
         onToolCalls([OPEN_CORNER_CALL]);
         onChunk(answer, `${narration}\n\n${answer}`, answer);
         await new Promise((resolve) => setImmediate(resolve));

@@ -508,11 +508,11 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     id: 'corner.handover',
     topic: 'corner-handover',
     why: 'An agent asked to hand the corner on opened a duplicate sibling corner instead of tagging the other agent.',
-    budgetBytes: 300,
+    budgetBytes: 360,
     layer: 'surface',
     surfaces: ['code-corner', 'no-code-corner'],
     render: () =>
-      'When a person asks you to hand this corner to another agent, tag that agent in your reply: it moves the implementer role here. Do not open a second corner for a hand-over.',
+      'When a person asks you to hand this corner to another agent, tag in your reply only an agent that person named by handle or display name: it moves the implementer role here. A tag for any other reason does not move the role. Do not open a second corner for a hand-over.',
   },
   {
     id: 'corner.worktree',

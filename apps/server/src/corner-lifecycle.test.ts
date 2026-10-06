@@ -1427,6 +1427,17 @@ describe('a person hands the corner to another agent (the implementer follows th
     expect((await commands(B, cornerId)).some((c) => c.reason === 'agent_tag')).toBe(true);
   });
 
+  it('R1 regression: an agent tag the person never asked for does not move the implementer', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    // The person only asks for a status; they do not name Goosy.
+    await say(cornerId, '@hoots what is the status?');
+    const command = (await commands(A, cornerId)).find((c) => c.reason === 'human_tag')!;
+    await claim(command);
+    await result(command, 'Blocked on the API shape. @goosy can you confirm it?');
+    // The tag asks a peer for input; the implementer stays with Hoots.
+    expect(await workerOf(cornerId)).toBe(A);
+  });
+
   it('an agent-to-agent tag with no person behind it does not move the implementer', async () => {
     const cornerId = await open(undefined, 'owner/widgets');
     // A peer agent's own message wakes Hoots; no person asked for anything.

@@ -8,6 +8,7 @@ let reviewer: string | null, reviewerExists: boolean, reviewerIsAuthor: boolean,
 let held: boolean, isWorkerYolo: boolean, mergeAllowed: boolean, expressMergeOrdered: boolean;
 let reviewerWake: { status: string; detail: string } | undefined;
 let calls: { name: string; input: Record<string, unknown> }[];
+let checkTally: Record<string, unknown>;
 beforeEach(() => {
   for (const [key, value] of Object.entries({
     BEELINE_DAEMON_CORNER_ID: 'corner',
@@ -35,6 +36,7 @@ beforeEach(() => {
     detail: 'The checks-passed transition woke @reviewer.',
   };
   calls = [];
+  checkTally = {};
   vi.stubGlobal('fetch', async (input: URL, init: RequestInit) => {
     const name = new URL(input).pathname.split('/').pop()!;
     calls.push({ name, input: JSON.parse(String(init.body)) });
@@ -48,6 +50,7 @@ beforeEach(() => {
             : name === 'getPrChecksStatus'
               ? {
                   checks,
+                  ...checkTally,
                   pullRequest: url,
                   headSha: 'a'.repeat(40),
                   approvalPending,
@@ -212,6 +215,52 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     const status = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
     expect(status).toMatchObject(expected);
     expect(status).not.toHaveProperty('didHumanSayDontMerge');
+  });
+  it('Reproduction CI-STATUS-1: reports running checks with counts and pending names', async () => {
+    checks = 'pending';
+    checkTally = {
+      checkCount: 35,
+      checkStates: {
+        passed: 33,
+        pending: 2,
+        failed: 0,
+        unlisted: 0,
+        pendingNames: ['SERVER SUITE', 'DESKTOP BUILD (macos-universal)'],
+        failedNames: [],
+      },
+    };
+    const status = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
+    expect(status).toMatchObject({ checks: 'pending', checkCount: 35, checkStates: checkTally.checkStates });
+    expect(status.reason).toBe(
+      '33 of 35 checks passed, 2 pending (SERVER SUITE, DESKTOP BUILD (macos-universal)), 0 failed',
+    );
+  });
+  it('names failed checks and says how many names and contexts are cut short', async () => {
+    checks = 'failed';
+    checkTally = {
+      checkCount: 130,
+      checkStates: {
+        passed: 85,
+        pending: 3,
+        failed: 12,
+        unlisted: 30,
+        pendingNames: ['a', 'b', 'c'],
+        failedNames: ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10'],
+      },
+    };
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 })).reason).toBe(
+      '85 of 130 checks passed, 3 pending (a, b, c), 12 failed (f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, and 2 more); 30 more not listed',
+    );
+  });
+  it('says no check has reported only when the head has no contexts', async () => {
+    checks = 'pending';
+    checkTally = {
+      checkCount: 0,
+      checkStates: { passed: 0, pending: 0, failed: 0, unlisted: 0, pendingNames: [], failedNames: [] },
+    };
+    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 })).reason).toBe(
+      `no checks have reported for head ${'a'.repeat(40)} yet`,
+    );
   });
   it('never opens the gate itself when the server says it is shut', async () => {
     // Every local fact looks green, but only the server's mergeAllowed counts.

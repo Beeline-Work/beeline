@@ -760,6 +760,20 @@ export class GitHubOperations {
       checks,
       recordedChecks: corner.lifecycle.checks,
       checkCount: rollup.total,
+      checkStates: {
+        passed: rollup.checks.filter((check) => check.status === 'passed').length,
+        pending: rollup.checks.filter((check) => check.status === 'pending').length,
+        failed: rollup.checks.filter((check) => check.status === 'failed').length,
+        unlisted: Math.max(0, rollup.total - rollup.checks.length),
+        pendingNames: rollup.checks
+          .filter((check) => check.status === 'pending')
+          .slice(0, 10)
+          .map((check) => check.name),
+        failedNames: rollup.checks
+          .filter((check) => check.status === 'failed')
+          .slice(0, 10)
+          .map((check) => check.name),
+      },
       pullRequest: pr.url,
       headSha: pr.headSha,
       approvalPending,

@@ -2612,6 +2612,28 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
       : typeof pullRequest === 'string'
         ? Number(pullRequest.match(/(?:pull\/)?(\d+)(?:\D*)$/)?.[1]) || lifecycle?.pr?.number
         : lifecycle?.pr?.number;
+  const checkCount = typeof verdict?.checkCount === 'number' ? verdict.checkCount : undefined;
+  const checkStates =
+    verdict?.checkStates && typeof verdict.checkStates === 'object'
+      ? (verdict.checkStates as {
+          passed: number;
+          pending: number;
+          failed: number;
+          unlisted: number;
+          pendingNames: string[];
+          failedNames: string[];
+        })
+      : undefined;
+  const named = (count: number, names: string[]) =>
+    names.length
+      ? ` (${names.join(', ')}${count > names.length ? `, and ${count - names.length} more` : ''})`
+      : '';
+  const tally =
+    checkCount !== undefined && checkStates
+      ? checkCount === 0
+        ? `no checks have reported for head ${headSha ?? 'unknown'} yet`
+        : `${checkStates.passed} of ${checkCount} checks passed, ${checkStates.pending} pending${named(checkStates.pending, checkStates.pendingNames)}, ${checkStates.failed} failed${named(checkStates.failed, checkStates.failedNames)}${checkStates.unlisted ? `; ${checkStates.unlisted} more not listed` : ''}`
+      : undefined;
   const reason =
     checks === 'unknown'
       ? pullRequestNumber
@@ -2620,8 +2642,8 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
       : checks === 'passed'
         ? 'all recorded checks passed'
         : checks === 'failed'
-          ? 'one or more recorded checks failed'
-          : 'recorded checks are still pending';
+          ? (tally ?? 'one or more recorded checks failed')
+          : (tally ?? 'recorded checks are still pending');
   const reviewer = typeof verdict?.reviewer === 'string' ? verdict.reviewer : null;
   const reviewerExists = verdict?.reviewerExists === true;
   const reviewerIsAuthor = verdict?.reviewerIsAuthor === true;
@@ -2642,6 +2664,8 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
   return JSON.stringify({
     checks,
     reason,
+    ...(checkCount !== undefined ? { checkCount } : {}),
+    ...(checkStates ? { checkStates } : {}),
     ...(headSha ? { headSha } : {}),
     held,
     ...(verdict?.holds ? { holds: verdict.holds } : {}),

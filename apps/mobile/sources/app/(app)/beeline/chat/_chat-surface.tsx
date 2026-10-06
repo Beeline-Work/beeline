@@ -5653,7 +5653,13 @@ export function BuzzChatSurface({
       }
 
       if (item.notificationLifecycleRun) {
-        return <NotificationLifecycleCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
+        return (
+          <NotificationLifecycleCard
+            message={item}
+            onOpenCorner={openCorner}
+            onOpenUrl={handleOpenGitHubEvent}
+          />
+        );
       }
 
       if (item.githubEvent) {

@@ -57,6 +57,7 @@ function render() {
           <NotificationLifecycleCard
             key={message.id}
             message={message}
+            onOpenCorner={() => undefined}
             onOpenUrl={(url) => {
               opened = url;
             }}

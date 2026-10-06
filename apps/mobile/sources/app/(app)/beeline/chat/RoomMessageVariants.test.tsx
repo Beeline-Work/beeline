@@ -49,6 +49,7 @@ vi.mock('react-native', async () => {
         setValue: vi.fn((v: number) => {
           state.value = v;
         }),
+        stopAnimation: vi.fn(),
       };
     }),
     timing: vi.fn(() => ({
@@ -170,6 +171,7 @@ vi.mock('@/components/buzz/Ledger', async () => {
 
 import {
   GitHubEventCard,
+  NotificationLifecycleCard,
   DaemonFactCard,
   GrantRequestCard,
   SquireApprovalCard,
@@ -227,6 +229,64 @@ function render(element: React.ReactElement): ReactTestRenderer {
 function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
   return { id: 'message', text: 'hello', isUser: false, timestamp: 1, ...overrides };
 }
+
+describe('NotificationLifecycleCard', () => {
+  it('opens the corner from a stacked corner cell and the PR from a PR cell', () => {
+    const onOpenCorner = vi.fn();
+    const onOpenUrl = vi.fn();
+    const renderer = render(
+      <NotificationLifecycleCard
+        message={message({
+          notificationLifecycleRun: {
+            subline: 'by @sol · 09:41 – 10:28',
+            items: [
+              {
+                id: 'corner',
+                title: 'Duplicate draft settle',
+                state: 'Merged',
+                kindLine: 'corner · PR #1126',
+                kind: 'corner',
+                cornerId: 'corner-1126',
+                actor: 'sol',
+                updatedBy: 'corner',
+              },
+              {
+                id: 'pr',
+                title: 'Change',
+                state: 'PR opened',
+                kindLine: 'PR #1130',
+                kind: 'pull-request',
+                url: 'https://github.com/acme/repo/pull/1130',
+                actor: 'octocat',
+                updatedBy: 'pr',
+              },
+            ],
+          },
+        })}
+        onOpenCorner={onOpenCorner}
+        onOpenUrl={onOpenUrl}
+      />,
+    );
+    expect(JSON.stringify(renderer.toJSON())).toContain('Corner →');
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-cell-corner-corner' }).props.onPress(),
+    );
+    expect(onOpenCorner).toHaveBeenCalledWith('corner-1126');
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-expand-message' }).props.onPress(),
+    );
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-contracted-pr' }).props.onPress(),
+    );
+    expect(
+      renderer.root.findAllByProps({ testID: 'notification-run-cell-corner-pr' }),
+    ).toHaveLength(0);
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-cell-url-pr' }).props.onPress(),
+    );
+    expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/acme/repo/pull/1130');
+  });
+});
 
 describe('Workbench identities', () => {
   it('describes a standing Wallet grant without an end date', () => {

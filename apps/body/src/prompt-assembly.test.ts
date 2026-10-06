@@ -699,6 +699,7 @@ describe('Reproduction runtime-brief-5: delivery capability', () => {
     ['prohibited repository changes', { spec: '## Intent\nRun the release\n## Not doing\nNo repository changes.' }, false],
     ['prohibited change push merge code', { spec: '## Non-goals\nNever change, push or merge code.' }, false],
     ['not doing after permissive non-goals', { spec: '## Intent\nFix code\n## Non-goals\nNo interval changes.\n## Not doing\nNo pushes.' }, false],
+    ['merge prohibition keeps repository work', { spec: '## Non-goals\n- Do not merge.' }, true],
     ['scoped push stays repository work', { repositoryWork: true, spec: '## Non-goals\nNo pushes to main other than this fix.' }, true],
   ])('%s', (_name, fields, coding) => {
     const brief = { ...base, ...fields } as CornerBrief;
@@ -746,31 +747,5 @@ describe('corner:prepare is gated on the checkout script', () => {
       cornerPrepareScript: true,
     }).systemPrompt;
     expect(prompt).not.toContain('corner:prepare');
-  });
-});
-
-describe('a human hold suppresses the publish prompts', () => {
-  const reviewed = SESSION_VARIANTS['code-corner-reviewed']!;
-  const publishRules = [
-    'gh pr create',
-    'Open the pull request with gh',
-    'Once the pull request exists',
-    'record_validation_stage',
-    'Validation stages',
-    '## Reproduced',
-    '## Demonstrated',
-    'pr_checks_status',
-  ];
-
-  it('drops every commit, push and pull request instruction while the hold stands', () => {
-    const { systemPrompt } = assembleSessionPrompt({ ...reviewed, repositoryHeld: true });
-    for (const rule of publishRules) expect(systemPrompt).not.toContain(rule);
-    expect(systemPrompt).toContain('The human approval quote wins any conflict');
-    expect(systemPrompt).toContain('post_artifact');
-  });
-
-  it('keeps the publish instructions when no hold stands', () => {
-    const { systemPrompt } = assembleSessionPrompt({ ...reviewed, repositoryHeld: false });
-    expect(systemPrompt).toContain('Open the pull request with gh');
   });
 });

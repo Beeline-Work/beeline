@@ -527,8 +527,6 @@ export class MonolithCornerTurnLoop {
   private sessionSurface: PromptSurface = 'code-corner';
   private sessionPromptContext?: SessionPromptContext;
   private repositoryWork = true;
-  /** A human hold suppresses every publish prompt for this corner. */
-  private repositoryHeld = false;
   /** Whether this corner's gh launcher uses a host binary or the REST fallback. */
   private cornerGitHubCli: CornerGitHubCli = 'host';
   private busy = false;
@@ -769,7 +767,6 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
       repositoryWork: cornerHasRepositoryWork(restored.brief),
-      repositoryHeld: restored.held === true,
       cornerPrepareScript,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
@@ -861,7 +858,6 @@ export class MonolithCornerTurnLoop {
         ? 'review-corner'
         : 'code-corner';
     this.repositoryWork = cornerHasRepositoryWork(restored.brief);
-    this.repositoryHeld = restored.held === true;
     const cornerPrepareScript = await hasCornerPrepareScript(this.options.worktreePath);
     this.sessionPromptContext = {
       brief: restored.brief,
@@ -871,7 +867,6 @@ export class MonolithCornerTurnLoop {
       selfReviewer: Boolean(selfReviewerInstruction),
       yoloMode: configuration.yoloMode,
       cornerPrepareScript,
-      repositoryHeld: this.repositoryHeld,
     };
     await mkdir(this.options.worktreePath, { recursive: true });
     const selection = {
@@ -1105,7 +1100,6 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       yoloMode: configuration.yoloMode,
       repositoryWork: cornerHasRepositoryWork(restored.brief),
-      repositoryHeld: restored.held === true,
       cornerPrepareScript,
       mcpServers: codegraphFingerprintServers(
         this.options.config,
@@ -1643,7 +1637,6 @@ export class MonolithCornerTurnLoop {
                   await deliverBrief();
                 }
                 repositoryWork = cornerHasRepositoryWork(assignedBrief);
-                repositoryHeld = restored.held === true;
                 if (this.repositoryWork !== repositoryWork) {
                   await this.discardSession();
                   await trace.measure('activation', () => this.activate(trace));

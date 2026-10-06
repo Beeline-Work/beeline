@@ -39,8 +39,6 @@ export interface SessionConfigInput {
   /** Merge authority baked into a corner session's Git workflow prompt. */
   yoloMode?: boolean | undefined;
   repositoryWork?: boolean | undefined;
-  /** Whether a human hold suppresses this corner's publish prompts. */
-  repositoryHeld?: boolean | undefined;
   /** Whether the checkout defines its own `corner:prepare` npm script, baked into the session prompt. */
   cornerPrepareScript?: boolean | undefined;
   /**
@@ -66,7 +64,6 @@ export function sessionConfigFingerprint(input: SessionConfigInput): string {
     mountedMcpSet(input.mcpServers),
   ];
   if (input.repositoryWork !== undefined) fingerprint.push({ repositoryWork: input.repositoryWork });
-  if (input.repositoryHeld !== undefined) fingerprint.push({ repositoryHeld: input.repositoryHeld });
   if (input.cornerPrepareScript !== undefined)
     fingerprint.push({ cornerPrepareScript: input.cornerPrepareScript });
   if (input.reviewerHandle !== undefined) fingerprint.push(input.reviewerHandle);

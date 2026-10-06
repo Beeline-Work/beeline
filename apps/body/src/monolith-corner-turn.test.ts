@@ -988,14 +988,11 @@ describe('corner close-request delivery', () => {
     // dirty-work nudge that would tell it to commit, push and open a PR.
     expect(sessionPrompt).toHaveBeenCalledTimes(1);
     expect(sessionPrompt.mock.calls[0]?.[1]).not.toContain(CORNER_DELIVERY_NUDGE);
-    const delivered =
-      sessionNew.mock.calls[0]?.[0].systemPrompt + '\n' + sessionPrompt.mock.calls[0]?.[1];
-    for (const instruction of [
-      'Open the pull request with gh',
-      'Once the pull request exists',
-      'record_validation_stage',
-    ])
-      expect(delivered).not.toContain(instruction);
+    // The hold only suppresses the nudge: the author contract and the PR
+    // procedure stay, so a person who holds a merge can still receive fixes.
+    const systemPrompt = sessionNew.mock.calls[0]?.[0].systemPrompt ?? '';
+    expect(systemPrompt).toContain(CORNER_AUTHOR_CONTRACT);
+    expect(systemPrompt).toContain('Open the pull request with gh');
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 

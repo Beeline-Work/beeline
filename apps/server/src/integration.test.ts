@@ -6427,10 +6427,10 @@ describe('monolith integration', () => {
     ).toBe(0);
 
     expect(
-      (await operation('updateRoom', { roomId: cornerId, name: 'bright river corner' })).status,
+      (await operation('updateRoom', { roomId: cornerId, name: 'bright-river-corner' })).status,
     ).toBe(204);
     expect((await markerFor(HUMAN))?.daemonFact).toMatchObject({
-      name: 'bright river corner',
+      name: 'bright-river-corner',
       sourceMessageId: sourceId,
     });
 
@@ -7181,7 +7181,7 @@ describe('monolith integration', () => {
           action: 'opened',
           pull_request: {
             number: 42,
-            title: 'Ship-the-widget',
+            title: 'Ship the widget',
             html_url: 'https://github.com/owner/widgets/pull/42',
             head: { ref: 'fm/widget', sha: '0'.repeat(40) },
             base: { ref: 'main' },
@@ -7375,7 +7375,7 @@ describe('monolith integration', () => {
           systemEvent: {
             subject: { kind: 'github', name: '@octocat' },
             verb: 'opened a pull request',
-            object: { text: 'Ship-the-widget', url: 'https://github.com/owner/widgets/pull/42' },
+            object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
           },
         }),
         expect.objectContaining({
@@ -7454,7 +7454,7 @@ describe('monolith integration', () => {
       action: 'synchronize',
       pull_request: {
         number: 42,
-        title: 'Ship-the-widget',
+        title: 'Ship the widget',
         html_url: 'https://github.com/owner/widgets/pull/42',
         head: { ref: 'fm/widget', sha: '1'.repeat(40) },
         base: { ref: 'main' },
@@ -7509,7 +7509,7 @@ describe('monolith integration', () => {
       action: 'closed',
       pull_request: {
         number: 42,
-        title: 'Ship-the-widget',
+        title: 'Ship the widget',
         html_url: 'https://github.com/owner/widgets/pull/42',
         head: { ref: 'fm/widget', sha: '1'.repeat(40) },
         base: { ref: 'main' },
@@ -7614,7 +7614,7 @@ describe('monolith integration', () => {
           subject: { kind: 'github', name: '@owner' },
           verb: 'merged',
           kind: 'merged',
-          object: { text: 'Ship-the-widget', url: 'https://github.com/owner/widgets/pull/42' },
+          object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
         },
         daemonFact: {
           type: 'corner-complete',
@@ -7624,7 +7624,7 @@ describe('monolith integration', () => {
           outcome: 'landed',
           pullRequest: {
             number: 42,
-            title: 'Ship-the-widget',
+            title: 'Ship the widget',
             url: 'https://github.com/owner/widgets/pull/42',
             targetBranch: 'main',
           },
@@ -10882,7 +10882,7 @@ describe('monolith integration', () => {
       const opened = await daemonOperation('createCorner', {
         roomId: ROOM,
         requestId: source.messageId,
-        name: `${lane} work`,
+        name: `${lane}-work`,
         objective: 'Answer this request',
         lane,
         ...(lane === 'no_code' ? {} : { repository: 'owner/widgets', targetBranch: 'main' }),

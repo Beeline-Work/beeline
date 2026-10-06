@@ -39,6 +39,8 @@ export interface SessionConfigInput {
   /** Merge authority baked into a corner session's Git workflow prompt. */
   yoloMode?: boolean | undefined;
   repositoryWork?: boolean | undefined;
+  /** Whether the checkout defines its own `corner:prepare` npm script, baked into the session prompt. */
+  cornerPrepareScript?: boolean | undefined;
   /**
    * Names of imported MCP servers this activation would mount. Order does not
    * matter; the fingerprint stores the sorted unique set.
@@ -62,6 +64,8 @@ export function sessionConfigFingerprint(input: SessionConfigInput): string {
     mountedMcpSet(input.mcpServers),
   ];
   if (input.repositoryWork !== undefined) fingerprint.push({ repositoryWork: input.repositoryWork });
+  if (input.cornerPrepareScript !== undefined)
+    fingerprint.push({ cornerPrepareScript: input.cornerPrepareScript });
   if (input.reviewerHandle !== undefined) fingerprint.push(input.reviewerHandle);
   if (input.devices?.length) fingerprint.push({ devices: [...new Set(input.devices)].sort() });
   return JSON.stringify(fingerprint);

@@ -854,6 +854,148 @@ describe('corner close-request delivery', () => {
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 
+  it('suppresses the delivery nudge while a human hold stands', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-held-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    // A dirty worktree: without the hold this is exactly what triggers the
+    // end-of-turn commit-and-push nudge.
+    await writeFile(join(root, 'retained-agent-work.txt'), 'keep until the agent decides\n');
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+      },
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    const abort = new AbortController();
+    let closeReads = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [{ identityId: '11'.repeat(32), kind: 'agent', name: 'Bee', role: 'member' }],
+        };
+      }
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        closeReads += 1;
+        if (closeReads === 1) {
+          return {
+            items: [
+              {
+                id: 'human-msg',
+                authorId: '22'.repeat(32),
+                createdAt: 1,
+                type: 'message',
+                body: 'Please continue',
+                attachments: [],
+              },
+            ],
+            cursor: 'human-msg',
+          };
+        }
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      if (name === 'getCornerRestoreState')
+        return {
+          held: true,
+          brief: {
+            id: 'corner-id',
+            revision: 1,
+            authorId: 'author',
+            sourceRoomId: 'room-id',
+            attachments: [],
+            repositoryWork: true,
+            spec: '## Intent\nImplement the widget\n## Non-goals\nNo interval changes',
+          },
+        };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'PR opened: https://github.com/acme/widgets/pull/7',
+      toolCalls: [],
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    const onCloseRequested = vi.fn(async () => undefined);
+    let loop!: MonolithCornerTurnLoop;
+    loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Implement the widget',
+      worktreePath: root,
+      repository: {
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'token',
+      },
+      runtime,
+      config,
+      api: commandFixtureApi(
+        closePushAfterReceipt(api, () => loop),
+        'corner-id',
+        runtime.agent.publicKey,
+        'Implement the widget',
+      ),
+      scheduler,
+      signal: abort.signal,
+      pollMs: 60_000,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested,
+      createAcpClient: () => acp,
+    });
+    await loop.run();
+    await scheduler.dispose();
+    // One prompt: the initial turn. The held corner never gets the second,
+    // dirty-work nudge that would tell it to commit, push and open a PR.
+    expect(sessionPrompt).toHaveBeenCalledTimes(1);
+    expect(sessionPrompt.mock.calls[0]?.[1]).not.toContain(CORNER_DELIVERY_NUDGE);
+    // The hold only suppresses the nudge: the author contract and the PR
+    // procedure stay, so a person who holds a merge can still receive fixes.
+    const systemPrompt = sessionNew.mock.calls[0]?.[0].systemPrompt ?? '';
+    expect(systemPrompt).toContain(CORNER_AUTHOR_CONTRACT);
+    expect(systemPrompt).toContain('Open the pull request with gh');
+    expect(onCloseRequested).toHaveBeenCalledOnce();
+  });
+
   it('keeps anonymous tool narration distinct after a provider re-pin', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-stream-'));
     roots.push(root);
@@ -3024,6 +3166,10 @@ describe('thin monolith corner turn', () => {
       ).map((tool) => tool.name),
     ).toContain('approve_merge');
     expect(repositorySystemPrompt).toContain(CORNER_AUTHOR_CONTRACT);
+    // This checkout has no package.json, so it defines no corner:prepare: the
+    // session must not name a command that would fail on its first step.
+    expect(repositorySystemPrompt).not.toContain('Run npm run corner:prepare first.');
+    expect(repositorySystemPrompt).not.toContain('corner:prepare');
     expect(repositorySystemPrompt).toContain("beeline-triage skill's bugfix execution contract");
     expect(repositorySystemPrompt).toContain('record it under Reproduction <id>');
     expect(repositorySystemPrompt).toContain(

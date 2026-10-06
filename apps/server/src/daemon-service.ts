@@ -1,6 +1,6 @@
 import { RoomWebhooks, webhookPromptBody } from './room-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
-import { setCornerHold } from './corner-holds.js';
+import { activeCornerHolds, setCornerHold } from './corner-holds.js';
 import { renderAgentAvatar } from './agent-avatar.js';
 import {
   authorizeCommandOutput,
@@ -3099,10 +3099,12 @@ export class DaemonService {
         [cornerId],
       )
     ).rows[0];
+    const held = (await activeCornerHolds(this.database, cornerId)).length > 0;
     return {
       cornerId,
       ...(row ? { archived: row.archived, parentRoomId: row.parent_room_id } : {}),
       objective: row?.objective ?? '',
+      ...(held ? { held: true } : {}),
       ...(brief ? { brief } : {}),
       ...(brief
         ? {

@@ -5170,7 +5170,8 @@ export class DaemonService {
   private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules
-       WHERE id=$1 AND room_id=$2 AND (agent_id=$3 OR creator_id=agent_id)`,
+       WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL
+         AND (agent_id=$3 OR creator_id=agent_id)`,
       [input.scheduleId, input.roomId, agentId],
     );
     if (!deleted.rowCount) throw new Error('schedule not found');
@@ -5208,7 +5209,7 @@ export class DaemonService {
     }
     const existing = (
       await db.query<{ message: string; workflow_slug: string | null }>(
-        `SELECT message,workflow_slug FROM agent_schedules WHERE id=$1 AND room_id=$2`,
+        `SELECT message,workflow_slug FROM agent_schedules WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL`,
         [input.scheduleId, input.roomId],
       )
     ).rows[0];
@@ -5226,7 +5227,7 @@ export class DaemonService {
       `UPDATE agent_schedules SET message=COALESCE($3,message),
          cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
          next_run_at=COALESCE($6,next_run_at),updated_at=now(),workflow_slug=$7,updated_by=$8
-       WHERE id=$1 AND room_id=$2 AND creator_id=agent_id
+       WHERE id=$1 AND room_id=$2 AND creator_id=agent_id AND workflow_run IS NULL
        RETURNING next_run_at`,
       [
         input.scheduleId,

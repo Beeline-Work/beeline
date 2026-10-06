@@ -274,10 +274,12 @@ describe('readWorkflowRun', () => {
     expect(failed.history.map(step => step.displayStatus)).toEqual(['failed', 'failed']);
     expect(failed.history[1]).toMatchObject({ status: 'failed', outcome: 'deadline' });
     const second = await startWorkflow(database, starter, { name: 'feedback-triage', roleBindings: { triager: TRIAGER } });
+    await handoff(database, starter, { runId: second.runId, outcome: 'ranked', contents: {} });
     await cancelWorkflowRun(database, starter, { runId: second.runId, reason: 'No longer needed' });
     const cancelled = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: second.runId }, OWNER);
     expect(cancelled.run.status).toBe('abandoned');
-    expect(cancelled.history.map(step => step.displayStatus)).toEqual(['done', 'done']);
+    console.log(`Reproduction abandoned-step-1: cancelWorkflowRun → readWorkflowRun: run=${cancelled.run.status}; steps=${cancelled.history.map(step => step.displayStatus).join(',')}`);
+    expect(cancelled.history.map(step => step.displayStatus)).toEqual(['done', 'failed', 'failed']);
   });
 
   it('preserves the prompt and visit-window fallback for gate cards without a run id', async () => {

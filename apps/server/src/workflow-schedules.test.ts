@@ -12,6 +12,7 @@ import { scheduleWorkflowName } from './workflow-admin.js';
 const WORKSPACE = '10000000-0000-4000-8000-000000000001';
 const ROOM = '20000000-0000-4000-8000-000000000001';
 const OTHER_ROOM = '20000000-0000-4000-8000-000000000002';
+const CORNER = '20000000-0000-4000-8000-000000000003';
 const OWNER = 'a'.repeat(64),
   ADMIN = 'b'.repeat(64),
   AGENT = 'c'.repeat(64);
@@ -88,6 +89,115 @@ const start = () =>
     { room_id: ROOM, agent_id: OWNER },
     { name: 'daily', roleBindings: { worker: AGENT } },
   );
+
+describe('Reproduction workflow-timer-mutations-1', () => {
+  it.each([ROOM, CORNER])('Room admin cannot delete engine timers in %s', async (surfaceId) => {
+    const { runId } = await start();
+    if (surfaceId === CORNER) {
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
+        [CORNER, WORKSPACE, ROOM, OWNER],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+        [WORKSPACE, CORNER, AGENT],
+      );
+      await db.query(`UPDATE agent_schedules SET room_id=$2 WHERE workflow_run->>'runId'=$1`, [
+        runId,
+        CORNER,
+      ]);
+    }
+    const timers = (
+      await db.query(`SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`, [
+        runId,
+      ])
+    ).rows;
+    expect(timers).toHaveLength(2);
+    const run = await getWorkflowRun(db, ROOM, runId);
+    for (const timer of timers) {
+      await expect(
+        phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId: timer.id }, ADMIN),
+      ).rejects.toThrow('schedule not found');
+    }
+    expect(
+      (
+        await db.query(
+          `SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`,
+          [runId],
+        )
+      ).rows,
+    ).toEqual(timers);
+    expect(await getWorkflowRun(db, ROOM, runId)).toEqual(run);
+    const ordinary = await daemon.execute(
+      'createAgentSchedule',
+      {
+        roomId: surfaceId,
+        agentId: AGENT,
+        prompt: 'Ordinary task',
+        cadence: { kind: 'interval', everyMinutes: 1 },
+      },
+      AGENT,
+    );
+    await phone.execute(
+      'deleteRoomSchedule',
+      { roomId: ROOM, scheduleId: ordinary.scheduleId },
+      ADMIN,
+    );
+    expect(
+      (await db.query(`SELECT 1 FROM agent_schedules WHERE id=$1`, [ordinary.scheduleId])).rowCount,
+    ).toBe(0);
+    console.log(
+      `Demonstrated workflow-timer-mutations-1: Room admin got schedule not found for both timers in ${surfaceId}; timer rows and run unchanged; ordinary deletion succeeded`,
+    );
+  });
+
+  it.each(['deleteAgentSchedule', 'updateAgentSchedule'] as const)(
+    '%s cannot mutate engine timers',
+    async (operation) => {
+      const { runId } = await start();
+      const timers = (
+        await db.query(
+          `SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`,
+          [runId],
+        )
+      ).rows;
+      expect(timers).toHaveLength(2);
+      const run = await getWorkflowRun(db, ROOM, runId);
+      for (const timer of timers) {
+        await expect(
+          daemon.execute(
+            operation,
+            {
+              roomId: ROOM,
+              scheduleId: timer.id,
+              ...(operation === 'updateAgentSchedule'
+                ? {
+                    prompt: 'Rewritten timer',
+                    cadence: { kind: 'interval' as const, everyMinutes: 60 },
+                    maxRuns: 3,
+                  }
+                : {}),
+            },
+            AGENT,
+          ),
+        ).rejects.toThrow('schedule not found');
+      }
+      expect(
+        (
+          await db.query(
+            `SELECT * FROM agent_schedules WHERE workflow_run->>'runId'=$1 ORDER BY id`,
+            [runId],
+          )
+        ).rows,
+      ).toEqual(timers);
+      expect(await getWorkflowRun(db, ROOM, runId)).toEqual(run);
+      console.log(
+        `Demonstrated workflow-timer-mutations-1: ${operation} rejected both engine timers; timer rows and run unchanged`,
+      );
+    },
+  );
+});
+
 async function schedule(prompt: string, explicit = false) {
   const created = await daemon.execute(
     'createAgentSchedule',

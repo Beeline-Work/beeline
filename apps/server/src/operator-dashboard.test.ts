@@ -155,6 +155,38 @@ describe('private operator dashboard', () => {
     expect(result.memory.tokenShare).toMatchObject({ state: 'unmeasured', share: null });
   });
 
+  it('measures token share over serves with counts and reports the missing serves', async () => {
+    await seed();
+    const human = `a${(1).toString(16).padStart(63, '0')}`;
+    const agent = `b${(1).toString(16).padStart(63, '0')}`;
+    for (let index = 0; index < 6; index++) {
+      const counted = index < 5;
+      await db.query(
+        `INSERT INTO institutional_context_serves
+        (id,workspace_id,room_id,agent_id,request_id,requester_identity_id,mode,served,total_bytes,
+          estimated_tokens,prompt_bytes,actual_input_tokens)
+        VALUES($1,$2,$3,$4,$5,$6,'live',true,100,25,$7,$8)`,
+        [`30000000-0000-4000-8000-00000000090${index}`, workspace, room, agent, `turn-${index}`, human,
+          counted ? 1000 : null, counted ? 400 : null],
+      );
+    }
+    const result = await dashboardOps(db, new Date().toISOString(), 'v2');
+    expect(result.memory.tokenShare).toMatchObject({
+      state: 'measured', share: 0.1, sampledServes: 5, missingServes: null,
+    });
+  });
+
+  it('measures the latest-build share over phones with a known build', async () => {
+    await seed();
+    await db.query(`UPDATE device_update_receipts SET receipt=receipt-'releaseVersion'
+      WHERE device_id='device-12'`);
+    const result = await dashboardOps(db, new Date().toISOString(), 'v2');
+    // 12 receipts: 6 on v2, 5 on v1, 1 unknown. Share uses the 11 known phones.
+    expect(result.release).toMatchObject({
+      latestShare: 0.5, activePhones: 10, latestPhones: 5, unknownBuildPhones: null,
+    });
+  });
+
   it('derives funnel time from each person’s actual stage timestamps', async () => {
     await seed();
     await db.query(`UPDATE identities SET created_at=now()-interval '3 hours' WHERE kind='human'`);

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
-import { readWorkflowContract } from '@beeline/api-contract/daemon';
+import { validateCornerWorkflow } from '@beeline/api-contract/daemon';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { describedWorkflow, PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
@@ -301,7 +301,7 @@ const result = (c: AgentCommand, text: string, generationId = 'g1') =>
 
 describe('the corner lifecycle contract itself', () => {
   it('validates against the shared workflow-contract schema', () => {
-    expect(readWorkflowContract(CORNER_LIFECYCLE_CONTRACT)).toEqual(CORNER_LIFECYCLE_CONTRACT);
+    expect(validateCornerWorkflow(CORNER_LIFECYCLE_CONTRACT)).toBeNull();
   });
 
   it('is never stored as a Workspace workflow, not even by creating a Workspace', async () => {

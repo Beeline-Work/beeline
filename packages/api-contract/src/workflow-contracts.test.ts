@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { readWorkflowContract, workflowContentsError, workflowReceiptError, workflowSaveError } from './workflow-contracts.js';
+import { validateCornerWorkflow, readWorkflowContract, workflowContentsError, workflowReceiptError, validateSavedWorkflow } from './workflow-contracts.js';
 
 const contract = {
   version: 1,
@@ -416,22 +416,22 @@ function saveable(): typeof contract & { summary: string } {
 describe('human descriptions at the save boundary', () => {
   const described = saveable();
   it('accepts new descriptions while reading legacy pinned contracts', () => {
-    expect(workflowSaveError(described)).toBeNull();
+    expect(validateSavedWorkflow(described)).toBeNull();
     expect(readWorkflowContract(contract)).not.toBeNull();
-    expect(workflowSaveError(contract)).toContain('summary');
+    expect(validateSavedWorkflow(contract)).toContain('summary');
   });
   it.each([undefined, '', '  ', 'x'.repeat(141), 'a\nb', 'a\rb', 'a\u2028b', 'a\u2029b'])('rejects invalid summary or does: %j', (text) => {
-    expect(workflowSaveError({ ...described, summary: text })).not.toBeNull();
-    expect(workflowSaveError({ ...described, handoffs: { ...described.handoffs,
+    expect(validateSavedWorkflow({ ...described, summary: text })).not.toBeNull();
+    expect(validateSavedWorkflow({ ...described, handoffs: { ...described.handoffs,
       implement: { ...described.handoffs.implement, does: text } } })).not.toBeNull();
   });
   it('counts Unicode characters consistently at 140', () => {
-    expect(workflowSaveError({ ...described, summary: '🦊'.repeat(140) })).toBeNull();
+    expect(validateSavedWorkflow({ ...described, summary: '🦊'.repeat(140) })).toBeNull();
   });
   it('refuses a saved abandoned ending while pinned contracts with one still read', () => {
     const abandonedEnding = { ...described, handoffs: { ...described.handoffs,
       failed: { ...described.handoffs.failed, status: 'abandoned' } } };
-    expect(workflowSaveError(abandonedEnding)).toBe(
+    expect(validateSavedWorkflow(abandonedEnding)).toBe(
       "handoffs.failed: a saved workflow's ending must be done or failed");
     expect(readWorkflowContract(abandonedEnding)).not.toBeNull();
   });
@@ -443,24 +443,24 @@ describe('self-healing contract keys', () => {
     human_approve: { ...described.handoffs.human_approve, ...gate } } });
 
   it('accepts a gate timeout with a default, and a run deadline', () => {
-    expect(workflowSaveError(withGate({ timeoutSeconds: 3600, default: 'rejected' }))).toBeNull();
-    expect(workflowSaveError({ ...described, deadlineSeconds: 86400 })).toBeNull();
+    expect(validateSavedWorkflow(withGate({ timeoutSeconds: 3600, default: 'rejected' }))).toBeNull();
+    expect(validateSavedWorkflow({ ...described, deadlineSeconds: 86400 })).toBeNull();
   });
 
   it('requires a gate timeout and default together, the default to be an outcome, and a deadline in range', () => {
-    expect(workflowSaveError(withGate({ timeoutSeconds: 3600, default: undefined }))).toContain('together');
-    expect(workflowSaveError(withGate({ timeoutSeconds: undefined, default: 'rejected' }))).toContain('together');
-    expect(workflowSaveError(withGate({ timeoutSeconds: 3600, default: 'later' }))).toContain('is not an outcome in on');
-    expect(workflowSaveError(withGate({ timeoutSeconds: 10, default: 'rejected' }))).toContain('timeoutSeconds must be');
-    expect(workflowSaveError({ ...described, deadlineSeconds: 30 })).toContain('deadlineSeconds must be');
+    expect(validateSavedWorkflow(withGate({ timeoutSeconds: 3600, default: undefined }))).toContain('together');
+    expect(validateSavedWorkflow(withGate({ timeoutSeconds: undefined, default: 'rejected' }))).toContain('together');
+    expect(validateSavedWorkflow(withGate({ timeoutSeconds: 3600, default: 'later' }))).toContain('is not an outcome in on');
+    expect(validateSavedWorkflow(withGate({ timeoutSeconds: 10, default: 'rejected' }))).toContain('timeoutSeconds must be');
+    expect(validateSavedWorkflow({ ...described, deadlineSeconds: 30 })).toContain('deadlineSeconds must be');
   });
 
   it('refuses a new save with an agent step that has no timeout, or a gate with no timeout and default', () => {
     const { timeoutSeconds: _t, ...untimed } = described.handoffs.review as Record<string, unknown>;
-    expect(workflowSaveError({ ...described, handoffs: { ...described.handoffs, review: untimed } }))
+    expect(validateSavedWorkflow({ ...described, handoffs: { ...described.handoffs, review: untimed } }))
       .toBe('handoffs.review: timeoutSeconds is required, with a "timeout" outcome in on');
     const { timeoutSeconds: _g, default: _d, ...gate } = described.handoffs.ask_human as Record<string, unknown>;
-    expect(workflowSaveError({ ...described, handoffs: { ...described.handoffs, ask_human: gate } }))
+    expect(validateSavedWorkflow({ ...described, handoffs: { ...described.handoffs, ask_human: gate } }))
       .toBe('handoffs.ask_human: a gate needs timeoutSeconds and default');
     // Older versions without them still read and run.
     expect(readWorkflowContract(contract)).not.toBeNull();
@@ -469,7 +469,128 @@ describe('self-healing contract keys', () => {
   it('reserves blocked on new saves but still reads a pinned version that declares it', () => {
     const declared = { ...described, handoffs: { ...described.handoffs,
       implement: { ...described.handoffs.implement, on: { pushed: 'checks', blocked: 'ask_human', timeout: 'failed' } } } };
-    expect(workflowSaveError(declared)).toContain('"blocked" is built in');
+    expect(validateSavedWorkflow(declared)).toContain('"blocked" is built in');
     expect(readWorkflowContract(declared)).not.toBeNull();
   });
+});
+
+
+describe('separate saved and corner validators', () => {
+  const base = {
+    version: 1, name: 'split', description: 'Validator boundary', summary: 'Do the work.',
+    roles: ['worker'], start: 'work', handoffs: {
+      work: { role: 'worker', requires: [], on: { done: 'done', timeout: 'done' }, timeoutSeconds: 60, does: 'Work.' },
+      done: { kind: 'terminal', status: 'done', does: 'Finish.' },
+    },
+  };
+  const work = (fields: Record<string, unknown>) => ({ ...base, handoffs: {
+    ...base.handoffs, work: { ...base.handoffs.work, ...fields },
+  } });
+  const gate = { kind: 'gate', default: 'done' };
+
+  it.each([
+    [{ ...base, implicitEdges: ['done'] }, 'implicitEdges is corner-only and cannot be saved in a workflow'],
+    [{ ...base, externalOutcomes: ['done'] }, 'externalOutcomes is corner-only and cannot be saved in a workflow'],
+    [{ ...base, handoffs: { ...base.handoffs, work: { kind: 'server', requires: [], on: { done: 'done' } } } }, 'handoffs.work: kind server is corner-only and cannot be saved in a workflow'],
+    [{ ...base, implicitEdges: undefined }, 'implicitEdges is corner-only and cannot be saved in a workflow'],
+    [{ ...base, handoffs: { work: { kind: 'waiting' }, done: base.handoffs.done }, implicitEdges: ['done'] },
+      'implicitEdges is corner-only and cannot be saved in a workflow'],
+    [work({ roleBinding: 'live:parent.reviewer_agent_id' }), 'handoffs.work: roleBinding is corner-only and cannot be saved in a workflow'],
+    [{ ...base, summary: undefined }, 'summary is required and must be nonempty'],
+    [work({ does: undefined }), 'handoffs.work: does is required and must be nonempty'],
+    [work({ on: { blocked: 'done', timeout: 'done' } }), 'handoffs.work: "blocked" is built in; name this outcome something else'],
+    [work({ timeoutSeconds: undefined }), 'handoffs.work: timeoutSeconds is required, with a "timeout" outcome in on'],
+    [work({ kind: 'gate', timeoutSeconds: undefined }), 'handoffs.work: a gate needs timeoutSeconds and default'],
+  ])('rejects only at the save boundary: %s', (value, message) => {
+    expect(validateSavedWorkflow(value)).toBe(message);
+    expect(validateCornerWorkflow(value)).toBeNull();
+    expect(readWorkflowContract(value)).toEqual(value);
+  });
+
+  it('rejects waiting on save while accepting a reachable corner waiting state', () => {
+    const value = { ...base, handoffs: { ...base.handoffs,
+      work: { ...base.handoffs.work, on: { done: 'done', timeout: 'wait' } }, wait: { kind: 'waiting' },
+    } };
+    expect(validateSavedWorkflow(value)).toBe('handoffs.wait: kind waiting is corner-only and cannot be saved in a workflow');
+    expect(validateCornerWorkflow(value)).toBeNull();
+  });
+
+  it.each([
+    [null, 'contract must be a JSON object'],
+    [{ ...base, extra: true }, 'unknown key "extra" at the top level'],
+    [{ ...base, version: 2 }, 'version must be 1'],
+    [{ ...base, name: 'Bad' }, 'name must be lowercase words joined by hyphens, at most 64 characters (got "Bad")'],
+    [{ ...base, description: 1 }, 'description must be a string'],
+    [{ ...base, description: '' }, 'description must be 1-60 characters (got 0)'],
+    [{ ...base, summary: 'two\nlines' }, 'summary must be plaintext on one line, at most 140 characters'],
+    [{ ...base, roles: [] }, 'roles must be 1-16 unique lowercase names (letters, digits, _ or -)'],
+    [{ ...base, handoffs: null }, 'handoffs must be an object of named states'],
+    [{ ...base, handoffs: {} }, 'handoffs must have 2-64 states (got 0)'],
+    [{ ...base, start: 'missing' }, 'start must name a state in handoffs (got "missing")'],
+    [{ ...base, deadlineSeconds: 1 }, 'deadlineSeconds must be a whole number from 60 to 2592000'],
+    [{ ...base, handoffs: { ...base.handoffs, Bad: base.handoffs.done } }, 'handoffs: state name "Bad" must be lowercase letters, digits, _ or -'],
+    [{ ...base, handoffs: { ...base.handoffs, work: null } }, 'handoffs.work must be an object'],
+    [{ ...base, handoffs: { ...base.handoffs, done: { ...base.handoffs.done, extra: true } } },
+      'handoffs.done: unknown key "extra" (a terminal allows kind, status, hint, does)'],
+    [{ ...base, handoffs: { ...base.handoffs, done: { ...base.handoffs.done, status: 'unknown' } } },
+      'handoffs.done: terminal status must be done, failed or abandoned'],
+    [work({ extra: true }), 'handoffs.work: unknown key "extra" (a handoff allows role, roleBinding, requires, on, loop, timeoutSeconds, hint, does)'],
+    [work({ ...gate, extra: true }), 'handoffs.work: unknown key "extra" (a gate allows kind, role, requires, on, timeoutSeconds, default, hint, does)'],
+    [work({ ...gate, on: { done: 'done' } }), 'handoffs.work: a gate needs 2-4 outcomes (got 1)'],
+    [work({ ...gate, on: { ['a'.repeat(33)]: 'done', timeout: 'done' } }),
+      `handoffs.work: outcome "${'a'.repeat(33)}" is longer than 32 characters`],
+    [{ ...base, handoffs: { work: base.handoffs.work, done: base.handoffs.work } }, 'at least one terminal state is required'],
+    [work({ does: '' }), 'handoffs.work: does must be nonempty plaintext on one line, at most 140 characters'],
+    [work({ hint: 1 }), 'handoffs.work: hint must be a string'],
+    [work({ kind: 'unknown' }), 'handoffs.work: kind must be gate, server, terminal or waiting, or omitted for a handoff'],
+    [work({ role: 'missing' }), 'handoffs.work: role "missing" is not in roles'],
+    [work({ requires: ['duplicate', 'duplicate'] }), 'handoffs.work: requires must be a list of up to 32 unique field names'],
+    [work({ on: null }), 'handoffs.work: on must be an object of outcome -> state'],
+    [work({ on: {} }), 'handoffs.work: on needs 1-16 outcomes (got 0)'],
+    [work({ on: { Bad: 'done' } }), 'handoffs.work: outcome "Bad" must be lowercase letters, digits, _ or -'],
+    [work({ on: { done: 'missing' } }), 'handoffs.work: outcome "done" goes to "missing", which is not a state'],
+    [work({ timeoutSeconds: 1 }), 'handoffs.work: timeoutSeconds must be a whole number from 60 to 2592000'],
+    [work({ on: { done: 'done' } }), 'handoffs.work: timeoutSeconds needs a "timeout" outcome in on'],
+    [work({ ...gate, default: undefined }), 'handoffs.work: a gate declares timeoutSeconds and default together, or neither'],
+    [work({ ...gate, default: 'missing' }), 'handoffs.work: default "missing" is not an outcome in on'],
+    [work({ loop: null }), 'handoffs.work: loop must be { onEdge, cap, onExceeded }'],
+    [work({ loop: { onEdge: 'missing', cap: 1, onExceeded: 'done' } }), 'handoffs.work: loop.onEdge "missing" is not an outcome in on'],
+    [work({ loop: { onEdge: 'done', cap: 101, onExceeded: 'done' } }), 'handoffs.work: loop.cap must be a whole number from 1 to 100'],
+    [work({ loop: { onEdge: 'done', cap: 1, onExceeded: 'missing' } }), 'handoffs.work: loop.onExceeded "missing" is not a state'],
+    [work({ loop: { onEdge: 'done', cap: 1, onExceeded: 'done' } }), 'handoffs.work: loop.onExceeded must differ from where loop.onEdge goes'],
+    [{ ...base, start: 'done' }, 'start state "done" must not be a terminal'],
+    [work({ on: { done: 'work', timeout: 'done' } }), 'cycle work -> work has no loop cap'],
+    [{ ...base, handoffs: { ...base.handoffs, orphan: base.handoffs.done } }, 'state "orphan" is not reachable from start'],
+  ])('preserves the shared rejection: %s', (value, message) => {
+    expect(validateSavedWorkflow(value)).toBe(message);
+    expect(validateCornerWorkflow(value)).toBe(message);
+  });
+
+  it.each([
+    [{ kind: 'waiting', hint: 1 }, 'handoffs.wait: hint must be a string'],
+    [{ kind: 'waiting', does: '' }, 'handoffs.wait: does must be nonempty plaintext on one line, at most 140 characters'],
+  ])('checks metadata on corner-only states', (waiting, message) => {
+    expect(validateCornerWorkflow({ ...base, handoffs: { ...base.handoffs,
+      work: { ...base.handoffs.work, on: { done: 'done', timeout: 'wait' } }, wait: waiting,
+    } })).toBe(message);
+  });
+  it.each([
+    [{ ...base, externalOutcomes: ['Bad'] }, 'externalOutcomes must be up to 16 unique outcome names'],
+    [{ ...base, externalOutcomes: ['missing'] }, 'externalOutcomes: "missing" is not an outcome of any state'],
+    [{ ...base, implicitEdges: ['done', 'done'] }, 'implicitEdges must be a list of unique state names'],
+    [{ ...base, implicitEdges: ['work'] }, 'implicitEdges: "work" is not a terminal state'],
+    [work({ roleBinding: 'parent.worker' }), 'handoffs.work: roleBinding must look like live:parent.field'],
+    [{ ...base, handoffs: { ...base.handoffs, work: { kind: 'server', extra: true } } },
+      'handoffs.work: unknown key "extra" (a server state allows kind, role, requires, on, loop, hint, does)'],
+    [{ ...base, handoffs: { ...base.handoffs, work: { kind: 'server', role: 'missing', requires: [], on: { done: 'done' } } } },
+      'handoffs.work: role "missing" is not in roles'],
+    [{ ...base, handoffs: { ...base.handoffs, work: { kind: 'waiting', role: 'missing' } } },
+      'handoffs.work: role "missing" is not in roles'],
+    [{ ...base, handoffs: { ...base.handoffs, work: { kind: 'waiting', extra: true } } },
+      'handoffs.work: unknown key "extra" (a waiting state allows kind, role, hint, does)'],
+  ])('preserves corner-specific rejection: %s', (value, message) => {
+    expect(validateCornerWorkflow(value)).toBe(message);
+    expect(validateSavedWorkflow(value)).toBe(message);
+  });
+
 });

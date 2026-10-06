@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { workflowContractError } from '@beeline/api-contract/daemon';
+import { validateSavedWorkflow } from '@beeline/api-contract/daemon';
 import { CORNER_BRIEF_PROPERTIES, agentToolsFor, cornerCallText } from './read-only-mcp.js';
 import {
   assembleSessionPrompt,
@@ -146,7 +146,7 @@ describe('save_workflow description', () => {
     );
     const example = guide.match(/```json\n([\s\S]*?)\n```/)?.[1];
     expect(example).toBeDefined();
-    expect(workflowContractError(JSON.parse(example!))).toBeNull();
+    expect(validateSavedWorkflow(JSON.parse(example!))).toBeNull();
   });
 });
 

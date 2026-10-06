@@ -199,6 +199,27 @@ beforeEach(async () => {
 });
 
 describe('save_workflow', () => {
+  it('demonstrates split validators through the daemon save operation', async () => {
+    const command = await commandFor(WORKER_A);
+    const generationId = 'validator-split';
+    await claimAgentCommand(database, ROOM, WORKER_A, command.id, generationId);
+    const daemon = new DaemonService(database, new LiveHub());
+    const save = (contract: unknown) => daemon.execute('saveWorkflow', {
+      roomId: ROOM, requestId: command.turn_request_id, generationId, contract,
+    }, WORKER_A);
+    const described = describedWorkflow(CONTRACT);
+    for (const field of ['implicitEdges', 'externalOutcomes']) {
+      const reason = `${field} is corner-only and cannot be saved in a workflow`;
+      await expect(save({ ...described, [field]: [] })).rejects.toThrow(reason);
+      console.log(`Demonstrated validator-split: daemon save rejected ${field}: ${reason}`);
+    }
+    expect((await database.query(`SELECT slug FROM workspace_skills WHERE kind='workflow'`)).rows).toEqual([]);
+    await expect(save(described)).resolves.toEqual({ slug: 'corner', version: 1 });
+    expect((await database.query(`SELECT current_version FROM workspace_skills WHERE slug='corner'`)).rows)
+      .toEqual([{ current_version: 1 }]);
+    console.log('Demonstrated validator-split: valid daemon save persisted version 1; rejected contracts wrote no workflows');
+  });
+
   it('rejects saves without human descriptions, including revisions', async () => {
     const command = await commandFor(IMPLEMENTER);
     await expect(saveWorkflow(database, command, { contract: CONTRACT })).rejects.toThrow('summary');
@@ -2081,7 +2102,7 @@ describe('backfillWorkflowSkillDescriptions', () => {
     expect(described.handoffs.human_approve.does).toBe(
       'Step human_approve (approver): describe what this step does',
     );
-    // Terminal states get a does too: workflowSaveError requires one on
+    // Terminal states get a does too: validateSavedWorkflow requires one on
     // every state, with no exception, so the backfill cannot skip them.
     expect(described.handoffs.land.does).toBe('Step land: describe what this step does');
     expect(described.handoffs.failed.does).toBe('Step failed: describe what this step does');

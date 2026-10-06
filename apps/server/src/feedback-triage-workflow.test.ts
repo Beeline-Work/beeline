@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readWorkflowContract, workflowSaveError } from '@beeline/api-contract/daemon';
+import { readWorkflowContract, validateSavedWorkflow } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import { migrate, migrateData } from './database.js';
 import { workflowBackfillOnce } from './migrations/workflow-cleanup.js';
@@ -168,7 +168,7 @@ describe('feedback-triage workflow', () => {
     expect(docs('feedback-triage-steps.md')).toBe(FEEDBACK_TRIAGE_STEPS);
     expect(readWorkflowContract(FEEDBACK_TRIAGE_CONTRACT)).toEqual(FEEDBACK_TRIAGE_CONTRACT);
     // The built-in contract meets the same save rules a person's workflow does.
-    expect(workflowSaveError(FEEDBACK_TRIAGE_CONTRACT)).toBeNull();
+    expect(validateSavedWorkflow(FEEDBACK_TRIAGE_CONTRACT)).toBeNull();
   });
 
   it('installs the workflow and its steps where a triage schedule runs and points that schedule at it, cadence unchanged', async () => {

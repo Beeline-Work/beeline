@@ -8,7 +8,7 @@ import type {
   WorkflowReadState,
   WorkflowReceipt,
 } from '@beeline/api-contract/phone';
-import { workflowRunStatus, workflowStepDisplayStatus } from '@beeline/api-contract/phone';
+import { workflowStepDisplayStatus } from '@beeline/api-contract/phone';
 
 /**
  * The run's reached visits in execution order (including repeated states),
@@ -97,12 +97,10 @@ function predictedTail(
 
 export function workflowRunLine(
   contract: WorkflowReadContract,
-  history: readonly WorkflowRunStepView[] = [],
-  runStatus?: WorkflowRunStatus,
+  history: readonly WorkflowRunStepView[],
+  status: WorkflowRunStatus,
 ): WorkflowLineStep[] {
   const entries = history.filter((entry) => contract.handoffs[entry.toState]);
-  const lastEntry = entries[entries.length - 1];
-  const status = runStatus ?? (lastEntry ? workflowRunStatus(contract, lastEntry.toState, lastEntry.status) : 'live');
   const reached = entries.map<WorkflowLineStep>((entry, index, entries) => {
     const declared = contract.handoffs[entry.toState]!;
     const next = entries[index + 1];

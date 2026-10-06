@@ -1,4 +1,4 @@
-import { workflowRunLiveSql } from './workflow-run-live.js';
+import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
 import type { SqlDatabase } from './database.js';
 
 export class WorkflowAuthorizationError extends Error {
@@ -89,7 +89,7 @@ export async function activeWorkflowRunIds(
     WHERE (surface.id=COALESCE(requested.parent_id,requested.id)
       OR surface.parent_id=COALESCE(requested.parent_id,requested.id))
       AND message.card_type='workflow-handoff' AND message.card->>'workflowSlug'=$2
-      AND message.deleted_at IS NULL AND ${workflowRunLiveSql('message.card')}
+      AND message.deleted_at IS NULL AND ${workflowRunIsLiveSql('message.card')}
     ORDER BY message.id`,
     [roomId, name, viewerId],
   );

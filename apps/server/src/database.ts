@@ -1,7 +1,13 @@
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { ROOM_WEBHOOK_SCHEMA } from './room-webhooks.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
-import { workflowBackfillOnce } from './migrations/workflow-cleanup.js';
+import {
+  normalizeLegacyWorkflowRuns,
+  reportAbandonedWorkflowEndings,
+  saveUnsavedWorkflowRunStatus,
+  workflowBackfillOnce,
+} from './migrations/workflow-cleanup.js';
+import { workflowRunIsLiveSql, workflowRunStatusUnsavedSql } from './workflow-run-saved-status.js';
 import {
   AGENT_COMMAND_SCHEMA,
   reconcileConfiguredCornerReviewers,
@@ -2786,6 +2792,18 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY messages_reply_to_idx
      ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL`,
   ));
+  // Every live-run check reads the start card's saved status through this index.
+  await retryMigrationStep('workflow run live index', () => createIndexConcurrently(
+    database, 'messages_workflow_run_live_idx',
+    `CREATE INDEX CONCURRENTLY messages_workflow_run_live_idx
+     ON messages(room_id) WHERE card_type='workflow-handoff' AND ${workflowRunIsLiveSql('card')}`,
+  ));
+  // Empty once every start card has its saved status, so each release's check is free.
+  await retryMigrationStep('workflow run status backfill index', () => createIndexConcurrently(
+    database, 'messages_workflow_run_status_backfill_idx',
+    `CREATE INDEX CONCURRENTLY messages_workflow_run_status_backfill_idx
+     ON messages(id) WHERE card_type='workflow-handoff' AND ${workflowRunStatusUnsavedSql('card', 'id')}`,
+  ));
   await ddlScript('corner merge holds', CORNER_MERGE_HOLDS_SCHEMA);
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
@@ -2816,8 +2834,13 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'workflow-descriptions-v1', backfillWorkflowSkillDescriptions));
   await dataStep('stale workflow gate choices', () =>
     workflowBackfillOnce(database, 'stale-workflow-gates-v1', closeStaleWorkflowGateChoices));
-  await dataStep('workflow run storage and timers', () =>
-    workflowBackfillOnce(database, 'workflow-storage-v1', backfillWorkflowRunTimers));
+  await dataStep('workflow run storage', () =>
+    workflowBackfillOnce(database, 'workflow-storage-v1', normalizeLegacyWorkflowRuns));
+  await dataStep('workflow run status', () => saveUnsavedWorkflowRunStatus(database));
+  await dataStep('abandoned workflow endings', () =>
+    workflowBackfillOnce(database, 'abandoned-workflow-endings-v1', reportAbandonedWorkflowEndings));
+  // A timer lost after any release stalls its run; re-arm missing ones every boot.
+  await dataStep('workflow run timers', () => backfillWorkflowRunTimers(database));
   const blockers = await dataStep('corner merge blockers', () =>
     reconcileCornerMergeBlockers(database));
   if (blockers)

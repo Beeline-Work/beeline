@@ -1,6 +1,5 @@
 import { workflowTimerId } from './workflow-timer-id.js';
-import { workflowRunLiveSql } from './workflow-run-live.js';
-import { normalizeLegacyWorkflowRuns } from './migrations/workflow-cleanup.js';
+import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
 import { humanRoomAdmin, WorkflowAuthorizationError } from './workflow-admin.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -23,7 +22,7 @@ import {
   type WorkflowReceipt,
 } from '@beeline/api-contract/daemon';
 import { workflowRunStatus } from '@beeline/api-contract/phone';
-import type { SystemSubject } from '@beeline/api-contract/phone';
+import type { SystemSubject, WorkflowRunStatus } from '@beeline/api-contract/phone';
 import { bindWorkflowStepOutput } from './workflow-step-output.js';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
@@ -81,6 +80,8 @@ type WorkflowRunCard = {
   fromState?: string;
   outcome?: string;
   status?: 'done' | 'failed' | 'abandoned';
+  /** Start card only: the run's status, saved by `saveRunStatus` whenever it changes. */
+  runStatus?: WorkflowRunStatus;
   requesterId?: string;
   /** Start card only: the person notices go to (see `resolveRunOwner`). */
   ownerId?: string | null;
@@ -305,8 +306,18 @@ async function loadPinnedContract(
   return JSON.parse(row.markdown) as WorkflowReadContract;
 }
 
-function runStatus(run: WorkflowRunCard, contract: WorkflowReadContract) {
-  return workflowRunStatus(contract, run.toState, run.cancellation ? 'abandoned' : run.status);
+/** The one writer of a run's status: decided by `workflowRunStatus` when the run moves and saved on its start card. */
+async function saveRunStatus(
+  db: SqlDatabase,
+  scope: { roomId: string; runId: string; contract: WorkflowReadContract },
+  state: string,
+  recorded?: WorkflowRunStatus,
+): Promise<void> {
+  await db.query(
+    `UPDATE messages SET card=card || jsonb_build_object('runStatus',$3::text)
+     WHERE id=$1 AND room_id=$2 AND card_type='workflow-handoff'`,
+    [scope.runId, scope.roomId, workflowRunStatus(scope.contract, state, recorded)],
+  );
 }
 
 // The daemon authorizes this Room before lookup; never search outside it.
@@ -345,7 +356,9 @@ export async function getWorkflowRun(
   const contract = await loadPinnedContract(db, roomId, run.workflowSlug, run.workflowVersion);
   if (!contract) throw new Error('workflow contract version is unavailable');
   const state = contract.handoffs[run.toState];
-  const activeState = runStatus(run, contract) === 'live' ? state : undefined;
+  const status = rows.find((row) => row.id === runId)?.card.runStatus;
+  if (!status) throw new Error('workflow run is unavailable in this Room');
+  const activeState = status === 'live' ? state : undefined;
   const role = activeState && 'role' in activeState ? activeState.role : undefined;
   return {
     runId,
@@ -353,7 +366,7 @@ export async function getWorkflowRun(
     workflowVersion: run.workflowVersion,
     state: run.toState,
     attempt: run.seq,
-    status: runStatus(run, contract),
+    status,
     ...(role ? { role, ...(run.roleBindings[role] ? { boundAgentId: run.roleBindings[role] } : {}) } : {}),
     allowedOutcomes: activeState && 'on' in activeState ? activeState.on : {},
     requiredFields: activeState && 'requires' in activeState ? activeState.requires : [],
@@ -473,6 +486,8 @@ type RunScope = {
   contract: WorkflowReadContract;
   stateName: string;
   state: WorkflowReadState | undefined;
+  /** The status saved on the start card. */
+  status: WorkflowRunStatus;
   ended: boolean;
 };
 
@@ -509,6 +524,8 @@ async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<
   const contract = await loadPinnedContract(db, roomId, run.workflowSlug, run.workflowVersion);
   if (!contract) throw new Error('workflow contract version is unavailable');
   const state = contract.handoffs[run.toState];
+  const status = (await loadRunStart(db, roomId, runId)).card.runStatus;
+  if (!status) throw new Error('workflow run status is unavailable');
   return {
     roomId,
     workspaceId: room.workspace_id,
@@ -518,7 +535,8 @@ async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<
     contract,
     stateName: run.toState,
     state,
-    ended: !state || runStatus(run, contract) !== 'live',
+    status,
+    ended: !state || status !== 'live',
   };
 }
 
@@ -739,11 +757,10 @@ async function dispatchState(
 
 /** Restore missing timers without resetting a live lease or changing its pinned workflow. */
 export async function backfillWorkflowRunTimers(database: SqlDatabase): Promise<number> {
-  await normalizeLegacyWorkflowRuns(database);
   const starts = await database.query<{ id: string; room_id: string; created_at: Date }>(
     `SELECT id,room_id,created_at FROM messages
      WHERE card_type='workflow-handoff' AND id=card->>'runId'
-       AND ${workflowRunLiveSql('card')}`,
+       AND ${workflowRunIsLiveSql('card')}`,
   );
   let armed = 0;
   for (const start of starts.rows) {
@@ -883,11 +900,7 @@ async function enterState(
       ...(status ? { status } : {}),
     },
   });
-  await db.query(
-    `UPDATE messages SET card=card || jsonb_build_object('active',$3::boolean)
-     WHERE id=$1 AND room_id=$2 AND card_type='workflow-handoff'`,
-    [runId, roomId, !isTerminal],
-  );
+  await saveRunStatus(db, scope, toState);
   await dispatchState(db, {
     workspaceId: scope.workspaceId,
     roomId,
@@ -1006,11 +1019,7 @@ async function closeRun(
       contents: { reason: input.reason },
     },
   });
-  await db.query(
-    `UPDATE messages SET card=card || '{"active":false}'::jsonb
-     WHERE id=$1 AND room_id=$2`,
-    [runId, roomId],
-  );
+  await saveRunStatus(db, scope, stateName, input.status);
 }
 
 /** The agents a step's role may walk: its ordered list, or its one bound agent. */
@@ -1220,7 +1229,7 @@ type HandoffResult =
     };
 
 function alreadyAdvanced(scope: RunScope): HandoffResult {
-  const status = runStatus(scope.run, scope.contract);
+  const { status } = scope;
   return {
     alreadyAdvanced: true,
     runId: scope.runId,
@@ -1553,6 +1562,35 @@ async function unansweredRun(
   return scope;
 }
 
+/** A closing corner abandons every live saved run inside it. Call within the close transaction. */
+export async function abandonCornerWorkflowRuns(db: SqlDatabase, cornerId: string): Promise<number> {
+  const live = await db.query<{ id: string }>(
+    `SELECT id FROM messages
+     WHERE room_id=$1 AND card_type='workflow-handoff' AND ${workflowRunIsLiveSql('card')}
+     ORDER BY id`,
+    [cornerId],
+  );
+  let abandoned = 0;
+  for (const { id } of live.rows) {
+    const scope = await openRun(db, cornerId, id);
+    if (scope.ended) continue;
+    await closeRun(db, scope, {
+      status: 'abandoned',
+      outcome: 'corner_closed',
+      reason: 'corner closed',
+      line: {
+        authorId: SYSTEM_IDENTITY_ID,
+        subject: { kind: 'system', name: 'the workflow' },
+        verb: 'closed',
+        object: `run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`,
+        consequence: `as abandoned at ${scope.stateName} because its corner closed`,
+      },
+    });
+    abandoned += 1;
+  }
+  return abandoned;
+}
+
 /** The live run of `workflowName` in this Room, if one exists. */
 export async function liveWorkflowRun(
   db: SqlDatabase,
@@ -1562,7 +1600,7 @@ export async function liveWorkflowRun(
   const active = (
     await db.query<{ id: string; created_at: Date }>(
       `SELECT id,created_at FROM messages
-       WHERE room_id=$1 AND card_type='workflow-handoff' AND ${workflowRunLiveSql('card')}
+       WHERE room_id=$1 AND card_type='workflow-handoff' AND ${workflowRunIsLiveSql('card')}
          AND card->>'workflowSlug'=$2
        ORDER BY created_at,id LIMIT 1`,
       [roomId, workflowName],
@@ -1655,7 +1693,7 @@ export async function activeRunIdsForSchedule(
 ): Promise<string[]> {
   const active = await db.query<{ id: string }>(
     `SELECT id FROM messages
-     WHERE room_id=$1 AND card_type='workflow-handoff' AND ${workflowRunLiveSql('card')}
+     WHERE room_id=$1 AND card_type='workflow-handoff' AND ${workflowRunIsLiveSql('card')}
        AND card->'trigger'->>'scheduleId'=$2
      ORDER BY id`,
     [roomId, scheduleId],
@@ -1778,7 +1816,7 @@ export async function startWorkflow(
       card: {
         runId,
         seq: 0,
-        active: true,
+        runStatus: 'live',
         workflowSlug: contract.name,
         workflowVersion: skill.current_version,
         requesterId: await workflowRequester(db, command),
@@ -2084,7 +2122,8 @@ export async function closeStaleWorkflowGateChoices(database: SqlDatabase): Prom
     if (!run) continue;
     const contract = await loadPinnedContract(database, row.room_id, run.workflowSlug, run.workflowVersion);
     const state = contract?.handoffs[run.toState];
-    const stillGated = contract && runStatus(run, contract) === 'live' && state?.kind === 'gate';
+    const stillGated = contract && state?.kind === 'gate' &&
+      workflowRunStatus(contract, run.toState, run.cancellation ? 'abandoned' : run.status) === 'live';
     if (stillGated) continue;
     await closeRunChoices(database, row.room_id, row.run_id);
     closed++;

@@ -505,6 +505,52 @@ describe('Postgres live fanout', () => {
     );
   });
 
+  it('names the parent Room and opener on a queued command for a corner this helper never watched', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+
+    const corner = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const target = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Cee')`, [
+      target,
+    ]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('tag-source',$1,$2,'@cee fix this')`,
+      [corner, AUTHOR],
+    );
+    received.length = 0;
+
+    await database.query(
+      `INSERT INTO agent_commands(
+         id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
+         root_command_id,root_source_message_id,agent_depth
+       ) VALUES($1,$2,$3,'tag-source',$4,'input','human_tag',$1,'tag-source',0)`,
+      ['command-1', corner, target, 'f'.repeat(64)],
+    );
+
+    await eventually(() =>
+      received.some(
+        (event) =>
+          event.type === 'invalidate' &&
+          event.reason === 'postgres:agent_commands' &&
+          event.targetAgentId === target &&
+          event.roomId === corner &&
+          event.parentRoomId === ROOM &&
+          event.openedBy === AUTHOR,
+      ),
+    );
+  });
+
   it('nudges the parent Room only when a corner status input changes', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);

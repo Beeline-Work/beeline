@@ -869,6 +869,38 @@ describe('daemon live command push', () => {
       openedBy: 'opener-agent',
     });
 
+    // A command queued for a corner this helper has never watched carries
+    // its own parent/opener, so the agent-wide wake can start it directly
+    // instead of waiting for the next discovery reconciliation.
+    const commandPushedCorner = nextSocketMessage(socket, 'rooms-changed');
+    live.publish({
+      type: 'invalidate',
+      roomId: 'corner-2',
+      reason: 'postgres:agent_commands',
+      targetAgentId: agentId,
+      parentRoomId: roomId,
+      openedBy: 'opener-agent',
+    });
+    await expect(commandPushedCorner).resolves.toEqual({
+      type: 'rooms-changed',
+      roomId: 'corner-2',
+      parentRoomId: roomId,
+      openedBy: 'opener-agent',
+    });
+
+    // A command queued for a top-level Room needs no push: every desired
+    // Room already starts eagerly on membership alone. (Its own existing
+    // per-room subscription still answers with a `commands` refresh.)
+    const noPushForRoom = expectNoSocketMessageOfType(socket, 'rooms-changed');
+    const roomCommandsEcho = nextSocketMessage(socket, 'commands');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:agent_commands',
+      targetAgentId: agentId,
+    });
+    await Promise.all([noPushForRoom, roomCommandsEcho]);
+
     const repositoryChanged = nextSocketMessage(socket, 'rooms-changed');
     live.publish({ type: 'invalidate', roomId, reason: 'postgres:rooms',
       repositoryChanged: true });
@@ -1927,6 +1959,30 @@ function nextSocketMessages(socket: WebSocket, count: number): Promise<Record<st
       cleanup();
       reject(new Error(`websocket ${count}-message timeout`));
     }, 3_000);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off('message', onMessage);
+    };
+    socket.on('message', onMessage);
+  });
+}
+
+function expectNoSocketMessageOfType(
+  socket: WebSocket,
+  type: string,
+  durationMs = 25,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onMessage = (raw: WebSocket.RawData) => {
+      const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (message.type !== type) return;
+      cleanup();
+      reject(new Error(`unexpected websocket message: ${raw.toString()}`));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, durationMs);
     const cleanup = () => {
       clearTimeout(timer);
       socket.off('message', onMessage);

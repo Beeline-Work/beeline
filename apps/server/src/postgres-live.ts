@@ -97,8 +97,22 @@ BEGIN
         'kind', COALESCE(NEW.kind, OLD.kind)
       );
     WHEN 'agent_commands' THEN
+      -- A command for a corner this agent's helper has never watched carries
+      -- its own parent Room and opener, exactly as a membership push does, so
+      -- the agent-wide wake can start that corner's intake directly instead
+      -- of waiting for the next discovery reconciliation.
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
-        'roomId', COALESCE(NEW.room_id, OLD.room_id), 'agentId', COALESCE(NEW.agent_id, OLD.agent_id));
+        'roomId', COALESCE(NEW.room_id, OLD.room_id), 'agentId', COALESCE(NEW.agent_id, OLD.agent_id))
+        || COALESCE((
+          SELECT jsonb_build_object(
+            'parentRoomId', room.parent_id,
+            'openedBy', CASE WHEN room.parent_id IS NOT NULL THEN COALESCE(
+              (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
+              room.created_by
+            ) END
+          )
+          FROM rooms room WHERE room.id = COALESCE(NEW.room_id, OLD.room_id)
+        ), '{}'::jsonb);
     WHEN 'agent_turns' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,

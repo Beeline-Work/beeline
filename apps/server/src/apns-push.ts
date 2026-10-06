@@ -76,13 +76,10 @@ export function apnsPushRequest(
   providerToken: string,
 ): { headers: OutgoingHttpHeaders; payload: Record<string, unknown> } {
   const data = pushMessageData(message);
-  const threadId = data.threadId ?? data.roomId;
-  // Collapse only retries of the same message. Room grouping belongs to
-  // aps.thread-id; collapsing by Room hides distinct unread alerts.
-  const collapseId =
-    Buffer.byteLength(message.messageId, 'utf8') <= 64
-      ? message.messageId
-      : createHash('sha256').update(message.messageId).digest('hex');
+  const threadId = message.type === 'message' ? message.collapseId ?? message.messageId : data.threadId;
+  const slot = message.collapseId ?? message.messageId;
+  const collapseId = Buffer.byteLength(slot, 'utf8') <= 64
+    ? slot : createHash('sha256').update(slot).digest('hex');
   return {
     headers: {
       [http2Constants.HTTP2_HEADER_METHOD]: 'POST',

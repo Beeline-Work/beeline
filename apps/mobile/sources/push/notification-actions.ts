@@ -160,7 +160,7 @@ export function readNotificationAction(payload: unknown): NotificationActionRequ
       : (data.message ?? '');
   // `attempt` is bumped each time a failure re-offers the action, so a retry
   // on the same notification is a new response to the at-most-once memory.
-  const key = `${notificationId}:${actionId}:${data.attempt ?? '0'}`;
+  const key = `${data.messageId ?? notificationId}:${actionId}:${data.attempt ?? '0'}`;
   const decision = grantDecisionForPushAction(actionId);
   if (decision) {
     if (data.categoryId !== PUSH_ACTION_CATEGORIES.grant || !data.grantId) return null;

@@ -48,7 +48,7 @@ self.addEventListener('push', (event) => {
       body: payload.body.slice(0, 200),
       icon: '/favicon-active.ico',
       data: { path },
-      tag: typeof payload.messageId === 'string' ? payload.messageId : undefined,
+      tag: typeof payload.tag === 'string' ? payload.tag : payload.messageId,
     });
   })());
 });

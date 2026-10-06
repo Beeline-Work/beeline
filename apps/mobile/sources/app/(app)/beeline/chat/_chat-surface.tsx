@@ -597,10 +597,50 @@ export function BuzzChatSurface({
   // Publish the open conversation to the foreground notification policy. The
   // root notification handler runs outside the React tree, so it reads this
   // tracker instead of route state. Synchronous, no relay work.
+  const [pushMuted, setPushMuted] = useState(false);
+  const [pushMuteWorking, setPushMuteWorking] = useState(false);
+  const togglePushMute = async () => {
+    setPushMuteWorking(true);
+    try {
+      const result = await monolithPhoneOperation('updateRoomPushState', {
+        roomId: decodedId,
+        muted: !pushMuted,
+      });
+      setPushMuted(result.muted);
+    } catch (error) {
+      setMembershipError(`Could not update Room notifications: ${String(error)}`);
+    } finally {
+      setPushMuteWorking(false);
+    }
+  };
   const isFocused = useIsFocused();
   useFocusEffect(
     useCallback(() => {
       pushOpenBuzzChannelId(decodedId || null);
+      const viewingSessionId = `${Date.now()}-${Math.random()}`;
+      let active = true;
+      let presenceUpdate = Promise.resolve();
+      const updateViewing = (viewing: boolean) => {
+        if (!getBuzzRuntimeConfig().monolithEnabled || !decodedId) return;
+        // Serialize enter/leave so a late enter cannot extend a closed view.
+        presenceUpdate = presenceUpdate
+          .then(async () => {
+            const result = await monolithPhoneOperation('updateRoomPushState', {
+              roomId: decodedId,
+              viewing,
+              sessionId: viewingSessionId,
+            });
+            if (active) setPushMuted(result.muted);
+          })
+          .catch((error) => console.log('Could not update Room push presence:', error));
+      };
+      updateViewing(AppState.currentState === 'active');
+      const heartbeat = setInterval(() => {
+        if (AppState.currentState === 'active') updateViewing(true);
+      }, 20_000);
+      const viewingState = AppState.addEventListener('change', (state) =>
+        updateViewing(state === 'active'),
+      );
       const dismiss = () => {
         if (AppState.currentState !== 'active') return;
         void dismissPresentedNotificationsForChannel(decodedId, Notifications, Platform.OS).catch(
@@ -613,6 +653,10 @@ export function BuzzChatSurface({
       const appState = AppState.addEventListener('change', dismiss);
       const received = Notifications.addNotificationReceivedListener(dismiss);
       return () => {
+        active = false;
+        clearInterval(heartbeat);
+        viewingState.remove();
+        updateViewing(false);
         releaseOpenBuzzChannelId(decodedId || null);
         appState.remove();
         received.remove();
@@ -7167,6 +7211,20 @@ export function BuzzChatSurface({
                 }}
               />
             ) : null}
+            {getBuzzRuntimeConfig().monolithEnabled && (
+              <HullActionSheetRow
+                label="Mute notifications"
+                accessibilityLabel="Mute notifications in this conversation"
+                disabled={pushMuteWorking}
+                onPress={() => void togglePushMute()}
+                toggle={{
+                  value: pushMuted,
+                  disabled: pushMuteWorking,
+                  onValueChange: () => void togglePushMute(),
+                }}
+                testID="room-push-mute"
+              />
+            )}
             <HullActionSheetRow
               accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
               chevron="right"
@@ -7246,6 +7304,20 @@ export function BuzzChatSurface({
         title={headerTitle ?? cornerOwnerDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
       >
+        {getBuzzRuntimeConfig().monolithEnabled && (
+          <HullActionSheetRow
+            label="Mute notifications"
+            accessibilityLabel="Mute notifications in this conversation"
+            disabled={pushMuteWorking}
+            onPress={() => void togglePushMute()}
+            toggle={{
+              value: pushMuted,
+              disabled: pushMuteWorking,
+              onValueChange: () => void togglePushMute(),
+            }}
+            testID="room-push-mute"
+          />
+        )}
         <HullActionSheetRow
           accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
           chevron="right"

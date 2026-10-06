@@ -109,6 +109,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   updateAgentSoul: true,
   updateAgentYolo: true,
   updateIdentityFace: true,
+  updateRoomPushState: true,
   updateIdentityPushLevel: true,
   updatePersonProfile: true,
   updateRoom: true,

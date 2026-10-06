@@ -7,14 +7,16 @@ import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from 
 
 export const PUSH_LEVEL_LABELS: Readonly<Record<PushLevel, string>> = {
   off: 'Off',
-  direct: 'Direct',
-  mine: 'My corners',
+  direct: 'Mentions only',
+  mine: 'My work',
+  all: 'All activity',
 };
 /** What each level actually delivers. A sentence never shares the row's
  *  single-line label, so it rides the sheet row's own description slot. */
 const PUSH_LEVEL_DESCRIPTIONS: Readonly<Partial<Record<PushLevel, string>>> = {
-  direct: 'Anything aimed at you: a DM, a tag naming you, a reply to you',
-  mine: 'Everything in Direct, plus member joins and leaves in your rooms',
+  direct: 'Tags, DMs, replies to you, and decisions addressed to you',
+  mine: 'Mentions plus human messages and finished agent turns in corners you opened or requested',
+  all: 'My work plus human messages and finished agent turns in every Room and corner you belong to',
 };
 
 type Props = {

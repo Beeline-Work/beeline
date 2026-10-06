@@ -229,3 +229,23 @@ describe('Firebase push inline actions', () => {
     );
   });
 });
+
+it('replaces an activity slot without losing its unique message destination', () => {
+  const push = firebasePushMessage('token', {
+    type: 'message',
+    messageId: 'fresh-final',
+    workspaceId: 'workspace',
+    roomId: 'room',
+    channelId: 'corner',
+    cornerId: 'corner',
+    target: 'message',
+    text: 'Bee: Finished',
+    collapseId: 'agent:corner',
+  });
+  expect(push.data).toMatchObject({
+    tag: 'agent:corner',
+    collapseId: 'agent:corner',
+    messageId: 'fresh-final',
+    channelId: 'corner',
+  });
+});

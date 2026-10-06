@@ -89,6 +89,7 @@ export function pushMessageData(message: PushDeliveryMessage): Record<string, st
       ...(message.type === 'message' && message.cornerId ? { cornerId: message.cornerId } : {}),
       ...(message.type === 'message' ? { messageId: message.messageId } : {}),
       ...(message.type === 'message' ? pushActionData(message.action) : {}),
+      ...(message.collapseId ? { collapseId: message.collapseId } : {}),
     };
   }
   return data;
@@ -109,9 +110,8 @@ export function pushAlert(message: PushDeliveryMessage): { title?: string; body:
  * itself (title `title`, body `message`, identifier `tag`), which is the only
  * way it can attach the inline action buttons named by `categoryId`. An FCM
  * `notification` block would be drawn by the system tray with no buttons.
- * The identifier is the message id, never the Room: the phone's tap router
- * remembers routed notification identifiers, so a Room-wide identifier would
- * make every later push in that Room look already handled.
+ * Activity reuses a Room slot; the tap router deduplicates by payload message
+ * id so replacements remain actionable.
  */
 export function firebasePushMessage(token: string, message: PushDeliveryMessage): Message {
   const data = pushMessageData(message);
@@ -122,7 +122,7 @@ export function firebasePushMessage(token: string, message: PushDeliveryMessage)
       ...data,
       ...(alert.title ? { title: alert.title } : {}),
       message: alert.body,
-      tag: message.messageId,
+      tag: message.collapseId ?? message.messageId,
     },
     android: { priority: 'high' },
     apns: {

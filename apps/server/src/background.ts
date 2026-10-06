@@ -46,6 +46,8 @@ export interface PushSender {
       /** A permission ask: its text is delivered whole, never cut to fit. */
       permission?: true;
       recipientIdentityId?: string;
+      /** Replacement slot; attention uses its own message or human-burst id. */
+      collapseId?: string;
     } & (
       | { type: 'test' }
       | {
@@ -183,6 +185,7 @@ export class PushDeliveryLoop {
       grant_target: string | null;
       grant_agent_name: string | null;
       author_name: string | null;
+      collapse_id: string | null;
     }>(`
       -- Bound message/device pairs before the current-roster tag subquery.
       -- Without this barrier the planner can resolve tags across all history.
@@ -202,6 +205,7 @@ export class PushDeliveryLoop {
           AND m.card_type IS DISTINCT FROM 'turn-failed'
           AND (m.card_type IS DISTINCT FROM 'relay' OR m.card->>'direction' IS DISTINCT FROM 'up')
           AND m.card_type IS DISTINCT FROM 'workspace-member-joined'
+          AND m.deleted_at IS NULL
           AND btrim(m.text)<>''
           AND NOT EXISTS (
             SELECT 1 FROM push_delivery_claims claim
@@ -210,6 +214,23 @@ export class PushDeliveryLoop {
                 OR claim.attempts>=${PUSH_MAX_ATTEMPTS})
           )
           AND NOT ${earlierTurnPushSql('m', 'd.token')}
+          -- A completed turn's decision/tag metadata qualifies its final prose,
+          -- rather than winning the turn's one push before that prose.
+          AND NOT (m.presentation IN ('system','card') AND m.request_id IS NOT NULL
+            AND EXISTS (SELECT 1 FROM agent_turns t WHERE t.room_id=m.room_id
+              AND t.request_id=m.request_id AND t.agent_id=m.author_id AND t.status='complete')
+            AND EXISTS (SELECT 1 FROM messages final WHERE final.room_id=m.room_id
+              AND final.author_id=m.author_id AND final.request_id=m.request_id
+              AND final.presentation='message' AND final.deleted_at IS NULL))
+          -- Durable chat from agents waits for completion and selects final prose.
+          AND (m.presentation<>'message' OR m.request_id IS NULL
+            OR NOT EXISTS (SELECT 1 FROM identities a WHERE a.id=m.author_id AND a.kind='agent')
+            OR (NOT EXISTS (SELECT 1 FROM agent_turns t WHERE t.room_id=m.room_id
+                AND t.request_id=m.request_id AND t.agent_id=m.author_id AND t.status='working')
+              AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.room_id=m.room_id
+                AND newer.author_id=m.author_id AND newer.request_id=m.request_id
+                AND newer.presentation='message' AND newer.card_type IS NULL AND newer.deleted_at IS NULL
+                AND (newer.created_at,newer.id)>(m.created_at,m.id))))
       ), candidates AS (
         SELECT m.id message_id,room.workspace_id::text workspace_id,
           COALESCE(room.parent_id,room.id)::text room_id,
@@ -244,7 +265,25 @@ export class PushDeliveryLoop {
           m.card->'grants'->0->>'kind' grant_kind,
           m.card->'grants'->0->>'target' grant_target,
           m.card->'agent'->>'name' grant_agent_name,
-          COALESCE(NULLIF(author.name,''),'Someone') author_name
+          COALESCE(NULLIF(author.name,''),'Someone') author_name,
+          CASE WHEN attention.direct OR m.presentation<>'message' THEN
+            CASE WHEN author.kind='human' AND m.presentation='message' THEN (
+              SELECT burst.id FROM messages burst
+              WHERE burst.room_id=m.room_id AND burst.author_id=m.author_id
+                AND burst.presentation='message' AND burst.deleted_at IS NULL
+                AND burst.created_at>=m.created_at-interval '20 seconds'
+                AND (burst.created_at,burst.id)<=(m.created_at,m.id)
+                AND NOT EXISTS (SELECT 1 FROM messages interruption
+                  WHERE interruption.room_id=m.room_id AND interruption.author_id<>m.author_id
+                    AND interruption.presentation='message'
+                    AND (interruption.created_at,interruption.id)>(burst.created_at,burst.id)
+                    AND (interruption.created_at,interruption.id)<(m.created_at,m.id))
+                AND (room.direct_participants IS NOT NULL OR ${addressedToPersonSql('burst', 'recipient.id', 'recipient.handle', 'recipient.kind', false)})
+              ORDER BY burst.created_at,burst.id LIMIT 1)
+            ELSE m.id END
+          -- Keep human prose visible when a subsequent agent summary replaces its slot.
+          ELSE CASE WHEN author.kind='human' THEN room.id::text ELSE 'agent:'||room.id::text END
+          END collapse_id
         FROM recent_messages m
         JOIN rooms room ON room.id=m.room_id
         LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
@@ -252,23 +291,33 @@ export class PushDeliveryLoop {
           AND workspace_member.removed_at IS NULL
         JOIN identities author ON author.id=m.author_id
         JOIN identities recipient ON recipient.id=m.push_identity_id AND recipient.kind='human'
+        CROSS JOIN LATERAL (SELECT (
+          (room.direct_participants IS NOT NULL AND (m.presentation='message' OR m.card_type IS NULL OR m.card_type='grant-request'))
+          OR ${addressedToPersonSql('m', 'recipient.id', 'recipient.handle', 'recipient.kind', false)}
+          OR (author.kind='agent' AND m.presentation='message' AND m.request_id IS NOT NULL
+            AND EXISTS (SELECT 1 FROM messages part WHERE part.room_id=m.room_id
+              AND part.author_id=m.author_id AND part.request_id=m.request_id
+              AND part.deleted_at IS NULL
+              AND ${addressedToPersonSql('part', 'recipient.id', 'recipient.handle', 'recipient.kind', false)}))
+        ) direct) attention
+
         WHERE (
             room.direct_participants IS NULL
             OR m.card_type IS NULL
             OR NOT (room.direct_participants @> jsonb_build_array('${SYSTEM_IDENTITY_ID}'::text))
             OR workspace_member.identity_id IS NOT NULL
           )
-          -- The push ceiling is six categories: direct messages, tags,
-          -- replies to you, a question card addressed to you, the final
-          -- state of a corner you commissioned, and member lifecycle (the
-          -- separate workspace-join branch below). Other cards and corner
-          -- lifecycle never push on their own. Levels are strict subsets of
-          -- that ceiling: direct = everything but member lifecycle,
-          -- mine = direct + member lifecycle.
-          AND recipient.push_level IN ('direct','mine')
+          AND recipient.push_level IN ('direct','mine','all')
           AND (
-            room.direct_participants IS NOT NULL
-            OR ${addressedToPersonSql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')}
+            attention.direct
+            OR (recipient.push_level IN ('mine','all')
+              AND ${addressedToPersonSql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')})
+            OR (m.presentation='message' AND m.card_type IS NULL
+              AND (recipient.push_level='all'
+                OR (recipient.push_level='mine' AND room.parent_id IS NOT NULL
+                  AND (room.created_by=recipient.id OR EXISTS (
+                    SELECT 1 FROM corner_facts mine WHERE mine.corner_id=room.id
+                      AND mine.commissioned_by=recipient.id)))))
           )
         UNION ALL
         SELECT notification.id message_id,notification.workspace_id::text workspace_id,
@@ -278,12 +327,12 @@ export class PushDeliveryLoop {
           btrim(notification.text) text,device.device_token token,push_device.identity_id,
           false is_release_catchup,notification.created_at,
           NULL::text action,NULL::text grant_id,NULL::text grant_kind,NULL::text grant_target,
-          NULL::text grant_agent_name,NULL::text author_name
+          NULL::text grant_agent_name,NULL::text author_name,NULL::text collapse_id
         FROM workspace_join_notifications notification
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
         JOIN push_devices push_device ON push_device.token=device.device_token
         JOIN identities recipient ON recipient.id=push_device.identity_id
-          AND recipient.kind='human' AND recipient.push_level='mine'
+          AND recipient.kind='human' AND recipient.push_level IN ('mine','all')
         JOIN memberships workspace_member ON workspace_member.workspace_id=notification.workspace_id
           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=push_device.identity_id
           AND workspace_member.removed_at IS NULL
@@ -292,7 +341,7 @@ export class PushDeliveryLoop {
           AND notification.created_at>=floor.started_at
           AND btrim(notification.text)<>''
         UNION ALL
-        ${RELEASE_CATCHUP_CANDIDATES_SQL}
+        SELECT catchup.*,NULL::text collapse_id FROM (${RELEASE_CATCHUP_CANDIDATES_SQL}) catchup
       ), unclaimed AS (
         SELECT DISTINCT ON (candidate.message_id,candidate.token)
           candidate.message_id,candidate.workspace_id,candidate.room_id,candidate.channel_id,
@@ -300,7 +349,7 @@ export class PushDeliveryLoop {
           candidate.notification_type,candidate.text,candidate.token,candidate.identity_id,
           candidate.is_release_catchup,candidate.created_at,device.platform,
           candidate.action,candidate.grant_id,candidate.grant_kind,candidate.grant_target,
-          candidate.grant_agent_name,candidate.author_name
+          candidate.grant_agent_name,candidate.author_name,candidate.collapse_id
         FROM candidates candidate
         JOIN push_devices device ON device.token=candidate.token
           AND device.platform IN (${[this.sender && "'android'", this.iosSender && "'ios'", this.webSender && "'web'"].filter(Boolean).join(',') || "'none'"})
@@ -312,7 +361,7 @@ export class PushDeliveryLoop {
       )
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
         notification_type,text,token,identity_id,is_release_catchup,platform,
-        action,grant_id,grant_kind,grant_target,grant_agent_name,author_name
+        action,grant_id,grant_kind,grant_target,grant_agent_name,author_name,collapse_id
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
     let delivered = 0;
@@ -337,6 +386,7 @@ export class PushDeliveryLoop {
             text: string;
             action?: PushAction;
             permission?: true;
+            collapseId?: string;
           };
     };
     const claimedDeliveries: ClaimedDelivery[] = [];
@@ -355,6 +405,9 @@ export class PushDeliveryLoop {
                  SELECT $1,$2,'claimed'
                  WHERE EXISTS (SELECT 1 FROM push_devices WHERE token=$2 AND identity_id=$3)
                    AND EXISTS (SELECT 1 FROM identities WHERE id=$3 AND push_level<>'off')
+                   AND ($6<>'message' OR EXISTS (
+                     SELECT 1 FROM messages m JOIN memberships member ON member.room_id=m.room_id
+                     WHERE m.id=$1 AND member.identity_id=$3 AND member.removed_at IS NULL))
                    AND NOT EXISTS (
                      SELECT 1 FROM messages m WHERE m.id=$1 AND ${earlierTurnPushSql('m', '$2')}
                    )
@@ -394,6 +447,32 @@ export class PushDeliveryLoop {
             ).rowCount,
           );
       if (!claimed) continue;
+      // Consume suppressed candidates permanently, so leaving a Room does not replay them.
+      const suppressed =
+        candidate.channel_id &&
+        (
+          await this.database.query(
+            `SELECT 1 FROM memberships member
+         WHERE member.room_id=$1 AND member.identity_id=$2
+           AND (member.removed_at IS NOT NULL OR member.push_muted)
+         UNION ALL
+         SELECT 1 FROM room_push_views WHERE room_id=$1 AND identity_id=$2 AND expires_at>now()
+         UNION ALL
+         SELECT 1 FROM room_read_marks mark WHERE mark.room_id=$1 AND mark.identity_id=$2
+           AND (mark.updated_at>now()-interval '30 seconds' OR EXISTS (
+             SELECT 1 FROM messages m WHERE m.id=$3
+               AND (mark.message_created_at,mark.message_id)>=(m.created_at,m.id)))
+         LIMIT 1`,
+            [candidate.channel_id, candidate.identity_id, candidate.message_id],
+          )
+        ).rowCount;
+      if (suppressed) {
+        await this.database.query(
+          `UPDATE push_delivery_claims SET status='suppressed',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
+          [candidate.message_id, candidate.token],
+        );
+        continue;
+      }
       claimedDeliveries.push({
         candidate,
         message:
@@ -414,6 +493,7 @@ export class PushDeliveryLoop {
                 target: candidate.target,
                 type: 'message' as const,
                 text: candidate.text,
+                ...(candidate.collapse_id ? { collapseId: candidate.collapse_id } : {}),
                 ...pushActionFor(candidate),
                 // Only a grant-request card carries `grants`, so its first
                 // grant id marks a permission ask.
@@ -421,6 +501,7 @@ export class PushDeliveryLoop {
               },
       });
     }
+    const slotSends = new Map<string, Promise<void>>();
     let nextClaim = 0;
     const workerResults = await Promise.all(
       Array.from(
@@ -437,10 +518,17 @@ export class PushDeliveryLoop {
                   : candidate.platform === 'web'
                     ? this.webSender!
                     : this.sender!;
-              await sender.send(candidate.token, {
-                ...message,
-                recipientIdentityId: candidate.identity_id,
-              });
+              const slot = `${candidate.token}:${candidate.collapse_id ?? candidate.message_id}`;
+              const sending = (slotSends.get(slot) ?? Promise.resolve())
+                .catch(() => undefined)
+                .then(() =>
+                  sender.send(candidate.token, {
+                    ...message,
+                    recipientIdentityId: candidate.identity_id,
+                  }),
+                );
+              slotSends.set(slot, sending);
+              await sending;
               await this.database.query(
                 `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
                 [candidate.message_id, candidate.token],
@@ -618,6 +706,7 @@ export class MediaExpiryLoop {
 }
 
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
+  await database.query(`DELETE FROM room_push_views WHERE expires_at<now()`);
   await database.query(
     `DELETE FROM agent_commands WHERE state IN ('complete','cancelled') AND completed_at<now()-interval '30 days'`,
   );

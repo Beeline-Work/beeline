@@ -3934,6 +3934,11 @@ export class PhoneService {
       case 'updateIdentityFace':
         await this.updateFace(input as Input<'updateIdentityFace'>, viewerId);
         return undefined as Output<Name>;
+      case 'updateRoomPushState':
+        return (await this.updateRoomPushState(
+          input as Input<'updateRoomPushState'>,
+          viewerId,
+        )) as Output<Name>;
       case 'updateIdentityPushLevel':
         return (await this.updatePushLevel(
           input as Input<'updateIdentityPushLevel'>,
@@ -7423,6 +7428,39 @@ export class PhoneService {
     );
     if (!updated.rowCount) throw new Error('identity not found');
   }
+  private async updateRoomPushState(input: Input<'updateRoomPushState'>, viewerId: string) {
+    if (
+      (input.muted !== undefined && typeof input.muted !== 'boolean') ||
+      (input.viewing !== undefined && typeof input.viewing !== 'boolean') ||
+      (input.viewing !== undefined &&
+        (typeof input.sessionId !== 'string' || !input.sessionId || input.sessionId.length > 100))
+    )
+      throw new Error('invalid push state');
+    return this.database.transaction(async (database) => {
+      const updated = await database.query<{ push_muted: boolean }>(
+        `UPDATE memberships SET push_muted=COALESCE($3,push_muted)
+         WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL
+           AND EXISTS (SELECT 1 FROM identities WHERE id=$2 AND kind='human')
+         RETURNING push_muted`,
+        [input.roomId, viewerId, input.muted ?? null],
+      );
+      if (!updated.rows[0]) throw new Error('room not found');
+      if (input.viewing === true)
+        await database.query(
+          `INSERT INTO room_push_views(room_id,identity_id,session_id,expires_at)
+         VALUES($1,$2,$3,now()+interval '45 seconds')
+         ON CONFLICT(room_id,identity_id,session_id) DO UPDATE SET expires_at=EXCLUDED.expires_at`,
+          [input.roomId, viewerId, input.sessionId],
+        );
+      if (input.viewing === false)
+        await database.query(
+          `DELETE FROM room_push_views WHERE room_id=$1 AND identity_id=$2 AND session_id=$3`,
+          [input.roomId, viewerId, input.sessionId],
+        );
+      return { muted: updated.rows[0].push_muted };
+    });
+  }
+
   private async updatePushLevel(input: Input<'updateIdentityPushLevel'>, viewerId: string) {
     if (!isPushLevel(input.pushLevel)) throw new Error('invalid push level');
     const updated = await this.database.query(
@@ -9501,6 +9539,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'removeAgent',
   'updatePersonProfile',
   'updateIdentityFace',
+  'updateRoomPushState',
   'updateIdentityPushLevel',
   'setRoomRepository',
   'setRoomTargetBranch',
@@ -9554,6 +9593,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
 ]);
 
 const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
+  'updateRoomPushState',
   'readWorkflowDefinition',
   'listWorkflowDefinitions',
   'leaveWorkspace',

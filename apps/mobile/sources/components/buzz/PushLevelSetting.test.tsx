@@ -26,7 +26,7 @@ import { PushLevelSetting } from './PushLevelSetting';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('PushLevelSetting', () => {
-  it('opens the three-choice picker and saves the selected level', async () => {
+  it('opens the sensitivity picker and saves the selected level', async () => {
     const onSave = vi.fn(async () => undefined);
     let renderer!: ReturnType<typeof create>;
     await act(async () => {
@@ -34,7 +34,7 @@ describe('PushLevelSetting', () => {
     });
     const row = renderer.root.findByProps({ testID: 'push-notifications-setting' });
     expect(row.props.title).toBe('Notifications');
-    expect(row.props.value).toBe('My corners');
+    expect(row.props.value).toBe('My work');
 
     act(() => row.props.onPress());
     expect(renderer.root.findByProps({ testID: 'push-notifications-sheet' }).props.visible).toBe(
@@ -44,19 +44,26 @@ describe('PushLevelSetting', () => {
       renderer.root
         .findAllByType('Choice')
         .map((choice: { props: { testID: string } }) => choice.props.testID),
-    ).toEqual(['push-level-off', 'push-level-direct', 'push-level-mine']);
+    ).toEqual(['push-level-off', 'push-level-direct', 'push-level-mine', 'push-level-all']);
     // The row's label is one line (HullActionSheetRow pins numberOfLines={1}),
     // so the level's name rides the label and the sentence explaining what it
     // delivers rides the wrapping description slot instead of ellipsizing.
     expect(
-      ['off', 'direct', 'mine'].map((level) => {
+      ['off', 'direct', 'mine', 'all'].map((level) => {
         const choice = renderer.root.findByProps({ testID: `push-level-${level}` });
         return [choice.props.label, choice.props.description];
       }),
     ).toEqual([
       ['Off', undefined],
-      ['Direct', 'Anything aimed at you: a DM, a tag naming you, a reply to you'],
-      ['My corners', 'Everything in Direct, plus member joins and leaves in your rooms'],
+      ['Mentions only', 'Tags, DMs, replies to you, and decisions addressed to you'],
+      [
+        'My work',
+        'Mentions plus human messages and finished agent turns in corners you opened or requested',
+      ],
+      [
+        'All activity',
+        'My work plus human messages and finished agent turns in every Room and corner you belong to',
+      ],
     ]);
 
     await act(async () =>

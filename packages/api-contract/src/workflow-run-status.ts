@@ -23,5 +23,5 @@ export function workflowStepDisplayStatus(
   const declared = contract.handoffs[state];
   if (declared?.kind === 'terminal') return declared.status === 'done' ? 'done' : 'failed';
   if (left) return 'done';
-  return runStatus === 'live' ? 'current' : runStatus === 'failed' ? 'failed' : 'done';
+  return runStatus === 'live' ? 'current' : runStatus === 'done' ? 'done' : 'failed';
 }

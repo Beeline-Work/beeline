@@ -112,10 +112,11 @@ describe('workflowRunLine execution history', () => {
     expect(assigneesOf(line, feedbackTriage)).toEqual(['Owner', 'Candy', undefined]);
   });
   it('keeps a cancellation exit stable without adding a second visit', () => {
-    const line = workflowRunLine(feedbackTriage, [{ toState: 'pull', at: 100 },
+    const line = workflowRunLine(feedbackTriage, [{ toState: 'notify', at: 90 },
+      { fromState: 'notify', toState: 'pull', at: 100 },
       { fromState: 'pull', toState: 'pull', status: 'abandoned', at: 120 }]);
-    expect(rowsOf(line)).toEqual([['pull', 'done']]);
-    expect(stepSeconds(line[0]!, 300)).toBe(20);
+    expect(rowsOf(line)).toEqual([['notify', 'done'], ['pull', 'failed']]);
+    expect(stepSeconds(line[1]!, 300)).toBe(20);
   });
 });
 

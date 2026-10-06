@@ -209,6 +209,7 @@ export function RoomCornersList({
         style={({ pressed }) => [styles.cell, pressed && styles.cellPressed]}
         testID={`room-corner-${item.corner.id}`}
       >
+        <View style={styles.cellRail} testID={`room-corner-rail-${item.corner.id}`} />
         <View style={styles.cellTitle}>
           {ownerMark(item)}
           <Text style={[styles.rowTitle, styles.cellName]}>{label}</Text>
@@ -216,6 +217,7 @@ export function RoomCornersList({
           <StateCircle state={display.visual} tone={display.tone} />
         </View>
         <CornerObjectiveLine
+          desktop
           objective={objective}
           onOpenBrief={item.briefRevision && onOpenBrief ? () => onOpenBrief(item) : undefined}
           workflow={runs[0]}
@@ -418,6 +420,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
+    cellRail: { position: 'absolute', left: 0, top: hull.space.sm, bottom: hull.space.sm, width: StyleSheet.hairlineWidth, backgroundColor: hull.borderStrong },
     cellPressed: { backgroundColor: hull.bgPressed },
     cellName: { flex: 1, minWidth: 0 },
     cellTitle: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm, minHeight: 44 },

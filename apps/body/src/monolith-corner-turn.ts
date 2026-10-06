@@ -29,6 +29,7 @@ import {
   isExpiredHarnessLoginError,
   prepareRoomAgentHome,
   repairRoomAgentCredentialLinks,
+  watchRoomClaudeLogin,
   writeBackRoomClaudeLogin,
 } from './agent-home.js';
 import {
@@ -482,6 +483,7 @@ export class MonolithCornerTurnLoop {
     this.wakeIntake?.();
   }
   private client?: AcpClient;
+  private claudeLoginWatch?: { close(): void };
   private sessionId?: string;
   /** The configuration the live session baked in; a change invalidates it. */
   private sessionFingerprint?: string;
@@ -704,8 +706,27 @@ export class MonolithCornerTurnLoop {
     };
   }
 
+  /**
+   * Watch this client's Claude login so a refresh made while the
+   * corner is idle reaches other Rooms at once (see `watchRoomClaudeLogin`).
+   */
+  private watchClaudeLogin(): void {
+    this.stopClaudeLoginWatch();
+    if (this.options.config.agentKind !== 'claude' || !this.options.config.agentHomeRoot) return;
+    this.claudeLoginWatch = watchRoomClaudeLogin({
+      root: this.options.config.agentHomeRoot,
+      operatorHome: this.options.config.operatorHome,
+    });
+  }
+
+  private stopClaudeLoginWatch(): void {
+    this.claudeLoginWatch?.close();
+    this.claudeLoginWatch = undefined;
+  }
+
   private async discardSession(): Promise<void> {
     const client = this.client;
+    this.stopClaudeLoginWatch();
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
@@ -1060,6 +1081,7 @@ export class MonolithCornerTurnLoop {
       clientOptions,
     );
     await this.client.start();
+    this.watchClaudeLogin();
     const codegraphReady = await prepareCodegraphIndex(
       this.options.config,
       this.options.worktreePath,
@@ -1354,6 +1376,7 @@ export class MonolithCornerTurnLoop {
     // The retry is its own timeline, fresh ACP handshake included.
     trace?.retry({ provider: next, ...(reason ? { reason } : {}) });
     const client = this.client;
+    this.stopClaudeLoginWatch();
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;

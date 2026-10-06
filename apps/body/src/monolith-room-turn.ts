@@ -36,6 +36,7 @@ import {
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
   repairRoomAgentCredentialLinks,
+  watchRoomClaudeLogin,
   writeBackRoomClaudeLogin,
 } from './agent-home.js';
 import {
@@ -450,6 +451,7 @@ export class MonolithRoomTurnLoop {
     this.wakeIntake = undefined;
   }
   private client?: AcpClient;
+  private claudeLoginWatch?: { close(): void };
   private sessionId?: string;
   private sessionCwd?: string;
   private sessionCommit?: string;
@@ -712,8 +714,27 @@ export class MonolithRoomTurnLoop {
     };
   }
 
+  /**
+   * Watch this client's Claude login so a refresh made while the
+   * Room is idle reaches other Rooms at once (see `watchRoomClaudeLogin`).
+   */
+  private watchClaudeLogin(): void {
+    this.stopClaudeLoginWatch();
+    if (this.options.config.agentKind !== 'claude' || !this.options.config.agentHomeRoot) return;
+    this.claudeLoginWatch = watchRoomClaudeLogin({
+      root: this.options.config.agentHomeRoot,
+      operatorHome: this.options.config.operatorHome,
+    });
+  }
+
+  private stopClaudeLoginWatch(): void {
+    this.claudeLoginWatch?.close();
+    this.claudeLoginWatch = undefined;
+  }
+
   private async discardSession(): Promise<void> {
     const client = this.client;
+    this.stopClaudeLoginWatch();
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionCwd = undefined;
@@ -1105,6 +1126,7 @@ export class MonolithRoomTurnLoop {
       clientOptions,
     );
     await this.client.start();
+    this.watchClaudeLogin();
     const persona = configuration.soul ?? self?.soul;
     const repositoryInfo =
       repositoryState.resolution === 'repository' && repositoryState.key
@@ -1262,6 +1284,7 @@ export class MonolithRoomTurnLoop {
     // first-token time.
     trace?.retry({ provider: next, ...(reason ? { reason } : {}) });
     const client = this.client;
+    this.stopClaudeLoginWatch();
     this.client = undefined;
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;

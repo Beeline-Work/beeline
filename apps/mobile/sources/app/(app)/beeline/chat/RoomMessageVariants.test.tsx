@@ -734,24 +734,24 @@ describe('Room message variant components', () => {
       />,
     );
 
-    const copy = renderer.root.findByProps({ testID: 'copy-button-desktop-reply' });
+    const copy = renderer.root.findAllByProps({ testID: 'copy-button-desktop-reply' }).find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
     expect(copy.props.accessibilityLabel).toBe('Copy message text');
     act(() => copy.props.onPress());
     expect(onCopy).toHaveBeenCalledWith(row.text);
 
-    const reply = renderer.root.findByProps({ testID: 'reply-button-desktop-reply' });
+    const reply = renderer.root.findAllByProps({ testID: 'reply-button-desktop-reply' }).find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
     expect(reply.props.accessibilityLabel).toBe('Reply to message');
     act(() => reply.props.onPress());
     expect(onReply).toHaveBeenCalledWith(row);
 
-    const react = renderer.root.findByProps({ testID: 'react-button-desktop-reply' });
+    const react = renderer.root.findAllByProps({ testID: 'react-button-desktop-reply' }).find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
     expect(react.props.accessibilityLabel).toBe('React to message');
     act(() => react.props.onPress());
     const laugh = renderer.root.findByProps({ testID: 'reaction-choice-desktop-reply-😂' });
     act(() => laugh.props.onPress());
     expect(onReact).toHaveBeenCalledWith(row, '😂');
 
-    const forward = renderer.root.findByProps({ testID: 'forward-button-desktop-reply' });
+    const forward = renderer.root.findAllByProps({ testID: 'forward-button-desktop-reply' }).find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
     expect(forward.props.accessibilityLabel).toBe('Forward message');
     act(() => forward.props.onPress());
     expect(onForward).toHaveBeenCalledWith(row);
@@ -778,7 +778,7 @@ describe('Room message variant components', () => {
     } satisfies OrdinaryLedgerMessageProps;
     const renderer = render(<OrdinaryLedgerMessage {...props} onReportIssue={onReportIssue} />);
 
-    const report = renderer.root.findByProps({ testID: 'report-button-desktop-report' });
+    const report = renderer.root.findAllByProps({ testID: 'report-button-desktop-report' }).find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
     expect(report.props.accessibilityLabel).toBe('Report an issue with this message');
     act(() => report.props.onPress());
     expect(onReportIssue).toHaveBeenCalledWith(row);

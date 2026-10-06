@@ -101,7 +101,9 @@ describe('desktop layout mode', () => {
 
     expect(room).toContain('const isDesktop = useIsDesktop();');
     expect(room).toContain('desktopLayout={isDesktop}');
-    expect(messages).toContain('onMouseEnter: () => setDesktopActionsVisible(true)');
+    expect(messages).toContain('onMouseEnter: () => setDesktopRowHovered(true)');
+    expect(messages).toContain('onMouseLeave: () => setDesktopRowHovered(false)');
+    expect(messages).toContain('desktopActionsVisible || desktopRowHovered || reactionPickerVisible');
     expect(messages).toContain('onFocus={() => setDesktopActionsVisible(true)}');
     expect(messages).toContain('testID={`copy-button-${messageId}`}');
     expect(messages).toContain('onPress={onLongPress}');

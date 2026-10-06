@@ -62,6 +62,7 @@
         "scripts/pr-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",
         "scripts/desktop-rail-mine-proof.tsx",
+        "scripts/desktop-ui-fixes-proof.tsx",
         "scripts/room-card-spacing-proof.tsx",
         "scripts/render-room-list-proof.mjs",
         "scripts/room-list-proof.tsx",

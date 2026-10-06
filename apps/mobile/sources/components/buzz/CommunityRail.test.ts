@@ -43,6 +43,9 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
+const layout = vi.hoisted(() => ({ desktop: false }));
+vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => layout.desktop }));
+
 vi.mock('expo-haptics', () => ({ selectionAsync: vi.fn() }));
 
 vi.mock('react-native-reanimated', async () => {
@@ -133,6 +136,16 @@ function renderShell(
 }
 
 describe('Workspace drawer', () => {
+  it('keeps the desktop Workspace avatar free of an attention overlay', () => {
+    layout.desktop = true;
+    try {
+      let renderer: ReactTestRenderer;
+      act(() => { renderer = create(React.createElement(CommunitySwitcherTrigger, { community: { communityId: 'sample', name: 'Sample' }, expanded: false, attention: true, onPress: () => undefined })); });
+      expect(renderer!.root.findAllByProps({ testID: 'workspace-attention' })).toHaveLength(0);
+      act(() => renderer!.unmount());
+    } finally { layout.desktop = false; }
+  });
+
   it('shows one attention mark on the current Workspace trigger when requested', () => {
     let renderer!: ReactTestRenderer;
     act(() => {

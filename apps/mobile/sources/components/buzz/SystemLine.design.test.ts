@@ -168,74 +168,11 @@ describe('the system line', () => {
     ).toBeUndefined();
   });
 
-  it('reads a folded run as one sentence', () => {
-    const renderer = render(
-      React.createElement(LedgerSystemLine, {
-        id: 'joined',
-        text: 'Candy, Terra and Codex joined',
-        event: { subject: { kind: 'person', id: 'c'.repeat(64), name: 'Candy' }, verb: 'joined' },
-        subjects: [
-          { kind: 'person', id: 'c'.repeat(64), name: 'Candy' },
-          { kind: 'agent', id: 't'.repeat(64), name: 'Terra' },
-          { kind: 'agent', id: 'x'.repeat(64), name: 'Codex' },
-        ],
-        stamp: '16:41',
-      }),
-    );
-    const line = renderer.root.findByProps({ testID: 'system-line-text-joined' });
-    expect(flattenText(line.props.children)).toBe('Candy, Terra and Codex joined');
-    expect(
-      [0, 1, 2].map(
-        (i) => renderer.root.findByProps({ testID: `system-line-name-joined-${i}` }).props.children,
-      ),
-    ).toEqual(['Candy', 'Terra', 'Codex']);
-  });
-
   it('renders a row from before the grammar as its plain text', () => {
     const renderer = render(
       React.createElement(LedgerSystemLine, { id: 'old', text: 'Candy joined', stamp: '16:41' }),
     );
     const line = renderer.root.findByProps({ testID: 'system-line-text-old' });
     expect(line.props.children).toBe('Candy joined');
-  });
-});
-
-describe('the folded GitHub lifecycle line', () => {
-  it('shows the newest three links and expands the rest inline', () => {
-    const onOpenUrl = vi.fn();
-    const items = Array.from({ length: 5 }, (_, index) => ({
-      id: String(index + 1),
-      title: `Change ${index + 1}`,
-      url: `https://github.test/pull/${index + 1}`,
-      verb: index < 2 ? 'merged' : 'opened',
-      subject: 'PR' as const,
-    }));
-    const renderer = render(
-      React.createElement(LedgerSystemLine, {
-        id: 'run',
-        text: '3 PRs opened · 2 merged',
-        summaryItems: items,
-        stamp: '16:41',
-        onOpenUrl,
-      }),
-    );
-    expect(renderer.root.findByProps({ testID: 'system-line-text-run' }).props.children).toBe(
-      '3 PRs opened · 2 merged',
-    );
-    expect(
-      renderer.root.findAll(
-        (node) => node.type === 'Text' && /^github-lifecycle-item-/.test(node.props.testID ?? ''),
-      ),
-    ).toHaveLength(3);
-    const disclosure = renderer.root.findByProps({ testID: 'github-lifecycle-expand-run' });
-    expect(flattenText(disclosure.props.children)).toBe('and 2 more');
-    act(() => disclosure.props.onPress());
-    expect(
-      renderer.root.findAll(
-        (node) => node.type === 'Text' && /^github-lifecycle-item-/.test(node.props.testID ?? ''),
-      ),
-    ).toHaveLength(5);
-    renderer.root.findByProps({ testID: 'github-lifecycle-item-5' }).props.onPress();
-    expect(onOpenUrl).toHaveBeenCalledWith('https://github.test/pull/5');
   });
 });

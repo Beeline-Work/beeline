@@ -58,6 +58,7 @@
         "scripts/tool-output-sheet-proof.tsx",
         "scripts/beeline-mark-proof.tsx",
         "scripts/identity-mark-system-proof.tsx",
+        "scripts/system-lines-proof.tsx",
         "scripts/tray-empty-proof.tsx",
         "scripts/desktop-rail-mine-proof.tsx",
         "scripts/room-card-spacing-proof.tsx",

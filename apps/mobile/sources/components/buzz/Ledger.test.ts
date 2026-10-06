@@ -35,6 +35,7 @@ vi.mock('react-native-reanimated', () => ({
 
 import {
   LedgerEntry,
+  LedgerSystemLine,
   LedgerGhostLine,
   LedgerMarginalia,
   LedgerRoomUpdate,
@@ -232,7 +233,11 @@ describe('the ledger — an agent turn', () => {
       render(
         React.createElement(LedgerEntry, {
           itemId: 'reported-message',
-          byline: { name: 'Ada', stamp: '10:02', ...(feedbackReported ? { feedbackReported } : {}) },
+          byline: {
+            name: 'Ada',
+            stamp: '10:02',
+            ...(feedbackReported ? { feedbackReported } : {}),
+          },
           bodyText: 'The deploy button did nothing.',
           bodyTestID: 'body',
         }),
@@ -1302,5 +1307,23 @@ describe('the ledger day caption', () => {
       marginVertical: 16,
     });
     expect(node.props.style.position).toBeUndefined();
+  });
+});
+
+describe('full system notices', () => {
+  it('renders native recovery text and every detail without line caps or expansion', () => {
+    const text =
+      'Ruby could not answer · the helper could not authenticate with Claude. Its owner can run beeline connect on its machine.';
+    const renderer = render(
+      React.createElement(LedgerSystemLine, {
+        id: 'notice',
+        text,
+        stamp: '17:14',
+      }),
+    );
+    expect(
+      renderer.root.findByProps({ testID: 'system-line-text-notice' }).props.numberOfLines,
+    ).toBeUndefined();
+    expect(renderedText(renderer)).toContain(text);
   });
 });

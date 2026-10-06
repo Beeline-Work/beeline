@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  anchorRelayReports,
-  foldSystemLines,
-  joinSystemNames,
-  systemLineText,
-} from './system-lines';
+import { anchorRelayReports, joinSystemNames, systemLineText } from './system-lines';
 
 const joined = (
   id: string,
@@ -37,24 +32,13 @@ describe('system lines on the phone', () => {
     expect(joinSystemNames(['@candy', '@terra', '@codex'])).toBe('@candy, @terra and @codex');
   });
 
-  it('folds consecutive lines with the same verb into one, oldest subject first', () => {
-    const folded = foldSystemLines([
+  it('keeps consecutive same-verb notices with their original text, stamps and anchors', () => {
+    const messages = [
       joined('a', '@candy', 1),
       joined('b', '@terra', 2, 'agent'),
       joined('c', '@codex', 3, 'agent'),
-    ]);
-    expect(folded).toHaveLength(1);
-    expect(folded[0]).toMatchObject({
-      id: 'a',
-      timestamp: 3,
-      text: '@candy, @terra and @codex joined',
-      foldedIds: ['a', 'b', 'c'],
-    });
-    expect(folded[0]!.systemSubjects!.map((subject) => subject.name)).toEqual([
-      '@candy',
-      '@terra',
-      '@codex',
-    ]);
+    ];
+    expect(anchorRelayReports(messages)).toEqual(messages);
   });
 
   it('keeps each deleted message line in its own place', () => {
@@ -71,7 +55,7 @@ describe('system lines on the phone', () => {
         consequence: 'sent by @milo',
       },
     });
-    expect(foldSystemLines([deleted('a', 1), deleted('b', 2)]).map((line) => line.id)).toEqual([
+    expect(anchorRelayReports([deleted('a', 1), deleted('b', 2)]).map((line) => line.id)).toEqual([
       'a',
       'b',
     ]);
@@ -92,7 +76,7 @@ describe('system lines on the phone', () => {
       timestamp: 5,
       isSystemNotice: true,
     };
-    const folded = foldSystemLines([
+    const folded = anchorRelayReports([
       joined('a', '@candy', 1),
       message,
       joined('b', '@terra', 3),
@@ -101,34 +85,16 @@ describe('system lines on the phone', () => {
       joined('c', '@codex', 6),
     ]);
     expect(folded.map((row) => row.id)).toEqual(['a', 'm', 'b', 'l', 'old', 'c']);
-    expect(folded.every((row) => !row.foldedIds)).toBe(true);
   });
 
-  it('keeps the object and consequence in a folded line and dedupes a repeated subject', () => {
-    const yolo = (id: string, name: string, timestamp: number) => ({
-      id,
-      text: `${name} turned yolo on for @bee · grant requests are now approved automatically`,
-      timestamp,
-      isSystemNotice: true,
-      systemEvent: {
-        subject: { kind: 'person' as const, id: `${name}-id`, name },
-        verb: 'turned yolo on for',
-        object: { text: '@bee', id: 'bee' },
-        consequence: 'grant requests are now approved automatically',
-      },
-    });
-    const folded = foldSystemLines([
-      yolo('a', '@owner', 1),
-      yolo('b', '@admin', 2),
-      yolo('c', '@owner', 3),
-    ]);
-    expect(folded).toHaveLength(1);
-    expect(folded[0]!.text).toBe(
-      '@owner and @admin turned yolo on for @bee · grant requests are now approved automatically',
-    );
-    expect(systemLineText(yolo('x', '@owner', 0).systemEvent)).toBe(
-      '@owner turned yolo on for @bee · grant requests are now approved automatically',
-    );
+  it('keeps repeated notices and all recovery details', () => {
+    const text =
+      'Ruby could not answer · the helper could not authenticate with Claude. Its owner can run beeline connect on its machine.';
+    const messages = [
+      { id: 'a', timestamp: 1, text, isSystemNotice: true },
+      { id: 'b', timestamp: 2, text, isSystemNotice: true },
+    ];
+    expect(anchorRelayReports(messages)).toEqual(messages);
   });
 });
 
@@ -151,7 +117,7 @@ it('anchors up-relays below their corner card and keeps an unanchored report vis
     relay: { direction: 'up' as const, anchorMessageId: 'card' },
   };
   const middle = { id: 'middle', text: 'Other conversation', timestamp: 2 };
-  const folded = foldSystemLines([card, middle, report]);
+  const folded = anchorRelayReports([card, middle, report]);
   expect(folded.map((m) => m.id)).toEqual(['card', 'middle']);
   expect(folded[0]).toMatchObject({ relayReports: [report] });
   // A newly unread report still belongs under a previously read corner card.
@@ -161,10 +127,10 @@ it('anchors up-relays below their corner card and keeps an unanchored report vis
   );
   expect(boundary).toBe(0);
   expect([
-    ...foldSystemLines(anchored.slice(0, boundary)),
-    ...foldSystemLines(anchored.slice(boundary)),
+    ...anchorRelayReports(anchored.slice(0, boundary)),
+    ...anchorRelayReports(anchored.slice(boundary)),
   ]).toEqual(folded);
-  expect(foldSystemLines([middle, report])).toEqual([middle, report]);
+  expect(anchorRelayReports([middle, report])).toEqual([middle, report]);
 });
 
 it('keeps a corner opened from a message out of a folded lifecycle run', () => {
@@ -180,9 +146,7 @@ it('keeps a corner opened from a message out of a folded lifecycle run', () => {
       ...(sourceMessageId ? { sourceMessageId } : {}),
     },
   });
-  // Two agent-opened corners fold into one run; a marker never joins it.
-  const folded = foldSystemLines([opened('a', 1), opened('b', 2), opened('m', 3, 'message')]);
-  expect(folded.map((m) => m.id)).toEqual(['a', 'm']);
-  expect(folded[0]!.notificationLifecycleRun).toBeDefined();
-  expect(folded[1]!.notificationLifecycleRun).toBeUndefined();
+  // Lifecycle notices and a source-message marker retain their own anchors.
+  const folded = anchorRelayReports([opened('a', 1), opened('b', 2), opened('m', 3, 'message')]);
+  expect(folded.map((m) => m.id)).toEqual(['a', 'b', 'm']);
 });

@@ -734,15 +734,13 @@ export function LedgerHistoryLine({ text, onPress }: { text: string; onPress?: (
  * The one renderer for a server-phrased system line (`buzz/system-lines.ts`):
  * `<subject> <verb>[ <object>][ · <consequence>]` in the quiet `meta` role,
  * no avatar, the stamp pinned right. Names are brass and tappable; an object
- * with a URL is a link. A folded run passes every subject in `subjects`. A row
+ * with a URL is a link. Every message remains a separate row. A row
  * from before the grammar has no event and shows its text verbatim.
  */
 export function LedgerSystemLine({
   id,
   text,
   event,
-  subjects,
-  summaryItems,
   stamp,
   onOpenIdentity,
   onOpenUrl,
@@ -751,16 +749,12 @@ export function LedgerSystemLine({
   id: string;
   text: string;
   event?: SystemEvent;
-  subjects?: readonly SystemSubject[];
-  summaryItems?: readonly { id: string; title: string; url?: string }[];
   stamp: string;
   onOpenIdentity?: (identityId: string) => void;
   onOpenUrl?: (url: string) => void;
   /** Opens the corner's latest brief; a revision notice links to it. */
   onOpenBrief?: () => void;
 }) {
-  const [summaryExpanded, setSummaryExpanded] = useState(false);
-  const names = event ? (subjects?.length ? subjects : [event.subject]) : [];
   const name = (subject: SystemSubject, index: number) => (
     <Text
       key={`${subject.id ?? subject.name}-${index}`}
@@ -773,11 +767,7 @@ export function LedgerSystemLine({
   );
   const spans: React.ReactNode[] = [];
   if (event) {
-    names.forEach((subject, index) => {
-      if (index > 0) spans.push(index === names.length - 1 ? ' and ' : ', ');
-      spans.push(name(subject, index));
-    });
-    spans.push(names.length ? ` ${event.verb}` : event.verb);
+    spans.push(name(event.subject, 0), ` ${event.verb}`);
     const object = event.object;
     if (object?.text) {
       spans.push(' ');
@@ -825,7 +815,6 @@ export function LedgerSystemLine({
   return (
     <View style={styles.systemLine} testID={`system-line-${id}`}>
       <Text
-        numberOfLines={summaryItems ? 1 : 2}
         style={styles.systemLineText}
         testID={`system-line-text-${id}`}
       >
@@ -834,37 +823,6 @@ export function LedgerSystemLine({
       <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`system-line-stamp-${id}`}>
         {stamp}
       </Text>
-      {summaryItems ? (
-        <View style={styles.systemLineItems}>
-          {(summaryExpanded ? summaryItems : summaryItems.slice(0, 3)).map((item) => (
-            <Text
-              key={item.id}
-              numberOfLines={1}
-              style={item.url ? styles.systemLineLink : styles.systemLineText}
-              onPress={item.url && onOpenUrl ? () => onOpenUrl(item.url!) : undefined}
-              testID={`github-lifecycle-item-${item.id}`}
-            >
-              {item.title}
-            </Text>
-          ))}
-          {summaryItems.length > 3 ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                summaryExpanded
-                  ? 'Show fewer GitHub events'
-                  : `Show ${summaryItems.length - 3} more GitHub events`
-              }
-              onPress={() => setSummaryExpanded((value) => !value)}
-              testID={`github-lifecycle-expand-${id}`}
-            >
-              <Text style={styles.systemLineName}>
-                {summaryExpanded ? 'show less' : `and ${summaryItems.length - 3} more`}
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -1127,10 +1085,6 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.buzz.proseRegular,
     color: theme.buzz.ledgerBody,
     textDecorationLine: 'underline',
-  },
-  systemLineItems: {
-    marginTop: theme.buzz.space.xs,
-    gap: theme.buzz.space.xs,
   },
   roomUpdateDigest: {
     ...theme.buzz.type.meta,

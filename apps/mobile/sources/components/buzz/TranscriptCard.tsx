@@ -440,6 +440,7 @@ export function TranscriptCard({
                 <TranscriptCardRowView
                   key={row.id}
                   row={row}
+                  wrapTitle={wrapTitle}
                   animateCardArrival={animateArrival}
                   animateEntry={liveMotion.appendedRowIds.has(row.id)}
                   animateState={liveMotion.changedRowIds.has(row.id)}
@@ -599,6 +600,7 @@ function TranscriptCardChoicePlate({
 
 function TranscriptCardRowView({
   row,
+  wrapTitle,
   animateCardArrival,
   animateEntry,
   animateState,
@@ -606,6 +608,7 @@ function TranscriptCardRowView({
   steady,
 }: {
   row: TranscriptCardRow;
+  wrapTitle: boolean;
   animateCardArrival: boolean;
   animateEntry: boolean;
   animateState: boolean;
@@ -644,7 +647,7 @@ function TranscriptCardRowView({
           durationMs={animateCardArrival ? TRANSCRIPT_SETTLE_MS : settleDurationMs}
           ellipsizeMode="tail"
           fadeMs={animateEntry ? 300 : 0}
-          numberOfLines={1}
+          numberOfLines={wrapTitle ? undefined : 1}
           steadyColor={steady.rowTitle}
           style={styles.rowTitle}
         >
@@ -655,7 +658,7 @@ function TranscriptCardRowView({
           delayMs={animateEntry ? 100 : 0}
           durationMs={animateCardArrival ? TRANSCRIPT_SETTLE_MS : settleDurationMs}
           fadeMs={animateEntry ? 300 : 0}
-          numberOfLines={1}
+          numberOfLines={wrapTitle ? undefined : 1}
           steadyColor={steady.rowKind}
           style={styles.rowKind}
         >

@@ -328,6 +328,26 @@ describe('corner message attribution', () => {
     expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
   });
 
+  it('Reproduction C3-1: a green re-report on the same head does not re-wake a reviewer that already reviewed it', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(21, '7'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    // The reviewer ends the turn without a PASS, so the corner hands back.
+    await result(review!, 'Review complete: this head needs a fix.');
+    expect((await commands(A, C)).map((command) => command.reason)).toEqual(['corner_review']);
+    // The same head's green verdict is re-reported (a CI re-run or a redelivery).
+    await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, B]);
+    await greenHead(21, '7'.repeat(40));
+    const reviewerWakes = (await commands(B, C)).filter(
+      (command) => command.reason === 'subscribed_event',
+    );
+    console.info(
+      `Reproduction C3-1: wrong=1 re-wake of a reviewed head; right=0; observed=${reviewerWakes.length}`,
+    );
+    expect(reviewerWakes).toHaveLength(0);
+  });
+
   it('commits the verdict and the handoff together, or neither', async () => {
     // The stall this whole corner removes is a durable verdict nobody was
     // woken for. A handoff written AFTER the verdict commits can produce

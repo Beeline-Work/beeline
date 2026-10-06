@@ -152,7 +152,6 @@ function Board() {
               ],
             } as never}
             onOpen={() => undefined}
-            renderDrag={(_id: string, child: React.ReactNode) => child}
           />
         </Section>
       </View>

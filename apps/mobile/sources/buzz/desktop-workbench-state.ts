@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { LAYOUT_BREAKPOINTS } from '@/utils/layoutClass';
+import type { DesktopArtifactSelection } from '@/buzz/desktop-artifact-pane';
 
 export const DESKTOP_NAV_MIN_WIDTH = 240;
 export const DESKTOP_NAV_MAX_WIDTH = 420;
@@ -17,39 +17,37 @@ export const DESKTOP_WORK_PANE_HYSTERESIS = 24;
 
 const NAV_WIDTH_KEY = 'beeline.desktop.nav-width.v1';
 const INSPECTOR_WIDTH_KEY = 'beeline.desktop.inspector-width.v1';
-const WORK_PANE_PREFERENCE_PREFIX = 'beeline.desktop.work-pane-preference.v1:';
 const DRAFT_PREFIX = 'beeline.desktop.draft.v1:';
 
-export type DesktopWorkPanePreference = 'present' | 'dismissed';
 export type DesktopWorkPaneWidthMode = 'wide' | 'narrow';
-export type DesktopWorkPaneMode = DesktopWorkPanePreference | 'suppressed';
-export type DesktopWorkPaneWindowClass = 'regular-window' | 'wide-window';
+
+/** The second pane holds one thing at a time, or nothing. */
+export type DesktopWorkPaneContent =
+  | { kind: 'corner'; cornerId: string }
+  | { kind: 'artifact'; artifact: DesktopArtifactSelection };
 
 export type DesktopWorkPaneState = {
-  preference: DesktopWorkPanePreference;
   widthMode: DesktopWorkPaneWidthMode;
-  selectedCornerId: string | null;
+  content: DesktopWorkPaneContent | null;
 };
+
+export type DesktopWorkPanePrimary = 'room' | 'corner' | 'direct-message';
 
 export type DesktopWorkPaneEvent =
-  | { type: 'hydrate'; preference: DesktopWorkPanePreference }
   | { type: 'resize'; width: number }
-  | { type: 'dismiss' }
-  | { type: 'toggle' }
-  | { type: 'open-overview' }
-  | { type: 'open-corner'; cornerId: string }
-  | { type: 'open-artifact' }
-  | { type: 'drop-corner'; cornerId: string }
-  | { type: 'open-corner-in-main' };
+  | { type: 'close' }
+  | { type: 'open-corner'; cornerId: string; primary: DesktopWorkPanePrimary }
+  | { type: 'open-artifact'; artifact: DesktopArtifactSelection; primary: DesktopWorkPanePrimary }
+  | { type: 'expand' };
 
+/**
+ * `pane`: the second pane now shows it. `primary`: the caller opens a corner
+ * in the primary view, or an artifact in the full-screen viewer.
+ */
 export type DesktopWorkPaneTransition = {
   state: DesktopWorkPaneState;
-  placement?: 'main' | 'work';
+  placement?: 'pane' | 'primary';
 };
-
-export function desktopWorkPaneWindowClass(width: number): DesktopWorkPaneWindowClass {
-  return width >= LAYOUT_BREAKPOINTS.wide ? 'wide-window' : 'regular-window';
-}
 
 export function desktopWorkPaneWidthMode(
   width: number,
@@ -63,86 +61,51 @@ export function desktopWorkPaneWidthMode(
 }
 
 export function initialDesktopWorkPaneState(width: number): DesktopWorkPaneState {
-  return {
-    preference: 'dismissed',
-    widthMode: desktopWorkPaneWidthMode(width),
-    selectedCornerId: null,
-  };
+  return { widthMode: desktopWorkPaneWidthMode(width), content: null };
 }
 
-/** Live work a handle or toggle may present — archived rows do not count. */
-export function desktopWorkPaneHasLiveCorners(
-  corners: readonly { state: string }[] | null | undefined,
-): boolean {
-  return Boolean(corners?.some((corner) => corner.state !== 'archived'));
+/** What the second pane shows right now; a narrow window shows nothing. */
+export function desktopWorkPaneVisibleContent(
+  state: DesktopWorkPaneState,
+): DesktopWorkPaneContent | null {
+  return state.widthMode === 'narrow' ? null : state.content;
 }
 
 /**
- * A direct message has no inspector to host — no corners, no repository, no
- * roster beyond its two participants — so channel-driven pane events are
- * no-ops there: nothing can re-present the pane, and neither a dismissal nor
- * a re-presentation is ever persisted as the person's preference. Hydration
- * and window resizes still apply, so returning to a Room restores the pane
- * exactly as it was left.
+ * The pane opens only two ways: an artifact clicked in a Room or a corner, or
+ * a corner of the Room in the primary view. Opening something replaces what
+ * was there. A narrow window or a direct message cannot host it, so the
+ * caller falls back to the primary view.
  */
-export function desktopWorkPaneEventApplies(
-  event: DesktopWorkPaneEvent,
-  isDirectMessage: boolean,
-): boolean {
-  if (!isDirectMessage) return true;
-  return event.type === 'hydrate' || event.type === 'resize';
-}
-
-export function desktopWorkPaneMode(state: DesktopWorkPaneState): DesktopWorkPaneMode {
-  return state.widthMode === 'narrow' ? 'suppressed' : state.preference;
-}
-
 export function transitionDesktopWorkPane(
   state: DesktopWorkPaneState,
   event: DesktopWorkPaneEvent,
 ): DesktopWorkPaneTransition {
   switch (event.type) {
-    case 'hydrate':
-      return { state: { ...state, preference: event.preference } };
     case 'resize':
       return {
         state: { ...state, widthMode: desktopWorkPaneWidthMode(event.width, state.widthMode) },
       };
-    case 'dismiss':
-      return { state: { ...state, preference: 'dismissed', selectedCornerId: null } };
-    case 'toggle':
-      return state.preference === 'present'
-        ? { state: { ...state, preference: 'dismissed', selectedCornerId: null } }
-        : { state: { ...state, preference: 'present', selectedCornerId: null } };
-    case 'open-overview':
-      // Handle and toggle present the corner list, never the last corner.
-      return { state: { ...state, preference: 'present', selectedCornerId: null } };
-    case 'drop-corner':
-      return {
-        state: { ...state, preference: 'present', selectedCornerId: event.cornerId },
-        placement: 'work',
-      };
+    case 'close':
+      return { state: { ...state, content: null } };
     case 'open-corner':
-      // A corner card opens the pane on that corner. A suppressed pane cannot
-      // host it, so the caller falls through to the main transcript.
-      if (desktopWorkPaneMode(state) === 'suppressed') return { state, placement: 'main' };
+      if (state.widthMode === 'narrow' || event.primary !== 'room')
+        return { state, placement: 'primary' };
       return {
-        state: { ...state, preference: 'present', selectedCornerId: event.cornerId },
-        placement: 'work',
+        state: { ...state, content: { kind: 'corner', cornerId: event.cornerId } },
+        placement: 'pane',
       };
-    // An artifact opened from the transcript must never land silently: a
-    // dismissed pane re-presents around it, a suppressed pane cannot host it
-    // at all so the caller falls back, and a present pane already shows it.
     case 'open-artifact':
-      if (desktopWorkPaneMode(state) === 'suppressed') return { state, placement: 'main' };
+      if (state.widthMode === 'narrow' || event.primary === 'direct-message')
+        return { state, placement: 'primary' };
       return {
-        state: state.preference === 'present' ? state : { ...state, preference: 'present' },
-        placement: 'work',
+        state: { ...state, content: { kind: 'artifact', artifact: event.artifact } },
+        placement: 'pane',
       };
-    case 'open-corner-in-main':
-      // Maximize is a temporary zoom: the corner goes to main and the side
-      // pane stays exactly as it was — including dismissed.
-      return { state, placement: 'main' };
+    case 'expand':
+      // The corner moves to the primary view, so the pane closes and nothing
+      // shows twice.
+      return { state: { ...state, content: null }, placement: 'primary' };
   }
 }
 
@@ -174,59 +137,11 @@ export async function saveDesktopPaneWidth(
   await AsyncStorage.setItem(key, String(clampDesktopPaneWidth(kind, width)));
 }
 
-function desktopWorkPanePreferenceKey(windowClass: DesktopWorkPaneWindowClass): string {
-  return `${WORK_PANE_PREFERENCE_PREFIX}${windowClass}`;
-}
-
-export async function loadDesktopWorkPanePreference(
-  windowClass: DesktopWorkPaneWindowClass,
-): Promise<DesktopWorkPanePreference> {
-  return (await AsyncStorage.getItem(desktopWorkPanePreferenceKey(windowClass))) === 'present'
-    ? 'present'
-    : 'dismissed';
-}
-
-export async function saveDesktopWorkPanePreference(
-  windowClass: DesktopWorkPaneWindowClass,
-  preference: DesktopWorkPanePreference,
-): Promise<void> {
-  await AsyncStorage.setItem(desktopWorkPanePreferenceKey(windowClass), preference);
-}
-
 export function desktopDraftKey(roomId: string): string {
   return `${DRAFT_PREFIX}${encodeURIComponent(roomId)}`;
 }
 
 export type DesktopComposerKeyAction = 'send' | 'newline' | 'none';
-
-export const DESKTOP_WORK_PANE_COMMAND = {
-  id: 'toggle-work-pane',
-  title: 'Toggle work pane',
-  key: 'i',
-  code: 'KeyI',
-} as const;
-
-export function isDesktopWorkPaneCommand(event: {
-  key: string;
-  code?: string;
-  metaKey: boolean;
-  ctrlKey: boolean;
-  altKey: boolean;
-  shiftKey: boolean;
-  isComposing?: boolean;
-  repeat?: boolean;
-}): boolean {
-  return (
-    !event.isComposing &&
-    !event.repeat &&
-    !event.altKey &&
-    !event.shiftKey &&
-    (event.metaKey || event.ctrlKey) &&
-    (event.code
-      ? event.code === DESKTOP_WORK_PANE_COMMAND.code
-      : event.key.toLowerCase() === DESKTOP_WORK_PANE_COMMAND.key)
-  );
-}
 
 export type DesktopWorkspaceRoute =
   | {

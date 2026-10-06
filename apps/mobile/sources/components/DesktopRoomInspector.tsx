@@ -13,12 +13,10 @@ import {
   desktopComposerKeyAction,
   loadDesktopPaneWidth,
   saveDesktopPaneWidth,
+  type DesktopWorkPaneContent,
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime, ledgerStamp } from '@/buzz/relative-time';
 import { ledgerDayCaption, transcriptBylineOpeners } from '@/buzz/message-dates';
-import { cornerDisplayState } from '@/buzz/corner-display-state';
-import { inspectorCornerObjective, inspectorCornerWindow } from '@/buzz/inspector-corners';
-import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
 import { anchorRelayReports } from '@/buzz/system-lines';
 import {
   createRoomMessageProjector,
@@ -31,12 +29,6 @@ import { openExternalUrl } from '@/utils/open-external-url';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import {
-  clearDesktopArtifactPane,
-  currentDesktopArtifact,
-  subscribeDesktopArtifact,
-  type DesktopArtifactSelection,
-} from '@/buzz/desktop-artifact-pane';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { CornerBriefLink } from '@/components/buzz/CornerObjectiveLine';
@@ -58,18 +50,17 @@ import {
   GitHubEventCard,
   OrdinaryLedgerMessage,
 } from '@/app/(app)/beeline/chat/RoomMessageVariants';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 
 type Props = {
   room: RoomView;
   client: RoomViewClient | null;
   channelIndex?: ChannelReferenceIndex;
   onChannelReference?: (target: ChannelReferenceTarget, text?: string) => void;
-  selectedCornerId: string | null;
-  onSelectCorner(cornerId: string | null): void;
+  /** The one thing the second pane shows. */
+  content: DesktopWorkPaneContent;
+  onOpenCorner(cornerId: string): void;
   onOpenInMain(cornerId: string): void;
   onClose(): void;
-  onNewCorner(): void;
   /** Scroll the cockpit transcript to this durable id and inscribe it. */
   focusMessageId?: string | null;
 };
@@ -117,27 +108,20 @@ export function DesktopRoomInspector({
   client,
   channelIndex,
   onChannelReference,
-  selectedCornerId,
-  onSelectCorner,
+  content,
+  onOpenCorner,
   onOpenInMain,
   onClose,
-  onNewCorner,
   focusMessageId,
 }: Props) {
+  const selectedCornerId = content.kind === 'corner' ? content.cornerId : null;
   const [corners, setCorners] = React.useState<readonly CornerListItem[]>([]);
   const [width, setWidth] = React.useState(DESKTOP_INSPECTOR_DEFAULT_WIDTH);
-  const [cornersExpanded, setCornersExpanded] = React.useState(false);
   const dragStart = React.useRef(width);
-  const [artifact, setArtifact] = React.useState<DesktopArtifactSelection | null>(currentDesktopArtifact());
-  React.useEffect(
-    () => subscribeDesktopArtifact((selection) => setArtifact(selection)),
-    [],
-  );
 
   React.useEffect(() => void loadDesktopPaneWidth('inspector').then(setWidth), []);
   React.useEffect(() => {
     setCorners([]);
-    setCornersExpanded(false);
   }, [room.room.id]);
 
   React.useEffect(() => {
@@ -206,7 +190,6 @@ export function DesktopRoomInspector({
     [],
   );
 
-  const cornerList = inspectorCornerWindow(corners, cornersExpanded);
   const summary = corners.find((corner) => corner.corner.id === selectedCornerId);
 
   return (
@@ -224,13 +207,13 @@ export function DesktopRoomInspector({
         style={styles.resizer}
         testID="desktop-inspector-resizer"
       />
-      {artifact ? (
+      {content.kind === 'artifact' ? (
         <DesktopArtifactPane
-          attachment={artifact.attachment}
-          authorHandle={artifact.authorHandle}
-          onClose={() => clearDesktopArtifactPane()}
+          attachment={content.artifact.attachment}
+          authorHandle={content.artifact.authorHandle}
+          onClose={onClose}
         />
-      ) : selectedCornerId ? (
+      ) : (
         <>
           {observed.error ? (
             <Pressable accessibilityRole="button" onPress={observed.retry} testID="desktop-corner-retry">
@@ -241,169 +224,19 @@ export function DesktopRoomInspector({
             client={client}
             channelIndex={channelIndex}
             onChannelReference={onChannelReference}
-            roomId={selectedCornerId}
+            roomId={content.cornerId}
             detail={detail}
             loading={loading}
             summary={summary}
             focusMessageId={focusMessageId}
-            onOpenInMain={() => onOpenInMain(selectedCornerId)}
+            onOpenInMain={() => onOpenInMain(content.cornerId)}
             onClose={onClose}
-            onOpenCorner={onSelectCorner}
+            onOpenCorner={onOpenCorner}
             onRefresh={refreshCorner}
-          />
-        </>
-      ) : (
-        <>
-          <View style={styles.header} testID="desktop-work-corners-header">
-            <View style={styles.headerButton} />
-            <View style={styles.headerCopy}>
-              <Text numberOfLines={1} style={styles.headerTitle}>
-                #{room.room.name}
-              </Text>
-            </View>
-            <HeaderIconControl
-              label="Close work pane"
-              glyph="×"
-              onPress={onClose}
-              testID="desktop-inspector-close"
-            />
-          </View>
-          <FlatList
-            data={[...cornerList.visible]}
-            keyExtractor={(corner) => corner.corner.id}
-            style={styles.scroll}
-            contentContainerStyle={styles.content}
-            ListHeaderComponent={
-              <SectionHeader title="CORNERS" action="New ›" onAction={onNewCorner} />
-            }
-            renderItem={({ item }) => (
-              <CornerRow
-                corner={item}
-                parentRoomName={room.room.name}
-                viewerPubkey={room.viewer.identity.pubkey}
-                onPress={() => onSelectCorner(item.corner.id)}
-              />
-            )}
-            ListFooterComponent={
-              cornerList.overflowLabel ? (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => setCornersExpanded(true)}
-                  style={styles.simpleRow}
-                  testID="desktop-work-corners-more"
-                >
-                  <Text style={styles.simpleTitle}>{cornerList.overflowLabel}</Text>
-                  <ChevronGlyph
-                    color={styles.chevron.color}
-                    direction="right"
-                    size={CHEVRON_ROW_SIZE}
-                  />
-                </Pressable>
-              ) : null
-            }
           />
         </>
       )}
     </View>
-  );
-}
-
-function SectionHeader({
-  title,
-  action,
-  onAction,
-}: {
-  title: string;
-  action?: string;
-  onAction?: () => void;
-}) {
-  return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {action ? (
-        <Pressable accessibilityRole="button" onPress={onAction} testID="desktop-work-new-corner">
-          <Text style={styles.sectionAction}>{action}</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-function CornerRow({
-  corner,
-  parentRoomName,
-  viewerPubkey,
-  onPress,
-}: {
-  corner: CornerListItem;
-  parentRoomName: string;
-  viewerPubkey: string;
-  onPress(): void;
-}) {
-  const display = cornerDisplayState(corner);
-  const title = displayGroupedCornerTitle(parentRoomName, corner.corner.name, corner.corner.id);
-  const objective = inspectorCornerObjective(title, corner.corner.about);
-  const initiatedByViewer = corner.initiator?.pubkey === viewerPubkey;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={styles.cornerRow}
-      testID={`desktop-work-corner-${corner.corner.id}`}
-    >
-      <View style={styles.cornerHeadline}>
-        <Text
-          style={[styles.cornerTitle, display.terminal ? styles.cornerTitleArchived : undefined]}
-        >
-          {title}
-        </Text>
-        <Text
-          style={[
-            styles.cornerStatus,
-            display.status === 'working'
-              ? styles.cornerStatusWorking
-              : display.status === 'review'
-                ? styles.cornerStatusReview
-                : display.status === 'archived'
-                  ? styles.cornerStatusArchived
-                  : styles.cornerStatusWaiting,
-          ]}
-          testID={`desktop-work-corner-state-${corner.corner.id}`}
-        >
-          {display.word}
-        </Text>
-        {initiatedByViewer ? (
-          <Text style={styles.cornerMe} testID={`desktop-work-corner-me-${corner.corner.id}`}>
-            ME
-          </Text>
-        ) : null}
-        <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
-      </View>
-      {objective ? (
-        <Text
-          ellipsizeMode="tail"
-          numberOfLines={2}
-          style={[styles.objective, display.terminal ? styles.objectiveArchived : undefined]}
-          testID={`desktop-work-corner-objective-${corner.corner.id}`}
-        >
-          {objective}
-        </Text>
-      ) : null}
-      <View style={styles.cornerAgent}>
-        <IdentityMark
-          kind={corner.agent?.kind === 'agent' ? 'agent' : 'human'}
-          seed={corner.agent?.pubkey ?? corner.corner.id}
-          avatarUrl={corner.agent?.avatar}
-          face={corner.agent?.face}
-          name={corner.agent?.name ?? 'Unassigned'}
-          size={18}
-        />
-        <Text style={styles.cornerMeta}>
-          {corner.agent ? `@${corner.agent.handle ?? corner.agent.name}` : 'Unassigned'} ·{' '}
-          {age(corner)}
-        </Text>
-      </View>
-    </Pressable>
   );
 }
 
@@ -830,64 +663,6 @@ const styles = StyleSheet.create((theme) => ({
   headerCopy: { flex: 1, minWidth: 0 },
   headerTitle: { ...theme.buzz.type.bodyStrong, color: theme.colors.text },
   headerMeta: { ...theme.buzz.type.meta, color: theme.colors.textSecondary, marginTop: 4 },
-  scroll: { flex: 1 },
-  content: { padding: 16, paddingBottom: 48 },
-  sectionHeader: {
-    minHeight: 28,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-  },
-  sectionTitle: { ...theme.buzz.type.sectionHead, color: theme.colors.textSecondary },
-  sectionAction: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
-  cornerRow: {
-    minHeight: 88,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.divider,
-  },
-  cornerHeadline: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  cornerTitle: {
-    ...theme.buzz.type.bodyStrong,
-    color: theme.colors.text,
-    flex: 1,
-    minWidth: 0,
-    includeFontPadding: false,
-  },
-  cornerTitleArchived: { color: theme.colors.textSecondary },
-  objective: { ...theme.buzz.type.meta, color: theme.colors.text, marginTop: 4 },
-  objectiveArchived: { color: theme.colors.textSecondary },
-  cornerAgent: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  cornerMe: {
-    ...theme.buzz.type.sectionHead,
-    color: theme.buzz.accent,
-    includeFontPadding: false,
-  },
-  cornerMeta: { ...theme.buzz.type.machine, color: theme.colors.textSecondary, flex: 1 },
-  cornerStatus: {
-    ...theme.buzz.type.sectionHead,
-    color: theme.colors.textSecondary,
-    includeFontPadding: false,
-  },
-  cornerStatusWorking: { color: theme.buzz.ledgerQuiet },
-  cornerStatusReview: { color: theme.buzz.ledgerQuiet },
-  cornerStatusWaiting: { color: theme.buzz.accent },
-  cornerStatusArchived: { color: theme.buzz.ledgerGhost },
-  simpleRow: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.divider,
-  },
-  simpleTitle: { ...theme.buzz.type.meta, color: theme.colors.text, flex: 1 },
-  // Colour only. The mark is drawn in its own box now, so the type role and
-  // the font-padding correction it used to need are dead weight.
-  chevron: { color: theme.colors.textSecondary },
   cockpit: { flex: 1 },
   pinnedObjective: {
     flexDirection: 'row',

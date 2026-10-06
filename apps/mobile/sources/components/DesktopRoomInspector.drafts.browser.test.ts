@@ -27,8 +27,8 @@ it('Demonstration draft-send-R1: browser composer retains and submits only appen
         corners: async () => ({ corners: [summary], viewer: detail.viewer, room: parent, watchFilters: [] }) };
       globalThis.sent = [];
       createRoot(document.getElementById('root')).render(<DesktopRoomInspector
-        room={{ ...detail, room: parent, corners: [summary] }} client={client} selectedCornerId="corner"
-        onSelectCorner={() => {}} onOpenInMain={() => {}} onClose={() => {}} onNewCorner={() => {}} />);
+        room={{ ...detail, room: parent, corners: [summary] }} client={client} content={{ kind: 'corner', cornerId: 'corner' }}
+        onOpenCorner={() => {}} onOpenInMain={() => {}} onClose={() => {}} />);
       const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
       const assert = (condition, message) => { if (!condition) throw Error(message); };
       const input = () => document.querySelector('textarea');

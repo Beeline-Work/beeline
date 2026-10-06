@@ -29,7 +29,7 @@ describe('DesktopRoomCorners', () => {
     let tree!: ReturnType<typeof create>;
     act(() => {
       tree = create(
-        <DesktopRoomCorners item={item} onOpen={() => {}} renderDrag={(_id, child) => child} />,
+        <DesktopRoomCorners item={item} onOpen={() => {}} />,
       );
     });
     const name = tree.root

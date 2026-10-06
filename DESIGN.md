@@ -185,7 +185,7 @@ The transcript's day caption is the one caption exception: `sectionHead` in the 
 - **Spacing scale** (`space`): 4 · 8 · 16 · 24 · 32 · 48 (`xs`…`xxl`). `layout`: rows 64, sections 24 apart, screens start 24 below the header.
 - **Transcript rhythm:** 12 between entries in a same-speaker run, 24 at a speaker change, by proximity alone; no turn dividers. Prose shares one left content edge; stamps hang in a right gutter.
 - **Phone Room list:** each section is one card (`roomCard`: radius 14, inset 16, 8 between sections) with hairlines between rows inside it. Rows have a 68 minimum height on phone, 62 on desktop, and a one-line `meta` preview.
-- **Desktop:** a 76 px Workspace rail beside a 380 px Room sidebar at windows ≥1360 px wide; narrower windows use the Workspace switcher overlay. A second pane (corners, artifacts) defaults dismissed and opens only with a reason.
+- **Desktop:** a 76 px Workspace rail beside a 380 px Room sidebar at windows ≥1360 px wide; narrower windows use the Workspace switcher overlay. A second pane holds one thing or nothing: an artifact clicked in the primary view, or a corner of the Room in the primary view that the person opens or creates. Opening something replaces it; switching rooms or Expand closes it; narrow windows have none.
 - **Touch targets:** 44 pt for every control (corners door, overflow, compose, reference chips, opened-corner links).
 
 ## Elevation & Depth

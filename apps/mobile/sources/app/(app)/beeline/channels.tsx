@@ -1189,7 +1189,6 @@ export default function BuzzChannels() {
                             cornerHref(cornerId, item.room.id, corner?.name, 'room-list'),
                           );
                         }}
-                        renderDrag={(_, children) => children}
                       />
                     )}
                   </View>

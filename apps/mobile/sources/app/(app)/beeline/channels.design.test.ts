@@ -53,7 +53,6 @@ describe('Approved Room list layout', () => {
     expect(corners).toContain("Number(b.state === 'waiting') - Number(a.state === 'waiting')");
     expect(corners).toContain('onOpen(corner.id)');
     expect(corners).toContain('<CornerGlyph');
-    expect(corners).toContain('renderDrag(');
   });
   it('retains authorized empty-state actions and a filter recovery action', () => {
     expect(source).toContain('canAddRoom={!viewerIsAgent && canManageWorkspace}');

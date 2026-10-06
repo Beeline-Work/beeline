@@ -9,7 +9,7 @@ import {
   subscribeActiveCommunityId,
 } from '@/buzz/community-storage';
 import { navigateToRoom } from '@/buzz/corner-navigation';
-import { selectDesktopWorkCorner, writeDesktopCornerDrag } from '@/buzz/desktop-work-pane';
+import { selectDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
@@ -73,23 +73,6 @@ function selectedRoomId(pathname: string): string | null {
 
 function firstParam(value: string | string[] | undefined): string | null {
   return (Array.isArray(value) ? value[0] : value)?.trim() || null;
-}
-
-function DesktopCornerDragSource({
-  roomId,
-  cornerId,
-  children,
-}: React.PropsWithChildren<{ roomId: string; cornerId: string }>) {
-  if (Platform.OS !== 'web') return children;
-  return React.createElement(
-    'div',
-    {
-      draggable: true,
-      onDragStart: (event: React.DragEvent<HTMLElement>) =>
-        writeDesktopCornerDrag(event.dataTransfer, { roomId, cornerId }),
-    },
-    children,
-  );
 }
 
 /** The viewer's face in the settings row. */
@@ -733,11 +716,6 @@ export const SidebarView = React.memo(function SidebarView() {
                               key={`${workspaceId}/${item.room.id}`}
                               item={item}
                               onOpen={(cornerId) => openCornerInRoom(item.room.id, cornerId)}
-                              renderDrag={(cornerId, children) => (
-                                <DesktopCornerDragSource roomId={item.room.id} cornerId={cornerId}>
-                                  {children}
-                                </DesktopCornerDragSource>
-                              )}
                             />
                           )}
                       </View>

@@ -114,30 +114,21 @@ import {
 import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnBandSlot, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
-import { DesktopWorkPaneHandle } from '@/components/DesktopWorkPaneHandle';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import { AgentSignInCard } from '@/components/buzz/AgentSignInCard';
 import { openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
-import {
-  subscribeDesktopArtifact,
-  type DesktopArtifactSelection,
-} from '@/buzz/desktop-artifact-pane';
+import { subscribeDesktopArtifact } from '@/buzz/desktop-artifact-pane';
 import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
 import { ROOM_SLUG_HINT, roomNameEntry, validRoomSlug } from '@/buzz/room-name';
 import {
   desktopComposerKeyAction,
-  desktopWorkPaneMode,
-  desktopWorkPaneWindowClass,
+  desktopWorkPaneVisibleContent,
   initialDesktopWorkPaneState,
-  isDesktopWorkPaneCommand,
   desktopDraftKey,
-  loadDesktopWorkPanePreference,
-  saveDesktopWorkPanePreference,
-  desktopWorkPaneEventApplies,
   transitionDesktopWorkPane,
   type DesktopWorkPaneEvent,
-  type DesktopWorkPaneTransition,
+  type DesktopWorkPanePrimary,
 } from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
@@ -551,7 +542,6 @@ export function BuzzChatSurface({
   useEffect(() => {
     setProfileAgentId(null);
   }, [decodedId]);
-  const workPaneWindowClass = desktopWorkPaneWindowClass(windowWidth);
   const routeParentChannelId = parent?.trim() || undefined;
   const routeCommunityId = communityId?.trim() || undefined;
   const routeChannelTitle = title?.trim() || undefined;
@@ -659,14 +649,10 @@ export function BuzzChatSurface({
   const activeComposerDraftRef = useRef(composerDraft);
   activeComposerDraftRef.current = composerDraft;
   const [composerInputRevision, setComposerInputRevision] = useState(0);
-  const workPaneHandleRef = useRef<React.ElementRef<typeof Pressable>>(null);
   const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(windowWidth));
   const [desktopWorkPane, setDesktopWorkPane] = useState(initialWorkPaneStateRef.current);
-  const [desktopWorkPaneHydrated, setDesktopWorkPaneHydrated] = useState(false);
   const desktopWorkPaneRef = useRef(desktopWorkPane);
-  const workPaneMode = desktopWorkPaneMode(desktopWorkPane);
-  const observedCornerCountRef = useRef<{ roomId: string; count: number } | null>(null);
-  const [workPaneArrived, setWorkPaneArrived] = useState(false);
+  const desktopWorkPaneContent = desktopWorkPaneVisibleContent(desktopWorkPane);
   const [desktopDeliveryState, setDesktopDeliveryState] = useState<
     'sending' | 'delivered' | 'failed' | null
   >(null);
@@ -879,46 +865,24 @@ export function BuzzChatSurface({
     });
   }, [composerMounted, decodedId]);
 
-  const commitDesktopWorkPane = useCallback(
-    (event: DesktopWorkPaneEvent) => {
-      // A direct message renders no work pane at all, so its pane events are
-      // no-ops (see `desktopWorkPaneEventApplies`): the pane cannot be opened,
-      // toggled or dismissed there, and the person's persisted preference is
-      // never overwritten by a channel that has nothing to show.
-      if (!desktopWorkPaneEventApplies(event, isDirectMessage)) {
-        const held: DesktopWorkPaneTransition = { state: desktopWorkPaneRef.current };
-        return held;
-      }
-      const transition = transitionDesktopWorkPane(desktopWorkPaneRef.current, event);
-      desktopWorkPaneRef.current = transition.state;
-      setDesktopWorkPane(transition.state);
-      if (desktopWorkPaneMode(transition.state) === 'present') setWorkPaneArrived(false);
-      return transition;
-    },
-    [isDirectMessage],
-  );
-
-  useEffect(() => {
-    if (!desktopExperience) return;
-    let cancelled = false;
-    setDesktopWorkPaneHydrated(false);
-    void loadDesktopWorkPanePreference(workPaneWindowClass)
-      .then((preference) => {
-        if (!cancelled) commitDesktopWorkPane({ type: 'hydrate', preference });
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setDesktopWorkPaneHydrated(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [commitDesktopWorkPane, desktopExperience, workPaneWindowClass]);
+  const commitDesktopWorkPane = useCallback((event: DesktopWorkPaneEvent) => {
+    const transition = transitionDesktopWorkPane(desktopWorkPaneRef.current, event);
+    desktopWorkPaneRef.current = transition.state;
+    setDesktopWorkPane(transition.state);
+    return transition;
+  }, []);
 
   useEffect(() => {
     if (!desktopExperience) return;
     commitDesktopWorkPane({ type: 'resize', width: windowWidth });
   }, [commitDesktopWorkPane, desktopExperience, windowWidth]);
+
+  // The second pane belongs to the view it opened beside: switching rooms
+  // closes it. Declared before the corner subscription so a rail corner that
+  // switched rooms opens after this close, not before it.
+  useEffect(() => {
+    commitDesktopWorkPane({ type: 'close' });
+  }, [commitDesktopWorkPane, decodedId]);
 
   const cacheViewerPubkey = userPubkey;
   const isArchived = roomSurface ? roomSurface.room.archived !== false : false;
@@ -945,43 +909,10 @@ export function BuzzChatSurface({
     };
   }, [desktopExperience, parentChannelId, roomClient]);
   const desktopWorkRoom = parentChannelId ? desktopParentRoom : roomSurface;
-  const liveDesktopCornerCount =
-    workspaceChats.find((item) => item.room.id === desktopWorkRoomId)?.cornerCount ?? 0;
-  const hasLiveDesktopCorners = liveDesktopCornerCount > 0;
-
-  useEffect(() => {
-    if (!desktopExperience || isDirectMessage || !desktopWorkRoomId) return;
-    // The chat-list count is the live-corner authority for this handle. Wait
-    // until that list has painted so the first 0→N transition is not treated
-    // as a newly opened corner.
-    if (workspaceChats.length === 0) return;
-    const observed = observedCornerCountRef.current;
-    if (!observed || observed.roomId !== desktopWorkRoomId) {
-      observedCornerCountRef.current = { roomId: desktopWorkRoomId, count: liveDesktopCornerCount };
-      setWorkPaneArrived(false);
-      return;
-    }
-    if (liveDesktopCornerCount > observed.count && workPaneMode !== 'present') {
-      setWorkPaneArrived(true);
-    }
-    observedCornerCountRef.current = { roomId: desktopWorkRoomId, count: liveDesktopCornerCount };
-  }, [
-    desktopExperience,
-    desktopWorkRoomId,
-    isDirectMessage,
-    liveDesktopCornerCount,
-    workPaneMode,
-    workspaceChats.length,
-  ]);
-  // A direct message renders no second pane at all (see the pane-event gate in
-  // `commitDesktopWorkPane`): the transcript takes the space it occupied, and
-  // neither the inspector nor its reopen handle ever mounts over a DM.
-  // Zero live corners: no handle (toggle is a no-op too). The pane still
-  // mounts when already present — an artifact tap can re-present it.
+  // A direct message has no second pane: artifacts open in the full-screen
+  // viewer and the transcript keeps the width.
   const desktopWorkPaneMounted =
-    desktopExperience && !isDirectMessage && workPaneMode === 'present' ? desktopWorkRoom : null;
-  const desktopWorkHandleMounted =
-    desktopExperience && !isDirectMessage && workPaneMode === 'dismissed' && hasLiveDesktopCorners;
+    desktopExperience && !isDirectMessage && desktopWorkPaneContent ? desktopWorkRoom : null;
   const channelKind: ChannelKind = roomSurface
     ? surfaceParentId
       ? 'corner'
@@ -1098,48 +1029,45 @@ export function BuzzChatSurface({
     routeChannelTitle,
     workspaceChats,
   ]);
+  const desktopWorkPanePrimary: DesktopWorkPanePrimary = isDirectMessage
+    ? 'direct-message'
+    : isCorner
+      ? 'corner'
+      : 'room';
+  // A corner of the Room in the primary view opens in the second pane. With a
+  // corner in the primary view, or a window too narrow for a second pane, it
+  // opens in the primary view instead.
   const openDesktopCorner = useCallback(
     (roomId: string, cornerId: string) => {
-      const transition = commitDesktopWorkPane({ type: 'open-corner', cornerId });
-      void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
-      if (transition.placement === 'main') router.push(cornerHref(cornerId, roomId));
+      const transition = commitDesktopWorkPane({
+        type: 'open-corner',
+        cornerId,
+        primary: desktopWorkPanePrimary,
+      });
+      if (transition.placement === 'primary') router.push(cornerHref(cornerId, roomId));
     },
-    [commitDesktopWorkPane, workPaneWindowClass],
+    [commitDesktopWorkPane, desktopWorkPanePrimary],
   );
+  // Background stack screens stay mounted, so only the focused one listens.
   useEffect(() => {
-    if (!desktopExperience || !desktopWorkPaneHydrated) return;
+    if (!desktopExperience || !isFocused) return;
     return subscribeDesktopWorkCorner(({ roomId, cornerId }) => {
       if (roomId !== desktopWorkRoomId) return false;
       openDesktopCorner(roomId, cornerId);
       return true;
     });
-  }, [desktopExperience, desktopWorkPaneHydrated, desktopWorkRoomId, openDesktopCorner]);
+  }, [desktopExperience, desktopWorkRoomId, isFocused, openDesktopCorner]);
   // The work pane and the Room route are siblings, so an artifact Open press
-  // arrives as a module event. A dismissed pane re-presents around it; the
-  // pane then shows the artifact from its own module read. A suppressed pane
-  // cannot host the artifact at all, so the press hands off to the browser —
-  // the same boundary the pane uses for formats it cannot sandbox.
-  const openDesktopArtifact = useCallback(
-    (selection: DesktopArtifactSelection) => {
-      // A direct message has no work pane to host the artifact, so the press
-      // always hands off to the browser, exactly like a suppressed pane.
-      if (isDirectMessage) {
-        void openArtifactInBrowserOrExplain(selection.attachment);
-        return;
-      }
-      const transition = commitDesktopWorkPane({ type: 'open-artifact' });
-      void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
-      if (transition.placement === 'main')
-        void openArtifactInBrowserOrExplain(selection.attachment);
-    },
-    [commitDesktopWorkPane, isDirectMessage, workPaneWindowClass],
-  );
+  // arrives as a module event. It replaces whatever the pane showed. When the
+  // pane cannot take it, the card opens the full-screen viewer instead.
   useEffect(() => {
-    if (!desktopExperience) return;
-    return subscribeDesktopArtifact((selection) => {
-      if (selection) openDesktopArtifact(selection);
-    });
-  }, [desktopExperience, openDesktopArtifact]);
+    if (!desktopExperience || !isFocused) return;
+    return subscribeDesktopArtifact(
+      (artifact) =>
+        commitDesktopWorkPane({ type: 'open-artifact', artifact, primary: desktopWorkPanePrimary })
+          .placement === 'pane',
+    );
+  }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]);
   /** Navigate to exactly the referenced Room/Corner through the existing
    * conventions; a reference to the transcript you are already in is a no-op. */
   const openingChannelReferenceRef = useRef<string | null>(null);
@@ -4745,7 +4673,8 @@ export function BuzzChatSurface({
         roomId: decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          router.push(cornerHref(cornerId, decodedId, title));
+          if (desktopExperience) openDesktopCorner(decodedId, cornerId);
+          else router.push(cornerHref(cornerId, decodedId, title));
         },
       });
     } catch (err) {
@@ -5155,49 +5084,22 @@ export function BuzzChatSurface({
   );
 
   const closeDesktopWorkPane = useCallback(() => {
-    const transition = commitDesktopWorkPane({ type: 'dismiss' });
-    void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
-    scheduleAnimationFrame(() => workPaneHandleRef.current?.focus());
-  }, [commitDesktopWorkPane, workPaneWindowClass]);
+    commitDesktopWorkPane({ type: 'close' });
+  }, [commitDesktopWorkPane]);
 
-  const openDesktopWorkOverview = useCallback(() => {
-    const transition = commitDesktopWorkPane({ type: 'open-overview' });
-    void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
-  }, [commitDesktopWorkPane, workPaneWindowClass]);
-
-  const dropCornerInDesktopWorkPane = useCallback(
+  // Expand moves the corner into the primary view and closes the pane.
+  const expandDesktopCorner = useCallback(
     (cornerId: string) => {
-      const transition = commitDesktopWorkPane({ type: 'drop-corner', cornerId });
-      void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
-    },
-    [commitDesktopWorkPane, workPaneWindowClass],
-  );
-
-  const openDesktopCornerInMain = useCallback(
-    (cornerId: string) => {
-      commitDesktopWorkPane({ type: 'open-corner-in-main' });
+      commitDesktopWorkPane({ type: 'expand' });
       router.push(cornerHref(cornerId, desktopWorkRoomId));
     },
     [commitDesktopWorkPane, desktopWorkRoomId],
   );
 
-  const toggleDesktopWorkPane = useCallback(() => {
-    if (desktopWorkPaneRef.current.preference !== 'present' && !hasLiveDesktopCorners) {
-      return;
-    }
-    const transition = commitDesktopWorkPane({ type: 'toggle' });
-    void saveDesktopWorkPanePreference(workPaneWindowClass, transition.state.preference);
-    if (transition.state.preference === 'dismissed')
-      scheduleAnimationFrame(() => workPaneHandleRef.current?.focus());
-  }, [commitDesktopWorkPane, hasLiveDesktopCorners, workPaneWindowClass]);
-
   useEffect(() => {
     if (!desktopExperience || Platform.OS !== 'web' || typeof window === 'undefined') return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isDesktopWorkPaneCommand(event)) {
-        event.preventDefault();
-        toggleDesktopWorkPane();
-      } else if (
+      if (
         (event.metaKey || event.ctrlKey) &&
         event.shiftKey &&
         event.key.toLowerCase() === 'm'
@@ -5207,7 +5109,7 @@ export function BuzzChatSurface({
       } else if (event.key === 'Escape' && profileAgentId) {
         event.preventDefault();
         setProfileAgentId(null);
-      } else if (event.key === 'Escape' && workPaneMode === 'present') {
+      } else if (event.key === 'Escape' && desktopWorkPaneMounted) {
         event.preventDefault();
         closeDesktopWorkPane();
       }
@@ -5217,9 +5119,8 @@ export function BuzzChatSurface({
   }, [
     closeDesktopWorkPane,
     desktopExperience,
+    desktopWorkPaneMounted,
     focusComposer,
-    toggleDesktopWorkPane,
-    workPaneMode,
     profileAgentId,
   ]);
 
@@ -6870,30 +6771,16 @@ export function BuzzChatSurface({
             )}
           </View>
         )}
-        {!profileAgentId && desktopWorkPaneMounted && (
+        {!profileAgentId && desktopWorkPaneMounted && desktopWorkPaneContent && (
           <DesktopRoomInspector
             room={desktopWorkPaneMounted}
             client={roomClient}
             channelIndex={channelReferenceIndex}
             onChannelReference={handleOpenChannelReference}
-            selectedCornerId={desktopWorkPane.selectedCornerId}
-            onSelectCorner={(cornerId) =>
-              commitDesktopWorkPane(
-                cornerId ? { type: 'open-corner', cornerId } : { type: 'open-overview' },
-              )
-            }
-            onOpenInMain={openDesktopCornerInMain}
+            content={desktopWorkPaneContent}
+            onOpenCorner={(cornerId) => openDesktopCorner(desktopWorkRoomId, cornerId)}
+            onOpenInMain={expandDesktopCorner}
             onClose={closeDesktopWorkPane}
-            onNewCorner={focusComposer}
-          />
-        )}
-        {!profileAgentId && desktopWorkHandleMounted && (
-          <DesktopWorkPaneHandle
-            ref={workPaneHandleRef}
-            roomId={desktopWorkRoomId}
-            arrived={workPaneArrived}
-            onOpen={openDesktopWorkOverview}
-            onDropCorner={dropCornerInDesktopWorkPane}
           />
         )}
       </View>

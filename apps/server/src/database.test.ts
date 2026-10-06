@@ -168,7 +168,7 @@ it('excludes existing accounts while new identities inherit welcome eligibility'
 describe('Room slugs', () => {
   it('requires a bounded lowercase slug for new names', () => {
     expect(requireRoomSlug('room-name-2')).toBe('room-name-2');
-    for (const value of ['Room Name', 'room--name', '-room', 'room-', ''])
+    for (const value of ['Room Name', 'room--name', '-room', 'room-', '', 'room\n', 'room\r', 'room\u00a0name', 'room\u2003name'])
       expect(() => requireRoomSlug(value)).toThrow(/invalid Room name/);
   });
 

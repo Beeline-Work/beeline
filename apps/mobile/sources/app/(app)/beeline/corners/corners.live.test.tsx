@@ -181,7 +181,7 @@ describe('Corner list live path', () => {
     expect(list.createCalls).toHaveLength(1);
     const [roomId, title] = list.createCalls[0] as [string, string];
     expect(roomId).toBe('room-a');
-    expect(title).toMatch(/^\w+ \w+ corner$/);
+    expect(title).toMatch(/^\w+-\w+-corner$/);
     expect(router.push).toHaveBeenCalledWith(
       expect.objectContaining({
         pathname: '/beeline/chat/[channelId]',

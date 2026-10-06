@@ -72,7 +72,7 @@ describe('Room header corner long-press gestures', () => {
   it('always yields three words ending in corner', () => {
     for (let i = 0; i < 40; i += 1) {
       const name = randomCornerName(() => (i % 10) / 10);
-      const words = name.split(' ');
+      const words = name.split('-');
       expect(words).toHaveLength(3);
       expect(words[2]).toBe('corner');
     }
@@ -80,8 +80,8 @@ describe('Room header corner long-press gestures', () => {
 
   it('long-presses the Room corner button and opens a random three-word name ending in corner', async () => {
     const createCorner = vi.fn(async (_roomId: string, title: string) => {
-      expect(title.split(' ')).toHaveLength(3);
-      expect(title.endsWith(' corner')).toBe(true);
+      expect(title.split('-')).toHaveLength(3);
+      expect(title.endsWith('-corner')).toBe(true);
       return 'corner-id';
     });
     const openCorner = vi.fn();
@@ -108,10 +108,10 @@ describe('Room header corner long-press gestures', () => {
     });
 
     expect(onOpenCorners).not.toHaveBeenCalled();
-    expect(createCorner).toHaveBeenCalledWith('room-id', 'quiet amber corner');
-    expect(openCorner).toHaveBeenCalledWith('corner-id', 'quiet amber corner');
+    expect(createCorner).toHaveBeenCalledWith('room-id', 'quiet-amber-corner');
+    expect(openCorner).toHaveBeenCalledWith('corner-id', 'quiet-amber-corner');
     process.stdout.write(
-      'long-press room-corners-menu → created "quiet amber corner" → opened corner-id\n',
+      'long-press room-corners-menu → created "quiet-amber-corner" → opened corner-id\n',
     );
   });
 

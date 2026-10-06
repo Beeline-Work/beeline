@@ -1108,7 +1108,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           minLength: 1,
           maxLength: CORNER_NAME_MAX_LENGTH,
-          description: `The corner's title: at most ${CORNER_NAME_MAX_WORDS} words, no line breaks.`,
+          description: `The corner's title: at most ${CORNER_NAME_MAX_WORDS} words joined by hyphens, no whitespace.`,
         },
         objective: {
           type: 'string',
@@ -1343,12 +1343,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'rename_corner',
     description:
-      'Retitle the corner you are working in. A human-opened corner without a brief requires its objective and first brief together with the name, grounded in the human request; the brief approval names that human message. The name follows open_corner: at most three words.',
+      'Retitle the corner you are working in. A human-opened corner without a brief requires its objective and first brief together with the name, grounded in the human request; the brief approval names that human message. The name follows open_corner: a continuous title with hyphens between words and no whitespace.',
     inputSchema: {
       type: 'object',
       required: ['name'],
       properties: {
-        name: { type: 'string', description: 'The corner title, at most three words.' },
+        name: { type: 'string', description: 'The corner title, words joined by hyphens with no whitespace.' },
         objective: { type: 'string', description: 'For a human-opened corner: a navigation summary of the human request, at most 24 words.' },
         brief: {
           type: 'object',

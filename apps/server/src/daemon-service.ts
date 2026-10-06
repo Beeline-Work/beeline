@@ -6904,9 +6904,7 @@ export class DaemonService {
   }
 
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
-    // Untidy is not wrong: a brief handed over with line breaks or double
-    // spaces is flattened here, and only a genuinely over-long text is
-    // refused — in a sentence that names the limit and the count (C90).
+    // Objectives are normalized paragraphs; names must already be continuous.
     const objective = normalizeCornerText(input.objective ?? '');
     const name = normalizeCornerText(input.name ?? '');
     const refusal =

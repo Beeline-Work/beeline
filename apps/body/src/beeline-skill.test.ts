@@ -49,7 +49,7 @@ describe('using-beeline Room guidance', () => {
     expect(room).toContain('If nothing is actionable for you, do not reply.');
     // The Room asks for the corner's NAME as well as its objective (C89).
     expect(room).toContain(
-      'call open_corner with a name of at most three words, an objective of at most 24 words, and the brief (a spec plus the approving message)',
+      'call open_corner with a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message)',
     );
     expect(room).toContain('Before opening one, consult beeline-triage and beeline-spec');
     expect(room).toContain('If a shell command is refused, say so plainly');

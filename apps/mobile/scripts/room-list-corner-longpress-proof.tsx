@@ -175,8 +175,8 @@ async function run() {
   const created = calls.create[0] ?? ['', ''];
   expectLine('long press creates in the pressed Room', created[0], 'room-a');
   expectLine(
-    'created title is three words ending in corner',
-    /^\w+ \w+ corner$/.test(created[1]),
+    'created title has three hyphenated words ending in corner',
+    /^\w+-\w+-corner$/.test(created[1]),
     true,
   );
   expectLine('long press opens the created corner', calls.opened, [['corner-room-a', created[1]]]);

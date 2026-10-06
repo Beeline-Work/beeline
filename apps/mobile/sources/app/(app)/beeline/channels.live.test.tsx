@@ -664,7 +664,7 @@ describe('Room deck live path', () => {
     expect(deck.createCorner).toHaveBeenCalledOnce();
     const [roomId, title] = deck.createCorner.mock.calls[0]!;
     expect(roomId).toBe('room-a');
-    expect(title).toMatch(/ corner$/);
+    expect(title).toMatch(/-corner$/);
     expect(router.push).toHaveBeenCalledOnce();
     expect(router.push).toHaveBeenCalledWith({
       pathname: '/beeline/chat/[channelId]',

@@ -282,7 +282,7 @@ describe('monolith integration', () => {
   });
   it('has no feedback triage setting or tools, refuses Fixed DMs from a non-sender, and opens fix corners beside the corner', async () => {
     const corner = (
-      (await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Issues triage' }, HUMAN)) as {
+      (await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Issues-triage' }, HUMAN)) as {
         id: string;
       }
     ).id;
@@ -334,7 +334,7 @@ describe('monolith integration', () => {
     const opened = await daemonCall('createCorner', {
       ...fix,
       idempotencyKey: 'fix-grant-card',
-      name: 'Fix grant card',
+      name: 'Fix-grant-card',
       objective: 'Fix the grant card that stays pending',
       lane: 'no_code',
       brief: {
@@ -377,7 +377,7 @@ describe('monolith integration', () => {
     const unrelated = (
       (await phone.execute(
         'createHumanCorner',
-        { roomId: ROOM, title: 'Unrelated work' },
+        { roomId: ROOM, title: 'Unrelated-work' },
         HUMAN,
       )) as {
         id: string;
@@ -495,8 +495,8 @@ describe('monolith integration', () => {
       const create = async (title: string) =>
         ((await phone.execute('createHumanCorner', { roomId: ROOM, title }, HUMAN)) as { id: string })
           .id;
-      const cornerId = await create('Unbriefed work');
-      const unrelated = await create('Other work');
+      const cornerId = await create('Unbriefed-work');
+      const unrelated = await create('Other-work');
       const approvals = new Map<string, string>();
       for (const roomId of [ROOM, cornerId, unrelated]) {
         const messageId = createHash('sha256').update(roomId).digest('hex');
@@ -3002,7 +3002,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-draft-request',
-      name: 'Room join push',
+      name: 'Room-join-push',
       objective: 'Trace the Room-join push producer and correct it',
     });
     expect(created.status).toBe(200);
@@ -3080,7 +3080,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-before-late-join',
-      name: 'Existing corner',
+      name: 'Existing-corner',
       objective: 'Keep this corner readable from its durable parent Room card',
     });
     expect(created.status).toBe(200);
@@ -3107,7 +3107,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'settled-corner-request',
-      name: 'Settled corner',
+      name: 'Settled-corner',
       objective: 'A turn that has already answered',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -3766,7 +3766,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'same-second-history',
-      name: 'Same second history',
+      name: 'Same-second-history',
       objective: 'Keep every earlier transcript row.',
     });
     expect(created.status).toBe(200);
@@ -3850,7 +3850,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'history-outline',
-      name: 'History outline',
+      name: 'History-outline',
       objective: 'Place the scrubber against every message.',
     });
     expect(created.status).toBe(200);
@@ -3913,7 +3913,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'long-history-outline',
-      name: 'Long history outline',
+      name: 'Long-history-outline',
       objective: 'Keep the oldest day reachable.',
     });
     expect(created.status).toBe(200);
@@ -3951,7 +3951,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'deleted-history-cursor',
-      name: 'Deleted cursor history',
+      name: 'Deleted-cursor-history',
       objective: 'Recover older transcript rows.',
     });
     expect(created.status).toBe(200);
@@ -3989,7 +3989,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'long-turn-corner',
-      name: 'Long turn',
+      name: 'Long-turn',
       objective: 'Long turn',
     });
     expect(created.status).toBe(200);
@@ -4021,7 +4021,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'tool-corner',
-      name: 'Tool ledger',
+      name: 'Tool-ledger',
       objective: 'Tool ledger',
     });
     expect(created.status).toBe(200);
@@ -4166,7 +4166,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'replayed-narration-corner',
-      name: 'Replay ledger',
+      name: 'Replay-ledger',
       objective: 'Keep one narrated tool row',
     });
     expect(created.status).toBe(200);
@@ -4237,7 +4237,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'tool-only-corner',
-      name: 'Tool-only ledger',
+      name: 'Tool-only-ledger',
       objective: 'Keep one final reply',
     });
     expect(created.status).toBe(200);
@@ -6069,7 +6069,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'chat-only-corner',
-      name: 'Render clip',
+      name: 'Render-clip',
       objective: 'Generate a clip and attach it',
     });
     expect(created.status).toBe(200);
@@ -6164,7 +6164,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'repository-corner-close',
-      name: 'Ship widget',
+      name: 'Ship-widget',
       objective: 'Ship the widget and close up',
       repository: 'owner/widgets',
       targetBranch: 'main',
@@ -6200,7 +6200,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'phone-close-corner',
-      name: 'Close request',
+      name: 'Close-request',
       objective: 'Close this corner from the phone',
     });
     expect(created.status).toBe(200);
@@ -6308,7 +6308,7 @@ describe('monolith integration', () => {
     ).toMatchObject({
       type: 'corner-complete',
       cornerId,
-      name: 'Close request',
+      name: 'Close-request',
       objective: 'Close this corner from the phone',
       outcome: 'abandoned',
     });
@@ -6322,7 +6322,7 @@ describe('monolith integration', () => {
     );
     const created = await operation('createHumanCorner', {
       roomId: ROOM,
-      title: 'Subscription inherit check',
+      title: 'Subscription-inherit-check',
     });
     expect(created.status).toBe(200);
     const { id: cornerId } = (await created.json()) as { id: string };
@@ -6336,7 +6336,7 @@ describe('monolith integration', () => {
   it('creates title-only human corners that only their creator or a Workspace owner or admin can close', async () => {
     const created = await operation('createHumanCorner', {
       roomId: ROOM,
-      title: '  Release   notes  ',
+      title: 'Release-notes',
     });
     expect(created.status).toBe(200);
     const { id: cornerId } = (await created.json()) as { id: string };
@@ -6357,7 +6357,7 @@ describe('monolith integration', () => {
       )
     ).rows[0];
     expect(stored).toEqual({
-      name: 'Release notes',
+      name: 'Release-notes',
       created_by: HUMAN,
       commissioned_by: HUMAN,
       objective: '',
@@ -6367,7 +6367,7 @@ describe('monolith integration', () => {
     });
     const listed = await phone.readCorners(ROOM, HUMAN);
     expect(listed?.corners.find((corner) => corner.corner.id === cornerId)).toMatchObject({
-      corner: { name: 'Release notes' },
+      corner: { name: 'Release-notes' },
       initiator: { pubkey: HUMAN, kind: 'human' },
     });
     expect(
@@ -6375,7 +6375,7 @@ describe('monolith integration', () => {
     ).toMatchObject({
       cornerId,
       objective: '',
-      title: 'Release notes',
+      title: 'Release-notes',
       kind: 'human',
       lane: 'no_code',
     });
@@ -6451,7 +6451,7 @@ describe('monolith integration', () => {
     ).toBe(200);
     const created = await operation('createHumanCorner', {
       roomId: ROOM,
-      title: 'quiet amber corner',
+      title: 'quiet-amber-corner',
       sourceMessageId: sourceId,
     });
     expect(created.status).toBe(200);
@@ -6467,7 +6467,7 @@ describe('monolith integration', () => {
       daemonFact: {
         type: 'corner-open',
         cornerId,
-        name: 'quiet amber corner',
+        name: 'quiet-amber-corner',
         objective: '',
         sourceMessageId: sourceId,
       },
@@ -6484,17 +6484,17 @@ describe('monolith integration', () => {
     ).toBe(0);
 
     expect(
-      (await operation('updateRoom', { roomId: cornerId, name: 'bright river corner' })).status,
+      (await operation('updateRoom', { roomId: cornerId, name: 'bright-river-corner' })).status,
     ).toBe(204);
     expect((await markerFor(HUMAN))?.daemonFact).toMatchObject({
-      name: 'bright river corner',
+      name: 'bright-river-corner',
       sourceMessageId: sourceId,
     });
 
     // A source that is not a message in this Room opens the corner unmarked.
     const unmarked = await operation('createHumanCorner', {
       roomId: ROOM,
-      title: 'stray corner',
+      title: 'stray-corner',
       sourceMessageId: '8'.repeat(64),
     });
     expect(unmarked.status).toBe(200);
@@ -6543,7 +6543,7 @@ describe('monolith integration', () => {
     ).toBe(200);
     const opened = await operation('createHumanCorner', {
       roomId: ROOM,
-      title: 'BBC follow-up',
+      title: 'BBC-follow-up',
       sourceMessageId: sourceId,
     });
     expect(opened.status).toBe(200);
@@ -6583,18 +6583,18 @@ describe('monolith integration', () => {
   it('renames a human corner through a name-only updateRoom', async () => {
     const created = await operation('createHumanCorner', {
       roomId: ROOM,
-      title: 'quiet amber corner',
+      title: 'quiet-amber-corner',
     });
     expect(created.status).toBe(200);
     const { id: cornerId } = (await created.json()) as { id: string };
 
     expect(
-      (await operation('updateRoom', { roomId: cornerId, name: '  bright river corner  ' })).status,
+      (await operation('updateRoom', { roomId: cornerId, name: 'bright-river-corner' })).status,
     ).toBe(204);
     expect(
       (await database.query<{ name: string }>(`SELECT name FROM rooms WHERE id=$1`, [cornerId]))
         .rows[0]?.name,
-    ).toBe('bright river corner');
+    ).toBe('bright-river-corner');
 
     const visibility = await operation('updateRoom', {
       roomId: cornerId,
@@ -6625,7 +6625,7 @@ describe('monolith integration', () => {
 
     const created = await operation('createHumanCorner', {
       roomId: ROOM,
-      title: 'Release control',
+      title: 'Release-control',
       appInstallationId: installationId,
     });
     expect(created.status).toBe(200);
@@ -6673,7 +6673,7 @@ describe('monolith integration', () => {
 
     const created = await operation('createHumanCorner', {
       roomId: ROOM,
-      title: 'Release control',
+      title: 'Release-control',
       appInstallationId: installationId,
     });
     expect(created.status).toBe(200);
@@ -7068,7 +7068,7 @@ describe('monolith integration', () => {
     );
     // The phone's + button opens a corner with no owner agent and copies the
     // parent's memberships, so Candy arrives in the corner as an owner.
-    const created = await operation('createHumanCorner', { roomId: ROOM, title: 'Hidden river' });
+    const created = await operation('createHumanCorner', { roomId: ROOM, title: 'Hidden-river' });
     expect(created.status).toBe(200);
     const { id: cornerId } = (await created.json()) as { id: string };
     const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
@@ -7088,7 +7088,7 @@ describe('monolith integration', () => {
       action: 'closed',
       pull_request: {
         number: 1,
-        title: 'Hidden river',
+        title: 'Hidden-river',
         html_url: 'https://github.com/owner/widgets/pull/1',
         head: { ref: branch, sha: '1'.repeat(40) },
         base: { ref: 'main' },
@@ -7168,7 +7168,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-request',
-      name: 'Ship widget',
+      name: 'Ship-widget',
       objective: 'Ship widget',
       repository: 'owner/widgets',
       targetBranch: 'main',
@@ -7676,7 +7676,7 @@ describe('monolith integration', () => {
         daemonFact: {
           type: 'corner-complete',
           cornerId,
-          name: 'Ship widget',
+          name: 'Ship-widget',
           objective: 'Ship widget',
           outcome: 'landed',
           pullRequest: {
@@ -7769,7 +7769,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'shared-corner',
-      name: 'Bee corner',
+      name: 'Bee-corner',
       objective: 'Any member carries this',
     });
     expect(created.status).toBe(200);
@@ -7895,7 +7895,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'retired-corner-responder',
-      name: 'Retired responder',
+      name: 'Retired-responder',
       objective: 'Keep continuity local to active corner members',
     });
     expect(created.status).toBe(200);
@@ -8979,7 +8979,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-room-label',
-      name: 'Ship the widget',
+      name: 'Ship-the-widget',
       objective: 'Ship the widget end to end',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -9021,7 +9021,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-question-tag-turn',
-      name: 'Ship the widget',
+      name: 'Ship-the-widget',
       objective: 'Ship the widget end to end',
     });
     expect(created.status).toBe(200);
@@ -9066,7 +9066,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-open-card',
-      name: 'Ship the widget',
+      name: 'Ship-the-widget',
       objective: 'Ship the widget end to end',
     });
     expect(created.status).toBe(200);
@@ -9080,7 +9080,7 @@ describe('monolith integration', () => {
     expect(cards.rows[0]!.card).toEqual({
       type: 'corner-open',
       cornerId,
-      name: 'Ship the widget',
+      name: 'Ship-the-widget',
       objective: 'Ship the widget end to end',
     });
     // The NAME titles the corner; the objective stays the statement of work.
@@ -9094,7 +9094,7 @@ describe('monolith integration', () => {
       [cornerId],
     );
     expect(corner.rows[0]).toEqual({
-      name: 'Ship the widget',
+      name: 'Ship-the-widget',
       objective: 'Ship the widget end to end',
       commissioned_by: HUMAN,
     });
@@ -9116,7 +9116,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-awaits-viewer',
-      name: 'Pick a colour',
+      name: 'Pick-a-colour',
       objective: 'Pick a colour for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -9142,7 +9142,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-chat-mine',
-      name: 'Pick a shape',
+      name: 'Pick-a-shape',
       objective: 'Pick a shape for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -9205,7 +9205,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-lifts-room',
-      name: 'Pick a size',
+      name: 'Pick-a-size',
       objective: 'Pick a size for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -9249,7 +9249,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-owed-idle',
-      name: 'Pick a finish',
+      name: 'Pick-a-finish',
       objective: 'Pick a finish for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -9309,7 +9309,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-owed-expiry',
-      name: 'Pick a box',
+      name: 'Pick-a-box',
       objective: 'Pick a box for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -9367,7 +9367,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-owed-crowded',
-      name: 'Pick a lid',
+      name: 'Pick-a-lid',
       objective: 'Pick a lid for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -9451,7 +9451,7 @@ describe('monolith integration', () => {
     await database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
     await database.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','main')`);
     await database.query(`UPDATE rooms SET repository_remote='https://github.com/owner/widgets.git',github_installation_id=77 WHERE id=$1`, [ROOM]);
-    const opened = await daemonOperation('createCorner', { roomId: ROOM, requestId: 'f1-human-retry', repository: 'owner/widgets', name: 'Recover merge', objective: 'Recover merge outcome' });
+    const opened = await daemonOperation('createCorner', { roomId: ROOM, requestId: 'f1-human-retry', repository: 'owner/widgets', name: 'Recover-merge', objective: 'Recover merge outcome' });
     expect(opened.status).toBe(200);
     const { cornerId } = await opened.json() as { cornerId: string };
     const head = 'a'.repeat(40);
@@ -9477,7 +9477,7 @@ describe('monolith integration', () => {
     await database.query(`INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
       VALUES($1,$2,'artifact','f1-artifact','text/plain','Plan',4,$3,'ready',now()+interval '1 day')`, [mediaId, AGENT, 'a'.repeat(64)]);
     expect((await daemonOperation('postAgentAttachment', { roomId: ROOM, requestId, attachment: { url: `${origin}/v1/media/${mediaId}`, name: 'Plan', mimeType: 'text/plain', size: 4 } })).status).toBe(200);
-    const input = { roomId: ROOM, requestId, name: 'Artifact work', objective: 'Apply plan', brief: { content: 'Apply the plan', attachments: [{ objectId: mediaId, purpose: 'Plan', required: true }] } };
+    const input = { roomId: ROOM, requestId, name: 'Artifact-work', objective: 'Apply plan', brief: { content: 'Apply the plan', attachments: [{ objectId: mediaId, purpose: 'Plan', required: true }] } };
     const opened = await daemonOperation('createCorner', input);
     console.info(`Reproduction F1-8: wrong=503; right=200 for pending artifact; observed=${opened.status}`);
     expect(opened.status).toBe(200);
@@ -9493,7 +9493,7 @@ describe('monolith integration', () => {
       roomId: ROOM,
       requestId: 'repeated-corner-open',
       idempotencyKey: 'repeated-corner-open:call-1',
-      name: 'Ship widget',
+      name: 'Ship-widget',
       objective: 'Ship the widget end to end',
       brief: { content: 'A1: ship the agreed widget behavior.' },
     };
@@ -9575,7 +9575,7 @@ describe('monolith integration', () => {
     const input = {
       roomId: ROOM,
       requestId: 'durable-brief-open',
-      name: 'Render size',
+      name: 'Render-size',
       objective: 'Match the approved dimensions',
       brief,
     };
@@ -9905,7 +9905,7 @@ describe('monolith integration', () => {
     const response = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'missing-brief-file',
-      name: 'Missing reference',
+      name: 'Missing-reference',
       objective: 'Use the approved reference',
       brief: {
         content: 'A1: use the approved reference.',
@@ -9960,7 +9960,7 @@ describe('monolith integration', () => {
       roomId: ROOM,
       requestId,
       idempotencyKey: `${requestId}:open`,
-      name: 'Bound mock',
+      name: 'Bound-mock',
       objective: 'Build the approved mock',
       repository: 'example/repository',
       brief: { content: 'Implement the approved visual mock exactly.' },
@@ -9988,7 +9988,7 @@ describe('monolith integration', () => {
     const response = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'missing-code-brief',
-      name: 'Missing brief',
+      name: 'Missing-brief',
       objective: 'Do repository work',
       lane: 'code',
       repository: 'example/repository',
@@ -10015,7 +10015,7 @@ describe('monolith integration', () => {
       const response = await daemonOperation('createCorner', {
         roomId: ROOM,
         requestId,
-        name: 'Unapproved brief',
+        name: 'Unapproved-brief',
         objective: 'Do repository work',
         repository: 'example/repository',
         brief: { spec: '## Checklist\n\n- Ship it.', approval: { sourceMessageId } },
@@ -10032,7 +10032,7 @@ describe('monolith integration', () => {
     const tooLong = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'over-long-spec',
-      name: 'Long brief',
+      name: 'Long-brief',
       objective: 'Do repository work',
       repository: 'example/repository',
       brief: { content: 'x'.repeat(CORNER_BRIEF_SPEC_MAX_LENGTH + 1) },
@@ -10044,7 +10044,7 @@ describe('monolith integration', () => {
     const atLimit = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'limit-length-spec',
-      name: 'Limit brief',
+      name: 'Limit-brief',
       objective: 'Do repository work',
       brief: { content: 'x'.repeat(CORNER_BRIEF_SPEC_MAX_LENGTH) },
     });
@@ -10055,7 +10055,7 @@ describe('monolith integration', () => {
     const opened = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'folded-brief-open',
-      name: 'Folded brief',
+      name: 'Folded-brief',
       objective: 'Keep the old assignment readable',
       brief: { content: 'Revision one.' },
     });
@@ -10166,7 +10166,7 @@ describe('monolith integration', () => {
     const response = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'brief-persistence-failure',
-      name: 'Brief failure',
+      name: 'Brief-failure',
       objective: 'Persist a complete assignment',
       brief: { content: 'reject-this-brief' },
     });
@@ -10200,7 +10200,7 @@ describe('monolith integration', () => {
       for (const roomId of [null, ROOM])
         await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, roomId, worker]);
       const opened = await daemonOperation('createCorner', {
-        roomId: ROOM, requestId: 'worker-brief-open', name: 'Worker brief',
+        roomId: ROOM, requestId: 'worker-brief-open', name: 'Worker-brief',
         objective: 'Keep the approved behavior', repository: 'example/repo',
         brief: { content: 'Keep the approved behavior.' },
       });
@@ -10258,7 +10258,7 @@ describe('monolith integration', () => {
     const opened = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'reviewer-brief-open',
-      name: 'Review brief',
+      name: 'Review-brief',
       objective: 'Keep the agreed behavior',
       repository: 'example/repo',
       brief: { content: 'A1: keep the agreed behavior.' },
@@ -10366,14 +10366,14 @@ describe('monolith integration', () => {
       roomId: ROOM,
       requestId,
       idempotencyKey: `${requestId}:call-1`,
-      name: 'First fix',
+      name: 'First-fix',
       objective: 'Fix the first independent problem',
     });
     const second = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId,
       idempotencyKey: `${requestId}:call-2`,
-      name: 'Second fix',
+      name: 'Second-fix',
       objective: 'Fix the second independent problem',
     });
     expect(first.status).toBe(200);
@@ -10400,7 +10400,7 @@ describe('monolith integration', () => {
       roomId: ROOM,
       requestId: 'concurrent-corner-open',
       idempotencyKey: 'concurrent-corner-open:call-1',
-      name: 'Ship widget',
+      name: 'Ship-widget',
       objective: 'Ship the widget end to end',
     };
     // Seed and claim the single command both retries are authorized to serve;
@@ -10448,7 +10448,7 @@ describe('monolith integration', () => {
     const response = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-objective-too-long',
-      name: 'Too long',
+      name: 'Too-long',
       objective: Array.from({ length: 25 }, (_, index) => `word${index + 1}`).join(' '),
     });
     expect(response.status).toBe(503);
@@ -10464,7 +10464,7 @@ describe('monolith integration', () => {
     expect(corners.rows).toEqual([]);
   });
 
-  it('requires a corner name of at most three words and normalises an untidy one', async () => {
+  it('requires a continuous corner name and normalizes an untidy objective', async () => {
     const missing = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-name-missing',
@@ -10482,14 +10482,14 @@ describe('monolith integration', () => {
       objective: 'Ship the widget',
     });
     expect(tooLong.status).toBe(503);
-    expect(await tooLong.json()).toEqual({ error: 'the name is 5 words; the limit is 3' });
+    expect(await tooLong.json()).toEqual({ error: 'the name must not contain whitespace; use hyphens between words' });
 
     // Untidy is not wrong: line breaks and double spaces are flattened, and
     // the objective that used to be refused outright now opens a corner.
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-name-normalised',
-      name: '  widget \n ledger ',
+      name: 'widget-ledger',
       objective: 'Ship the widget\nend to  end',
     });
     expect(created.status).toBe(200);
@@ -10499,7 +10499,7 @@ describe('monolith integration', () => {
       [cornerId],
     );
     expect(corner.rows[0]).toEqual({
-      name: 'widget ledger',
+      name: 'widget-ledger',
       objective: 'Ship the widget end to end',
     });
   });
@@ -10508,7 +10508,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-legacy-card',
-      name: 'Legacy corner',
+      name: 'Legacy-corner',
       objective: 'Rework the room list so every corner row carries a state mark',
     });
     expect(created.status).toBe(200);
@@ -10939,7 +10939,7 @@ describe('monolith integration', () => {
       const opened = await daemonOperation('createCorner', {
         roomId: ROOM,
         requestId: source.messageId,
-        name: `${lane} work`,
+        name: `${lane}-work`,
         objective: 'Answer this request',
         lane,
         ...(lane === 'no_code' ? {} : { repository: 'owner/widgets', targetBranch: 'main' }),
@@ -11130,7 +11130,7 @@ describe('monolith integration', () => {
     await operation('addRoomMember', { roomId: ROOM, memberId: requesterId });
     const opened = await operation(
       'createHumanCorner',
-      { roomId: ROOM, title: 'Older helper corner' },
+      { roomId: ROOM, title: 'Older-helper-corner' },
       requesterToken,
     );
     expect(opened.status).toBe(200);
@@ -13300,7 +13300,7 @@ describe('monolith integration', () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-subscription-inherit-request',
-      name: 'Inherit check',
+      name: 'Inherit-check',
       objective: 'Check what a new corner inherits',
     });
     expect(created.status).toBe(200);

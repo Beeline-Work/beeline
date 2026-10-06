@@ -22,7 +22,7 @@ describe('openRoomListCorner', () => {
 
     const [, title] = createCorner.mock.calls[0] as unknown as [string, string];
     expect(createCorner).toHaveBeenCalledWith('room-a', title);
-    expect(title).toMatch(/^\w+ \w+ corner$/);
+    expect(title).toMatch(/^\w+-\w+-corner$/);
     expect(openCorner).toHaveBeenCalledWith('corner-new', title);
     expect(alert).not.toHaveBeenCalled();
   });

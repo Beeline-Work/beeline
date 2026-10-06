@@ -237,7 +237,7 @@ lines.on('line', async (line) => {
             },
             body: JSON.stringify({
               ...ctx,
-              name: 'Market scan',
+              name: 'Market-scan',
               objective: 'Survey the five nearest competitors and write it up',
               lane: 'no_code',
               repository: process.env.BEELINE_TEST_REPO_KEY,

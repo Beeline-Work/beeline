@@ -343,7 +343,7 @@ describe('institutional context prefetch, proven against the real server', () =>
       };
       const created = await daemon.execute(
         'createCorner',
-        { ...context, name: 'Cake order', objective: "Fulfill Ren's birthday cake order" } as never,
+        { ...context, name: 'Cake-order', objective: "Fulfill Ren's birthday cake order" } as never,
         AGENT,
       );
       cornerId = (created as { cornerId: string }).cornerId;

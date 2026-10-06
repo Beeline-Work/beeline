@@ -34,5 +34,5 @@ const NOUNS = [
 export function randomCornerName(random: () => number = Math.random): string {
   const adjective = ADJECTIVES[Math.floor(random() * ADJECTIVES.length)] ?? ADJECTIVES[0];
   const noun = NOUNS[Math.floor(random() * NOUNS.length)] ?? NOUNS[0];
-  return `${adjective} ${noun} corner`;
+  return `${adjective}-${noun}-corner`;
 }

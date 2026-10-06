@@ -110,7 +110,7 @@ async function open(
       roomId,
       requestId: command.turnRequestId,
       generationId: 'g1',
-      name: 'Market scan',
+      name: 'Market-scan',
       objective: 'Survey the five nearest competitors and write it up',
       ...(lane ? { lane } : {}),
       ...(repository ? { repository, targetBranch: 'main' } : {}),
@@ -125,10 +125,24 @@ async function open(
   return cornerId;
 }
 
-async function humanCorner(roomId: string, title = 'Release notes'): Promise<string> {
+async function humanCorner(roomId: string, title = 'Release-notes'): Promise<string> {
   return ((await phone.execute('createHumanCorner', { roomId, title }, HUMAN)) as { id: string })
     .id;
 }
+
+it('rejects whitespace in human corner creation and rename while accepting continuous names', async () => {
+  for (const separator of [' ', '\t', '\n', '\u00a0', '\u2003']) {
+    await expect(phone.execute('createHumanCorner', {
+      roomId: CHAT_ROOM, title: `continuous${separator}amber-corner`,
+    }, HUMAN)).rejects.toThrow(/whitespace/);
+  }
+  const cornerId = await humanCorner(CHAT_ROOM, 'continuous-amber-corner');
+  await expect(phone.execute('updateRoom', {
+    roomId: cornerId, name: 'continuous amber corner',
+  }, HUMAN)).rejects.toThrow(/whitespace/);
+  await phone.execute('updateRoom', { roomId: cornerId, name: 'continuous-river-corner' }, HUMAN);
+  expect((await phone.readRoom(cornerId, HUMAN))?.room.name).toBe('continuous-river-corner');
+});
 
 async function upgrade(cornerId: string, agentId = AGENT) {
   const command = await commissioned(cornerId, agentId);
@@ -214,14 +228,14 @@ it('restores a corner opened before the lane column as code', async () => {
 it('restores a generated human-corner title as generated until the corner is renamed', async () => {
   const generated = ((await phone.execute(
     'createHumanCorner',
-    { roomId: CHAT_ROOM, title: 'still harbor corner', titleGenerated: true },
+    { roomId: CHAT_ROOM, title: 'still-harbor-corner', titleGenerated: true },
     HUMAN,
   )) as { id: string }).id;
-  const chosen = await humanCorner(CHAT_ROOM, 'Reading corner');
+  const chosen = await humanCorner(CHAT_ROOM, 'Reading-corner');
 
   expect(
     await daemon.execute('getCornerRestoreState', { cornerId: generated }, AGENT),
-  ).toMatchObject({ title: 'still harbor corner', titleGenerated: true });
+  ).toMatchObject({ title: 'still-harbor-corner', titleGenerated: true });
   expect(
     await daemon.execute('getCornerRestoreState', { cornerId: chosen }, AGENT),
   ).not.toHaveProperty('titleGenerated');
@@ -233,21 +247,21 @@ it('restores a generated human-corner title as generated until the corner is ren
       cornerId: generated,
       requestId: command.turnRequestId,
       generationId: 'g1',
-      name: 'rename after steer',
+      name: 'rename-after-steer',
       objective: 'Answer the steering request',
       brief: brief(command.sourceMessageId, 'Answer the steering request in this corner.'),
     },
     AGENT,
   );
   const renamed = await daemon.execute('getCornerRestoreState', { cornerId: generated }, AGENT);
-  expect(renamed.title).toBe('rename after steer');
+  expect(renamed.title).toBe('rename-after-steer');
   expect(renamed).not.toHaveProperty('titleGenerated');
 });
 
 it('saves the first human-opened corner objective and brief when an agent names the work', async () => {
   const cornerId = ((await phone.execute(
     'createHumanCorner',
-    { roomId: CHAT_ROOM, title: 'still harbor corner', titleGenerated: true },
+    { roomId: CHAT_ROOM, title: 'still-harbor-corner', titleGenerated: true },
     HUMAN,
   )) as { id: string }).id;
   const before = await phone.readRoom(cornerId, HUMAN);
@@ -259,14 +273,14 @@ it('saves the first human-opened corner objective and brief when an agent names 
     cornerId,
     requestId: command.turnRequestId,
     generationId: 'g1',
-    name: 'Readable briefs',
+    name: 'Readable-briefs',
   }, AGENT)).rejects.toThrow('requires its objective and first brief');
-  expect((await phone.readRoom(cornerId, HUMAN))?.room.name).toBe('still harbor corner');
+  expect((await phone.readRoom(cornerId, HUMAN))?.room.name).toBe('still-harbor-corner');
   const details = {
     cornerId,
     requestId: command.turnRequestId,
     generationId: 'g1',
-    name: 'Readable briefs',
+    name: 'Readable-briefs',
     objective: 'Make the corner brief readable above its workflow',
     brief: brief(command.sourceMessageId, 'Show the request in the corner panel.'),
   };
@@ -274,10 +288,10 @@ it('saves the first human-opened corner objective and brief when an agent names 
     ...details,
     brief: brief('f'.repeat(64), details.brief.spec),
   }, AGENT)).rejects.toThrow('corner brief approval must name a human Room message');
-  expect((await phone.readRoom(cornerId, HUMAN))?.room.name).toBe('still harbor corner');
+  expect((await phone.readRoom(cornerId, HUMAN))?.room.name).toBe('still-harbor-corner');
   await daemon.execute('renameCorner', details, AGENT);
   const viewed = await phone.readRoom(cornerId, HUMAN);
-  expect(viewed?.room.name).toBe('Readable briefs');
+  expect(viewed?.room.name).toBe('Readable-briefs');
   expect(viewed?.room.about).toBe(details.objective);
   expect(viewed?.cornerBrief).toMatchObject({
     revision: 1,
@@ -307,7 +321,7 @@ it('saves the first human-opened corner objective and brief when an agent names 
     cornerId,
     requestId: command.turnRequestId,
     generationId: 'g1',
-    name: 'Readable briefs',
+    name: 'Readable-briefs',
     objective: 'Read the latest brief above the workflow',
   }, AGENT);
   expect((await phone.readRoom(cornerId, HUMAN))?.room.about)
@@ -844,7 +858,7 @@ it('keeps the brief a no-code corner already had when it upgrades', async () => 
       roomId: CODE_ROOM,
       requestId: command.turnRequestId,
       generationId: 'g1',
-      name: 'Market scan',
+      name: 'Market-scan',
       objective: 'Survey the five nearest competitors and write it up',
       lane: 'no_code',
       repository: 'owner/widgets',
@@ -965,7 +979,7 @@ it.each([false, true])('persists repositoryWork=%s through opening, restore, his
   const draft = { ...brief(command.sourceMessageId, '## Intent\nDeliver the assigned task'), repositoryWork };
   const { cornerId } = await daemon.execute('createCorner', {
     roomId: CODE_ROOM, requestId: command.turnRequestId, generationId: 'g1',
-    name: 'Delivery scope', objective: 'Deliver the assigned task', brief: draft,
+    name: 'Delivery-scope', objective: 'Deliver the assigned task', brief: draft,
   }, AGENT);
   expect((await daemon.execute('getCornerRestoreState', { cornerId }, AGENT)).brief?.repositoryWork).toBe(repositoryWork);
   expect((await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions[0]?.repositoryWork).toBe(repositoryWork);

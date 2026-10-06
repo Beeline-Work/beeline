@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
-import { ROOM_SLUG_HINT, validRoomSlug } from '@/buzz/room-name';
+import { ROOM_SLUG_HINT, roomNameEntry, validRoomSlug } from '@/buzz/room-name';
 import { Typography } from '@/constants/Typography';
 import { Button } from './Button';
 import { HullDialogInput } from './HullDialog';
@@ -212,7 +212,7 @@ export function NewRoomDialog({
               accessibilityLabel={`${ROOM_LABEL} name`}
               ruleStyle={styles.nameRule}
               editable={!busy}
-              onChangeText={setRoomName}
+              onChangeText={(value) => setRoomName(roomNameEntry(value))}
               onSubmitEditing={() => {
                 if (!submitDisabled) void submit();
               }}

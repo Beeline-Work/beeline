@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
+import { EventEmitter } from 'node:events';
+import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { FACE_NAMES, FACE_SOULS, isFaceId, type FaceId } from '@beeline/api-contract/phone';
 import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';
 import { CORNER_BRIEF_SPEC_MAX_LENGTH } from '@beeline/api-contract/daemon';
@@ -74,6 +76,7 @@ const ROOM = '22222222-2222-4222-8222-222222222222';
 
 describe('monolith integration', () => {
   let database: PgliteDatabase;
+  let live: LiveHub;
   let auth: TokenAuth;
   let origin: string;
   let server: ReturnType<typeof createBeelineServer>;
@@ -179,7 +182,7 @@ describe('monolith integration', () => {
       objectService,
       undefined,
     );
-    const live = new LiveHub();
+    live = new LiveHub();
     const daemon = new DaemonService(
       database,
       live,
@@ -2049,6 +2052,60 @@ describe('monolith integration', () => {
       [workspaceId, bobId],
     );
     expect(membership.rows).toEqual([{ removed_at: null }]);
+  });
+
+  it('removes an owner-deleted workspace for an online member and on the next offline load', async () => {
+    const memberToken = await phoneToken('alice');
+    const memberId = createHash('sha256').update('github:alice').digest('hex');
+    const outsiderToken = await phoneToken('bob');
+    const offlineToken = await phoneToken('offline');
+    const offlineId = createHash('sha256').update('github:offline').digest('hex');
+    const workspaceId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    await operation('createWorkspace', { workspaceId, name: 'Beeline Welcome' });
+    await operation('addWorkspaceMember', { workspaceId, memberId, role: 'member' });
+    await operation('addWorkspaceMember', { workspaceId, memberId: offlineId, role: 'member' });
+    const before = await (await request('/v1/phone/workspaces', 'GET', undefined, memberToken)).json();
+    expect(before.workspaces.map((workspace: { id: string }) => workspace.id)).toContain(workspaceId);
+
+    let unlisten: (() => Promise<void>) | undefined;
+    const pgClient = new EventEmitter() as EventEmitter & LivePgClient;
+    pgClient.connect = async () => undefined;
+    pgClient.query = async () => {
+      unlisten = await database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) => {
+        pgClient.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload });
+      });
+    };
+    pgClient.end = async () => { await unlisten?.(); };
+    const listener = new PostgresLiveListener(database, live, () => pgClient, 1);
+    const sockets = [memberToken, outsiderToken].map((token) =>
+      new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [`bearer.${token}`]));
+    const opened = Promise.all(sockets.map((socket) => new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    })));
+    try {
+      void listener.run();
+      await vi.waitFor(() => expect(listener.projectionHealth().connected).toBe(true));
+      await opened;
+      const outsiderEvents: unknown[] = [];
+      sockets[1]!.on('message', (raw) => outsiderEvents.push(JSON.parse(raw.toString())));
+      // The workspace rail has no Room subscriptions. Deletion must still
+      // reach it after the membership rows have cascaded away.
+      const invalidated = next(sockets[0]!, 'invalidate');
+      expect((await operation('deleteWorkspace', { workspaceId })).status).toBe(204);
+      expect(await invalidated).toMatchObject({ roomId: '', reason: 'postgres:memberships' });
+      const after = await (await request('/v1/phone/workspaces', 'GET', undefined, memberToken)).json();
+      expect(after.workspaces).toEqual([]);
+      expect(after.deletedNotices).toEqual([{ workspaceId, workspaceName: 'Beeline Welcome' }]);
+      const nextLoad = await (await request('/v1/phone/workspaces', 'GET', undefined, offlineToken)).json();
+      expect(nextLoad.workspaces).toEqual([]);
+      expect((await request(`/v1/phone/workspaces/${workspaceId}/chats`, 'GET', undefined, memberToken)).status).toBe(404);
+      expect(outsiderEvents).toEqual([]);
+      console.log('Reproduction workspace-removal: owner deleted Beeline Welcome; member received live removal, next load has no workspace, deleted rooms refused, outsider received nothing');
+    } finally {
+      sockets.forEach((socket) => socket.terminate());
+      await listener.stop();
+    }
   });
 
   it('lets only the Workspace owner delete it, as a real cascade that leaves no orphan rows and retires bound helpers', async () => {

@@ -219,10 +219,17 @@ export const SidebarView = React.memo(function SidebarView() {
 
   React.useEffect(() => {
     let cancelled = false;
+    let stopWorkspaces: (() => void) | undefined;
     setNavigationError(null);
     void (async () => {
       const identity = await loadBuzzIdentity();
       if (!identity) return;
+      void new BuzzRigTransport(identity).surfaceSubscribe([], () => {
+        if (!cancelled) setRefreshNonce((nonce) => nonce + 1);
+      }).then((stop) => {
+        if (cancelled) stop();
+        else stopWorkspaces = stop;
+      });
       const http = new RoomViewClient({ baseUrl: await getEffectiveRelayUrl(), identity });
       const list = await http.workspaces();
       const stored = await loadActiveCommunityId(identity.publicKey);
@@ -230,17 +237,28 @@ export const SidebarView = React.memo(function SidebarView() {
         ? stored
         : (list.workspaces[0]?.id ?? null);
       if (cancelled) return;
+      const selectionRemoved = [workspaceIdRef.current, stored, routeWorkspaceId].some(
+        (id) => id && !list.workspaces.some((workspace) => workspace.id === id),
+      );
+      if (workspaceIdRef.current !== selected) setSurface(null);
       setClient(http);
       setIdentityPubkey(identity.publicKey);
       setViewerIdentity(list.viewer);
       setWorkspaces(list.workspaces);
       workspaceIdRef.current = selected;
       setWorkspaceId(selected);
+      if (selectionRemoved) {
+        void saveActiveCommunityId(identity.publicKey, selected);
+        router.replace(selected
+          ? { pathname: '/beeline/channels', params: { communityId: selected } }
+          : '/beeline/community');
+      }
     })().catch(() => {
       if (!cancelled) setNavigationError(`Could not load ${WORKSPACE_LABEL.toLowerCase()}s.`);
     });
     return () => {
       cancelled = true;
+      stopWorkspaces?.();
     };
   }, [refreshNonce]);
 
@@ -277,7 +295,13 @@ export const SidebarView = React.memo(function SidebarView() {
   React.useEffect(() => {
     if (!identityPubkey) return;
     return subscribeActiveCommunityId(identityPubkey, (nextWorkspaceId) => {
-      if (!nextWorkspaceId) return;
+      if (!nextWorkspaceId) {
+        workspaceIdRef.current = null;
+        setWorkspaceId(null);
+        setSurface(null);
+        setRefreshNonce((nonce) => nonce + 1);
+        return;
+      }
       if (!workspaces.some((workspace) => workspace.id === nextWorkspaceId)) {
         // A Workspace just created or joined: read the list again — once per
         // id, so a stale stored id (a deleted Workspace) cannot loop.

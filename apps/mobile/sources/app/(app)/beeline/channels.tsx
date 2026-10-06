@@ -1,3 +1,4 @@
+import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { useNeedsYouCount } from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
@@ -441,7 +442,9 @@ export default function BuzzChannels() {
       if (cancelled) return;
       if (cachedChats) setChatList(cachedChats);
       let heldChats = cachedChats;
+      let selectedWorkspaceRemoved = false;
       const paintChats = (value: ChatListView) => {
+        if (selectedWorkspaceRemoved) return;
         heldChats = value;
         setChatList(value);
       };
@@ -455,14 +458,26 @@ export default function BuzzChannels() {
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
           }
-          if (
-            value.workspaces[0]?.id &&
-            (!selectedId || !value.workspaces.some((workspace) => workspace.id === selectedId))
-          ) {
-            router.replace({
-              pathname: '/beeline/channels',
-              params: { communityId: value.workspaces[0].id },
-            } as never);
+          if (!selectedId || !value.workspaces.some((workspace) => workspace.id === selectedId)) {
+            selectedWorkspaceRemoved = true;
+            chatsRefresh?.dispose();
+            unsubscribeChats?.();
+            unsubscribeChats = undefined;
+            if (chatCacheAddress) void mobileSurfaceCache.remove(chatCacheAddress);
+            heldChats = null;
+            setChatList(null);
+            setWorkspaceDetail(null);
+            setMemberPickerVisible(false);
+            setRefreshing(false);
+            setError(null);
+            const nextId = value.workspaces[0]?.id ?? null;
+            void saveActiveCommunityId(nextIdentity.publicKey, nextId);
+            if (nextId) {
+              router.replace({
+                pathname: '/beeline/channels',
+                params: { communityId: nextId },
+              } as never);
+            }
           }
         },
         onError: (reason) => setError(String(reason)),
@@ -512,7 +527,7 @@ export default function BuzzChannels() {
             if (deckVisible()) chatsRefresh?.signal();
           });
           previous?.();
-          if (cancelled || generation !== chatWatchGeneration) {
+          if (cancelled || selectedWorkspaceRemoved || generation !== chatWatchGeneration) {
             stop();
             return;
           }
@@ -548,8 +563,13 @@ export default function BuzzChannels() {
             if (nextWatchKey !== chatWatchKey) void installChatWatch(value.watchFilters);
           },
           onError: (reason) => {
+            if (selectedWorkspaceRemoved) return;
             setRefreshing(false);
             setError(String(reason));
+            // A deleted Workspace's old route may be restored from storage
+            // before the authoritative workspace read has reconciled it.
+            if (reason instanceof RoomViewHttpError && (reason.status === 403 || reason.status === 404))
+              workspaceRefresh?.force();
           },
         });
         chatScheduler.current = chatsRefresh;

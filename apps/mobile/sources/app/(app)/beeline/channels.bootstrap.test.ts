@@ -12,7 +12,7 @@ describe('Room deck bootstrap', () => {
     );
     expect(workspaceApply).toContain('!value.workspaces.some');
     expect(workspaceApply).toContain("pathname: '/beeline/channels'");
-    expect(workspaceApply).toContain('communityId: value.workspaces[0].id');
+    expect(workspaceApply).toContain('communityId: nextId');
   });
 
   it('restores the persisted Workspace before choosing server recency order', () => {

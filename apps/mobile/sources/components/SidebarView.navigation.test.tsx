@@ -1,8 +1,10 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const workspaceLive = vi.hoisted(() => ({ listeners: new Set<() => void>(), deleted: false, empty: false }));
+const routerReplace = vi.hoisted(() => vi.fn());
 const routerPush = vi.hoisted(() => vi.fn());
 const routerNavigate = vi.hoisted(() => vi.fn());
 const saveActiveCommunityId = vi.hoisted(() => vi.fn(async () => undefined));
@@ -53,8 +55,8 @@ const chats = vi.hoisted(() =>
 );
 const workspaceSummary = vi.hoisted(() => ({ attention: true, roomCount: 3 }));
 const workspaces = vi.hoisted(() => vi.fn(async () => ({
-  workspaces: [
-    { id: 'workspace-a', name: 'Alpha Workspace' },
+  workspaces: workspaceLive.empty ? [] : [
+    ...(!workspaceLive.deleted ? [{ id: 'workspace-a', name: 'Alpha Workspace' }] : []),
     { id: 'workspace-empty', name: 'Empty Workspace', ...workspaceSummary },
   ],
   viewer: { pubkey: 'viewer', kind: 'human', name: 'Ada Lovelace' },
@@ -130,7 +132,7 @@ vi.mock('expo-router', async () => {
     pathnameListeners.add(listener);
     return () => { pathnameListeners.delete(listener); };
   }, () => route.pathname),
-  useRouter: () => ({ push: routerPush, navigate: routerNavigate }),
+  useRouter: () => ({ push: routerPush, navigate: routerNavigate, replace: routerReplace }),
   });
 });
 vi.mock('@/utils/responsive', () => ({ useHeaderHeight: () => 56, useIsDesktop: () => true }));
@@ -156,6 +158,10 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     createHumanCorner = createHumanCorner;
+    async surfaceSubscribe(_filters: unknown, listener: () => void) {
+      workspaceLive.listeners.add(listener);
+      return () => workspaceLive.listeners.delete(listener);
+    }
   },
 }));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
@@ -292,6 +298,10 @@ beforeAll(() => {
   });
 });
 
+afterEach(async () => {
+  await act(async () => tree.unmount());
+});
+
 afterAll(() => {
   vi.restoreAllMocks();
   delete (globalThis as any).window;
@@ -300,6 +310,9 @@ afterAll(() => {
 describe('desktop Workspace navigation', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    workspaceLive.deleted = false;
+    workspaceLive.empty = false;
+    workspaceLive.listeners.clear();
     windowListeners.clear();
     route.communityId = undefined;
     route.parent = undefined;
@@ -317,6 +330,27 @@ describe('desktop Workspace navigation', () => {
     await settle();
   });
 
+
+  it('removes the deleted workspace from the permanent rail while a Room is open', async () => {
+    route.pathname = '/beeline/chat/room-a';
+    workspaceLive.deleted = true;
+    await act(async () => { for (const listener of [...workspaceLive.listeners]) listener(); });
+    await settle();
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.map((workspace: { id: string }) => workspace.id)).toEqual(['workspace-empty']);
+    expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
+    expect(routerReplace).toHaveBeenCalledWith({ pathname: '/beeline/channels', params: { communityId: 'workspace-empty' } });
+    expect(chats).toHaveBeenLastCalledWith('workspace-empty');
+    console.log('Reproduction workspace-removal: permanent desktop rail removed Alpha Workspace and opened remaining workspace without a room retry');
+  });
+
+  it('clears the permanent rail when its final workspace is deleted', async () => {
+    workspaceLive.empty = true;
+    await act(async () => { for (const listener of [...workspaceLive.listeners]) listener(); });
+    await settle();
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces).toEqual([]);
+    expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', null);
+    expect(routerReplace).toHaveBeenCalledWith('/beeline/community');
+  });
 
   it('R12e: reads chats only for the active Workspace on mount and navigation', async () => {
     expect(chats.mock.calls.every(([id]) => id === 'workspace-a')).toBe(true);

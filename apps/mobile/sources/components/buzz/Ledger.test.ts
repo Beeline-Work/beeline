@@ -1310,20 +1310,34 @@ describe('the ledger day caption', () => {
   });
 });
 
-describe('full system notices', () => {
-  it('renders native recovery text and every detail without line caps or expansion', () => {
-    const text =
-      'Ruby could not answer · the helper could not authenticate with Claude. Its owner can run beeline connect on its machine.';
+describe('expandable system notices', () => {
+  it('uses native overflow measurement and reveals unchanged text with an accessible brass control', () => {
+    const text = 'Ruby could not answer · Its owner can run beeline connect on its machine.';
     const renderer = render(
-      React.createElement(LedgerSystemLine, {
-        id: 'notice',
-        text,
-        stamp: '17:14',
-      }),
+      React.createElement(LedgerSystemLine, { id: 'notice', text, stamp: '17:14' }),
     );
-    expect(
-      renderer.root.findByProps({ testID: 'system-line-text-notice' }).props.numberOfLines,
-    ).toBeUndefined();
-    expect(renderedText(renderer)).toContain(text);
+    const body = () => renderer.root.findByProps({ testID: 'system-line-text-notice' });
+    const measurement = renderer.root.findByProps({ testID: 'system-line-measurement-notice' });
+    const controls = () => renderer.root.findAllByProps({ testID: 'system-line-toggle-notice' });
+    expect(body().props.numberOfLines).toBe(2);
+    expect(controls()).toHaveLength(0);
+    expect(measurement.props.accessibilityElementsHidden).toBe(true);
+    expect(measurement.props.importantForAccessibility).toBe('no-hide-descendants');
+    act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}, {}] } }));
+    expect(controls()).toHaveLength(0);
+    act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}, {}, {}] } }));
+    const control = renderer.root.findByProps({ testID: 'system-line-toggle-notice' });
+    expect(control.props.accessibilityRole).toBe('button');
+    expect(control.props.accessibilityState).toEqual({ expanded: false });
+    expect(control.props.style).toMatchObject({ minHeight: 44, minWidth: 44 });
+    expect(control.findByType('Text').props.style.color).toBe(groknight.accent);
+    act(() => control.props.onPress());
+    expect(body().props.numberOfLines).toBeUndefined();
+    expect(body().props.children).toBe(text);
+    expect(renderedText(renderer)).toContain('Less');
+    act(() => control.props.onPress());
+    expect(body().props.numberOfLines).toBe(2);
+    act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}] } }));
+    expect(controls()).toHaveLength(0);
   });
 });

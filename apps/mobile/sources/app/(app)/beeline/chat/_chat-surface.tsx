@@ -98,6 +98,7 @@ import { cornerObjectiveItems } from '@/buzz/corner-context';
 import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution';
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
+import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
 import { anchorRelayReports } from '@/buzz/system-lines';
 import { cornerProposalDecision } from '@/buzz/corner-proposal';
 import { anchorCornerMarkers } from '@/buzz/corner-markers';
@@ -279,6 +280,7 @@ import {
 } from './useRoomSurfaceSession';
 import {
   GitHubEventCard,
+  NotificationLifecycleCard,
   DaemonFactCard,
   GrantRequestCard,
   SquireApprovalCard,
@@ -1337,17 +1339,17 @@ export function BuzzChatSurface({
   const foldedMessages = useMemo(() => {
     const anchored = anchorCornerMarkers(anchorRelayReports(combinedMessages));
     const boundary = boundaryRowIndex(anchored, isCorner ? null : firstUnreadMessageId);
-    if (boundary < 0) return foldSettledActivityRuns(anchored);
+    if (boundary < 0) return foldPrLifecycleRuns(foldSettledActivityRuns(anchored));
     // Folding cannot swallow the one exact server-owned unread boundary.
     return [
-      ...foldSettledActivityRuns(anchored.slice(0, boundary)),
-      ...foldSettledActivityRuns(anchored.slice(boundary)),
+      ...foldPrLifecycleRuns(foldSettledActivityRuns(anchored.slice(0, boundary))),
+      ...foldPrLifecycleRuns(foldSettledActivityRuns(anchored.slice(boundary))),
     ];
   }, [combinedMessages, firstUnreadMessageId, isCorner]);
   const arrivalMessages = useMemo(() => {
     if (!anchoredSegmentActive) return foldedMessages;
     const tail = mergeDisplayPages(cachedMessages, liveMessages, roomSendFrame.optimistic);
-    return foldSettledActivityRuns(anchorCornerMarkers(anchorRelayReports(tail)));
+    return foldPrLifecycleRuns(foldSettledActivityRuns(anchorCornerMarkers(anchorRelayReports(tail))));
   }, [
     anchoredSegmentActive,
     cachedMessages,
@@ -5664,6 +5666,10 @@ export function BuzzChatSurface({
       }
       if (item.corner) {
         return null;
+      }
+
+      if (item.notificationLifecycleRun) {
+        return <NotificationLifecycleCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
       if (item.githubEvent) {

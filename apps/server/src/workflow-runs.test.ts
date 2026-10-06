@@ -1006,6 +1006,59 @@ describe('handoff', () => {
     expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('human_approve');
   });
 
+  it("settles a gate from the person's message that started the turn", async () => {
+    const { runId } = await startedRun(OWNER);
+    const gate = await driveToApprovalGate(runId);
+    const source = await rootMessage(OWNER, 'no, rejected');
+    const answered = await handoff(database, await commandFor(APPROVER, source), {
+      runId, outcome: 'rejected', contents: {},
+    });
+    expect(answered).toMatchObject({ runId, state: 'implement', attempt: 4 });
+    const read = await getWorkflowRun(database, ROOM, runId);
+    expect(read.history.at(-1)).toMatchObject({
+      fromState: 'human_approve', outcome: 'rejected', actorId: OWNER,
+      contents: { decision: 'rejected', answeredBy: OWNER },
+      receipt: { exit: { gate: 'rejected', actorId: OWNER, sourceMessageId: source } },
+    });
+    expect(
+      (await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE id=$1`, [gate]))
+        .rows[0]?.status,
+    ).toBe('answered');
+    expect(
+      (await database.query<{ voter_id: string }>(
+        `SELECT voter_id FROM room_choice_votes WHERE choice_id=$1`,
+        [gate],
+      )).rows[0]?.voter_id,
+    ).toBe(OWNER);
+    // The only pending command is this turn's own; settling wakes the next state, not the gate role.
+    expect(await pendingCommandsFor(APPROVER)).toBe(1);
+    const woken = (await readAgentCommands(database, ROOM, IMPLEMENTER)).commands
+      .find((entry) => entry.source.systemEvent?.verb === 'picked');
+    expect(woken?.source.body).toContain(
+      `You are in run ${runId} of corner. Continue this run; do not start a new one.`,
+    );
+  });
+
+  it('refuses a message-settled gate when the author is not a Room member', async () => {
+    const { runId } = await startedRun(OWNER);
+    await driveToApprovalGate(runId);
+    const source = await rootMessage(OUTSIDER, 'approve please');
+    await expect(handoff(database, await commandFor(APPROVER, source), {
+      runId, outcome: 'approved', contents: {},
+    })).rejects.toThrow('room access denied');
+    expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('human_approve');
+  });
+
+  it('refuses a message-settled gate whose outcome is not an option', async () => {
+    const { runId } = await startedRun(OWNER);
+    await driveToApprovalGate(runId);
+    const source = await rootMessage(OWNER, 'hmm');
+    await expect(handoff(database, await commandFor(APPROVER, source), {
+      runId, outcome: 'bogus', contents: {},
+    })).rejects.toThrow('outcome must be one of: approved -> land, rejected -> implement');
+    expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('human_approve');
+  });
+
   /** Drive a fresh run from `implement` to the open `human_approve` gate; returns its choice id. */
   async function driveToApprovalGate(runId: string): Promise<string> {
     await handoff(database, await commandFor(IMPLEMENTER), {

@@ -836,6 +836,8 @@ async function enterState(
     receiptInput?: WorkflowReceiptInput;
     actorId: string;
     commandId?: string;
+    /** The person's message the engine took as this exit's answer, when it was settled from chat. */
+    sourceMessageId?: string;
     line: (toState: string) => CardLine;
   },
 ): Promise<{ state: string; attempt: number; status?: 'done' | 'failed' }> {
@@ -893,7 +895,7 @@ async function enterState(
       outcome: input.outcome,
       toState,
       contents: input.contents,
-      receipt: { ...input.receiptInput, exit: { gate: input.outcome, actorId: input.actorId } },
+      receipt: { ...input.receiptInput, exit: { gate: input.outcome, actorId: input.actorId, ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}) } },
       answers: run.seq,
       ...(input.commandId ? { commandId: input.commandId } : {}),
       ...(nextState.hint ? { receiptHint: nextState.hint } : {}),
@@ -1292,9 +1294,29 @@ export async function handoff(
     const state = scope.state;
     if (scope.ended || !state) throw new Error('this workflow run has already ended');
     if (state.kind === 'gate') {
-      throw new Error(
-        `${stateName} is a gate; a person answers it on its card in the Room, and it cannot be handed off`,
-      );
+      const role = state.role;
+      const boundAgentId = run.roleBindings[role];
+      if (boundAgentId !== command.agent_id)
+        throw new Error(`this workflow state is bound to the ${role} role, not you`);
+      const answer = await gateMessageAnswer(db, command, input.runId, current, state, input.outcome);
+      if (!answer)
+        throw new Error(
+          `${stateName} is a gate; a person answers it on its card in the Room, and it cannot be handed off`,
+        );
+      await bindWorkflowStepOutput(db, command, input.runId);
+      await settleWorkflowGate(db, {
+        choiceId: answer.choiceId,
+        viewerId: answer.viewerId,
+        optionId: answer.optionId,
+        sourceMessageId: command.source_message_id,
+      });
+      const after = await openRun(db, command.room_id, input.runId);
+      return {
+        runId: input.runId,
+        state: after.stateName,
+        attempt: after.run.seq,
+        ...(after.run.status === 'done' || after.run.status === 'failed' ? { status: after.run.status } : {}),
+      };
     }
     const role = (state as WorkflowHandoffState | WorkflowGateState).role;
     const boundAgentId = run.roleBindings[role];
@@ -1363,6 +1385,50 @@ export async function handoff(
 }
 
 /**
+ * The person's message that started this turn, resolved to the gate's own
+ * open choice and the option its outcome names. `undefined` when the turn
+ * was not started by a person, so the gate keeps today's refusal; the
+ * caller then fails closed. The person is not checked for membership here:
+ * `settleWorkflowGate` runs the same human-and-current-member authority
+ * check as a card answer, and a message from a non-member is refused there.
+ */
+async function gateMessageAnswer(
+  db: SqlDatabase,
+  command: CommandRow,
+  runId: string,
+  attempt: number,
+  state: WorkflowGateState,
+  outcome: string,
+): Promise<{ choiceId: string; viewerId: string; optionId: string } | undefined> {
+  const author = (
+    await db.query<{ id: string; kind: string }>(
+      `SELECT identity.id,identity.kind FROM messages message
+       JOIN identities identity ON identity.id=message.author_id
+       WHERE message.id=$1 AND message.room_id=$2`,
+      [command.source_message_id, command.room_id],
+    )
+  ).rows[0];
+  if (author?.kind !== 'human') return undefined;
+  const choice = (
+    await db.query<{ id: string; options: { optionId: string; label: string }[] }>(
+      `SELECT choice.id,choice.options FROM room_choices choice
+       JOIN messages message ON message.id=choice.message_id
+       WHERE choice.room_id=$1 AND choice.workflow_run_id=$2 AND choice.status='open'
+         AND COALESCE((message.card->>'attempt')::int,-1)=$3
+       ORDER BY choice.created_at DESC,choice.id DESC LIMIT 1`,
+      [command.room_id, runId, attempt],
+    )
+  ).rows[0];
+  if (!choice) return undefined;
+  const option = choice.options.find((entry) => entry.label === outcome);
+  if (!option) {
+    const outcomes = Object.entries(state.on).map(([name, target]) => `${name} -> ${target}`).join(', ');
+    throw new Error(`outcome must be one of: ${outcomes}`);
+  }
+  return { choiceId: choice.id, viewerId: author.id, optionId: option.optionId };
+}
+
+/**
  * A person's answer or Skip on a workflow gate's card, applied under the run
  * lock as the gate's transition. `undefined` when the choice is not a
  * workflow gate, so the caller settles it as an ordinary choice. An answer
@@ -1371,7 +1437,7 @@ export async function handoff(
  */
 export async function settleWorkflowGate(
   db: SqlDatabase,
-  input: { choiceId: string; viewerId: string; optionId?: string; note?: unknown; skip?: boolean },
+  input: { choiceId: string; viewerId: string; optionId?: string; note?: unknown; skip?: boolean; sourceMessageId?: string },
 ): Promise<{ choiceId: string; status: 'answered' | 'skipped'; roomId: string } | undefined> {
   const gate = (
     await db.query<{
@@ -1415,6 +1481,7 @@ export async function settleWorkflowGate(
       ? { decision: label, defaultedBy: input.viewerId }
       : { decision: label, ...(note ? { note } : {}), answeredBy: input.viewerId },
     actorId: input.viewerId,
+    ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}),
     line: (toState) => ({
       authorId: input.viewerId,
       subject: identitySubject(viewer),

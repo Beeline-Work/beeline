@@ -53,7 +53,12 @@ export type WorkflowReceiptInput = {
 };
 export type WorkflowReceipt = WorkflowReceiptInput & {
   /** Written by the engine, never accepted from the agent. */
-  readonly exit: { readonly gate: string; readonly actorId: string };
+  readonly exit: {
+    readonly gate: string;
+    readonly actorId: string;
+    /** Set only when the exit was settled from a person's message rather than the gate card. */
+    readonly sourceMessageId?: string;
+  };
 };
 
 const IDENTITY_ID_PATTERN = /^[0-9a-f]{64}$/;

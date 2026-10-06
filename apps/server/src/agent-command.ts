@@ -686,14 +686,39 @@ export async function routeAgentResult(
   if (!source) return;
   const targets = new Set(source.tagged_agent_ids);
   targets.delete(parent.agent_id);
-  for (const agentId of targets)
-    await createAgentCommand(db, {
+  // An agent's own tag moves the corner implementer only when a real person
+  // asked for the hand-over in this turn: the person's request is the
+  // permission, never the agents' own chatter. The turn's source message must
+  // be from a current corner member who is a person — `@system`, the
+  // scheduler and the reviewer are hidden humans that hold no corner
+  // membership, so the join is what tells a person apart from a machine line.
+  const askedByPerson =
+    (
+      await db.query(
+        `SELECT 1 FROM rooms corner
+         JOIN messages source ON source.id=$2
+         JOIN memberships member ON member.room_id=corner.id
+           AND member.identity_id=source.author_id AND member.removed_at IS NULL
+         JOIN identities person ON person.id=source.author_id AND person.kind='human'
+         WHERE corner.id=$1 AND corner.parent_id IS NOT NULL
+           AND source.room_id IN (corner.id,corner.parent_id)`,
+        [parent.room_id, parent.source_message_id],
+      )
+    ).rowCount > 0;
+  for (const agentId of targets) {
+    const dispatched = await createAgentCommand(db, {
       roomId: parent.room_id,
       agentId,
       sourceMessageId: sourceId,
       parent,
       reason: 'agent_tag',
     });
+    // The hand-over follows a real dispatch: a tag that could not wake the
+    // target must not leave the role pointing at it. `setCornerImplementer`
+    // itself still refuses the reviewer and its fallbacks.
+    if (dispatched && askedByPerson)
+      await setCornerImplementer(db, parent.room_id, agentId);
+  }
 }
 
 /**

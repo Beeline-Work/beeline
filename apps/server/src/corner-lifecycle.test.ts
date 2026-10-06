@@ -1412,6 +1412,57 @@ describe('a person hands the corner to another agent (the implementer follows th
     expect(await workerOf(cornerId)).toBeNull();
   });
 
+  it('Reproduction H1-1: an agent the person asked hands the corner on by tagging the other agent', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    // The person asks the agent working the corner to give the work to Goosy.
+    await say(cornerId, '@hoots hand this corner to goosy');
+    const command = (await commands(A, cornerId)).find((c) => c.reason === 'human_tag')!;
+    await claim(command);
+    await result(command, '@goosy take this one');
+    console.log('Reproduction H1-1:', {
+      implementer: await workerOf(cornerId),
+      goosyCommands: (await commands(B, cornerId)).map((c) => c.reason),
+    });
+    expect(await workerOf(cornerId)).toBe(B);
+    expect((await commands(B, cornerId)).some((c) => c.reason === 'agent_tag')).toBe(true);
+  });
+
+  it('an agent-to-agent tag with no person behind it does not move the implementer', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    // A peer agent's own message wakes Hoots; no person asked for anything.
+    const peerMessageId = randomBytes(32).toString('hex');
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+      peerMessageId,
+      cornerId,
+      B,
+      '@hoots fyi',
+    ]);
+    const command = await createAgentCommand(db, {
+      roomId: cornerId,
+      agentId: A,
+      sourceMessageId: peerMessageId,
+      reason: 'agent_tag',
+    });
+    expect(command).toBeDefined();
+    const peerTurn = (await commands(A, cornerId)).find(
+      (c) => c.sourceMessageId === peerMessageId,
+    )!;
+    await claim(peerTurn);
+    await result(peerTurn, '@goosy take this one');
+    expect(await workerOf(cornerId)).toBeNull();
+  });
+
+  it('an agent hand-over to the configured reviewer does not take the implementer role', async () => {
+    const cornerId = await open(undefined, 'owner/widgets');
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await say(cornerId, '@hoots hand this corner to goosy');
+    const command = (await commands(A, cornerId)).find((c) => c.reason === 'human_tag')!;
+    await claim(command);
+    await result(command, '@goosy take this one');
+    // The person's tag put Hoots in the role; the reviewer Goosy never takes it.
+    expect(await workerOf(cornerId)).toBe(A);
+  });
+
   it('a corner nobody redirected still wakes its opener', async () => {
     const cornerId = await open(undefined, 'owner/widgets');
     await redHead(cornerId, 3, SHA);

@@ -87,6 +87,29 @@ test('builds every public Pages path and preserves association and helper bytes'
   }
 });
 
+test('privacy policy explains how Google user data is protected', () => {
+  const html = fs.readFileSync(path.join(WEB_ROOT, 'privacy', 'index.html'), 'utf8');
+  const section = html.slice(html.indexOf('<h2>Google user data</h2>'), html.indexOf('<h2>Your choices</h2>'));
+  assert.ok(section.length > 0, 'Google user data section');
+  for (const required of [
+    /encrypted in transit with HTTPS \(TLS\)/,
+    /encrypted at rest with AES-256-GCM/,
+    /keeps only your Google account identifier\. It keeps no Google tokens\./,
+    /only when you, or an agent you control, asks for it/,
+    /visible only to the members of that Room/,
+    /do not sell it, use it for advertising, or use it to develop, improve, or train AI or machine-learning models/,
+    /href="https:\/\/developers\.google\.com\/terms\/api-services-user-data-policy"/,
+    /including the Limited Use requirements/,
+    /href="https:\/\/www\.youtube\.com\/t\/terms"/,
+    /href="http:\/\/www\.google\.com\/policies\/privacy"/,
+    /href="https:\/\/security\.google\.com\/settings\/security\/permissions"/,
+    /disconnect a Google app at any time in the Workbench/,
+  ]) {
+    assert.match(section, required);
+  }
+  assert.match(html, /revokes your connected apps, including Google apps, at Composio/);
+});
+
 test('refuses a corrupt helper bundle before producing a Pages tree', async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'beeline-pages.'));
   const bundleRoot = path.join(temporary, 'bundle');

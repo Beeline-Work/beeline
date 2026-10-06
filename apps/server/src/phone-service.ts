@@ -7182,6 +7182,10 @@ export class PhoneService {
    *     stripped of their mentions of the deleted ids;
    *   - DM Rooms whose only other participants were the account's own agents
    *     are deleted outright — nobody else relies on them;
+   *   - every Composio connected account the person owns is revoked at the
+   *     provider first; a revocation failure aborts before anything is erased;
+   *   - sign-in identity links (`beeline_identity_links`) for the person's
+   *     subjects and keys are deleted;
    *   - sessions, access/refresh/daemon tokens, push devices, media bytes,
    *     GitHub tokens/links/installations, invites, pairing codes, grants,
    *     read marks and succession rows all go with the identity row's
@@ -7198,6 +7202,19 @@ export class PhoneService {
     if (!held.rowCount) return;
     const account = await this.requireIdentity(viewerId);
     if (account.kind !== 'human') throw new Error('only a person may delete their account');
+    // Provider tokens live at Composio, not here: revoke every connected
+    // account the person owns before erasing anything, so a failed revocation
+    // leaves the account whole and a retry finishes the job. Composio's
+    // deleteAccount already treats an account that is gone as revoked.
+    const providerAccounts = await this.database.query<{ composio_account_id: string }>(
+      `SELECT DISTINCT composio_account_id FROM workspace_apps
+       WHERE owner_identity_id=$1 AND composio_account_id IS NOT NULL`,
+      [viewerId],
+    );
+    if (providerAccounts.rowCount && !this.composio)
+      throw new Error('App connections cannot be revoked now; try again later');
+    for (const row of providerAccounts.rows)
+      await this.composio!.deleteAccount(row.composio_account_id);
     await this.database.transaction(async (database) => {
       await database.query(`SELECT 1 FROM identities WHERE id=$1 FOR UPDATE`, [viewerId]);
       if (!(await database.query(`SELECT 1 FROM identities WHERE id=$1`, [viewerId])).rowCount)
@@ -7375,6 +7392,23 @@ export class PhoneService {
       await database.query(
         `DELETE FROM github_user_tokens WHERE subject IN (
            SELECT github_subject FROM identities WHERE id=$1 AND github_subject IS NOT NULL)`,
+        [viewerId],
+      );
+
+      // Sign-in links (auth schema, same database) that map a Google, GitHub
+      // or other OIDC subject to this person: every link of a key bound to one
+      // of the person's subjects, and any link bound to the account id itself.
+      await database.query(
+        `WITH subjects AS (
+           SELECT issuer,subject FROM identity_external_links WHERE identity_id=$1
+           UNION SELECT 'https://github.com',github_subject FROM identities
+           WHERE id=$1 AND github_subject IS NOT NULL
+         ), keys AS (
+           SELECT link.pubkey::text AS pubkey FROM beeline_identity_links link
+           JOIN subjects ON subjects.issuer=link.issuer AND subjects.subject=link.subject
+           UNION SELECT $1::text
+         )
+         DELETE FROM beeline_identity_links WHERE pubkey::text IN (SELECT pubkey FROM keys)`,
         [viewerId],
       );
 

@@ -23,7 +23,7 @@
     <main>
       <div class="mark">Beeline</div>
       <h1>Privacy Policy</h1>
-      <p class="updated">Effective: August 31, 2026</p>
+      <p class="updated">Effective: October 6, 2026</p>
       <p>Beeline lets you steer and review AI coding agents from your phone. This policy explains the small set of information needed to provide that service.</p>
 
       <h2>Information we handle</h2>
@@ -43,8 +43,21 @@
       <h2>Where information goes</h2>
       <p>Your workspace content goes to the Beeline service you choose and to the people who are members of the relevant Room. GitHub receives information necessary for the GitHub connection you request. Firebase Cloud Messaging receives what is necessary to deliver Android push notifications.</p>
 
+      <h2>Google user data</h2>
+      <p>You can connect Google services such as YouTube, Gmail, Google Calendar, and Google Drive to Beeline's Workbench so that you, or an AI agent you control, can use them. This section explains how Beeline handles data it receives from Google APIs (“Google user data”).</p>
+      <ul>
+        <li><strong>What we access and when.</strong> Beeline fetches Google user data only when you, or an agent you control, asks for it, such as reading your YouTube channel's videos and analytics or uploading a video you request. The results go to the Room where the request was made and are visible only to the members of that Room, whom you choose.</li>
+        <li><strong>Where your Google authorization is held.</strong> Beeline uses Composio as its app-connection provider. The OAuth tokens Google issues for a connected app are held by Composio. Beeline stores only a reference to that connection, not the Google tokens.</li>
+        <li><strong>Sign-in.</strong> Beeline sign-in uses GitHub. If a Beeline service signs you in with Google, it requests only the <code>openid</code> scope and keeps only your Google account identifier. It keeps no Google tokens.</li>
+        <li><strong>How we protect it.</strong> All traffic between the app, the Beeline service, Composio, and Google is encrypted in transit with HTTPS (TLS). Provider tokens that Beeline itself stores, such as GitHub tokens, are encrypted at rest with AES-256-GCM, and Beeline session tokens are stored only as hashes. Only the service and the people you share a Room with can see Google user data shown in that Room.</li>
+        <li><strong>How we use and share it.</strong> We use Google user data only to provide the features you request. We do not sell it, use it for advertising, or use it to develop, improve, or train AI or machine-learning models. When you ask an agent to work with Google user data, the agent and the AI model provider you chose for it process that data to complete your request.</li>
+        <li><strong>Limited Use.</strong> Beeline's use and transfer of information received from Google APIs to any other app will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</li>
+        <li><strong>YouTube.</strong> Beeline uses YouTube API Services. By connecting YouTube you agree to the <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a>, and Google's handling of your data is described in the <a href="http://www.google.com/policies/privacy">Google Privacy Policy</a>.</li>
+        <li><strong>Revoking access.</strong> You can disconnect a Google app at any time in the Workbench, which revokes Beeline's connection. You can also revoke access from your <a href="https://security.google.com/settings/security/permissions">Google security settings</a>. Deleting your Beeline account revokes all of your app connections.</li>
+      </ul>
+
       <h2>Your choices</h2>
-      <p>You can turn notifications off in the app or your device settings, disconnect GitHub access, and remove the app's local session. You can delete your account at any time from the app's Settings screen, which erases your profile, sessions, GitHub connections, agents, and uploaded media from the service; messages you wrote in shared Rooms may remain available to other authorized members where that is necessary to preserve their shared record, attributed to “Deleted account”. Questions about deletion can go to Moon Rice Limited at <a href="mailto:hello@usebeeline.app">hello@usebeeline.app</a>.</p>
+      <p>You can turn notifications off in the app or your device settings, disconnect GitHub access, and remove the app's local session. You can delete your account at any time from the app's Settings screen, which erases your profile, sessions, sign-in links, GitHub connections, agents, and uploaded media from the service and revokes your connected apps, including Google apps, at Composio; messages you wrote in shared Rooms may remain available to other authorized members where that is necessary to preserve their shared record, attributed to “Deleted account”. Questions about deletion can go to Moon Rice Limited at <a href="mailto:hello@usebeeline.app">hello@usebeeline.app</a>.</p>
 
       <h2>Changes and contact</h2>
       <p>Moon Rice Limited operates Beeline and will update this page when the service's data practices change. Privacy contact: <a href="mailto:hello@usebeeline.app">hello@usebeeline.app</a>.</p>

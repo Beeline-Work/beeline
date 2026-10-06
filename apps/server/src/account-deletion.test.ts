@@ -15,6 +15,8 @@ import {
 } from '@beeline/api-contract/system-identity';
 import { REVIEW_WORKSPACE_ID } from './review-proof-fixture.js';
 import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
+import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
+import type { ComposioApps } from './composio-apps.js';
 
 // sha256('github:owner') — the same derivation TokenAuth.exchangeGitHubOidc
 // uses, so the fresh sign-in assertion below recreates the SAME id.
@@ -158,6 +160,7 @@ describe('deleteAccount', () => {
   beforeEach(async () => {
     database = new PgliteDatabase();
     await migrate(database);
+    await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     await seed();
     auth = new TokenAuth(database, async (proof) => {
       const login = proof === 'proof' ? 'owner' : proof === 'partner-proof' ? 'partner' : proof;
@@ -329,6 +332,95 @@ describe('deleteAccount', () => {
     await phone.execute('deleteAccount', {}, OWNER);
     await expect(phone.execute('deleteAccount', {}, OWNER)).resolves.toBeUndefined();
     await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 0);
+  });
+
+  const seedAppConnections = async () => {
+    await database.query(
+      `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,
+         transport,route,composio_account_id,state) VALUES
+         ('99999999-9999-4999-8999-999999999991',$1,$2,'youtube','YouTube','composio','composio','ca_youtube','active'),
+         ('99999999-9999-4999-8999-999999999992',$1,$2,'gmail','Gmail','composio','composio','ca_gmail','disconnected'),
+         ('99999999-9999-4999-8999-999999999993',$1,$3,'slack','Slack','composio','composio','ca_partner','active')`,
+      [WORKSPACE, OWNER, PARTNER],
+    );
+  };
+  const fakeComposio = () =>
+    ({ deleteAccount: vi.fn(async (_accountId: string) => undefined) }) as unknown as ComposioApps & {
+      deleteAccount: ReturnType<typeof vi.fn>;
+    };
+  const phoneWith = (composio?: ComposioApps) =>
+    new PhoneService(
+      database,
+      'http://placeholder',
+      undefined,
+      async () => undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      composio,
+    );
+
+  it('revokes every Composio account the person owns at the provider', async () => {
+    await seedAppConnections();
+    const composio = fakeComposio();
+    phone = phoneWith(composio);
+    await startServer();
+    ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+    const response = await fetch(`${origin}/v1/phone/operations/deleteAccount`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(response.status).toBe(204);
+    expect(composio.deleteAccount.mock.calls.map(([id]) => id).sort()).toEqual([
+      'ca_gmail',
+      'ca_youtube',
+    ]);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 0);
+    await expectRowCount(`SELECT 1 FROM workspace_apps WHERE owner_identity_id=$1`, [PARTNER], 1);
+  });
+
+  it('keeps the account intact when the provider revocation fails, so a retry can finish it', async () => {
+    await seedAppConnections();
+    const composio = fakeComposio();
+    composio.deleteAccount.mockRejectedValueOnce(new Error('provider unavailable'));
+    await expect(phoneWith(composio).execute('deleteAccount', {}, OWNER)).rejects.toThrow(
+      /provider unavailable/,
+    );
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 1);
+    await phoneWith(composio).execute('deleteAccount', {}, OWNER);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 0);
+  });
+
+  it('refuses to delete while app connections exist and nothing can revoke them', async () => {
+    await seedAppConnections();
+    await expect(phoneWith(undefined).execute('deleteAccount', {}, OWNER)).rejects.toThrow(
+      /cannot be revoked/,
+    );
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 1);
+  });
+
+  it('deletes the identity links that map the person to Google or GitHub subjects', async () => {
+    const legacyKey = 'c'.repeat(64);
+    const partnerKey = 'd'.repeat(64);
+    await database.query(
+      `INSERT INTO beeline_identity_links(community,issuer,audience,subject,pubkey,created_at) VALUES
+         ('hive','https://github.com','github','owner',$1,now()),
+         ('hive','https://accounts.google.com','google-client','google-owner',$1,now()),
+         ('hive','https://accounts.google.com','google-client','google-direct',$2,now()),
+         ('hive','https://github.com','github','partner',$3,now())`,
+      [legacyKey, OWNER, partnerKey],
+    );
+    await phone.execute('deleteAccount', {}, OWNER);
+    await expectRowCount(
+      `SELECT 1 FROM beeline_identity_links WHERE pubkey=ANY($1) OR subject=ANY($2)`,
+      [[legacyKey, OWNER], ['owner', 'google-owner', 'google-direct']],
+      0,
+    );
+    await expectRowCount(`SELECT 1 FROM beeline_identity_links WHERE pubkey=$1`, [partnerKey], 1);
   });
 
   it('lets the same GitHub subject sign in fresh afterwards', async () => {

@@ -641,8 +641,9 @@ it('recovers a dirty PR lifecycle once per head and retries an undelivered confl
      WHERE corner_id=$1`,
     [C, 'a'.repeat(40)],
   );
-  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
-  expect(await commands(B, C)).toHaveLength(2);
+  // A moved base is not a new head: the conflict wake stays one per head.
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
+  expect(await commands(B, C)).toHaveLength(1);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
 });
 

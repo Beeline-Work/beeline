@@ -164,8 +164,11 @@ interface CornerWebhookTarget {
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
-function mergeConflictKey(number: number, headSha: string, baseSha?: string): string {
-  return `merge-conflict:${number}:${headSha}${baseSha ? `:${baseSha}` : ''}`;
+// One conflict wake per pull-request head. The base is deliberately absent:
+// every new commit on main moved it, so a stale 'dirty' verdict produced a
+// fresh key and a fresh wake for an unchanged head.
+function mergeConflictKey(number: number, headSha: string): string {
+  return `merge-conflict:${number}:${headSha}`;
 }
 function challenge(value: string): string {
   return createHash('sha256').update(value).digest('base64url');
@@ -1270,7 +1273,7 @@ export class GitHubOperations {
             tx,
           );
           if (pr.mergeability !== 'dirty') return;
-          const conflictKey = mergeConflictKey(row.number, pr.headSha, baseSha);
+          const conflictKey = mergeConflictKey(row.number, pr.headSha);
           const note = await systemLine(tx, {
             id: hash(`beeline:${row.corner_id}:github:${conflictKey}`),
             roomId: row.corner_id,
@@ -1700,6 +1703,9 @@ export class GitHubOperations {
             const baseSha = staleBase
               ? previous!.pr!.baseSha
               : (webhookBaseSha ?? (sameHead ? previous?.pr?.baseSha : undefined));
+            // A webhook's mergeable_state is a cached field. Never wake the
+            // implementer from it; keep an unconfirmed verdict as unknown and
+            // let refreshStaleMergeability confirm it against the live PR.
             await this.updateLifecycle(
               target.corner_id,
               {
@@ -1711,29 +1717,15 @@ export class GitHubOperations {
                   title,
                   targetBranch,
                   headSha,
-                  mergeability,
+                  mergeability: mergeability === 'dirty' ? 'unknown' : mergeability,
                   ...(baseSha ? { baseSha } : {}),
                 },
               },
               tx,
             );
-            if (mergeability === 'dirty') {
-              const conflictKey = mergeConflictKey(number, headSha, baseSha);
-              const note = await systemLine(tx, {
-                id: hash(`beeline:${target.corner_id}:github:${conflictKey}`),
-                roomId: target.corner_id,
-                authorId: target.author_id,
-                subject: GITHUB_SUBJECT,
-                verb: 'found merge conflicts in',
-                object: { text: title, url, headSha },
-                cardType: 'github-corner-note',
-                card: { source: 'github', dedupe: conflictKey },
-              });
-              await queueCornerMergeConflict(tx, target.corner_id, note.id);
-              if (note.inserted) this.onRoomChanged?.(target.corner_id);
-            }
           });
-          if (mergeability === 'unknown') await this.refreshStaleMergeability(target.corner_id);
+          if (mergeability === 'unknown' || mergeability === 'dirty')
+            await this.refreshStaleMergeability(target.corner_id);
           if (body.action === 'opened' || body.action === 'synchronize')
             await this.refreshCheckRollup({ ...target, has_pr: true }, repository,
               { name: 'Pull request checks', status: 'pending', headSha, url }, database);
@@ -1897,26 +1889,41 @@ export class GitHubOperations {
           const label = check.status === 'pending' ? 'started' : check.status;
           const becamePassing = summary.status === 'passing' && current.checks !== 'passing';
           const becameFailing = summary.status === 'failing' && current.checks !== 'failing';
+          // A green/red rollup is a property of the whole head, not of the one
+          // check that happened to arrive last. Name the actual failing jobs
+          // on a failure, so the implementer knows what to fix and a passing
+          // check can never be described as the failure.
+          const failing = summary.failing?.length ? summary.failing : [check.name];
           await this.systemNote(
             target.corner_id,
             target.author_id,
             {
               subject: GITHUB_SUBJECT,
-              verb: `${label} a check`,
+              verb: becameFailing ? 'found failing checks on' : `${label} a check`,
               // A check that is still running is not yet a fact to react to.
               ...(becamePassing
                 ? { kind: 'check-passed' as const }
                 : becameFailing
                   ? { kind: 'check-failed' as const }
                   : {}),
-              object: {
-                text: check.name,
-                ...(check.url ? { url: check.url } : {}),
-                ...(check.headSha ? { headSha: check.headSha } : {}),
-              },
-              ...(check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'
-                ? { consequence: check.conclusion }
-                : {}),
+              object: becameFailing
+                ? {
+                    text:
+                      current.pr?.title ??
+                      (current.pr?.number ? `pull request #${current.pr.number}` : 'the pull request'),
+                    ...(current.pr?.url ? { url: current.pr.url } : {}),
+                    ...(check.headSha ? { headSha: check.headSha } : {}),
+                  }
+                : {
+                    text: check.name,
+                    ...(check.url ? { url: check.url } : {}),
+                    ...(check.headSha ? { headSha: check.headSha } : {}),
+                  },
+              ...(becameFailing
+                ? { consequence: `failing ${failing.join(', ')}` }
+                : check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'
+                  ? { consequence: check.conclusion }
+                  : {}),
             },
             becamePassing
               ? `github:checks:green:${check.headSha}`

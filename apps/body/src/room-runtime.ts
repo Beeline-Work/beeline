@@ -472,6 +472,11 @@ async function assertCornerWorktreePublished(worktree: CornerWorktree): Promise<
   }
 }
 
+/** The exact, permanent fault `assertCornerWorktreePublished` throws for an unpublished HEAD. */
+function hasUnpushedCommits(error: unknown): boolean {
+  return error instanceof Error && / has unpushed commits$/.test(error.message);
+}
+
 async function originContains(gitCommonDir: string, head: string): Promise<boolean> {
   const result = await execFileAsync('git', [
     `--git-dir=${gitCommonDir}`,
@@ -522,6 +527,13 @@ export class RoomRuntimeCoordinator {
   private readonly archiveCleanupFaults = new Map<string, { failures: number; retryAt: number }>();
   /** A refused local checkout is kept until a later Room listing proves membership again. */
   private readonly archiveCleanupAccessDenied = new Set<string>();
+  /**
+   * A corner whose branch cleanup found commits no origin ref contains. That
+   * is never transient - nothing pushes them later - so retrying it every
+   * reconciliation would only slow discovery down forever. Reported once,
+   * then left alone; the checkout and its commits are kept, never deleted.
+   */
+  private readonly archiveCleanupAbandoned = new Set<string>();
   private readonly startingCorners = new Set<string>();
   /**
    * Rooms whose start is in flight. `running` is not set until the checkout
@@ -1560,12 +1572,22 @@ export class RoomRuntimeCoordinator {
     for (const [cornerId, worktree] of [...this.pendingCornerReaps]) {
       if (desired.has(cornerId)) {
         this.pendingCornerReaps.delete(cornerId);
+        this.archiveCleanupAbandoned.delete(cornerId);
         continue;
       }
+      if (this.archiveCleanupAbandoned.has(cornerId)) continue;
       if (!this.archiveCleanupDue(cornerId)) continue;
       try {
         await this.reapCornerWorktree(worktree);
       } catch (error) {
+        if (hasUnpushedCommits(error)) {
+          // Nothing will ever push these commits for an abandoned corner, so
+          // retrying is pure waste. Keep the checkout and its commits, report
+          // the fault once, and stop spending reconciliation time on it.
+          this.archiveCleanupAbandoned.add(cornerId);
+          console.error(`[thin-core] corner ${cornerId} branch cleanup abandoned; unpushed commits kept:`, error);
+          continue;
+        }
         this.deferArchiveCleanup(cornerId);
         console.error(`[thin-core] corner ${cornerId} branch cleanup retry failed:`, error);
         // Cleanup retries ride the next reconciliation. Waking discovery

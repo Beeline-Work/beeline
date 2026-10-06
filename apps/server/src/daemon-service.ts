@@ -3598,14 +3598,23 @@ export class DaemonService {
       await this.database.query<{
         source_name: string;
         source_parent_id: string | null;
-        owner_agent_id: string;
+        owner_agent_id: string | null;
+        worker_agent_id: string | null;
         source_owner_agent_id: string | null;
+        fallback_agent_id: string | null;
       }>(
         // A sibling corner's reports wake the agent who opened it when that agent is in the destination.
-        `SELECT source.name source_name,source.parent_id source_parent_id,f.owner_agent_id,
+        // A corner opened from the phone (`createHumanCorner`) never records an
+        // owner agent; fall back to whoever a human last tagged as its
+        // implementer, then to any agent currently a member of the corner,
+        // rather than a destination with no agent to receive it at all.
+        `SELECT source.name source_name,source.parent_id source_parent_id,f.owner_agent_id,f.worker_agent_id,
          (SELECT sf.owner_agent_id FROM corner_facts sf
           JOIN memberships om ON om.room_id=corner.id AND om.identity_id=sf.owner_agent_id AND om.removed_at IS NULL
-          WHERE sf.corner_id=source.id AND source.parent_id IS NOT NULL AND sf.owner_agent_id<>$3) source_owner_agent_id
+          WHERE sf.corner_id=source.id AND source.parent_id IS NOT NULL AND sf.owner_agent_id<>$3) source_owner_agent_id,
+         (SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
+          WHERE m.room_id=corner.id AND m.removed_at IS NULL AND i.kind='agent'
+          ORDER BY m.joined_at LIMIT 1) fallback_agent_id
        FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
        JOIN rooms source ON source.id=$2 AND (source.id=parent.id OR source.parent_id=parent.id)
        JOIN corner_facts f ON f.corner_id=corner.id
@@ -3622,7 +3631,10 @@ export class DaemonService {
     if (!pair) throw new Error('relay requires current Room and corner membership');
     if (pair.source_parent_id !== null && relay.reply === 'once')
       throw new Error('corner questions require a Room source');
-    const target = pair.source_owner_agent_id ?? pair.owner_agent_id;
+    const target =
+      pair.source_owner_agent_id ?? pair.owner_agent_id ?? pair.worker_agent_id ??
+      pair.fallback_agent_id;
+    if (!target) throw new Error('relay destination corner has no agent member');
     const received = Boolean(
       (
         await this.database.query(

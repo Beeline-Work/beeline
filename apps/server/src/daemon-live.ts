@@ -163,7 +163,15 @@ export class DaemonAgentSession {
           transport.send({ type: 'connector-assignment' });
           return;
         }
-        if (event.reason !== 'postgres:memberships') return;
+        if (event.reason === 'postgres:agent_commands') {
+          // A command queued for a corner this agent's helper has never
+          // watched (no prior membership push reached it, or it reconnected
+          // and missed one) carries the same parent/opener a membership push
+          // does, so it can start that corner's intake directly. A command
+          // for a top-level Room needs no push: every desired Room starts
+          // eagerly on membership alone.
+          if (!event.parentRoomId) return;
+        } else if (event.reason !== 'postgres:memberships') return;
         transport.send({
           type: 'rooms-changed',
           ...(event.roomId ? { roomId: event.roomId } : {}),

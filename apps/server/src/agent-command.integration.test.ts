@@ -2192,6 +2192,43 @@ describe('Room/corner relays', () => {
       view!.messages.find((message) => message.author.pubkey === H)?.agentModel,
     ).toBeUndefined();
   });
+
+  it('relays into a phone-opened no-code corner with no owner agent by falling back to a member', async () => {
+    const humanCorner = randomUUID();
+    await db.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Pane UX')`,
+      [humanCorner, W, R, H],
+    );
+    // `createHumanCorner` never records an owner agent for a phone-opened corner.
+    await db.query(
+      `INSERT INTO corner_facts(corner_id,objective,lane,kind,lifecycle)
+       VALUES($1,'','no_code','human','{"lifecycle":"working","checks":"unknown"}'::jsonb)`,
+      [humanCorner],
+    );
+    // B joins before A, so the deterministic fallback (earliest agent member) picks B.
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,joined_at) VALUES
+         ($1,$2,$3,'owner',now()-interval '2 minutes'),
+         ($1,$2,$4,'member',now()-interval '1 minute'),
+         ($1,$2,$5,'member',now())`,
+      [W, humanCorner, H, B, A],
+    );
+    try {
+      await send('@hoots relay to the pane');
+      const command = (await commands(A))[0]!;
+      await claim(command);
+      await expect(
+        result(command, 'Opening a question there', 'g1', {
+          relay: { fromRoomId: R, toRoomId: humanCorner, direction: 'down' },
+        }),
+      ).resolves.toBeDefined();
+      const [queued] = await commands(B, humanCorner);
+      expect(queued).toMatchObject({ reason: 'relay_steer', action: 'input' });
+      expect(await commands(A, humanCorner)).toEqual([]);
+    } finally {
+      await db.query(`DELETE FROM rooms WHERE id=$1`, [humanCorner]);
+    }
+  });
 });
 
 describe('heartbeat authority across a lapsed lease', () => {

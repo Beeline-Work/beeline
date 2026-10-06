@@ -511,7 +511,7 @@ describe('triage corner: sibling fix corners and its daily schedule, with no set
       {
         ...turn,
         idempotencyKey: `fix-${turn.requestId}`,
-        name: 'Fix grant card',
+        name: 'Fix-grant-card',
         objective: 'Fix the grant card that stays pending',
         lane: 'no_code',
         brief: {

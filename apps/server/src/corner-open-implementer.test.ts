@@ -75,7 +75,7 @@ async function input(agent = A) {
     requestId: command.turnRequestId,
     generationId: 'g1',
     idempotencyKey: randomBytes(16).toString('hex'),
-    name: 'Dispatch work',
+    name: 'Dispatch-work',
     objective: 'Dispatch this work',
   };
 }

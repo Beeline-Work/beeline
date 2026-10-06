@@ -90,11 +90,11 @@ async function openCorner(
 }
 
 it('opens a sibling corner in the parent Room from a corner turn', async () => {
-  const { created: first } = await openCorner(ROOM, '@hoots fix the header', 'Header fix');
+  const { created: first } = await openCorner(ROOM, '@hoots fix the header', 'Header-fix');
   const { input, created: second } = await openCorner(
     first.cornerId,
     '@hoots open another corner for the footer',
-    'Footer fix',
+    'Footer-fix',
   );
 
   expect(second.cornerId).not.toBe(first.cornerId);
@@ -125,7 +125,7 @@ it('opens a sibling corner in the parent Room from a corner turn', async () => {
 }, 30_000);
 
 it('attaches a file shared in the calling corner to the sibling corner brief', async () => {
-  const { created: first } = await openCorner(ROOM, '@hoots fix the sidebar', 'Sidebar fix');
+  const { created: first } = await openCorner(ROOM, '@hoots fix the sidebar', 'Sidebar-fix');
   const mediaId = '33333333-3333-4333-8333-333333333333';
   const sha = 'c'.repeat(64);
   await db.query(
@@ -146,7 +146,7 @@ it('attaches a file shared in the calling corner to the sibling corner brief', a
   const { created: second } = await openCorner(
     first.cornerId,
     '@hoots open a corner for the sidebar mock',
-    'Sidebar mock',
+    'Sidebar-mock',
     [{ objectId: mediaId, purpose: 'approved mock', required: true }],
   );
 

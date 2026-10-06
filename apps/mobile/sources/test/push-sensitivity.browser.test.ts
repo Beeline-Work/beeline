@@ -29,9 +29,9 @@ it.skipIf(!existsSync(CHROME))(
         });
         expect(proof.status, proof.stderr).toBe(0);
         expect(proof.result).toContain('PASS');
-        expect(proof.result).toContain('Mentions only');
-        expect(proof.result).toContain('My work');
-        expect(proof.result).toContain('All activity');
+        expect(proof.result).toContain('Mentions');
+        expect(proof.result).toContain('Followed');
+        expect(proof.result).toContain('corners you follow');
       }
     }
   },

@@ -5,6 +5,7 @@ import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './me
 import type { ObjectStorage } from './object-storage.js';
 import type { ObjectService } from './object-service.js';
 import { addressedToPersonSql } from './corner-owed.js';
+import { tagsKnownIdentitySql } from './message-mentions.js';
 import {
   claimReleaseCatchup,
   PUSH_MAX_ATTEMPTS,
@@ -186,6 +187,7 @@ export class PushDeliveryLoop {
       grant_agent_name: string | null;
       author_name: string | null;
       collapse_id: string | null;
+      direct_attention: boolean;
     }>(`
       -- Bound message/device pairs before the current-roster tag subquery.
       -- Without this barrier the planner can resolve tags across all history.
@@ -283,7 +285,8 @@ export class PushDeliveryLoop {
             ELSE m.id END
           -- Keep human prose visible when a subsequent agent summary replaces its slot.
           ELSE CASE WHEN author.kind='human' THEN room.id::text ELSE 'agent:'||room.id::text END
-          END collapse_id
+          END collapse_id,
+          COALESCE(attention.direct,false) direct_attention
         FROM recent_messages m
         JOIN rooms room ON room.id=m.room_id
         LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
@@ -314,10 +317,22 @@ export class PushDeliveryLoop {
               AND ${addressedToPersonSql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')})
             OR (m.presentation='message' AND m.card_type IS NULL
               AND (recipient.push_level='all'
+                -- A person follows a corner they opened, requested, posted
+                -- in, steered from its Room, or were tagged in.
                 OR (recipient.push_level='mine' AND room.parent_id IS NOT NULL
-                  AND (room.created_by=recipient.id OR EXISTS (
-                    SELECT 1 FROM corner_facts mine WHERE mine.corner_id=room.id
-                      AND mine.commissioned_by=recipient.id)))))
+                  AND room.archived_at IS NULL
+                  AND (room.created_by=recipient.id
+                    OR EXISTS (SELECT 1 FROM corner_facts mine WHERE mine.corner_id=room.id
+                      AND mine.commissioned_by=recipient.id)
+                    OR EXISTS (SELECT 1 FROM messages posted WHERE posted.room_id=room.id
+                      AND posted.author_id=recipient.id AND posted.deleted_at IS NULL)
+                    OR EXISTS (SELECT 1 FROM agent_commands steer
+                      JOIN messages steered_by ON steered_by.id=steer.root_source_message_id
+                      WHERE steer.room_id=room.id AND steer.reason='relay_steer'
+                        AND steered_by.author_id=recipient.id)
+                    OR EXISTS (SELECT 1 FROM messages tagged WHERE tagged.room_id=room.id
+                      AND tagged.deleted_at IS NULL
+                      AND ${tagsKnownIdentitySql('tagged', 'recipient.id', 'recipient.handle', 'recipient.kind')})))))
           )
         UNION ALL
         SELECT notification.id message_id,notification.workspace_id::text workspace_id,
@@ -327,7 +342,8 @@ export class PushDeliveryLoop {
           btrim(notification.text) text,device.device_token token,push_device.identity_id,
           false is_release_catchup,notification.created_at,
           NULL::text action,NULL::text grant_id,NULL::text grant_kind,NULL::text grant_target,
-          NULL::text grant_agent_name,NULL::text author_name,NULL::text collapse_id
+          NULL::text grant_agent_name,NULL::text author_name,NULL::text collapse_id,
+          false direct_attention
         FROM workspace_join_notifications notification
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
         JOIN push_devices push_device ON push_device.token=device.device_token
@@ -341,7 +357,7 @@ export class PushDeliveryLoop {
           AND notification.created_at>=floor.started_at
           AND btrim(notification.text)<>''
         UNION ALL
-        SELECT catchup.*,NULL::text collapse_id FROM (${RELEASE_CATCHUP_CANDIDATES_SQL}) catchup
+        SELECT catchup.*,NULL::text collapse_id,false direct_attention FROM (${RELEASE_CATCHUP_CANDIDATES_SQL}) catchup
       ), unclaimed AS (
         SELECT DISTINCT ON (candidate.message_id,candidate.token)
           candidate.message_id,candidate.workspace_id,candidate.room_id,candidate.channel_id,
@@ -349,7 +365,8 @@ export class PushDeliveryLoop {
           candidate.notification_type,candidate.text,candidate.token,candidate.identity_id,
           candidate.is_release_catchup,candidate.created_at,device.platform,
           candidate.action,candidate.grant_id,candidate.grant_kind,candidate.grant_target,
-          candidate.grant_agent_name,candidate.author_name,candidate.collapse_id
+          candidate.grant_agent_name,candidate.author_name,candidate.collapse_id,
+          candidate.direct_attention
         FROM candidates candidate
         JOIN push_devices device ON device.token=candidate.token
           AND device.platform IN (${[this.sender && "'android'", this.iosSender && "'ios'", this.webSender && "'web'"].filter(Boolean).join(',') || "'none'"})
@@ -361,7 +378,8 @@ export class PushDeliveryLoop {
       )
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
         notification_type,text,token,identity_id,is_release_catchup,platform,
-        action,grant_id,grant_kind,grant_target,grant_agent_name,author_name,collapse_id
+        action,grant_id,grant_kind,grant_target,grant_agent_name,author_name,collapse_id,
+        direct_attention
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
     let delivered = 0;
@@ -448,13 +466,16 @@ export class PushDeliveryLoop {
           );
       if (!claimed) continue;
       // Consume suppressed candidates permanently, so leaving a Room does not replay them.
+      // A Room's mute covers its corners and lets direct attention through.
       const suppressed =
         candidate.channel_id &&
         (
           await this.database.query(
             `SELECT 1 FROM memberships member
-         WHERE member.room_id=$1 AND member.identity_id=$2
-           AND (member.removed_at IS NOT NULL OR member.push_muted)
+         WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NOT NULL
+         UNION ALL
+         SELECT 1 FROM memberships member WHERE member.room_id=$4 AND member.identity_id=$2
+           AND member.push_muted AND NOT $5::boolean
          UNION ALL
          SELECT 1 FROM room_push_views WHERE room_id=$1 AND identity_id=$2 AND expires_at>now()
          UNION ALL
@@ -463,7 +484,13 @@ export class PushDeliveryLoop {
              SELECT 1 FROM messages m WHERE m.id=$3
                AND (mark.message_created_at,mark.message_id)>=(m.created_at,m.id)))
          LIMIT 1`,
-            [candidate.channel_id, candidate.identity_id, candidate.message_id],
+            [
+              candidate.channel_id,
+              candidate.identity_id,
+              candidate.message_id,
+              candidate.room_id,
+              candidate.direct_attention,
+            ],
           )
         ).rowCount;
       if (suppressed) {

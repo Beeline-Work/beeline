@@ -463,9 +463,6 @@ export class MonolithRigTransport {
       targetBranch,
     }) as Promise<RoomRepository>;
   }
-  roomGitHubEventsSet(roomId: string, enabled: boolean): Promise<RoomRepository> {
-    return this.operation('setRoomGitHubEvents', { roomId, enabled }) as Promise<RoomRepository>;
-  }
   /** Sever the Room→repository binding; the Room becomes chat-only. Idempotent. */
   roomRepositoryRemove(roomId: string): Promise<void> {
     return this.operation('removeRoomRepository', { roomId }).then(() => undefined);

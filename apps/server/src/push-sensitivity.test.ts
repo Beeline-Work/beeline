@@ -199,9 +199,10 @@ describe('sensitivity boundaries and replacement slots', () => {
     async (reason) => {
       const { PhoneService } = await import('./phone-service.js');
       const phone = new PhoneService(db, 'https://example.test');
-      const message = await post('@owner new message');
+      // Mute is the Room's and lets tags through, so it is proven on plain chatter.
+      const message = await post(reason === 'mute' ? 'Corner chatter' : '@owner new message');
       if (reason === 'mute')
-        await phone.execute('updateRoomPushState', { roomId: corner, muted: true }, person);
+        await phone.execute('updateRoomPushState', { roomId: room, muted: true }, person);
       if (reason === 'view')
         await phone.execute(
           'updateRoomPushState',

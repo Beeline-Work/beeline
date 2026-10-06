@@ -142,7 +142,7 @@ export function useRoomRepositoryChoice({
   const collapsedValue = current ? splitFullName(current).name : 'None';
 
   // Collapsed, the Repository control is one row among its Room-sheet
-  // siblings (Reviewer, Repo notifications, Members…): the same
+  // siblings (Reviewer, Mute notifications, Members…): the same
   // HullActionSheetRow, no box. Revealed, it keeps its own switch widget,
   // which legitimately boxes the controls the user is actively changing.
   const row = !canManage ? (

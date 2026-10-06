@@ -165,7 +165,6 @@ export type PhoneOperationMap = {
   updateIdentityPushLevel: { input: UpdateIdentityPushLevelInput; output: ManagedIdentityResult };
   setRoomRepository: { input: SetRoomRepositoryInput; output: RoomRepositoryResult };
   setRoomTargetBranch: { input: SetRoomTargetBranchInput; output: RoomRepositoryResult };
-  setRoomGitHubEvents: { input: SetRoomGitHubEventsInput; output: RoomRepositoryResult };
   /** Sever the Room→repository binding; the Room becomes chat-only. Idempotent. */
   removeRoomRepository: { input: RoomInput; output: void };
   listRoomWorkflows: { input: RoomInput; output: RoomWorkflowListResult };
@@ -600,7 +599,6 @@ export type SetRoomRepositoryInput = RoomInput & {
   readonly githubInstallationId?: number;
 };
 export type SetRoomTargetBranchInput = RoomInput & { readonly targetBranch: string };
-export type SetRoomGitHubEventsInput = RoomInput & { readonly enabled: boolean };
 export type ApproveCornerMergeInput = {
   readonly cornerId: string;
   /** Managers may explicitly override a known failing check result. */

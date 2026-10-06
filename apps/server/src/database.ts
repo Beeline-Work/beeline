@@ -780,6 +780,11 @@ ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_invited_by_fkey;
 ALTER TABLE memberships ADD CONSTRAINT memberships_invited_by_fkey
   FOREIGN KEY (invited_by) REFERENCES identities(id) ON DELETE SET NULL;
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS push_muted boolean NOT NULL DEFAULT false;
+-- Mute is a Room setting: a corner follows its Room's mute.
+UPDATE memberships member SET push_muted=false FROM rooms corner
+  WHERE corner.id=member.room_id AND corner.parent_id IS NOT NULL AND member.push_muted;
+-- Beeline's PR flow needs GitHub events in every Room; the toggle is gone.
+UPDATE rooms SET github_events_enabled=true WHERE NOT github_events_enabled;
 -- What this member reacts to in THIS Room. An event happens in a Room, so the
 -- subscription lives on the Room membership row and not on the identity: an
 -- agent in several Rooms would otherwise inherit one Room's job everywhere.

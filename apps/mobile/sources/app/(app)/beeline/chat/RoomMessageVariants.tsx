@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
-import { Ionicons } from '@expo/vector-icons';
+import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   MESSAGE_REACTION_EMOJIS,
@@ -1201,6 +1201,7 @@ function SwipeToReply({
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
+  const [desktopRowHovered, setDesktopRowHovered] = useState(false);
   const [reactionPickerVisible, setReactionPickerVisible] = useState(false);
   const message = isDesktop ? (
     <Pressable
@@ -1233,8 +1234,8 @@ function SwipeToReply({
       <View
         style={styles.replyDesktopRow}
         {...({
-          onMouseEnter: () => setDesktopActionsVisible(true),
-          onMouseLeave: () => setDesktopActionsVisible(false),
+          onMouseEnter: () => setDesktopRowHovered(true),
+          onMouseLeave: () => setDesktopRowHovered(false),
         } as any)}
       >
         {message}
@@ -1242,105 +1243,22 @@ function SwipeToReply({
           accessibilityLabel="Message actions"
           style={[
             styles.replyDesktopActions,
-            desktopActionsVisible && styles.replyDesktopActionsVisible,
+            (desktopActionsVisible || desktopRowHovered || reactionPickerVisible) && styles.replyDesktopActionsVisible,
           ]}
           testID={`message-actions-${messageId}`}
         >
           {!replyOnly ? (
-            <Pressable
-              accessibilityLabel="Copy message text"
-              accessibilityRole="button"
-              onFocus={() => setDesktopActionsVisible(true)}
-              onBlur={() => setDesktopActionsVisible(false)}
-              onPress={onLongPress}
-              style={({ pressed }) => [
-                styles.replyDesktopAction,
-                pressed && styles.replyDesktopPressed,
-              ]}
-              testID={`copy-button-${messageId}`}
-            >
-              <Text style={styles.replyDesktopGlyph}>⧉</Text>
-            </Pressable>
+            <DesktopMessageAction action="copy" label="Copy message text" tooltip="Copy" onPress={onLongPress} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`copy-button-${messageId}`} />
           ) : null}
-          <Pressable
-            accessibilityLabel="Reply to message"
-            accessibilityRole="button"
-            onFocus={() => setDesktopActionsVisible(true)}
-            onBlur={() => setDesktopActionsVisible(false)}
-            onPress={onReply}
-            style={({ pressed }) => [
-              styles.replyDesktopAction,
-              pressed && styles.replyDesktopPressed,
-            ]}
-            testID={`reply-button-${messageId}`}
-          >
-            <Text style={styles.replyDesktopGlyph}>↩</Text>
-          </Pressable>
+          <DesktopMessageAction action="reply" label="Reply to message" tooltip="Reply" onPress={onReply} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`reply-button-${messageId}`} />
           {!replyOnly ? (
             <>
-              <Pressable
-                accessibilityLabel="React to message"
-                accessibilityRole="button"
-                onFocus={() => setDesktopActionsVisible(true)}
-                onPress={() => setReactionPickerVisible((visible) => !visible)}
-                style={({ pressed }) => [
-                  styles.replyDesktopAction,
-                  pressed && styles.replyDesktopPressed,
-                ]}
-                testID={`react-button-${messageId}`}
-              >
-                <Text style={styles.replyDesktopGlyph}>☺</Text>
-              </Pressable>
-              <Pressable
-                accessibilityLabel={bookmarked ? 'Remove bookmark' : 'Bookmark message'}
-                accessibilityRole="button"
-                accessibilityState={{ selected: bookmarked }}
-                onFocus={() => setDesktopActionsVisible(true)}
-                onBlur={() => setDesktopActionsVisible(false)}
-                onPress={onBookmark}
-                style={({ pressed }) => [
-                  styles.replyDesktopAction,
-                  pressed && styles.replyDesktopPressed,
-                ]}
-                testID={`bookmark-button-${messageId}`}
-              >
-                <Ionicons
-                  color={
-                    bookmarked ? styles.replyDesktopBookmark.color : styles.replyDesktopGlyph.color
-                  }
-                  name={bookmarked ? 'bookmark' : 'bookmark-outline'}
-                  size={14}
-                />
-              </Pressable>
+              <DesktopMessageAction action="react" label="React to message" tooltip="React" onPress={() => setReactionPickerVisible((visible) => !visible)} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`react-button-${messageId}`} />
+              <DesktopMessageAction action="bookmark" label={bookmarked ? 'Remove bookmark' : 'Bookmark message'} tooltip={bookmarked ? 'Remove bookmark' : 'Bookmark'} selected={bookmarked} onPress={onBookmark} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`bookmark-button-${messageId}`} />
               {onReportIssue ? (
-                <Pressable
-                  accessibilityLabel="Report an issue with this message"
-                  accessibilityRole="button"
-                  onFocus={() => setDesktopActionsVisible(true)}
-                  onBlur={() => setDesktopActionsVisible(false)}
-                  onPress={onReportIssue}
-                  style={({ pressed }) => [
-                    styles.replyDesktopAction,
-                    pressed && styles.replyDesktopPressed,
-                  ]}
-                  testID={`report-button-${messageId}`}
-                >
-                  <Ionicons color={styles.replyDesktopGlyph.color} name="flag-outline" size={14} />
-                </Pressable>
+                <DesktopMessageAction action="report" label="Report an issue with this message" tooltip="Report an issue" onPress={onReportIssue} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`report-button-${messageId}`} />
               ) : null}
-              <Pressable
-                accessibilityLabel="Forward message"
-                accessibilityRole="button"
-                onFocus={() => setDesktopActionsVisible(true)}
-                onPress={onForward}
-                style={({ pressed }) => [
-                  styles.replyDesktopAction,
-                  pressed && styles.replyDesktopPressed,
-                ]}
-                testID={`forward-button-${messageId}`}
-              >
-                <Text style={styles.replyDesktopGlyph}>↗</Text>
-              </Pressable>
+              <DesktopMessageAction action="forward" label="Forward message" tooltip="Forward" onPress={onForward} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`forward-button-${messageId}`} />
             </>
           ) : null}
         </View>
@@ -2184,19 +2102,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.bgTerminal,
   },
   replyDesktopActionsVisible: { opacity: 1 },
-  replyDesktopAction: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   replyDesktopPressed: { backgroundColor: theme.buzz.bgHighlight },
-  replyDesktopGlyph: {
-    ...theme.buzz.type.meta,
-    fontFamily: theme.buzz.proseSemibold,
-    color: theme.buzz.textPrimary,
-  },
-  replyDesktopBookmark: { color: theme.buzz.accent },
   reactionPicker: {
     position: 'absolute',
     top: 46,

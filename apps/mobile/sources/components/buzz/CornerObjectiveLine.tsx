@@ -18,6 +18,7 @@ function runLabel(run: WorkflowRunSummaryView): string {
 /** The corner objective sits above the compact workflow and brief actions. */
 export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   objective,
+  desktop = false,
   onOpenBrief,
   workflow,
   onOpenWorkflow,
@@ -27,6 +28,7 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   testID = 'corner-objective-line',
 }: {
   objective?: string;
+  desktop?: boolean;
   /** Present only when the corner has a brief. */
   onOpenBrief?: () => void;
   /** The corner's live workflow run, if any. */
@@ -47,8 +49,8 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   const run = workflow?.status === 'live' && onOpenWorkflow ? workflow : undefined;
   if (!line && !onOpenBrief && !run && !workflowError) return null;
   return (
-    <View style={styles.line} testID={testID}>
-      <View style={styles.rail} />
+    <View style={[styles.line, desktop && styles.desktopLine]} testID={testID}>
+      {!desktop && <View style={styles.rail} testID={`${testID}-rail`} />}
       <View style={styles.inner}>
         {line ? (
           <View style={styles.objective}>
@@ -194,6 +196,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: 4,
     gap: 8,
   },
+  desktopLine: { paddingTop: 8, paddingBottom: 8 },
   rail: {
     alignSelf: 'stretch',
     width: 2,

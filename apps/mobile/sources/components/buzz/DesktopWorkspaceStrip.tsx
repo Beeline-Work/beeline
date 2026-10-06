@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { WorkspaceListView } from '@beeline/buzz-client';
@@ -30,6 +30,7 @@ export function DesktopWorkspaceStrip({
   onAdd: () => void;
   onAccount: () => void;
 }) {
+  const [accountLabelVisible, setAccountLabelVisible] = useState(false);
   return (
     <View style={styles.rail} testID="desktop-workspace-strip">
       <ScrollView contentContainerStyle={styles.list}>
@@ -68,7 +69,11 @@ export function DesktopWorkspaceStrip({
         accessibilityLabel={viewerName ? `${viewerName} — Settings` : 'Settings'}
         accessibilityRole="button"
         onPress={onAccount}
-        style={styles.tile}
+        onHoverIn={() => setAccountLabelVisible(true)}
+        onHoverOut={() => setAccountLabelVisible(false)}
+        onFocus={() => setAccountLabelVisible(true)}
+        onBlur={() => setAccountLabelVisible(false)}
+        style={styles.account}
         testID="desktop-strip-account"
       >
         <IdentityMark
@@ -77,8 +82,19 @@ export function DesktopWorkspaceStrip({
           kind="human"
           name={viewerName}
           seed={viewerPubkey ?? 'viewer'}
-          size={48}
+          size={32}
         />
+        <Text style={styles.caption}>Settings</Text>
+        {accountLabelVisible && (
+          <View
+            pointerEvents="none"
+            style={styles.accountLabel}
+            testID="desktop-strip-account-label"
+          >
+            <Text style={styles.labelTitle}>Settings</Text>
+            {viewerName ? <Text style={styles.labelName}>{viewerName}</Text> : null}
+          </View>
+        )}
       </Pressable>
     </View>
   );
@@ -91,6 +107,29 @@ const styles = StyleSheet.create((theme) => ({
     borderRightColor: theme.buzz.border,
     backgroundColor: theme.buzz.bgTerminal,
   },
+  account: {
+    alignSelf: 'center',
+    alignItems: 'center',
+    minHeight: 44,
+    gap: theme.buzz.space.sm,
+    marginBottom: theme.buzz.space.md,
+  },
+  caption: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary },
+  accountLabel: {
+    position: 'absolute',
+    left: DESKTOP_WORKSPACE_STRIP_WIDTH,
+    bottom: 0,
+    minWidth: 184,
+    maxWidth: 260,
+    padding: theme.buzz.space.sm,
+    backgroundColor: theme.buzz.bgRaised,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.buzz.borderStrong,
+    borderRadius: theme.buzz.radius,
+    zIndex: 2,
+  },
+  labelTitle: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
+  labelName: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   list: { alignItems: 'center', paddingTop: 16, gap: theme.buzz.space.sm },
   tile: { width: 56, minHeight: 56, alignItems: 'center', justifyContent: 'center' },
   workspaceTile: {

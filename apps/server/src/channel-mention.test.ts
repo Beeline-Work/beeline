@@ -97,6 +97,39 @@ describe('@channel mention expansion', () => {
     }
   });
 
+  it('skips handles inside code in SQL and TypeScript alike', async () => {
+    const database = await fixture();
+    try {
+      const cases: [string, string[]][] = [
+        ['The probe reads `@greeter and @bee take it`.', []],
+        ['Probe:\n```\n@greeter fix it\n```\nDone.', []],
+        ['```\n@greeter never closed\n@bee', []],
+        ['@carl see `@greeter` in the probe', [CARL]],
+        ['```\n@greeter\n```\n@bee fix R1', [BEE]],
+        ['a stray ` backtick, @greeter take it', [AGENT]],
+        ['`@channel` is the broadcast token', []],
+      ];
+      for (const [index, [text, expected]] of cases.entries()) {
+        const id = String(index + 3).repeat(64);
+        await database.query(
+          `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
+          [id, ROOM, AUTHOR, text],
+        );
+        const tagged = (
+          await database.query<{ tagged_ids: string[] }>(
+            `SELECT ${taggedIdentityIdsSql('m')} tagged_ids FROM messages m WHERE m.id=$1`,
+            [id],
+          )
+        ).rows[0]!.tagged_ids;
+        const resolved = await resolveCurrentMemberMentions(database, ROOM, text, AUTHOR);
+        expect(tagged.sort(), text).toEqual([...expected].sort());
+        expect(resolved.map((member) => member.id).sort(), text).toEqual([...expected].sort());
+      }
+    } finally {
+      await database.close();
+    }
+  });
+
   it('in a corner, tags the humans of the corner\'s PARENT Room, not the corner\'s own narrower roster', async () => {
     const database = await fixture();
     try {

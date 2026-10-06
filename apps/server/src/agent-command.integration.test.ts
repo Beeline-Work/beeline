@@ -359,6 +359,23 @@ describe.each([R, C])('server command authority in %s', (room) => {
     );
     expect((await commands(B, room))[0]?.agentDepth).toBe(0);
   });
+  it('wakes no agent whose handle appears only inside code', async () => {
+    await send('@hoots review the probe', room);
+    const [review] = await commands(A, room);
+    await claim(review!);
+    await result(
+      review!,
+      'FAIL. The probe reads `@goosy and @hoots take it`.\n\n```\n@goosy fix R1\n```\nNo tag here.',
+    );
+    expect(await commands(B, room)).toEqual([]);
+
+    await send('Quoting `@goosy` and\n```\n@hoots\n```', room);
+    expect(await commands(A, room)).toEqual([]);
+    expect(await commands(B, room)).toEqual([]);
+
+    await send('Run `npm test` then @goosy take a look', room);
+    expect(await commands(B, room)).toHaveLength(1);
+  });
 });
 it('resolves multiple natural tags and ignores human-only and unknown tags', async () => {
   await send('@hoots and @goosy');

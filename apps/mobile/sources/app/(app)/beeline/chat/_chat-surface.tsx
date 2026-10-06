@@ -7298,13 +7298,13 @@ export function BuzzChatSurface({
       >
         <HullDialogInput
           accessibilityLabel={`New ${CORNER_LABEL} name`}
-          autoCapitalize="sentences"
-          autoCorrect
+          autoCapitalize="none"
+          autoCorrect={false}
           autoFocus
           editable={!renameBusy}
           maxLength={120}
           onChangeText={(value) => {
-            setRenameDraft(value);
+            setRenameDraft(roomNameEntry(value));
             if (value.trim()) setRenameError(null);
           }}
           onSubmitEditing={() => void handleRenameRoom()}

@@ -3,7 +3,7 @@ import type { SqlDatabase } from './database.js';
 export const ROOM_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export function requireRoomSlug(value: string): string {
-  if (value.length > 48 || /\s/.test(value) || !ROOM_SLUG_PATTERN.test(value))
+  if (value.length > 48 || !ROOM_SLUG_PATTERN.test(value))
     throw new Error(
       'invalid Room name: use lowercase letters, numbers and single hyphens (up to 48 characters)',
     );

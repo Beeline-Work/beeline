@@ -46,7 +46,7 @@
  * Pi uses `PI_CODING_AGENT_DIR` and the isolated `$HOME`, preventing its
  * otherwise-implicit reads from the operator's `~/.pi` and `~/.agents` trees.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, watch, type FSWatcher } from 'node:fs';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { createHash, randomUUID } from 'node:crypto';
@@ -553,6 +553,46 @@ export async function writeBackRoomClaudeLogin(input: {
   const stats = await lstat(target).catch(() => undefined);
   if (!stats?.isFile()) return;
   await writeBackDetachedClaudeLogin(target, source);
+}
+
+/**
+ * Write a Claude login back the moment this Room's link detaches.
+ *
+ * A warm Claude Code process can refresh its login while its Room is idle.
+ * The after-prompt write-back then waits for this Room's next turn, and every
+ * other Room fails meanwhile on the spent shared token. Watching the Room's
+ * Claude directory shares the rotated login at once. Passes run one at a time
+ * through the same locked, expiry-checked write-back; a pass that finds the
+ * link restored does nothing. Returns undefined when there is nothing to watch.
+ */
+export function watchRoomClaudeLogin(input: {
+  root: string;
+  operatorHome?: string;
+}): FSWatcher | undefined {
+  const claude = SHARED_CREDENTIALS.find((credential) => credential.dir === 'claude')!;
+  if (!existsSync(resolve(input.operatorHome ?? homedir(), claude.source))) return undefined;
+  const dir = resolve(input.root, claude.dir);
+  let pass = Promise.resolve();
+  let watcher: FSWatcher;
+  try {
+    watcher = watch(dir, (_event, filename) => {
+      if (filename !== claude.target) return;
+      pass = pass
+        .then(() => writeBackRoomClaudeLogin(input))
+        .catch((error: unknown) => {
+          console.error(`[body] could not write back a refreshed Claude login under ${dir}:`, error);
+        });
+    });
+  } catch (error) {
+    console.error(`[body] could not watch the Claude login under ${dir}:`, error);
+    return undefined;
+  }
+  watcher.on('error', (error) => {
+    console.error(`[body] stopped watching the Claude login under ${dir}:`, error);
+    watcher.close();
+  });
+  watcher.unref();
+  return watcher;
 }
 
 /**

@@ -32,6 +32,7 @@ import {
   mountedImportedMcpServerNames,
   prepareRoomAgentHome,
   roomAgentHomeEnv,
+  watchRoomClaudeLogin,
   writeBackRoomClaudeLogin,
 } from './agent-home.js';
 import {
@@ -393,6 +394,35 @@ describe('per-room harness state isolation', () => {
     expect(readFileSync(codexSource, 'utf8')).toBe(spent);
     expect(lstatSync(codexTarget).isFile()).toBe(true);
     expect(readFileSync(codexTarget, 'utf8')).toBe(rotated);
+  });
+
+  it('writes back a Claude refresh made while the Room is idle', async () => {
+    const operatorHome = await scratch('beeline-operator-home-');
+    const roomRoot = resolve(await scratch('beeline-room-idle-'), 'agent-home');
+    const source = resolve(operatorHome, '.claude/.credentials.json');
+    const target = resolve(roomRoot, 'claude/.credentials.json');
+    const spent = JSON.stringify({ claudeAiOauth: { refreshToken: 'spent', expiresAt: 1_000 } });
+    const rotated = JSON.stringify({
+      claudeAiOauth: { refreshToken: 'rotated', expiresAt: 2_000 },
+    });
+    await mkdir(resolve(operatorHome, '.claude'), { recursive: true });
+    await writeFile(source, spent);
+    await prepareRoomAgentHome({ root: roomRoot, operatorHome, agentKind: 'claude' });
+    const watcher = watchRoomClaudeLogin({ root: roomRoot, operatorHome });
+    expect(watcher).toBeDefined();
+    try {
+      // No turn runs: only the watcher can share this refresh.
+      await writeFile(`${target}.next`, rotated);
+      await rename(`${target}.next`, target);
+
+      await vi.waitFor(() => {
+        expect(readFileSync(source, 'utf8')).toBe(rotated);
+        expect(lstatSync(target).isSymbolicLink()).toBe(true);
+      });
+      expect(realpathSync(target)).toBe(realpathSync(source));
+    } finally {
+      watcher?.close();
+    }
   });
 
   it('leaves the newest login when two Rooms write back concurrently', async () => {

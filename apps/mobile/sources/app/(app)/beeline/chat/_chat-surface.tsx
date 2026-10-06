@@ -1756,6 +1756,17 @@ export function BuzzChatSurface({
   }, [participantPickerKind, userPubkey, workspaceRoster]);
   // Agents carry their model and owner, people their Room role, for the
   // roster sheet and @-mention menu.
+  /** Each agent's model as its Workspace profile holds it — the one source
+   *  every agent byline reads, step rows and replies alike. */
+  const agentProfileModelByPubkey = useMemo(
+    () =>
+      new Map(
+        (workspaceRoster?.agents ?? []).flatMap((agent) =>
+          agent.model ? [[agent.identity.pubkey, agent.model] as const] : [],
+        ),
+      ),
+    [workspaceRoster],
+  );
   const describedRoomParticipants = useMemo(() => {
     const workspaceAgents = new Map(
       (workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent]),
@@ -5767,11 +5778,9 @@ export function BuzzChatSurface({
         <OrdinaryLedgerMessage
           message={renderedItem}
           firstBylineOfDay={bylineOpeners.has(item.id)}
-          // The byline carries the model stamped on the message at
-          // generation time (server-side from the producing turn); an agent
-          // row with no stamp keeps the plain `AGENT` word — never a live
-          // roster lookup retro-labeling old messages with today's setting.
-          agentModel={item.agentModel}
+          // The byline shows the agent's model from its profile; an agent
+          // with no profile model keeps the plain `AGENT` word.
+          agentModel={item.pubkey ? agentProfileModelByPubkey.get(item.pubkey) : undefined}
           desktopLayout={isDesktop}
           announcementFeed={isReadOnlyDirectMessage}
           {...(knownAgent ? { agent: knownAgent } : {})}
@@ -5830,6 +5839,7 @@ export function BuzzChatSurface({
       renderCornerMarker,
       bylineOpeners,
       agentByPubkey,
+      agentProfileModelByPubkey,
       answerByMessageId,
       isDesktop,
       handleWritePermission,

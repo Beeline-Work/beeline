@@ -280,10 +280,6 @@ describe('Room message variant components', () => {
     expect(conversationSource).toContain('<ConnectorOfferCard');
     expect(conversationSource.match(/<MentionSuggestionMenu/g)).toHaveLength(1);
     expect(conversationSource).toContain('keyboardOpen={keyboardHeight > 0}');
-    expect(conversationSource).toContain('agentModel={item.agentModel}');
-    // The byline renders the model stamped at generation time; the roster
-    // lookup is retired so old rows keep their own turn's model (or none).
-    expect(conversationSource).not.toContain('workspaceAgentModelByPubkey');
     expect(conversationSource).toContain(
       'inputSelection.start === inputSelection.end\n        ? activeMentionAtCursor',
     );
@@ -1850,6 +1846,48 @@ describe('Room message variant components', () => {
       role: 'deepseek-deepseek-v.4.1-flash',
       mark: { seed: 'agent-lumen', kind: 'agent', face: 'owl' },
     });
+  });
+
+  it("labels an agent's step row with the model from its profile, not a per-message stamp", () => {
+    expect(conversationSource).toContain(
+      'agentModel={item.pubkey ? agentProfileModelByPubkey.get(item.pubkey) : undefined}',
+    );
+    expect(conversationSource).not.toContain('agentModel={item.agentModel}');
+    const stepRow = message({
+      id: 'monarch-step',
+      text: '',
+      pubkey: 'agent-monarch',
+      isAgentAuthor: true,
+      isAgentActivity: true,
+      requestId: 'turn-monarch',
+      activity: [{ kind: 'tool', title: 'Run tests', command: 'npm test', status: 'running' }],
+    });
+    expect(stepRow.agentModel).toBeUndefined();
+    const profileModelByPubkey = new Map([['agent-monarch', 'openai/gpt-6.1-sol']]);
+
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={stepRow}
+        agent={{ pubkey: 'agent-monarch', displayName: 'Monarch' }}
+        agentModel={profileModelByPubkey.get('agent-monarch')}
+        continued={false}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking
+        participantHandles={[{ pubkey: 'agent-monarch', handle: 'monarch' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const timeline = renderer.root.findByType('ActivityTimeline' as never);
+    console.log(`[byline] Monarch step row role: ${timeline.props.role}`);
+    expect(timeline.props).toMatchObject({ handle: 'Monarch', role: 'gpt-6.1-sol' });
   });
 
   it('keeps a human continuation compact', () => {

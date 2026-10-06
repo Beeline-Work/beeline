@@ -163,6 +163,9 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
       const run = await proof(detail, `?theme=${theme}`);
       expect(run.text).toContain('Abandoned · cancelled');
       expect(run.halo).toBe(0);
+      console.log(`Reproduction abandoned-step-1 (${theme}): ${run.text.find(text => text.startsWith('Abandoned'))}; steps=${JSON.stringify(run.circles)}`);
+      expect(run.circles).toEqual({ pull: 'failed' });
+      expect(run.labels).toEqual(expect.arrayContaining([expect.stringMatching(/^Pull, .*failed, Candy/)]));
     }
   }, 120_000);
 

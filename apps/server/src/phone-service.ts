@@ -4387,7 +4387,7 @@ export class PhoneService {
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules schedule USING rooms surface
        WHERE schedule.id=$1 AND surface.id=schedule.room_id
-         AND (surface.id=$2 OR surface.parent_id=$2)`,
+         AND (surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,
       [input.scheduleId, input.roomId],
     );
     if (!deleted.rowCount) throw new Error('schedule not found');

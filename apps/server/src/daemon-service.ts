@@ -329,9 +329,7 @@ export class DaemonService {
     private readonly objects?: ObjectService,
     private readonly linkWallet?: import('./link-agent-wallet.js').LinkAgentWallet,
     private readonly refreshMergeability?: (cornerId: string) => Promise<void>,
-    /** Best-effort immediate merge attempt after `order_corner_merge`: an
-     *  express order does not wait for the next merge sweep, which only ever
-     *  considers corners already sitting in `land`. */
+    /** The merge attempt behind `merge_corner` and `order_corner_merge`. */
     private readonly landCorner?: (cornerId: string) => Promise<boolean>,
   ) {}
 
@@ -1100,6 +1098,11 @@ export class DaemonService {
           input as Input<'approveCornerMerge'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'mergeCorner':
+        return (await this.mergeCorner(
+          input as Input<'mergeCorner'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
       case 'getCornerRestoreState':
         return (await this.cornerRestore(
           (input as Input<'getCornerRestoreState'>).cornerId,
@@ -1592,9 +1595,7 @@ export class DaemonService {
           await advanceCorner(db, order.cornerId, { kind: 'express-merge-ordered' });
           return recorded;
         });
-        // The order is durable either way; an express order does not wait for
-        // the next merge sweep, which only ever considers corners already
-        // sitting in `land`.
+        // The order is durable either way; it merges now, not on a later call.
         try {
           await this.landCorner?.(order.cornerId);
         } catch (error) {
@@ -3198,6 +3199,43 @@ export class DaemonService {
    * the corner lifecycle in the same transaction; the server merge follows
    * from the workflow once the whole gate is open.
    */
+  /**
+   * The implementer starts its own merge. Only the corner's implementer may
+   * call it, and only an open gate on the corner in `land` merges: a
+   * reviewer's PASS moved it there, or a human's order did.
+   */
+  private async mergeCorner(input: Input<'mergeCorner'>, agentId: string): Promise<Output<'mergeCorner'>> {
+    const corner = (
+      await this.database.query<{ worker_agent_id: string | null; workflow_state: string | null; head_sha: string | null }>(
+        `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,fact.workflow_state,
+                fact.lifecycle->'pr'->>'headSha' head_sha
+         FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+         WHERE fact.corner_id=$1 AND corner.archived_at IS NULL`,
+        [input.cornerId],
+      )
+    ).rows[0];
+    if (!corner || corner.worker_agent_id !== agentId)
+      throw new Error("only this corner's implementer can merge its pull request");
+    if (!corner.head_sha) return { status: 'blocked', blocker: 'the corner has no pull request' };
+    if (!this.landCorner || !this.prChecksStatus)
+      return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
+    const gate = await this.prChecksStatus({ cornerId: input.cornerId });
+    if (!gate.mergeAllowed) {
+      const blockers = [
+        gate.checks !== 'passed' ? `checks are ${gate.checks}` : '',
+        gate.approvalPending ? 'no reviewer PASS on this head' : '',
+        gate.held ? 'a human hold stands' : '',
+        gate.isWorkerYolo ? '' : 'yolo is off',
+      ].filter(Boolean);
+      return { status: 'blocked', blocker: `${blockers.join('; ') || 'the merge gate is closed'}. ${gate.rule}` };
+    }
+    if (corner.workflow_state !== 'land')
+      return { status: 'blocked', blocker: `the corner is in ${corner.workflow_state ?? 'no state'}, not land` };
+    if (!(await this.landCorner(input.cornerId)))
+      return { status: 'blocked', blocker: 'a merge of this head was already attempted, or the head moved' };
+    return { status: 'merge-started', headSha: corner.head_sha };
+  }
+
   private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
     return this.database.transaction(async (db) => {
       await lockCornerLifecycle(db, input.cornerId);
@@ -7950,6 +7988,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postCornerValidationStage: true,
   getPrChecksStatus: true,
   approveCornerMerge: true,
+  mergeCorner: true,
   getCornerCloseRequests: true,
   waitForCornerWake: true,
   listUntrackedCorners: true,

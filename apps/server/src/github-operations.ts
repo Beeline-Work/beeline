@@ -21,7 +21,6 @@ import {
   claimCornerMergeAttempt,
   lockCornerLifecycle,
   cornerMergeGate,
-  cornersReadyToLand,
   unfinishedCornerMergeClaims,
   clearUnfinishedCornerMergeClaim,
 } from './corner-lifecycle.js';
@@ -32,8 +31,6 @@ import {
 } from './agent-command.js';
 import { recordInstitutionalCornerOutcome } from './institutional-memory-shadow.js';
 import { reviewerList, roomAgentHealth } from './agent-health.js';
-
-const CORNER_MERGE_CONCURRENCY = 4;
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -723,7 +720,7 @@ export class GitHubOperations {
         : null;
     const reviewerLabel = reviewer ?? 'the configured reviewer';
     const reviewerWake = reviewerIsAuthor
-      ? { status: 'not_required' as const, detail: "Review is not required because the reviewer is this corner's implementer." }
+      ? { status: 'not_required' as const, detail: "No agent review is possible because the reviewer is this corner's implementer; a Workspace owner or admin must order the merge." }
       : listLabel
       ? await this.listReviewerWake({
           parentId: corner.parent_id,
@@ -749,7 +746,7 @@ export class GitHubOperations {
     const approval = listLabel ? `approve_merge from ${reviewerLabel}` : `${reviewerLabel}'s approve_merge`;
     const woken = listLabel ? `the first healthy agent on ${listLabel}` : reviewerLabel;
     const rule = reviewerIsAuthor
-      ? `You are this corner's implementer and also this Room's configured reviewer (${reviewerLabel}), so self-review is not required — approve_merge cannot add signal over your own work. The reviewer outcome is PASS; the merge gate still requires worker yolo mode, no human hold, and a configured reviewer who is a current agent member of the parent Room.`
+      ? `You are this corner's implementer and also this Room's configured reviewer (${reviewerLabel}), so no other agent can review your work and approve_merge cannot record your own PASS. Nothing merges this corner without a human's yes: ask a current Workspace owner or admin in this corner to approve, and once they do, call order_corner_merge for their order.`
       : configuredReviewerId
         ? reviewerWake.status === 'unreachable'
           ? `Only ${approval} records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
@@ -898,31 +895,10 @@ export class GitHubOperations {
   }
 
   /**
-   * The server merge. Every corner the workflow has moved to `land` whose
-   * gate is open gets one squash-merge attempt at its exact head. Runs on the
-   * background leader, which a new message (the `land` handoff card, a human
-   * lifting a hold) wakes, and on its reconciliation interval (yolo turning
-   * on).
-   */
-  async landReadyCorners(): Promise<number> {
-    const candidates = await cornersReadyToLand(this.database);
-    let next = 0;
-    let attempted = 0;
-    await Promise.all(Array.from(
-      { length: Math.min(CORNER_MERGE_CONCURRENCY, candidates.length) },
-      async () => {
-        while (next < candidates.length) {
-          const cornerId = candidates[next++]!;
-          if (await this.landCorner(cornerId)) attempted += 1;
-        }
-      },
-    ));
-    return attempted;
-  }
-
-  /**
    * Squash-merges one `land` corner at its exact head when the complete gate
    * (`pr_checks_status`'s `mergeAllowed`) is open on GitHub's current head.
+   * Called by the implementer's `merge_corner`, a human's `order_corner_merge`,
+   * and recovery of an unfinished attempt; the server never starts it alone.
    * At most one attempt per head: the attempt is claimed under the run lock
    * before GitHub is called. The merge webhook then lands the corner; a
    * refusal returns it to the implementer with GitHub's reason.
@@ -1337,7 +1313,9 @@ export class GitHubOperations {
             throw new Error(`Merged PR #${claim.number} does not match the claimed branch and head`);
           await this.recordConfirmedCornerMerge(target, target.repository, claim.number, pr, claim.head_sha);
         } else {
-          await clearUnfinishedCornerMergeClaim(this.database, claim.corner_id, claim.head_sha, claim.number);
+          // The attempt never landed: retry it once the gate is still open.
+          if (await clearUnfinishedCornerMergeClaim(this.database, claim.corner_id, claim.head_sha, claim.number))
+            await this.landCorner(claim.corner_id);
         }
       } catch (error) {
         const lastError = (error instanceof Error ? error.message : String(error)).slice(0, 500);

@@ -114,8 +114,8 @@ describe('corner merge instructions', () => {
   });
 
   it('selects the no-reviewer and reviewer matrix', () => {
-    // The server merges once its gate opens; no variant tells the author to
-    // merge, and only a reviewer with yolo on names the server as the merger.
+    // Only a reviewer with yolo on wakes the author to merge with merge_corner,
+    // after it checks the discussion for an unanswered human question.
     for (const yolo of [false, true]) {
       expect(cornerMergeInstruction(yolo)).toContain('no configured reviewer');
       expect(cornerMergeInstruction(yolo)).toContain('never merge');
@@ -126,11 +126,10 @@ describe('corner merge instructions', () => {
     expect(off).toContain('never merge');
     expect(off).not.toContain('gh pr merge');
     const on = cornerMergeInstruction(true, 'echo');
-    expect(on).toContain('after its PASS the server merges the pull request itself');
-    expect(on).toContain('Never merge it yourself');
-    expect(on).toContain(
-      'You are woken only to fix failing checks, requested changes, or a merge GitHub refused',
-    );
+    expect(on).toContain('its PASS wakes you to merge');
+    expect(on).toContain("if a human's question or proposal in the corner has no answer, name it and do not merge");
+    expect(on).toContain('otherwise call merge_corner.');
+    expect(on).toContain('You are also woken to fix failing checks, requested changes, or a refused merge');
     expect(on).not.toContain('gh pr merge');
     for (const instruction of [off, on]) {
       expect(instruction).not.toContain('please review');
@@ -154,8 +153,9 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain('assigned brief revision 2');
     expect(instruction).toContain('briefRevision=2');
     expect(instruction).toContain(
-      `reply \`approved ${'a'.repeat(40)}\` without tagging bee: the server merges it`,
+      `reply \`approved ${'a'.repeat(40)}\` without tagging bee: your PASS wakes the author to merge`,
     );
+    expect(instruction).toContain("A human's question or proposal in the corner discussion with no answer is a FAIL finding; name it.");
     expect(instruction).not.toContain(`approved ${'a'.repeat(40)}, merge`);
     expect(instruction).toContain('Never merge yourself or tell the author to merge');
     expect(instruction).not.toContain('gh pr merge');
@@ -173,10 +173,11 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain("You are this Room's reviewer");
     expect(instruction).toContain('do not request one');
     expect(instruction).toContain('tag any agent for review');
+    // No other agent can review it, so only a human's yes merges it.
     expect(instruction).toContain(
-      'The server merges it once checks are green, yolo is on, and no human hold stands',
+      "It merges only on a human's yes: ask a Workspace owner or admin to approve the merge, then record their yes with order_corner_merge.",
     );
-    expect(instruction).toContain('never merge it yourself');
+    expect(instruction).toContain('Never merge it any other way.');
     expect(instruction).not.toContain('gh pr merge');
     // A non-reviewer opener (someone else is the configured reviewer): nothing.
     expect(cornerSelfReviewerInstruction({ ...selfReviewer, isReviewer: false })).toBeUndefined();

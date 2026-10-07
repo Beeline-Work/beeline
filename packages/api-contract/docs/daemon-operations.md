@@ -74,10 +74,16 @@ a reviewer id on the parent Room that is not a current parent member stays confi
 head-bound check facts across corners, and reconciles
 missing/invalidated snapshots with GitHub check runs and combined commit status. A single webhook
 check is not a complete snapshot. When the configured reviewer implements the corner it is reviewing,
-the operation's `approvalPending` reviewer outcome is false — self-review is not required, and no
-other agent's approval can add signal. The `pr_checks_status` helper then composes the complete
+the operation's `approvalPending` stays true: no other agent can review the work, so only a
+current Workspace owner or admin's `orderCornerMerge` merges it. The `pr_checks_status` helper then composes the complete
 merge gate: reviewer outcome must pass, worker yolo must be on, no existing human hold may apply,
 and `reviewerExists` must be true. Human holds remain in the helper's requesting-corner
 conversation scan; absent reviewer or request state is not consent.
 
 Deploy the server before helpers that call this operation.
+
+`mergeCorner({ cornerId })` is the implementer's merge. Only the corner's implementer may call it.
+The server squash-merges the current head only when the corner is in `land` and
+`getPrChecksStatus` reports `mergeAllowed`; otherwise it attempts nothing and returns
+`{ status: 'blocked', blocker }`. The server never merges a corner on its own: a reviewer's PASS
+wakes the implementer to call this operation, and `orderCornerMerge` merges at once.

@@ -70,6 +70,14 @@ describe('corner wake reporting (Reproduction schedule-silence-4)', () => {
     } }).text).toContain(silence);
   });
 
+  it('hands a reviewer-approved head to the implementer to merge, unless a human question is open', () => {
+    const land = turn('corner_land');
+    expect(land).toContain("The reviewer approved this pull request's current head.");
+    expect(land).toContain("if a human's question or proposal in the corner has no answer, name it and do not merge; otherwise call merge_corner.");
+    expect(land).not.toContain(silence);
+    expect(turn('corner_check')).not.toContain('The reviewer approved');
+  });
+
   it('keeps workflow handoff wakes ordinary', () => {
     expect(assembleTurnPrompt({ surface: 'code-corner', task: {
       body: 'Report the workflow result', commandReason: 'subscribed_event', outsideEvent: { kind: 'workflow-handoff', subject: { kind: 'system', name: 'Beeline' }, verb: 'handed off' },
@@ -360,15 +368,15 @@ describe('prompt assembly guards', () => {
 
   it('states one merge condition, the one pr_checks_status enforces, and no other', () => {
     const merges = (name: string) => assembleSessionPrompt(SESSION_VARIANTS[name]!).systemPrompt;
-    expect(merges('code-corner-reviewed')).toContain(
-      'after its PASS the server merges the pull request itself',
-    );
+    expect(merges('code-corner-reviewed')).toContain('its PASS wakes you to merge');
+    expect(merges('code-corner-reviewed')).toContain('otherwise call merge_corner.');
+    expect(merges('code-corner-reviewed')).toContain('a refused merge');
     expect(merges('code-corner-self-reviewer')).toContain(
-      'The server merges it once checks are green, yolo is on, and no human hold stands',
+      "It merges only on a human's yes: ask a Workspace owner or admin to approve the merge, then record their yes with order_corner_merge.",
     );
+    expect(merges('code-corner-self-reviewer')).toContain('a merge GitHub refused');
     for (const name of ['code-corner-reviewed', 'code-corner-self-reviewer']) {
-      expect(merges(name), name).toMatch(/never merge it yourself/i);
-      expect(merges(name), name).toContain('a merge GitHub refused');
+      expect(merges(name), name).not.toMatch(/the server merges/i);
     }
     for (const name of ['code-corner-reviewed-yolo-off', 'code-corner-no-reviewer']) {
       expect(merges(name), name).toContain('never merge; a person merges it');
@@ -454,8 +462,8 @@ describe('prompt assembly guards', () => {
       expect(text, name).not.toContain('gh pr merge');
       expect(text, name).not.toMatch(/approved [0-9a-f<][^`]*, merge/);
     }
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain('the server merges this pull request itself');
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain('Never merge it yourself.');
+    expect(CORNER_YOLO_MERGE_NUDGE).toContain("a reviewer's PASS wakes you to merge with merge_corner");
+    expect(CORNER_YOLO_MERGE_NUDGE).toContain('Never merge it any other way.');
   });
 
   it('tells a code-corner author that a human opening the corner and prompting inside it is not the outline', () => {

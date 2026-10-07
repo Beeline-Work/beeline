@@ -144,26 +144,6 @@ describe('GitHub phone operations', () => {
     console.log('Demonstrated S08-1: check_run webhook => token and held rollup fetch at transaction depth 0.');
   });
 
-  it('Reproduction S09-1: a slow first GitHub read does not delay another eligible merge', async () => {
-    const { app } = await checksFixture(2);
-    let started!: () => void, release!: () => void;
-    const fetching = new Promise<void>(resolve => { started = resolve; });
-    const pending = new Promise<void>(resolve => { release = resolve; });
-    const read = app.readPullRequest.getMockImplementation()!;
-    app.readPullRequest.mockImplementation(async (token, repository, number) => {
-      if (number === 1) { started(); await pending; }
-      return read(token, repository, number);
-    });
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
-    const sweep = operations.landReadyCorners();
-    await fetching;
-    try {
-      await vi.waitFor(() => expect(app.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 2, '1'.repeat(40)), { timeout: 1000 });
-    } finally { release(); await sweep; }
-    expect(app.mergePullRequest).toHaveBeenCalledTimes(2);
-    console.log('Demonstrated S09-1: two eligible corners => second exact-head merge while first PR read is held.');
-  });
-
   it.each(['moved', 'missing'])('discards a check fetch when the recorded head is %s', async kind => {
     const { app, payload, corners } = await checksFixture();
     let started!: () => void, release!: () => void;
@@ -190,29 +170,6 @@ describe('GitHub phone operations', () => {
     } finally { release(); await delivery; }
   });
 
-  it('limits concurrent candidate reads to four and merges every head once', async () => {
-    const { app } = await checksFixture(6);
-    let release!: () => void;
-    const pending = new Promise<void>(resolve => { release = resolve; });
-    let active = 0, maximum = 0;
-    const read = app.readPullRequest.getMockImplementation()!;
-    app.readPullRequest.mockImplementation(async (token, repository, number) => {
-      maximum = Math.max(maximum, ++active);
-      await pending;
-      active--;
-      return read(token, repository, number);
-    });
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
-    const sweep = operations.landReadyCorners();
-    try {
-      await vi.waitFor(() => expect(active).toBe(4));
-      expect(app.readPullRequest).toHaveBeenCalledTimes(4);
-    } finally { release(); await sweep; }
-    expect(maximum).toBe(4);
-    expect(app.mergePullRequest).toHaveBeenCalledTimes(6);
-    await operations.landReadyCorners();
-    expect(app.mergePullRequest).toHaveBeenCalledTimes(6);
-  });
   it('routes a promoted corner PR and checks by its repository-scoped branch prefix', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';

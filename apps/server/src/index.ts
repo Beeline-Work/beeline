@@ -379,10 +379,9 @@ async function main() {
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       await backgroundJobs.run('webhook-expiry', () => new RoomWebhooks(jobsDatabase).expireRequests());
-      // The corner lifecycle's server merge: a `land` handoff card (or a human
-      // lifting a hold) is a new message, which wakes this loop.
+      // Corners merge only on the implementer's merge_corner or a human's
+      // order; this loop only recovers an attempt that never finished.
       if (githubJobs) await backgroundJobs.run('corner-merge-recovery', () => githubJobs.recoverUnfinishedMergeClaims());
-      if (githubJobs) await backgroundJobs.run('corner-land', () => githubJobs.landReadyCorners());
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
         lastReconciliationAt = now;

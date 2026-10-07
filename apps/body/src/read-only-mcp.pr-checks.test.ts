@@ -287,7 +287,7 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     });
     expect(result.rule).toContain(gateRule);
     expect(result.rule).toContain(
-      'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge.',
+      'When mergeAllowed is true the implementer calls merge_corner to squash-merge this exact head; no agent runs gh pr merge.',
     );
     expect(result.rule).toContain('the server wakes the implementer with its reason');
     expect(result.rule).toContain('missing state is never consent');

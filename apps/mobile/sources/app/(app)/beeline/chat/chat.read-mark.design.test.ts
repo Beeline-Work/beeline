@@ -26,7 +26,7 @@ describe('the chat surface read-mark contract', () => {
     // The send path marks read BEFORE the refresh signal, so the mark can
     // never lag behind a message the viewer just wrote.
     const sendBlock = chatSource.slice(
-      chatSource.indexOf('await sendTransport.publishPreparedMessage(preparedEvent);'),
+      chatSource.indexOf('await publishOutboxEvent(sendTransport, preparedEvent);'),
       chatSource.indexOf('refreshSignal.signal();'),
     );
     expect(sendBlock).toContain('markRead(decodedId, preparedEvent.id)');

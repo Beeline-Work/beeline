@@ -61,10 +61,18 @@ function outboxKey(viewerPubkey: string, roomId: string): string {
   return `${OUTBOX_PREFIX}${viewerPubkey}.${encodeURIComponent(roomId)}`;
 }
 
-/** One mutation-lifetime owner per mounted composer. It stores exact prepared frames only. */
+const outboxes = new Map<string, SignedEventOutbox>();
+
+/**
+ * One outbox per viewer and Room, shared by the mounted composer and the
+ * app-wide delivery driver so neither overwrites the other's records. It
+ * stores exact prepared frames only.
+ */
 export function createRoomOutbox(identity: Pick<Identity, 'publicKey'>, roomId: string) {
   const key = outboxKey(identity.publicKey, roomId);
-  return new SignedEventOutbox(
+  const existing = outboxes.get(key);
+  if (existing) return existing;
+  const outbox = new SignedEventOutbox(
     {
       load: async () => {
         const encoded = mutations.getString(key);
@@ -85,12 +93,30 @@ export function createRoomOutbox(identity: Pick<Identity, 'publicKey'>, roomId: 
       acceptUnsignedEvent: isUnsignedMonolithMessage,
     },
   );
+  outboxes.set(key, outbox);
+  return outbox;
+}
+
+/** Rooms holding any stored send for this viewer. */
+export function pendingOutboxRoomIds(viewerPubkey: string): string[] {
+  const prefix = `${OUTBOX_PREFIX}${viewerPubkey}.`;
+  return mutations.getAllKeys().flatMap((key) => {
+    if (!key.startsWith(prefix)) return [];
+    try {
+      return [decodeURIComponent(key.slice(prefix.length))];
+    } catch {
+      return [];
+    }
+  });
 }
 
 export async function evictMobileSurfaceViewer(relayOrigin: string, viewerPubkey: string) {
   await mobileSurfaceCache.evictViewer(relayOrigin, viewerPubkey);
   for (const key of mutations.getAllKeys()) {
     if (key.startsWith(`${OUTBOX_PREFIX}${viewerPubkey}.`)) mutations.delete(key);
+  }
+  for (const key of outboxes.keys()) {
+    if (key.startsWith(`${OUTBOX_PREFIX}${viewerPubkey}.`)) outboxes.delete(key);
   }
 }
 
@@ -101,6 +127,7 @@ export function clearMobileSurfaceStorage(): void {
   for (const key of mutations.getAllKeys()) {
     if (key.startsWith(OUTBOX_PREFIX)) mutations.delete(key);
   }
+  outboxes.clear();
 }
 
 /** Convenience type used only at the render boundary; cached values stay verbatim RoomView. */

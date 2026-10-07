@@ -1429,6 +1429,8 @@ export interface OrdinaryLedgerMessageProps {
   participantHandles: readonly { pubkey: string; handle: string }[];
   channelIndex: ChannelReferenceIndex;
   deliveryFailed: boolean;
+  /** The server has not stored this send yet. */
+  deliveryPending?: boolean;
   onChannelReference(target: ChannelReferenceTarget): void;
   codeRoomId?: string;
   onOpenCode?(messageId: string): void;
@@ -1546,6 +1548,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   participantHandles,
   channelIndex,
   deliveryFailed,
+  deliveryPending = false,
   onChannelReference,
   codeRoomId,
   onOpenCode,
@@ -1996,6 +1999,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               />
             </View>
           </View>
+        ) : message.isUser && deliveryPending ? (
+          <Text style={styles.outboxPendingText} testID={`outbox-delivery-pending-${message.id}`}>
+            SENDING…
+          </Text>
         ) : null}
         {message.reactions?.length ? (
           <View style={styles.reactionChips} testID={`reaction-chips-${message.id}`}>
@@ -2085,6 +2092,13 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.sectionHead,
     fontFamily: theme.buzz.monoSemibold,
     color: theme.buzz.textPrimary,
+  },
+  outboxPendingText: {
+    ...theme.buzz.type.sectionHead,
+    fontFamily: theme.buzz.monoSemibold,
+    color: theme.buzz.textSecondary,
+    marginTop: 4,
+    marginHorizontal: 8,
   },
   outboxFailureActions: { flexDirection: 'row', gap: 8, marginTop: theme.buzz.space.sm },
   replySwipeContainer: { marginHorizontal: -ALIVE_RING_PAD },

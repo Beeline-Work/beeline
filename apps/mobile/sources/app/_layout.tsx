@@ -73,6 +73,7 @@ import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
 import { startDesktopNotifications } from '@/push/desktop-notifications';
+import { startOutboxDelivery } from '@/buzz/outbox-delivery';
 
 const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
 
@@ -210,6 +211,7 @@ async function loadFonts() {
 
 export default function RootLayout() {
   React.useEffect(startDesktopNotifications, []);
+  React.useEffect(startOutboxDelivery, []);
   const isDesktop = useIsDesktop();
   React.useEffect(() => {
     const reconcileBadge = () => {

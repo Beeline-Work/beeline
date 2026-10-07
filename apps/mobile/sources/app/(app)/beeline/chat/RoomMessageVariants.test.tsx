@@ -713,6 +713,35 @@ describe('Room message variant components', () => {
     expect(ledgerEntryRender.mock.lastCall?.[0].byline.mark.alive).toBe(true);
   });
 
+  it('marks the viewer’s unstored send as SENDING… until it lands or fails', () => {
+    const props = {
+      message: message({ id: 'mine', pubkey: 'viewer', isUser: true }),
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
+    } satisfies Omit<OrdinaryLedgerMessageProps, 'deliveryFailed'>;
+    const pending = () => renderer.root.findAllByProps({ testID: 'outbox-delivery-pending-mine' });
+    const failed = () => renderer.root.findAllByProps({ testID: 'outbox-delivery-failed-mine' });
+    const renderer = render(
+      <OrdinaryLedgerMessage {...props} deliveryFailed={false} deliveryPending />,
+    );
+    expect(pending().length).toBeGreaterThan(0);
+    act(() => renderer.update(<OrdinaryLedgerMessage {...props} deliveryFailed deliveryPending />));
+    expect(pending()).toHaveLength(0);
+    expect(failed().length).toBeGreaterThan(0);
+    act(() => renderer.update(<OrdinaryLedgerMessage {...props} deliveryFailed={false} />));
+    expect(pending()).toHaveLength(0);
+    expect(failed()).toHaveLength(0);
+  });
+
   it('keeps the whole byline tile, alive ring included, inside the swipe clip box for both kinds', () => {
     // C70: on device the row lives in gesture-handler's Swipeable, whose
     // container is `overflow: 'hidden'` at the row's content edge — exactly

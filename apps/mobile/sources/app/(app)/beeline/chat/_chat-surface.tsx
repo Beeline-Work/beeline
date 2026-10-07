@@ -13,6 +13,7 @@ import React, {
   type MutableRefObject,
 } from 'react';
 import { transcriptBylineOpeners } from '@/buzz/message-dates';
+import { publishOutboxEvent } from '@/buzz/outbox-delivery';
 import {
   View,
   Text,
@@ -1308,6 +1309,11 @@ export function BuzzChatSurface({
     if (records.length === 0 || !userPubkey) return;
     addMessages(records.map((record) => displayRoomMessages([record.row], userPubkey)[0]!));
   }, [addMessages, outbox, userPubkey]);
+  // An optimistic row is a send the server has not stored yet.
+  const pendingOutboxIds = useMemo(
+    () => new Set(roomSendFrame.optimistic.map((message) => message.id)),
+    [roomSendFrame.optimistic],
+  );
   // All four display partitions share the same chronological merge. A durable
   // outbox row may be older than the current server tail after an interrupted
   // publish, so it must never claim the inverted list's newest slot.
@@ -4004,7 +4010,7 @@ export function BuzzChatSurface({
           }
         }
         await activeOutbox.attempted(preparedEvent.id);
-        const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
+        const writeResult = await publishOutboxEvent(sendTransport, preparedEvent);
         if (
           isCorner &&
           activeAgentTurn &&
@@ -5764,6 +5770,7 @@ export function BuzzChatSurface({
           participantHandles={roomParticipants}
           channelIndex={channelReferenceIndex}
           deliveryFailed={failedOutboxIds.has(item.id)}
+          deliveryPending={pendingOutboxIds.has(item.id)}
           onChannelReference={handleOpenChannelReference}
           codeRoomId={decodedId}
           onOpenCode={handleOpenCode}
@@ -5856,6 +5863,7 @@ export function BuzzChatSurface({
       beginReply,
       dismissOutboxMessage,
       failedOutboxIds,
+      pendingOutboxIds,
       replyTargetForMessage,
       retryOutboxMessage,
       channelReferenceIndex,

@@ -41,6 +41,7 @@ import {
   type LiveDraftDrainStore,
 } from '@/buzz/live-draft-drain';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { publishOutboxEvent } from '@/buzz/outbox-delivery';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import {
@@ -403,7 +404,7 @@ export function useRoomSurfaceSession({
           return next;
         });
         try {
-          await activeTransport.publishPreparedMessage(record.event);
+          await publishOutboxEvent(activeTransport, record.event);
           schedulerRef.current?.signal();
           scheduleConfirmation(eventId);
         } catch {
@@ -988,7 +989,7 @@ export function useRoomSurfaceSession({
         );
         for (const record of outbox.list().filter((record) => record.status === 'pending')) {
           await outbox.attempted(record.event.id);
-          void nextTransport.publishPreparedMessage(record.event).then(
+          void publishOutboxEvent(nextTransport, record.event).then(
             () => {
               schedulerRef.current?.signal();
               scheduleConfirmation(record.event.id);

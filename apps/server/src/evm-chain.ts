@@ -101,11 +101,6 @@ export const EVM_CHAINS: Record<WalletChainId, EvmChain> = {
 /** EIP-7528 native-token placeholder, as CDP balances and swaps use it. */
 export const NATIVE_TOKEN = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
 
-/** Hyperliquid Bridge2 on Arbitrum One (Hyperliquid docs, "USDC" > "Legacy Bridge"). */
-export const HYPERLIQUID_BRIDGE2 = '0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7';
-/** A smaller Bridge2 deposit is never credited and is lost. */
-export const HYPERLIQUID_MIN_DEPOSIT_USDC = 5;
-
 export type EvmAsset = { symbol: string; decimals: number; token: string | null };
 
 /** Resolve an asset symbol on a chain: the native token or USDC. */

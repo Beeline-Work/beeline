@@ -26,6 +26,8 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
  * The wallet runs on the FAKE CDP source (never a real key) through the same
  * phone/daemon operation surfaces the mobile app and the MCP tools use.
  */
+const BRIDGE2 = '0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7';
+
 describe('wallet over the fake CDP seam', () => {
   let database: PgliteDatabase;
   let auth: TokenAuth;
@@ -719,34 +721,103 @@ describe('wallet over the fake CDP seam', () => {
     ).toEqual({ outcome: 'failed', reason: 'swap unsupported on zora' });
   });
 
-  it('deposits at least 5 USDC from Arbitrum to Hyperliquid Bridge2', async () => {
+  it('refuses a wallet_pay to Hyperliquid Bridge2 that the venue rule says is lost', async () => {
     // The fake outlives a test; start from an empty wallet on every chain.
     fakeState().holdings.clear();
     const wallet = await createdWallet();
     await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
-    fakeState().holdings.set(wallet.address, new Map([['usdc', 100]]));
+    fundChain(wallet.address, 'arbitrum', 'usdc', 10);
+    fundChain(wallet.address, 'arbitrum', 'eth', 1);
     const send = vi.spyOn(walletSource(), 'sendTransaction');
+    const pay = (asset: string, amount: string) =>
+      daemonOperation('walletPay', { agentId: HELPER, chain: 'arbitrum', asset, amount, to: BRIDGE2 });
 
-    expect((await daemonOperation('walletHyperliquidDeposit', { agentId: HELPER, amount: '4.99' })).body).toMatchObject({
+    expect((await pay('usdc', '4.99')).body).toEqual({
       outcome: 'failed',
-      reason: expect.stringContaining('at least 5 USDC'),
+      reason:
+        'Hyperliquid Bridge2 deposits must be at least 5 USDC; a smaller deposit is never credited and is lost',
     });
-    // Base USDC does not fund an Arbitrum deposit.
-    expect((await daemonOperation('walletHyperliquidDeposit', { agentId: HELPER, amount: '5' })).body).toMatchObject({
-      outcome: 'insufficient', available: '0',
+    expect((await pay('eth', '0.1')).body).toMatchObject({
+      outcome: 'failed',
+      reason: expect.stringContaining('credits only USDC'),
     });
     expect(send).not.toHaveBeenCalled();
-
-    fundChain(wallet.address, 'arbitrum', 'usdc', 10);
-    expect((await daemonOperation('walletHyperliquidDeposit', { agentId: HELPER, amount: '5' })).body).toMatchObject({
-      outcome: 'sent',
-    });
+    expect((await pay('usdc', '5')).body).toMatchObject({ outcome: 'sent' });
     expect(send).toHaveBeenCalledWith(wallet.address, {
       chain: 'arbitrum',
       asset: 'usdc',
       amount: '5',
-      to: '0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7',
+      to: BRIDGE2,
     });
+  });
+
+  it('approves an exact amount and calls a contract, under the same funds and ledger rules', async () => {
+    fakeState().holdings.clear();
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const call = vi.spyOn(walletSource(), 'contractCall');
+    const vault = '0x' + '7'.repeat(40);
+    const deposit = { agentId: HELPER, chain: 'arbitrum', contract: vault, data: '0xb6b55f25' + '0'.repeat(64) };
+
+    expect(
+      (await daemonOperation('walletContractCall', { ...deposit, approve: { asset: 'usdc', amount: '20' } })).body,
+    ).toMatchObject({ outcome: 'insufficient', asset: 'usdc', needed: '20', available: '0' });
+    expect(call).not.toHaveBeenCalled();
+
+    fundChain(wallet.address, 'arbitrum', 'usdc', 50);
+    const sent = await daemonOperation('walletContractCall', {
+      ...deposit,
+      approve: { asset: 'usdc', amount: '20' },
+    });
+    expect(sent.body).toMatchObject({
+      outcome: 'sent',
+      amountText: '−20 USDC',
+      txUrl: expect.stringMatching(/^https:\/\/arbiscan\.io\/tx\//),
+    });
+    expect(call).toHaveBeenCalledWith(wallet.address, {
+      chain: 'arbitrum',
+      contract: vault,
+      data: deposit.data,
+      approve: { asset: 'usdc', amount: '20' },
+    });
+    const entries = (await daemonOperation('getWalletToolHistory', { agentId: HELPER })).body.entries as Array<{
+      direction: string; amountText: string; counterparty: string;
+    }>;
+    expect(entries.filter((entry) => entry.direction === 'out')).toEqual([
+      expect.objectContaining({ amountText: '−20 USDC', counterparty: vault }),
+    ]);
+  });
+
+  it('refuses contract calls that grant an allowance or break a venue rule', async () => {
+    fakeState().holdings.clear();
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'arbitrum', 'usdc', 50);
+    fundChain(wallet.address, 'arbitrum', 'eth', 1);
+    const call = vi.spyOn(walletSource(), 'contractCall');
+    const usdc = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
+    const word = (hex: string) => hex.replace(/^0x/, '').toLowerCase().padStart(64, '0');
+    const contractCall = (input: Record<string, unknown>) =>
+      daemonOperation('walletContractCall', { agentId: HELPER, chain: 'arbitrum', ...input });
+
+    // An unlimited approve hidden in call data.
+    expect(
+      (await contractCall({ contract: usdc, data: `0x095ea7b3${word('0x' + '7'.repeat(40))}${'f'.repeat(64)}` })).body,
+    ).toEqual({
+      outcome: 'failed',
+      reason: 'call data grants a token allowance; use approve, which approves an exact amount',
+    });
+    // A USDC transfer to Bridge2 below the minimum, encoded as call data.
+    expect(
+      (await contractCall({ contract: usdc, data: `0xa9059cbb${word(BRIDGE2)}${word((4_000_000).toString(16))}` })).body,
+    ).toMatchObject({ outcome: 'failed', reason: expect.stringContaining('at least 5 USDC') });
+    // Native value sent to Bridge2.
+    expect((await contractCall({ contract: BRIDGE2, data: '0x', value: '0.1' })).body).toMatchObject({
+      outcome: 'failed',
+      reason: expect.stringContaining('credits only USDC'),
+    });
+    expect((await contractCall({ contract: '0x1234', data: '0x' })).body).toMatchObject({ outcome: 'failed' });
+    expect(call).not.toHaveBeenCalled();
   });
 
   it('the only spending refusal is insufficient funds', async () => {

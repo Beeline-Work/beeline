@@ -38,7 +38,7 @@ import type {
 } from './feedback.js';
 import type {
   WalletPayInput,
-  WalletHyperliquidDepositInput,
+  WalletContractCallInput,
   WalletSendOutcome,
   WalletSwapInput,
   WalletSwapResult,
@@ -626,8 +626,8 @@ export type DaemonOperationMap = {
     WalletPayInput & TurnOutputAuthority & RoomInput,
     WalletSendOutcome | { readonly status: 'permission-required'; readonly grantId?: string }
   >;
-  walletHyperliquidDeposit: Operation<
-    WalletHyperliquidDepositInput & TurnOutputAuthority & RoomInput,
+  walletContractCall: Operation<
+    WalletContractCallInput & TurnOutputAuthority & RoomInput,
     WalletSendOutcome | { readonly status: 'permission-required'; readonly grantId?: string }
   >;
   walletSignTypedData: Operation<

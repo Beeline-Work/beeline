@@ -8,7 +8,10 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CdpWalletClient, withEip712Domain } from './cdp-client.js';
-import { HYPERLIQUID_BRIDGE2, formatUnits, parseUnits } from './evm-chain.js';
+import { formatUnits, parseUnits } from './evm-chain.js';
+import { WALLET_VENUE_RULES } from './wallet-venues.js';
+
+const HYPERLIQUID_BRIDGE2 = WALLET_VENUE_RULES[0]!.address;
 
 const OWNER = '0xE196B6eD2f276A5c33a122562F13d9a199d89a23';
 const RECIPIENT = '0x1111111111111111111111111111111111111111';
@@ -141,6 +144,35 @@ describe('sends', () => {
     expect(calls[0]!.body.transaction).toBe(
       '0x02f86482a4b18080808094af88d065e77c8cc2239327c5edb3a432268e583180b844a9059cbb0000000000000000000000002df1c51e09aecf9cacb7bc98cb1742757f163df700000000000000000000000000000000000000000000000000000000004c4b40c0',
     );
+  });
+
+  it('approves exactly the given amount for the contract, waits, then sends the call', async () => {
+    const vault = '0x7777777777777777777777777777777777777777';
+    let sends = 0;
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith('/send/transaction'))
+        return Response.json({ transactionHash: sends++ ? '0xcallhash' : '0xapprovehash' });
+      if (call.url === 'https://arb1.arbitrum.io/rpc')
+        return rpcReply(call, { eth_getTransactionReceipt: { status: '0x1' } });
+      return new Response('unexpected', { status: 500 });
+    });
+    const result = await client().contractCall(OWNER, {
+      chain: 'arbitrum',
+      contract: vault,
+      data: '0xd0e30db0',
+      value: '0.001',
+      approve: { asset: 'usdc', amount: '5' },
+    });
+    expect(result).toEqual({ txId: '0xcallhash' });
+    expect(calls.map((call) => call.url.split('/').at(-1))).toEqual(['transaction', 'rpc', 'transaction']);
+    // approve(vault, 5 USDC) on the Arbitrum USDC contract.
+    expect(calls[0]!.body.transaction).toContain(
+      `af88d065e77c8cc2239327c5edb3a432268e5831` +
+        `80b844095ea7b3${'0'.repeat(24)}${'7'.repeat(40)}${(5_000_000).toString(16).padStart(64, '0')}`,
+    );
+    expect(calls[1]!.body[0]).toMatchObject({ method: 'eth_getTransactionReceipt', params: ['0xapprovehash'] });
+    // The call itself: to the vault, 0.001 ETH, the given call data.
+    expect(calls[2]!.body.transaction).toContain(`${'7'.repeat(40)}87038d7ea4c6800084d0e30db0`);
   });
 
   it('signs with CDP and broadcasts through the RPC where CDP cannot send (Zora)', async () => {

@@ -12,10 +12,12 @@ import {
   walletExplorerTxUrl,
   type WalletChainId,
   type WalletCoinView,
+  type WalletContractCall,
   type WalletLedgerEntry,
   type WalletSendInput,
 } from '@beeline/api-contract/wallet';
 import type { CdpWalletSource } from './cdp-client.js';
+import { EVM_CHAINS } from './evm-chain.js';
 
 type FakeAccount = {
   name: string;
@@ -152,6 +154,33 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
         counterparty: input.to,
         chain: input.chain,
         usd: needed * unitPrice(symbol),
+        createdAt: Date.now(),
+      });
+      return { txId };
+    },
+    async contractCall(address: string, call: WalletContractCall) {
+      // The fake contract takes the native value and the whole approval.
+      const holdings = holdingsFor(address, call.chain);
+      const spends: Array<[string, number]> = [
+        ...(call.value ? [[EVM_CHAINS[call.chain].nativeSymbol, Number(call.value)] as [string, number]] : []),
+        ...(call.approve ? [[call.approve.asset.toLowerCase(), Number(call.approve.amount)] as [string, number]] : []),
+      ];
+      for (const [symbol, needed] of spends) {
+        const available = holdings.get(symbol) ?? 0;
+        if (Number.isNaN(needed) || needed > available)
+          throw new FakeInsufficientFundsError(needed, available, symbol);
+      }
+      for (const [symbol, needed] of spends) holdings.set(symbol, (holdings.get(symbol) ?? 0) - needed);
+      const txId = `fake-call-${randomUUID()}`;
+      const [asset, amount] = spends[0] ?? [EVM_CHAINS[call.chain].nativeSymbol, 0];
+      record(address, {
+        txId,
+        direction: 'out',
+        asset,
+        amount: String(amount),
+        counterparty: call.contract,
+        chain: call.chain,
+        usd: amount * unitPrice(asset),
         createdAt: Date.now(),
       });
       return { txId };

@@ -154,7 +154,7 @@ import {
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
 import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
-import { agentWalletTool, agentSignTypedData, delegationView } from './wallet.js';
+import { agentWalletTool, agentSignTypedData, agentContractCall, delegationView } from './wallet.js';
 import {
   noteFirstSilence,
   TURN_FAILURE_REASON_MAX,
@@ -364,7 +364,7 @@ export class DaemonService {
       'getWalletToolQuote',
       'walletPay',
       'walletSwap',
-      'walletHyperliquidDeposit',
+      'walletContractCall',
       'walletSignTypedData',
     ].includes(name);
     if (walletCall && !scopedRoom) throw new Error('wallet access requires an active Room command');
@@ -405,7 +405,7 @@ export class DaemonService {
       'getWalletToolQuote',
       'walletPay',
       'walletSwap',
-      'walletHyperliquidDeposit',
+      'walletContractCall',
       'walletSignTypedData',
 
       'listTurnAgentGrants',
@@ -638,7 +638,7 @@ export class DaemonService {
               'getWalletToolQuote',
               'walletPay',
               'walletSwap',
-              'walletHyperliquidDeposit',
+              'walletContractCall',
               'walletSignTypedData',
             ],
           ].includes(name) &&
@@ -1674,12 +1674,11 @@ export class DaemonService {
           authenticatedAgentId,
           input as Input<'walletSwap'>,
         )) as Output<Name>;
-      case 'walletHyperliquidDeposit':
-        return (await agentWalletTool(
+      case 'walletContractCall':
+        return (await agentContractCall(
           this.database,
-          'hyperliquid-deposit',
           authenticatedAgentId,
-          input as Input<'walletHyperliquidDeposit'>,
+          input as Input<'walletContractCall'>,
         )) as Output<Name>;
       // The feedback loop (`feedback.ts`). Any agent may report from its own
       // turn; only a configured System sender's agent may close the loop.
@@ -8029,7 +8028,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWalletToolQuote: true,
   walletPay: true,
   walletSwap: true,
-  walletHyperliquidDeposit: true,
+  walletContractCall: true,
   walletSignTypedData: true,
   reportFeedback: true,
   notifyFeedbackFixed: true,

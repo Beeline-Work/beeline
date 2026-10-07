@@ -34,6 +34,7 @@ import {
   WALLET_CHAIN_NAMES,
   type WalletChainId,
   type WalletCoinView,
+  type WalletContractCall,
   type WalletLedgerEntry,
   type WalletSendInput,
   type WalletSendOutcome,
@@ -45,12 +46,8 @@ import { ensureConnectorDirectMessageRoom, ensureConnectorIdentity } from './wor
 import { systemLine } from './system-line.js';
 import { fakeCdpWalletSource } from './cdp-fake.js';
 import { realCdpWalletSource, type CdpWalletSource } from './cdp-client.js';
-import {
-  HYPERLIQUID_BRIDGE2,
-  HYPERLIQUID_MIN_DEPOSIT_USDC,
-  formatUnits,
-  parseUnits,
-} from './evm-chain.js';
+import { EVM_CHAINS, evmAsset, formatUnits, isEvmAddress, parseUnits } from './evm-chain.js';
+import { venueRefusal, type WalletTransfer } from './wallet-venues.js';
 
 export { fakeCdpWalletSource } from './cdp-fake.js';
 export type { CdpWalletSource } from './cdp-client.js';
@@ -836,8 +833,7 @@ export async function agentWalletTool(
     | 'history'
     | 'quote'
     | 'pay'
-    | 'swap'
-    | 'hyperliquid-deposit',
+    | 'swap',
   agentId: string,
   input?: {
     chain?: WalletChainId;
@@ -906,20 +902,6 @@ export async function agentWalletTool(
         asset: input?.asset ?? 'usdc',
         amount: input?.amount ?? '',
         to: input?.to ?? '',
-      });
-    }
-    case 'hyperliquid-deposit': {
-      const amount = input?.amount ?? '';
-      if (!(Number(amount) >= HYPERLIQUID_MIN_DEPOSIT_USDC))
-        return {
-          outcome: 'failed',
-          reason: `Hyperliquid Bridge2 deposits must be at least ${HYPERLIQUID_MIN_DEPOSIT_USDC} USDC; a smaller deposit is never credited and is lost`,
-        };
-      return await agentSend(database, ctx, agentId, {
-        chain: 'arbitrum',
-        asset: 'usdc',
-        amount,
-        to: HYPERLIQUID_BRIDGE2,
       });
     }
     case 'swap': {
@@ -1005,6 +987,8 @@ async function agentSend(
   if (!(await assertAgentDelegation(database, ctx.ownerIdentityId))) {
     return { outcome: 'delegation-expired' };
   }
+  const refusal = venueRefusal(input);
+  if (refusal) return { outcome: 'failed', reason: refusal };
   const source = walletSource();
   const holdings = await readHoldings(source, ctx.binding.eoaAddress);
   await reconcileBalancesSafely(database, ctx, holdings);
@@ -1062,6 +1046,170 @@ async function agentSend(
     };
   } catch (error) {
     return handleSendFailure(database, ctx, agentId, error, symbol, input.amount, input.chain);
+  }
+}
+
+/** Calldata selectors that grant a token allowance; `approve` is the bounded way. */
+const ALLOWANCE_SELECTORS = new Set([
+  '0x095ea7b3', // approve(address,uint256)
+  '0x39509351', // increaseAllowance(address,uint256)
+  '0xa22cb465', // setApprovalForAll(address,bool)
+]);
+const ERC20_TRANSFER_SELECTOR = '0xa9059cbb';
+
+/**
+ * Validate a contract call and list what it spends: the native value, the
+ * approved token amount, and a USDC `transfer` encoded in the call data.
+ * Throws a reason when the call is malformed or grants an allowance itself.
+ */
+export function contractCallSpends(input: WalletContractCall): {
+  call: WalletContractCall;
+  spends: WalletTransfer[];
+} {
+  const chain = validChain(input.chain);
+  const contract = typeof input.contract === 'string' ? input.contract : '';
+  if (!isEvmAddress(contract)) throw new Error(`invalid contract address: ${contract}`);
+  const data = typeof input.data === 'string' ? input.data : '';
+  if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(data) || data.length > 2 + 2 * 64 * 1024)
+    throw new Error('call data must be 0x-prefixed hex bytes, at most 64 KB');
+  const selector = data.slice(0, 10).toLowerCase();
+  if (ALLOWANCE_SELECTORS.has(selector))
+    throw new Error('call data grants a token allowance; use approve, which approves an exact amount');
+  const spends: WalletTransfer[] = [];
+  const native = evmAsset(chain, 'native');
+  let value: string | undefined;
+  if (input.value !== undefined && input.value !== '') {
+    value = String(input.value);
+    if (parseUnits(value, native.decimals) > 0n)
+      spends.push({ chain, asset: native.symbol, amount: value, to: contract });
+  }
+  let approve: WalletContractCall['approve'];
+  if (input.approve !== undefined) {
+    const asset = evmAsset(chain, String(input.approve?.asset ?? ''));
+    if (!asset.token) throw new Error('approve needs a token, not the native asset');
+    const amount = String(input.approve?.amount ?? '');
+    if (parseUnits(amount, asset.decimals) <= 0n) throw new Error('approve amount must be positive');
+    approve = { asset: asset.symbol, amount };
+    spends.push({ chain, asset: asset.symbol, amount, to: contract });
+  }
+  const usdc = EVM_CHAINS[chain].usdc;
+  if (
+    selector === ERC20_TRANSFER_SELECTOR &&
+    contract.toLowerCase() === usdc.address.toLowerCase() &&
+    data.length === 10 + 128
+  )
+    spends.push({
+      chain,
+      asset: 'usdc',
+      amount: formatUnits(BigInt(`0x${data.slice(74, 138)}`), usdc.decimals),
+      to: `0x${data.slice(34, 74)}`,
+    });
+  return {
+    call: { chain, contract, data, ...(value ? { value } : {}), ...(approve ? { approve } : {}) },
+    spends,
+  };
+}
+
+/**
+ * One agent-initiated contract call (`wallet_contract_call`): the same
+ * delegation gate, venue rules, funds check, ledger line and record as
+ * `wallet_pay`. Its spends are the native value, the exact approval and a
+ * USDC transfer in the call data.
+ */
+export async function agentContractCall(
+  database: SqlDatabase,
+  agentId: string,
+  input: WalletContractCall,
+): Promise<WalletSendOutcome> {
+  const ctx = await walletAgentContext(database, agentId);
+  if (!ctx) throw new Error('no wallet: the agent has no connected owner with a wallet');
+  if (!(await assertAgentDelegation(database, ctx.ownerIdentityId)))
+    return { outcome: 'delegation-expired' };
+  let checked: ReturnType<typeof contractCallSpends>;
+  try {
+    checked = contractCallSpends(input);
+  } catch (error) {
+    return { outcome: 'failed', reason: error instanceof Error ? error.message : String(error) };
+  }
+  const { call, spends } = checked;
+  for (const spend of spends) {
+    const refusal = venueRefusal(spend);
+    if (refusal) return { outcome: 'failed', reason: refusal };
+  }
+  const source = walletSource();
+  const holdings = await readHoldings(source, ctx.binding.eoaAddress);
+  await reconcileBalancesSafely(database, ctx, holdings);
+  const coins = chainCoins(holdings, call.chain);
+  const needed = new Map<string, number>();
+  for (const spend of spends)
+    needed.set(spend.asset, (needed.get(spend.asset) ?? 0) + Number(spend.amount));
+  for (const [symbol, amount] of needed) {
+    const available = coins.find((coin) => coin.symbol === symbol)?.amount ?? '0';
+    if (amount > Number(available)) {
+      await postInsufficientNotice(
+        database,
+        ctx.ownerIdentityId,
+        ctx.workspaceId,
+        { chain: call.chain, asset: symbol, amount: String(amount) },
+        {
+          needed: String(amount),
+          available,
+          asset: symbol,
+          agentName: await agentName(database, agentId),
+        },
+      );
+      return { outcome: 'insufficient', asset: symbol, needed: String(amount), available };
+    }
+  }
+  const primary = spends[0] ?? {
+    chain: call.chain,
+    asset: EVM_CHAINS[call.chain].nativeSymbol,
+    amount: '0',
+    to: call.contract,
+  };
+  try {
+    const sent = await source.contractCall(ctx.binding.eoaAddress, call);
+    let totalUsd = holdingsUsd(holdings.coins);
+    for (const [symbol, amount] of needed) {
+      const holding = coins.find((coin) => coin.symbol === symbol);
+      if (holding) totalUsd -= usdValue(holding) * (amount / Number(holding.amount));
+    }
+    const amountText = (spends.length ? spends : [primary])
+      .map((spend) => `−${spend.amount} ${spend.asset.toUpperCase()}`)
+      .join(' ');
+    const txUrl = walletExplorerTxUrl(call.chain, sent.txId);
+    await postLedgerLine(database, ctx.workspaceId, ctx.ownerIdentityId, {
+      direction: 'out',
+      agentName: await agentName(database, agentId),
+      amountText,
+      counterparty: call.contract,
+      chain: call.chain,
+      balanceAfterUsd: formatUsd(totalUsd),
+      createdAt: Date.now(),
+      txUrl,
+    });
+    await recordTransaction(database, ctx.ownerIdentityId, {
+      txId: sent.txId,
+      direction: 'out',
+      asset: primary.asset,
+      amount: primary.amount,
+      counterparty: call.contract,
+      chain: call.chain,
+      balanceAfterUsd: formatUsd(totalUsd),
+      txUrl,
+      agentId,
+    });
+    return { outcome: 'sent', txUrl, amountText, balanceAfterUsd: formatUsd(totalUsd) };
+  } catch (error) {
+    return handleSendFailure(
+      database,
+      ctx,
+      agentId,
+      error,
+      primary.asset,
+      primary.amount,
+      call.chain,
+    );
   }
 }
 

@@ -763,7 +763,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'wallet_pay',
     description:
-      "Send crypto from your connected owner's wallet to one address. Requires the owner's live delegated-signing grant; an expired grant is returned as delegation-expired and means your owner must re-grant permission in the app. Resource access is checked for the original requester; approval includes paid calls within that scope. Insufficient funds still refuses the send. Every send is written to the @wallet ledger.",
+      "Send crypto from your connected owner's wallet to one address. Requires the owner's live delegated-signing grant; an expired grant is returned as delegation-expired and means your owner must re-grant permission in the app. Resource access is checked for the original requester; approval includes paid calls within that scope. Insufficient funds still refuses the send. A send a known venue would never credit is refused, e.g. under 5 USDC to Hyperliquid Bridge2 (0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7 on arbitrum). Every send is written to the @wallet ledger.",
     inputSchema: {
       type: 'object',
       required: ['asset', 'amount', 'to'],
@@ -793,14 +793,27 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    name: 'wallet_hyperliquid_deposit',
+    name: 'wallet_contract_call',
     description:
-      "Deposit USDC from your owner's wallet on Arbitrum into their Hyperliquid account by sending it to Hyperliquid's Bridge2 contract; it is credited to the same address in about a minute. The minimum is 5 USDC: a smaller deposit is never credited and is lost, so it is refused. Same grant and ledger rules as wallet_pay.",
+      "Call a contract from your owner's wallet, for venues that take an approve and a call rather than a plain transfer: bridges, vaults, lending and similar. `data` is the ABI-encoded call data. `approve` first approves exactly that amount of a token (usdc) for the contract; call data that grants an allowance itself is refused. `value` sends the chain's native token with the call. The approved amount, the value and a USDC transfer in the call data count as spends: insufficient funds refuse the call, and known venue rules apply as for wallet_pay. Same grant and ledger rules as wallet_pay.",
     inputSchema: {
       type: 'object',
-      required: ['amount'],
+      required: ['chain', 'contract', 'data'],
       properties: {
-        amount: { type: 'string', description: 'USDC to deposit, at least 5.' },
+        chain: { type: 'string', description: 'The chain the contract is on, e.g. arbitrum.' },
+        contract: { type: 'string', description: 'The contract address to call.' },
+        data: { type: 'string', description: '0x-prefixed ABI-encoded call data.' },
+        value: { type: 'string', description: "Native token to send with the call, e.g. 0.01. Defaults to none." },
+        approve: {
+          type: 'object',
+          description: 'Approve exactly this token amount for the contract before the call.',
+          required: ['asset', 'amount'],
+          properties: {
+            asset: { type: 'string', description: 'Token symbol, e.g. usdc.' },
+            amount: { type: 'string', description: 'Exact amount to approve, in the token.' },
+          },
+          additionalProperties: false,
+        },
       },
       additionalProperties: false,
     },
@@ -4382,14 +4395,22 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           amount: String(args.amount ?? ''),
         }),
       );
-    case 'wallet_hyperliquid_deposit':
+    case 'wallet_contract_call': {
+      const approve = args.approve as JsonObject | undefined;
       return JSON.stringify(
-        await daemonExecute('walletHyperliquidDeposit', {
+        await daemonExecute('walletContractCall', {
           agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
           roomId: agentScheduleRoomId(),
-          amount: String(args.amount ?? ''),
+          chain: String(args.chain ?? ''),
+          contract: String(args.contract ?? ''),
+          data: String(args.data ?? ''),
+          ...(typeof args.value === 'string' ? { value: args.value } : {}),
+          ...(approve && typeof approve === 'object'
+            ? { approve: { asset: String(approve.asset ?? ''), amount: String(approve.amount ?? '') } }
+            : {}),
         }),
       );
+    }
     case 'wallet_sign_typed_data':
       return JSON.stringify(
         await daemonExecute('walletSignTypedData', {

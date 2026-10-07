@@ -1,6 +1,7 @@
 import { RoomWebhooks, WebhookError } from './room-webhooks.js';
 import { WEBHOOK_MAX_BYTES } from '@beeline/api-contract/phone';
 import { WorkflowAuthorizationError } from './workflow-admin.js';
+import { GitHubHttpError } from '@beeline/auth/github';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -438,7 +439,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       helperVersionGate,
     ).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
-      const status =
+      let status =
         error instanceof WorkflowAuthorizationError || error instanceof WebhookError
           ? error.status
           : (message.startsWith('corner brief attachment ') &&
@@ -468,6 +469,11 @@ export function createBeelineServer(options: ServerOptions): Server {
                 : message.includes('not found')
                   ? 404
                   : 503;
+      // GitHub's own outage or rate limit is a bad gateway, not this server
+      // being unavailable; the message already names GitHub's status.
+      if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429)) {
+        status = 502;
+      }
       console.error(
         '[req-error]',
         method,

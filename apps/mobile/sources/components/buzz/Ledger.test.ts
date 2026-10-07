@@ -1323,6 +1323,9 @@ describe('expandable system notices', () => {
     expect(controls()).toHaveLength(0);
     expect(measurement.props.accessibilityElementsHidden).toBe(true);
     expect(measurement.props.importantForAccessibility).toBe('no-hide-descendants');
+    // Android ignores pointerEvents on Text; only a View wrapper keeps the
+    // overflowing copy from taking taps meant for the row below.
+    expect(measurement.parent?.props.pointerEvents).toBe('none');
     act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}, {}] } }));
     expect(controls()).toHaveLength(0);
     act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}, {}, {}] } }));

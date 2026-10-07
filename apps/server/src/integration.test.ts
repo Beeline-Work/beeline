@@ -24,6 +24,7 @@ import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
 import { MediaExpiryLoop, PushDeliveryLoop } from './background.js';
 import { GitHubOperations } from './github-operations.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
+import { GitHubHttpError } from '@beeline/auth/github';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import {
   isCommunityInviteToken,
@@ -97,7 +98,9 @@ describe('monolith integration', () => {
     readCommitCheckRollup: ReturnType<typeof vi.fn>;
   };
   let githubRollupState: 'pending' | 'passed' | 'failed';
+  let roomTokenFailure: Error | undefined;
   beforeEach(async () => {
+    roomTokenFailure = undefined;
     database = new PgliteDatabase();
     await migrate(database);
     await new AuthStore(database as unknown as TransactionalDatabase).migrate();
@@ -236,7 +239,10 @@ describe('monolith integration', () => {
       objectService,
       github: {
         webhookSecret: 'webhook-secret',
-        roomToken: async () => ({ token: 'github-room-token', expiresAt: Date.now() + 60_000 }),
+        roomToken: async () => {
+          if (roomTokenFailure) throw roomTokenFailure;
+          return { token: 'github-room-token', expiresAt: Date.now() + 60_000 };
+        },
         completeInstallation,
         onWebhook: processWebhook,
       },
@@ -7000,6 +7006,15 @@ describe('monolith integration', () => {
     const roomToken = await request(`/v1/phone/github/room-token/${ROOM}`);
     expect(roomToken.status).toBe(200);
     expect(((await roomToken.json()) as { token: string }).token).toBe('github-room-token');
+    // A GitHub outage is a bad gateway that names GitHub's status, not this
+    // server's own 503; other GitHub refusals keep their mapping.
+    roomTokenFailure = new GitHubHttpError('GitHub installation token', 500);
+    const outage = await request(`/v1/phone/github/room-token/${ROOM}`);
+    expect(outage.status).toBe(502);
+    expect(await outage.json()).toEqual({ error: 'GitHub installation token failed: HTTP 500' });
+    roomTokenFailure = new GitHubHttpError('GitHub installation token', 422);
+    expect((await request(`/v1/phone/github/room-token/${ROOM}`)).status).toBe(503);
+    roomTokenFailure = undefined;
     const payload = Buffer.from(JSON.stringify({ action: 'opened' }));
     const signature = `sha256=${createHmac('sha256', 'webhook-secret').update(payload).digest('hex')}`;
     const send = () =>

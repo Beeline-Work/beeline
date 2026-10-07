@@ -836,27 +836,30 @@ export function LedgerSystemLine({
   return (
     <View style={styles.systemLine} testID={`system-line-${id}`}>
       <View>
-        {/* Measure unclamped copy: native reports lines, web reports its laid-out height. */}
-        <Text
-          ref={measurementRef}
-          testID={`system-line-measurement-${id}`}
-          style={[styles.systemLineText, styles.systemLineMeasurement]}
-          pointerEvents="none"
-          accessible={false}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          aria-hidden
-          onTextLayout={
-            Platform.OS === 'web'
-              ? undefined
-              : ({ nativeEvent }) => {
-                  setOverflows(nativeEvent.lines.length > 2);
-                }
-          }
-          onLayout={Platform.OS === 'web' ? measureWebOverflow : undefined}
-        >
-          {fullText}
-        </Text>
+        {/* Measure unclamped copy: native reports lines, web reports its laid-out height.
+            Android ignores pointerEvents on Text, so the View keeps the copy from taking
+            taps where it overflows onto the row below. */}
+        <View pointerEvents="none" style={styles.systemLineMeasurement}>
+          <Text
+            ref={measurementRef}
+            testID={`system-line-measurement-${id}`}
+            style={styles.systemLineText}
+            accessible={false}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            aria-hidden
+            onTextLayout={
+              Platform.OS === 'web'
+                ? undefined
+                : ({ nativeEvent }) => {
+                    setOverflows(nativeEvent.lines.length > 2);
+                  }
+            }
+            onLayout={Platform.OS === 'web' ? measureWebOverflow : undefined}
+          >
+            {fullText}
+          </Text>
+        </View>
         <Text
           style={styles.systemLineText}
           numberOfLines={expanded ? undefined : 2}

@@ -208,6 +208,8 @@ export type WalletToolBalanceInput = { readonly agentId: string; readonly chain?
 export type WalletToolBalanceResult = {
   readonly totalUsd: string;
   readonly coins: readonly WalletCoinView[];
+  /** Chains whose balance could not be read; absent when every chain was read. */
+  readonly unreadChains?: readonly WalletChainId[];
 };
 
 export type WalletToolChainsInput = { readonly agentId: string };
@@ -228,9 +230,14 @@ export type WalletToolQuoteResult = {
   readonly sufficient: boolean;
   readonly available: string;
   readonly asset: string;
+  readonly chain: WalletChainId;
+  /** True when the chain's balance could not be read, so `available` is unknown. */
+  readonly unread?: boolean;
 };
 
 export type WalletPayInput = WalletSendInput & { readonly agentId: string };
+/** USDC from Arbitrum to Hyperliquid's Bridge2; at least 5 USDC. */
+export type WalletHyperliquidDepositInput = { readonly agentId: string; readonly amount: string };
 export type WalletSwapInput = {
   readonly agentId: string;
   readonly fromAsset: string;
@@ -248,9 +255,11 @@ export type WalletSwapResult =
       readonly balanceAfterUsd: string;
     }
   | WalletInsufficient
-  | WalletDelegationExpired;
+  | WalletDelegationExpired
+  | WalletFailed;
 
-/** EIP-712 payload, forwarded unchanged to CDP without a chain allowlist. */
+/** EIP-712 payload, forwarded to CDP without a chain allowlist; a missing
+ *  `EIP712Domain` type is derived from the domain fields present. */
 export type WalletTypedData = {
   readonly domain: Readonly<Record<string, unknown>>;
   readonly types: Readonly<Record<string, readonly { readonly name: string; readonly type: string }[]>>;

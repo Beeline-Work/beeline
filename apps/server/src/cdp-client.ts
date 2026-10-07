@@ -27,19 +27,36 @@
  *   POST /platform/v2/solana/accounts       -> 201 { address, name, ... }
  *   GET  /platform/v2/evm/token-balances/{network}/{address}
  *
- * Send is wired to the documented CDP v2 transfer endpoint; flagged for
- * funded verification.
+ * Sends, swaps and typed-data signing follow the CDP v2 OpenAPI spec
+ * (coinbase/cdp-sdk openapi.yaml): send/transaction, sign/transaction,
+ * /evm/swaps and sign/typed-data. Per-chain coverage lives in evm-chain.ts.
  */
 import { createPrivateKey, createPublicKey, randomUUID, sign, type KeyObject, createSign, createHash } from 'node:crypto';
 import {
   walletAssetName,
-  walletExplorerTxUrl,
   type WalletChainId,
   type WalletCoinView,
   type WalletLedgerEntry,
   type WalletSendInput,
   type WalletTypedData,
 } from '@beeline/api-contract/wallet';
+import {
+  EVM_CHAINS,
+  NATIVE_TOKEN,
+  appendPermit2Signature,
+  erc20ApproveData,
+  erc20TransferData,
+  evmAsset,
+  formatUnits,
+  hexToBigInt,
+  isEvmAddress,
+  parseUnits,
+  rpc,
+  rpcBatch,
+  rpcNativeAndUsdc,
+  serializeEip1559,
+  usdPrice,
+} from './evm-chain.js';
 
 // ---------------------------------------------------------------------------
 // Credential parsing
@@ -62,22 +79,22 @@ export interface CdpWalletSource {
   createEvmAccount(name: string): Promise<{ address: string }>;
   /** Create a SEPARATE Solana account with the given deterministic name. */
   createSolanaAccount(name: string): Promise<{ address: string }>;
-  /** Holdings for an EVM address on a specific network (e.g. "base"). */
-  balances(network: string, address: string): Promise<WalletCoinView[]>;
+  /** Holdings for an EVM address on one chain, each tagged with that chain. */
+  balances(network: WalletChainId, address: string): Promise<WalletCoinView[]>;
   /** Estimated send fee; `sponsored` chains (Base, via the paymaster) carry null. */
   feeEstimate(chain: WalletChainId): Promise<{ feeUsd: number | null; sponsored: boolean }>;
   /** The paymaster's free monthly gas allowance, or null when unconfigured. */
   sponsorshipAllowance(): Promise<{ usedUsd: number; limitUsd: number } | null>;
   /** Move `input.amount` of `input.asset` to `input.to`. Throws on failure. */
   sendTransaction(address: string, input: WalletSendInput): Promise<{ txId: string }>;
-  /** Convert `fromAsset` to `toAsset` in-wallet (same account, no transfer). */
+  /** Convert `fromAsset` to `toAsset` in-wallet on one chain (same account, no transfer). */
   swap(
     address: string,
-    input: { fromAsset: string; toAsset: string; amount: string },
+    input: { chain: WalletChainId; fromAsset: string; toAsset: string; amount: string },
   ): Promise<{ txId: string; toAmount: string }>;
   /** Sign an EIP-712 message without broadcasting or selecting a network. */
   signTypedData(address: string, input: WalletTypedData): Promise<{ signature: string }>;
-  /** Recent transaction history (both directions) for deposit reconciliation. */
+  /** Recent transaction history (both directions) for deposit reconciliation; the real client has none. */
   history(address: string, limit: number): Promise<WalletLedgerEntry[]>;
 }
 
@@ -347,32 +364,76 @@ export class CdpWalletClient implements CdpWalletSource {
   }
 
   /**
-   * Holdings for an EVM address on a specific network.
-   * GET /platform/v2/evm/token-balances/{network}/{address}
-   * Developer JWT only (no wallet-secret needed).
+   * Native and USDC holdings (plus any other CDP-indexed token) for an EVM
+   * address on one chain. CDP's token-balances endpoint covers only Base and
+   * Ethereum; every other chain, and any CDP failure, reads the public RPC.
    */
-  async balances(network: string, address: string): Promise<WalletCoinView[]> {
-    const result = await this.devRequest<{
-      balances?: Array<{
-        asset?: string;
-        asset_id?: string;
-        symbol?: string;
-        name?: string;
-        amount: string;
-        usd_value?: string;
-        usdValue?: string;
-      }>;
-    }>('GET', `/evm/token-balances/${network}/${address}`);
-    const rows = result.balances ?? [];
-    return rows.map((row) => {
-      const symbol = assetSymbol(row.asset ?? row.asset_id ?? row.symbol ?? '');
-      return {
-        symbol,
-        name: row.name ?? walletAssetName(symbol),
-        amount: row.amount,
-        usd: formatUsd(Number(row.usd_value ?? row.usdValue ?? 0)),
-      };
-    });
+  async balances(network: WalletChainId, address: string): Promise<WalletCoinView[]> {
+    const chain = EVM_CHAINS[network];
+    let rows: Array<{ symbol: string; amount: bigint; decimals: number }> | null = null;
+    if (chain.cdpBalances) {
+      try {
+        rows = await this.cdpTokenBalances(network, address);
+      } catch (error) {
+        console.error(
+          `[cdp] token-balances failed for ${network}; reading the public RPC:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    if (!rows) {
+      const { native, usdc } = await rpcNativeAndUsdc(network, address);
+      rows = [
+        { symbol: chain.nativeSymbol, amount: native, decimals: 18 },
+        { symbol: 'usdc', amount: usdc, decimals: chain.usdc.decimals },
+      ];
+    }
+    const coins: WalletCoinView[] = [];
+    for (const row of rows) {
+      if (row.amount <= 0n) continue;
+      const amount = formatUnits(row.amount, row.decimals);
+      coins.push({
+        symbol: row.symbol,
+        name: walletAssetName(row.symbol),
+        chain: network,
+        amount,
+        usd: formatUsd(Number(amount) * (await usdPrice(row.symbol))),
+      });
+    }
+    return coins;
+  }
+
+  /** GET /platform/v2/evm/token-balances/{network}/{address}, every page. */
+  private async cdpTokenBalances(
+    network: WalletChainId,
+    address: string,
+  ): Promise<Array<{ symbol: string; amount: bigint; decimals: number }>> {
+    const chain = EVM_CHAINS[network];
+    const rows: Array<{ symbol: string; amount: bigint; decimals: number }> = [];
+    let pageToken: string | undefined;
+    do {
+      const result = await this.devRequest<{
+        balances?: Array<{
+          amount?: { amount?: string; decimals?: number };
+          token?: { symbol?: string; contractAddress?: string };
+        }>;
+        nextPageToken?: string;
+      }>('GET', `/evm/token-balances/${network}/${address}${pageToken ? `?pageToken=${encodeURIComponent(pageToken)}` : ''}`);
+      for (const row of result.balances ?? []) {
+        const contract = row.token?.contractAddress?.toLowerCase() ?? '';
+        const decimals = row.amount?.decimals;
+        if (!row.amount?.amount || typeof decimals !== 'number') continue;
+        const symbol =
+          contract === NATIVE_TOKEN.toLowerCase()
+            ? chain.nativeSymbol
+            : contract === chain.usdc.address.toLowerCase()
+              ? 'usdc'
+              : (row.token?.symbol ?? contract).toLowerCase();
+        rows.push({ symbol, amount: BigInt(row.amount.amount), decimals });
+      }
+      pageToken = result.nextPageToken || undefined;
+    } while (pageToken);
+    return rows;
   }
 
   async feeEstimate(chain: WalletChainId): Promise<{ feeUsd: number | null; sponsored: boolean }> {
@@ -394,61 +455,138 @@ export class CdpWalletClient implements CdpWalletSource {
     return null;
   }
 
-  /**
-   * Move funds. Wired to the documented CDP v2 transfer endpoint.
-   *
-   * @todo funded-verify: this endpoint could not be probed against a funded
-   *       account. Verify with a real transfer after a wallet holds funds.
-   */
+  /** Send the native token or USDC as one EIP-1559 transaction. */
   async sendTransaction(address: string, input: WalletSendInput): Promise<{ txId: string }> {
-    if (!this.walletKey) throw new Error('Wallet secret required for sends');
-    const result = await this.walletRequest<{ transaction_id?: string; txId?: string; id?: string }>(
-      'POST',
-      `/evm/accounts/${address}/transfers`,
-      {
-        amount: input.amount,
-        asset_id: input.asset.toLowerCase(),
-        destination: input.to,
-        network_id: input.chain,
-      },
-    );
-    return { txId: result.transaction_id ?? result.txId ?? result.id ?? 'unknown' };
+    if (!isEvmAddress(input.to)) throw new Error(`invalid recipient address: ${input.to}`);
+    const asset = evmAsset(input.chain, input.asset);
+    const amount = parseUnits(input.amount, asset.decimals);
+    if (amount <= 0n) throw new Error('amount must be positive');
+    return {
+      txId: await this.sendEvmTransaction(
+        address,
+        input.chain,
+        asset.token
+          ? { to: asset.token, data: erc20TransferData(input.to, amount) }
+          : { to: input.to, value: amount },
+      ),
+    };
   }
 
   /**
-   * Swap in-wallet.
-   *
-   * @todo funded-verify: verify swap endpoint against CDP v2 server-wallet docs.
+   * POST /platform/v2/evm/accounts/{address}/send/transaction where CDP
+   * supports the network (it fills nonce, gas and fees). Elsewhere the
+   * transaction is completed from the public RPC, signed by CDP
+   * (/sign/transaction) and broadcast with eth_sendRawTransaction.
+   */
+  private async sendEvmTransaction(
+    address: string,
+    network: WalletChainId,
+    tx: { to: string; value?: bigint; data?: string; gas?: bigint },
+  ): Promise<string> {
+    if (!this.walletKey) throw new Error('Wallet secret required for sends');
+    const chain = EVM_CHAINS[network];
+    if (chain.cdpSend) {
+      const result = await this.walletRequest<{ transactionHash: string }>(
+        'POST',
+        `/evm/accounts/${address}/send/transaction`,
+        { network, transaction: serializeEip1559({ chainId: chain.chainId, ...tx }) },
+      );
+      return result.transactionHash;
+    }
+    const call = {
+      from: address,
+      to: tx.to,
+      ...(tx.value ? { value: `0x${tx.value.toString(16)}` } : {}),
+      ...(tx.data ? { data: tx.data } : {}),
+    };
+    const [nonce, priority, block, estimate] = await rpcBatch(network, [
+      { method: 'eth_getTransactionCount', params: [address, 'pending'] },
+      { method: 'eth_maxPriorityFeePerGas', params: [] },
+      { method: 'eth_getBlockByNumber', params: ['latest', false] },
+      { method: 'eth_estimateGas', params: [call] },
+    ]);
+    const maxPriorityFeePerGas = hexToBigInt(priority);
+    const baseFee = hexToBigInt((block as { baseFeePerGas?: string }).baseFeePerGas ?? '0x0');
+    const signed = await this.walletRequest<{ signedTransaction: string }>(
+      'POST',
+      `/evm/accounts/${address}/sign/transaction`,
+      {
+        transaction: serializeEip1559({
+          chainId: chain.chainId,
+          ...tx,
+          nonce: hexToBigInt(nonce),
+          maxPriorityFeePerGas,
+          maxFeePerGas: baseFee * 2n + maxPriorityFeePerGas,
+          gas: tx.gas ?? (hexToBigInt(estimate) * 12n) / 10n,
+        }),
+      },
+    );
+    return String(await rpc(network, 'eth_sendRawTransaction', [signed.signedTransaction]));
+  }
+
+  /**
+   * Swap in-wallet through CDP's swap API (POST /platform/v2/evm/swaps), on
+   * the networks it supports. An ERC-20 sell first approves Permit2 when the
+   * quote reports a missing allowance, then signs the Permit2 message and
+   * appends it to the swap calldata.
    */
   async swap(
     address: string,
-    input: { fromAsset: string; toAsset: string; amount: string },
+    input: { chain: WalletChainId; fromAsset: string; toAsset: string; amount: string },
   ): Promise<{ txId: string; toAmount: string }> {
+    const chain = EVM_CHAINS[input.chain];
+    if (!chain.cdpSwap) throw new Error(`swap unsupported on ${input.chain}`);
     if (!this.walletKey) throw new Error('Wallet secret required for swaps');
-    const result = await this.walletRequest<{
-      transaction_id?: string;
-      to_amount?: string;
-      txId?: string;
+    const from = evmAsset(input.chain, input.fromAsset);
+    const to = evmAsset(input.chain, input.toAsset);
+    if (from.symbol === to.symbol) throw new Error('swap needs two different assets');
+    const fromAmount = parseUnits(input.amount, from.decimals);
+    if (fromAmount <= 0n) throw new Error('amount must be positive');
+    type SwapQuote = {
+      liquidityAvailable?: boolean;
       toAmount?: string;
-    }>(
-      'POST',
-      `/evm/accounts/${address}/transfers`,
-      {
-        from_asset: input.fromAsset.toLowerCase(),
-        to_asset: input.toAsset.toLowerCase(),
-        amount: input.amount,
-      },
-    );
-    return {
-      txId: result.transaction_id ?? result.txId ?? 'unknown',
-      toAmount: result.to_amount ?? result.toAmount ?? '0',
+      issues?: { allowance?: { spender?: string } | null };
+      permit2?: { eip712?: WalletTypedData } | null;
+      transaction?: { to: string; data: string; value?: string; gas?: string };
     };
+    const quote = async (): Promise<SwapQuote> =>
+      this.devRequest<SwapQuote>('POST', '/evm/swaps', {
+        network: input.chain,
+        fromToken: from.token ?? NATIVE_TOKEN,
+        toToken: to.token ?? NATIVE_TOKEN,
+        fromAmount: fromAmount.toString(),
+        taker: address,
+      });
+    let swap = await quote();
+    if (swap.liquidityAvailable === false) throw new Error(`no swap liquidity on ${input.chain}`);
+    const spender = swap.issues?.allowance?.spender;
+    if (spender && from.token) {
+      const approval = await this.sendEvmTransaction(address, input.chain, {
+        to: from.token,
+        data: erc20ApproveData(spender, fromAmount),
+      });
+      await waitForReceipt(input.chain, approval);
+      swap = await quote();
+    }
+    if (!swap.transaction) throw new Error('CDP swap quote returned no transaction');
+    let data = swap.transaction.data;
+    if (swap.permit2?.eip712) {
+      const { signature } = await this.signTypedData(address, swap.permit2.eip712);
+      data = appendPermit2Signature(data, signature);
+    }
+    const txId = await this.sendEvmTransaction(address, input.chain, {
+      to: swap.transaction.to,
+      data,
+      ...(swap.transaction.value ? { value: BigInt(swap.transaction.value) } : {}),
+      ...(swap.transaction.gas ? { gas: BigInt(swap.transaction.gas) } : {}),
+    });
+    return { txId, toAmount: formatUnits(BigInt(swap.toAmount ?? '0'), to.decimals) };
   }
 
   async signTypedData(address: string, input: WalletTypedData): Promise<{ signature: string }> {
     const result = await this.walletRequest<{ signature: string }>(
       'POST', `/evm/accounts/${address}/sign/typed-data`, {
-        domain: input.domain, types: input.types, primaryType: input.primaryType, message: input.message,
+        domain: input.domain, types: withEip712Domain(input), primaryType: input.primaryType, message: input.message,
       },
     );
     if (typeof result.signature !== 'string' || !/^0x[0-9a-fA-F]{130}$/.test(result.signature))
@@ -457,107 +595,47 @@ export class CdpWalletClient implements CdpWalletSource {
   }
 
   /**
-   * Recent transaction history.
-   *
-   * Resilient by design: the `/evm/accounts/{address}/transfers` path is
-   * CONFIRMED WRONG (401 with dev-JWT and X-Wallet-Auth; 404 without the
-   * query) — the correct CDP v2 server-wallet history endpoint is still
-   * unknown and must be confirmed against CDP docs before any real
-   * reconciliation can run. Until then any non-2xx response (or parse
-   * failure) returns [] rather than throwing, so nothing downstream —
-   * `readWalletView`/`createWallet` above all — can break on it.
-   *
-   * @todo funded-verify: the correct CDP v2 history endpoint is still
-   *       UNKNOWN and must be confirmed against CDP v2 server-wallet docs.
+   * CDP v2 has no address-history endpoint for server-wallet accounts, so
+   * the source reports none. Inbound transfers are found from per-chain
+   * balance increases (`reconcileBalances` in wallet.ts).
    */
-  async history(address: string, limit: number): Promise<WalletLedgerEntry[]> {
-    const n = Math.min(Math.max(limit, 1), 100);
-    let result: {
-      transfers?: Array<{
-        id: string;
-        direction: string;
-        asset: string;
-        amount: string;
-        destination: string;
-        network: string;
-        usd_value?: string;
-        usdValue?: string;
-        created_at?: string;
-        createdAt?: string;
-      }>;
-      transactions?: Array<{
-        transaction_id: string;
-        direction: string;
-        asset: string;
-        amount: string;
-        counterparty: string;
-        chain: string;
-        usd_value: string;
-        block_time: string;
-      }>;
-    };
-    try {
-      result = await this.devRequest<NonNullable<typeof result>>('GET', `/evm/accounts/${address}/transfers?limit=${n}`);
-    } catch (error) {
-      console.error(
-        `[cdp] history read failed for ${address} (endpoint unconfirmed, returning []):`,
-        error instanceof Error ? error.message : error,
-      );
-      return [];
-    }
-    const entries = result.transfers ?? result.transactions ?? [];
-    return entries.slice(0, n).map((row: Record<string, unknown>) => {
-      const chain = guessChain(String(row.network ?? row.chain ?? 'base'));
-      return {
-        direction: String(row.direction ?? 'in') === 'in' ? ('in' as const) : ('out' as const),
-        agentName: null,
-        amountText: formatAmountText(String(row.direction ?? 'in'), String(row.amount ?? '0'), String(row.asset ?? 'usdc')),
-        counterparty: String(row.destination ?? row.counterparty ?? ''),
-        chain,
-        balanceAfterUsd: formatUsd(Number(row.usd_value ?? row.usdValue ?? 0)),
-        txUrl: walletExplorerTxUrl(chain, String(row.id ?? row.transaction_id ?? '')),
-        createdAt: new Date(String(row.created_at ?? row.createdAt ?? row.block_time ?? Date.now())).getTime(),
-      };
-    });
+  async history(_address: string, _limit: number): Promise<WalletLedgerEntry[]> {
+    return [];
   }
+}
+
+/** Wait (up to a minute) for a transaction to be mined successfully. */
+async function waitForReceipt(chain: WalletChainId, txHash: string): Promise<void> {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const receipt = (await rpc(chain, 'eth_getTransactionReceipt', [txHash]).catch(() => null)) as
+      | { status?: string }
+      | null;
+    if (receipt?.status === '0x1') return;
+    if (receipt?.status === '0x0') throw new Error(`transaction ${txHash} reverted`);
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  throw new Error(`transaction ${txHash} was not mined within a minute`);
+}
+
+/**
+ * CDP requires `EIP712Domain` in `types`. When the caller omits it, derive it
+ * from the domain fields present, in the canonical EIP-712 order.
+ */
+export function withEip712Domain(input: WalletTypedData): WalletTypedData['types'] {
+  if (Object.hasOwn(input.types, 'EIP712Domain')) return input.types;
+  const fields = [
+    { name: 'name', type: 'string' },
+    { name: 'version', type: 'string' },
+    { name: 'chainId', type: 'uint256' },
+    { name: 'verifyingContract', type: 'address' },
+    { name: 'salt', type: 'bytes32' },
+  ].filter((field) => input.domain[field.name] !== undefined && input.domain[field.name] !== null);
+  return { EIP712Domain: fields, ...input.types };
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Map a CDP asset id to a standard symbol. */
-function assetSymbol(asset: string): string {
-  const symbols: Record<string, string> = {
-    'usdc': 'usdc',
-    'eth': 'eth',
-    'cbbtc': 'cbbtc',
-    'sol': 'sol',
-    'usd-coin': 'usdc',
-    'ethereum': 'eth',
-    'coinbase-wrapped-btc': 'cbbtc',
-  };
-  return symbols[asset.toLowerCase()] ?? asset.toLowerCase();
-}
-
-function formatAmountText(direction: string, amount: string, asset: string): string {
-  const prefix = direction === 'in' ? '+' : '−';
-  return `${prefix}${amount} ${asset.toUpperCase()}`;
-}
-
-function guessChain(value: string): WalletChainId {
-  const map: Record<string, WalletChainId> = {
-    base: 'base',
-    arbitrum: 'arbitrum',
-    optimism: 'optimism',
-    polygon: 'polygon',
-    zora: 'zora',
-    bnb: 'bnb',
-    avalanche: 'avalanche',
-    ethereum: 'ethereum',
-  };
-  return map[value.toLowerCase()] ?? 'base';
-}
 
 function formatUsd(value: number): string {
   return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

@@ -97,7 +97,7 @@ export interface CdpWalletSource {
   swap(
     address: string,
     input: { chain: WalletChainId; fromAsset: string; toAsset: string; amount: string },
-  ): Promise<{ txId: string; toAmount: string }>;
+  ): Promise<{ txId: string; toAmount: string; status: 'confirmed' | 'pending' }>;
   /** Sign an EIP-712 message without broadcasting or selecting a network. */
   signTypedData(address: string, input: WalletTypedData): Promise<{ signature: string }>;
   /** Recent transaction history (both directions) for deposit reconciliation; the real client has none. */
@@ -561,7 +561,7 @@ export class CdpWalletClient implements CdpWalletSource {
   async swap(
     address: string,
     input: { chain: WalletChainId; fromAsset: string; toAsset: string; amount: string },
-  ): Promise<{ txId: string; toAmount: string }> {
+  ): Promise<{ txId: string; toAmount: string; status: 'confirmed' | 'pending' }> {
     const chain = EVM_CHAINS[input.chain];
     if (!chain.cdpSwap) throw new Error(`swap unsupported on ${input.chain}`);
     if (!this.walletKey) throw new Error('Wallet secret required for swaps');
@@ -608,7 +608,12 @@ export class CdpWalletClient implements CdpWalletSource {
       ...(swap.transaction.value ? { value: BigInt(swap.transaction.value) } : {}),
       ...(swap.transaction.gas ? { gas: BigInt(swap.transaction.gas) } : {}),
     });
-    return { txId, toAmount: formatUnits(BigInt(swap.toAmount ?? '0'), to.decimals) };
+    const confirmed = await waitForReceipt(input.chain, txId, true);
+    return {
+      txId,
+      toAmount: formatUnits(BigInt(swap.toAmount ?? '0'), to.decimals),
+      status: confirmed ? 'confirmed' : 'pending',
+    };
   }
 
   async signTypedData(address: string, input: WalletTypedData): Promise<{ signature: string }> {
@@ -633,15 +638,19 @@ export class CdpWalletClient implements CdpWalletSource {
 }
 
 /** Wait (up to a minute) for a transaction to be mined successfully. */
-async function waitForReceipt(chain: WalletChainId, txHash: string): Promise<void> {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    const receipt = (await rpc(chain, 'eth_getTransactionReceipt', [txHash]).catch(() => null)) as
+async function waitForReceipt(chain: WalletChainId, txHash: string, allowPending = false): Promise<boolean> {
+  const deadline = Date.now() + 60_000;
+  for (let attempt = 0; attempt < 30 && Date.now() < deadline; attempt += 1) {
+    const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
+    const receipt = (await rpc(chain, 'eth_getTransactionReceipt', [txHash], signal).catch(() => null)) as
       | { status?: string }
       | null;
-    if (receipt?.status === '0x1') return;
+    if (receipt?.status === '0x1') return true;
     if (receipt?.status === '0x0') throw new Error(`transaction ${txHash} reverted`);
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(2_000, remaining)));
   }
+  if (allowPending) return false;
   throw new Error(`transaction ${txHash} was not mined within a minute`);
 }
 

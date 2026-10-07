@@ -144,11 +144,12 @@ export function formatUnits(value: bigint, decimals: number): string {
 type RpcCall = { method: string; params: unknown[] };
 
 /** One batched JSON-RPC request; any per-call error rejects the batch. */
-export async function rpcBatch(chain: WalletChainId, calls: RpcCall[]): Promise<unknown[]> {
+export async function rpcBatch(chain: WalletChainId, calls: RpcCall[], signal?: AbortSignal): Promise<unknown[]> {
   const response = await fetch(EVM_CHAINS[chain].rpcUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(calls.map((call, id) => ({ jsonrpc: '2.0', id, ...call }))),
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok) throw new Error(`${chain} RPC failed (${response.status})`);
   const rows = (await response.json()) as Array<{
@@ -165,8 +166,8 @@ export async function rpcBatch(chain: WalletChainId, calls: RpcCall[]): Promise<
   });
 }
 
-export async function rpc(chain: WalletChainId, method: string, params: unknown[]): Promise<unknown> {
-  return (await rpcBatch(chain, [{ method, params }]))[0];
+export async function rpc(chain: WalletChainId, method: string, params: unknown[], signal?: AbortSignal): Promise<unknown> {
+  return (await rpcBatch(chain, [{ method, params }], signal))[0];
 }
 
 /** Native and USDC balance of `address`, in atomic units, from the public RPC. */

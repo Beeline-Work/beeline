@@ -85,9 +85,12 @@ async function daemonDoor(
                 }
               : operation === 'getPrChecksStatus'
                 ? {
+                    stage: 'checking',
                     checks: 'pending',
                     headSha: 'b'.repeat(40),
-                    approvalPending: true,
+                    approved: false,
+                    held: false,
+                    mergeAllowed: false,
                     reviewer: '@reviewer',
                     reviewerExists: true,
                     reviewerIsAuthor: false,
@@ -552,13 +555,16 @@ describe('relay tools', () => {
       head: 'b'.repeat(40),
       checks: 'pending',
       verdict: {
-        approvalPending: true,
+        stage: 'checking',
+        approved: false,
+        held: false,
+        mergeAllowed: false,
         reviewer: '@reviewer',
         reviewerExists: true,
         reviewerIsAuthor: false,
         reviewerWake: { status: 'waiting', detail: 'checks pending' },
       },
-      merge: { mergeability: 'clean', authorization: 'check pr_checks_status in the corner' },
+      merge: { mergeability: 'clean' },
     });
     expect(door.calls.map((call) => call.operation)).toEqual([
       'listRoomCorners',

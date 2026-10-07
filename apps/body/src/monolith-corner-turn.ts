@@ -107,7 +107,7 @@ import {
   cornerHasRepositoryWork,
   CORNER_REVIEWER_SESSION_INSTRUCTION,
   CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION,
-  CORNER_YOLO_MERGE_NUDGE,
+  CORNER_CHECKS_NUDGE,
   cornerReviewerInstruction,
   cornerSelfReviewerInstruction,
   roomMentionDirectory,
@@ -516,8 +516,6 @@ export class MonolithCornerTurnLoop {
   private modelTakesImages?: boolean;
   /** The one provider re-pinned after an empty completion, until the session ends. */
   private pinnedProviderOverride?: string;
-  /** The worker's yolo mode baked into the current session. */
-  private yoloMode = false;
   /** Identity-only reviewer context; the exact PR head is refreshed inside each active turn. */
   private reviewerInstructionInput?: ReviewerInstructionInput;
   /** The role-specific second-chance instruction for this session. */
@@ -837,7 +835,6 @@ export class MonolithCornerTurnLoop {
     ]);
     const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
-    this.yoloMode = configuration.yoloMode;
     const opener = this.options.openedBy
       ? roster.members.find((member) => member.identityId === this.options.openedBy)
       : undefined;
@@ -864,7 +861,6 @@ export class MonolithCornerTurnLoop {
       agentName: self?.name ?? this.agent.name,
       ...(configuration.reviewerHandle ? { reviewerHandle: configuration.reviewerHandle } : {}),
       selfReviewer: Boolean(selfReviewerInstruction),
-      yoloMode: configuration.yoloMode,
       cornerPrepareScript,
     };
     await mkdir(this.options.worktreePath, { recursive: true });
@@ -2064,7 +2060,7 @@ export class MonolithCornerTurnLoop {
                   reviewerTargetChanged ||
                   !result.toolCalls.some(
                     (call) =>
-                      /(?:^|[._:/-])(?:approve_merge|record_validation_stage)$/i.test(call.title ?? '') &&
+                      /(?:^|[._:/-])approve_merge$/i.test(call.title ?? '') &&
                       isCompletedToolCall(call),
                   );
               }
@@ -2075,7 +2071,7 @@ export class MonolithCornerTurnLoop {
                   (checksTurn &&
                     (this.reviewerInstructionInput
                       ? reviewerSecondPass
-                      : repositoryWork && !repositoryHeld && this.yoloMode &&
+                      : repositoryWork && !repositoryHeld &&
                         !result.toolCalls.some(
                           (call) =>
                             /(?:^|[._:/-])pr_checks_status$/i.test(call.title ?? '') &&
@@ -2095,7 +2091,7 @@ export class MonolithCornerTurnLoop {
                   this.reviewerInstructionInput
                     ? (refreshedReviewerInstruction ?? CORNER_REVIEWER_SESSION_INSTRUCTION)
                     : checksTurn
-                      ? CORNER_YOLO_MERGE_NUDGE
+                      ? CORNER_CHECKS_NUDGE
                       : CORNER_DELIVERY_NUDGE,
                 );
                 trace.promptSettled();

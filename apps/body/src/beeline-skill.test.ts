@@ -326,14 +326,11 @@ describe('beeline-review reviewer skill', () => {
     );
     expect(markdown).not.toContain('approved <reviewed sha>, merge');
     expect(markdown).toContain(
-      'Approving is your last step as reviewer. Your PASS wakes the author, who merges that exact head with `merge_corner` once checks are green',
+      'Approving is your last step as reviewer. Your PASS is the yes that wakes the author, who merges that exact head with `merge_corner` once checks are green',
     );
     expect(markdown).toContain('You never merge it yourself.');
     expect(markdown).toContain(
       "A human's question or proposal in the corner discussion with no answer is a blocking finding: FAIL and name it.",
-    );
-    expect(markdown).toContain(
-      'mergeAllowed true for the current head; merge_corner merges that head.',
     );
   });
 

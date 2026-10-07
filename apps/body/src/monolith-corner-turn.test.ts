@@ -20,7 +20,7 @@ import {
   CORNER_DELIVERY_NUDGE,
   CORNER_REVIEWER_SESSION_INSTRUCTION,
   CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION,
-  CORNER_YOLO_MERGE_NUDGE,
+  CORNER_CHECKS_NUDGE,
   cornerMergeInstruction,
   cornerReviewerInstruction,
   cornerSelfReviewerInstruction,
@@ -172,28 +172,24 @@ describe('corner merge instructions', () => {
   });
 
   it('selects the no-reviewer and reviewer matrix', () => {
-    // Only a reviewer with yolo on wakes the author to merge with merge_corner,
-    // after it checks the discussion for an unanswered human question.
-    for (const yolo of [false, true]) {
-      expect(cornerMergeInstruction(yolo)).toContain('no configured reviewer');
-      expect(cornerMergeInstruction(yolo)).toContain('never merge');
-      expect(cornerMergeInstruction(yolo)).not.toContain('gh pr merge');
-    }
-    const off = cornerMergeInstruction(false, 'echo');
-    expect(off).toContain('Yolo is off');
-    expect(off).toContain('never merge');
-    expect(off).not.toContain('gh pr merge');
-    const on = cornerMergeInstruction(true, 'echo');
-    expect(on).toContain('its PASS wakes you to merge');
-    expect(on).toContain("if a human's question or proposal in the corner has no answer, name it and do not merge");
-    expect(on).toContain('otherwise call merge_corner.');
-    expect(on).toContain('You are also woken to fix failing checks, requested changes, or a refused merge');
-    expect(on).not.toContain('gh pr merge');
-    for (const instruction of [off, on]) {
-      expect(instruction).not.toContain('please review');
-      expect(instruction).not.toContain('@echo');
-      expect(instruction).toContain('the reviewer (echo)');
-    }
+    // A reviewer's PASS wakes the author to merge with merge_corner, after it
+    // checks the discussion for an unanswered human question. With no
+    // reviewer, a Workspace owner or admin's yes merges it.
+    const none = cornerMergeInstruction();
+    expect(none).toContain('no configured reviewer');
+    expect(none).toContain("it merges only on a person's yes");
+    expect(none).toContain('order_corner_merge');
+    expect(none).not.toContain('gh pr merge');
+    const reviewed = cornerMergeInstruction('echo');
+    expect(reviewed).toContain('its PASS wakes you to merge');
+    expect(reviewed).toContain("if a human's question or proposal in the corner has no answer, name it and do not merge");
+    expect(reviewed).toContain('otherwise call merge_corner.');
+    expect(reviewed).toContain('You are also woken to fix failing checks, requested changes, or a refused merge');
+    expect(reviewed).not.toContain('gh pr merge');
+    expect(reviewed).not.toContain('please review');
+    expect(reviewed).not.toContain('@echo');
+    expect(reviewed).toContain('the reviewer (echo)');
+    for (const instruction of [none, reviewed]) expect(instruction).not.toMatch(/yolo/i);
   });
 
   it('selects the reviewer role by identity only for a non-opener', () => {
@@ -209,7 +205,7 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain(`Checks are green on PR #42 at ${'a'.repeat(40)}`);
     expect(instruction).toContain(`call the approve_merge tool for ${'a'.repeat(40)}`);
     expect(instruction).toContain('assigned brief revision 2');
-    expect(instruction).toContain('briefRevision=2');
+    expect(instruction).not.toContain('briefRevision=');
     expect(instruction).toContain(
       `reply \`approved ${'a'.repeat(40)}\` without tagging bee: your PASS wakes the author to merge`,
     );
@@ -282,15 +278,15 @@ describe('corner merge instructions', () => {
     expect(await cornerHasUndeliveredRepositoryWork(root, 'feature/widget', 'main')).toBe(true);
   });
 
-  it('keeps delivery cleanup under agent control and the merge reminder behind yolo', () => {
+  it('keeps delivery cleanup under agent control and the checks reminder free of yolo', () => {
     expect(CORNER_DELIVERY_NUDGE).toContain('commit and push');
     expect(CORNER_DELIVERY_NUDGE).toContain('do not discard');
     expect(CORNER_DELIVERY_NUDGE).toContain('## Reproduced');
     expect(CORNER_DELIVERY_NUDGE).toContain('## Demonstrated');
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain('Yolo is on');
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain('pr_checks_status');
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain('checks="unknown"');
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain('instead of retrying');
+    expect(CORNER_CHECKS_NUDGE).not.toMatch(/yolo/i);
+    expect(CORNER_CHECKS_NUDGE).toContain('pr_checks_status');
+    expect(CORNER_CHECKS_NUDGE).toContain('checks="unknown"');
+    expect(CORNER_CHECKS_NUDGE).toContain('instead of retrying');
   });
 
   it.each([
@@ -339,7 +335,6 @@ describe('corner merge instructions', () => {
 
   it.each([
     ['approve_merge', 'completed'],
-    ['record_validation_stage', 'completed'],
     ['approve_merge', 'in_progress'],
     ['approve_merge', 'failed'],
     ['unrelated_tool', 'completed'],
@@ -893,7 +888,7 @@ describe('corner close-request delivery', () => {
     if (repositoryWork) expect(sessionPrompt.mock.calls[1]?.[1]).toContain(CORNER_DELIVERY_NUDGE);
     else {
       const delivered = sessionNew.mock.calls[0]?.[0].systemPrompt + '\n' + sessionPrompt.mock.calls[0]?.[1];
-      for (const instruction of ['corner:prepare', 'record_validation_stage', '## Reproduced', '## Demonstrated', 'Use its file manifest', 'Once the pull request exists', 'pr_checks_status']) expect(delivered).not.toContain(instruction);
+      for (const instruction of ['corner:prepare', '## Reproduced', '## Demonstrated', 'Use its file manifest', 'Once the pull request exists', 'pr_checks_status']) expect(delivered).not.toContain(instruction);
       expect(delivered).toContain('post_artifact');
       expect(delivered).toContain('The human approval quote wins any conflict');
       expect(delivered).toContain('How is the desk doing?');
@@ -2869,7 +2864,7 @@ describe('thin monolith corner turn', () => {
     });
   });
 
-  it.each(['completed', 'in_progress', 'failed', 'missing'])('R8f checks outcome (%s) controls the yolo follow-up', async (status) => {
+  it.each(['completed', 'in_progress', 'failed', 'missing'])('R8f checks outcome (%s) controls the checks follow-up', async (status) => {
     vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
     const root = await mkdtemp(join(tmpdir(), 'beeline-thin-corner-'));
     roots.push(root);
@@ -3073,7 +3068,7 @@ describe('thin monolith corner turn', () => {
       .spyOn(acp, 'sessionPrompt')
       .mockImplementation(async (_id, prompt, _timeout, draft, _activity, toolActivity) => {
         draft?.('Opening PR', 'Opening PR');
-        const checksTurn = prompt.includes('passed a check') || prompt === CORNER_YOLO_MERGE_NUDGE;
+        const checksTurn = prompt.includes('passed a check') || prompt === CORNER_CHECKS_NUDGE;
         const toolCalls = checksTurn
           ? (status === 'missing' ? [] : [{ id: 'checks', title: 'beeline.pr_checks_status', status }])
           : [
@@ -3134,8 +3129,8 @@ describe('thin monolith corner turn', () => {
     expect(onCloseRequested).toHaveBeenCalledOnce();
     expect(sessionPrompt.mock.calls[1]?.[1]).toContain('passed a check');
     if (status === 'completed')
-      expect(sessionPrompt.mock.calls.map((call) => call[1])).not.toContain(CORNER_YOLO_MERGE_NUDGE);
-    else expect(sessionPrompt.mock.calls[2]?.[1]).toContain(CORNER_YOLO_MERGE_NUDGE);
+      expect(sessionPrompt.mock.calls.map((call) => call[1])).not.toContain(CORNER_CHECKS_NUDGE);
+    else expect(sessionPrompt.mock.calls[2]?.[1]).toContain(CORNER_CHECKS_NUDGE);
     // The first turn on a cold session renders the whole transcript window.
     const firstPrompt = String(sessionPrompt.mock.calls[0]?.[1]);
     const secondPrompt = String(sessionPrompt.mock.calls[1]?.[1]);
@@ -3193,12 +3188,12 @@ describe('thin monolith corner turn', () => {
           }),
           expect.objectContaining({ name: 'beeline-agent' }),
         ]),
-        systemPrompt: expect.stringContaining('the merge gate never opens for you: never merge'),
+        systemPrompt: expect.stringContaining("it merges only on a person's yes"),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
-        systemPrompt: expect.stringContaining(cornerMergeInstruction(true)),
+        systemPrompt: expect.stringContaining(cornerMergeInstruction()),
       }),
     );
     const repositorySystemPrompt = String(sessionNew.mock.calls[0]?.[0].systemPrompt);
@@ -3240,7 +3235,7 @@ describe('thin monolith corner turn', () => {
     expect(repositorySystemPrompt).not.toMatch(/report .* to the Room/i);
     expect(repositorySystemPrompt).not.toContain('Proposed corner:');
     expect(repositorySystemPrompt.indexOf(CORNER_AUTHOR_CONTRACT)).toBeLessThan(
-      repositorySystemPrompt.indexOf(cornerMergeInstruction(true)),
+      repositorySystemPrompt.indexOf(cornerMergeInstruction()),
     );
     expect(repositorySystemPrompt).not.toContain('do not tag anyone');
     expect(sessionNew).toHaveBeenCalledWith(

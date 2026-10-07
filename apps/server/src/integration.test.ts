@@ -567,7 +567,6 @@ describe('monolith integration', () => {
       'postSquireLoginWall',
       'createCorner',
       'reviseCornerBrief',
-      'postCornerValidationStage',
       'postRoomEvent',
       'requestAgentGrant',
       'authorizeSquireCall',
@@ -7360,18 +7359,20 @@ describe('monolith integration', () => {
         url: 'https://github.com/owner/widgets/actions/runs/7',
       },
     });
+    // The owner's yes on a red head is kept, and nothing merges until the
+    // head is green: there is no force past failing checks.
+    Object.assign(githubApp, {
+      readPullRequest: vi.fn(async () => ({
+        url: 'https://github.com/owner/widgets/pull/42',
+        headSha: '1'.repeat(40),
+        headRef: 'fm/widget',
+        merged: false,
+      })),
+    });
     const redApproval = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
       cornerId,
     });
-    expect(redApproval.status).toBe(409);
     expect(await redApproval.json()).toEqual({
-      error: 'corner checks are failing: typecheck; retry with force=true',
-    });
-    const forcedApproval = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
-      cornerId,
-      force: true,
-    });
-    expect(await forcedApproval.json()).toEqual({
       status: 'merge-requested',
       pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
     });
@@ -7380,13 +7381,7 @@ describe('monolith integration', () => {
     ).toMatchObject({
       mergeApproval: { pullRequestNumber: 42, headSha: '1'.repeat(40) },
     });
-    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(
-      77,
-      101,
-      'owner/widgets',
-      42,
-      '1'.repeat(40),
-    );
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
     await database.query(
       `UPDATE corner_facts
        SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text))
@@ -7575,7 +7570,15 @@ describe('monolith integration', () => {
       status: 'already-requested',
       pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
     });
+    // Green now: the same yes merges the exact head through landCorner.
     expect(githubApp.mergePullRequest).toHaveBeenCalledOnce();
+    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(
+      77,
+      101,
+      'owner/widgets',
+      42,
+      '1'.repeat(40),
+    );
 
     const deviceToken = 'github-merge-device-token-1234567890';
     await database.query(
@@ -7741,18 +7744,16 @@ describe('monolith integration', () => {
       (
         await database.query<{
           approved_by: string;
-          force: boolean;
           pull_request_number: number;
           head_sha: string;
         }>(
-          `SELECT approved_by,force,pull_request_number,head_sha
+          `SELECT approved_by,pull_request_number,head_sha
            FROM corner_merge_approvals WHERE corner_id=$1`,
           [cornerId],
         )
       ).rows[0],
     ).toEqual({
       approved_by: HUMAN,
-      force: true,
       pull_request_number: 42,
       head_sha: '1'.repeat(40),
     });
@@ -9467,7 +9468,7 @@ describe('monolith integration', () => {
     expect(opened.status).toBe(200);
     const { cornerId } = await opened.json() as { cornerId: string };
     const head = 'a'.repeat(40);
-    await database.query(`UPDATE corner_facts SET workflow_state='land',feature_branch='feature/f1-recovery',merge_attempt_head=$2,lifecycle=jsonb_build_object(
+    await database.query(`UPDATE corner_facts SET workflow_state='review',feature_branch='feature/f1-recovery',merge_attempt_head=$2,lifecycle=jsonb_build_object(
       'checks','passing','pr',jsonb_build_object('number',7,'headSha',$2::text),
       'mergeRecovery',jsonb_build_object('attempts',1,'lastAttemptAt',extract(epoch FROM clock_timestamp()),
         'nextAttemptAt',extract(epoch FROM clock_timestamp())+3600)) WHERE corner_id=$1`, [cornerId, head]);
@@ -9650,20 +9651,6 @@ describe('monolith integration', () => {
         hashed: true,
       },
     ]);
-    expect(
-      (
-        await daemonOperation('postCornerValidationStage', {
-          roomId: cornerId,
-          cornerId,
-          requestId: 'brief-stage-old',
-          briefRevision: 1,
-          headSha: 'draft',
-          stage: 'intent',
-          status: 'passed',
-          evidence: 'Checked the original assignment.',
-        })
-      ).status,
-    ).toBe(200);
     await database.query(`UPDATE objects SET expires_at=now()-interval '1 minute' WHERE id=$1`, [
       mediaId,
     ]);
@@ -9704,14 +9691,6 @@ describe('monolith integration', () => {
         )
       ).rows,
     ).toEqual([{ revision: 1 }, { revision: 2 }]);
-    const freshValidation = (await (
-      await daemonOperation('getCornerRestoreState', { cornerId })
-    ).json()) as {
-      validation: Array<{ stage: string; status: string }>;
-    };
-    expect(freshValidation.validation.find((stage) => stage.stage === 'intent')?.status).toBe(
-      'pending',
-    );
     const history = await daemonOperation('listCornerBriefRevisions', { cornerId, limit: 20 });
     expect(await history.json()).toMatchObject({
       revisions: [
@@ -9781,166 +9760,6 @@ describe('monolith integration', () => {
       (await database.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId]))
         .rows,
     ).toHaveLength(2);
-    const recorded = await daemonOperation('postCornerValidationStage', {
-      roomId: cornerId,
-      cornerId,
-      requestId: 'brief-stage-intent',
-      briefRevision: 2,
-      headSha: 'draft',
-      stage: 'intent',
-      status: 'passed',
-      evidence: 'Compared the corrected label and approved dimensions against the brief.',
-    });
-    expect(recorded.status).toBe(200);
-    expect(
-      await daemonOperation('getCornerRestoreState', { cornerId }).then((response) =>
-        response.json(),
-      ),
-    ).toMatchObject({
-      validation: expect.arrayContaining([
-        {
-          briefRevision: 2,
-          headSha: 'draft',
-          stage: 'intent',
-          status: 'passed',
-          evidence: 'Compared the corrected label and approved dimensions against the brief.',
-          actorId: AGENT,
-        },
-      ]),
-    });
-    const headBeforePr = await daemonOperation('postCornerValidationStage', {
-      roomId: cornerId,
-      cornerId,
-      requestId: 'brief-stage-full-head-before-pr',
-      briefRevision: 2,
-      headSha: '3'.repeat(40),
-      stage: 'intent',
-      status: 'passed',
-      evidence: 'Claimed a head that is not published yet.',
-    });
-    expect(headBeforePr.status).not.toBe(200);
-    expect(await headBeforePr.json()).toEqual({
-      error: expect.stringContaining('"draft"'),
-    });
-    const falsePass = await daemonOperation('postCornerValidationStage', {
-      roomId: cornerId,
-      cornerId,
-      requestId: 'brief-stage-no-evidence',
-      briefRevision: 2,
-      headSha: 'draft',
-      stage: 'tests',
-      status: 'passed',
-      evidence: '',
-    });
-    expect(falsePass.status).not.toBe(200);
-    const falseReview = await daemonOperation('postCornerValidationStage', {
-      roomId: cornerId,
-      cornerId,
-      requestId: 'brief-stage-false-review',
-      briefRevision: 2,
-      headSha: 'draft',
-      stage: 'review',
-      status: 'passed',
-      evidence: 'Author claims independent review.',
-    });
-    expect(falseReview.status).not.toBe(200);
-    const falseCi = await daemonOperation('postCornerValidationStage', {
-      roomId: cornerId,
-      cornerId,
-      requestId: 'brief-stage-false-ci',
-      briefRevision: 2,
-      headSha: 'draft',
-      stage: 'ci',
-      status: 'passed',
-      evidence: 'No CI rollup exists.',
-    });
-    expect(falseCi.status).not.toBe(200);
-    const reviewedHead = '1'.repeat(40);
-    await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
-      cornerId,
-      JSON.stringify({
-        lifecycle: 'in-review',
-        checks: 'passing',
-        pr: { number: 77, url: 'https://github.com/example/repo/pull/77', headSha: reviewedHead },
-      }),
-    ]);
-    expect(
-      (
-        await daemonOperation('postCornerValidationStage', {
-          roomId: cornerId,
-          cornerId,
-          requestId: 'brief-stage-tests-head-1',
-          briefRevision: 2,
-          headSha: reviewedHead,
-          stage: 'tests',
-          status: 'passed',
-          evidence: 'Executed the corner behavior test.',
-        })
-      ).status,
-    ).toBe(200);
-    // An unambiguous short SHA resolves to the one head this corner can be
-    // recording against.
-    expect(
-      (
-        await daemonOperation('postCornerValidationStage', {
-          roomId: cornerId,
-          cornerId,
-          requestId: 'brief-stage-short-head',
-          briefRevision: 2,
-          headSha: reviewedHead.slice(0, 7),
-          stage: 'docs',
-          status: 'passed',
-          evidence: 'Documented the short-head path.',
-        })
-      ).status,
-    ).toBe(200);
-    const restored = (await (
-      await daemonOperation('getCornerRestoreState', { cornerId })
-    ).json()) as { validation: Array<{ stage: string; headSha: string; status: string }> };
-    expect(restored.validation.find((stage) => stage.stage === 'docs')).toMatchObject({
-      headSha: reviewedHead,
-      status: 'passed',
-    });
-    // A short SHA naming no head this corner has is refused, and the error
-    // names the current head.
-    const badShort = await daemonOperation('postCornerValidationStage', {
-      roomId: cornerId,
-      cornerId,
-      requestId: 'brief-stage-bad-short-head',
-      briefRevision: 2,
-      headSha: 'deadbee',
-      stage: 'docs',
-      status: 'failed',
-      evidence: 'Wrong head.',
-    });
-    expect(badShort.status).not.toBe(200);
-    expect(await badShort.json()).toEqual({
-      error: expect.stringContaining(reviewedHead),
-    });
-    // A full SHA that is not the current head is refused, and the refusal names
-    // the current head.
-    const movedHead = await daemonOperation('postCornerValidationStage', {
-      roomId: cornerId,
-      cornerId,
-      requestId: 'brief-stage-moved-head',
-      briefRevision: 2,
-      headSha: '3'.repeat(40),
-      stage: 'docs',
-      status: 'failed',
-      evidence: 'A different full head.',
-    });
-    expect(movedHead.status).not.toBe(200);
-    expect(await movedHead.json()).toEqual({
-      error: expect.stringContaining(reviewedHead),
-    });
-    await database.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
-      [cornerId, '2'.repeat(40)],
-    );
-    const moved = (await (await daemonOperation('getCornerRestoreState', { cornerId })).json()) as {
-      validation: Array<{ stage: string; status: string }>;
-    };
-    expect(moved.validation.find((stage) => stage.stage === 'tests')?.status).toBe('pending');
   });
 
   it('does not open or wake a corner when a required brief file is unavailable', async () => {
@@ -10230,7 +10049,7 @@ describe('monolith integration', () => {
   });
 
   it.each([
-    ...['opened', 'no_code_work', 'upgrade_to_code', 'implement', 'checks', 'review', 'land', 'ask_human', 'landed', 'closed']
+    ...['opened', 'no_code_work', 'upgrade_to_code', 'implement', 'checks', 'review', 'ask_human', 'landed', 'closed']
       .map(state => ({ state, health: 'healthy' })),
     ...['implement', 'ask_human'].flatMap(state =>
       ['offline', 'removed', 'recent-failure', 'out-of-credit'].map(health => ({ state, health }))),
@@ -10296,7 +10115,7 @@ describe('monolith integration', () => {
     },
   );
 
-  it('wakes the configured reviewer with a revised brief on an already green head', async () => {
+  it('wakes the implementer, not the reviewer, with a revised brief on an already green head', async () => {
     const opened = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'reviewer-brief-open',
@@ -10346,48 +10165,14 @@ describe('monolith integration', () => {
       `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1 AND reason IN ('corner_brief_revision','corner_check') ORDER BY agent_id`,
       [cornerId],
     );
-    expect(commands.rows).toEqual([
-      { agent_id: reviewerId, reason: 'corner_check' },
-    ]);
-    const reviewerCommand = (
-      await database.query<{ id: string; turn_request_id: string }>(
-        `SELECT id,turn_request_id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='corner_check'`,
-        [cornerId, reviewerId],
-      )
-    ).rows[0]!;
-    const reviewerDaemon = new DaemonService(database, new LiveHub());
-    await reviewerDaemon.execute(
-      'claimAgentCommand',
-      { roomId: cornerId, commandId: reviewerCommand.id, generationId: 'review-generation' },
-      reviewerId,
-    );
-    await reviewerDaemon.execute(
-      'postAgentTurnReceipt',
-      {
-        roomId: cornerId,
-        agentId: reviewerId,
-        requestId: reviewerCommand.turn_request_id,
-        generationId: 'review-generation',
-        status: 'working',
-      },
-      reviewerId,
-    );
-    await expect(
-      reviewerDaemon.execute(
-        'postCornerValidationStage',
-        {
-          cornerId,
-          requestId: reviewerCommand.turn_request_id,
-          generationId: 'review-generation',
-          briefRevision: 2,
-          headSha: '1'.repeat(40),
-          stage: 'review',
-          status: 'passed',
-          evidence: 'Compared both acceptance criteria with the current head.',
-        },
-        reviewerId,
-      ),
-    ).resolves.toMatchObject({ stage: 'review', status: 'passed', actorId: reviewerId });
+    // A brief edit never sends the corner back to review: the reviewer is not
+    // woken, and the run stays where it was.
+    expect(commands.rows.filter((row) => row.agent_id === reviewerId)).toEqual([]);
+    expect(
+      (await database.query<{ workflow_state: string }>(
+        `SELECT workflow_state FROM corner_facts WHERE corner_id=$1`, [cornerId],
+      )).rows[0]?.workflow_state,
+    ).toBe('implement');
     expect(
       await (await daemonOperation('getCornerRestoreState', { cornerId })).json(),
     ).toMatchObject({
@@ -10395,10 +10180,6 @@ describe('monolith integration', () => {
         revision: 2,
         spec: 'A1: keep the agreed behavior. A2: retain the corrected label.',
       },
-      validation: expect.arrayContaining([
-        expect.objectContaining({ stage: 'review', status: 'passed', actorId: reviewerId }),
-        expect.objectContaining({ stage: 'tests', status: 'pending' }),
-      ]),
     });
   });
 

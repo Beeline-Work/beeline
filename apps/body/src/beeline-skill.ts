@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MESSAGE_REACTION_EMOJIS, eventKindCatalogLines } from '@beeline/api-contract/phone';
-import { VALIDATION_STAGE_OWNERSHIP } from './prompt-assembly.js';
 
 export const USING_BEELINE_SKILL_NAME = 'using-beeline';
 export const BEELINE_TRIAGE_SKILL_NAME = 'beeline-triage';
@@ -136,10 +135,7 @@ Before judging the implementation, independently repeat the two judgment legs fr
 
 ## 3. Empirical pass second
 
-Build one visible validation record for the brief revision and code head. Assess intent, base synchronization, independent review, tests, documentation, lint and types, publication, CI, and final Beeline authorization. Each applicable stage is pending, running, passed, failed, skipped, or not applicable, with a reason for the last two. A required skipped, failed, or unverified stage blocks PASS. An empty rollup alone is not proof of passing checks. Use pr_checks_status for the exact current head: checks="passed" with checkCount=0 is the server-confirmed no-checks path and satisfies the CI prerequisite for review. Do not refuse review because no literal green check exists, and do not require mergeAllowed=true before reviewing: the missing reviewer PASS itself keeps that gate closed. Pending, failed, or unknown checks still block approval. Reuse valid author evidence; run targeted independent checks where needed. A screenshot or rendered app is needed for visual claims, and server-boundary behavior for authorization claims.
-Use record_validation_stage for each assessed stage, naming the current brief revision and exact PR head.
-${VALIDATION_STAGE_OWNERSHIP}
-The record informs the verdict but never replaces approve_merge or pr_checks_status.
+Check the brief revision and code head for base synchronization, tests, documentation, lint and types, publication, and CI. A required check that was skipped, failed, or not verified blocks PASS. An empty rollup alone is not proof of passing checks. Use pr_checks_status for the exact current head: checks="passed" with checkCount=0 is the server-confirmed no-checks path and satisfies the CI prerequisite for review. Do not refuse review because no literal green check exists, and do not require mergeAllowed=true before reviewing: the missing reviewer PASS itself keeps that gate closed. Pending, failed, or unknown checks still block approval. Reuse valid author evidence; run targeted independent checks where needed. A screenshot or rendered app is needed for visual claims, and server-boundary behavior for authorization claims.
 
 - Run the repository typecheck and tests touched by the diff.
 - If the spec or the approval quote names a user path, exercise that path.
@@ -191,7 +187,6 @@ When the diff touches UI and the repository has a DESIGN.md, check every changed
 \`commands run + results:\`
 \`brief revision:\`
 \`outline ledger (every user story, acceptance criterion, non-goal and risk + status + evidence; mock-vs-screen notes for frontend work):\`
-\`validation stages and evidence:\`
 \`product-completeness findings (block):\`
 \`engineering findings (block):\`
 \`plausible findings (do not block):\`
@@ -200,10 +195,10 @@ When the diff touches UI and the repository has a DESIGN.md, check every changed
 
 Then take exactly one action:
 
-- FAIL: call \`record_validation_stage\` with stage \`review\`, status \`failed\`, and the reviewed head SHA, then reply \`@author\` with the confirmed findings and that reviewed head SHA to fix. The recorded review stage is how an implementer who has already fixed the findings can tell whether the review is stale.
-- PASS: call \`approve_merge\` with the reviewed head SHA and assigned briefRevision (omit the revision only for a legacy corner without a brief), then reply \`approved <reviewed sha>\` without tagging the author. Do not tell the author to merge.
+- FAIL: reply \`@author\` with the confirmed findings and the reviewed head SHA to fix.
+- PASS: call \`approve_merge\` with the reviewed head SHA, then reply \`approved <reviewed sha>\` without tagging the author. Do not tell the author to merge.
 - A human's question or proposal in the corner discussion with no answer is a blocking finding: FAIL and name it.
-- Approving is your last step as reviewer. Your PASS wakes the author, who merges that exact head with \`merge_corner\` once checks are green, the worker's yolo is on, and no human hold stands. You never merge it yourself.
+- Approving is your last step as reviewer. Your PASS is the yes that wakes the author, who merges that exact head with \`merge_corner\` once checks are green and no hold stands. You never merge it yourself.
 `;
 }
 

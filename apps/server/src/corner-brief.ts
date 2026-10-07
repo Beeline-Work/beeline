@@ -4,24 +4,12 @@ import {
   type CornerBrief,
   type CornerBriefAttachment,
   type CornerBriefDraft,
-  type CornerValidationStageName,
 } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 
 /** Most files one brief revision may carry. */
 const CORNER_BRIEF_ATTACHMENT_LIMIT = 16;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export const CORNER_VALIDATION_STAGES: readonly CornerValidationStageName[] = [
-  'intent',
-  'base',
-  'review',
-  'tests',
-  'docs',
-  'lint_types',
-  'publication',
-  'ci',
-  'final_authorization',
-];
 
 function boundedText(value: unknown, maximum: number): value is string {
   return typeof value === 'string' && Boolean(value.trim()) && value.length <= maximum;

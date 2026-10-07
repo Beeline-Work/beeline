@@ -103,7 +103,6 @@ export interface SessionPromptContext {
   readonly android?: { readonly emulatorPort: string };
   readonly reviewerHandle?: string;
   readonly selfReviewer?: boolean;
-  readonly yoloMode?: boolean;
   /**
    * Whether this checkout's own package.json defines a `corner:prepare`
    * script (`corner-prepare-script.ts`). Beeline's own checkout does; another
@@ -139,14 +138,6 @@ export interface SectionReport {
 // section below; the exports exist for the nudge and reviewer paths that reuse
 // the same words and for tests.
 // ---------------------------------------------------------------------------
-
-export const VALIDATION_STAGE_OWNERSHIP = `Validation stages (merge effect: none for every stage):
-Stage | Recorder | Server checks
---- | --- | ---
-intent, base, tests, docs, lint_types, publication, final_authorization | implementer | current revision/head
-review | configured reviewer records the review stage | current revision/head and reviewer identity
-ci | implementer | current revision/head; passed requires passing checks
-The server merge gate is the authority: pr_checks_status reports mergeAllowed true for the current head; merge_corner merges that head. final_authorization grants nothing; do not wait for mergeAllowed.`;
 
 /**
  * New briefs carry an explicit capability. Legacy briefs keep their code lane
@@ -186,8 +177,7 @@ Deliver files with post_artifact; answer plain chat questions directly.
 No unrequested features, flags, compatibility shims or refactors.`;
 
 export const CORNER_AUTHOR_CONTRACT = `The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
-Meet every story; respect every non-goal and risk. Use its file manifest. Use record_validation_stage for this revision and head. Do not call a missing stage passed.
-${VALIDATION_STAGE_OWNERSHIP}
+Meet every story; respect every non-goal and risk. Use its file manifest.
 Before any code or build action, the brief must hold this ask's outline; opening and prompting inside it is not that outline. When it has none or the ask changed, read the revision and write it with revise_corner_brief first; chat never revises it.
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
 Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
@@ -210,8 +200,8 @@ export const CORNER_DELIVERY_NUDGE =
 export const CORNER_LAND_RULE =
   "Then, if a human's question or proposal in the corner has no answer, name it and do not merge; otherwise call merge_corner.";
 
-export const CORNER_YOLO_MERGE_NUDGE =
-  'Yolo is on. Call pr_checks_status now. If checks="failed", fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Never merge it any other way.';
+export const CORNER_CHECKS_NUDGE =
+  'Call pr_checks_status now. If checks="failed", fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Never merge it any other way.';
 
 /** Shared verbatim between the upgrade_corner_to_code tool description
  *  (`read-only-mcp.ts`) and this corner's own no-code prompt clause below, so
@@ -254,13 +244,11 @@ const handle = (value: string): string => value.replace(/^@/, '');
  * exists, and who merges it (the author through `merge_corner`, after a PASS). It owns the
  * `merge` topic, so no other section may speak about merging on the same surface.
  */
-export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: string): string {
+export function cornerMergeInstruction(reviewerHandle?: string): string {
   if (!reviewerHandle)
-    return 'Once the pull request exists, reply with its full URL and end the turn; do not check or wait for CI. This Room has no configured reviewer, so the merge gate never opens for you: never merge; a person merges it.';
+    return "Once the pull request exists, reply with its full URL and end the turn; do not check or wait for CI. This Room has no configured reviewer, so it merges only on a person's yes: ask a Workspace owner or admin to approve the merge, then record their yes with order_corner_merge. You are woken to fix failing checks or a merge GitHub refused.";
   const reviewer = `the reviewer (${handle(reviewerHandle)})`;
-  return yoloMode
-    ? `Once the pull request exists, reply with its full URL and end the turn; do not tag ${reviewer}, check, or wait for CI. Green checks wake ${reviewer}; its PASS wakes you to merge. ${CORNER_LAND_RULE} You are also woken to fix failing checks, requested changes, or a refused merge; a fixed head needs green checks and a fresh PASS.`
-    : `Once the pull request exists, reply with its full URL and end the turn; do not tag ${reviewer}, check, or wait for CI. Yolo is off, so the merge gate stays closed for you: never merge; a person merges it after ${reviewer} approves.`;
+  return `Once the pull request exists, reply with its full URL and end the turn; do not tag ${reviewer}, check, or wait for CI. Green checks wake ${reviewer}; its PASS wakes you to merge. ${CORNER_LAND_RULE} You are also woken to fix failing checks, requested changes, or a refused merge; a fixed head needs green checks and a fresh yes.`;
 }
 
 export function cornerReviewerInstruction(input: {
@@ -275,7 +263,7 @@ export function cornerReviewerInstruction(input: {
   const author = input.authorHandle ? handle(input.authorHandle) : 'author';
   const number = input.pullRequestNumber ?? 'N';
   const headSha = input.headSha ?? '<head sha>';
-  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: call record_validation_stage with stage "review", status "failed", and headSha ${headSha}, then reply \`@${author}\` with the confirmed findings and the reviewed head ${headSha} to fix. PASS: call the approve_merge tool for ${headSha}${input.briefRevision ? ` with briefRevision=${input.briefRevision}` : ''}, then reply \`approved ${headSha}\` without tagging ${author}: your PASS wakes the author to merge, so a tag adds nothing. A human's question or proposal in the corner discussion with no answer is a FAIL finding; name it. Never merge yourself or tell the author to merge. Never say you are holding or waiting for checks.`;
+  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: reply \`@${author}\` with the confirmed findings and the reviewed head ${headSha} to fix. PASS: call the approve_merge tool for ${headSha}, then reply \`approved ${headSha}\` without tagging ${author}: your PASS wakes the author to merge, so a tag adds nothing. A human's question or proposal in the corner discussion with no answer is a FAIL finding; name it. Never merge yourself or tell the author to merge. Never say you are holding or waiting for checks.`;
 }
 
 /**
@@ -576,10 +564,10 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: ['code-corner'],
     when: ({ brief }) => cornerHasRepositoryWork(brief),
-    render: ({ yoloMode, reviewerHandle, selfReviewer }) =>
+    render: ({ reviewerHandle, selfReviewer }) =>
       (selfReviewer
         ? cornerSelfReviewerInstruction({ isReviewer: true, openedByAgent: true })!
-        : cornerMergeInstruction(Boolean(yoloMode), reviewerHandle)) +
+        : cornerMergeInstruction(reviewerHandle)) +
       ' Never merge any other pull request.',
   },
   {

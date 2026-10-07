@@ -46,15 +46,17 @@ import { workflowRunLockKey } from './workflow-runs.js';
  * state does not allow changes nothing and is logged. No other code path
  * issues a corner lifecycle wake.
  *
- * The implementer merges. Entering `land` on a reviewer's PASS wakes the
- * implementer, whose `merge_corner` call runs `GitHubOperations.landCorner`;
- * it merges only when the complete gate (`cornerMergeGate`) is open: a PASS by
- * a configured reviewer who is not the author on the exact current head and
- * latest brief revision, checks green, worker yolo on, and no human hold. With
- * no other agent to review (no reviewer, or the reviewer is the author) only a
- * Workspace owner or admin's `order_corner_merge` merges. A refused merge
- * returns the corner to `implement` with GitHub's reason; the merge webhook
- * moves it to `landed`.
+ * The merge rule is one sentence: a pull request merges when its checks are
+ * green on the current head (read live from GitHub) and a non-author said yes
+ * on that head, unless a hold stands. The yes is a configured reviewer
+ * agent's `approve_merge` PASS (it wakes the implementer, whose
+ * `merge_corner` runs `GitHubOperations.landCorner`) or a Workspace owner or
+ * admin's order (`order_corner_merge` or the phone's approve call), which the
+ * server lands at once through the same `landCorner`. A new commit cancels
+ * the yes; a brief edit does not. With no other agent to review (no reviewer,
+ * or the reviewer is the author) green checks go straight to waiting for a
+ * person's yes. A refused merge returns the corner to `implement` with
+ * GitHub's reason; the merge webhook moves it to `landed`.
  *
  * The contract is plain TypeScript. It is not a Workspace workflow: it is
  * never stored in `workspace_skills`, never listed or started as one, and a
@@ -70,8 +72,8 @@ export const CORNER_LIFECYCLE_SLUG = 'corner';
 export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
   version: 1,
   name: CORNER_LIFECYCLE_SLUG,
-  description: 'Corner lifecycle: implement, check, review, merge, or close',
-  summary: 'Build the agreed change, check it, review it, and land it.',
+  description: 'Corner lifecycle: build, check, get a yes, merge, or close',
+  summary: 'Build the agreed change, check it, get a non-author yes, and land it.',
   roles: ['implementer', 'reviewer'],
   start: 'opened',
   handoffs: {
@@ -95,60 +97,58 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
     // The implementer's turn. A push reported by the GitHub webhook moves it
     // to checks. `rechecked` is a checks verdict on the same head arriving
     // after the one that sent the corner here (a re-run, or a reviewer
-    // configured later); `rereview` is the reviewer's next verdict on the
-    // same head after a changes-requested handback.
+    // configured later); `rereview` is a yes on the same head after a
+    // changes-requested handback.
     implement: { does: 'Build and prove the agreed change.',
       role: 'implementer',
       requires: [],
-      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review', brief_revised: 'review' },
+      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review' },
     },
     // Green wakes the reviewer (live from the parent Room's
-    // `reviewer_agent_id`/`reviewer_fallback_ids`); red, no configured
-    // reviewer, or a reviewer who is the author wakes the implementer. At the loop cap the corner names the commissioning human.
+    // `reviewer_agent_id`/`reviewer_fallback_ids`); with no reviewer, or a
+    // reviewer who is the author, green waits for a person's yes and says so.
+    // Red wakes the implementer. At the loop cap the corner names the
+    // commissioning human.
     checks: { does: 'Check the proposed change.',
       kind: 'server',
       requires: [],
-      on: { passing: 'review', failing: 'implement', no_reviewer: 'implement', brief_revised: 'review' },
+      on: { passing: 'review', no_reviewer: 'review', failing: 'implement' },
       loop: { onEdge: 'failing', cap: 100, onExceeded: 'ask_human' },
     },
-    // PASS is recorded by the configured reviewer's `approve_merge`; the end
-    // of a review turn with no PASS for the current head hands back to the
-    // implementer. The handback cap is counted per head and reset by a push
-    // (`corner_facts.review_handback_head/count`).
-    review: { does: 'Review the change against the agreed brief.',
+    // Waiting for a non-author yes on the current head. A reviewer's PASS
+    // (`approve_merge`) takes `approved` and wakes the implementer to call
+    // `merge_corner`; a person's order lands at once. The end of a review
+    // turn with no yes for the current head hands back to the implementer;
+    // the handback cap is counted per head and reset by a push
+    // (`corner_facts.review_handback_head/count`). The merge webhook takes the
+    // implicit edge to `landed`; GitHub refusing the merge returns to the
+    // implementer.
+    review: { does: 'Wait for a non-author yes on the current head.',
       role: 'reviewer',
       roleBinding: 'live:parent.reviewer_agent_id',
       requires: [],
       on: {
-        approved: 'land',
+        approved: 'review',
         changes_requested: 'implement',
         pushed: 'checks',
         rechecked: 'checks',
-        brief_revised: 'review',
+        merge_refused: 'implement',
+        merge_unconfirmed: 'ask_human',
       },
       loop: { onEdge: 'changes_requested', cap: 3, onExceeded: 'ask_human' },
     },
-    // The implementer is woken and calls `merge_corner`, which squash-merges
-    // the exact head once the complete gate is open
-    // (`GitHubOperations.landCorner`). The merge webhook takes the implicit
-    // edge to `landed`; GitHub refusing the merge returns to the implementer.
-    land: { does: 'Land the reviewed change.',
-      kind: 'server',
-      requires: [],
-      on: { merge_unconfirmed: 'ask_human', merge_refused: 'implement', pushed: 'checks', rechecked: 'checks', brief_revised: 'review' },
-    },
     // A loop cap was reached. The corner names the commissioning human and
     // waits; a new push starts the next round.
-    ask_human: { does: 'Wait for a person to decide the next step.', kind: 'server', requires: [], on: { pushed: 'checks', brief_revised: 'review', revision_work: 'implement', merge_refused: 'implement' } },
+    ask_human: { does: 'Wait for a person to decide the next step.', kind: 'server', requires: [], on: { pushed: 'checks', revision_work: 'implement', merge_refused: 'implement' } },
     landed: { does: 'The change has landed.', kind: 'terminal', status: 'done' },
     closed: { does: 'The corner has closed.', kind: 'terminal', status: 'abandoned' },
   },
   // The merge webhook and a close request end a corner from wherever it sits.
   implicitEdges: ['landed', 'closed'],
   // Only an event from outside the run takes these: a new commit on the
-  // branch, a check verdict re-reported on the same head, a reviewer's next
-  // verdict after a handback, a brief revision, or GitHub refusing the merge.
-  externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused', 'brief_revised'],
+  // branch, a check verdict re-reported on the same head, a yes after a
+  // handback, or GitHub refusing the merge.
+  externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused'],
 };
 
 /** The review handback cap, read from the contract. */
@@ -183,14 +183,12 @@ export type CornerEvent =
       kind: 'brief-revised';
       revision: number;
       sourceMessageId: string;
-      authorAgentId: string;
       command: CommandRow;
     }
   /** Checks started again on the same head (a re-run); the verdict that follows is reported as `checks`. */
   | { kind: 'checks-pending' }
-  | { kind: 'approval'; headSha: string }
-  /** A current Workspace owner or admin ordered this exact head merged (`order_corner_merge`); carries the run straight to `land` from wherever it sits. */
-  | { kind: 'express-merge-ordered' }
+  /** A non-author yes on this head: a reviewer's PASS wakes the implementer to merge; a person's order is landed by the caller. */
+  | { kind: 'approval'; headSha: string; by: 'reviewer' | 'person' }
   | { kind: 'review-ended'; review: CommandRow; verdictMessageId: string }
   | { kind: 'merge-unconfirmed'; number: number; error: string }
   | { kind: 'merge-refused'; headSha: string; reason: string }
@@ -414,21 +412,18 @@ class Transition {
 
   /**
    * `loopCount` is this trip's number around the state's loop, when the edge
-   * is its loop edge. `force` takes the run straight to `outcome` as its next
-   * state regardless of the current state's declared edges, for an authority
-   * that overrides the lifecycle's own requires (an express merge order).
+   * is its loop edge.
    */
   async take(
     outcome: string,
     contents: Record<string, unknown> = {},
     loopCount?: number,
-    force = false,
   ): Promise<string> {
     const fromState = this.run.toState;
     const implicit = CORNER_LIFECYCLE_CONTRACT.implicitEdges?.includes(outcome) ?? false;
-    if (!implicit && !force && !this.allows(outcome))
+    if (!implicit && !this.allows(outcome))
       throw new Error(`corner contract has no ${fromState} --${outcome}--> edge`);
-    let toState = implicit || force ? outcome : edgesOf(fromState)[outcome]!;
+    let toState = implicit ? outcome : edgesOf(fromState)[outcome]!;
     const state = CORNER_LIFECYCLE_CONTRACT.handoffs[fromState];
     const loop = state && 'loop' in state ? state.loop : undefined;
     if (loop && loop.onEdge === outcome && loopCount !== undefined && loopCount > loop.cap)
@@ -485,7 +480,7 @@ function rejected(cornerId: string, event: CornerEvent, state: string | undefine
  * The run a corner opened before the workflow run existed (#1918) is given
  * once, derived from its lifecycle (`cornerRunFromLifecycle`, the mapping the
  * phone badge uses) and from what was already dispatched for its current head:
- * a green head with a PASS is already `land`; a checks verdict whose wake
+ * a checks verdict whose wake
  * (reviewer on green, implementer on red) never went out is still `checks`,
  * so reporting that verdict again dispatches it.
  */
@@ -501,10 +496,7 @@ async function backfillRun(
     toState = 'no_code_work';
     outcome = undefined;
   } else if (toState === 'review') {
-    if (await approvedCurrentHead(db, cornerId, corner)) {
-      toState = 'land';
-      outcome = 'approved';
-    } else if (!(await checksVerdictDispatched(db, cornerId, 'check-passed', 'subscribed_event')))
+    if (!(await checksVerdictDispatched(db, cornerId, 'check-passed', 'subscribed_event')))
       toState = 'checks';
   } else if (
     toState === 'implement' &&
@@ -624,34 +616,29 @@ async function applyEvent(
     case 'checks':
       return checksReported(db, cornerId, corner, transition, event);
     case 'brief-revised': {
-      const resuming = transition.state === 'ask_human';
-      const reviewerAgentId = corner.lifecycle.checks === 'passing' && transition.allows('brief_revised') ? await reachableReviewer(
-        db, cornerId, corner, event.sourceMessageId, corner.lifecycle.pr?.headSha ?? null, event.authorAgentId,
-      ) : undefined;
-      // loadCorner resolves the current worker through cornerImplementerSql.
-      // A revision still commits when that worker cannot take a turn.
-      const agentId = reviewerAgentId ?? (corner.worker_agent_id
+      // A brief edit wakes the implementer; it never cancels a yes or sends
+      // the corner back to review.
+      const agentId = corner.worker_agent_id
         ? await firstHealthyAgent(db, cornerId, [corner.worker_agent_id])
-        : null);
+        : null;
       if (!agentId) return { ok: true, wake: { queued: false, reason: 'No reachable implementer for the revision' } };
       const command = await createAgentCommand(db, {
         roomId: cornerId,
         agentId,
         sourceMessageId: event.sourceMessageId,
-        reason: reviewerAgentId ? 'corner_check' : 'corner_brief_revision',
+        reason: 'corner_brief_revision',
         parent: event.command,
         retainDepth: true,
       });
       if (!command) return { ok: true, wake: { queued: false, reason: 'The revision recipient cannot be woken' } };
-      if (reviewerAgentId || resuming)
-        await transition.take(reviewerAgentId ? 'brief_revised' : 'revision_work', { briefRevision: event.revision });
+      if (transition.state === 'ask_human')
+        await transition.take('revision_work', { briefRevision: event.revision });
       return { ok: true, wake: { queued: true, agentId } };
     }
     case 'checks-pending': {
       if (corner.lifecycle.checks !== 'pending') return no(`checks are ${corner.lifecycle.checks}`);
       const verdictHolds =
         transition.state === 'review' ||
-        transition.state === 'land' ||
         (transition.state === 'implement' &&
           (transition.run.outcome === 'failing' || transition.run.outcome === 'no_reviewer'));
       if (!verdictHolds) return no('no checks verdict to re-run');
@@ -660,13 +647,6 @@ async function applyEvent(
     }
     case 'approval':
       return approvalRecorded(db, cornerId, corner, transition, event);
-    case 'express-merge-ordered':
-      // Authority, not autonomy: carries straight to `land` from wherever the
-      // run sits, with no reviewer/checks/hold requirement, so the normal
-      // land path (`GitHubOperations.landCorner`) merges it from there.
-      if (transition.state === 'land') return no('already in land');
-      await transition.take('land', {}, undefined, true);
-      return OK;
     case 'review-ended':
       return reviewEnded(db, cornerId, corner, transition, event);
     case 'merge-unconfirmed':
@@ -695,8 +675,8 @@ async function applyEvent(
 type ChecksPlan =
   | { outcome: 'failing' }
   | { outcome: 'no_reviewer' }
-  | { outcome: 'passing'; skipReview: true }
-  | { outcome: 'passing'; skipReview: false; reviewerAgentId: string };
+  | { outcome: 'passing'; approved: true }
+  | { outcome: 'passing'; approved: false; reviewerAgentId: string };
 
 async function checksReported(
   db: SqlDatabase,
@@ -708,36 +688,38 @@ async function checksReported(
   // A fact replayed after the checks moved on is stale.
   if (corner.lifecycle.checks !== event.result) return no(`checks are ${corner.lifecycle.checks}`);
   const from = transition.state;
-  if (!['checks', 'implement', 'review', 'land'].includes(from)) return no('no checks edge');
+  if (!['checks', 'implement', 'review'].includes(from)) return no('no checks edge');
   const headSha = corner.lifecycle.pr?.headSha ?? null;
+  const sameHead = transition.run.headSha === (headSha ?? undefined);
+  // A repeat of the green verdict that already holds changes nothing, and
+  // must not spend a reviewer pick, a membership repair, or a note. A head
+  // waiting for a person's yes is re-planned: a reviewer configured since
+  // then is woken.
+  if (event.result === 'passing' && from === 'review' && sameHead && transition.run.outcome !== 'no_reviewer')
+    return no('checks already passed on this head');
   let plan: ChecksPlan;
   if (event.result === 'failing') plan = { outcome: 'failing' };
-  // No other agent can review the author's own work, so a human's yes is the
-  // only way it merges (`order_corner_merge`).
+  // A yes given while checks ran (a PASS or a person's order) needs no review.
+  else if (await approvedCurrentHead(db, cornerId, corner)) plan = { outcome: 'passing', approved: true };
+  // No other agent can review the author's own work, so a person's yes is
+  // the only way it merges.
   else if (!corner.configured_reviewer_id || (corner.reviewer_parent_member && reviewerIsAuthor(corner)))
     plan = { outcome: 'no_reviewer' };
-  else if (await approvedCurrentHead(db, cornerId, corner))
-    plan = { outcome: 'passing', skipReview: true };
   else {
-    // A repeat of the verdict that already holds changes nothing, and must
-    // not spend a reviewer pick, a membership repair, or a note.
-    if ((from === 'review' || from === 'land') && transition.run.headSha === (headSha ?? undefined))
-      return no('checks already passed on this head');
     const reviewerAgentId = await reachableReviewer(db, cornerId, corner, event.sourceMessageId, headSha);
     if (!reviewerAgentId) return no('configured reviewer is unreachable');
-    plan = { outcome: 'passing', skipReview: false, reviewerAgentId };
+    plan = { outcome: 'passing', approved: false, reviewerAgentId };
   }
-  if (from !== 'checks' && transition.run.headSha === (headSha ?? undefined)) {
+  if (from === 'review' && sameHead && plan.outcome === 'no_reviewer')
+    return no('already waiting for a yes on this head');
+  if (from === 'implement' && sameHead) {
     const repeat =
-      (from === 'implement' && transition.run.outcome === plan.outcome) ||
-      ((from === 'review' || from === 'land') && plan.outcome === 'passing') ||
+      transition.run.outcome === plan.outcome ||
       // The reviewer already ended a review on this head with a
       // changes-requested handback. A re-reported green for the same head is
       // not a new review: the implementer still owes a push, so do not wake
       // the reviewer again.
-      (from === 'implement' &&
-        plan.outcome === 'passing' &&
-        transition.run.outcome === 'changes_requested');
+      (plan.outcome !== 'failing' && transition.run.outcome === 'changes_requested');
     if (repeat) return no(`${plan.outcome} already holds on this head`);
   }
   const failingRound =
@@ -746,7 +728,7 @@ async function checksReported(
   // The wake goes out first: a verdict whose wake cannot be delivered (the
   // implementer is no longer a member) leaves the run in place, so the next
   // report of the same verdict retries it.
-  if (!capped && plan.outcome !== 'passing') {
+  if (plan.outcome === 'failing' && !capped) {
     if (!corner.worker_agent_id) return no('the corner has no implementer');
     const command = await createAgentCommand(db, {
       roomId: cornerId,
@@ -755,7 +737,7 @@ async function checksReported(
       reason: 'corner_check',
     });
     if (!command) return no('the implementer cannot be woken');
-  } else if (plan.outcome === 'passing' && !plan.skipReview) {
+  } else if (plan.outcome === 'passing' && !plan.approved) {
     const command = await createAgentCommand(db, {
       roomId: cornerId,
       agentId: plan.reviewerAgentId,
@@ -775,16 +757,24 @@ async function checksReported(
     });
     return OK;
   }
-  if (plan.outcome === 'passing' && plan.skipReview) {
-    await transition.take('approved', { verdict: 'approved' });
-    await wakeToLand(db, cornerId, corner, transition);
+  if (plan.outcome === 'no_reviewer') {
+    await ensureSystemIdentity(db);
+    await systemLine(db, {
+      id: createHash('sha256').update(`beeline:${cornerId}:waiting-for-yes:${headSha ?? event.sourceMessageId}`).digest('hex'),
+      roomId: cornerId,
+      authorId: SYSTEM_IDENTITY_ID,
+      subject: { kind: 'system', name: 'A Workspace owner or admin' },
+      verb: 'needs to approve',
+      object: 'this pull request',
+      consequence: 'checks passed and no other agent can review it',
+      afterMessageId: event.sourceMessageId,
+    });
     return OK;
   }
-  // `pr_checks_status` reports a dispatched wake from this projection.
-  await db.query(`UPDATE corner_facts SET command_check_state=$2 WHERE corner_id=$1`, [
-    cornerId,
-    corner.lifecycle.checks,
-  ]);
+  if (plan.outcome === 'passing' && plan.approved) {
+    await transition.take('approved', { verdict: 'approved' });
+    await wakeToLand(db, cornerId, corner, transition);
+  }
   return OK;
 }
 
@@ -801,14 +791,10 @@ async function reachableReviewer(
   corner: CornerRow,
   sourceMessageId: string,
   headSha: string | null,
-  revisionAuthorId?: string,
 ): Promise<string | undefined> {
   if (!corner.configured_reviewer_id) return undefined;
   if (corner.reviewer_fallback_ids.length)
-    return dispatchableListReviewer(
-      db, cornerId, corner, sourceMessageId, headSha, undefined, revisionAuthorId,
-    );
-  if (corner.configured_reviewer_id === revisionAuthorId) return undefined;
+    return dispatchableListReviewer(db, cornerId, corner, sourceMessageId, headSha);
   if (!corner.reviewer_parent_member) {
     await noteUnreachableReviewer(db, {
       cornerId,
@@ -837,12 +823,11 @@ async function dispatchableListReviewer(
   sourceMessageId: string,
   headSha: string | null,
   failed?: string,
-  revisionAuthorId?: string,
 ): Promise<string | undefined> {
   const list = reviewerList({
     reviewer_agent_id: corner.configured_reviewer_id,
     reviewer_fallback_ids: corner.reviewer_fallback_ids,
-  }).filter((id) => id !== corner.owner_agent_id && id !== revisionAuthorId);
+  }).filter((id) => id !== corner.owner_agent_id);
   const reviewerAgentId = failed
     ? await nextHealthyAgent(db, corner.parent_id, list, failed)
     : await firstHealthyAgent(db, corner.parent_id, list);
@@ -936,14 +921,15 @@ async function approvalRecorded(
   event: Extract<CornerEvent, { kind: 'approval' }>,
 ): Promise<Applied> {
   if (corner.lifecycle.pr?.headSha !== event.headSha) return no('approval is not for the current head');
-  // An approval while checks still run is kept; the checks-passed that
-  // follows it skips the review and lands.
+  // A yes while checks still run is kept; the checks-passed that follows it
+  // skips the review.
   if (corner.lifecycle.checks !== 'passing') return no('checks are not green yet');
   if (transition.state === 'implement' && transition.run.outcome === 'changes_requested')
     await transition.take('rereview');
-  if (transition.state !== 'review') return no('not in review');
+  if (transition.state !== 'review') return no('not waiting for a yes');
   await transition.take('approved', { verdict: 'approved', headSha: event.headSha });
-  await wakeToLand(db, cornerId, corner, transition);
+  // A person's order is landed by its caller at once; nobody else is woken.
+  if (event.by === 'reviewer') await wakeToLand(db, cornerId, corner, transition);
   return OK;
 }
 
@@ -975,7 +961,7 @@ async function reviewEnded(
   const headSha = corner.lifecycle.pr?.headSha;
   if (!headSha) return no('no pull request head');
   if (corner.lifecycle.checks !== 'passing') return no('checks are not green');
-  if (await approvedCurrentHead(db, cornerId, corner)) return no('the current head is approved');
+  if (await approvedCurrentHead(db, cornerId, corner)) return no('the current head has a yes');
   if (transition.state === 'implement' && transition.run.outcome === 'changes_requested')
     await transition.take('rereview');
   if (transition.state !== 'review') return no('not in review');
@@ -1186,90 +1172,51 @@ function reviewerIsAuthor(
   }).every((id) => id === corner.owner_agent_id);
 }
 
-/** The configured reviewer's PASS on the corner's current head and latest brief revision, by a current parent member. */
+/** A non-author yes on the corner's current head (`cornerMergeGate`'s `approved`). */
 async function approvedCurrentHead(
   db: SqlDatabase,
   cornerId: string,
-  corner: Pick<CornerRow, 'lifecycle' | 'parent_id' | 'owner_agent_id'>,
+  corner: Pick<CornerRow, 'lifecycle'>,
 ): Promise<boolean> {
   const pr = corner.lifecycle.pr;
   if (!pr?.headSha || !pr.number) return false;
-  return (
-    (await approvingReviewer(db, { ...corner, cornerId, number: pr.number, headSha: pr.headSha })) !==
-    undefined
-  );
-}
-
-async function approvingReviewer(
-  db: SqlDatabase,
-  input: { cornerId: string; parent_id: string; owner_agent_id: string | null; number: number; headSha: string },
-): Promise<string | undefined> {
-  const approvedBy = (
-    await db.query<{ approved_by: string }>(
-      `SELECT approved_by FROM corner_merge_approvals
-       WHERE corner_id=$1 AND pull_request_number=$2 AND head_sha=$3
-         AND brief_revision IS NOT DISTINCT FROM
-           (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$1)`,
-      [input.cornerId, input.number, input.headSha],
-    )
-  ).rows[0]?.approved_by;
-  // The author on its own Room's reviewer list never approves its own work.
-  if (!approvedBy || approvedBy === input.owner_agent_id) return undefined;
-  // The same predicate `approve_merge` enforces: a configured reviewer (or a
-  // current-member fallback) that is still a current member of the parent Room.
-  return (await isCornerReviewer(db, input.cornerId, approvedBy)) ? approvedBy : undefined;
+  return (await cornerMergeGate(db, cornerId, { number: pr.number, headSha: pr.headSha })).approved;
 }
 
 export type CornerMergeGate = {
   /** A reviewer is configured; one who is the author must also be a current parent member. */
   reviewerExists: boolean;
   reviewerIsAuthor: boolean;
-  /** No PASS on this head and the latest brief revision by a configured reviewer who is not the author. */
-  approvalPending: boolean;
+  /**
+   * A non-author said yes on this exact head: a configured reviewer agent's
+   * PASS (never the author's), or a current Workspace owner or admin's order.
+   */
+  approved: boolean;
   held: boolean;
   holds: Awaited<ReturnType<typeof activeCornerHolds>>;
-  isWorkerYolo: boolean;
-  /** A current Workspace owner or admin ordered this exact head merged (`order_corner_merge`). Authority, not autonomy: it carries on its own. */
-  expressMergeOrdered: boolean;
-  /** Everything but checks: either an owner/admin's express order, or the implementer's merge (a non-author reviewer's PASS, yolo on, no hold). */
+  /** Everything but checks: a yes on this head and no hold. */
   open: boolean;
 };
 
 /**
  * The merge gate for one exact PR head, minus the checks verdict (the caller
- * supplies that from GitHub). Shared by `pr_checks_status` and the server
- * merge, so the gate an agent reads is the gate `merge_corner` merges on.
+ * supplies that live from GitHub). Shared by `pr_checks_status` and the server
+ * merge, so the gate an agent reads is the gate `landCorner` merges on.
  */
 export async function cornerMergeGate(
   db: SqlDatabase,
   cornerId: string,
   head: { number: number; headSha: string },
 ): Promise<CornerMergeGate> {
-  const gates = await cornerMergeGates(db, [
-    { corner_id: cornerId, number: head.number, head_sha: head.headSha },
-  ]);
-  const gate = gates.get(cornerId);
-  if (!gate) throw new Error('corner not found');
-  return gate;
-}
-
-/** Gate facts and rules for the given heads. */
-async function cornerMergeGates(
-  db: SqlDatabase,
-  heads: { corner_id: string; number: number; head_sha: string }[],
-): Promise<Map<string, CornerMergeGate>> {
   const rows = await db.query<{
-    corner_id: string;
     owner_agent_id: string | null;
     configured_reviewer_id: string | null;
     reviewer_parent_member: boolean;
     reviewer_fallback_ids: string[];
     approved: boolean;
-    express_merge_ordered: boolean;
     holds: CornerMergeGate['holds'];
-    yolo_mode: boolean | null;
   }>(
-      `SELECT fact.corner_id,fact.owner_agent_id,
+      `SELECT fact.owner_agent_id,
               parent.reviewer_agent_id configured_reviewer_id,parent.reviewer_fallback_ids,
               EXISTS (
                 SELECT 1 FROM memberships member JOIN identities reviewer ON reviewer.id=member.identity_id
@@ -1278,65 +1225,59 @@ async function cornerMergeGates(
               ) reviewer_parent_member,
               EXISTS (
                 SELECT 1 FROM corner_merge_approvals approval
-                JOIN memberships member ON member.room_id=parent.id AND member.identity_id=approval.approved_by
-                  AND member.removed_at IS NULL
-                JOIN identities reviewer ON reviewer.id=member.identity_id AND reviewer.kind='agent'
-                WHERE approval.corner_id=fact.corner_id AND approval.pull_request_number=head.number
-                  AND approval.head_sha=head.head_sha
-                  AND approval.brief_revision IS NOT DISTINCT FROM
-                    (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id)
-                  AND approval.approved_by IS DISTINCT FROM fact.owner_agent_id
-                  AND parent.reviewer_agent_id IS NOT NULL
-                  AND (approval.approved_by=parent.reviewer_agent_id OR approval.approved_by=ANY(parent.reviewer_fallback_ids))
+                WHERE approval.corner_id=fact.corner_id AND approval.pull_request_number=$2
+                  AND approval.head_sha=$3
+                  AND (
+                    -- A configured reviewer agent, still a parent member, who is not the author.
+                    EXISTS (
+                      SELECT 1 FROM memberships member
+                      JOIN identities reviewer ON reviewer.id=member.identity_id AND reviewer.kind='agent'
+                      WHERE member.room_id=parent.id AND member.identity_id=approval.approved_by
+                        AND member.removed_at IS NULL
+                        AND approval.approved_by IS DISTINCT FROM fact.owner_agent_id
+                        AND (approval.approved_by=parent.reviewer_agent_id
+                          OR approval.approved_by=ANY(parent.reviewer_fallback_ids))
+                    )
+                    -- Or a current Workspace owner or admin.
+                    OR EXISTS (
+                      SELECT 1 FROM memberships workspace_member
+                      JOIN identities person ON person.id=workspace_member.identity_id AND person.kind='human'
+                      WHERE workspace_member.workspace_id=corner.workspace_id
+                        AND workspace_member.room_id IS NULL
+                        AND workspace_member.identity_id=approval.approved_by
+                        AND workspace_member.removed_at IS NULL
+                        AND workspace_member.role IN ('owner','admin')
+                    )
+                  )
               ) approved,
-              -- A current Workspace owner or admin's order_corner_merge is authority,
-              -- not autonomy: it does not need a configured reviewer at all.
-              EXISTS (
-                SELECT 1 FROM corner_merge_approvals approval
-                JOIN memberships workspace_member ON workspace_member.workspace_id=corner.workspace_id
-                  AND workspace_member.room_id IS NULL AND workspace_member.identity_id=approval.approved_by
-                  AND workspace_member.removed_at IS NULL AND workspace_member.role IN ('owner','admin')
-                JOIN identities orderer ON orderer.id=approval.approved_by AND orderer.kind='human'
-                WHERE approval.corner_id=fact.corner_id AND approval.pull_request_number=head.number
-                  AND approval.head_sha=head.head_sha
-              ) express_merge_ordered,
               COALESCE((SELECT jsonb_agg(jsonb_build_object('id',hold.id::text,'actorId',hold.actor_id,
                 'standing',hold.standing,'setAt',hold.set_at::text) ORDER BY hold.set_at,hold.id)
                 FROM corner_merge_holds hold WHERE hold.corner_id=fact.corner_id AND hold.released_at IS NULL),
-                '[]'::jsonb) holds,
-              (agent.yolo_mode AND workspace.visibility<>'public') yolo_mode
-       FROM jsonb_to_recordset($1::jsonb) head(corner_id uuid,number int,head_sha text)
-       JOIN corner_facts fact ON fact.corner_id=head.corner_id
+                '[]'::jsonb) holds
+       FROM corner_facts fact
        JOIN rooms corner ON corner.id=fact.corner_id
        JOIN rooms parent ON parent.id=corner.parent_id
-       JOIN workspaces workspace ON workspace.id=corner.workspace_id
-       LEFT JOIN agents agent ON agent.agent_id=${cornerImplementerSql('fact', 'corner')}`,
-    [JSON.stringify(heads)],
+       WHERE fact.corner_id=$1`,
+    [cornerId, head.number, head.headSha],
   );
-  return new Map(rows.rows.map(corner => {
-    const author = reviewerIsAuthor(corner);
-    const reviewerExists = Boolean(corner.configured_reviewer_id) && (!author || corner.reviewer_parent_member);
-    const approvalPending = Boolean(corner.configured_reviewer_id) && !corner.approved;
-    const held = corner.holds.length > 0;
-    const isWorkerYolo = corner.yolo_mode === true;
-    const expressMergeOrdered = corner.express_merge_ordered;
-    return [corner.corner_id, {
-      reviewerExists,
-      reviewerIsAuthor: author,
-      approvalPending,
-      held,
-      holds: corner.holds,
-      isWorkerYolo,
-      expressMergeOrdered,
-      open: expressMergeOrdered || (reviewerExists && !approvalPending && !held && isWorkerYolo),
-    }];
-  }));
+  const corner = rows.rows[0];
+  if (!corner) throw new Error('corner not found');
+  const author = reviewerIsAuthor(corner);
+  const held = corner.holds.length > 0;
+  return {
+    reviewerExists: Boolean(corner.configured_reviewer_id) && (!author || corner.reviewer_parent_member),
+    reviewerIsAuthor: author,
+    approved: corner.approved,
+    held,
+    holds: corner.holds,
+    open: corner.approved && !held,
+  };
 }
 
 /**
- * Claims the one merge attempt for this head, under the run lock and
- * only while the run is in `land` on that head. Returns false when the head
- * was already attempted or the corner moved on, so concurrent `merge_corner`
+ * Claims the one merge attempt for this head, under the run lock and only
+ * while the gate is open on that head. Returns false when the head was
+ * already attempted or the corner moved on, so concurrent `merge_corner`
  * calls and redelivered events never merge a head twice. Stale unfinished claims are
  * recovered only after reading GitHub to establish whether the merge landed.
  */
@@ -1356,7 +1297,7 @@ export async function claimCornerMergeAttempt(
     if (!gate.open) return false;
     const claimed = await db.query(
       `UPDATE corner_facts SET merge_attempt_head=$2,lifecycle=lifecycle-'mergeRecovery',updated_at=now()
-       WHERE corner_id=$1 AND workflow_state='land'
+       WHERE corner_id=$1
          AND lifecycle->'pr'->>'headSha'=$2
          AND merge_attempt_head IS DISTINCT FROM $2
        RETURNING 1`,
@@ -1375,7 +1316,7 @@ export async function unfinishedCornerMergeClaims(db: SqlDatabase, cornerId?: st
     `SELECT fact.corner_id,(fact.lifecycle->'pr'->>'number')::int number,
             fact.merge_attempt_head head_sha
      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-     WHERE fact.workflow_state IN ('land','ask_human') AND corner.archived_at IS NULL
+     WHERE fact.workflow_state IN ('review','ask_human') AND corner.archived_at IS NULL
        AND fact.merge_attempt_head=fact.lifecycle->'pr'->>'headSha'
        AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'
        AND (COALESCE((fact.lifecycle->'mergeRecovery'->>'nextAttemptAt')::double precision,
@@ -1400,12 +1341,14 @@ export async function clearUnfinishedCornerMergeClaim(
     const claim = (await unfinishedCornerMergeClaims(db, cornerId))[0];
     if (!corner || claim?.head_sha !== headSha || claim.number !== number) return;
     const gate = await cornerMergeGate(db, cornerId, { number: claim.number, headSha });
-    if ((await loadCornerLifecycleState(db, cornerId))?.toState === 'ask_human')
+    const refused = (await loadCornerLifecycleState(db, cornerId))?.toState === 'ask_human';
+    if (refused)
       await advanceCorner(db, cornerId, { kind: 'merge-refused', headSha, reason: 'GitHub confirmed the pull request has not merged' });
     await db.query(`UPDATE corner_facts SET merge_attempt_head=NULL,lifecycle=lifecycle-'mergeRecovery',updated_at=now() WHERE corner_id=$1`, [cornerId]);
     // Only a fresh land attempt can act on an open gate, with a fresh GitHub read
-    // and claim. A closed gate still clears the stale claim for later recovery.
-    return gate.open && corner.lifecycle.checks === 'passing';
+    // (live checks) and claim. A closed gate, or a head just handed back as
+    // refused, still clears the stale claim for later recovery.
+    return !refused && gate.open;
   });
 }
 

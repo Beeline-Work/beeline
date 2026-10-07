@@ -62,28 +62,26 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 
 `getPrChecksStatus({ cornerId, pullRequest? })` is authorized by current corner membership.
 `pullRequest` is a positive PR number in the parent Room repository or its full GitHub URL;
-omitting it selects the corner's own PR. It returns `checks` (`passed`, `failed`, or `pending`),
-`pullRequest` (URL), `headSha`, `checkCount`, `approvalPending`, `reviewer` (the parent Room's currently
-configured reviewer as `@handle`, or null), `reviewerExists` (the configuration fact independent
-of whether the identity has a handle), `reviewerIsAuthor` (true when that reviewer is also
-this corner's implementer), `reviewerWake` (`unconfigured` | `unreachable` | `waiting` | `dispatched` | `not_required`,
-plus a `detail` sentence the author can restate), `recordedChecks` (the stored verdict used for dispatch; distinct from the live `checks` verdict), and `rule` (states which actor's `approve_merge`
-clears the gate). The membership used to *deliver* a green wake is not the configuration itself:
-a reviewer id on the parent Room that is not a current parent member stays configured, reports
-`unreachable`, and does not collapse to "no reviewer". The server resolves the current head, shares
-head-bound check facts across corners, and reconciles
-missing/invalidated snapshots with GitHub check runs and combined commit status. A single webhook
-check is not a complete snapshot. When the configured reviewer implements the corner it is reviewing,
-the operation's `approvalPending` stays true: no other agent can review the work, so only a
-current Workspace owner or admin's `orderCornerMerge` merges it. The `pr_checks_status` helper then composes the complete
-merge gate: reviewer outcome must pass, worker yolo must be on, no existing human hold may apply,
-and `reviewerExists` must be true. Human holds remain in the helper's requesting-corner
-conversation scan; absent reviewer or request state is not consent.
+omitting it selects the corner's own PR. It returns facts only: `stage` (`building` |
+`checking` | `waiting_for_yes` | `merged` | `closed`, derived from the live facts below),
+`checks` (`passed`, `failed`, or `pending`, read live from GitHub's rollup for the current head),
+`pullRequest` (URL), `headSha`, `checkCount`, `approved` (a non-author said yes on this exact
+head: a configured reviewer agent's PASS, or a current Workspace owner or admin), `reviewer` (the
+parent Room's currently configured reviewer as `@handle`, or null), `reviewerExists`,
+`reviewerIsAuthor` (true when that reviewer is also this corner's implementer, so only a person's
+yes can merge it), `reviewerWake` (`unconfigured` | `unreachable` | `waiting` | `dispatched` |
+`not_required`, plus a `detail` sentence), `held`/`holds`, and `mergeAllowed`:
+
+    mergeAllowed = checks === 'passed' && approved && !held
+
+A new commit cancels the yes because it is bound to the exact head; a brief edit does not. A
+hold is the only veto.
 
 Deploy the server before helpers that call this operation.
 
 `mergeCorner({ cornerId })` is the implementer's merge. Only the corner's implementer may call it.
-The server squash-merges the current head only when the corner is in `land` and
+It goes through the one merge path, `landCorner`, which squash-merges the current head only when
 `getPrChecksStatus` reports `mergeAllowed`; otherwise it attempts nothing and returns
-`{ status: 'blocked', blocker }`. The server never merges a corner on its own: a reviewer's PASS
-wakes the implementer to call this operation, and `orderCornerMerge` merges at once.
+`{ status: 'blocked', blocker }`. A reviewer's PASS wakes the implementer to call this operation;
+a person's yes (`orderCornerMerge`, or the phone's `approveCornerMerge`) goes through the same
+`landCorner` at once.

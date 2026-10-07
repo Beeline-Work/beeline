@@ -31,15 +31,14 @@ describe('daemon network-failure classification', () => {
         }),
       ),
     ).toBe(true);
-    expect(isDaemonNetworkFailure(new Error('invalid validation stage'))).toBe(false);
+    expect(isDaemonNetworkFailure(new Error('corner not found'))).toBe(false);
   });
 });
 
 describe('daemonOperationIsSafeToRepeat', () => {
-  it('repeats reads and the idempotent validation upsert', () => {
+  it('repeats reads', () => {
     expect(daemonOperationIsSafeToRepeat('getPrChecksStatus', {})).toBe(true);
     expect(daemonOperationIsSafeToRepeat('listRoomWebhooks', {})).toBe(true);
-    expect(daemonOperationIsSafeToRepeat('postCornerValidationStage', {})).toBe(true);
   });
 
   it('never repeats an ordinary write', () => {

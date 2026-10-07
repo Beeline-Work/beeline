@@ -606,11 +606,6 @@ export type RoomView = {
       readonly url: string;
     }[];
   };
-  readonly cornerValidation?: readonly {
-    readonly stage: string;
-    readonly status: string;
-    readonly evidence: string;
-  }[];
   readonly repository?: RoomRepositoryView;
   readonly repositoryResolution: RoomRepositoryResolution;
   /** GitHub-derived lifecycle for this Room when it is a repository corner. */

@@ -77,6 +77,7 @@ CREATE INDEX IF NOT EXISTS agent_commands_source_message_idx ON agent_commands(s
 CREATE INDEX IF NOT EXISTS agent_commands_result_message_idx ON agent_commands(result_message_id)
   WHERE result_message_id IS NOT NULL;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS command_id text;
+-- Retired: nothing reads or writes command_check_state; drop it in a later release.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS command_check_state text;
 -- Handbacks to the corner's worker, counted per pull-request head so a push
 -- resets them and a review/fix loop over one commit cannot run forever.
@@ -1403,9 +1404,6 @@ export async function reconcileCornerMergeBlockers(
             },
           });
           if (!source.inserted) {
-            await db.query(`UPDATE corner_facts SET command_check_state=NULL WHERE corner_id=$1`, [
-              row.corner_id,
-            ]);
             await routeSystemCommand(db, {
               roomId: row.corner_id,
               sourceMessageId: source.id,
@@ -1535,8 +1533,6 @@ export async function reconcileConfiguredCornerReviewers(
          SELECT 1 FROM corner_merge_approvals approval
          WHERE approval.corner_id=corner.id
            AND approval.approved_by=parent.reviewer_agent_id
-           AND approval.brief_revision IS NOT DISTINCT FROM
-             (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=corner.id)
            AND approval.pull_request_number=(fact.lifecycle->'pr'->>'number')::integer
            AND approval.head_sha=fact.lifecycle->'pr'->>'headSha'
        )
@@ -1606,8 +1602,6 @@ export async function reconcileConfiguredCornerReviewers(
          SELECT 1 FROM corner_merge_approvals approval
          WHERE approval.corner_id=corner.id
            AND approval.approved_by=parent.reviewer_agent_id
-           AND approval.brief_revision IS NOT DISTINCT FROM
-             (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=corner.id)
            AND approval.pull_request_number=(fact.lifecycle->'pr'->>'number')::integer
            AND approval.head_sha=fact.lifecycle->'pr'->>'headSha'
        )

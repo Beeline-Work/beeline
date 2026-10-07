@@ -601,8 +601,6 @@ export type SetRoomRepositoryInput = RoomInput & {
 export type SetRoomTargetBranchInput = RoomInput & { readonly targetBranch: string };
 export type ApproveCornerMergeInput = {
   readonly cornerId: string;
-  /** Managers may explicitly override a known failing check result. */
-  readonly force?: boolean;
 };
 export type ApproveCornerMergeResult = {
   readonly status: 'merge-requested' | 'already-requested' | 'already-merged';

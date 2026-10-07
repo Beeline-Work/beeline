@@ -330,12 +330,12 @@ export type DaemonOperationMap = {
     ReviseCornerBriefInput,
     CornerBrief & { readonly wake: { readonly queued: boolean; readonly agentId?: string; readonly reason?: string } }
   >;
-  postCornerValidationStage: Operation<PostCornerValidationStageInput, CornerValidationStage>;
   getPrChecksStatus: Operation<
     CornerInput & { pullRequest?: number | string },
     {
+      /** Where the corner stands, from live facts: building -> checking -> waiting for a yes -> merged (or closed). */
+      stage: 'building' | 'checking' | 'waiting_for_yes' | 'merged' | 'closed';
       checks: 'passed' | 'failed' | 'pending';
-      recordedChecks?: 'passing' | 'failing' | 'pending' | 'unknown';
       /** Number of check-run and commit-status contexts GitHub reports for the current head. */
       checkCount: number;
       /**
@@ -353,8 +353,8 @@ export type DaemonOperationMap = {
       };
       pullRequest: string;
       headSha: string;
-      /** True when the configured reviewer's exact-head outcome has not passed. */
-      approvalPending: boolean;
+      /** A non-author said yes on this exact head: a configured reviewer agent's PASS, or a Workspace owner or admin. */
+      approved: boolean;
       /** The parent Room's currently-configured reviewer, as `@handle`, or null when none is configured. */
       reviewer: string | null;
       /** True when the parent Room has a configured reviewer, even if that identity has no handle. */
@@ -370,24 +370,15 @@ export type DaemonOperationMap = {
         status: 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched' | 'not_required';
         detail: string;
       };
-      /** True when a person in the corner asked to hold the merge. */
+      /** True when a person in the corner asked to hold the merge. The only veto. */
       held: boolean;
       holds: CornerMergeHold[];
-      /** The corner worker's yolo mode (always off in a public Workspace). */
-      isWorkerYolo: boolean;
-      /**
-       * The complete merge gate: checks passed, reviewer outcome passed,
-       * worker yolo on, no human hold, and a configured reviewer. When it is
-       * true for the corner's current head, the implementer's `mergeCorner`
-       * squash-merges that head.
-       */
+      /** The merge gate: checks passed, `approved`, and not `held`. */
       mergeAllowed: boolean;
-      /** States which actor's approve_merge clears the gate, and the human fallback path. */
-      rule: string;
     }
   >;
   approveCornerMerge: Operation<
-    CornerInput & { readonly headSha: string; readonly briefRevision?: number },
+    CornerInput & { readonly headSha: string },
     {
       readonly status: 'approved';
       readonly pullRequestNumber: number;
@@ -591,10 +582,10 @@ export type DaemonOperationMap = {
     { holdId: string; roomId: string }
   >;
   /**
-   * This turn's original human requester's express instruction to merge now.
-   * Only a current Workspace owner or admin's order carries; it is recorded
-   * for the exact head, in the same table where `approve_merge`
-   * records a reviewer's PASS.
+   * This turn's original human requester's yes on the current head. Only a
+   * current Workspace owner or admin's yes is recorded; it is the same yes as
+   * a reviewer's PASS, and the server merges at once when checks are green
+   * and no hold stands.
    */
   orderCornerMerge: Operation<
     CornerInput & TurnOutputAuthority & RoomInput & { requestId: string },
@@ -848,7 +839,6 @@ export type CornerRestoreResult = {
   readonly objective: string;
   /** Current immutable assignment, absent on corners opened before briefs. */
   readonly brief?: CornerBrief;
-  readonly validation?: readonly CornerValidationStage[];
   /** Human-created corners are title-only; their title supplies runtime context after a tag. */
   readonly title?: string;
   /** True while `title` is still the generated one the corner was opened under. */
@@ -1267,33 +1257,6 @@ export type ReviseCornerBriefInput = TurnOutputAuthority &
     readonly roomId?: string;
     readonly expectedRevision: number;
     readonly brief: CornerBriefDraft;
-  };
-export type CornerValidationStageName =
-  | 'intent'
-  | 'base'
-  | 'review'
-  | 'tests'
-  | 'docs'
-  | 'lint_types'
-  | 'publication'
-  | 'ci'
-  | 'final_authorization';
-export type CornerValidationStage = {
-  readonly briefRevision: number;
-  readonly headSha: string;
-  readonly stage: CornerValidationStageName;
-  readonly status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'not_applicable';
-  readonly evidence: string;
-  readonly actorId: string;
-};
-export type PostCornerValidationStageInput = TurnOutputAuthority &
-  CornerInput & {
-    readonly requestId: string;
-    readonly briefRevision: number;
-    readonly headSha: string;
-    readonly stage: CornerValidationStageName;
-    readonly status: CornerValidationStage['status'];
-    readonly evidence: string;
   };
 export type CornerResult = { readonly cornerId: string };
 export type CornerLane = 'code' | 'no_code';

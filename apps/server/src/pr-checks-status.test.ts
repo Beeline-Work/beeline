@@ -213,10 +213,12 @@ async function ownPr() {
 describe('PR-scoped check gate', () => {
   it('uses GitHub statusCheckRollup as the verdict', async () => {
     await expect(gate()).resolves.toMatchObject({
+      stage: 'waiting_for_yes',
       checks: 'passed',
       pullRequest: URL,
       headSha: SHA,
-      approvalPending: false,
+      approved: false,
+      mergeAllowed: false,
       reviewer: null,
       reviewerExists: false,
     });
@@ -324,12 +326,12 @@ describe('PR-scoped check gate', () => {
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
     expect(await gate(AUTHOR)).toMatchObject({
       checks: 'passed',
-      approvalPending: true,
+      approved: false,
       mergeAllowed: false,
       reviewer: '@reviewer',
       reviewerExists: true,
       reviewerIsAuthor: true,
-      rule: expect.stringContaining('order_corner_merge'),
+      reviewerWake: { status: 'not_required' },
     });
   });
 
@@ -337,80 +339,19 @@ describe('PR-scoped check gate', () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     expect(await gate(AUTHOR)).toMatchObject({
-      approvalPending: true,
+      approved: false,
       reviewer: '@reviewer',
       reviewerExists: true,
     });
     await expect(
       daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, REVIEWER),
     ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });
-    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
+    expect(await gate(AUTHOR)).toMatchObject({ approved: true, mergeAllowed: true });
     head = '9'.repeat(40);
-    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true, headSha: head });
+    expect(await gate(AUTHOR)).toMatchObject({ approved: false, mergeAllowed: false, headSha: head });
   });
 
-  it('refuses an old brief revision even when the code head is unchanged', async () => {
-    await ownPr();
-    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
-    await db.query(
-      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
-       VALUES($1,1,'A1: complete the full permission matrix',$2,$3)`,
-      [AUTHOR, A, R],
-    );
-    await expect(
-      daemon.execute(
-        'approveCornerMerge',
-        {
-          cornerId: AUTHOR,
-          headSha: SHA,
-        },
-        REVIEWER,
-      ),
-    ).rejects.toThrow('STALE_BRIEF_REVISION');
-    await expect(
-      daemon.execute(
-        'approveCornerMerge',
-        {
-          cornerId: AUTHOR,
-          headSha: SHA,
-          briefRevision: 1,
-        },
-        REVIEWER,
-      ),
-    ).resolves.toMatchObject({ status: 'approved' });
-    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
-    await db.query(
-      `INSERT INTO corner_brief_revisions(corner_id,revision,content,change,author_id,source_room_id)
-       VALUES($1,2,'A1: complete the matrix. A2: retain audit trail.','Added audit criterion',$2,$3)`,
-      [AUTHOR, A, R],
-    );
-    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true });
-    await expect(
-      daemon.execute(
-        'approveCornerMerge',
-        {
-          cornerId: AUTHOR,
-          headSha: SHA,
-          briefRevision: 1,
-        },
-        REVIEWER,
-      ),
-    ).rejects.toThrow('STALE_BRIEF_REVISION');
-    await expect(
-      daemon.execute(
-        'approveCornerMerge',
-        {
-          cornerId: AUTHOR,
-          headSha: SHA,
-          briefRevision: 2,
-        },
-        REVIEWER,
-      ),
-    ).resolves.toMatchObject({ status: 'approved' });
-    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
-  });
-
-  it('requires a fresh approval for every changed head and brief revision', async () => {
+  it('keeps the yes across a brief edit; only a new commit cancels it', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
@@ -418,29 +359,22 @@ describe('PR-scoped check gate', () => {
        VALUES($1,1,'A1: change the button label',$2,$3)`,
       [AUTHOR, A, R],
     );
-    await daemon.execute(
-      'approveCornerMerge',
-      { cornerId: AUTHOR, headSha: SHA, briefRevision: 1 },
-      REVIEWER,
-    );
-    head = '9'.repeat(40);
-    expect(await gate(AUTHOR)).toMatchObject({ checks: 'passed', approvalPending: true });
-    await db.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
-      [AUTHOR, head],
-    );
-    await daemon.execute(
-      'approveCornerMerge',
-      { cornerId: AUTHOR, headSha: head, briefRevision: 1 },
-      REVIEWER,
-    );
-    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: false });
+    await daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, REVIEWER);
+    expect(await gate(AUTHOR)).toMatchObject({ approved: true, mergeAllowed: true });
     await db.query(
       `INSERT INTO corner_brief_revisions(corner_id,revision,content,change,author_id,source_room_id)
        VALUES($1,2,'A1: use a different label','The requester changed the label',$2,$3)`,
       [AUTHOR, A, R],
     );
-    expect(await gate(AUTHOR)).toMatchObject({ approvalPending: true });
+    expect(await gate(AUTHOR)).toMatchObject({ approved: true, mergeAllowed: true });
+    head = '9'.repeat(40);
+    expect(await gate(AUTHOR)).toMatchObject({ checks: 'passed', approved: false, mergeAllowed: false });
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
+      [AUTHOR, head],
+    );
+    await daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: head }, REVIEWER);
+    expect(await gate(AUTHOR)).toMatchObject({ approved: true, mergeAllowed: true });
   });
 
   it('never transfers approval across whitespace, line-ending, metadata, or binary edits', async () => {
@@ -457,7 +391,7 @@ describe('PR-scoped check gate', () => {
     ];
     for (const [index, collisionClass] of collisionClasses.entries()) {
       head = (index + 1).toString(16).repeat(40);
-      expect(await gate(AUTHOR), collisionClass).toMatchObject({ approvalPending: true });
+      expect(await gate(AUTHOR), collisionClass).toMatchObject({ approved: false });
     }
     expect(requests.some((request) => request.includes('.diff'))).toBe(false);
   });
@@ -471,7 +405,7 @@ describe('PR-scoped check gate', () => {
     ]);
     expect(await gate(AUTHOR)).toMatchObject({
       checks: 'passed',
-      approvalPending: true,
+      approved: false,
       reviewer: '@reviewer',
       reviewerExists: true,
       reviewerIsAuthor: false,
@@ -481,14 +415,13 @@ describe('PR-scoped check gate', () => {
           '@reviewer is configured as reviewer but is not a current member of the parent Room, so the checks-passed transition cannot wake them.',
       },
     });
-    expect((await gate(AUTHOR)).rule).toContain('cannot wake them');
   });
 
   it('reports waiting while checks are still pending so the author does not invent a missed wake', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [
         AUTHOR,
         JSON.stringify({
@@ -512,9 +445,10 @@ describe('PR-scoped check gate', () => {
   it('reports dispatched after the green transition consumed the reviewer wake', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
-    await db.query(`UPDATE corner_facts SET command_check_state='passing' WHERE corner_id=$1`, [
-      AUTHOR,
-    ]);
+    await db.query(
+      `UPDATE corner_facts SET workflow_state='review',workflow_outcome='passing' WHERE corner_id=$1`,
+      [AUTHOR],
+    );
     expect(await gate(AUTHOR)).toMatchObject({
       reviewerWake: {
         status: 'dispatched',
@@ -533,7 +467,7 @@ describe('PR-scoped check gate', () => {
     expect(requests).toHaveLength(0);
   });
 
-  it('composes yolo, reviewer outcome, reviewer existence, and human hold through the real helper', async () => {
+  it('composes a reviewer yes, a person yes, and a hold through the real helper', async () => {
     server = createServer(async (request, response) => {
       try {
         const chunks: Buffer[] = [];
@@ -589,82 +523,63 @@ describe('PR-scoped check gate', () => {
       return JSON.parse(response.result.content[0]!.text) as Record<string, unknown>;
     };
 
-    await db.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [A]);
-    await db.query(
-      `INSERT INTO corner_validation_stages
-        (corner_id,brief_revision,head_sha,stage,status,evidence,actor_id)
-       VALUES($1,0,$2,'final_authorization','passed','Agent claimed an all-clear',$3)`,
-      [C, SHA, A],
-    );
     const gate1 = await callGate(1);
     expect(gate1).toMatchObject({
+      stage: 'waiting_for_yes',
       checks: 'passed',
-      approvalPending: true,
+      approved: false,
+      held: false,
       mergeAllowed: false,
       reviewerExists: false,
-      reviewFailed: false,
-      isWorkerYolo: true,
-      expressMergeOrdered: false,
     });
-    expect(gate1).not.toHaveProperty('didHumanSayDontMerge');
+    expect(gate1).not.toHaveProperty('rule');
+    expect(gate1).not.toHaveProperty('isWorkerYolo');
 
+    // A configured reviewer's PASS on this head is a yes. Yolo plays no part.
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
-      `INSERT INTO corner_merge_approvals(corner_id,approved_by,force,pull_request_number,head_sha)
-       VALUES($1,$2,false,614,$3)`,
+      `INSERT INTO corner_merge_approvals(corner_id,approved_by,pull_request_number,head_sha)
+       VALUES($1,$2,614,$3)`,
       [C, REVIEWER, SHA],
     );
-    await expect(callGate(2)).resolves.toMatchObject({
-      approvalPending: false,
-      reviewerExists: true,
-      reviewFailed: false,
-      isWorkerYolo: true,
-    });
-
     await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
-    const gate3 = await callGate(3);
-    expect(gate3).toMatchObject({
-      approvalPending: true,
-      mergeAllowed: false,
+    await expect(callGate(2)).resolves.toMatchObject({
+      approved: true,
+      held: false,
+      mergeAllowed: true,
       reviewerExists: true,
-      reviewFailed: false,
-      isWorkerYolo: false,
-      expressMergeOrdered: false,
     });
-    expect(gate3).not.toHaveProperty('didHumanSayDontMerge');
 
-    await db.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [A]);
+    // A hold is the only veto.
     const { holdId } = await new PhoneService(db, 'http://test').execute('setCornerHold', { cornerId: C }, H);
-    const gate4 = await callGate(4);
-    expect(gate4).toMatchObject({
-      approvalPending: true,
+    await expect(callGate(3)).resolves.toMatchObject({
+      approved: true,
+      held: true,
       mergeAllowed: false,
-      expressMergeOrdered: false,
       holds: [{ id: holdId, actorId: H, standing: 'owner', setAt: expect.any(String) }],
     });
-    expect(gate4).not.toHaveProperty('didHumanSayDontMerge');
 
-    // A current Workspace owner or admin's order carries on its own: it is
-    // never re-gated behind the standing hold above, worker yolo, or the
-    // missing reviewer.
+    // A Workspace owner's yes is the same yes: with no reviewer it opens the
+    // gate, and the standing hold still vetoes it.
     await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
-    await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
     await db.query(
-      `INSERT INTO corner_merge_approvals(corner_id,approved_by,force,pull_request_number,head_sha)
-       VALUES($1,$2,true,614,$3)
-       ON CONFLICT(corner_id) DO UPDATE SET approved_by=EXCLUDED.approved_by,force=EXCLUDED.force,
-         pull_request_number=EXCLUDED.pull_request_number,head_sha=EXCLUDED.head_sha,approved_at=now()`,
-      [C, H, SHA],
+      `UPDATE corner_merge_approvals SET approved_by=$2,approved_at=now() WHERE corner_id=$1`,
+      [C, H],
+    );
+    const gate4 = await callGate(4);
+    expect(gate4).toMatchObject({
+      reviewerExists: false,
+      approved: true,
+      held: true,
+      mergeAllowed: false,
+    });
+    await new PhoneService(db, 'http://test').execute(
+      'setCornerHold',
+      { cornerId: C, releaseHoldId: holdId },
+      H,
     );
     const gate5 = await callGate(5);
-    expect(gate5).toMatchObject({
-      reviewerExists: false,
-      isWorkerYolo: false,
-      held: true,
-      expressMergeOrdered: true,
-      mergeAllowed: true,
-    });
-    expect(gate5).not.toHaveProperty('didHumanSayDontMerge');
+    expect(gate5).toMatchObject({ approved: true, held: false, mergeAllowed: true });
     child.kill();
   });
 });
@@ -798,7 +713,7 @@ describe('zero-check worker completion', () => {
     expect(after.reviewer).toEqual(['subscribed_event']);
     expect(after.lifecycle).toMatchObject({ checks: 'passing', checksSummary: { total: 0 } });
     expect(after.worker).toEqual([]);
-    expect(await gate()).toMatchObject({ approvalPending: true, mergeAllowed: false });
+    expect(await gate()).toMatchObject({ approved: false, mergeAllowed: false });
   });
 
   it.each(['PENDING', 'FAILURE'])('keeps configured CI gated when checks are %s', async (state) => {

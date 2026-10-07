@@ -1782,8 +1782,14 @@ UPDATE corner_facts SET lane='code' WHERE lane='research';
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
   CHECK (lane IN ('code', 'no_code'));
-CREATE INDEX IF NOT EXISTS corner_facts_workflow_land_idx ON corner_facts(corner_id)
-  WHERE workflow_state='land';
+-- The land state is gone: a yes keeps the run in review, and the merge gate
+-- (corner-lifecycle.ts) no longer reads the run state. A run in land moves to
+-- review with the same outcome; its newest handoff card is its state.
+UPDATE messages SET card=card || '{"toState":"review"}'::jsonb
+  WHERE card_type='corner-workflow-handoff' AND card->>'toState'='land'
+    AND room_id IN (SELECT corner_id FROM corner_facts WHERE workflow_state='land');
+UPDATE corner_facts SET workflow_state='review' WHERE workflow_state='land';
+DROP INDEX IF EXISTS corner_facts_workflow_land_idx;
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
 -- True while a human corner still carries the name the phone generated for it;
 -- any rename clears it (corner-title.ts).
@@ -1833,6 +1839,7 @@ UPDATE corner_brief_revisions SET build_spec=content
 -- columns above NULL; older rows keep them and are folded into a spec on read.
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS spec text;
 ALTER TABLE corner_brief_revisions ALTER COLUMN content DROP NOT NULL;
+-- Retired: nothing reads or writes this table; drop it in a later release.
 CREATE TABLE IF NOT EXISTS corner_validation_stages (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   brief_revision integer NOT NULL,

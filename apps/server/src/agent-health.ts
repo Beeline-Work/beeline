@@ -123,8 +123,8 @@ export function reviewerList(room: {
  * Whether `agentId` holds a Room's reviewer post: the configured reviewer
  * itself, or one of its fallbacks that is a current parent member. Used at
  * every point that accepts a fallback reviewer without loosening the fixed
- * reviewer check (`approve_merge`, the review validation stage, and the
- * corner-reviewer fast path in `DaemonService.access`).
+ * reviewer check (`approve_merge` and the corner-reviewer fast path in
+ * `DaemonService.access`).
  */
 export async function isConfiguredReviewer(
   db: SqlDatabase,
@@ -151,9 +151,9 @@ export async function isConfiguredReviewer(
  * The exact reviewer post `approve_merge` enforces for one corner: the parent
  * Room's configured reviewer (or a current-member fallback) that is also a
  * current member of the parent Room. It is the ONE predicate every reviewer
- * surface uses — `approveCornerMerge`, the review validation stage, and the
- * reviewer instruction `getAgentConfiguration.isReviewer` projects — so the
- * instruction a reviewer receives can never name a PASS the gate refuses.
+ * surface uses — `approveCornerMerge` and the reviewer instruction
+ * `getAgentConfiguration.isReviewer` projects — so the instruction a reviewer
+ * receives can never name a PASS the gate refuses.
  */
 export async function isCornerReviewer(
   db: SqlDatabase,

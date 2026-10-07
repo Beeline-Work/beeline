@@ -46,7 +46,7 @@ describe('deriveCornerState from the workflow run', () => {
     ['implement', 'failed', { state: 'waiting', reason: 'failed' }],
     ['checks', 'pushed', { state: 'review' }],
     ['review', 'passing', { state: 'review' }],
-    ['land', 'approved', { state: 'review' }],
+    ['review', 'approved', { state: 'review' }],
     ['ask_human', 'failing', { state: 'waiting', reason: 'question' }],
     ['landed', 'landed', { state: 'archived' }],
     ['closed', 'closed', { state: 'archived' }],

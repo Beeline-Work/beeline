@@ -106,12 +106,13 @@ describe('GitHub phone operations', () => {
     const self = await operations.prChecksStatus({ cornerId: corners[0]! });
     console.info(`Reproduction F1-6: wrong=waiting/opener; right=not_required/implementer; observed=${self.reviewerWake.status}`);
     expect(self.reviewerWake.status).toBe('not_required');
-    expect(self.rule).toContain("this corner's implementer");
-    expect(self.rule).not.toContain('You opened');
+    expect(self.reviewerWake.detail).toContain("this corner's implementer");
+    expect(self).not.toHaveProperty('rule');
     await database.query(`UPDATE corner_facts SET owner_agent_id=NULL,lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
     const result = await operations.prChecksStatus({ cornerId: corners[0]! });
-    expect(result).toMatchObject({ checks: 'passed', recordedChecks: 'unknown', reviewerWake: { status: 'waiting' } });
-    expect(result.reviewerWake.detail).toContain('behind the live rollup');
+    // The live verdict leads; the wake reports only what was dispatched.
+    expect(result).toMatchObject({ stage: 'waiting_for_yes', checks: 'passed', reviewerWake: { status: 'waiting' } });
+    expect(result).not.toHaveProperty('recordedChecks');
   });
 
   it('Reproduction S08-1: check webhook fetches without an open transaction', async () => {

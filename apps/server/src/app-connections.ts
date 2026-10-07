@@ -997,11 +997,11 @@ type AppGate =
   | { readonly kind: 'refuse' };
 
 /**
- * The app a per-call resource authorization belongs to. A Registry route and
- * a Squire call that names a connected app both resolve to `app:<key>`, so
- * every route of one app answers to one permission decision; a call for a
- * disconnected app is refused outright rather than falling back to Squire's
- * own gate.
+ * The app a per-call resource authorization belongs to. A Registry route
+ * resolves to `app:<key>`, so it answers to that app's one permission
+ * decision; a route for a disconnected app is refused outright. A Squire call
+ * answers to Squire's own gate whatever apps it names: it only reaches the
+ * owner's own vault.
  */
 export async function appGateFor(
   database: SqlDatabase,
@@ -1009,26 +1009,13 @@ export async function appGateFor(
     readonly roomId: string;
     readonly agentId: string;
     readonly target: string;
-    readonly appKeys?: readonly string[];
   },
 ): Promise<AppGate> {
-  const registryName = input.target.startsWith('registry-mcp:')
-    ? input.target.slice('registry-mcp:'.length)
-    : undefined;
-  const keys =
-    registryName !== undefined
-      ? [
-          registryServerAppKey(registryName) ??
-            appIdentity(registryName.split('/').pop() ?? '')?.key,
-        ].filter((key): key is string => Boolean(key))
-      : input.target === 'squire'
-        ? [
-            ...new Set(
-              (input.appKeys ?? []).filter((key) => typeof key === 'string' && key.length > 0),
-            ),
-          ]
-        : [];
-  if (registryName === undefined && !keys.length) return { kind: 'resource', target: input.target };
+  if (!input.target.startsWith('registry-mcp:')) return { kind: 'resource', target: input.target };
+  const registryName = input.target.slice('registry-mcp:'.length);
+  const keys = [
+    registryServerAppKey(registryName) ?? appIdentity(registryName.split('/').pop() ?? '')?.key,
+  ].filter((key): key is string => Boolean(key));
   const rows = (
     await database.query<{
       id: string;
@@ -1044,7 +1031,7 @@ export async function appGateFor(
          AND (($2::text IS NOT NULL AND app.transport='registry-mcp' AND k.registry_server_name=$2)
            OR app.app_key=ANY($3::text[]))
        ORDER BY app.app_key`,
-      [input.agentId, registryName ?? null, keys],
+      [input.agentId, registryName, keys],
     )
   ).rows;
   if (!rows.length) {
@@ -1059,7 +1046,7 @@ export async function appGateFor(
          AND (($2::text IS NOT NULL AND app.transport='registry-mcp' AND k.registry_server_name=$2)
            OR app.app_key=ANY($3::text[]))
        LIMIT 1`,
-      [input.agentId, registryName ?? null, keys],
+      [input.agentId, registryName, keys],
     );
     if (foreign.rowCount) return { kind: 'refuse' };
     return { kind: 'resource', target: input.target };

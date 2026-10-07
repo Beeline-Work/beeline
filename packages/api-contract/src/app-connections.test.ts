@@ -9,7 +9,6 @@ import {
   registryServerAppKey,
   registryServerDomain,
   selectOfficialHostedServer,
-  squireCallAppKeys,
   normalizeAppContinuation,
 } from './app-connections.js';
 
@@ -89,25 +88,5 @@ describe('official hosted MCP servers', () => {
         'linear',
       )?.name,
     ).toBe('app.linear/linear');
-  });
-});
-
-describe('Squire calls', () => {
-  it('names the apps a call is for from its service and every URL it points at', () => {
-    expect(
-      squireCallAppKeys({
-        reference: 'vault:opaque',
-        http: { method: 'GET', url: 'https://api.linear.app/graphql' },
-      }),
-    ).toEqual(['linear']);
-    expect(squireCallAppKeys({ service: 'Resend', url: 'https://resend.com/login' })).toEqual([
-      'resend',
-    ]);
-    expect(squireCallAppKeys({ service: 'stripe', url: 'https://linear.app' })).toEqual([
-      'linear',
-      'stripe',
-    ]);
-    expect(squireCallAppKeys({})).toEqual([]);
-    expect(squireCallAppKeys(undefined)).toEqual([]);
   });
 });

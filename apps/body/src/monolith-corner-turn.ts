@@ -576,10 +576,7 @@ export class MonolithCornerTurnLoop {
             requestId: call.requestId,
             generationId: call.generationId,
             target: 'squire',
-            ...resourceCallFacts(
-              { method: 'tools/call', params: { name: call.tool, arguments: call.args } },
-              'squire',
-            ),
+            ...resourceCallFacts({ method: 'tools/call', params: { name: call.tool } }),
           })
         ).allowed,
       options.config.operatorHome ?? homedir(),

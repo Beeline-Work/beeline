@@ -189,17 +189,24 @@ export function cornerGitHubCommandRefusal(
         if (raw.startsWith('+')) return { refused: true };
         const separator = raw.indexOf(':');
         const source = separator >= 0 ? raw.slice(0, separator) : raw;
-        const destination = separator >= 0 ? raw.slice(separator + 1) : source;
+        const explicitDestination = separator >= 0 ? raw.slice(separator + 1) : undefined;
         if (!source || source === ':' || /(?:^|\/)refs\/tags\//.test(source))
           return { refused: true };
-        const resolved = resolvePushBranch(source === 'HEAD' ? undefined : source);
+        // A bare `HEAD` refspec names the branch checked out right now, so it
+        // resolves to that branch rather than the literal string `HEAD`. A
+        // detached HEAD resolves to no branch and stays refused.
+        const resolved = resolvePushBranch(source);
         if (resolved.tag) return { refused: true };
-        const branch = destination
-          ? branchName(destination)
+        const branch = explicitDestination
+          ? branchName(explicitDestination)
           : resolved.branch
             ? branchName(resolved.branch)
             : undefined;
-        return { branch, refused: destination.startsWith('refs/tags/') };
+        return {
+          branch,
+          refused:
+            explicitDestination !== undefined && explicitDestination.startsWith('refs/tags/'),
+        };
       })
     : [resolvePushBranch()];
   if (
@@ -238,6 +245,12 @@ const gitContext = (() => {
 })();
 function git(args, options) { return spawnSync(config.gitCommand, gitContext.concat(args), options); }
 function resolvePushBranch(source) {
+  if (source === 'HEAD') {
+    // git push origin HEAD targets the branch checked out now; read it
+    // directly and fail closed in a detached HEAD.
+    const current = git(['symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' });
+    return current.status === 0 ? { branch: current.stdout.trim() } : {};
+  }
   if (source) {
     const tag = git(['show-ref', '--verify', '--quiet', 'refs/tags/' + source], { stdio: 'ignore' }).status === 0;
     return { branch: source, tag };

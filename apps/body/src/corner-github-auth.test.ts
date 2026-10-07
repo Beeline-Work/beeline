@@ -201,10 +201,25 @@ if (!existsSync(marker)) {
   });
   it.each([
     { launcher: 'git' as const, argv: ['push', 'origin', featureBranch], allowed: true },
+    { launcher: 'git' as const, argv: ['push', '-u', 'origin', 'HEAD'], allowed: true },
+    { launcher: 'git' as const, argv: ['push', 'origin', 'HEAD'], allowed: true },
+    { launcher: 'git' as const, argv: ['push', 'origin', `HEAD:${featureBranch}`], allowed: true },
     {
       launcher: 'git' as const,
       argv: ['push', '-u', 'origin', `HEAD:refs/heads/${featureBranch}`],
       allowed: true,
+    },
+    {
+      launcher: 'git' as const,
+      argv: ['push', 'origin', 'HEAD'],
+      pushBranch: 'foreign',
+      allowed: false,
+    },
+    {
+      launcher: 'git' as const,
+      argv: ['push', '-u', 'origin', 'HEAD'],
+      pushBranch: 'foreign',
+      allowed: false,
     },
     { launcher: 'git' as const, argv: ['push'], allowed: true },
     { launcher: 'git' as const, argv: ['push'], pushBranch: 'foreign', allowed: false },
@@ -244,10 +259,34 @@ if (!existsSync(marker)) {
     const resolve = (source?: string) =>
       source === 'v1.0.0'
         ? { branch: source, tag: true }
-        : { branch: source ?? pushBranch ?? featureBranch, tag: false };
+        : source === 'HEAD'
+          ? { branch: pushBranch ?? featureBranch, tag: false }
+          : { branch: source ?? pushBranch ?? featureBranch, tag: false };
     expect(cornerGitHubCommandRefusal(launcher, argv, featureBranch, targetBranch, resolve)).toBe(
       allowed ? undefined : `beeline: this corner may push only ${featureBranch}`,
     );
+  });
+
+  it('refuses a bare HEAD refspec on a foreign branch or a detached HEAD', () => {
+    // A detached HEAD resolves to no branch, so `HEAD` fails closed.
+    expect(
+      cornerGitHubCommandRefusal(
+        'git',
+        ['push', '-u', 'origin', 'HEAD'],
+        featureBranch,
+        targetBranch,
+        () => ({}),
+      ),
+    ).toBe(`beeline: this corner may push only ${featureBranch}`);
+    expect(
+      cornerGitHubCommandRefusal(
+        'git',
+        ['push', 'origin', 'HEAD'],
+        featureBranch,
+        targetBranch,
+        () => ({}),
+      ),
+    ).toBe(`beeline: this corner may push only ${featureBranch}`);
   });
 
   it('mints lazily and retries an authentication failure exactly once', async () => {
@@ -402,6 +441,8 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
       (await execFileAsync('/usr/bin/git', ['--git-dir', remote, 'show-ref', featureBranch]))
         .stdout,
     ).toContain(`refs/heads/${featureBranch}`);
+    // The corner's own branch may also be pushed as a bare HEAD refspec.
+    await execFileAsync(launcher, ['push', '-u', 'origin', 'HEAD'], { cwd: repo });
     await expect(
       execFileAsync(launcher, ['push', 'origin', 'foreign'], { cwd: repo }),
     ).rejects.toMatchObject({
@@ -415,7 +456,22 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
         stderr: `beeline: this corner may push only ${featureBranch}\n`,
       });
     }
-    expect(await readFile(calls, 'utf8')).toBe('token\n');
+    // On another branch, and in a detached HEAD, a bare HEAD stays refused.
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'checkout', '-b', 'foreign-work']);
+    await expect(
+      execFileAsync(launcher, ['push', 'origin', 'HEAD'], { cwd: repo }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: `beeline: this corner may push only ${featureBranch}\n`,
+    });
+    await execFileAsync('/usr/bin/git', ['-C', repo, 'checkout', '--detach']);
+    await expect(
+      execFileAsync(launcher, ['push', '-u', 'origin', 'HEAD'], { cwd: repo }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: `beeline: this corner may push only ${featureBranch}\n`,
+    });
+    expect(await readFile(calls, 'utf8')).toBe('token\ntoken\n');
   });
 
   async function restServer(

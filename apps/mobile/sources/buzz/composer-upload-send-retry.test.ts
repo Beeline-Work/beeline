@@ -16,7 +16,10 @@ vi.mock('@/utils/readFileBytes', () => ({ readFileBytes: mocks.readFileBytes }))
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
 }));
-vi.mock('@/auth/monolith-session', () => ({ monolithSession: { fetch: mocks.fetch } }));
+vi.mock('@/auth/monolith-session', () => ({
+  MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
+  monolithSession: { fetch: mocks.fetch },
+}));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: vi.fn() }));
 
 import { createChatAttachmentUploader, type PickedChatAttachment } from './chat-attachment';

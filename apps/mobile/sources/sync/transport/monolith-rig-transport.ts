@@ -13,7 +13,7 @@ import type {
 } from '@beeline/buzz-client';
 import type { AgentMessageWriteResult } from '@beeline/api-contract/phone';
 import type { MessageSubmitInput } from './rig-transport';
-import { monolithSession } from '@/auth/monolith-session';
+import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { MonolithPhoneOperationError } from './monolith-operation';
@@ -245,12 +245,20 @@ export class MonolithRigTransport {
     return result.id;
   }
 
-  async operation(name: string, input: unknown): Promise<unknown> {
-    const response = await monolithSession.fetch(`${this.baseUrl}/v1/phone/operations/${name}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-    });
+  async operation(
+    name: string,
+    input: unknown,
+    options?: { timeoutMs?: number },
+  ): Promise<unknown> {
+    const response = await monolithSession.fetch(
+      `${this.baseUrl}/v1/phone/operations/${name}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      },
+      ...(options ? [options] : []),
+    );
     if (!response.ok) {
       let code = 'request_failed';
       try {
@@ -326,14 +334,19 @@ export class MonolithRigTransport {
     ) as AttachmentReference[];
     const mentions = JSON.parse(tag(event, 'monolith-mentions') ?? '[]') as string[];
     const parentMessageId = tag(event, 'monolith-parent');
-    return (await this.operation(parentMessageId ? 'sendRoomReply' : 'sendRoomMessage', {
-      roomId,
-      messageId: event.id,
-      text: event.content,
-      mentions,
-      attachments,
-      ...(parentMessageId ? { parentMessageId } : {}),
-    })) as AgentMessageWriteResult;
+    // The server ignores a repeated messageId, so a timed-out send can retry.
+    return (await this.operation(
+      parentMessageId ? 'sendRoomReply' : 'sendRoomMessage',
+      {
+        roomId,
+        messageId: event.id,
+        text: event.content,
+        mentions,
+        attachments,
+        ...(parentMessageId ? { parentMessageId } : {}),
+      },
+      { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS },
+    )) as AgentMessageWriteResult;
   }
 
   async uploadMedia(bytes: Uint8Array, mimeType: string): Promise<any> {

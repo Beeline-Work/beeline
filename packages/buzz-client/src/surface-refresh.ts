@@ -3,6 +3,8 @@ export type SurfaceRefreshOptions<T> = {
   readonly apply: (value: T) => void;
   readonly minimumIntervalMs?: number;
   readonly maximumWaitMs?: number;
+  /** Past this age since the last paint, a raced read paints anyway. */
+  readonly maximumStaleMs?: number;
   readonly now?: () => number;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -22,6 +24,7 @@ type SurfaceExpectation<T> = {
 export class SurfaceRefreshScheduler<T> {
   private readonly minimumIntervalMs: number;
   private readonly maximumWaitMs: number;
+  private readonly maximumStaleMs: number;
   private readonly now: () => number;
   private readonly setTimer: NonNullable<SurfaceRefreshOptions<T>['setTimer']>;
   private readonly clearTimer: NonNullable<SurfaceRefreshOptions<T>['clearTimer']>;
@@ -32,6 +35,8 @@ export class SurfaceRefreshScheduler<T> {
   private firstDirtyAt: number | undefined;
   private lastStartedAt = Number.NEGATIVE_INFINITY;
   private generation = 0;
+  private raced = 0;
+  private lastAppliedAt: number;
   private disposed = false;
   private ready = false;
   private expectations: SurfaceExpectation<T>[] = [];
@@ -45,7 +50,9 @@ export class SurfaceRefreshScheduler<T> {
     // GET+paint (F5) before any further floor change.
     this.minimumIntervalMs = options.minimumIntervalMs ?? 500;
     this.maximumWaitMs = options.maximumWaitMs ?? 1_000;
+    this.maximumStaleMs = options.maximumStaleMs ?? 5_000;
     this.now = options.now ?? Date.now;
+    this.lastAppliedAt = this.now();
     this.setTimer =
       options.setTimer ?? ((callback, delay) => globalThis.setTimeout(callback, delay));
     // Never store the host `clearTimeout` on `this` — `this.clearTimer(id)`
@@ -66,7 +73,7 @@ export class SurfaceRefreshScheduler<T> {
     // A signal observed while a GET is in flight may describe a commit that
     // raced that GET's database snapshot. Reject that completion and let the
     // dirty follow-up become the only paint for this generation.
-    if (this.inFlight) this.generation += 1;
+    if (this.inFlight) this.raced += 1;
     this.dirty = true;
     this.firstDirtyAt ??= this.now();
     this.schedule(false);
@@ -87,7 +94,7 @@ export class SurfaceRefreshScheduler<T> {
   /** Reconnect and focus are recovery boundaries, so they do not wait for quiet. */
   force(): void {
     if (this.disposed) return;
-    if (this.inFlight) this.generation += 1;
+    if (this.inFlight) this.raced += 1;
     this.dirty = true;
     this.firstDirtyAt ??= this.now();
     this.schedule(true);
@@ -108,7 +115,7 @@ export class SurfaceRefreshScheduler<T> {
   /** A committed server event reads now, or directly after the current read. */
   refreshNow(): void {
     if (this.disposed) return;
-    if (this.inFlight) this.generation += 1;
+    if (this.inFlight) this.raced += 1;
     this.dirty = true;
     this.immediatePending = true;
     this.firstDirtyAt ??= this.now();
@@ -156,11 +163,18 @@ export class SurfaceRefreshScheduler<T> {
     this.inFlight = true;
     this.lastStartedAt = this.now();
     const generation = this.generation;
+    const raced = this.raced;
     try {
       const value = await this.options.fetch();
-      if (!this.disposed && generation === this.generation) {
+      // A busy surface signals faster than a slow read returns. Rejecting
+      // every raced read would never paint, so a stale surface paints the
+      // raced read and lets the dirty follow-up correct it.
+      const current =
+        raced === this.raced || this.now() - this.lastAppliedAt >= this.maximumStaleMs;
+      if (!this.disposed && generation === this.generation && current) {
         this.options.apply(value);
         const now = this.now();
+        this.lastAppliedAt = now;
         this.expectations = this.expectations.filter(
           (expectation) => expectation.expiresAt > now && !expectation.satisfied(value),
         );
@@ -170,7 +184,8 @@ export class SurfaceRefreshScheduler<T> {
         }
       }
     } catch (error) {
-      if (!this.disposed && generation === this.generation) this.options.onError?.(error);
+      if (!this.disposed && generation === this.generation && raced === this.raced)
+        this.options.onError?.(error);
     } finally {
       this.inFlight = false;
       if (this.dirty) {

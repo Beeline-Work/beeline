@@ -120,6 +120,23 @@ describe('surface liveness scheduler', () => {
     expect(applied).toEqual([2]);
   });
 
+  it('still paints a busy surface whose slow reads are each raced by a signal', async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const fetch = vi.fn(
+      () => new Promise<number>((resolve) => setTimeout(() => resolve(++reads), 2_000)),
+    );
+    const applied: number[] = [];
+    const scheduler = new SurfaceRefreshScheduler({ fetch, apply: (value) => applied.push(value) });
+    await scheduler.startAfter(Promise.resolve());
+    for (let elapsed = 0; elapsed < 20_000; elapsed += 500) {
+      scheduler.signal();
+      await vi.advanceTimersByTimeAsync(500);
+    }
+    expect(fetch.mock.calls.length).toBeGreaterThan(5);
+    expect(applied.length).toBeGreaterThan(0);
+  });
+
   it('paints the read in flight and then reads once more on a follow-up', async () => {
     vi.useFakeTimers();
     const first = deferred<number>();

@@ -779,7 +779,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'wallet_swap',
     description:
-      "Swap one asset for another inside your owner's wallet (e.g. usdc to eth). Same grant and ledger rules as wallet_pay.",
+      "Swap one asset for another inside your owner's wallet (e.g. usdc to eth) on one chain: base, ethereum, arbitrum, optimism or polygon. Other chains return \"swap unsupported on <chain>\". Same grant and ledger rules as wallet_pay.",
     inputSchema: {
       type: 'object',
       required: ['fromAsset', 'toAsset', 'amount'],
@@ -788,6 +788,19 @@ const AGENT_TOOLS: ToolDefinition[] = [
         fromAsset: { type: 'string' },
         toAsset: { type: 'string' },
         amount: { type: 'string', description: 'Amount to swap, in fromAsset.' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'wallet_hyperliquid_deposit',
+    description:
+      "Deposit USDC from your owner's wallet on Arbitrum into their Hyperliquid account by sending it to Hyperliquid's Bridge2 contract; it is credited to the same address in about a minute. The minimum is 5 USDC: a smaller deposit is never credited and is lost, so it is refused. Same grant and ledger rules as wallet_pay.",
+    inputSchema: {
+      type: 'object',
+      required: ['amount'],
+      properties: {
+        amount: { type: 'string', description: 'USDC to deposit, at least 5.' },
       },
       additionalProperties: false,
     },
@@ -4366,6 +4379,14 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
           fromAsset: String(args.fromAsset ?? 'usdc'),
           toAsset: String(args.toAsset ?? 'eth'),
+          amount: String(args.amount ?? ''),
+        }),
+      );
+    case 'wallet_hyperliquid_deposit':
+      return JSON.stringify(
+        await daemonExecute('walletHyperliquidDeposit', {
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: agentScheduleRoomId(),
           amount: String(args.amount ?? ''),
         }),
       );

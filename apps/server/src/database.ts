@@ -2616,6 +2616,16 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 );
 CREATE INDEX IF NOT EXISTS wallet_transactions_wallet_idx
   ON wallet_transactions(identity_id, created_at DESC);
+-- The last balance seen per (chain, asset). CDP v2 has no address history,
+-- so an increase over this snapshot is recorded as an inbound transfer.
+CREATE TABLE IF NOT EXISTS wallet_balance_snapshots (
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  chain text NOT NULL,
+  asset text NOT NULL,
+  amount text NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (identity_id, chain, asset)
+);
 
 -- The Beeline feedback loop (apps/server/src/feedback.ts). An agent's
 -- report_feedback call and a person's @system tag or Report issue action land

@@ -625,6 +625,130 @@ describe('wallet over the fake CDP seam', () => {
     expect(lines.every((line) => line.author_id === connectorIdentityId('wallet'))).toBe(true);
   });
 
+  /** Fund one non-Base chain of the fake wallet. */
+  function fundChain(address: string, chain: string, symbol: string, units: number) {
+    const key = `${chain}:${address}`;
+    const holdings = fakeState().holdings.get(key) ?? new Map<string, number>();
+    holdings.set(symbol, units);
+    fakeState().holdings.set(key, holdings);
+  }
+
+  it('an Arbitrum-only wallet reads its real balance, chains, quote and inbound history', async () => {
+    // The fake outlives a test; start from an empty wallet on every chain.
+    fakeState().holdings.clear();
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'arbitrum', 'eth', 0.5);
+
+    const balance = (await daemonOperation('getWalletToolBalance', { agentId: HELPER })).body;
+    expect(balance).toEqual({
+      totalUsd: '$1,600.00',
+      coins: [{ symbol: 'eth', name: 'ETH', chain: 'arbitrum', amount: '0.50', usd: '$1,600.00' }],
+    });
+    const chains = (await daemonOperation('getWalletToolChains', { agentId: HELPER })).body
+      .chains as Array<{ id: string; hasBalance: boolean }>;
+    expect(chains.filter((chain) => chain.hasBalance).map((chain) => chain.id)).toEqual(['arbitrum']);
+    expect(
+      (await daemonOperation('getWalletToolQuote', { agentId: HELPER, chain: 'arbitrum', asset: 'eth', amount: '0.001' })).body,
+    ).toMatchObject({ available: '0.50', sufficient: true, chain: 'arbitrum' });
+    expect(
+      (await daemonOperation('getWalletToolQuote', { agentId: HELPER, chain: 'base', asset: 'eth', amount: '0.001' })).body,
+    ).toMatchObject({ available: '0', sufficient: false, chain: 'base' });
+
+    const history = async () =>
+      (await daemonOperation('getWalletToolHistory', { agentId: HELPER })).body.entries as Array<{
+        direction: string;
+        amountText: string;
+        chain: string;
+        txUrl: string | null;
+      }>;
+    const arbitrumInbound = async () =>
+      (await history()).filter((entry) => entry.direction === 'in' && entry.chain === 'arbitrum');
+    const inbound = await arbitrumInbound();
+    expect(inbound).toEqual([
+      expect.objectContaining({ amountText: '+0.5 ETH', chain: 'arbitrum', txUrl: null }),
+    ]);
+    // A repeated read records the same deposit once.
+    expect(await arbitrumInbound()).toHaveLength(1);
+    fundChain(wallet.address, 'arbitrum', 'eth', 0.75);
+    expect((await arbitrumInbound()).map((entry) => entry.amountText)).toEqual([
+      '+0.5 ETH',
+      '+0.25 ETH',
+    ]);
+  });
+
+  it('pays and swaps on Arbitrum without reading the swap output as a deposit', async () => {
+    // The fake outlives a test; start from an empty wallet on every chain.
+    fakeState().holdings.clear();
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'arbitrum', 'eth', 1);
+    fundChain(wallet.address, 'arbitrum', 'usdc', 50);
+
+    const paid = await daemonOperation('walletPay', {
+      agentId: HELPER, chain: 'arbitrum', asset: 'usdc', amount: '20', to: '0xabc',
+    });
+    expect(paid.body).toMatchObject({ outcome: 'sent', txUrl: expect.stringMatching(/^https:\/\/arbiscan\.io\/tx\//) });
+    expect(fakeState().holdings.get(`arbitrum:${wallet.address}`)!.get('usdc')).toBe(30);
+
+    const swapped = await daemonOperation('walletSwap', {
+      agentId: HELPER, chain: 'arbitrum', fromAsset: 'eth', toAsset: 'usdc', amount: '0.5',
+    });
+    expect(swapped.body).toMatchObject({ outcome: 'sent', txUrl: expect.stringMatching(/^https:\/\/arbiscan\.io\/tx\//) });
+    const entries = (await daemonOperation('getWalletToolHistory', { agentId: HELPER })).body.entries as Array<{
+      direction: string; amountText: string; chain: string;
+    }>;
+    expect(
+      entries
+        .filter((entry) => entry.direction === 'in' && entry.chain === 'arbitrum')
+        .map((entry) => entry.amountText)
+        .sort(),
+    ).toEqual([
+      '+1 ETH',
+      '+50 USDC',
+    ]);
+    expect(entries.filter((entry) => entry.direction === 'out').every((entry) => entry.chain === 'arbitrum')).toBe(true);
+  });
+
+  it('reports an unsupported swap chain as a named failure', async () => {
+    await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    vi.spyOn(walletSource(), 'swap').mockRejectedValue(new Error('swap unsupported on zora'));
+    expect(
+      (await daemonOperation('walletSwap', { agentId: HELPER, chain: 'zora', fromAsset: 'usdc', toAsset: 'eth', amount: '1' })).body,
+    ).toEqual({ outcome: 'failed', reason: 'swap unsupported on zora' });
+  });
+
+  it('deposits at least 5 USDC from Arbitrum to Hyperliquid Bridge2', async () => {
+    // The fake outlives a test; start from an empty wallet on every chain.
+    fakeState().holdings.clear();
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fakeState().holdings.set(wallet.address, new Map([['usdc', 100]]));
+    const send = vi.spyOn(walletSource(), 'sendTransaction');
+
+    expect((await daemonOperation('walletHyperliquidDeposit', { agentId: HELPER, amount: '4.99' })).body).toMatchObject({
+      outcome: 'failed',
+      reason: expect.stringContaining('at least 5 USDC'),
+    });
+    // Base USDC does not fund an Arbitrum deposit.
+    expect((await daemonOperation('walletHyperliquidDeposit', { agentId: HELPER, amount: '5' })).body).toMatchObject({
+      outcome: 'insufficient', available: '0',
+    });
+    expect(send).not.toHaveBeenCalled();
+
+    fundChain(wallet.address, 'arbitrum', 'usdc', 10);
+    expect((await daemonOperation('walletHyperliquidDeposit', { agentId: HELPER, amount: '5' })).body).toMatchObject({
+      outcome: 'sent',
+    });
+    expect(send).toHaveBeenCalledWith(wallet.address, {
+      chain: 'arbitrum',
+      asset: 'usdc',
+      amount: '5',
+      to: '0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7',
+    });
+  });
+
   it('the only spending refusal is insufficient funds', async () => {
     await createdWallet();
     await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });

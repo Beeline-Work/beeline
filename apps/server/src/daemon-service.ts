@@ -364,6 +364,7 @@ export class DaemonService {
       'getWalletToolQuote',
       'walletPay',
       'walletSwap',
+      'walletHyperliquidDeposit',
       'walletSignTypedData',
     ].includes(name);
     if (walletCall && !scopedRoom) throw new Error('wallet access requires an active Room command');
@@ -404,6 +405,7 @@ export class DaemonService {
       'getWalletToolQuote',
       'walletPay',
       'walletSwap',
+      'walletHyperliquidDeposit',
       'walletSignTypedData',
 
       'listTurnAgentGrants',
@@ -636,6 +638,7 @@ export class DaemonService {
               'getWalletToolQuote',
               'walletPay',
               'walletSwap',
+              'walletHyperliquidDeposit',
               'walletSignTypedData',
             ],
           ].includes(name) &&
@@ -1670,6 +1673,13 @@ export class DaemonService {
           'swap',
           authenticatedAgentId,
           input as Input<'walletSwap'>,
+        )) as Output<Name>;
+      case 'walletHyperliquidDeposit':
+        return (await agentWalletTool(
+          this.database,
+          'hyperliquid-deposit',
+          authenticatedAgentId,
+          input as Input<'walletHyperliquidDeposit'>,
         )) as Output<Name>;
       // The feedback loop (`feedback.ts`). Any agent may report from its own
       // turn; only a configured System sender's agent may close the loop.
@@ -8019,6 +8029,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWalletToolQuote: true,
   walletPay: true,
   walletSwap: true,
+  walletHyperliquidDeposit: true,
   walletSignTypedData: true,
   reportFeedback: true,
   notifyFeedbackFixed: true,

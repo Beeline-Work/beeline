@@ -45,6 +45,12 @@ import { ensureConnectorDirectMessageRoom, ensureConnectorIdentity } from './wor
 import { systemLine } from './system-line.js';
 import { fakeCdpWalletSource } from './cdp-fake.js';
 import { realCdpWalletSource, type CdpWalletSource } from './cdp-client.js';
+import {
+  HYPERLIQUID_BRIDGE2,
+  HYPERLIQUID_MIN_DEPOSIT_USDC,
+  formatUnits,
+  parseUnits,
+} from './evm-chain.js';
 
 export { fakeCdpWalletSource } from './cdp-fake.js';
 export type { CdpWalletSource } from './cdp-client.js';
@@ -177,37 +183,15 @@ export async function readWalletView(
   const binding = await walletBinding(database, identityId);
   if (!binding) throw new Error('wallet not created');
   await reconcileInbound(database, identityId, workspaceId, source, binding.eoaAddress);
-  const coins = await source.balances('base', binding.eoaAddress);
-  const chains = [];
-  for (const chain of [
-    'base',
-    'arbitrum',
-    'optimism',
-    'polygon',
-    'zora',
-    'bnb',
-    'avalanche',
-    'ethereum',
-  ] as const) {
-    const fee = await source.feeEstimate(chain);
-    chains.push({
-      id: chain,
-      name: WALLET_CHAIN_NAMES[chain],
-      ...(fee.feeUsd !== null ? { feeUsd: fee.feeUsd.toFixed(2) } : { feeUsd: null }),
-      sponsored: fee.sponsored,
-      // Every EVM chain spends the SAME EOA balance, so one holding lights
-      // them all; the per-chain picker still shows the fee difference.
-      hasBalance: coins.some((coin) => Number(coin.amount) > 0),
-    });
-  }
-  const totalUsd = coins.reduce((sum, coin) => sum + usdValue(coin), 0);
+  const holdings = await readHoldings(source, binding.eoaAddress);
+  await reconcileBalancesSafely(database, { ownerIdentityId: identityId, workspaceId, binding }, holdings);
   const sponsorship = await source.sponsorshipAllowance();
   return {
     address: binding.eoaAddress,
     solanaAddress: binding.solanaAddress,
-    totalUsd: formatUsd(totalUsd),
-    coins,
-    chains,
+    totalUsd: formatUsd(holdingsUsd(holdings.coins)),
+    coins: holdings.coins,
+    chains: await chainViews(source, holdings),
     sponsorship: sponsorship
       ? {
           usedUsd: formatUsd(sponsorship.usedUsd),
@@ -294,6 +278,171 @@ export function formatUsd(value: number): string {
   return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+export type WalletHoldings = {
+  /** Every holding on every chain, each tagged with its chain. */
+  coins: WalletCoinView[];
+  /** Chains whose balance could not be read; their holdings are unknown, not zero. */
+  unreadChains: WalletChainId[];
+};
+
+/** The ONE balance read: every listed chain, in parallel. */
+export async function readHoldings(
+  source: CdpWalletSource,
+  address: string,
+): Promise<WalletHoldings> {
+  const reads = await Promise.allSettled(
+    WALLET_CHAIN_IDS.map((chain) => source.balances(chain, address)),
+  );
+  const coins: WalletCoinView[] = [];
+  const unreadChains: WalletChainId[] = [];
+  reads.forEach((read, index) => {
+    const chain = WALLET_CHAIN_IDS[index]!;
+    if (read.status === 'fulfilled') coins.push(...read.value.map((coin) => ({ ...coin, chain })));
+    else {
+      unreadChains.push(chain);
+      console.error(
+        `[wallet] ${chain} balance read failed for ${address}:`,
+        read.reason instanceof Error ? read.reason.message : read.reason,
+      );
+    }
+  });
+  return { coins, unreadChains };
+}
+
+function holdingsUsd(coins: readonly WalletCoinView[]): number {
+  return coins.reduce((sum, coin) => sum + usdValue(coin), 0);
+}
+
+function chainCoins(holdings: WalletHoldings, chain: WalletChainId): WalletCoinView[] {
+  return holdings.coins.filter((coin) => coin.chain === chain);
+}
+
+/** Chain picker rows; `hasBalance` comes from the same holdings as the balance. */
+async function chainViews(source: CdpWalletSource, holdings: WalletHoldings) {
+  const chains = [];
+  for (const chain of WALLET_CHAIN_IDS) {
+    const fee = await source.feeEstimate(chain);
+    chains.push({
+      id: chain,
+      name: WALLET_CHAIN_NAMES[chain],
+      ...(fee.feeUsd !== null ? { feeUsd: fee.feeUsd.toFixed(2) } : { feeUsd: null }),
+      sponsored: fee.sponsored,
+      hasBalance: chainCoins(holdings, chain).some((coin) => Number(coin.amount) > 0),
+    });
+  }
+  return chains;
+}
+
+/** Snapshot amounts compare at 18 decimals, the most any listed asset uses. */
+const SNAPSHOT_DECIMALS = 18;
+
+/**
+ * Inbound transfers, found from balance increases. CDP v2 has no address
+ * history for server wallets, so each read compares every (chain, asset)
+ * holding with the last snapshot; an increase is recorded as one inbound
+ * transaction and ledger line. The snapshot update is compare-and-set, so
+ * concurrent reads record an increase once. Unread chains are skipped.
+ */
+export async function reconcileBalances(
+  database: SqlDatabase,
+  identityId: string,
+  workspaceId: string,
+  holdings: WalletHoldings,
+): Promise<number> {
+  const snapshots = new Map(
+    (
+      await database.query<{ chain: string; asset: string; amount: string }>(
+        `SELECT chain,asset,amount FROM wallet_balance_snapshots WHERE identity_id=$1`,
+        [identityId],
+      )
+    ).rows.map((row) => [`${row.chain}:${row.asset}`, row.amount]),
+  );
+  const current = new Map<string, { chain: WalletChainId; asset: string; amount: string }>();
+  for (const coin of holdings.coins)
+    if (coin.chain) current.set(`${coin.chain}:${coin.symbol}`, { chain: coin.chain, asset: coin.symbol, amount: coin.amount });
+  for (const key of snapshots.keys()) {
+    const [chain, asset] = key.split(':') as [WalletChainId, string];
+    if (!current.has(key)) current.set(key, { chain, asset, amount: '0' });
+  }
+  const balanceAfterUsd = formatUsd(holdingsUsd(holdings.coins));
+  let added = 0;
+  for (const [key, row] of current) {
+    if (holdings.unreadChains.includes(row.chain)) continue;
+    const previous = snapshots.get(key);
+    const before = previous === undefined ? 0n : parseUnits(previous, SNAPSHOT_DECIMALS);
+    const after = parseUnits(row.amount, SNAPSHOT_DECIMALS);
+    if (previous !== undefined && after === before) continue;
+    const stored =
+      previous === undefined
+        ? await database.query(
+            `INSERT INTO wallet_balance_snapshots(identity_id,chain,asset,amount)
+             VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+            [identityId, row.chain, row.asset, row.amount],
+          )
+        : await database.query(
+            `UPDATE wallet_balance_snapshots SET amount=$4,updated_at=now()
+             WHERE identity_id=$1 AND chain=$2 AND asset=$3 AND amount=$5`,
+            [identityId, row.chain, row.asset, row.amount, previous],
+          );
+    if (stored.rowCount !== 1 || after <= before) continue;
+    const amount = formatUnits(after - before, SNAPSHOT_DECIMALS);
+    const createdAt = Date.now();
+    await recordTransaction(database, identityId, {
+      txId: createHash('sha256')
+        .update(`balance:${row.chain}:${row.asset}:${previous ?? '0'}:${row.amount}:${createdAt}`)
+        .digest('hex'),
+      direction: 'in',
+      asset: row.asset,
+      amount,
+      counterparty: INBOUND_COUNTERPARTY,
+      chain: row.chain,
+      balanceAfterUsd,
+      agentId: null,
+      txUrl: '',
+    });
+    await postLedgerLine(database, workspaceId, identityId, {
+      direction: 'in',
+      agentName: null,
+      amountText: `+${amount} ${row.asset.toUpperCase()}`,
+      counterparty: INBOUND_COUNTERPARTY,
+      chain: row.chain,
+      balanceAfterUsd,
+      txUrl: null,
+      createdAt,
+    });
+    added += 1;
+  }
+  return added;
+}
+
+/** A balance increase carries no sender; the ledger says so plainly. */
+const INBOUND_COUNTERPARTY = 'deposit (sender not indexed)';
+
+/** Credit a swap's expected output to the snapshot so it is not read as a deposit. */
+async function creditSnapshot(
+  database: SqlDatabase,
+  identityId: string,
+  chain: WalletChainId,
+  asset: string,
+  amount: string,
+): Promise<void> {
+  const previous = (
+    await database.query<{ amount: string }>(
+      `SELECT amount FROM wallet_balance_snapshots WHERE identity_id=$1 AND chain=$2 AND asset=$3`,
+      [identityId, chain, asset],
+    )
+  ).rows[0]?.amount;
+  const total = formatUnits(
+    parseUnits(previous ?? '0', SNAPSHOT_DECIMALS) + parseUnits(amount, SNAPSHOT_DECIMALS),
+    SNAPSHOT_DECIMALS,
+  );
+  await database.query(
+    `INSERT INTO wallet_balance_snapshots(identity_id,chain,asset,amount) VALUES ($1,$2,$3,$4)
+     ON CONFLICT(identity_id,chain,asset) DO UPDATE SET amount=EXCLUDED.amount,updated_at=now()`,
+    [identityId, chain, asset, total],
+  );
+}
+
 /**
  * Send on a named chain. The funded balance is the only gate: a payment
  * larger than what the asset holds moves nothing and posts the one
@@ -314,8 +463,10 @@ export async function sendFromWallet(
     return { outcome: 'delegation-expired' };
   }
   const source = walletSource();
-  const coins = await source.balances('base', binding.eoaAddress);
-  const holding = coins.find((coin) => coin.symbol.toLowerCase() === input.asset.toLowerCase());
+  const coins = (await readHoldings(source, binding.eoaAddress)).coins;
+  const holding = coins.find(
+    (coin) => coin.chain === input.chain && coin.symbol.toLowerCase() === input.asset.toLowerCase(),
+  );
   const needed = Number(input.amount);
   const available = Number(holding?.amount ?? '0');
   if (!holding || Number.isNaN(needed) || needed <= 0 || needed > available) {
@@ -341,7 +492,7 @@ export async function sendFromWallet(
     coins.reduce(
       (sum, coin) =>
         sum +
-        (coin.symbol === holding.symbol
+        (coin === holding
           ? usdValue(coin) * (1 - needed / available)
           : usdValue(coin)),
       0,
@@ -678,7 +829,15 @@ export async function walletAgentContext(
 /** The agent-facing wallet tools: one entry point per daemon operation. */
 export async function agentWalletTool(
   database: SqlDatabase,
-  op: 'state' | 'balance' | 'chains' | 'history' | 'quote' | 'pay' | 'swap',
+  op:
+    | 'state'
+    | 'balance'
+    | 'chains'
+    | 'history'
+    | 'quote'
+    | 'pay'
+    | 'swap'
+    | 'hyperliquid-deposit',
   agentId: string,
   input?: {
     chain?: WalletChainId;
@@ -705,72 +864,87 @@ export async function agentWalletTool(
   }
   if (!ctx) throw new Error('no wallet: the agent has no connected owner with a wallet');
   const address = ctx.binding.eoaAddress;
+  const chain = input?.chain ?? 'base';
+  const holdings = async (): Promise<WalletHoldings> => {
+    const read = await readHoldings(source, address);
+    await reconcileBalancesSafely(database, ctx, read);
+    return read;
+  };
   switch (op) {
     case 'balance': {
-      const coins = await source.balances('base', address);
+      const read = await holdings();
       return {
-        totalUsd: formatUsd(coins.reduce((sum, coin) => sum + usdValue(coin), 0)),
-        coins,
+        totalUsd: formatUsd(holdingsUsd(read.coins)),
+        coins: read.coins,
+        ...(read.unreadChains.length ? { unreadChains: read.unreadChains } : {}),
       };
     }
-    case 'chains': {
-      const chains = [];
-      for (const chain of WALLET_CHAIN_IDS) {
-        const fee = await source.feeEstimate(chain);
-        chains.push({
-          id: chain,
-          name: WALLET_CHAIN_NAMES[chain],
-          ...(fee.feeUsd !== null ? { feeUsd: fee.feeUsd.toFixed(2) } : { feeUsd: null }),
-          sponsored: fee.sponsored,
-          hasBalance: true,
-        });
-      }
-      return { chains };
-    }
+    case 'chains':
+      return { chains: await chainViews(source, await holdings()) };
     case 'history':
+      await holdings();
       return { entries: await walletHistory(database, ctx.ownerIdentityId, input?.limit ?? 20) };
     case 'quote': {
-      const fee = await source.feeEstimate((input?.chain ?? 'base') as WalletChainId);
-      const coins = await source.balances('base', address);
+      const fee = await source.feeEstimate(validChain(chain));
+      const read = await holdings();
       const symbol = (input?.asset ?? 'usdc').toLowerCase();
-      const available = coins.find((coin) => coin.symbol === symbol)?.amount ?? '0';
+      const available =
+        chainCoins(read, chain).find((coin) => coin.symbol === symbol)?.amount ?? '0';
       return {
         feeUsd: fee.feeUsd !== null ? fee.feeUsd.toFixed(2) : null,
         sponsored: fee.sponsored,
         sufficient: Number(available) >= Number(input?.amount ?? 0),
         available,
         asset: symbol,
+        chain,
+        ...(read.unreadChains.includes(chain) ? { unread: true } : {}),
       };
     }
     case 'pay': {
       return await agentSend(database, ctx, agentId, {
-        chain: (input?.chain ?? 'base') as WalletChainId,
+        chain: validChain(chain),
         asset: input?.asset ?? 'usdc',
         amount: input?.amount ?? '',
         to: input?.to ?? '',
+      });
+    }
+    case 'hyperliquid-deposit': {
+      const amount = input?.amount ?? '';
+      if (!(Number(amount) >= HYPERLIQUID_MIN_DEPOSIT_USDC))
+        return {
+          outcome: 'failed',
+          reason: `Hyperliquid Bridge2 deposits must be at least ${HYPERLIQUID_MIN_DEPOSIT_USDC} USDC; a smaller deposit is never credited and is lost`,
+        };
+      return await agentSend(database, ctx, agentId, {
+        chain: 'arbitrum',
+        asset: 'usdc',
+        amount,
+        to: HYPERLIQUID_BRIDGE2,
       });
     }
     case 'swap': {
       if (!(await assertAgentDelegation(database, ctx.ownerIdentityId))) {
         return { outcome: 'delegation-expired' };
       }
+      const swapChain = validChain(chain);
+      const fromAsset = (input?.fromAsset ?? 'usdc').toLowerCase();
+      const toAsset = (input?.toAsset ?? 'eth').toLowerCase();
+      const amount = input?.amount ?? '';
       try {
-        const swapped = await source.swap(address, {
-          fromAsset: input?.fromAsset ?? 'usdc',
-          toAsset: input?.toAsset ?? 'eth',
-          amount: input?.amount ?? '',
-        });
-        const coins = await source.balances('base', address);
-        const totalUsd = coins.reduce((sum, coin) => sum + usdValue(coin), 0);
-        const fromAmountText = `−${input?.amount} ${(input?.fromAsset ?? 'usdc').toUpperCase()}`;
-        const toAmountText = `+${swapped.toAmount} ${(input?.toAsset ?? 'eth').toUpperCase()}`;
-        const txUrl = walletExplorerTxUrl((input?.chain ?? 'base') as WalletChainId, swapped.txId);
+        const before = await holdings();
+        const swapped = await source.swap(address, { chain: swapChain, fromAsset, toAsset, amount });
+        await creditSnapshot(database, ctx.ownerIdentityId, swapChain, toAsset, swapped.toAmount);
+        // A swap trades value for value; the wallet total is unchanged but for fees.
+        const totalUsd = holdingsUsd(before.coins);
+        const fromAmountText = `−${amount} ${fromAsset.toUpperCase()}`;
+        const toAmountText = `+${swapped.toAmount} ${toAsset.toUpperCase()}`;
+        const txUrl = walletExplorerTxUrl(swapChain, swapped.txId);
         await postLedgerLine(database, ctx.workspaceId, ctx.ownerIdentityId, {
           direction: 'out',
           agentName: await agentName(database, agentId),
           amountText: `${fromAmountText} ${toAmountText}`,
-          counterparty: `swap ${(input?.fromAsset ?? 'usdc').toUpperCase()}→${(input?.toAsset ?? 'eth').toUpperCase()}`,
-          chain: (input?.chain ?? 'base') as WalletChainId,
+          counterparty: `swap ${fromAsset.toUpperCase()}→${toAsset.toUpperCase()}`,
+          chain: swapChain,
           balanceAfterUsd: formatUsd(totalUsd),
           txUrl,
           createdAt: Date.now(),
@@ -778,10 +952,10 @@ export async function agentWalletTool(
         await recordTransaction(database, ctx.ownerIdentityId, {
           txId: swapped.txId,
           direction: 'out',
-          asset: (input?.fromAsset ?? 'usdc').toLowerCase(),
-          amount: input?.amount ?? '',
-          counterparty: `swap→${(input?.toAsset ?? 'eth').toUpperCase()}`,
-          chain: (input?.chain ?? 'base') as WalletChainId,
+          asset: fromAsset,
+          amount,
+          counterparty: `swap→${toAsset.toUpperCase()}`,
+          chain: swapChain,
           balanceAfterUsd: formatUsd(totalUsd),
           txUrl,
           agentId,
@@ -794,16 +968,30 @@ export async function agentWalletTool(
           balanceAfterUsd: formatUsd(totalUsd),
         };
       } catch (error) {
-        return handleSendFailure(
-          database,
-          ctx,
-          agentId,
-          error,
-          (input?.fromAsset ?? 'usdc').toLowerCase(),
-          input?.amount ?? '',
-        );
+        return handleSendFailure(database, ctx, agentId, error, fromAsset, amount, swapChain);
       }
     }
+  }
+}
+
+function validChain(chain: unknown): WalletChainId {
+  if (!isWalletChainId(chain)) throw new Error(`unknown chain: ${String(chain)}`);
+  return chain;
+}
+
+/** A failed snapshot reconciliation never blocks a balance read or a send. */
+async function reconcileBalancesSafely(
+  database: SqlDatabase,
+  ctx: WalletAgentContext,
+  holdings: WalletHoldings,
+): Promise<void> {
+  try {
+    await reconcileBalances(database, ctx.ownerIdentityId, ctx.workspaceId, holdings);
+  } catch (error) {
+    console.error(
+      `[wallet] balance reconciliation failed for ${ctx.binding.eoaAddress}:`,
+      error instanceof Error ? error.message : error,
+    );
   }
 }
 
@@ -818,9 +1006,11 @@ async function agentSend(
     return { outcome: 'delegation-expired' };
   }
   const source = walletSource();
-  const coins = await source.balances('base', ctx.binding.eoaAddress);
+  const holdings = await readHoldings(source, ctx.binding.eoaAddress);
+  await reconcileBalancesSafely(database, ctx, holdings);
   const symbol = input.asset.toLowerCase();
-  const available = coins.find((coin) => coin.symbol === symbol)?.amount ?? '0';
+  const holding = chainCoins(holdings, input.chain).find((coin) => coin.symbol === symbol);
+  const available = holding?.amount ?? '0';
   if (Number(input.amount) > Number(available)) {
     await postInsufficientNotice(
       database,
@@ -838,8 +1028,10 @@ async function agentSend(
   }
   try {
     const sent = await source.sendTransaction(ctx.binding.eoaAddress, input);
-    const after = await source.balances('base', ctx.binding.eoaAddress);
-    const totalUsd = after.reduce((sum, coin) => sum + usdValue(coin), 0);
+    // What the send left behind: the same holdings with the spent share removed.
+    const totalUsd =
+      holdingsUsd(holdings.coins) -
+      (holding ? usdValue(holding) * (Number(input.amount) / Number(available)) : 0);
     const txUrl = walletExplorerTxUrl(input.chain, sent.txId);
     await postLedgerLine(database, ctx.workspaceId, ctx.ownerIdentityId, {
       direction: 'out',
@@ -869,7 +1061,7 @@ async function agentSend(
       balanceAfterUsd: formatUsd(totalUsd),
     };
   } catch (error) {
-    return handleSendFailure(database, ctx, agentId, error, symbol, input.amount);
+    return handleSendFailure(database, ctx, agentId, error, symbol, input.amount, input.chain);
   }
 }
 
@@ -885,6 +1077,7 @@ async function handleSendFailure(
   error: unknown,
   asset: string,
   amount: string,
+  chain: WalletChainId,
 ): Promise<WalletSendOutcome> {
   const reason = error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
   const connectorId = await ensureConnectorIdentity(database, 'wallet');
@@ -914,7 +1107,7 @@ async function handleSendFailure(
       needed: amount,
       available: null,
       asset: asset.toUpperCase(),
-      chain: 'base' as WalletChainId,
+      chain,
       reason,
     },
   });

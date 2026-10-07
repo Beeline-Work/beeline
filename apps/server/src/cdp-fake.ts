@@ -36,7 +36,7 @@ type FakeTx = {
 export type FakeWalletState = {
   /** Accounts keyed by deterministic name. */
   accounts: Map<string, FakeAccount>;
-  /** Holdings keyed by EOA address -> symbol -> units. */
+  /** Holdings keyed by EOA address (Base) or `${chain}:${address}` -> symbol -> units. */
   holdings: Map<string, Map<string, number>>;
   prices: Map<string, number>;
   transactions: Map<string, FakeTx[]>;
@@ -55,11 +55,13 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
     transactions: new Map(),
   };
 
-  const holdingsFor = (address: string): Map<string, number> => {
-    let h = state.holdings.get(address);
+  const holdingsKey = (address: string, chain: WalletChainId): string =>
+    chain === 'base' ? address : `${chain}:${address}`;
+  const holdingsFor = (address: string, chain: WalletChainId = 'base'): Map<string, number> => {
+    let h = state.holdings.get(holdingsKey(address, chain));
     if (!h) {
       h = new Map([['usdc', 0], ['eth', 0]]);
-      state.holdings.set(address, h);
+      state.holdings.set(holdingsKey(address, chain), h);
     }
     return h;
   };
@@ -108,12 +110,16 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
       }
       return { address: account.solanaAddress };
     },
-    async balances(network: string, address: string): Promise<WalletCoinView[]> {
-      return [...holdingsFor(address).entries()]
+    async balances(network: WalletChainId, address: string): Promise<WalletCoinView[]> {
+      // Only Base holdings exist until a test funds another chain.
+      const holdings =
+        network === 'base' ? holdingsFor(address) : state.holdings.get(holdingsKey(address, network));
+      return [...(holdings ?? new Map<string, number>()).entries()]
         .filter(([, units]) => units > 0)
         .map(([symbol, units]) => ({
           symbol,
           name: symbol === 'usdc' ? 'USD Coin' : symbol.toUpperCase(),
+          chain: network,
           amount: units.toFixed(2),
           usd: `$${(units * unitPrice(symbol)).toLocaleString('en-US', {
             minimumFractionDigits: 2,
@@ -129,7 +135,7 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
       return { usedUsd: 1.24, limitUsd: 25 };
     },
     async sendTransaction(address: string, input: WalletSendInput) {
-      const holdings = holdingsFor(address);
+      const holdings = holdingsFor(address, input.chain);
       const symbol = input.asset.toLowerCase();
       const available = holdings.get(symbol) ?? 0;
       const needed = Number(input.amount);
@@ -150,8 +156,11 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
       });
       return { txId };
     },
-    async swap(address: string, input: { fromAsset: string; toAsset: string; amount: string }) {
-      const holdings = holdingsFor(address);
+    async swap(
+      address: string,
+      input: { chain: WalletChainId; fromAsset: string; toAsset: string; amount: string },
+    ) {
+      const holdings = holdingsFor(address, input.chain);
       const from = input.fromAsset.toLowerCase();
       const to = input.toAsset.toLowerCase();
       const available = holdings.get(from) ?? 0;
@@ -169,7 +178,7 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
         asset: from,
         amount: input.amount,
         counterparty: `swap→${to.toUpperCase()}`,
-        chain: 'base',
+        chain: input.chain,
         usd: needed * unitPrice(from),
         createdAt: Date.now(),
       });

@@ -46,10 +46,15 @@ describe('wallet MCP identity and signing', () => {
       ['wallet_quote', { asset: 'usdc', amount: '1' }],
       ['wallet_pay', { asset: 'usdc', amount: '1', to: '0xabc' }],
       ['wallet_swap', { fromAsset: 'usdc', toAsset: 'eth', amount: '1' }],
+      ['wallet_hyperliquid_deposit', { amount: '5' }],
       ['wallet_sign_typed_data', payload],
     ] as const)
       await expect(callAgentTool(tool, args, 'wallet-call')).resolves.toBe('{"ok":true}');
-    expect(calls).toHaveLength(8);
+    expect(calls).toHaveLength(9);
+    expect(calls.find((call) => call.name === 'walletHyperliquidDeposit')?.body).toMatchObject({
+      agentId: 'agent-1',
+      amount: '5',
+    });
     for (const call of calls)
       expect(call.body).toMatchObject({ agentId: 'agent-1', roomId: 'corner-1' });
     expect(calls.at(-1)).toEqual({
@@ -57,6 +62,7 @@ describe('wallet MCP identity and signing', () => {
       body: { ...payload, agentId: 'agent-1', roomId: 'corner-1' },
     });
     expect(daemonOperationIsSafeToRepeat('walletSignTypedData', {})).toBe(false);
+    expect(daemonOperationIsSafeToRepeat('walletHyperliquidDeposit', {})).toBe(false);
   });
 
   it('exposes typed data in Room and corner tools with all four required fields', () => {

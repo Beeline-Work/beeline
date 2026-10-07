@@ -69,7 +69,19 @@ describe('cdp request construction', () => {
       globalThis.fetch = async (url, options) => {
         expect(String(url)).toBe('https://api.cdp.coinbase.com/platform/v2/evm/accounts/0xabc/sign/typed-data');
         expect(options?.method).toBe('POST');
-        expect(JSON.parse(options?.body as string)).toEqual(payload);
+        // CDP requires EIP712Domain; it is derived from the domain fields present.
+        expect(JSON.parse(options?.body as string)).toEqual({
+          ...payload,
+          types: {
+            EIP712Domain: [
+              { name: 'name', type: 'string' },
+              { name: 'version', type: 'string' },
+              { name: 'chainId', type: 'uint256' },
+              { name: 'verifyingContract', type: 'address' },
+            ],
+            ...payload.types,
+          },
+        });
         const headers = options?.headers as Record<string, string>;
         expect(headers.authorization).toMatch(/^Bearer /);
         expect(headers['x-wallet-auth']).toBeTruthy();
@@ -144,49 +156,6 @@ describe('cdp request construction', () => {
       expect(capturedUrl).toContain('/platform/v2/evm/token-balances/base/0xabc');
       expect(capturedUrl).not.toContain('/embedded-wallet-api');
       expect(capturedUrl).not.toContain('projectId=');
-    });
-
-    it('sends transactions under /platform/v2/evm/accounts/{address}/transfers', async () => {
-      const creds = { ...testEd25519Creds(), walletSecret: testP256Key().privateKey };
-      const client = new CdpWalletClient(creds);
-      let capturedUrl = '';
-      const originalFetch = globalThis.fetch;
-      try {
-        globalThis.fetch = async (url: RequestInfo | URL) => {
-          capturedUrl = typeof url === 'string' ? url : url.toString();
-          return new Response(JSON.stringify({ transaction_id: 'tx-1' }));
-        };
-        await client.sendTransaction('0xabc', {
-          chain: 'base',
-          asset: 'usdc',
-          amount: '10.00',
-          to: '0xdef',
-        });
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
-
-      expect(capturedUrl).toContain('/platform/v2/evm/accounts/0xabc/transfers');
-      expect(capturedUrl).not.toContain('/embedded-wallet-api');
-    });
-
-    it('reads history from /platform/v2/evm/accounts/{address}/transfers', async () => {
-      const creds = testEd25519Creds();
-      const client = new CdpWalletClient(creds);
-      let capturedUrl = '';
-      const originalFetch = globalThis.fetch;
-      try {
-        globalThis.fetch = async (url: RequestInfo | URL) => {
-          capturedUrl = typeof url === 'string' ? url : url.toString();
-          return new Response(JSON.stringify({ transfers: [] }));
-        };
-        await client.history('0xabc', 10);
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
-
-      expect(capturedUrl).toContain('/platform/v2/evm/accounts/0xabc/transfers');
-      expect(capturedUrl).not.toContain('/embedded-wallet-api');
     });
 
     it('grep guarantees: no embedded-wallet-api path or createUser remains in the client', () => {

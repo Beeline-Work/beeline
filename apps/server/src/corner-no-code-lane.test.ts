@@ -718,7 +718,7 @@ it("delivers GitHub's pull request to a corner another agent upgraded", async ()
   ).toMatchObject({
     lifecycle: 'in-review',
     branch,
-    checks: 'unknown',
+    checks: 'pending',
     pr: { number: 7, url: 'https://github.com/owner/widgets/pull/7' },
   });
 });

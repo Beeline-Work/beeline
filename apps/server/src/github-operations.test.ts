@@ -90,7 +90,9 @@ describe('GitHub phone operations', () => {
       if (n === 5) {
         app.readCommitCheckRollup.mockResolvedValueOnce({ state: 'pending', total: 0, failing: [], checks: [] });
         await operations.processWebhook('pull_request', { ...payload, action: 'opened', pull_request: { number: 1, html_url: 'https://github.com/owner/widgets/pull/1', title: 'Checks', head: { ref: 'feature/checks-1', sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean' } });
-        expect((await database.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [corners[0]])).rows[0]!.checks).toBe('unknown');
+        const opened = (await database.query<{ checks: string; status: string }>(`SELECT lifecycle->>'checks' checks,lifecycle->'checksSummary'->>'status' status FROM corner_facts WHERE corner_id=$1`, [corners[0]])).rows[0]!;
+        console.info(`Reproduction CI-1: wrong=unknown (no tests configured); right=pending (tests running); observed=${opened.checks}`);
+        expect(opened).toEqual({ checks: 'pending', status: 'pending' });
         await operations.processWebhook('check_run', payload);
         expect((await database.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [corners[0]])).rows[0]!.checks).toBe('passing');
       }

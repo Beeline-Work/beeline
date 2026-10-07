@@ -1870,9 +1870,11 @@ export class GitHubOperations {
           if (target.has_pr && !current.pr?.headSha) return;
           const latestFetch = current.checksSummary?.fetchStartedAt ?? current.checksSummary?.updatedAt ?? 0;
           if (fetchStartedAt < latestFetch) return;
+          // An empty rollup is only "no checks" once GitHub says so; a null
+          // rollup (state pending) is the race before workflows register.
           const summary = {
             status:
-              rollup.total === 0 ? ('unknown' as const) : rollup.state === 'passed'
+              rollup.total === 0 && rollup.state !== 'pending' ? ('unknown' as const) : rollup.state === 'passed'
                 ? ('passing' as const)
                 : rollup.state === 'failed'
                   ? ('failing' as const)

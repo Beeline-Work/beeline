@@ -7491,14 +7491,16 @@ export class DaemonService {
     return this.writeResult();
   }
   /**
-   * The sole legal lane mutation: one human-authored command may promote one
-   * repository Room's no-code corner. The command transaction is the proof
-   * that the agent did not decide to acquire a checkout on its own.
+   * The sole legal lane mutation: the agent working one turn in a repository
+   * Room's no-code corner promotes it on its own judgment. No human has to
+   * ask; the live command only proves the caller is that corner's agent turn.
    */
   private async upgradeCornerLane(cornerId: string, agentId: string) {
     const command = this.authorizedCommand;
     if (!this.commandTransaction || !command)
-      throw new Error('corner lane upgrade requires an active human request');
+      throw new Error('corner lane upgrade requires an active agent turn in this corner');
+    // A human message in this corner seeds the placeholder brief. Any other
+    // trigger leaves the corner briefless and the code session writes it.
     const requester = (
       await this.database.query<{ kind: string; text: string }>(
         `SELECT identity.kind,message.text
@@ -7507,8 +7509,7 @@ export class DaemonService {
         [command.source_message_id, cornerId],
       )
     ).rows[0];
-    if (requester?.kind !== 'human')
-      throw new Error('corner lane upgrade requires an explicit human request in this corner');
+    const humanRequest = requester?.kind === 'human' ? requester.text : undefined;
 
     // Everything below is one transaction: the lane flip, the feature-branch
     // write, the brief, and the resume/complete bookkeeping commit together
@@ -7594,11 +7595,11 @@ export class DaemonService {
       const briefed = await db.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`, [
         cornerId,
       ]);
-      if (!briefed.rowCount) {
+      if (!briefed.rowCount && humanRequest !== undefined) {
         await ensureSystemIdentity(db);
         const draft = await composeCornerUpgradeBrief(db, cornerId, {
           sourceMessageId: command.source_message_id,
-          text: requester.text,
+          text: humanRequest,
         });
         const attachments = await resolveCornerBriefAttachments(db, [cornerId], draft);
         const authority = await resolveCornerBriefApproval(

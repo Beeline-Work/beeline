@@ -662,7 +662,8 @@ describe('assigned corner brief', () => {
     expect(UPGRADE_INTENT_RULE).not.toContain("becomes the code corner's brief");
     expect(UPGRADE_INTENT_RULE).toContain('on your own judgment');
     expect(UPGRADE_INTENT_RULE).toContain('nobody has to ask');
-    expect(UPGRADE_INTENT_RULE).toContain('then write the brief');
+    expect(UPGRADE_INTENT_RULE).toContain('Then write the brief');
+    expect(UPGRADE_INTENT_RULE).not.toContain('human message');
   });
 });
 

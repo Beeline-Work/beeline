@@ -434,6 +434,32 @@ describe('connect_app', () => {
     }
   });
 
+  it('Reproduction NEON-1: app tools name the Squire route for a squire-api app instead of "unavailable"', async () => {
+    const neon = 'edd5e6c5-fc4c-4170-93c0-8efef63010c9';
+    await database.query(
+      `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route)
+       VALUES($1,$2,$3,'neon','Neon','squire-api','squire-api')`,
+      [neon, WORKSPACE, OWNER],
+    );
+    const daemon = daemonWith(fakeRegistry([]).client, fakeComposio());
+    const cause = 'Neon is connected through squire-api, not app tools. ' +
+      'Call Neon\'s API with Trusty Squire use_credential (service "neon").';
+    const listed = await daemon.execute('listAppTools', { ...turn, appId: neon }, HELPER)
+      .catch((error: Error) => error.message);
+    expect(listed).toBe(cause);
+    console.log(`list_app_tools(Neon): ${listed}`);
+    await expect(daemon.execute('executeAppTool', { ...turn, appId: neon,
+      tool: 'NEON_LIST_PROJECTS', arguments: {} }, HELPER)).rejects.toThrow(cause);
+
+    const other = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Other','other')`, [other]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
+      [WORKSPACE, other]);
+    await database.query(`UPDATE workspace_apps SET owner_identity_id=$1 WHERE id=$2`, [other, neon]);
+    await expect(daemon.execute('listAppTools', { ...turn, appId: neon }, HELPER))
+      .rejects.toThrow("Neon is another person's squire-api app; only their own agents can use it.");
+  });
+
   it('returns an empty tool list over the daemon API when a query matches nothing', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);

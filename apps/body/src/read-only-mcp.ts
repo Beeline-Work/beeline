@@ -1624,7 +1624,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'list_app_tools',
-    description: 'List the tools of one connected app by its app ID from workbench_status or connect_app. Discovery returns no credentials. An unavailable account or empty provider tool list reports a cause.',
+    description: 'List the tools of one connected app shown via composio, by its app ID from workbench_status or connect_app. Apps via squire-api, squire-browser or registry-mcp do not use app tools; the error names their route. Discovery returns no credentials. An unavailable account or empty provider tool list reports a cause.',
     inputSchema: { type: 'object', required: ['appId'], properties: {
       appId: { type: 'string', format: 'uuid' },
       query: { type: 'string', maxLength: 120 },

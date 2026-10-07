@@ -216,12 +216,12 @@ export const CORNER_YOLO_MERGE_NUDGE =
 /** Shared verbatim between the upgrade_corner_to_code tool description
  *  (`read-only-mcp.ts`) and this corner's own no-code prompt clause below, so
  *  the two surfaces can never say something different. The agent decides when
- *  the work needs the repository; nobody has to ask. The
- *  server still requires the turn to answer a human message in this corner:
- *  it writes a placeholder brief revision quoting that message, and the code
- *  session then writes the real spec (`CORNER_PLACEHOLDER_BRIEF_RULE`). */
+ *  the work needs the repository; nobody has to ask, and the server does not
+ *  gate on a human request. When the turn answers a human message in this
+ *  corner, the server writes a placeholder brief quoting it; the code session
+ *  then writes the real spec (`CORNER_PLACEHOLDER_BRIEF_RULE`). */
 export const UPGRADE_INTENT_RULE =
-  'Call this on your own judgment when the work in this corner needs the repository; nobody has to ask. Call it while answering a human message in this corner, then write the brief in the restarted code session.';
+  'Call this on your own judgment when the work in this corner needs the repository; nobody has to ask. Then write the brief in the restarted code session.';
 
 /** Appended to a code corner's turn.brief only while the current brief is the
  *  upgrade's placeholder (revision 1 by the system identity). Approval is best effort:

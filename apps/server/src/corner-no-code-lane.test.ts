@@ -336,7 +336,7 @@ it('refuses a lane the constraint does not name', async () => {
   ).rejects.toThrow();
 });
 
-it('upgrades one repository-backed human corner on its explicit human code request', async () => {
+it('upgrades one repository-backed human corner during a turn answering a human message', async () => {
   const cornerId = await humanCorner(CODE_ROOM);
   const beforeMessages = await db.query<{ id: string; text: string }>(
     // The corner's workflow cards are hidden bookkeeping, not conversation.
@@ -418,17 +418,17 @@ it('upgrades one repository-backed human corner on its explicit human code reque
   ).toEqual(beforeMembers.rows);
 });
 
-it('rejects an agent-initiated upgrade without an active human command', async () => {
+it('rejects an upgrade outside an active agent turn', async () => {
   const cornerId = await humanCorner(CODE_ROOM);
 
   await expect(daemon.execute('upgradeCornerLane', { cornerId }, AGENT)).rejects.toThrow();
   expect(await lane(cornerId)).toBe('no_code');
 });
 
-it('rejects an upgrade backed by an agent-authored ask, however live the command', async () => {
-  // An exact agent tag in a committed agent reply dispatches that agent, so a
-  // command can be live and claimed with no human behind it. Only a person may
-  // put this corner on the code lane.
+it('upgrades on an agent-initiated turn with no human request, leaving the brief to the code session', async () => {
+  // An exact agent tag in a committed agent reply dispatches that agent. The
+  // agent decides on its own that the work needs the repository; no human
+  // phrase is required.
   const cornerId = await humanCorner(CODE_ROOM);
   const messageId = randomBytes(32).toString('hex');
   await db.query(
@@ -454,11 +454,21 @@ it('rejects an upgrade backed by an agent-authored ask, however live the command
       { cornerId, requestId: messageId, generationId: 'g1' },
       AGENT,
     ),
-  ).rejects.toThrow('requires an explicit human request in this corner');
-  expect(await lane(cornerId)).toBe('no_code');
+  ).resolves.toEqual({ cornerId, lane: 'code' });
+  expect(await lane(cornerId)).toBe('code');
+  // No human message to quote as approval: the code session writes the brief.
   expect(
     (await daemon.execute('listCornerBriefRevisions', { cornerId }, AGENT)).revisions,
   ).toHaveLength(0);
+  expect(
+    (
+      await db.query<{ state: string }>(
+        `SELECT state FROM agent_commands WHERE room_id=$1 AND action='resume'
+           AND reason='corner_lane_upgrade'`,
+        [cornerId],
+      )
+    ).rows[0]?.state,
+  ).toBe('pending');
 });
 
 it('answers a second upgrade of an already fully-upgraded corner with an idempotent no-op, never a restart', async () => {

@@ -547,6 +547,20 @@ type ConnectAppOutcome = {
   readonly next: string;
 };
 
+/** How an agent uses a connected app on its route. */
+export function connectedAppUse(app: {
+  readonly transport?: AppTransport;
+  readonly name: string;
+  readonly appKey?: string;
+  readonly domain: string;
+}): string {
+  if (app.transport === 'composio') return `Use the server app tools for ${app.name}.`;
+  if (app.transport === 'registry-mcp') return `Use the mounted ${app.name} MCP tools.`;
+  if (app.transport === 'squire-browser')
+    return `Use Trusty Squire operate_* tools on ${app.domain}.`;
+  return `Call ${app.name}'s API with Trusty Squire use_credential (service "${app.appKey}").`;
+}
+
 function nextStep(
   outcome: Omit<ConnectAppOutcome, 'next'>,
   derived: Derived,
@@ -566,15 +580,8 @@ function nextStep(
     return `Open authorizationUrl with Trusty Squire (operate_start, operate_login, operate_observe, then operate_finish). Any passkey or vouch step goes to the owner through Squire; never paste the link into chat. Call connect_app again when Squire finishes.`;
   if (outcome.status === 'error')
     return `${errorNote ?? derived.errorMessage ?? 'The connection failed'}. The route stays ${outcome.transport}; call connect_app with reconnect: true to resolve it again from the top.`;
-  if (outcome.status === 'connected') {
-    if (outcome.transport === 'composio')
-      return `Use the server app tools for ${name}. Every execution is authorized as ${target}.`;
-    if (outcome.transport === 'registry-mcp')
-      return `Use the mounted ${name} MCP tools. Every call is authorized as ${target}.`;
-    if (outcome.transport === 'squire-browser')
-      return `Use Trusty Squire operate_* tools on ${where}. Every call is authorized as ${target}.`;
-    return `Call ${name}'s API with Trusty Squire use_credential (service "${outcome.appKey}"). Every call is authorized as ${target}.`;
-  }
+  if (outcome.status === 'connected')
+    return `${connectedAppUse({ ...outcome, name, domain: where })} Every ${outcome.transport === 'composio' ? 'execution' : 'call'} is authorized as ${target}.`;
   if (outcome.transport === 'registry-mcp')
     return `The helper is preparing ${name}'s MCP sign-in. Call connect_app again in a moment.`;
   if (outcome.transport === 'squire-browser')

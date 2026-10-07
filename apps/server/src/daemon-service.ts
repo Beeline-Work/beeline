@@ -109,13 +109,14 @@ import {
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
 import { APP_INPUT_MAX_LENGTH, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
-import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
+import { normalizeAppContinuation, type AppTransport } from '@beeline/api-contract/app-connections';
 import { McpRegistryClient } from './mcp-registry.js';
 import {
   appGateFor,
   armRegistryConnector,
   backfillRegistryApps,
   connectApp,
+  connectedAppUse,
   readOwnerApps,
   recordAppUsage,
 } from './app-connections.js';
@@ -6578,10 +6579,12 @@ export class DaemonService {
     if (typeof appId !== 'string' || !/^[0-9a-f-]{36}$/i.test(appId))
       throw new Error('App id is invalid');
     const row = (await this.database.query<{ id: string; app_key: string;
+      display_name: string; domain: string | null; transport: AppTransport;
       owner_identity_id: string; composio_account_id: string | null;
       composio_link_expires_at: Date | null;
       agent_owner_id: string }>(
-      `SELECT app.id,app.app_key,app.owner_identity_id,app.composio_account_id,
+      `SELECT app.id,app.app_key,app.display_name,app.domain,app.transport,
+              app.owner_identity_id,app.composio_account_id,
               app.composio_link_expires_at,
               agent.owner_id agent_owner_id
        FROM workspace_apps app JOIN agents agent ON agent.agent_id=$3
@@ -6591,10 +6594,18 @@ export class DaemonService {
          AND owner_member.removed_at IS NULL
        WHERE app.id=$1::uuid
          AND (app.owner_identity_id=agent.owner_id OR owner_member.identity_id IS NOT NULL)
-         AND app.state='active' AND app.transport='composio'`,
+         AND app.state='active'`,
       [appId, roomId, agentId],
     )).rows[0];
     if (!row) throw new Error('Connected app is unavailable in this Room');
+    if (row.transport !== 'composio') {
+      // Only managed-OAuth apps run through app tools; name the route that serves this one.
+      if (row.owner_identity_id !== row.agent_owner_id)
+        throw new Error(`${row.display_name} is another person's ${row.transport} app; only their own agents can use it.`);
+      throw new Error(`${row.display_name} is connected through ${row.transport}, not app tools. ${
+        connectedAppUse({ transport: row.transport, name: row.display_name,
+          appKey: row.app_key, domain: row.domain ?? row.display_name })}`);
+    }
     return row;
   }
 

@@ -209,9 +209,7 @@ const styles = StyleSheet.create((theme) => ({
   unreadName: { fontFamily: theme.buzz.proseSemibold },
   sigil: { color: theme.buzz.accent },
   previewLine: {
-    // One meta line is 19px. Pad below instead of a 20px minimum so a wrapped
-    // desktop preview keeps the same gap under its last line.
-    paddingBottom: 1,
+    minHeight: 20,
     marginTop: theme.buzz.space.xs,
     flexDirection: 'row',
     alignItems: 'baseline',

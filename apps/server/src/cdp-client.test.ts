@@ -56,6 +56,36 @@ describe('cdp request construction', () => {
     });
   });
 
+  it('forwards EIP-712 to the account signing endpoint with both JWTs and no network allowlist', async () => {
+    const client = new CdpWalletClient({ ...testEd25519Creds(), walletSecret: testP256Key().privateKey });
+    const originalFetch = globalThis.fetch;
+    const signature = `0x${'ab'.repeat(65)}`;
+    const payload = {
+      domain: { name: 'Exchange', version: '1', chainId: 1337, verifyingContract: `0x${'0'.repeat(40)}` },
+      types: { BeelineTest: [{ name: 'notice', type: 'string' }] },
+      primaryType: 'BeelineTest', message: { notice: 'Harmless test; not an order' },
+    };
+    try {
+      globalThis.fetch = async (url, options) => {
+        expect(String(url)).toBe('https://api.cdp.coinbase.com/platform/v2/evm/accounts/0xabc/sign/typed-data');
+        expect(options?.method).toBe('POST');
+        expect(JSON.parse(options?.body as string)).toEqual(payload);
+        const headers = options?.headers as Record<string, string>;
+        expect(headers.authorization).toMatch(/^Bearer /);
+        expect(headers['x-wallet-auth']).toBeTruthy();
+        const auth = JSON.parse(Buffer.from(headers['x-wallet-auth']!.split('.')[1]!, 'base64url').toString());
+        expect(auth.uris).toEqual(['POST api.cdp.coinbase.com/platform/v2/evm/accounts/0xabc/sign/typed-data']);
+        expect(auth.reqHash).toMatch(/^[a-f0-9]{64}$/);
+        return Response.json({ signature });
+      };
+      await expect(client.signTypedData('0xabc', payload)).resolves.toEqual({ signature });
+      globalThis.fetch = async () => Response.json({ signature: 'missing' });
+      await expect(client.signTypedData('0xabc', payload)).rejects.toThrow('invalid typed-data signature');
+      globalThis.fetch = async () => new Response('policy refused', { status: 403 });
+      await expect(client.signTypedData('0xabc', payload)).rejects.toThrow('403');
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   describe('endpoint paths (server-wallet API)', () => {
     it('creates EVM accounts under /platform/v2/evm/accounts (NOT /platform/v2/embedded-wallet-api)', async () => {
       const creds = { ...testEd25519Creds(), walletSecret: testP256Key().privateKey };

@@ -38,6 +38,7 @@ import {
   type WalletCoinView,
   type WalletLedgerEntry,
   type WalletSendInput,
+  type WalletTypedData,
 } from '@beeline/api-contract/wallet';
 
 // ---------------------------------------------------------------------------
@@ -74,6 +75,8 @@ export interface CdpWalletSource {
     address: string,
     input: { fromAsset: string; toAsset: string; amount: string },
   ): Promise<{ txId: string; toAmount: string }>;
+  /** Sign an EIP-712 message without broadcasting or selecting a network. */
+  signTypedData(address: string, input: WalletTypedData): Promise<{ signature: string }>;
   /** Recent transaction history (both directions) for deposit reconciliation. */
   history(address: string, limit: number): Promise<WalletLedgerEntry[]>;
 }
@@ -440,6 +443,17 @@ export class CdpWalletClient implements CdpWalletSource {
       txId: result.transaction_id ?? result.txId ?? 'unknown',
       toAmount: result.to_amount ?? result.toAmount ?? '0',
     };
+  }
+
+  async signTypedData(address: string, input: WalletTypedData): Promise<{ signature: string }> {
+    const result = await this.walletRequest<{ signature: string }>(
+      'POST', `/evm/accounts/${address}/sign/typed-data`, {
+        domain: input.domain, types: input.types, primaryType: input.primaryType, message: input.message,
+      },
+    );
+    if (typeof result.signature !== 'string' || !/^0x[0-9a-fA-F]{130}$/.test(result.signature))
+      throw new Error('CDP returned an invalid typed-data signature');
+    return { signature: result.signature };
   }
 
   /**

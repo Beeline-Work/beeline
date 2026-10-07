@@ -8,7 +8,7 @@
  *  - A wallet belongs to the HUMAN whose identity created it (one binding
  *    row per identity: this account owns that wallet — never a secret).
  *  - The funded balance IS the limit. The only refusal is insufficient
- *    funds. No caps, no approvals, no policy engine.
+ *    funds. Wallet resource approvals and signing delegation still apply.
  *  - Every transaction, inbound AND out, appends ONE ledger line to the
  *    @wallet DM (the hidden connector identity's read-only thread) carrying
  *    amount, counterparty, chain and the BALANCE REMAINING. Outbound lines
@@ -38,6 +38,8 @@ import {
   type WalletSendInput,
   type WalletSendOutcome,
   type WalletView,
+  type WalletTypedData,
+  type WalletSignTypedDataResult,
 } from '@beeline/api-contract/wallet';
 import { ensureConnectorDirectMessageRoom, ensureConnectorIdentity } from './workbench.js';
 import { systemLine } from './system-line.js';
@@ -917,4 +919,84 @@ async function handleSendFailure(
     },
   });
   return { outcome: 'failed', reason };
+}
+
+/** Sign through the linked account after the daemon's wallet resource approval. */
+export async function agentSignTypedData(
+  database: SqlDatabase,
+  agentId: string,
+  input: WalletTypedData,
+): Promise<WalletSignTypedDataResult> {
+  const ctx = await walletAgentContext(database, agentId);
+  if (!ctx) throw new Error('no wallet: the agent has no connected owner with a wallet');
+  if (!(await assertAgentDelegation(database, ctx.ownerIdentityId)))
+    return { outcome: 'delegation-expired' };
+  const object = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (
+    !object(input.domain) ||
+    !object(input.types) ||
+    !object(input.message) ||
+    typeof input.primaryType !== 'string' ||
+    !input.primaryType ||
+    !Object.hasOwn(input.types, input.primaryType) ||
+    !Object.values(input.types).every(
+      (fields) =>
+        Array.isArray(fields) &&
+        fields.every(
+          (field) =>
+            object(field) &&
+            typeof field.name === 'string' &&
+            !!field.name &&
+            typeof field.type === 'string' &&
+            !!field.type,
+        ),
+    )
+  )
+    return { outcome: 'failed', reason: 'invalid EIP-712 typed data' };
+  const payload = {
+    domain: input.domain,
+    types: input.types,
+    primaryType: input.primaryType,
+    message: input.message,
+  };
+  const serialized = JSON.stringify(payload);
+  if (Buffer.byteLength(serialized) > 64 * 1024)
+    return { outcome: 'failed', reason: 'EIP-712 typed data exceeds 64 KB' };
+  let signed: { signature: string };
+  try {
+    signed = await walletSource().signTypedData(ctx.binding.eoaAddress, payload);
+  } catch (error) {
+    return {
+      outcome: 'failed',
+      reason: error instanceof Error ? error.message : 'typed-data signing failed',
+    };
+  }
+  const connectorId = await ensureConnectorIdentity(database, 'wallet');
+  const roomId = await ensureConnectorDirectMessageRoom(
+    database,
+    ctx.workspaceId,
+    'wallet',
+    ctx.ownerIdentityId,
+  );
+  // This is an authorization audit, not an on-chain transaction. Never store
+  // the reusable signature in a ledger card or manufacture a transfer amount.
+  await systemLine(database, {
+    roomId,
+    authorId: connectorId,
+    subject: { id: connectorId, kind: 'person', name: 'Wallet' },
+    verb: 'signed',
+    object: { text: 'EIP-712 typed data' },
+    consequence: (await agentName(database, agentId)) ?? 'An agent',
+    presentation: 'card',
+    cardType: 'wallet-signature',
+    card: {
+      agentId,
+      address: ctx.binding.eoaAddress,
+      domain: input.domain,
+      primaryType: input.primaryType,
+      payloadSha256: createHash('sha256').update(serialized).digest('hex'),
+    },
+  });
+  return { outcome: 'signed', signature: signed.signature };
 }

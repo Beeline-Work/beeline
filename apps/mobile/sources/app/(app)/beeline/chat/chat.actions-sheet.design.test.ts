@@ -112,13 +112,10 @@ describe('Room and corner actions sheets', () => {
     expect(members).toContain('setRosterVisible(true)');
     expect(members).toContain('setRoomActionsVisible(false)');
     for (const testID of ROOM_ROWS) expect(roomSheet).toContain(`testID="${testID}"`);
-    // The corner sheet carries the same counted Members row (design fix,
-    // 2026-10-03), and no Feedback triage switch (the setting is retired).
-    const cornerMembers = row(cornerSheet, 'corner-participant-roster-trigger');
-    expect(cornerMembers).toContain('label="Members"');
-    expect(cornerMembers).toContain('formatRoomParticipantTotal(roomParticipantTotal)');
-    expect(cornerMembers).toContain('setRosterVisible(true)');
-    expect(cornerMembers).toContain('setCornerActionsVisible(false)');
+    // The corner sheet carries no Members row (corners inherit Room
+    // membership) and no Feedback triage switch (the setting is retired).
+    expect(cornerSheet).not.toContain('label="Members"');
+    expect(cornerSheet).not.toContain('setRosterVisible(true)');
     expect(cornerSheet).not.toContain('corner-feedback-triage-toggle');
     expect(cornerSheet).toContain('testID="close-corner-action"');
   });

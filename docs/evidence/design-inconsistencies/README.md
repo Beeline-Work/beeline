@@ -14,7 +14,6 @@ The run fails if any page throws. `before-*.png` are the same board rendered fro
 | `board` | TranscriptCard (theme brass, 16/13 sizes), WorkflowGlyph idle/live, unread Room row (`bgUnread`), italic emphasis by weight, `Typography.default()` face, `dialogDanger` text, the one `Button` (primary/secondary/brass), flat UpdateReadyPrompt, per-theme dialog shadow, "View corner" link, corner dropdown `#` mark | 1, 2, 3, 5, 6, 7 |
 | `frames` | ArtifactCard, the connector card (`AppSignInCard`) and the notification card (`NotificationLifecycleCard`) on the TranscriptCard frame | 5 |
 | `workflows`, `language`, `text-selection` | The three screens that now draw the shared `PageHeader` | 5 |
-| `members` | The corner overflow sheet's Members row with its count, as the corner surface renders it (`HullActionSheetModal` + `HullActionSheetRow`) | 7 |
 | `welcome-1` … `welcome-4` | Every Welcome scene, reached by pressing Next, with the shared 44-point `Button` | 1, 5 |
 
 Not shown here:

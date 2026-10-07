@@ -197,10 +197,6 @@ vi.mock('@/buzz/room-view-presentation', () => ({
     name: workspace.name,
   }),
 }));
-vi.mock('@/buzz/desktop-work-pane', () => ({
-  selectDesktopWorkCorner: vi.fn(),
-  writeDesktopCornerDrag: vi.fn(),
-}));
 vi.mock('@/components/buzz/RoomListSectionHeader', async () => {
   const ReactModule = await import('react');
   return {
@@ -263,7 +259,6 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
 }));
 
 import { SidebarView } from './SidebarView';
-import { selectDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 let tree: ReactTestRenderer;
 function control(id: string) {
   const nodes = tree.root.findAll(
@@ -722,81 +717,28 @@ describe('desktop Workspace navigation', () => {
     expect(control('desktop-room-room-a').props.accessibilityState).toEqual({ selected: true });
   });
 
-  it("lists only the viewer's corners after expanding the Room", async () => {
-    const hosts = (match: (id: string) => boolean) =>
-      tree.root.findAll(
-        (node: any) =>
-          typeof node.type === 'string' &&
-          typeof node.props.testID === 'string' &&
-          match(node.props.testID),
-      );
+  it('opens the Room corner list from a tap on the corner glyph', () => {
     act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/corners/[roomId]',
+      params: { roomId: 'room-a' },
+    });
+    expect(createHumanCorner).not.toHaveBeenCalled();
     expect(
-      hosts((id) => id.startsWith('desktop-corner-corner-')).map((node: any) => node.props.testID),
-    ).toEqual(['desktop-corner-corner-a']);
-    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
-      expanded: true,
-    });
+      tree.root.findAll((node: any) => node.props.testID === 'desktop-corner-corner-a'),
+    ).toHaveLength(0);
   });
 
-  it('opens a Room before showing its corner from the empty deck', async () => {
-    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
-    act(() => control('desktop-corner-corner-a').props.onPress());
-
-    expect(selectDesktopWorkCorner).toHaveBeenCalledWith({
-      roomId: 'room-a',
-      cornerId: 'corner-a',
-    });
-    expect(routerNavigate).toHaveBeenCalledWith(
-      { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
-      { dangerouslySingular: true },
-    );
-  });
-
-  it('opens a Room on a row click without expanding its corners, which only the glyph expands', async () => {
+  it('opens a Room on a row click without opening its corner list', async () => {
     act(() => control('desktop-room-room-a').props.onPress());
     expect(routerNavigate).toHaveBeenCalledWith(
       { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
       { dangerouslySingular: true },
     );
-    route.pathname = '/beeline/chat/room-a';
-    await act(async () => {
-      tree.update(<SidebarView key="row-click-opened-room" />);
-    });
-    await settle();
-
-    expect(control('desktop-room-room-a').props.accessibilityState).toEqual({ selected: true });
-    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
-      expanded: false,
-    });
-    expect(
-      tree.root.findAll((node: any) => node.props.testID === 'desktop-room-corners-room-a'),
-    ).toHaveLength(0);
-
-    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
-    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
-      expanded: true,
-    });
-    expect(control('desktop-corner-corner-a').props.accessibilityLabel).toBe(
-      'Open corner Fix fixture, working',
-    );
+    expect(routerPush).not.toHaveBeenCalled();
   });
 
-  it('keeps a corner route beneath its expanded parent Room', async () => {
-    route.pathname = '/beeline/chat/corner-a';
-    route.parent = 'room-a';
-    await act(async () => {
-      tree.update(<SidebarView key="corner-route" />);
-    });
-    await settle();
-
-    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
-      expanded: true,
-    });
-    expect(control('desktop-corner-corner-a')).toBeDefined();
-  });
-
-  it('opens a new corner from a long press on the Room corner glyph and lands in it', async () => {
+  it('opens a new corner from a long press on the Room corner glyph in the main pane', async () => {
     await act(async () => {
       await control('desktop-room-room-a-corners').props.onLongPress();
     });
@@ -805,25 +747,10 @@ describe('desktop Workspace navigation', () => {
     const [roomId, title] = createHumanCorner.mock.calls[0]!;
     expect(roomId).toBe('room-a');
     expect(title).toMatch(/-corner$/);
-    expect(selectDesktopWorkCorner).toHaveBeenCalledWith({
-      roomId: 'room-a',
-      cornerId: 'corner-new',
-    });
-    expect(routerNavigate).toHaveBeenCalledWith(
-      { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
-      { dangerouslySingular: true },
-    );
-    // The long press opened a corner; it did not also toggle the corner list.
-    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
-      expanded: false,
-    });
-  });
-
-  it('keeps a tap on the Room corner glyph as the corner-list toggle', () => {
-    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
-    expect(createHumanCorner).not.toHaveBeenCalled();
-    expect(control('desktop-room-room-a-corners').props.accessibilityState).toEqual({
-      expanded: true,
+    expect(routerPush).toHaveBeenCalledOnce();
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/chat/[channelId]',
+      params: { channelId: 'corner-new', parent: 'room-a', title },
     });
   });
 
@@ -834,60 +761,6 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
     expect(control('desktop-room-room-a-corners').props.onLongPress).toBeUndefined();
-  });
-
-  it('lists open corners from the chat list with no per-Room corners read', async () => {
-    route.pathname = '/beeline/chat/room-a';
-    await act(async () => {
-      tree.update(<SidebarView key="room-corners-payload" />);
-    });
-    await settle();
-    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
-
-    const glyph = control('desktop-corner-glyph-corner-a');
-    expect(glyph.type).toBe('CornerGlyph');
-    expect(glyph.props.color).toBeUndefined();
-    const row = control('desktop-corner-corner-a');
-    expect(row.props.accessibilityLabel).toBe('Open corner Fix fixture, working');
-    expect(tree.root.findAllByProps({ children: 'working' }).length).toBeGreaterThan(0);
-    expect(corners).not.toHaveBeenCalled();
-  });
-
-  it.each(['working', 'idle', 'review'] as const)('keeps a %s state label quiet', async (state) => {
-    openCornerState.current = state;
-    route.pathname = '/beeline/chat/room-a';
-    await act(async () => {
-      tree.update(<SidebarView key={`room-corners-${state}`} />);
-    });
-    await settle();
-    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
-
-    const label = tree.root.find(
-      (node: any) => node.type === 'Text' && node.props.children === state,
-    );
-    expect(label.props.style).toContainEqual(expect.objectContaining({ color: '#777' }));
-    expect(label.props.style).not.toContainEqual({ color: '#b08a4a' });
-  });
-
-  it('spends brass only on a ready corner state label, never restaining the glyph', async () => {
-    openCornerState.current = 'waiting';
-    route.pathname = '/beeline/chat/room-a';
-    await act(async () => {
-      tree.update(<SidebarView key="room-corners-ready" />);
-    });
-    await settle();
-
-    // The viewer's waiting corner opens the dropdown without a tap.
-    expect(control('desktop-corner-glyph-corner-a').props.color).toBeUndefined();
-    const label = tree.root.find(
-      (node: any) => node.type === 'Text' && node.props.children === 'waiting',
-    );
-    expect(label.props.style).toContainEqual({ color: '#b08a4a' });
-    expect(tree.root.findAllByProps({ testID: 'corner-waiting-pulse' }).length).toBeGreaterThan(0);
-    expect(corners).not.toHaveBeenCalled();
-
-    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
-    expect(tree.root.findAllByProps({ testID: 'desktop-corner-glyph-corner-a' })).toHaveLength(0);
   });
 
   it('closes without routing when the current Workspace is picked', () => {

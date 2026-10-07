@@ -18,8 +18,12 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).toContain('saveActiveCommunityId(identityPubkey, routeWorkspaceId)');
   });
 
-  it('renders nested corners with the grouped title formatter', () => {
-    expect(source).toContain('<DesktopRoomCorners');
+  it('opens the corner list from the glyph instead of nesting corners under the row', () => {
+    expect(source).not.toContain('<DesktopRoomCorners');
+    expect(source).toContain('onOpenCorners={() => router.push(roomCornersHref(item.room.id))}');
+  });
+
+  it('formats nested corners with the grouped title formatter', () => {
     expect(corners).toContain('displayGroupedCornerTitle(');
     expect(corners).toContain('item.room.name,');
   });

@@ -48,15 +48,18 @@ import { inspectorCornerObjective } from '@/buzz/inspector-corners';
  * one cell instead: the corner's own agent and the full name as the title
  * line, the state on the right, and under them the same objective panel the
  * corner page opens with (objective, live workflow, Read brief). Waiting /
- * Mine / All filters replace the Mine and Others folds; All is the default so
- * every corner in the Room stays one click away.
+ * Mine / Others / All / Archived filters replace the folds and the archived
+ * footer; All is the default so every corner in the Room stays one click
+ * away. Archived reads its first page when first chosen.
  */
-type DesktopFilter = 'waiting' | 'mine' | 'all';
+type DesktopFilter = 'waiting' | 'mine' | 'others' | 'all' | 'archived';
 
 const DESKTOP_FILTERS: readonly { readonly key: DesktopFilter; readonly label: string; readonly empty: string }[] = [
   { key: 'waiting', label: 'Waiting', empty: 'No corner here is waiting.' },
   { key: 'mine', label: 'Mine', empty: 'None of these corners are yours.' },
+  { key: 'others', label: 'Others', empty: 'Every corner here is yours.' },
   { key: 'all', label: 'All', empty: '' },
+  { key: 'archived', label: 'Archived', empty: '' },
 ];
 
 type Entry =
@@ -119,13 +122,20 @@ export function RoomCornersList({
   // corners or a fold change, not on every parent render.
   const data = useMemo(() => {
     if (desktop) {
-      const rows = corners.filter((item) =>
-        filter === 'waiting'
-          ? item.state === 'waiting'
-          : filter === 'mine'
-            ? isMineCorner(item, viewerPubkey)
-            : true,
-      );
+      const rows =
+        filter === 'archived'
+          ? archived.status === 'ready'
+            ? archived.corners
+            : []
+          : corners.filter((item) =>
+              filter === 'waiting'
+                ? item.state === 'waiting'
+                : filter === 'mine'
+                  ? isMineCorner(item, viewerPubkey)
+                  : filter === 'others'
+                    ? !isMineCorner(item, viewerPubkey)
+                    : true,
+            );
       return rows.map((item): Entry => ({ kind: 'row', item }));
     }
     const mine = corners.filter((item) => isMineCorner(item, viewerPubkey));
@@ -146,9 +156,12 @@ export function RoomCornersList({
       ...section('mine', 'Mine', mine, mineOpen),
       ...section('others', 'Others', others, othersOpen ?? mine.length === 0),
     ];
-  }, [corners, viewerPubkey, mineOpen, othersOpen, desktop, filter]);
+  }, [corners, viewerPubkey, mineOpen, othersOpen, desktop, filter, archived]);
   const stampedAt = nowMs ?? Date.now();
-  const archivedRows = archived.status === 'ready' && archivedOpen ? archived.corners : [];
+  // On desktop the Archived filter carries the closed rows inside `data`.
+  const archivedRows =
+    !desktop && archived.status === 'ready' && archivedOpen ? archived.corners : [];
+  const showMoreArchived = desktop ? filter === 'archived' : archivedOpen;
   const more = archived.status === 'ready' ? archived.more : undefined;
 
   const openCorner = (item: CornerListItem) => {
@@ -310,19 +323,34 @@ export function RoomCornersList({
         desktop ? (
           <View style={styles.filters} testID="room-corners-filters">
             {DESKTOP_FILTERS.map((option) => {
+              // Archived is not in the live read, so its count is known
+              // only once a page has landed, and is a floor while more wait.
               const count =
-                option.key === 'waiting'
-                  ? corners.filter((item) => item.state === 'waiting').length
-                  : option.key === 'mine'
-                    ? corners.filter((item) => isMineCorner(item, viewerPubkey)).length
-                    : corners.length;
+                option.key === 'archived'
+                  ? archived.status === 'ready'
+                    ? `${archived.corners.length}${archived.next ? '+' : ''}`
+                    : undefined
+                  : option.key === 'waiting'
+                    ? corners.filter((item) => item.state === 'waiting').length
+                    : option.key === 'mine'
+                      ? corners.filter((item) => isMineCorner(item, viewerPubkey)).length
+                      : option.key === 'others'
+                        ? corners.filter((item) => !isMineCorner(item, viewerPubkey)).length
+                        : corners.length;
               return (
                 <Button
                   key={option.key}
-                  label={`${option.label} · ${count}`}
+                  label={count === undefined ? option.label : `${option.label} · ${count}`}
                   variant={filter === option.key ? 'brass' : 'secondary'}
                   accessibilityState={{ selected: filter === option.key }}
-                  onPress={() => setFilter(option.key)}
+                  onPress={() => {
+                    if (
+                      option.key === 'archived' &&
+                      (archived.status === 'idle' || archived.status === 'error')
+                    )
+                      onShowArchived?.();
+                    setFilter(option.key);
+                  }}
                   testID={`room-corners-filter-${option.key}`}
                 />
               );
@@ -343,20 +371,22 @@ export function RoomCornersList({
             open reads the first page; after that it only folds and unfolds.
             The archived rows hang off the footer rather than joining `data`
             because the fold has to precede them. */}
-          {fold(
-            'archived',
-            archivedCornersLabel(archived),
-            archivedOpen && archived.status === 'ready',
-            () => {
-              if (archived.status !== 'ready') onShowArchived?.();
-              setArchivedOpen(archived.status !== 'ready' || !archivedOpen);
-            },
-            archived.status === 'loading',
-          )}
+          {desktop
+            ? null
+            : fold(
+                'archived',
+                archivedCornersLabel(archived),
+                archivedOpen && archived.status === 'ready',
+                () => {
+                  if (archived.status !== 'ready') onShowArchived?.();
+                  setArchivedOpen(archived.status !== 'ready' || !archivedOpen);
+                },
+                archived.status === 'loading',
+              )}
           {archivedRows.map((item) => (
             <React.Fragment key={item.corner.id}>{row(item)}</React.Fragment>
           ))}
-          {archivedOpen && archived.status === 'ready' && archived.next ? (
+          {showMoreArchived && archived.status === 'ready' && archived.next ? (
             <Pressable
               accessibilityLabel={
                 more?.status === 'error' ? `${more.reason}. Tap to retry` : 'More archived corners'
@@ -380,7 +410,17 @@ export function RoomCornersList({
       ListEmptyComponent={
         // A Room whose only work is closed is not an empty Room: once the
         // archived rows are on screen the invitation to start would be a lie.
-        archivedRows.length ? null : desktop && corners.length > 0 ? (
+        archivedRows.length ? null : desktop && filter === 'archived' ? (
+          // Loading, failed (the Archived filter retries), or genuinely empty.
+          <View style={styles.archivedEmpty}>
+            <Text style={styles.filterEmpty} testID="room-corners-filter-empty">
+              {archivedCornersLabel(archived)}
+            </Text>
+            {archived.status === 'loading' ? (
+              <SurfaceGlyphLoader compact testID="room-corners-archived-loading" />
+            ) : null}
+          </View>
+        ) : desktop && corners.length > 0 ? (
           <Text style={styles.filterEmpty} testID="room-corners-filter-empty">
             {DESKTOP_FILTERS.find((option) => option.key === filter)?.empty}
           </Text>
@@ -433,6 +473,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
+    archivedEmpty: { flexDirection: 'row', alignItems: 'center' },
     filterEmpty: {
       ...Typography.default(),
       ...hull.type.meta,

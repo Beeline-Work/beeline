@@ -52,14 +52,15 @@ describe('desktop workbench state', () => {
     expect(initialDesktopWorkPaneState(WIDE)).toEqual({ widthMode: 'wide', content: null });
   });
 
-  it('opens a corner of the Room in the primary view in the pane', () => {
-    const opened = transitionDesktopWorkPane(initialDesktopWorkPaneState(WIDE), {
+  it('never opens a corner in the pane, even beside a Room in a wide window', () => {
+    const state = initialDesktopWorkPaneState(WIDE);
+    const opened = transitionDesktopWorkPane(state, {
       type: 'open-corner',
       cornerId: 'c1',
       primary: 'room',
     });
-    expect(opened.placement).toBe('pane');
-    expect(opened.state.content).toEqual({ kind: 'corner', cornerId: 'c1' });
+    expect(opened.placement).toBe('primary');
+    expect(opened.state).toBe(state);
   });
 
   it('opens a corner in the primary view when a corner is already there', () => {
@@ -85,7 +86,8 @@ describe('desktop workbench state', () => {
     }
   });
 
-  it('holds one thing: opening something new replaces it', () => {
+  it('holds one thing: opening another artifact replaces it, and a corner leaves it alone', () => {
+    const other = { ...(artifact as object), attachment: { id: 'a2' } } as never;
     let state = initialDesktopWorkPaneState(WIDE);
     state = transitionDesktopWorkPane(state, { type: 'open-artifact', artifact, primary: 'room' })
       .state;
@@ -94,10 +96,13 @@ describe('desktop workbench state', () => {
       cornerId: 'c2',
       primary: 'room',
     }).state;
-    expect(state.content).toEqual({ kind: 'corner', cornerId: 'c2' });
-    state = transitionDesktopWorkPane(state, { type: 'open-artifact', artifact, primary: 'room' })
-      .state;
     expect(state.content).toEqual({ kind: 'artifact', artifact });
+    state = transitionDesktopWorkPane(state, {
+      type: 'open-artifact',
+      artifact: other,
+      primary: 'room',
+    }).state;
+    expect(state.content).toEqual({ kind: 'artifact', artifact: other });
   });
 
   it('closes on close and on expand, and an artifact never comes back afterwards', () => {
@@ -109,11 +114,10 @@ describe('desktop workbench state', () => {
     state = transitionDesktopWorkPane(state, { type: 'close' }).state;
     expect(state.content).toBeNull();
     state = transitionDesktopWorkPane(state, {
-      type: 'open-corner',
-      cornerId: 'c1',
+      type: 'open-artifact',
+      artifact,
       primary: 'room',
     }).state;
-    expect(state.content).toEqual({ kind: 'corner', cornerId: 'c1' });
     const expanded = transitionDesktopWorkPane(state, { type: 'expand' });
     expect(expanded.placement).toBe('primary');
     expect(expanded.state.content).toBeNull();
@@ -140,14 +144,18 @@ describe('desktop workbench state', () => {
 
   it('hides its content while the window is narrow', () => {
     const open = transitionDesktopWorkPane(initialDesktopWorkPaneState(WIDE), {
-      type: 'open-corner',
-      cornerId: 'c1',
+      type: 'open-artifact',
+      artifact,
       primary: 'room',
     }).state;
     const narrowed = transitionDesktopWorkPane(open, { type: 'resize', width: NARROW }).state;
     expect(desktopWorkPaneVisibleContent(narrowed)).toBeNull();
     const widened = transitionDesktopWorkPane(narrowed, { type: 'resize', width: WIDE }).state;
-    expect(desktopWorkPaneVisibleContent(widened)).toEqual({ kind: 'corner', cornerId: 'c1' });
+    expect(desktopWorkPaneVisibleContent(widened)).toEqual({ kind: 'artifact', artifact });
+  });
+
+  it('opens the Room list at a narrow default width until the reader drags it', async () => {
+    expect(await loadDesktopPaneWidth('navigation')).toBe(260);
   });
 
   it('bounds and persists both pane widths', async () => {

@@ -88,14 +88,13 @@ function desktopWindow(width: number) {
 }
 
 describe('desktop second pane, end to end through the module events', () => {
-  it('holds one thing, opens only for artifacts and the Room’s corners, and closes on a switch', () => {
+  it('holds one artifact at a time and opens every corner in the primary view', () => {
     const desk = desktopWindow(DESKTOP_WORK_PANE_THRESHOLD + 200);
     desk.step('open #room-a', () => undefined);
     desk.step('click artifact plan.html', () => desk.artifact('plan.html'));
     desk.step('click rail corner a-1 of #room-a', () => desk.railCorner('room-a', 'a-1'));
     desk.step('click artifact notes.html', () => desk.artifact('notes.html'));
     desk.step('click rail corner b-1 of #room-b', () => desk.railCorner('room-b', 'b-1'));
-    desk.step('press Expand', () => desk.expand());
     desk.step('click artifact diff.html', () => desk.artifact('diff.html'));
     desk.step('click rail corner b-2 of #room-b', () => desk.railCorner('room-b', 'b-2'));
     desk.step('click rail corner a-2 of #room-a', () => desk.railCorner('room-a', 'a-2'));
@@ -104,13 +103,12 @@ describe('desktop second pane, end to end through the module events', () => {
     expect(desk.log).toEqual([
       'open #room-a -> primary: room-a, pane: closed',
       'click artifact plan.html -> primary: room-a, pane: artifact plan.html',
-      'click rail corner a-1 of #room-a -> primary: room-a, pane: corner a-1',
-      'click artifact notes.html -> primary: room-a, pane: artifact notes.html',
-      'click rail corner b-1 of #room-b -> primary: room-b, pane: corner b-1',
-      'press Expand -> primary: b-1, pane: closed',
+      'click rail corner a-1 of #room-a -> primary: a-1, pane: closed',
+      'click artifact notes.html -> primary: a-1, pane: artifact notes.html',
+      'click rail corner b-1 of #room-b -> primary: b-1, pane: closed',
       'click artifact diff.html -> primary: b-1, pane: artifact diff.html',
       'click rail corner b-2 of #room-b -> primary: b-2, pane: closed',
-      'click rail corner a-2 of #room-a -> primary: room-a, pane: corner a-2',
+      'click rail corner a-2 of #room-a -> primary: a-2, pane: closed',
     ]);
   });
 

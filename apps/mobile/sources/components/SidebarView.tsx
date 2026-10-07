@@ -8,8 +8,7 @@ import {
   saveActiveCommunityId,
   subscribeActiveCommunityId,
 } from '@/buzz/community-storage';
-import { navigateToRoom } from '@/buzz/corner-navigation';
-import { selectDesktopWorkCorner } from '@/buzz/desktop-work-pane';
+import { cornerHref, navigateToRoom, roomCornersHref } from '@/buzz/corner-navigation';
 import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
@@ -26,8 +25,6 @@ import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabular
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
-import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
-import { useCornerDropdowns } from '@/buzz/corner-dropdowns';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
 import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -194,11 +191,6 @@ export const SidebarView = React.memo(function SidebarView() {
   const refreshedForWorkspaceIds = React.useRef(new Set<string>());
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = React.useState(false);
   const attentionWorkspaceIds = new Set(workspaces.filter((workspace) => workspace.attention).map((workspace) => workspace.id));
-  const {
-    expanded: expandedRoomIds,
-    setExpanded: setExpandedRoomIds,
-    toggle: toggleRoomCorners,
-  } = useCornerDropdowns(surface?.chats);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -342,20 +334,6 @@ export const SidebarView = React.memo(function SidebarView() {
     () => roomListSections(filteredChats),
     [filteredChats],
   );
-  // A corner route expands its parent. Opening a Room itself leaves its corner
-  // list collapsed; the row's corner glyph toggles that list.
-  React.useEffect(() => {
-    const parentId = promotedCornerParentId;
-    if (
-      !parentId ||
-      !(surface?.chats.find((item) => item.room.id === parentId)?.cornerCount ?? 0)
-    ) {
-      return;
-    }
-    setExpandedRoomIds((current) =>
-      current.has(parentId) ? current : new Set([...current, parentId]),
-    );
-  }, [promotedCornerParentId, surface?.chats]);
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   // ChatListView carries workspace.role; the server's viewer.permissions.manage
   // is the same boolean (`role !== 'member'`). Do not invent a second gate.
@@ -379,13 +357,6 @@ export const SidebarView = React.memo(function SidebarView() {
     },
     [router],
   );
-  const openCornerInRoom = React.useCallback(
-    (roomId: string, cornerId: string) => {
-      selectDesktopWorkCorner({ roomId, cornerId });
-      if (activeRoomId !== roomId) openRoom(roomId);
-    },
-    [activeRoomId, openRoom],
-  );
   // The sidebar reads through RoomViewClient only, so the one write it makes
   // builds the monolith transport on demand, as the Room composer does.
   const openingCornerRef = React.useRef(false);
@@ -399,13 +370,13 @@ export const SidebarView = React.memo(function SidebarView() {
         await openRoomListCorner({
           roomId,
           createCorner: transport ? (id, title) => transport.createHumanCorner(id, title, undefined, undefined, true) : null,
-          openCorner: (cornerId) => openCornerInRoom(roomId, cornerId),
+          openCorner: (cornerId, title) => router.push(cornerHref(cornerId, roomId, title)),
         });
       } finally {
         openingCornerRef.current = false;
       }
     },
-    [openCornerInRoom],
+    [router],
   );
 
   React.useEffect(() => {
@@ -699,8 +670,7 @@ export const SidebarView = React.memo(function SidebarView() {
                           now={Date.now()}
                           selected={isDesktop && active}
                           desktop
-                          cornersExpanded={expandedRoomIds.has(item.room.id)}
-                          onToggleCorners={() => toggleRoomCorners(item.room.id)}
+                          onOpenCorners={() => router.push(roomCornersHref(item.room.id))}
                           pinned={pinned.includes(item.room.id)}
                           onPin={() => void togglePin(item.room.id)}
                           onLongPressCorners={
@@ -709,15 +679,6 @@ export const SidebarView = React.memo(function SidebarView() {
                           onPress={() => openRoom(item.room.id)}
                           testID={`desktop-room-${item.room.id}`}
                         />
-                        {!item.directMessage &&
-                          (item.cornerCount ?? 0) > 0 &&
-                          expandedRoomIds.has(item.room.id) && (
-                            <DesktopRoomCorners
-                              key={`${workspaceId}/${item.room.id}`}
-                              item={item}
-                              onOpen={(cornerId) => openCornerInRoom(item.room.id, cornerId)}
-                            />
-                          )}
                       </View>
                     );
                   })}

@@ -573,7 +573,7 @@ jobs:
       (needs.helper_macos.result == 'success' || needs.initialize.outputs.helper_reuse_run_id != '' ||
         !contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper))
     runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 12
+    timeout-minutes: 20
     permissions:
       actions: read
       contents: write

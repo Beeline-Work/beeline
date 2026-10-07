@@ -154,7 +154,7 @@ import {
   senderMayAddressAgent,
 } from '@beeline/api-contract/agent-access';
 import { taggedIdentityIdsSql, typedMentionHandles } from './message-mentions.js';
-import { agentWalletTool, delegationView } from './wallet.js';
+import { agentWalletTool, agentSignTypedData, delegationView } from './wallet.js';
 import {
   noteFirstSilence,
   TURN_FAILURE_REASON_MAX,
@@ -364,6 +364,7 @@ export class DaemonService {
       'getWalletToolQuote',
       'walletPay',
       'walletSwap',
+      'walletSignTypedData',
     ].includes(name);
     if (walletCall && !scopedRoom) throw new Error('wallet access requires an active Room command');
     let cornerReviewer = false;
@@ -403,6 +404,7 @@ export class DaemonService {
       'getWalletToolQuote',
       'walletPay',
       'walletSwap',
+      'walletSignTypedData',
 
       'listTurnAgentGrants',
       'offerConnector',
@@ -634,6 +636,7 @@ export class DaemonService {
               'getWalletToolQuote',
               'walletPay',
               'walletSwap',
+              'walletSignTypedData',
             ],
           ].includes(name) &&
           ['pending', 'permission-required'].includes(
@@ -1654,6 +1657,12 @@ export class DaemonService {
           'pay',
           authenticatedAgentId,
           input as Input<'walletPay'>,
+        )) as Output<Name>;
+      case 'walletSignTypedData':
+        return (await agentSignTypedData(
+          this.database,
+          authenticatedAgentId,
+          input as Input<'walletSignTypedData'>,
         )) as Output<Name>;
       case 'walletSwap':
         return (await agentWalletTool(
@@ -6367,7 +6376,21 @@ export class DaemonService {
         [context.owner.pubkey],
       )
     ).rows;
+    const walletConnected = (await delegationView(this.database, context.owner.pubkey)).active;
     const catalog = connectorCatalog().map((entry) => {
+      if (entry.connectorType === 'wallet' && walletConnected)
+        return {
+          connectorType: entry.connectorType,
+          name: entry.name,
+          purpose: connectorPurpose(entry.connectorType),
+          available: entry.available,
+          offerable: !context.isCorner && isOfferableConnectorKind(entry.connectorType),
+          paired: {
+            status: 'connected' as const,
+            helperName: context.machine.name,
+            onThisMachine: true,
+          },
+        };
       // The most recently touched row wins; a live one over a disconnected one.
       const rows = paired.filter((row) => row.connector_type === entry.connectorType);
       const here = rows.filter((candidate) =>
@@ -8000,6 +8023,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWalletToolQuote: true,
   walletPay: true,
   walletSwap: true,
+  walletSignTypedData: true,
   reportFeedback: true,
   notifyFeedbackFixed: true,
 };

@@ -7,7 +7,7 @@
  * Updated for server-wallet API (no end-user model): accounts are keyed by
  * their deterministic name, and wallets are identified by address.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   walletExplorerTxUrl,
   type WalletChainId,
@@ -174,6 +174,11 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
         createdAt: Date.now(),
       });
       return { txId, toAmount: toAmount.toFixed(6) };
+    },
+    async signTypedData(address, input) {
+      // An unmistakably synthetic test signature, never a usable authorization.
+      const digest = createHash('sha256').update(address + JSON.stringify(input)).digest('hex');
+      return { signature: `0x${digest}${digest}1b` };
     },
     async history(address: string, limit: number): Promise<WalletLedgerEntry[]> {
       return (state.transactions.get(address) ?? [])

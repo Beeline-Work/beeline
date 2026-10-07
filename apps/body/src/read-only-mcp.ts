@@ -793,6 +793,33 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'wallet_sign_typed_data',
+    description:
+      "Sign EIP-712 typed data with your connected owner's EVM account. Accepts any domain chainId, including 1337. Typed-data signatures can authorize transfers: the same wallet resource approval and live delegated-signing grant as wallet_pay and wallet_swap are required. Successful signatures are recorded in the Wallet ledger. Returns {outcome, signature}; never broadcasts a transaction.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        domain: { type: 'object', additionalProperties: true },
+        types: {
+          type: 'object',
+          additionalProperties: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { name: { type: 'string' }, type: { type: 'string' } },
+              required: ['name', 'type'],
+              additionalProperties: false,
+            },
+          },
+        },
+        primaryType: { type: 'string' },
+        message: { type: 'object', additionalProperties: true },
+      },
+      required: ['domain', 'types', 'primaryType', 'message'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'steer_corner',
     description:
       'Pass input from your active Room or corner turn to another corner you belong to under the same parent Room. The hand-off queues input for the destination opener, or, from a corner, for the agent who opened your corner when that agent is a member of the destination; it keeps your turn active; membership alone never authorizes a turn.',
@@ -4284,37 +4311,37 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     case 'wallet_address':
       return JSON.stringify(
         await daemonExecute('getWalletToolState', {
-          agentId: 'self',
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: agentScheduleRoomId(),
         }),
       );
     case 'wallet_balance':
       return JSON.stringify(
         await daemonExecute('getWalletToolBalance', {
-          agentId: 'self',
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: agentScheduleRoomId(),
         }),
       );
     case 'wallet_chains':
       return JSON.stringify(
         await daemonExecute('getWalletToolChains', {
-          agentId: 'self',
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: agentScheduleRoomId(),
         }),
       );
     case 'wallet_history':
       return JSON.stringify(
         await daemonExecute('getWalletToolHistory', {
-          agentId: 'self',
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: agentScheduleRoomId(),
           ...(typeof args.limit === 'number' ? { limit: Math.floor(args.limit) } : {}),
         }),
       );
     case 'wallet_quote':
       return JSON.stringify(
         await daemonExecute('getWalletToolQuote', {
-          agentId: 'self',
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: agentScheduleRoomId(),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
           asset: String(args.asset ?? 'usdc'),
           amount: String(args.amount ?? ''),
@@ -4323,8 +4350,8 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     case 'wallet_pay':
       return JSON.stringify(
         await daemonExecute('walletPay', {
-          agentId: 'self',
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: agentScheduleRoomId(),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
           asset: String(args.asset ?? 'usdc'),
           amount: String(args.amount ?? ''),
@@ -4334,12 +4361,23 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     case 'wallet_swap':
       return JSON.stringify(
         await daemonExecute('walletSwap', {
-          agentId: 'self',
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: agentScheduleRoomId(),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
           fromAsset: String(args.fromAsset ?? 'usdc'),
           toAsset: String(args.toAsset ?? 'eth'),
           amount: String(args.amount ?? ''),
+        }),
+      );
+    case 'wallet_sign_typed_data':
+      return JSON.stringify(
+        await daemonExecute('walletSignTypedData', {
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: agentScheduleRoomId(),
+          domain: args.domain,
+          types: args.types,
+          primaryType: args.primaryType,
+          message: args.message,
         }),
       );
     case 'set_corner_hold':

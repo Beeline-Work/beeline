@@ -51,6 +51,8 @@ import type {
   WalletToolQuoteResult,
   WalletToolState,
   WalletToolStateInput,
+  WalletSignTypedDataInput,
+  WalletSignTypedDataResult,
 } from './wallet.js';
 
 /** Maximum number of consecutive agent-authored turns in one Room exchange. */
@@ -624,6 +626,10 @@ export type DaemonOperationMap = {
   walletPay: Operation<
     WalletPayInput & TurnOutputAuthority & RoomInput,
     WalletSendOutcome | { readonly status: 'permission-required'; readonly grantId?: string }
+  >;
+  walletSignTypedData: Operation<
+    WalletSignTypedDataInput & TurnOutputAuthority & RoomInput,
+    WalletSignTypedDataResult | { readonly status: 'permission-required'; readonly grantId?: string }
   >;
   walletSwap: Operation<
     WalletSwapInput & TurnOutputAuthority & RoomInput,

@@ -1,13 +1,13 @@
 /**
- * Wallet connector — the Coinbase CDP Embedded Wallet vocabulary.
+ * Wallet connector — the Coinbase CDP Server Wallet vocabulary.
  *
  * ONE app-wide Coinbase credential lives in the Beeline server's own secrets;
  * no end user ever provisions a key and nothing here ever touches a Trusty
  * Squire vault (captain invariant, 2026-09). A wallet belongs to the HUMAN who
- * created it (one binding per identity); agents spend it through the seven
- * session tools, scoped to their owner's wallet. The balance IS the limit:
- * the only refusal is insufficient funds. No caps, no policy engine, no
- * signature ceremony.
+ * created it (one binding per identity); agent tools use their owner's wallet
+ * under the wallet resource approval and live signing delegation. Transfer
+ * limits follow the funded balance. Typed-data signing is off-chain and can
+ * authorize transfers; it uses the same signing authority.
  *
  * Chains are a PER-TRANSACTION argument, never a wallet property. Base gas is
  * sponsored by CDP's paymaster under a free monthly allowance; every other
@@ -249,3 +249,16 @@ export type WalletSwapResult =
     }
   | WalletInsufficient
   | WalletDelegationExpired;
+
+/** EIP-712 payload, forwarded unchanged to CDP without a chain allowlist. */
+export type WalletTypedData = {
+  readonly domain: Readonly<Record<string, unknown>>;
+  readonly types: Readonly<Record<string, readonly { readonly name: string; readonly type: string }[]>>;
+  readonly primaryType: string;
+  readonly message: Readonly<Record<string, unknown>>;
+};
+export type WalletSignTypedDataInput = WalletTypedData & { readonly agentId: string };
+export type WalletSignTypedDataResult =
+  | { readonly outcome: 'signed'; readonly signature: string }
+  | WalletDelegationExpired
+  | WalletFailed;

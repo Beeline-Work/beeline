@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Real transport, real outbox storage and the real delivery driver; only the
 // network, the device key-value store and React Native's AppState are stubbed.
@@ -108,16 +108,12 @@ describe('a Room send that did not land while its corner was closed', () => {
     mocks.appStateListeners.clear();
     mocks.connectedListeners.clear();
   });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
 
-  it('is delivered while the app stays open on another screen', async () => {
+  it('is delivered when another send gets through while the app stays open', async () => {
     // The person never leaves the app: no foreground, no reconnect. The
     // driver is already running from launch with nothing to send.
-    vi.useFakeTimers();
     const stop = startOutboxDelivery();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(mocks.connectedListeners.size).toBe(1));
     expect(mocks.fetch).not.toHaveBeenCalled();
 
     mocks.fetch.mockRejectedValue(new MonolithRequestTimeoutError());
@@ -126,54 +122,39 @@ describe('a Room send that did not land while its corner was closed', () => {
     expect(replyPosts()).toHaveLength(1);
     console.log(`reply ${event.id.slice(0, 8)} timed out after leaving ${ROOM}; app still open`);
 
-    serverAccepts();
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(replyPosts()).toHaveLength(2);
-    expect(pendingOutboxRoomIds(VIEWER)).toEqual([]);
-    console.log(`retry timer delivered ${event.id.slice(0, 8)} 5s later; corner never opened`);
-    stop();
-  });
+    // Nothing fires on its own: no timer resends it.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(replyPosts()).toHaveLength(1);
 
-  it('backs off while the server stays unreachable, and stops once delivered', async () => {
-    vi.useFakeTimers();
-    mocks.fetch.mockRejectedValue(new TypeError('Network request failed'));
-    await sendReplyThenLeave(new BuzzRigTransport(identity as never));
-    const stop = startOutboxDelivery();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(replyPosts()).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(replyPosts()).toHaveLength(3);
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(replyPosts()).toHaveLength(3);
+    // The person sends in another Room and that send is acked.
     serverAccepts();
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(replyPosts()).toHaveLength(4);
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(replyPosts()).toHaveLength(4);
+    const other = await transport.composeMessage({ sessionId: 'network-errors-triage', text: 'ok' });
+    await publishOutboxEvent(transport, other);
+    await vi.waitFor(() => expect(pendingOutboxRoomIds(VIEWER)).toEqual([]));
+    expect(replyPosts()).toHaveLength(2);
+    console.log(
+      `send in network-errors-triage acked; ${event.id.slice(0, 8)} delivered with it; corner never opened`,
+    );
     stop();
   });
 
   it('marks a refused send failed instead of retrying it', async () => {
-    vi.useFakeTimers();
     mocks.fetch.mockResolvedValue(
       new Response(JSON.stringify({ error: 'room access denied' }), { status: 403 }),
     );
     const event = await sendReplyThenLeave(new BuzzRigTransport(identity as never));
     const stop = startOutboxDelivery();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(createRoomOutbox(identity, ROOM).get(event.id)?.status).toBe('failed');
-    const posts = replyPosts().length;
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(replyPosts()).toHaveLength(posts);
+    await vi.waitFor(() =>
+      expect(createRoomOutbox(identity, ROOM).get(event.id)?.status).toBe('failed'),
+    );
     stop();
   });
 
   it('retires the stored send when the composer’s own request lands', async () => {
-    vi.useFakeTimers();
     const stop = startOutboxDelivery();
     serverAccepts();
     await sendReplyThenLeave(new BuzzRigTransport(identity as never));
-    await vi.advanceTimersByTimeAsync(60_000);
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(replyPosts()).toHaveLength(1);
     expect(pendingOutboxRoomIds(VIEWER)).toEqual([]);
     stop();

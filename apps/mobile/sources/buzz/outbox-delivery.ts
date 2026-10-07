@@ -5,23 +5,18 @@ import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { monolithSession } from '@/auth/monolith-session';
 import { BuzzRigTransport } from '@/sync/transport';
 import { MonolithPhoneOperationError } from '@/sync/transport/monolith-operation';
-import {
-  createRoomOutbox,
-  pendingOutboxRoomIds,
-  subscribeOutboxSaved,
-} from './surface-storage';
+import { createRoomOutbox, pendingOutboxRoomIds } from './surface-storage';
 
 type Publisher = Pick<BuzzRigTransport, 'publishPreparedMessage'>;
 
-const RETRY_FIRST_MS = 5_000;
-const RETRY_MAX_MS = 60_000;
-
 const inFlight = new Map<string, Promise<AgentMessageWriteResult>>();
+const deliveredListeners = new Set<() => void>();
 
 /**
  * One request per prepared event at a time, whichever path asks for it. The
  * server has stored the message once it acks, so the stored send is retired
- * then and no retry sends it again.
+ * then and never sent again. An ack also proves the server is reachable, which
+ * is the cue to send anything still pending.
  */
 export function publishOutboxEvent(
   transport: Publisher,
@@ -34,6 +29,7 @@ export function publishOutboxEvent(
     .then(async (result) => {
       const roomId = event.tags.find((tag) => tag[0] === 'h')?.[1];
       if (roomId) await createRoomOutbox({ publicKey: event.pubkey }, roomId).remove(event.id);
+      for (const listener of deliveredListeners) listener();
       return result;
     })
     .finally(() => {
@@ -58,14 +54,13 @@ function refused(error: unknown): boolean {
  * Send every pending Room message for this viewer, whether or not its Room is
  * open. A stored send no longer waits for its Room screen to mount. The server
  * ignores a repeated messageId, so a send that already landed is harmless. A
- * retryable failure stays pending; a refusal is marked failed for the Room to
- * show. Returns how many sends are still pending.
+ * retryable failure stays pending for the next cue; a refusal is marked failed
+ * for the Room to show.
  */
 async function flushPendingOutboxes(
   identity: { publicKey: string },
   transport: Publisher,
-): Promise<number> {
-  let pending = 0;
+): Promise<void> {
   for (const roomId of pendingOutboxRoomIds(identity.publicKey)) {
     const outbox = createRoomOutbox(identity, roomId);
     await outbox.restore();
@@ -77,45 +72,29 @@ async function flushPendingOutboxes(
           await outbox.fail(record.event.id);
         } else {
           console.warn('[outbox] pending send failed; will retry', error);
-          pending += 1;
         }
       }
     }
   }
-  return pending;
 }
 
 /**
- * Drive pending sends on launch, sign-in, foreground, live reconnect, and on a
- * backoff timer while the app is open, whichever screen is showing.
+ * Send pending messages on launch, sign-in, foreground, live reconnect, and
+ * whenever another send is acked. Nothing retries on a timer: each attempt
+ * follows an event that shows the server can be reached.
  */
 export function startOutboxDelivery(): () => void {
   let disposed = false;
   let flushing = false;
   let again = false;
-  let retryMs = RETRY_FIRST_MS;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let stopConnected: (() => void) | undefined;
 
-  const cancelTimer = () => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-  };
-  const arm = () => {
-    if (timer !== undefined || disposed || AppState.currentState === 'background') return;
-    timer = setTimeout(() => {
-      timer = undefined;
-      void flush().catch(report);
-    }, retryMs);
-  };
   const flush = async () => {
     if (flushing) {
       again = true;
       return;
     }
     flushing = true;
-    cancelTimer();
-    let pending = 0;
     try {
       do {
         again = false;
@@ -123,41 +102,28 @@ export function startOutboxDelivery(): () => void {
         if (!identity || disposed) return;
         const transport = new BuzzRigTransport(identity);
         if (!stopConnected) stopConnected = transport.subscribeConnected(() => void flush());
-        pending = await flushPendingOutboxes(identity, transport);
+        await flushPendingOutboxes(identity, transport);
       } while (again && !disposed);
     } finally {
       flushing = false;
-    }
-    if (pending > 0) {
-      arm();
-      retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
-    } else {
-      retryMs = RETRY_FIRST_MS;
     }
   };
   const report = (error: unknown) => console.warn('[outbox]', error);
 
   const appState = AppState.addEventListener('change', (state) => {
-    if (state === 'active') {
-      retryMs = RETRY_FIRST_MS;
-      void flush().catch(report);
-    } else if (state === 'background') {
-      cancelTimer();
-    }
+    if (state === 'active') void flush().catch(report);
   });
-  // A new or still-pending send arms the timer; the composer's own request
-  // usually acks first and retires it, leaving the timer nothing to send.
-  const stopSaved = subscribeOutboxSaved(() => {
-    if (flushing) again = true;
-    else arm();
-  });
+  // The flush's own acks are not a new cue; it already covers every Room.
+  const onDelivered = () => {
+    if (!flushing) void flush().catch(report);
+  };
+  deliveredListeners.add(onDelivered);
   const stopIdentity = monolithSession.subscribeIdentityChange(() => void flush().catch(report));
   void flush().catch(report);
   return () => {
     disposed = true;
-    cancelTimer();
     appState.remove();
-    stopSaved();
+    deliveredListeners.delete(onDelivered);
     stopIdentity();
     stopConnected?.();
   };

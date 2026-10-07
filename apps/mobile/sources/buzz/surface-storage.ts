@@ -62,13 +62,6 @@ function outboxKey(viewerPubkey: string, roomId: string): string {
 }
 
 const outboxes = new Map<string, SignedEventOutbox>();
-const outboxSaveListeners = new Set<() => void>();
-
-/** Fires after any Room outbox write, so the delivery driver sees new sends. */
-export function subscribeOutboxSaved(listener: () => void): () => void {
-  outboxSaveListeners.add(listener);
-  return () => outboxSaveListeners.delete(listener);
-}
 
 /**
  * One outbox per viewer and Room, shared by the mounted composer and the
@@ -94,7 +87,6 @@ export function createRoomOutbox(identity: Pick<Identity, 'publicKey'>, roomId: 
       save: async (records) => {
         if (records.length === 0) mutations.delete(key);
         else mutations.set(key, JSON.stringify(records));
-        for (const listener of outboxSaveListeners) listener();
       },
     },
     {

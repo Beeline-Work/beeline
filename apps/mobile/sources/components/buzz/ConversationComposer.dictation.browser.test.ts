@@ -13,6 +13,9 @@ function composerDictationProofShims(mobile: string): Record<string, string> {
     )}';
     export const getRecognitionModule = () => speechProofRecognizer.module;`,
     './speech-locale': "export const getDeviceSpeechLocale = () => 'en-US';",
+    './speech-transcription': `export const dictationTranscriptionAvailable = () => false;
+    export const transcribeDictation = async () => null;
+    export const discardDictationRecordings = async () => {};`,
   };
 }
 

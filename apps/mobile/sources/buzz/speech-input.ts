@@ -6,6 +6,9 @@
  * Silence is a result-gap with no speech-level volume, not merely a sparse
  * Android interim; captured text never shares the page with "didn't catch
  * that". Transcripts are corrected against the Room lexicon (speech-correction).
+ * Where the device can record, the take's audio also goes to the server's Groq
+ * Whisper on stop; its text replaces the on-device text, which stays the
+ * fallback (speech-transcription).
  */
 import * as React from 'react';
 import { Platform } from 'react-native';
@@ -15,6 +18,11 @@ import {
 } from './speech-recognition-adapter';
 import { getDeviceSpeechLocale } from './speech-locale';
 import { createSpeechCorrector } from './speech-correction';
+import {
+  discardDictationRecordings,
+  dictationTranscriptionAvailable,
+  transcribeDictation,
+} from './speech-transcription';
 
 export type SpeechInputState =
   'idle' | 'listening' | 'finalizing' | 'nothing-recognised' | 'permission-denied';
@@ -55,6 +63,17 @@ const ANDROID_BACKGROUND_MODEL_DOWNLOAD_API = 34;
 // Google's server recognizer is more accurate than its on-device model and
 // honours the Room lexicon; Samsung and other defaults may not.
 export const ANDROID_GOOGLE_RECOGNITION_SERVICE = 'com.google.android.googlequicksearchbox';
+// Whisper's native format; the sample rate and encoding apply on iOS, and
+// Android already records 16 kHz mono PCM.
+const DICTATION_RECORDING_OPTIONS = {
+  persist: true,
+  outputSampleRate: 16000,
+  outputEncoding: 'pcmFormatInt16' as const,
+};
+
+/** One dictation recorded for server transcription. */
+type RecordedTake = { recorded: boolean; uris: string[]; finals: string[] };
+const NO_TAKE: RecordedTake = { recorded: false, uris: [], finals: [] };
 
 function sameLocale(a: string, b: string): boolean {
   return a.replace(/_/g, '-').toLowerCase() === b.replace(/_/g, '-').toLowerCase();
@@ -73,6 +92,14 @@ async function androidOnDeviceModelInstalled(
     return Boolean(support?.installedLocales.some((installed) => sameLocale(installed, locale)));
   } catch {
     // The platform recognizer still works without punctuation.
+    return false;
+  }
+}
+
+function recordingSupported(m: SpeechRecognitionInterface): boolean {
+  try {
+    return Boolean(m.supportsRecording?.());
+  } catch {
     return false;
   }
 }
@@ -109,6 +136,10 @@ export function useSpeechInput(
   const startAttemptRef = React.useRef(0);
   const androidOnDeviceRef = React.useRef(false);
   const androidModelRequestedRef = React.useRef(false);
+  // A recorded take holds its on-device finals until the server's text
+  // replaces them on stop. The id voids a transcription that outlives its take.
+  const takeRef = React.useRef<RecordedTake>(NO_TAKE);
+  const takeIdRef = React.useRef(0);
   const capability: SpeechInputCapability =
     (Platform.OS === 'ios' || Platform.OS === 'android') && modRef.current
       ? 'available'
@@ -142,6 +173,8 @@ export function useSpeechInput(
   );
   const correctorRef = React.useRef(corrector);
   correctorRef.current = corrector;
+  const lexiconRef = React.useRef<readonly string[]>([]);
+  lexiconRef.current = contextualKey ? contextualKey.split('\n') : [];
   // Android pins Google's server recognizer when it is installed.
   const androidGoogleService = React.useMemo(() => {
     if (Platform.OS !== 'android') return false;
@@ -176,13 +209,15 @@ export function useSpeechInput(
   }, [androidGoogleService, contextualKey]);
   // Without Google's service, Android's recognizer is chosen per start from
   // the installed models.
-  const nativeStartOptions = React.useCallback(
-    () =>
+  const nativeStartOptions = React.useCallback(() => {
+    const options =
       Platform.OS === 'android' && !androidGoogleService
         ? { ...startOptions, requiresOnDeviceRecognition: androidOnDeviceRef.current }
-        : startOptions,
-    [androidGoogleService, startOptions],
-  );
+        : startOptions;
+    return takeRef.current.recorded
+      ? { ...options, recordingOptions: DICTATION_RECORDING_OPTIONS }
+      : options;
+  }, [androidGoogleService, startOptions]);
 
   const finishStopWithCapture = React.useCallback((pendingPartial: string) => {
     pendingPartialRef.current = '';
@@ -209,10 +244,60 @@ export function useSpeechInput(
     settlement?.resolve(captured);
   }, []);
 
+  /**
+   * Ends a recorded take after native capture has ended: the server's text
+   * replaces the on-device text, which is committed instead on any failure.
+   */
+  const finishTake = React.useCallback(async () => {
+    if (finalizationTimerRef.current !== null) {
+      clearTimeout(finalizationTimerRef.current);
+      finalizationTimerRef.current = null;
+    }
+    const take = takeRef.current;
+    if (!take.recorded) return;
+    takeRef.current = NO_TAKE;
+    const takeId = takeIdRef.current;
+    const onDevice = [...take.finals, pendingPartialRef.current]
+      .filter((text) => text.trim())
+      .join(' ');
+    let text = onDevice;
+    if (onDevice.trim() && take.uris.length) {
+      const transcribed = await transcribeDictation(
+        take.uris,
+        lexiconRef.current,
+        startOptions.lang,
+      );
+      if (takeId !== takeIdRef.current) return;
+      if (transcribed) text = correctorRef.current.correct([transcribed]);
+    } else {
+      void discardDictationRecordings(take.uris);
+    }
+    const captured = finishStopWithCapture(text);
+    if (stopSettlementRef.current) {
+      settleExplicitStop(captured);
+      return;
+    }
+    stopRequestedRef.current = false;
+    if (!captured) setState(sessionGotResultRef.current ? 'idle' : 'nothing-recognised');
+  }, [finishStopWithCapture, settleExplicitStop, startOptions.lang]);
+
+  /** After a stop without a waiting caller, a recorded take waits for native `end`. */
+  const awaitTakeEnd = React.useCallback(() => {
+    setState('finalizing');
+    if (finalizationTimerRef.current !== null) clearTimeout(finalizationTimerRef.current);
+    finalizationTimerRef.current = setTimeout(() => {
+      void finishTake();
+    }, SPEECH_FINALIZATION_TIMEOUT_MS);
+  }, [finishTake]);
+
   const restartIfStillListening = React.useCallback(() => {
     if (!listeningRef.current) return;
     if (restartCountRef.current >= MAX_RESTARTS) {
       doStop();
+      if (takeRef.current.recorded) {
+        awaitTakeEnd();
+        return;
+      }
       if (!finishStopWithCapture(pendingPartialRef.current)) {
         setState(sessionGotResultRef.current ? 'idle' : 'nothing-recognised');
       }
@@ -225,20 +310,24 @@ export function useSpeechInput(
     } catch {
       doStop();
     }
-  }, [doStop, finishStopWithCapture, nativeStartOptions]);
+  }, [awaitTakeEnd, doStop, finishStopWithCapture, nativeStartOptions]);
 
   const armSilenceTimer = React.useCallback(() => {
     clearSilenceTimer();
     silenceTimerRef.current = setTimeout(() => {
       if (!listeningRef.current) return;
       doStop();
+      if (takeRef.current.recorded) {
+        awaitTakeEnd();
+        return;
+      }
       // Captured words are a successful stop even when the platform has not
       // marked a final yet. "Didn't catch that" is only for a true empty.
       if (finishStopWithCapture(pendingPartialRef.current)) return;
       if (!sessionGotResultRef.current) setState('nothing-recognised');
       else setState('idle');
     }, SPEECH_SILENCE_TIMEOUT_MS);
-  }, [clearSilenceTimer, doStop, finishStopWithCapture]);
+  }, [awaitTakeEnd, clearSilenceTimer, doStop, finishStopWithCapture]);
 
   // Register one listener set per effect lifetime. In React Strict Mode an
   // effect is mounted, cleaned up, and mounted again; a sticky "registered"
@@ -262,6 +351,19 @@ export function useSpeechInput(
       sessionGotResultRef.current = true;
       if (listeningRef.current) armSilenceTimer();
 
+      const take = takeRef.current;
+      if (take.recorded) {
+        // The take commits once, on stop; meanwhile show every segment so far.
+        if (event.isFinal) {
+          take.finals.push(transcript);
+          pendingPartialRef.current = '';
+        } else {
+          pendingPartialRef.current = transcript;
+        }
+        setPartialText([...take.finals, pendingPartialRef.current].filter(Boolean).join(' '));
+        return;
+      }
+
       if (event.isFinal) {
         // Commit immediately — the text is finalised by the recogniser.
         pendingPartialRef.current = '';
@@ -283,6 +385,8 @@ export function useSpeechInput(
 
     const onError = (event: any) => {
       if (event.error === 'not-allowed') {
+        void discardDictationRecordings(takeRef.current.uris);
+        takeRef.current = NO_TAKE;
         if (stopSettlementRef.current) {
           const captured = finishStopWithCapture(pendingPartialRef.current);
           settleExplicitStop(captured);
@@ -307,8 +411,19 @@ export function useSpeechInput(
 
     const onNoMatch = () => {};
 
+    const onAudioEnd = (event: any) => {
+      const uri = typeof event?.uri === 'string' ? event.uri : '';
+      if (!uri) return;
+      if (takeRef.current.recorded) takeRef.current.uris.push(uri);
+      else void discardDictationRecordings([uri]);
+    };
+
     const onEnd = () => {
       if (stopRequestedRef.current) {
+        if (takeRef.current.recorded) {
+          void finishTake();
+          return;
+        }
         // Android continuous recognition can end a requested stop with a
         // client error instead of a final result. Preserve the last real
         // hypothesis rather than losing captured speech or showing an error.
@@ -338,6 +453,8 @@ export function useSpeechInput(
       if (r4) subs.push(r4);
       const r5 = m.addListener('volumechange', onVolumeChange);
       if (r5) subs.push(r5);
+      const r6 = m.addListener('audioend', onAudioEnd);
+      if (r6) subs.push(r6);
     } catch {
       /* ignore */
     }
@@ -356,6 +473,7 @@ export function useSpeechInput(
     clearSilenceTimer,
     doStop,
     finishStopWithCapture,
+    finishTake,
     restartIfStillListening,
     settleExplicitStop,
   ]);
@@ -396,6 +514,12 @@ export function useSpeechInput(
 
       setPartialText('');
       pendingPartialRef.current = '';
+      takeIdRef.current += 1;
+      takeRef.current = {
+        recorded: recordingSupported(m) && dictationTranscriptionAvailable(),
+        uris: [],
+        finals: [],
+      };
       setVolumeLevel(0);
       sessionGotResultRef.current = false;
       restartCountRef.current = 0;
@@ -434,19 +558,26 @@ export function useSpeechInput(
       resolveStop = resolve;
     });
     stopSettlementRef.current = { promise, resolve: resolveStop };
-    finalizationTimerRef.current = setTimeout(() => {
+    const finishWithoutNativeEnd = () => {
+      if (takeRef.current.recorded) {
+        void finishTake();
+        return;
+      }
       const captured = finishStopWithCapture(pendingPartialRef.current);
       settleExplicitStop(captured);
-    }, SPEECH_FINALIZATION_TIMEOUT_MS);
+    };
+    finalizationTimerRef.current = setTimeout(
+      finishWithoutNativeEnd,
+      SPEECH_FINALIZATION_TIMEOUT_MS,
+    );
 
     try {
       modRef.current?.stop();
     } catch {
-      const captured = finishStopWithCapture(pendingPartialRef.current);
-      settleExplicitStop(captured);
+      finishWithoutNativeEnd();
     }
     return promise;
-  }, [clearSilenceTimer, finishStopWithCapture, settleExplicitStop]);
+  }, [clearSilenceTimer, finishStopWithCapture, finishTake, settleExplicitStop]);
 
   React.useEffect(() => {
     return () => {
@@ -456,6 +587,9 @@ export function useSpeechInput(
         finalizationTimerRef.current = null;
       }
       startAttemptRef.current += 1;
+      takeIdRef.current += 1;
+      void discardDictationRecordings(takeRef.current.uris);
+      takeRef.current = NO_TAKE;
       listeningRef.current = false;
       stopRequestedRef.current = false;
       pendingPartialRef.current = '';

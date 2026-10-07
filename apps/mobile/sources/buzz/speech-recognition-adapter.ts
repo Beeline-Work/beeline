@@ -14,6 +14,7 @@ export interface SpeechRecognitionInterface {
   getPermissionsAsync(): Promise<{ status: string; granted: boolean; canAskAgain: boolean }>;
   requestPermissionsAsync(): Promise<{ status: string; granted: boolean; canAskAgain: boolean }>;
   supportsOnDeviceRecognition?(): boolean;
+  supportsRecording?(): boolean;
   getSupportedLocales?(options: object): Promise<{ locales: string[]; installedLocales: string[] }>;
   androidTriggerOfflineModelDownload?(options: { locale: string }): Promise<{ status: string }>;
   getSpeechRecognitionServices?(): string[];
@@ -29,6 +30,7 @@ interface SpeechRecognitionModule {
     requestPermissionsAsync: () => Promise<{ status: string; granted: boolean; canAskAgain: boolean }>;
     addListener?: (event: string, handler: (...args: any[]) => void) => { remove(): void };
     supportsOnDeviceRecognition?: () => boolean;
+    supportsRecording?: () => boolean;
     getSupportedLocales?: (
       options: object,
     ) => Promise<{ locales: string[]; installedLocales: string[] }>;
@@ -105,6 +107,10 @@ export function getRecognitionModule(): SpeechRecognitionInterface | null {
     supportsOnDeviceRecognition: () =>
       typeof mod.ExpoSpeechRecognitionModule.supportsOnDeviceRecognition === 'function'
         ? mod.ExpoSpeechRecognitionModule.supportsOnDeviceRecognition()
+        : false,
+    supportsRecording: () =>
+      typeof mod.ExpoSpeechRecognitionModule.supportsRecording === 'function'
+        ? mod.ExpoSpeechRecognitionModule.supportsRecording()
         : false,
     getSupportedLocales: (options: object) =>
       typeof mod.ExpoSpeechRecognitionModule.getSupportedLocales === 'function'

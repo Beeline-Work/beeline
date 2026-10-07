@@ -28,23 +28,23 @@ describe('chat corner counts', () => {
       'review',
     ]);
   });
-  it('marks corners the viewer commissioned or that await them', () => {
+  it('marks corners the viewer follows or that owe them something', () => {
     const result = chatCornerCounts([
-      { ...row(), commissioned_by_viewer: true },
-      { ...row({ reason: 'question' }), latest_tags_viewer: true },
-      { ...row({}, 'working'), latest_tags_viewer: true },
+      { ...row(), follows_viewer: true },
+      { ...row({}, 'working'), follows_viewer: true },
+      { ...row(), owed: true, owed_viewer: true },
       row({ reason: 'question' }),
     ]);
     expect(result.get('room')?.openCorners.map((corner) => corner.mine)).toEqual([
       true,
       true,
-      undefined,
+      true,
       undefined,
     ]);
   });
   it('reads idle with nothing owed and flags only unseen asks for the viewer', () => {
     const result = chatCornerCounts([
-      { ...row(), commissioned_by_viewer: true, owed: false, owed_viewer: false, attention: false },
+      { ...row(), follows_viewer: true, owed: false, owed_viewer: false, attention: false },
       { ...row(), owed: true, owed_viewer: true, attention: true },
       { ...row(), owed: true, owed_viewer: true, attention: false },
       { ...row({}, 'working'), owed: true, owed_viewer: true, attention: true },
@@ -62,8 +62,8 @@ describe('chat corner counts', () => {
   it("stamps only the viewer's waiting corners with when they handed back", () => {
     const at = new Date('2026-09-29T12:00:00Z');
     const result = chatCornerCounts([
-      { ...row(), commissioned_by_viewer: true, latest_created_at: at },
-      { ...row({}, 'working'), commissioned_by_viewer: true, latest_created_at: at },
+      { ...row(), follows_viewer: true, latest_created_at: at },
+      { ...row({}, 'working'), follows_viewer: true, latest_created_at: at },
       { ...row(), latest_created_at: at },
     ]);
     expect(result.get('room')?.openCorners.map((corner) => corner.waitingSince)).toEqual([

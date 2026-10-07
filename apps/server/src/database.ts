@@ -37,6 +37,7 @@ import {
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
+import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
 import { retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { QueryProfiler } from './query-profile.js';
@@ -189,7 +190,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 20;
+export const REQUIRED_SCHEMA_VERSION = 21;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2817,6 +2818,7 @@ export async function migrate(
   ));
   await ddlScript('corner merge holds', CORNER_MERGE_HOLDS_SCHEMA);
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
+  await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }
@@ -2836,6 +2838,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
   await dataStep('corner owner backfill', () => backfillCornerOwners(database));
   await dataStep('corner owed backfill', () => backfillCornerOwed(database));
+  await dataStep('corner follows backfill', () =>
+    workflowBackfillOnce(database, 'corner-follows-v1', backfillCornerFollows));
   await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));

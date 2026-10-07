@@ -712,8 +712,9 @@ export type ChatListCorner = {
   readonly id: string;
   readonly name: string;
   readonly state: Exclude<CornerState, 'archived'>;
-  /** Present when the viewer commissioned this corner or it awaits them, the
-   * same rule as the corners page's "Mine" filter. */
+  /** Present when the viewer follows this corner (opened, requested, posted,
+   * steered or was tagged in it) or it owes them something, the same rule as
+   * push's Followed level and the corners page's "Mine" filter. */
   readonly mine?: true;
   /** On the viewer's waiting corners: when the corner last spoke (unix
    * seconds), the moment it handed back. It counts as Room activity. */
@@ -1043,6 +1044,10 @@ export type CornerListItem = {
   /** Present when the corner is waiting or in review and its latest message
    * tags the viewer. */
   readonly awaitsViewer?: true;
+  /** Present when the viewer follows this open corner: they opened, requested,
+   * posted in, steered or were tagged in it. Push's Followed level uses the
+   * same rule. */
+  readonly followsViewer?: true;
   readonly agent?: RoomViewIdentity;
   readonly app?: CornerAppBindingView;
   /** The corner's latest brief revision. Absent when it has no brief. */

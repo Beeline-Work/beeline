@@ -9141,7 +9141,7 @@ describe('monolith integration', () => {
     expect(await read()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
   });
 
-  it("marks the viewer's corners in the Room list with the page's Mine rule", async () => {
+  it("marks the viewer's corners in the Room list with the push Followed rule", async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-chat-mine',
@@ -9149,8 +9149,13 @@ describe('monolith integration', () => {
       objective: 'Pick a shape for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
+    // Someone else started it: the viewer neither commissioned nor follows it.
     await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
       cornerId,
+    ]);
+    await database.query(`DELETE FROM corner_follows WHERE corner_id=$1 AND identity_id=$2`, [
+      cornerId,
+      HUMAN,
     ]);
     const listed = async () =>
       (
@@ -9175,23 +9180,12 @@ describe('monolith integration', () => {
       [cornerId, AGENT],
     );
     expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
-    // A later agent line does not answer the tag; the viewer's reply does.
+    // The tag keeps the corner the viewer's after they answer and it moves on.
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('chat-mine-later',$1,$2,'Never mind.',now()+interval '3 seconds')`,
-      [cornerId, AGENT],
-    );
-    expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('chat-mine-answer',$1,$2,'Round.',now()+interval '4 seconds')`,
+       VALUES('chat-mine-answer',$1,$2,'Round.',now()+interval '3 seconds')`,
       [cornerId, HUMAN],
     );
-    expect(await listed()).not.toHaveProperty('mine');
-    await database.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [
-      cornerId,
-      HUMAN,
-    ]);
     expect(await listed()).toEqual(expect.objectContaining({ mine: true }));
   });
 

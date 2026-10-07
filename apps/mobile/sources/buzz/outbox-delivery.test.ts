@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Real transport, real outbox storage and the real delivery driver; only the
 // network, the device key-value store and React Native's AppState are stubbed.
@@ -41,6 +41,11 @@ vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
 }));
 vi.mock('@/auth/monolith-session', () => ({
+  MonolithRequestTimeoutError: class extends Error {
+    constructor() {
+      super('The server timed out before it responded.');
+    }
+  },
   MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
   monolithSession: { fetch: mocks.fetch, subscribeIdentityChange: () => () => undefined },
 }));
@@ -57,6 +62,7 @@ vi.mock('@/sync/transport/live-connection', () => ({
 }));
 
 import { BuzzRigTransport } from '@/sync/transport';
+import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import { publishOutboxEvent, startOutboxDelivery } from './outbox-delivery';
 import { createRoomOutbox, pendingOutboxRoomIds } from './surface-storage';
 
@@ -101,6 +107,76 @@ describe('a Room send that did not land while its corner was closed', () => {
     mocks.store.clear();
     mocks.appStateListeners.clear();
     mocks.connectedListeners.clear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('is delivered while the app stays open on another screen', async () => {
+    // The person never leaves the app: no foreground, no reconnect. The
+    // driver is already running from launch with nothing to send.
+    vi.useFakeTimers();
+    const stop = startOutboxDelivery();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+
+    mocks.fetch.mockRejectedValue(new MonolithRequestTimeoutError());
+    const transport = new BuzzRigTransport(identity as never);
+    const event = await sendReplyThenLeave(transport);
+    expect(replyPosts()).toHaveLength(1);
+    console.log(`reply ${event.id.slice(0, 8)} timed out after leaving ${ROOM}; app still open`);
+
+    serverAccepts();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(replyPosts()).toHaveLength(2);
+    expect(pendingOutboxRoomIds(VIEWER)).toEqual([]);
+    console.log(`retry timer delivered ${event.id.slice(0, 8)} 5s later; corner never opened`);
+    stop();
+  });
+
+  it('backs off while the server stays unreachable, and stops once delivered', async () => {
+    vi.useFakeTimers();
+    mocks.fetch.mockRejectedValue(new TypeError('Network request failed'));
+    await sendReplyThenLeave(new BuzzRigTransport(identity as never));
+    const stop = startOutboxDelivery();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(replyPosts()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(replyPosts()).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(replyPosts()).toHaveLength(3);
+    serverAccepts();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(replyPosts()).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(replyPosts()).toHaveLength(4);
+    stop();
+  });
+
+  it('marks a refused send failed instead of retrying it', async () => {
+    vi.useFakeTimers();
+    mocks.fetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'room access denied' }), { status: 403 }),
+    );
+    const event = await sendReplyThenLeave(new BuzzRigTransport(identity as never));
+    const stop = startOutboxDelivery();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(createRoomOutbox(identity, ROOM).get(event.id)?.status).toBe('failed');
+    const posts = replyPosts().length;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(replyPosts()).toHaveLength(posts);
+    stop();
+  });
+
+  it('retires the stored send when the composer’s own request lands', async () => {
+    vi.useFakeTimers();
+    const stop = startOutboxDelivery();
+    serverAccepts();
+    await sendReplyThenLeave(new BuzzRigTransport(identity as never));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(replyPosts()).toHaveLength(1);
+    expect(pendingOutboxRoomIds(VIEWER)).toEqual([]);
+    stop();
   });
 
   it('is delivered on app foreground without opening the corner', async () => {

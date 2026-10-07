@@ -4667,11 +4667,12 @@ export function BuzzChatSurface({
       await openRandomNamedCorner({
         createCorner: (roomId, title) =>
           transport.createHumanCorner(roomId, title, undefined, undefined, true),
-        roomId: decodedId,
+        // Inside a corner the new corner is a sibling under the parent Room.
+        roomId: parentChannelId ?? decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          if (desktopExperience) openDesktopCorner(decodedId, cornerId);
-          else router.push(cornerHref(cornerId, decodedId, title));
+          if (desktopExperience) openDesktopCorner(parentChannelId ?? decodedId, cornerId);
+          else router.push(cornerHref(cornerId, parentChannelId ?? decodedId, title));
         },
       });
     } catch (err) {
@@ -4686,6 +4687,7 @@ export function BuzzChatSurface({
     isArchived,
     openDesktopCorner,
     openingRandomCorner,
+    parentChannelId,
     transport,
     viewerIsAgent,
   ]);
@@ -4734,11 +4736,12 @@ export function BuzzChatSurface({
         sourceMessageId: target.relayId ?? target.id,
         createCorner: (roomId, title, sourceMessageId) =>
           transport.createHumanCorner(roomId, title, undefined, sourceMessageId, true),
-        roomId: decodedId,
+        // Inside a corner the new corner is a sibling under the parent Room.
+        roomId: parentChannelId ?? decodedId,
         openCorner: (cornerId, title) => {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          if (desktopExperience) openDesktopCorner(decodedId, cornerId);
-          else router.push(cornerHref(cornerId, decodedId, title));
+          if (desktopExperience) openDesktopCorner(parentChannelId ?? decodedId, cornerId);
+          else router.push(cornerHref(cornerId, parentChannelId ?? decodedId, title));
         },
       });
     } catch (err) {
@@ -4753,7 +4756,9 @@ export function BuzzChatSurface({
     displayRoomName,
     forwardCornerPrompt,
     isArchived,
+    openDesktopCorner,
     openingRandomCorner,
+    parentChannelId,
     transport,
     viewerIsAgent,
   ]);
@@ -5767,7 +5772,7 @@ export function BuzzChatSurface({
           onForward={beginForward}
           onBookmark={handleBookmarkMessage}
           onReportIssue={handleReportMessage}
-          {...(!isCorner && !isDirectMessage && !isArchived && !viewerIsAgent && !desktopExperience
+          {...(!isDirectMessage && !isArchived && !viewerIsAgent && !desktopExperience
             ? { onForwardToNewCorner: handleForwardToNewCorner }
             : {})}
           {...(!isCorner &&
@@ -6069,7 +6074,9 @@ export function BuzzChatSurface({
               destination of its own, so the door is NAMED, the way every rail
               command is: the mark states the kind, the word states where it
               goes, and the pair's boxes touch like the Room-list chrome. */}
-            {!parentChannelId && !isDirectMessage && (
+            {/* Desktop corners carry the parent Room's door too, so its long
+              press opens a sibling corner as it does in the Room. */}
+            {(!parentChannelId || desktopExperience) && !isDirectMessage && (
               <TouchableOpacity
                 accessibilityHint="Long press to open a new corner"
                 accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}
@@ -6077,7 +6084,7 @@ export function BuzzChatSurface({
                 delayLongPress={450}
                 hitSlop={HEADER_EDGE_HIT_SLOP}
                 onLongPress={() => void handleOpenRandomCorner()}
-                onPress={() => router.push(roomCornersHref(decodedId))}
+                onPress={() => router.push(roomCornersHref(parentChannelId ?? decodedId))}
                 style={styles.roomCornersButton}
                 testID="room-corners-menu"
               >

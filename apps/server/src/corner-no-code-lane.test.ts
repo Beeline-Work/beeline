@@ -991,3 +991,25 @@ it.each([false, true])('persists repositoryWork=%s through opening, restore, his
   const restored = await daemon.execute('getCornerRestoreState', { cornerId }, AGENT);
   expect(restored.brief).toMatchObject({ revision: 2, repositoryWork: !repositoryWork, spec: draft.spec });
 });
+
+it('opens a sibling corner under the parent Room from a message inside a corner', async () => {
+  const sourceCorner = await humanCorner(CHAT_ROOM, 'swipe-source-corner');
+  const messageId = randomBytes(32).toString('hex');
+  await phone.execute('sendRoomMessage', { roomId: sourceCorner, messageId, text: 'Split this out' }, HUMAN);
+
+  // The corner itself is never a parent: the server only nests under a Room.
+  await expect(phone.execute('createHumanCorner', {
+    roomId: sourceCorner, title: 'nested-amber-corner', sourceMessageId: messageId, titleGenerated: true,
+  }, HUMAN)).rejects.toThrow('room access denied');
+
+  // The phone swipe inside a corner sends the parent Room id.
+  const { id } = (await phone.execute('createHumanCorner', {
+    roomId: CHAT_ROOM, title: 'quiet-amber-corner', sourceMessageId: messageId, titleGenerated: true,
+  }, HUMAN)) as { id: string };
+  const row = (await db.query<{ parent_id: string }>(`SELECT parent_id FROM rooms WHERE id=$1`, [id])).rows[0];
+  expect(row?.parent_id).toBe(CHAT_ROOM);
+  expect((await phone.readRoom(id, HUMAN))?.room.name).toBe('quiet-amber-corner');
+  process.stdout.write(
+    `swipe in corner ${sourceCorner} → createHumanCorner(parent ${CHAT_ROOM}) → sibling ${id} parent=${row?.parent_id}\n`,
+  );
+});

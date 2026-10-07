@@ -3,7 +3,7 @@ import type { DesktopArtifactSelection } from '@/buzz/desktop-artifact-pane';
 
 export const DESKTOP_NAV_MIN_WIDTH = 240;
 export const DESKTOP_NAV_MAX_WIDTH = 420;
-export const DESKTOP_NAV_DEFAULT_WIDTH = 260;
+export const DESKTOP_NAV_DEFAULT_WIDTH = 340;
 export const DESKTOP_WORKSPACE_STRIP_WIDTH = 76;
 export const DESKTOP_INSPECTOR_MIN_WIDTH = 320;
 export const DESKTOP_INSPECTOR_MAX_WIDTH = 480;

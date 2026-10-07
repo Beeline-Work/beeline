@@ -154,8 +154,8 @@ describe('desktop workbench state', () => {
     expect(desktopWorkPaneVisibleContent(widened)).toEqual({ kind: 'artifact', artifact });
   });
 
-  it('opens the Room list at a narrow default width until the reader drags it', async () => {
-    expect(await loadDesktopPaneWidth('navigation')).toBe(260);
+  it('opens the Room list at its default width until the reader drags it', async () => {
+    expect(await loadDesktopPaneWidth('navigation')).toBe(340);
   });
 
   it('bounds and persists both pane widths', async () => {

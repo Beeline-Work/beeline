@@ -112,6 +112,14 @@ describe('ConversationRow preview', () => {
       expect(onToggleCorners).toHaveBeenCalledTimes(2);
     },
   );
+  it.each([
+    [true, 2],
+    [false, 1],
+  ])('wraps the preview to the desktop line limit (desktop=%s)', (desktop, lines) => {
+    const { root } = renderRow({}, { desktop });
+    expect(root.findByProps({ testID: 'room-preview' }).props.numberOfLines).toBe(lines);
+  });
+
   it('shows the latest sender and text for an unread mention while retaining its attention state', () => {
     const { root, visibleText } = renderRow({
       unread: true,

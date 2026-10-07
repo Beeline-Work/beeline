@@ -134,7 +134,7 @@ export function ConversationRow({
           </View>
           <View style={styles.previewLine}>
             <Text
-              numberOfLines={1}
+              numberOfLines={desktop ? 2 : 1}
               style={[
                 styles.preview,
                 item.unread && !showReason && styles.unreadPreview,
@@ -209,7 +209,9 @@ const styles = StyleSheet.create((theme) => ({
   unreadName: { fontFamily: theme.buzz.proseSemibold },
   sigil: { color: theme.buzz.accent },
   previewLine: {
-    minHeight: 20,
+    // One meta line is 19px. Pad below instead of a 20px minimum so a wrapped
+    // desktop preview keeps the same gap under its last line.
+    paddingBottom: 1,
     marginTop: theme.buzz.space.xs,
     flexDirection: 'row',
     alignItems: 'baseline',

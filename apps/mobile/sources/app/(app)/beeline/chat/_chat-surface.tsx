@@ -320,7 +320,7 @@ import {
   messageBoundaryIds,
   newestTranscriptRowId,
 } from '@/buzz/room-new-message-boundary';
-import { useNewMessageControl } from '@/buzz/use-new-message-control';
+import { useNewMessageControl, useUnreadLineControl } from '@/buzz/use-new-message-control';
 import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
 import { continueScrubLanding, type ScrubLanding } from '@/buzz/transcript-scrubber';
@@ -1334,16 +1334,22 @@ export function BuzzChatSurface({
   // A corner turn's per-call activity rows read back as one collapsed group
   // per turn; the window and paging count those groups, not the raw rows.
   // Same-verb system lines and adjacent GitHub lifecycle rows fold into one.
+  const unreadLine = useUnreadLineControl({
+    roomId: decodedId,
+    firstUnreadMessageId: isCorner ? null : firstUnreadMessageId,
+    enabled: !isCorner,
+  });
+  const { dividerMessageId: firstNewMessageId } = unreadLine;
   const foldedMessages = useMemo(() => {
     const anchored = anchorCornerMarkers(anchorRelayReports(combinedMessages));
-    const boundary = boundaryRowIndex(anchored, isCorner ? null : firstUnreadMessageId);
+    const boundary = boundaryRowIndex(anchored, firstNewMessageId);
     if (boundary < 0) return foldPrLifecycleRuns(foldSettledActivityRuns(anchored));
-    // Folding cannot swallow the one exact server-owned unread boundary.
+    // Keep stacks separate only while their unread divider is visible.
     return [
       ...foldPrLifecycleRuns(foldSettledActivityRuns(anchored.slice(0, boundary))),
       ...foldPrLifecycleRuns(foldSettledActivityRuns(anchored.slice(boundary))),
     ];
-  }, [combinedMessages, firstUnreadMessageId, isCorner]);
+  }, [combinedMessages, firstNewMessageId]);
   const arrivalMessages = useMemo(() => {
     if (!anchoredSegmentActive) return foldedMessages;
     const tail = mergeDisplayPages(cachedMessages, liveMessages, roomSendFrame.optimistic);
@@ -2366,7 +2372,6 @@ export function BuzzChatSurface({
   // just landed, which is the divider readers watched appear at the newest
   // message out of nowhere.
   const {
-    dividerMessageId: firstNewMessageId,
     queue: newMessageQueue,
     discVisible: newestJumpDiscShown,
     badgeCount: newMessageBadgeCount,
@@ -2375,6 +2380,7 @@ export function BuzzChatSurface({
     observeTailPinned,
     settleQueueAtBoundary,
   } = useNewMessageControl({
+    unreadLine,
     roomId: decodedId,
     queueableMessages: arrivalMessages,
     arrivingIds: transcriptArrivalObservation.arrivingIds,

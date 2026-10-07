@@ -1430,7 +1430,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'pr_checks_status',
     description:
-      'Read GitHub checks and the complete merge-authority gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result reports the configured reviewer outcome, worker yolo mode, existing human hold, and whether a reviewer is configured; mergeAllowed is true (and approvalPending false) only when checks pass and all four authorize the merge; the server then squash-merges that exact head itself, so no agent runs gh pr merge. reviewerWake says whether the configured reviewer was woken. Never infer passing checks from local git, gh output, or chat prose, and never invent a cause for a missing review.',
+      'Read GitHub checks and the complete merge-authority gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result reports the configured reviewer outcome, worker yolo mode, existing human hold, and whether a reviewer is configured; mergeAllowed is true (and approvalPending false) only when checks pass and all four authorize the merge; the implementer then calls merge_corner, and no agent runs gh pr merge. reviewerWake says whether the configured reviewer was woken. Never infer passing checks from local git, gh output, or chat prose, and never invent a cause for a missing review.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1445,7 +1445,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'approve_merge',
     description:
-      'Record the configured reviewer’s PASS for the exact pull-request head and brief revision you reviewed. The server then squash-merges that head itself once the whole gate is open (checks green, worker yolo on, no human hold); no agent runs gh pr merge. The server rejects a caller who is not the parent Room’s configured reviewer, a head that is not the pull request’s current head, and a stale brief revision. Call it only after a complete beeline-review PASS whose outline ledger has no missing or unverified user story - otherwise send the brief back; use that review’s full head SHA and assigned brief revision, then reply that you approved that SHA without tagging the author. Do not tell the author to merge.',
+      'Record the configured reviewer’s PASS for the exact pull-request head and brief revision you reviewed. The implementer is then woken to merge it with merge_corner once the whole gate is open (checks green, worker yolo on, no human hold); no agent runs gh pr merge. Withhold PASS while a human’s question or proposal in the corner discussion has no answer, and name it. The server rejects a caller who is not the parent Room’s configured reviewer, a head that is not the pull request’s current head, and a stale brief revision. Call it only after a complete beeline-review PASS whose outline ledger has no missing or unverified user story - otherwise send the brief back; use that review’s full head SHA and assigned brief revision, then reply that you approved that SHA without tagging the author. Do not tell the author to merge.',
     inputSchema: {
       type: 'object',
       required: ['headSha'],
@@ -1463,6 +1463,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
       },
       additionalProperties: false,
     },
+  },
+  {
+    name: 'merge_corner',
+    description:
+      "Squash-merge this corner's own pull request at its current head. Only this corner's implementer may call it. Before calling, read the corner discussion: if a human's question or proposal has no answer, do not merge; reply naming it and end the turn. The server merges only when pr_checks_status reports mergeAllowed; otherwise it merges nothing and returns the blocker. No agent runs gh pr merge.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'write_scratch_file',
@@ -1815,6 +1821,7 @@ export function agentToolsFor(
     // Every code-lane corner turn may record a PASS: the server, not the
     // session's boot role, decides whether this agent is the configured reviewer.
     if (tool.name === 'approve_merge') return cornerTurn && codeLane;
+    if (tool.name === 'merge_corner') return cornerTurn && codeLane;
     // Connector installation stays in Rooms and DMs; app discovery and
     // connection are available wherever an app tool can be used.
     if (tool.name === 'offer_connector') return !cornerTurn;
@@ -2706,14 +2713,14 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
       ? verdict.reviewerWake
       : undefined;
   // The merge gate is the server's: it owns the human hold, the worker's yolo
-  // mode and the reviewer outcome, and it merges the head itself.
+  // mode and the reviewer outcome; merge_corner merges only through it.
   const reviewFailed = verdict ? verdict.approvalPending !== false : true;
   const held = verdict?.held === true;
   const isWorkerYolo = verdict?.isWorkerYolo === true;
   const expressMergeOrdered = verdict?.expressMergeOrdered === true;
   const mergeAllowed = verdict?.mergeAllowed === true;
   const mergeConditionsRule =
-    'When mergeAllowed is true the server squash-merges this exact head itself; no agent runs gh pr merge. mergeAllowed is true when expressMergeOrdered is true - a current Workspace owner or admin ordered this exact head merged with order_corner_merge, which carries on its own and is never re-gated behind checks, held, isWorkerYolo, or reviewerExists - or otherwise when checks passed, reviewFailed is false, isWorkerYolo is true, held is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before the server merges it.';
+    'When mergeAllowed is true the implementer calls merge_corner to squash-merge this exact head; no agent runs gh pr merge. mergeAllowed is true when expressMergeOrdered is true - a current Workspace owner or admin ordered this exact head merged with order_corner_merge, which carries on its own and is never re-gated behind checks, held, isWorkerYolo, or reviewerExists - or otherwise when checks passed, reviewFailed is false, isWorkerYolo is true, held is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before it can merge.';
   return JSON.stringify({
     checks,
     reason,
@@ -4595,6 +4602,10 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return prChecksStatus(args);
     case 'approve_merge':
       return approveMerge(args);
+    case 'merge_corner':
+      return JSON.stringify(
+        await daemonExecute('mergeCorner', { cornerId: requiredEnv('BEELINE_DAEMON_CORNER_ID') }),
+      );
     case 'write_scratch_file':
       return writeScratchFile(args);
     case 'get_avatar':

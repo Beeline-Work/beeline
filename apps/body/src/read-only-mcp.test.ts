@@ -186,12 +186,13 @@ describe('approve_merge surface', () => {
     );
   });
 
-  it('says the server merges and rejects the wrong caller, head, or revision', () => {
+  it('says the implementer merges and rejects the wrong caller, head, or revision', () => {
     const tool = agentToolsFor(true, false, true, true).find(
       (entry) => entry.name === 'approve_merge',
     )!;
     expect(tool.description).toContain('exact pull-request head and brief revision');
-    expect(tool.description).toContain('The server then squash-merges that head itself');
+    expect(tool.description).toContain('The implementer is then woken to merge it with merge_corner');
+    expect(tool.description).toContain('Withhold PASS while a human’s question or proposal in the corner discussion has no answer');
     expect(tool.description).toContain('not the parent Room’s configured reviewer');
     expect(tool.description).toContain('not the pull request’s current head');
     expect(tool.description).toContain('a stale brief revision');

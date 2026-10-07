@@ -1093,8 +1093,10 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
       )
     ).rowCount,
   ).toBe(1);
-  const [mergeClearance] = await commands(B, C);
-  expect(mergeClearance?.source.body).toBe(`@goosy approved ${approvedHead}, merge`);
+  // The PASS wakes the implementer to merge, alongside the reviewer's tag.
+  expect((await commands(B, C)).map((command) => command.source.body)).toEqual(
+    expect.arrayContaining(['@system handed off land', `@goosy approved ${approvedHead}, merge`]),
+  );
 });
 // The merge webhook writes the parent card, then reports the landing to the
 // corner workflow. Only the card's `merged` subscribers are woken by it.

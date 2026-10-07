@@ -202,7 +202,8 @@ Then take exactly one action:
 
 - FAIL: call \`record_validation_stage\` with stage \`review\`, status \`failed\`, and the reviewed head SHA, then reply \`@author\` with the confirmed findings and that reviewed head SHA to fix. The recorded review stage is how an implementer who has already fixed the findings can tell whether the review is stale.
 - PASS: call \`approve_merge\` with the reviewed head SHA and assigned briefRevision (omit the revision only for a legacy corner without a brief), then reply \`approved <reviewed sha>\` without tagging the author. Do not tell the author to merge.
-- Approving is your last step as reviewer. The server squash-merges that exact head once checks are green, the worker's yolo is on, and no human hold stands. Neither you nor the author merges it.
+- A human's question or proposal in the corner discussion with no answer is a blocking finding: FAIL and name it.
+- Approving is your last step as reviewer. Your PASS wakes the author, who merges that exact head with \`merge_corner\` once checks are green, the worker's yolo is on, and no human hold stands. You never merge it yourself.
 `;
 }
 

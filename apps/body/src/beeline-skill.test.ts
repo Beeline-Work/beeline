@@ -319,18 +319,21 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).not.toContain('An empty CI rollup is not proof of passing checks.');
   });
 
-  it("ends the reviewer's authority at approval and leaves the merge to the server", () => {
+  it("ends the reviewer's authority at approval and leaves the merge to the author", () => {
     expect(markdown).toContain('## 8. Gate and verdict');
     expect(markdown).toContain(
       'then reply `approved <reviewed sha>` without tagging the author. Do not tell the author to merge.',
     );
     expect(markdown).not.toContain('approved <reviewed sha>, merge');
     expect(markdown).toContain(
-      'Approving is your last step as reviewer. The server squash-merges that exact head once checks are green',
+      'Approving is your last step as reviewer. Your PASS wakes the author, who merges that exact head with `merge_corner` once checks are green',
     );
-    expect(markdown).toContain('Neither you nor the author merges it.');
+    expect(markdown).toContain('You never merge it yourself.');
     expect(markdown).toContain(
-      'mergeAllowed true for the current head; the server then merges that head.',
+      "A human's question or proposal in the corner discussion with no answer is a blocking finding: FAIL and name it.",
+    );
+    expect(markdown).toContain(
+      'mergeAllowed true for the current head; merge_corner merges that head.',
     );
   });
 

@@ -827,7 +827,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(reviewSkill).toContain('`approved <reviewed sha>` without tagging the author. Do not tell the author to merge.');
     expect(reviewSkill).not.toContain('approved <reviewed sha>, merge');
     expect(reviewSkill).toContain(
-      'Approving is your last step as reviewer. The server squash-merges that exact head',
+      'Approving is your last step as reviewer. Your PASS wakes the author, who merges that exact head',
     );
     expect(reviewSkill).not.toContain('gh pr merge');
     expect(reviewSkill).not.toContain('Never merge');

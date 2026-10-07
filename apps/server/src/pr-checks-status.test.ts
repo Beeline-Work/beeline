@@ -317,18 +317,19 @@ describe('PR-scoped check gate', () => {
     expect(await gate()).toMatchObject({ checks: 'passed', checkCount: 0 });
   });
 
-  it('lifts the self-review deadlock for the configured reviewer who opened the corner', async () => {
+  it('requires a human\'s yes when the configured reviewer opened the corner', async () => {
     await ownPr();
     await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [AUTHOR, A]);
     await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
     expect(await gate(AUTHOR)).toMatchObject({
       checks: 'passed',
-      approvalPending: false,
+      approvalPending: true,
+      mergeAllowed: false,
       reviewer: '@reviewer',
       reviewerExists: true,
       reviewerIsAuthor: true,
-      rule: expect.stringContaining('current agent member of the parent Room'),
+      rule: expect.stringContaining('order_corner_merge'),
     });
   });
 

@@ -146,7 +146,7 @@ Stage | Recorder | Server checks
 intent, base, tests, docs, lint_types, publication, final_authorization | implementer | current revision/head
 review | configured reviewer records the review stage | current revision/head and reviewer identity
 ci | implementer | current revision/head; passed requires passing checks
-The server merge gate is the authority: pr_checks_status reports mergeAllowed true for the current head; the server then merges that head. final_authorization grants nothing; do not wait for mergeAllowed.`;
+The server merge gate is the authority: pr_checks_status reports mergeAllowed true for the current head; merge_corner merges that head. final_authorization grants nothing; do not wait for mergeAllowed.`;
 
 /**
  * New briefs carry an explicit capability. Legacy briefs keep their code lane
@@ -206,8 +206,12 @@ export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
 export const CORNER_DELIVERY_NUDGE =
   'Only when the brief calls for repository changes, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the brief; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn. Otherwise do not commit, push or open a PR; deliver with post_artifact.';
 
+/** What the implementer does when a reviewer's PASS wakes it in `land`. */
+export const CORNER_LAND_RULE =
+  "Then, if a human's question or proposal in the corner has no answer, name it and do not merge; otherwise call merge_corner.";
+
 export const CORNER_YOLO_MERGE_NUDGE =
-  'Yolo is on. Call pr_checks_status now. If checks="failed", fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: the server merges this pull request itself once mergeAllowed=true. Never merge it yourself.';
+  'Yolo is on. Call pr_checks_status now. If checks="failed", fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Never merge it any other way.';
 
 /** Shared verbatim between the upgrade_corner_to_code tool description
  *  (`read-only-mcp.ts`) and this corner's own no-code prompt clause below, so
@@ -247,7 +251,7 @@ const handle = (value: string): string => value.replace(/^@/, '');
 
 /**
  * The one merge rule for an author session: what to do once the pull request
- * exists, and who merges it (the server, never the author). It owns the
+ * exists, and who merges it (the author through `merge_corner`, after a PASS). It owns the
  * `merge` topic, so no other section may speak about merging on the same surface.
  */
 export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: string): string {
@@ -255,7 +259,7 @@ export function cornerMergeInstruction(yoloMode: boolean, reviewerHandle?: strin
     return 'Once the pull request exists, reply with its full URL and end the turn; do not check or wait for CI. This Room has no configured reviewer, so the merge gate never opens for you: never merge; a person merges it.';
   const reviewer = `the reviewer (${handle(reviewerHandle)})`;
   return yoloMode
-    ? `Once the pull request exists, reply with its full URL and end the turn; do not tag ${reviewer}, check, or wait for CI. Green checks wake ${reviewer}; after its PASS the server merges the pull request itself. Never merge it yourself. You are woken only to fix failing checks, requested changes, or a merge GitHub refused; push the fix, and the new head needs green checks and a fresh PASS.`
+    ? `Once the pull request exists, reply with its full URL and end the turn; do not tag ${reviewer}, check, or wait for CI. Green checks wake ${reviewer}; its PASS wakes you to merge. ${CORNER_LAND_RULE} You are also woken to fix failing checks, requested changes, or a refused merge; a fixed head needs green checks and a fresh PASS.`
     : `Once the pull request exists, reply with its full URL and end the turn; do not tag ${reviewer}, check, or wait for CI. Yolo is off, so the merge gate stays closed for you: never merge; a person merges it after ${reviewer} approves.`;
 }
 
@@ -271,7 +275,7 @@ export function cornerReviewerInstruction(input: {
   const author = input.authorHandle ? handle(input.authorHandle) : 'author';
   const number = input.pullRequestNumber ?? 'N';
   const headSha = input.headSha ?? '<head sha>';
-  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: call record_validation_stage with stage "review", status "failed", and headSha ${headSha}, then reply \`@${author}\` with the confirmed findings and the reviewed head ${headSha} to fix. PASS: call the approve_merge tool for ${headSha}${input.briefRevision ? ` with briefRevision=${input.briefRevision}` : ''}, then reply \`approved ${headSha}\` without tagging ${author}: the server merges it, and a tag would wake the author for nothing. Never merge yourself or tell the author to merge. Never say you are holding or waiting for checks.`;
+  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: call record_validation_stage with stage "review", status "failed", and headSha ${headSha}, then reply \`@${author}\` with the confirmed findings and the reviewed head ${headSha} to fix. PASS: call the approve_merge tool for ${headSha}${input.briefRevision ? ` with briefRevision=${input.briefRevision}` : ''}, then reply \`approved ${headSha}\` without tagging ${author}: your PASS wakes the author to merge, so a tag adds nothing. A human's question or proposal in the corner discussion with no answer is a FAIL finding; name it. Never merge yourself or tell the author to merge. Never say you are holding or waiting for checks.`;
 }
 
 /**
@@ -285,7 +289,7 @@ export function cornerSelfReviewerInstruction(input: {
   openedByAgent: boolean;
 }): string | undefined {
   if (!input.isReviewer || !input.openedByAgent) return undefined;
-  return 'Once the pull request exists, reply with its full URL and end the turn. You are this Room\'s reviewer, so your own pull request needs no review: do not request one or tag any agent for review. The server merges it once checks are green, yolo is on, and no human hold stands; never merge it yourself. You are woken only to fix failing checks or a merge GitHub refused.';
+  return 'Once the pull request exists, reply with its full URL and end the turn. You are this Room\'s reviewer, so no other agent can review your pull request: do not request one or tag any agent for review. It merges only on a human\'s yes: ask a Workspace owner or admin to approve the merge, then record their yes with order_corner_merge. Never merge it any other way. You are woken to fix failing checks or a merge GitHub refused.';
 }
 
 function shellLine(shell: RoomShellState | undefined): string {
@@ -771,6 +775,16 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     ),
     render: () =>
       'This is a checks turn about CI or the merge gate. On it, say nothing unless you push a fix or report checks="unknown", and then use one short line. Never restate server check or merge notes.',
+  },
+  {
+    id: 'turn.land',
+    topic: 'land-turn',
+    why: "A reviewer's PASS hands the merge to the implementer, who must not merge over an unanswered human question.",
+    budgetBytes: 300,
+    layer: 'turn',
+    surfaces: ['code-corner'],
+    when: ({ task }) => task.commandReason === 'corner_land',
+    render: () => `The reviewer approved this pull request's current head. ${CORNER_LAND_RULE}`,
   },
   {
     id: 'turn.objective',

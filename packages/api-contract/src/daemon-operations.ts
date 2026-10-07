@@ -378,7 +378,8 @@ export type DaemonOperationMap = {
       /**
        * The complete merge gate: checks passed, reviewer outcome passed,
        * worker yolo on, no human hold, and a configured reviewer. When it is
-       * true for the corner's current head, the server squash-merges that head.
+       * true for the corner's current head, the implementer's `mergeCorner`
+       * squash-merges that head.
        */
       mergeAllowed: boolean;
       /** States which actor's approve_merge clears the gate, and the human fallback path. */
@@ -392,6 +393,16 @@ export type DaemonOperationMap = {
       readonly pullRequestNumber: number;
       readonly headSha: string;
     }
+  >;
+  /**
+   * The corner implementer starts the squash-merge of its own pull request's
+   * current head. The server merges only when `getPrChecksStatus` reports
+   * `mergeAllowed`; otherwise nothing is attempted and `blocker` names why.
+   */
+  mergeCorner: Operation<
+    CornerInput,
+    | { readonly status: 'merge-started'; readonly headSha: string }
+    | { readonly status: 'blocked'; readonly blocker: string }
   >;
   getCornerCloseRequests: Operation<CornerCursorInput, RoomInboxResult>;
   /** Long-poll: resolves as soon as the corner has something new, or on a bounded timeout. */

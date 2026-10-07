@@ -9,7 +9,7 @@ import type { CornerBrief } from '@beeline/api-contract/daemon';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient, AcpTurnBackstopError, TURN_BACKSTOP_MS } from './acp.js';
 import type { BodyConfig } from './config.js';
-import type { DaemonApiClient, InboxItem } from './daemon-api-client.js';
+import { DaemonApiError, type DaemonApiClient, type InboxItem } from './daemon-api-client.js';
 import {
   cornerHasUndeliveredRepositoryWork,
   cornerToolActivity,
@@ -111,6 +111,64 @@ describe('corner merge instructions', () => {
     await expect(loop.syncBranch()).rejects.toThrow('repository access denied');
     expect(execute).toHaveBeenCalledTimes(3);
     expect(execute).toHaveBeenCalledWith('getRoomGitHubToken', { roomId: 'exact-room' });
+  });
+
+  it('waits out a GitHub outage for a bounded time before the turn fails', async () => {
+    vi.useFakeTimers();
+    try {
+      const outage = new DaemonApiError(
+        'monolith daemon request failed (502: GitHub installation token failed: HTTP 500)',
+        502,
+        true,
+        'GitHub installation token failed: HTTP 500',
+      );
+      const execute = vi.fn().mockRejectedValue(outage);
+      const loop = Object.create(MonolithCornerTurnLoop.prototype) as {
+        options: Record<string, unknown>;
+        syncBranch(): Promise<void>;
+      };
+      loop.options = {
+        repository: { featureBranch: 'feature/widget', targetBranch: 'main' },
+        api: { execute },
+        parentRoomId: 'exact-room',
+        worktreePath: '/unused',
+      };
+      const failed = expect(loop.syncBranch()).rejects.toBe(outage);
+      // Three quick tries would be over within a second; an outage keeps going.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(execute).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(execute.mock.calls.length).toBeGreaterThan(3);
+      await vi.advanceTimersByTimeAsync(120_000);
+      await failed;
+      const calls = execute.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(execute).toHaveBeenCalledTimes(calls);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps three quick tries for a token refusal that is not a GitHub outage', async () => {
+    const refusal = new DaemonApiError(
+      'monolith daemon request failed (404: not found)',
+      404,
+      false,
+      'not found',
+    );
+    const execute = vi.fn().mockRejectedValue(refusal);
+    const loop = Object.create(MonolithCornerTurnLoop.prototype) as {
+      options: Record<string, unknown>;
+      syncBranch(): Promise<void>;
+    };
+    loop.options = {
+      repository: { featureBranch: 'feature/widget', targetBranch: 'main' },
+      api: { execute },
+      parentRoomId: 'exact-room',
+      worktreePath: '/unused',
+    };
+    await expect(loop.syncBranch()).rejects.toBe(refusal);
+    expect(execute).toHaveBeenCalledTimes(3);
   });
 
   it('selects the no-reviewer and reviewer matrix', () => {

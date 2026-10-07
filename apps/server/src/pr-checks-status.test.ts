@@ -30,6 +30,7 @@ let daemon: DaemonService;
 let app: GitHubAppClient;
 let head: string;
 let rollupState: string | null;
+let rollupContexts: { totalCount: number; nodes: Record<string, unknown>[] } | undefined;
 let mergeableState: string | undefined;
 let pullBaseSha: string | undefined;
 let mainHead: string;
@@ -89,6 +90,7 @@ beforeEach(async () => {
   }
   head = SHA;
   rollupState = 'SUCCESS';
+  rollupContexts = undefined;
   mergeableState = undefined;
   pullBaseSha = undefined;
   mainHead = 'd'.repeat(40);
@@ -136,7 +138,7 @@ beforeEach(async () => {
                   ? null
                   : {
                       state: rollupState,
-                      contexts: {
+                      contexts: rollupContexts ?? {
                         totalCount: 1,
                         nodes: [
                           {
@@ -253,9 +255,52 @@ describe('PR-scoped check gate', () => {
     expect(await gate()).toMatchObject({ checks: 'passed' });
   });
 
+  it('Reproduction CI-STATUS-1: counts passed, pending and failed checks and names the unfinished ones', async () => {
+    rollupState = 'PENDING';
+    const run = (name: string, status: string, conclusion: string | null) => ({
+      __typename: 'CheckRun',
+      name,
+      status,
+      conclusion,
+    });
+    rollupContexts = {
+      totalCount: 104,
+      nodes: [
+        run('Detect changes', 'COMPLETED', 'SUCCESS'),
+        run('Mobile', 'COMPLETED', 'SKIPPED'),
+        { __typename: 'StatusContext', context: 'deploy/preview', state: 'SUCCESS' },
+        run('SERVER SUITE', 'IN_PROGRESS', null),
+        run('DESKTOP BUILD (macos-universal)', 'QUEUED', null),
+        run('LINT', 'COMPLETED', 'FAILURE'),
+        ...Array.from({ length: 11 }, (_, index) => run(`shard ${index}`, 'IN_PROGRESS', null)),
+      ],
+    };
+    const status = await gate();
+    expect(status).toMatchObject({
+      checks: 'pending',
+      checkCount: 104,
+      checkStates: {
+        passed: 3,
+        pending: 13,
+        failed: 1,
+        unlisted: 87,
+        failedNames: ['LINT'],
+      },
+    });
+    expect(status.checkStates.pendingNames).toEqual([
+      'SERVER SUITE',
+      'DESKTOP BUILD (macos-universal)',
+      ...Array.from({ length: 8 }, (_, index) => `shard ${index}`),
+    ]);
+  });
+
   it('does not promote a head with no rollup', async () => {
     rollupState = null;
-    expect(await gate()).toMatchObject({ checks: 'pending', checkCount: 0 });
+    expect(await gate()).toMatchObject({
+      checks: 'pending',
+      checkCount: 0,
+      checkStates: { passed: 0, pending: 0, failed: 0, unlisted: 0, pendingNames: [], failedNames: [] },
+    });
   });
 
   it('treats a zero-check head as complete after the worker handoff records it', async () => {

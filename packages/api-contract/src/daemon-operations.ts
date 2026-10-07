@@ -335,6 +335,19 @@ export type DaemonOperationMap = {
       recordedChecks?: 'passing' | 'failing' | 'pending' | 'unknown';
       /** Number of check-run and commit-status contexts GitHub reports for the current head. */
       checkCount: number;
+      /**
+       * Per-state counts and names from the same rollup that decides `checks`.
+       * `unlisted` counts contexts beyond the rollup's first page; names list at
+       * most 10 entries each, so a longer list is cut short.
+       */
+      checkStates: {
+        passed: number;
+        pending: number;
+        failed: number;
+        unlisted: number;
+        pendingNames: string[];
+        failedNames: string[];
+      };
       pullRequest: string;
       headSha: string;
       /** True when the configured reviewer's exact-head outcome has not passed. */

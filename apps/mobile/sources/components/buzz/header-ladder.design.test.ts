@@ -57,11 +57,12 @@ describe('Chat header — one language for Room and Corner', () => {
     );
     expect(directMessageMeta, 'missing Direct Message metadata').toBeTruthy();
     expect(directMessageMeta![0]).not.toContain('formatRoomParticipantTotal');
-    // The Room and corner overflow sheets each carry one Members row. The
-    // header diamond opens corners, not the roster (#1432 masking).
+    // Only the Room overflow sheet carries a Members row; corners inherit
+    // Room membership. The header diamond opens corners, not the roster
+    // (#1432 masking).
     expect(chatSource.match(/testID="room-participant-roster-trigger"/g)).toHaveLength(1);
-    expect(chatSource.match(/testID="corner-participant-roster-trigger"/g)).toHaveLength(1);
-    expect(chatSource.match(/label="Members"/g)).toHaveLength(2);
+    expect(chatSource).not.toContain('corner-participant-roster-trigger');
+    expect(chatSource.match(/label="Members"/g)).toHaveLength(1);
     expect(
       chatSource.match(/formatRoomParticipantTotal\(roomParticipantTotal\)/g).length,
     ).toBeGreaterThanOrEqual(1);

@@ -7202,20 +7202,6 @@ export function BuzzChatSurface({
         visible={cornerActionsVisible}
       >
         <HullActionSheetRow
-          accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
-          chevron="right"
-          disabled={!memberManagement.canOpenRoster}
-          label="Members"
-          metadata={
-            participantsHydrated ? formatRoomParticipantTotal(roomParticipantTotal) : 'Loading'
-          }
-          onPress={() => {
-            setCornerActionsVisible(false);
-            setRosterVisible(true);
-          }}
-          testID="corner-participant-roster-trigger"
-        />
-        <HullActionSheetRow
           accessibilityLabel={`Close ${CORNER_LABEL}`}
           description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}
           destructive

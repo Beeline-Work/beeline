@@ -24,7 +24,6 @@ const PAGES: { page: string; width: number; height: number }[] = [
   { page: 'frames', width: 1200, height: 760 },
   { page: 'workflows', width: 390, height: 640 },
   { page: 'text-selection', width: 390, height: 640 },
-  { page: 'members', width: 390, height: 640 },
   { page: 'welcome-1', width: 1200, height: 900 },
   { page: 'welcome-2', width: 1200, height: 900 },
   { page: 'welcome-3', width: 1200, height: 900 },

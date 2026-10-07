@@ -9,7 +9,6 @@ import { WorkflowGlyph } from '../sources/components/buzz/WorkflowGlyph';
 import { WritePermissionOutcome } from '../sources/components/buzz/WritePermissionOutcome';
 import { DesktopRoomCorners } from '../sources/components/buzz/DesktopRoomCorners';
 import { HullFloatingSurface } from '../sources/components/buzz/HullDialog';
-import { HullActionSheetModal, HullActionSheetRow } from '../sources/components/buzz/HullActionSheet';
 import { UpdateReadyPrompt } from '../sources/components/UpdateReadyPrompt';
 import { TranscriptCard } from '../sources/components/buzz/TranscriptCard';
 import { MonoMarkdown } from '../sources/components/buzz/MonoMarkdown';
@@ -203,35 +202,6 @@ function Frames() {
   );
 }
 
-/** Class 7: the corner overflow sheet's Members row, as the corner surface renders it. */
-function Members() {
-  return (
-    <HullActionSheetModal
-      accessibilityLabel="Close corner actions"
-      onClose={() => undefined}
-      testID="corner-actions-sheet"
-      title="#app/Sign-in retry"
-      visible
-    >
-      <HullActionSheetRow
-        accessibilityLabel="View 4 members"
-        chevron="right"
-        label="Members"
-        metadata="4 members"
-        onPress={() => undefined}
-        testID="corner-participant-roster-trigger"
-      />
-      <HullActionSheetRow
-        accessibilityLabel="Close corner"
-        description="Ends the edit session and archives this corner. Unmerged work is lost."
-        label="Close corner"
-        destructive
-        onPress={() => undefined}
-      />
-    </HullActionSheetModal>
-  );
-}
-
 function Welcome() {
   return <WelcomeCards visible onDone={() => undefined} />;
 }
@@ -241,7 +211,6 @@ const pages: Record<string, React.ComponentType> = {
   frames: Frames,
   workflows: WorkflowsScreen,
   'text-selection': TextSelectionScreen,
-  members: Members,
   'welcome-1': Welcome,
   'welcome-2': Welcome,
   'welcome-3': Welcome,

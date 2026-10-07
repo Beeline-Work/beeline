@@ -136,18 +136,19 @@ describe('Chat header — one language for Room and Corner', () => {
     expect(chatSource).toContain('accessibilityLabel={`${ROOM_LABEL} ${CHANGES_LABEL}`}');
     expect(chatSource).toContain('<CornerGlyph');
     expect(chatSource).toContain('testID="room-corners-glyph"');
-    expect(chatSource).toContain('router.push(roomCornersHref(decodedId))');
+    expect(chatSource).toContain('router.push(roomCornersHref(parentChannelId ?? decodedId))');
     expect(chatSource).toContain('onLongPress={() => void handleOpenRandomCorner()}');
     expect(chatSource).toContain('onLongPress={canRenameTitle ? startRenameFromTitle : undefined}');
     expect(chatSource).toContain('accessibilityHint="Long press to open a new corner"');
     expect(chatSource).toContain("from '@/buzz/corner-navigation'");
     expect(chatSource).toContain('roomCornersHref');
-    // DMs and the corner's own header do not grow this control.
+    // DMs and the phone corner header do not grow this control; a desktop
+    // corner carries it so its long press opens a sibling corner.
     const glyph = chatSource.slice(
-      chatSource.indexOf('{!parentChannelId && !isDirectMessage && ('),
+      chatSource.indexOf('{(!parentChannelId || desktopExperience) && !isDirectMessage && ('),
       chatSource.indexOf('testID="room-corners-menu"'),
     );
-    expect(glyph).toContain('!parentChannelId && !isDirectMessage');
+    expect(glyph).toContain('(!parentChannelId || desktopExperience) && !isDirectMessage');
     // Destination marks share the active theme's brass. Overflow stays steel.
     const doorMount = chatSource.slice(
       chatSource.indexOf('<CornerGlyph'),

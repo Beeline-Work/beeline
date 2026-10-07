@@ -211,7 +211,7 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
         usd: needed * unitPrice(from),
         createdAt: Date.now(),
       });
-      return { txId, toAmount: toAmount.toFixed(6) };
+      return { txId, toAmount: toAmount.toFixed(6), status: 'confirmed' as const };
     },
     async signTypedData(address, input) {
       // An unmistakably synthetic test signature, never a usable authorization.

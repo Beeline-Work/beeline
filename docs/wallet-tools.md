@@ -23,7 +23,11 @@ Avalanche). On Zora and BNB Chain, CDP signs the transaction
 `wallet_swap` uses CDP's swap API (`POST /evm/swaps`) on Base, Ethereum,
 Arbitrum, Optimism and Polygon. An ERC-20 sell approves Permit2 first when the
 quote reports a missing allowance. Other chains fail with
-`swap unsupported on <chain>`.
+`swap unsupported on <chain>`. After submission, the swap receipt is checked
+for up to one minute. `sent` means a successful receipt; a reverted receipt
+returns `failed` with the transaction hash. Missing receipts or RPC failures
+return `pending` with the transaction link. Do not resubmit a pending swap.
+Failed and pending swaps do not credit quoted output or write a success ledger entry.
 
 CDP v2 has no address history for server wallets. Each balance read compares
 every chain and asset with the last snapshot (`wallet_balance_snapshots`); an

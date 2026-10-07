@@ -57,7 +57,7 @@ function rpcReply(call: Call, results: Record<string, unknown>): Response {
 
 const price = (usd: string) => Response.json({ data: { amount: usd, base: 'ETH', currency: 'USD' } });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('balances on every chain', () => {
   it('reads an Arbitrum-only balance from the public RPC, never CDP token-balances', async () => {
@@ -210,6 +210,65 @@ describe('sends', () => {
 });
 
 describe('swaps', () => {
+  it('bounds a stalled receipt RPC and returns pending without another submission', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), milliseconds);
+      return controller.signal;
+    });
+    let submissions = 0;
+    vi.stubGlobal('fetch', async (url: RequestInfo | URL, options?: RequestInit) => {
+      if (String(url).endsWith('/evm/swaps')) return Response.json({
+        toAmount: '43210000', transaction: { to: RECIPIENT, data: '0xabcd' },
+      });
+      if (String(url).endsWith('/send/transaction')) {
+        submissions += 1;
+        return Response.json({ transactionHash: '0xstalled' });
+      }
+      return new Promise<Response>((_, reject) => {
+        options!.signal!.addEventListener('abort', () => reject(new Error('timeout')), { once: true });
+      });
+    });
+    const result = client().swap(OWNER, { chain: 'arbitrum', fromAsset: 'eth', toAsset: 'usdc', amount: '0.017' });
+    await vi.runAllTimersAsync();
+    expect(await result).toMatchObject({ txId: '0xstalled', status: 'pending' });
+    expect(submissions).toBe(1);
+  });
+
+  it.each([false, true])('keeps an unconfirmed swap pending without resubmitting (RPC error: %s)', async (rpcError) => {
+    vi.useFakeTimers();
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith('/evm/swaps')) return Response.json({
+        toAmount: '43210000', transaction: { to: RECIPIENT, data: '0xabcd' },
+      });
+      if (call.url === 'https://arb1.arbitrum.io/rpc') {
+        if (rpcError) throw new Error('RPC unavailable');
+        return rpcReply(call, { eth_getTransactionReceipt: null });
+      }
+      return Response.json({ transactionHash: '0xpending' });
+    });
+    const result = client().swap(OWNER, { chain: 'arbitrum', fromAsset: 'eth', toAsset: 'usdc', amount: '0.017' });
+    await vi.runAllTimersAsync();
+    expect(await result).toMatchObject({ txId: '0xpending', status: 'pending' });
+    expect(calls.filter((call) => call.url.endsWith('/send/transaction'))).toHaveLength(1);
+  });
+
+  it('Reproduction swap-receipt-1: rejects an on-chain failed swap receipt', async () => {
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith('/evm/swaps')) return Response.json({
+        toAmount: '43210000', transaction: { to: RECIPIENT, data: '0xabcd', gas: '420491' },
+      });
+      if (call.url === 'https://arb1.arbitrum.io/rpc')
+        return rpcReply(call, { eth_getTransactionReceipt: { status: '0x0', gasUsed: '0x66a8b' } });
+      return Response.json({ transactionHash: '0xfailed' });
+    });
+    await expect(client().swap(OWNER, {
+      chain: 'arbitrum', fromAsset: 'eth', toAsset: 'usdc', amount: '0.017',
+    })).rejects.toThrow('transaction 0xfailed reverted');
+    expect(calls.filter((call) => call.url.endsWith('/send/transaction'))).toHaveLength(1);
+  });
+
   it('swaps ETH to USDC on Arbitrum through CDP /evm/swaps and send/transaction', async () => {
     const calls = mockFetch((call) => {
       if (call.url.endsWith('/evm/swaps'))
@@ -218,14 +277,17 @@ describe('swaps', () => {
           toAmount: '43210000',
           transaction: { to: '0x2222222222222222222222222222222222222222', data: '0xabcd', value: '17000000000000000', gas: '300000' },
         });
+      if (call.url === 'https://arb1.arbitrum.io/rpc')
+        return rpcReply(call, { eth_getTransactionReceipt: { status: '0x1' } });
       return Response.json({ transactionHash: '0xswap' });
     });
     await expect(
       client().swap(OWNER, { chain: 'arbitrum', fromAsset: 'eth', toAsset: 'usdc', amount: '0.017' }),
-    ).resolves.toEqual({ txId: '0xswap', toAmount: '43.21' });
+    ).resolves.toEqual({ txId: '0xswap', toAmount: '43.21', status: 'confirmed' });
     expect(calls.map((call) => call.url.replace('https://api.cdp.coinbase.com/platform/v2', ''))).toEqual([
       '/evm/swaps',
       `/evm/accounts/${OWNER}/send/transaction`,
+      'https://arb1.arbitrum.io/rpc',
     ]);
     expect(calls[0]!.body).toEqual({
       network: 'arbitrum',

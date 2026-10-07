@@ -1,5 +1,6 @@
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
+import { CdpWalletClient } from './cdp-client.js';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
@@ -95,6 +96,8 @@ describe('wallet over the fake CDP seam', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (database) await database.close();
   });
@@ -584,6 +587,58 @@ describe('wallet over the fake CDP seam', () => {
       amount: '10',
     });
     expect(swap.body.outcome).toBe('sent');
+  });
+
+
+  it.each(['0x0', '0x1', null])('Reproduction swap-receipt-1: daemon reports receipt %s truthfully', async (receiptStatus) => {
+    await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const key = generateKeyPairSync('ed25519').privateKey;
+    const walletKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey;
+    const client = new CdpWalletClient({ keyId: 'test',
+      keySecret: key.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      walletSecret: walletKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    });
+    const originalFetch = globalThis.fetch;
+    let submissions = 0;
+    vi.stubGlobal('fetch', async (url: RequestInfo | URL, options?: RequestInit) => {
+      if (String(url).startsWith(origin)) return originalFetch(url, options);
+      if (String(url).endsWith('/evm/swaps')) return Response.json({
+        toAmount: '43210000', transaction: { to: '0x2222222222222222222222222222222222222222', data: '0xabcd', gas: '420491' },
+      });
+      if (String(url).endsWith('/send/transaction')) {
+        submissions += 1;
+        return Response.json({ transactionHash: '0xreceiptproof' });
+      }
+      const entries = JSON.parse(String(options?.body)) as { id: number }[];
+      return Response.json(entries.map(({ id }) => ({ jsonrpc: '2.0', id,
+        result: receiptStatus === null ? null : { status: receiptStatus },
+      })));
+    });
+    vi.spyOn(walletSource(), 'swap').mockImplementation(async (address, input) => {
+      vi.useFakeTimers();
+      try {
+        const result = client.swap(address, input);
+        const observed = result.then(value => ({ value }), error => ({ error }));
+        await vi.runAllTimersAsync();
+        const settled = await observed;
+        if ('error' in settled) throw settled.error;
+        return settled.value;
+      } finally { vi.useRealTimers(); }
+    });
+    const before = (await database.query('SELECT * FROM wallet_transactions')).rows.length;
+    const response = await daemonOperation('walletSwap', {
+      agentId: HELPER, chain: 'arbitrum', fromAsset: 'eth', toAsset: 'usdc', amount: '0.017',
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.outcome).toBe(receiptStatus === '0x0' ? 'failed' : receiptStatus === '0x1' ? 'sent' : 'pending');
+    if (receiptStatus === '0x0') expect(response.body.reason).toContain('0xreceiptproof reverted');
+    if (receiptStatus === null) expect(response.body.txUrl).toContain('0xreceiptproof');
+    expect(submissions).toBe(1);
+    const after = (await database.query('SELECT * FROM wallet_transactions')).rows.length;
+    expect(after - before).toBe(receiptStatus === '0x1' ? 1 : 0);
+    console.log(`Reproduction swap-receipt-1: daemon walletSwap receipt=${receiptStatus} outcome=${response.body.outcome}; submissions=${submissions}; ledger additions=${after - before}`);
+    vi.unstubAllGlobals();
   });
 
   it('every @wallet DM line is authored by the wallet connector identity, never the agent', async () => {

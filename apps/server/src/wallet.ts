@@ -915,6 +915,13 @@ export async function agentWalletTool(
       try {
         const before = await holdings();
         const swapped = await source.swap(address, { chain: swapChain, fromAsset, toAsset, amount });
+        if (swapped.status === 'pending') {
+          return {
+            outcome: 'pending',
+            txUrl: walletExplorerTxUrl(swapChain, swapped.txId),
+            reason: 'Swap submitted; receipt confirmation timed out. Do not resubmit.',
+          };
+        }
         await creditSnapshot(database, ctx.ownerIdentityId, swapChain, toAsset, swapped.toAmount);
         // A swap trades value for value; the wallet total is unchanged but for fees.
         const totalUsd = holdingsUsd(before.coins);

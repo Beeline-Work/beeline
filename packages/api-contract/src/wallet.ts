@@ -259,6 +259,7 @@ export type WalletSwapInput = {
 };
 
 export type WalletSwapResult =
+  | { readonly outcome: 'pending'; readonly txUrl: string; readonly reason: string }
   | {
       readonly outcome: 'sent';
       readonly txUrl: string;

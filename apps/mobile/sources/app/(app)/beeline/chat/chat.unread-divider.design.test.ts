@@ -78,8 +78,8 @@ describe('the chat surface unread-divider wiring', () => {
     expect(chatSource).toContain('onViewableItemsChanged={observeVisibleTranscriptMessages}');
   });
 
-  it('keeps the unread boundary out of the fold without consulting the live queue', () => {
-    expect(chatSource).toContain('boundaryRowIndex(anchored, isCorner ? null : firstUnreadMessageId)');
+  it('splits folding only at the visible unread divider without consulting the live queue', () => {
+    expect(chatSource).toContain('boundaryRowIndex(anchored, firstNewMessageId)');
   });
 
   it('derives corner state from the same fresh turn receipts as the turn line', () => {

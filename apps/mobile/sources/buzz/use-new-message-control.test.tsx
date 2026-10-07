@@ -3,6 +3,8 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
+import { foldPrLifecycleRuns } from './pr-lifecycle';
+import { boundaryRowIndex, newestTranscriptRowId } from './room-new-message-boundary';
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -27,7 +29,7 @@ vi.mock('@/components/buzz/Ledger', () => ({
 }));
 
 const { useRoomMessageRenderItem } = await import('./room-message-cell');
-const { useNewMessageControl } = await import('./use-new-message-control');
+const { useNewMessageControl, useUnreadLineControl } = await import('./use-new-message-control');
 const { RoomCatchUpControls } = await import('@/components/buzz/RoomCatchUpControls');
 const { resetUnreadLineTickets } = await import('./unread-line-ticket');
 
@@ -79,12 +81,13 @@ const handles: {
 const tail = { pinned: true };
 
 function TranscriptHarness({
-  messages,
+  messages: rawMessages,
   arrivingIds,
   firstUnreadMessageId,
   openingUnreadCounts,
   pinnedToTail,
   enabled,
+  foldLifecycle = false,
 }: {
   messages: readonly ChatDisplayMessage[];
   arrivingIds: ReadonlySet<string>;
@@ -92,13 +95,26 @@ function TranscriptHarness({
   openingUnreadCounts: { messages: number; agentTurns: number } | null;
   pinnedToTail: boolean;
   enabled?: boolean;
+  foldLifecycle?: boolean;
 }) {
   tail.pinned = pinnedToTail;
+  const unreadLine = useUnreadLineControl({ roomId: 'room-1', firstUnreadMessageId, enabled });
+  const messages = React.useMemo(() => {
+    if (!foldLifecycle) return rawMessages;
+    const boundary = boundaryRowIndex(rawMessages, unreadLine.dividerMessageId);
+    return boundary < 0
+      ? foldPrLifecycleRuns(rawMessages)
+      : [
+          ...foldPrLifecycleRuns(rawMessages.slice(0, boundary)),
+          ...foldPrLifecycleRuns(rawMessages.slice(boundary)),
+        ];
+  }, [rawMessages, unreadLine.dividerMessageId, foldLifecycle]);
   const control = useNewMessageControl({
+    unreadLine,
     roomId: 'room-1',
     queueableMessages: messages,
     arrivingIds,
-    newestMessageId: messages.at(-1)?.id ?? null,
+    newestMessageId: newestTranscriptRowId(messages),
     firstUnreadMessageId,
     openingUnreadCounts,
     isPinnedToTail: () => tail.pinned,
@@ -241,7 +257,11 @@ describe('the transcript new-message control', () => {
 
     // Two messages land while the reader is still up in history.
     const arrived = [...SEED, rowFrom('arrival-0', 5, 'Sol'), rowFrom('arrival-1', 6, 'Nerd')];
-    update(renderer, { ...open, messages: arrived, arrivingIds: new Set(['arrival-0', 'arrival-1']) });
+    update(renderer, {
+      ...open,
+      messages: arrived,
+      arrivingIds: new Set(['arrival-0', 'arrival-1']),
+    });
     walk.push(`2 · two messages arrive below the fold → ${onScreen(renderer)}`);
 
     // The reader scrolls down to the newest message under their own finger.
@@ -625,7 +645,10 @@ describe('the transcript new-message control', () => {
 
     update(renderer, {
       ...opened,
-      messages: [...SEED.slice(0, 4), { ...host, relayReports: [row('fold-a', 4), row('fold-b', 5)] }],
+      messages: [
+        ...SEED.slice(0, 4),
+        { ...host, relayReports: [row('fold-a', 4), row('fold-b', 5)] },
+      ],
       arrivingIds: new Set(['fold-b']),
       pinnedToTail: false,
     });
@@ -700,4 +723,45 @@ describe('the transcript new-message control', () => {
     // Exactly one divider, still on the row the visit opened at.
     expect(dividerRowIds(renderer)).toEqual(['seed-2']);
   });
+});
+
+it('Reproduction PR-UNREAD-SPLIT-1: combines adjacent PR stacks when the divider retires and keeps the unread jump target', () => {
+  const messages = Array.from({ length: 8 }, (_, index): ChatDisplayMessage => ({
+    ...row(`pr-${index}`, index),
+    timestamp: 1_791_369_000 + index * 840,
+    githubEvent: {
+      type: 'pull-request',
+      action: index === 2 ? 'opened' : 'merged',
+      title: `Change ${index}`,
+      actor: 'ruby',
+      branch: `feature/${index}`,
+      url: `https://github.com/Beeline-Work/beeline/pull/${2200 + index}`,
+    },
+  }));
+  const renderer = mount({
+    ...AT_TAIL,
+    messages,
+    firstUnreadMessageId: 'pr-3',
+    foldLifecycle: true,
+    pinnedToTail: false,
+  });
+  const renderedRows = () =>
+    renderer.root.findAll(
+      (node: any) =>
+        node.type === 'View' &&
+        typeof node.props.testID === 'string' &&
+        node.props.testID.startsWith('row-'),
+    );
+  expect(renderedRows().map((node: any) => node.props.testID)).toEqual(['row-pr-0', 'row-pr-3']);
+  expect(dividerRowIds(renderer)).toEqual(['pr-3']);
+  // The opening visibility pass preserves the line; reaching newest afterwards retires it.
+  report([messages[3]!]);
+  report(foldPrLifecycleRuns(messages.slice(3)));
+  expect(dividerRowIds(renderer)).toEqual([]);
+  expect(renderedRows().map((node: any) => node.props.testID)).toEqual(['row-pr-0']);
+  const combined = foldPrLifecycleRuns(messages);
+  expect(combined[0].notificationLifecycleRun?.items).toHaveLength(8);
+  expect(boundaryRowIndex(combined, 'pr-3')).toBe(0);
+  expect(combined[0].foldedIds).toEqual(messages.map((message) => message.id));
+  act(() => renderer.unmount());
 });

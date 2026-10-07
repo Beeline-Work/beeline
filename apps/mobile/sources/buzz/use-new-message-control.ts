@@ -12,6 +12,49 @@ import {
 } from './room-new-message-boundary';
 import { issueUnreadLine, spendUnreadLine, unreadLineSpent } from './unread-line-ticket';
 
+/** Shared unread-line state, available before transcript folding. */
+export function useUnreadLineControl({
+  roomId,
+  firstUnreadMessageId,
+  enabled = true,
+}: {
+  roomId: string;
+  firstUnreadMessageId: string | null;
+  enabled?: boolean;
+}) {
+  const [boundaryRead, setBoundaryRead] = useState(false);
+  // A boundary the reader has not been shown yet is not one they have read.
+  // The server cursor arrives after the first paint, and `markUnreadFrom`
+  // replaces it mid-visit; either way the new line starts its own life.
+  useEffect(() => setBoundaryRead(false), [roomId, enabled, firstUnreadMessageId]);
+
+  // Is a line owed at all? Read once per boundary, BEFORE the spend below, so
+  // that spending the ticket cannot retire the line the spend paid for. The
+  // session captures the cursor once a visit, so the only thing that moves
+  // `firstUnreadMessageId` mid-visit is "Mark unread", which issues its own
+  // ticket first.
+  const [lineOwed, setLineOwed] = useState(false);
+  useEffect(() => {
+    setLineOwed(enabled && firstUnreadMessageId !== null && !unreadLineSpent(roomId));
+  }, [enabled, firstUnreadMessageId, roomId]);
+
+  useEffect(() => {
+    if (lineOwed) spendUnreadLine(roomId);
+  }, [lineOwed, roomId]);
+
+  // Reaching the newest row is being caught up, which is what earns the next
+  // run its line — whether or not one was drawn for this one.
+  useEffect(() => {
+    if (boundaryRead) issueUnreadLine(roomId);
+  }, [boundaryRead, roomId]);
+
+  const retire = useCallback(() => setBoundaryRead(true), []);
+  return {
+    dividerMessageId: enabled && lineOwed && !boundaryRead ? firstUnreadMessageId : null,
+    retire,
+  };
+}
+
 /**
  * The answers a transcript owes a reader about unread mail, kept apart the
  * way Slack keeps them apart:
@@ -45,8 +88,10 @@ export function useNewMessageControl({
   openingUnreadCounts,
   isPinnedToTail,
   enabled = true,
+  unreadLine,
 }: {
   roomId: string;
+  unreadLine: ReturnType<typeof useUnreadLineControl>;
   /** Rows exactly as the list renders them, so a fold is queued by its host. */
   queueableMessages: readonly ChatDisplayMessage[];
   arrivingIds: ReadonlySet<string>;
@@ -71,6 +116,7 @@ export function useNewMessageControl({
   observeTailPinned: (pinned: boolean) => void;
   settleQueueAtBoundary: (boundaryId: string) => void;
 } {
+  const { dividerMessageId, retire } = unreadLine;
   const [queue, setQueue] = useState<NewMessageQueue>(EMPTY_NEW_MESSAGE_QUEUE);
   // Any visible pixel of the newest row, as the list's own viewability pass
   // reports it. False until that pass has run, which is why the disc waits on
@@ -81,10 +127,6 @@ export function useNewMessageControl({
   // Tail position is state so a scroll or Android keyboard resize that leaves
   // the viewable set unchanged still redraws the chevron.
   const [tailPinned, setTailPinned] = useState(true);
-  // The glyph's own end. Set when a viewability pass AFTER the opening one
-  // reports the newest row on screen — the reader's own scroll down, or their
-  // tap on the disc, which lands there and reports.
-  const [boundaryRead, setBoundaryRead] = useState(false);
   // Read inside the observation callback, where the state above is a commit
   // behind: the opening pass must not retire a line drawn in the same frame.
   const hasObservedVisibilityRef = useRef(false);
@@ -102,31 +144,6 @@ export function useNewMessageControl({
     hasObservedVisibilityRef.current = false;
     visibleMessagesRef.current = [];
   }, [roomId, enabled]);
-
-  // A boundary the reader has not been shown yet is not one they have read.
-  // The server cursor arrives after the first paint, and `markUnreadFrom`
-  // replaces it mid-visit; either way the new line starts its own life.
-  useEffect(() => setBoundaryRead(false), [roomId, enabled, firstUnreadMessageId]);
-
-  // Is a line owed at all? Read once per boundary, BEFORE the spend below, so
-  // that spending the ticket cannot retire the line the spend paid for. The
-  // session captures the cursor once a visit, so the only thing that moves
-  // `firstUnreadMessageId` mid-visit is "Mark unread", which issues its own
-  // ticket first.
-  const [lineOwed, setLineOwed] = useState(false);
-  useEffect(() => {
-    setLineOwed(enabled && firstUnreadMessageId !== null && !unreadLineSpent(roomId));
-  }, [enabled, firstUnreadMessageId, roomId]);
-
-  useEffect(() => {
-    if (lineOwed) spendUnreadLine(roomId);
-  }, [lineOwed, roomId]);
-
-  // Reaching the newest row is being caught up, which is what earns the next
-  // run its line — whether or not one was drawn for this one.
-  useEffect(() => {
-    if (boundaryRead) issueUnreadLine(roomId);
-  }, [boundaryRead, roomId]);
 
   useLayoutEffect(() => {
     if (!enabled || arrivingIds.size === 0) return;
@@ -172,18 +189,15 @@ export function useNewMessageControl({
       // could look at it.
       if (enabled && newestVisible) {
         setQueue(acknowledgeNewMessageQueue);
-        if (!opening) setBoundaryRead(true);
+        if (!opening) retire();
       }
     },
-    [enabled],
+    [enabled, retire],
   );
 
-  const observeTailPinned = useCallback(
-    (pinned: boolean) => {
-      setTailPinned(pinned);
-    },
-    [],
-  );
+  const observeTailPinned = useCallback((pinned: boolean) => {
+    setTailPinned(pinned);
+  }, []);
 
   const settleQueueAtBoundary = useCallback(
     (boundaryId: string) => {
@@ -198,7 +212,7 @@ export function useNewMessageControl({
   // The glyph marks where the reader's unread run began. Later read-mark
   // updates and live arrivals cannot move it; only reaching newest ends it.
   return {
-    dividerMessageId: enabled && lineOwed && !boundaryRead ? firstUnreadMessageId : null,
+    dividerMessageId,
     queue: enabled ? queue : EMPTY_NEW_MESSAGE_QUEUE,
     discVisible:
       newestJumpDiscVisible({
@@ -215,8 +229,7 @@ export function useNewMessageControl({
     // offer, and reaching the tail takes both.
     catchUpVisible:
       enabled &&
-      lineOwed &&
-      !boundaryRead &&
+      dividerMessageId !== null &&
       catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts),
     observeVisibleMessages,
     observeTailPinned,

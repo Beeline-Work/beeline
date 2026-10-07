@@ -236,8 +236,20 @@ export type WalletToolQuoteResult = {
 };
 
 export type WalletPayInput = WalletSendInput & { readonly agentId: string };
-/** USDC from Arbitrum to Hyperliquid's Bridge2; at least 5 USDC. */
-export type WalletHyperliquidDepositInput = { readonly agentId: string; readonly amount: string };
+/**
+ * One call to a contract: `data` is the calldata, `value` the native token
+ * sent with it. `approve` first approves exactly that amount of a token for
+ * the contract.
+ */
+export type WalletContractCall = {
+  readonly chain: WalletChainId;
+  readonly contract: string;
+  readonly data: string;
+  /** Native token sent with the call, as a decimal amount. */
+  readonly value?: string;
+  readonly approve?: { readonly asset: string; readonly amount: string };
+};
+export type WalletContractCallInput = WalletContractCall & { readonly agentId: string };
 export type WalletSwapInput = {
   readonly agentId: string;
   readonly fromAsset: string;

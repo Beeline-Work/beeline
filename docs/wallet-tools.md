@@ -31,10 +31,37 @@ increase is recorded as one inbound ledger entry with the counterparty
 `deposit (sender not indexed)` and no transaction link. A swap's quoted output
 is credited to the snapshot so it is not read as a deposit.
 
-`wallet_hyperliquid_deposit` sends USDC on Arbitrum to Hyperliquid's Bridge2
-contract `0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7` (Hyperliquid docs,
-USDC > Legacy Bridge), which credits the same address on Hyperliquid. Amounts
-under 5 USDC are refused, because Bridge2 never credits them and they are lost.
+## Contract calls
+
+`wallet_contract_call` calls one contract on one chain with ABI-encoded call
+data (`data`) and an optional native `value`. It serves venues that take an
+approve and a call: bridges such as CCTP, lending, vaults. With `approve`
+(`{ asset, amount }`), the server first sends an ERC-20 `approve` for exactly
+that amount to the contract, waits for it to be mined, then sends the call.
+Call data that grants an allowance itself (`approve`, `increaseAllowance`,
+`setApprovalForAll`) is refused, so no call can approve an unlimited amount.
+
+The call's spends are the native value, the approved amount and a USDC
+`transfer` encoded in the call data. They pass the same checks as `wallet_pay`:
+the owner's signing delegation, the venue rules below and the funded balance.
+A successful call writes one `@wallet` ledger line naming the agent, the spends
+and the contract.
+
+## Venue rules
+
+`apps/server/src/wallet-venues.ts` holds one table of deposit rules: a venue's
+deposit address on a chain, the one asset it credits and the smallest amount
+it credits. `wallet_pay` checks every send against it, and
+`wallet_contract_call` checks every spend. A transfer the venue would never
+credit fails with the reason, before anything is sent. Adding a venue is one
+table entry.
+
+| Venue | Chain | Address | Asset | Minimum | Source |
+| --- | --- | --- | --- | --- | --- |
+| Hyperliquid Bridge2 | arbitrum | `0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7` | USDC | 5 | Hyperliquid docs, USDC > Legacy Bridge |
+
+To deposit into Hyperliquid, `wallet_pay` at least 5 USDC on Arbitrum to
+Bridge2; it is credited to the same address on Hyperliquid.
 
 ## Typed data
 

@@ -36,6 +36,7 @@ import {
   walletAssetName,
   type WalletChainId,
   type WalletCoinView,
+  type WalletContractCall,
   type WalletLedgerEntry,
   type WalletSendInput,
   type WalletTypedData,
@@ -87,6 +88,11 @@ export interface CdpWalletSource {
   sponsorshipAllowance(): Promise<{ usedUsd: number; limitUsd: number } | null>;
   /** Move `input.amount` of `input.asset` to `input.to`. Throws on failure. */
   sendTransaction(address: string, input: WalletSendInput): Promise<{ txId: string }>;
+  /**
+   * Call `call.contract` with `call.data` and `call.value`. With `call.approve`,
+   * first approve exactly that token amount for the contract and wait for it.
+   */
+  contractCall(address: string, call: WalletContractCall): Promise<{ txId: string }>;
   /** Convert `fromAsset` to `toAsset` in-wallet on one chain (same account, no transfer). */
   swap(
     address: string,
@@ -469,6 +475,28 @@ export class CdpWalletClient implements CdpWalletSource {
           ? { to: asset.token, data: erc20TransferData(input.to, amount) }
           : { to: input.to, value: amount },
       ),
+    };
+  }
+
+  /** An exact ERC-20 approval for the contract, mined first, then the call itself. */
+  async contractCall(address: string, call: WalletContractCall): Promise<{ txId: string }> {
+    if (!isEvmAddress(call.contract)) throw new Error(`invalid contract address: ${call.contract}`);
+    const value = call.value ? parseUnits(call.value, evmAsset(call.chain, 'native').decimals) : 0n;
+    if (call.approve) {
+      const asset = evmAsset(call.chain, call.approve.asset);
+      if (!asset.token) throw new Error('approve needs a token, not the native asset');
+      const approval = await this.sendEvmTransaction(address, call.chain, {
+        to: asset.token,
+        data: erc20ApproveData(call.contract, parseUnits(call.approve.amount, asset.decimals)),
+      });
+      await waitForReceipt(call.chain, approval);
+    }
+    return {
+      txId: await this.sendEvmTransaction(address, call.chain, {
+        to: call.contract,
+        data: call.data,
+        ...(value ? { value } : {}),
+      }),
     };
   }
 

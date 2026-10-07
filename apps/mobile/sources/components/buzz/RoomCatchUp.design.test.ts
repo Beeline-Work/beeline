@@ -113,8 +113,8 @@ describe('the catch-up sheet', () => {
     expect(hook).toContain('catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts)');
     // The offer rides the line, so it cannot outlive it: no line owed, no
     // offer, and reaching newest ends both on the same landing.
-    expect(hook).toContain('lineOwed &&');
-    expect(hook).toContain('!boundaryRead &&');
+    expect(hook).toContain('lineOwed && !boundaryRead ? firstUnreadMessageId : null');
+    expect(hook).toMatch(/catchUpVisible:\s*enabled &&\s*dividerMessageId !== null &&/);
     // The queue keeps a boundary and a count, and nothing that can be read out.
     expect(boundary).not.toContain('authors: readonly CatchUpAuthor[]');
   });

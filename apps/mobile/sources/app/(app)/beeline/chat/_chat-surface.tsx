@@ -1080,9 +1080,7 @@ export function BuzzChatSurface({
     : isCorner
       ? 'corner'
       : 'room';
-  // A corner of the Room in the primary view opens in the second pane. With a
-  // corner in the primary view, or a window too narrow for a second pane, it
-  // opens in the primary view instead.
+  // A corner always opens in the primary view; the second pane is for artifacts.
   const openDesktopCorner = useCallback(
     (roomId: string, cornerId: string) => {
       const transition = commitDesktopWorkPane({
@@ -5112,7 +5110,7 @@ export function BuzzChatSurface({
   );
 
   // The line beneath a message a corner was opened from; its Open goes
-  // straight into that corner (the work pane on desktop).
+  // straight into that corner.
   const renderCornerMarker = useCallback(
     (marker: ChatDisplayMessage) => {
       const fact = marker.daemonFact!;

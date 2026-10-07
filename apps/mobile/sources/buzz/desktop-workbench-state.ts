@@ -3,7 +3,7 @@ import type { DesktopArtifactSelection } from '@/buzz/desktop-artifact-pane';
 
 export const DESKTOP_NAV_MIN_WIDTH = 240;
 export const DESKTOP_NAV_MAX_WIDTH = 420;
-export const DESKTOP_NAV_DEFAULT_WIDTH = 380;
+export const DESKTOP_NAV_DEFAULT_WIDTH = 260;
 export const DESKTOP_WORKSPACE_STRIP_WIDTH = 76;
 export const DESKTOP_INSPECTOR_MIN_WIDTH = 320;
 export const DESKTOP_INSPECTOR_MAX_WIDTH = 480;
@@ -72,10 +72,10 @@ export function desktopWorkPaneVisibleContent(
 }
 
 /**
- * The pane opens only two ways: an artifact clicked in a Room or a corner, or
- * a corner of the Room in the primary view. Opening something replaces what
- * was there. A narrow window or a direct message cannot host it, so the
- * caller falls back to the primary view.
+ * The pane opens only for an artifact clicked in a Room or a corner. Opening
+ * one replaces what was there. A narrow window or a direct message cannot
+ * host it, so the caller falls back to the full-screen viewer. A corner
+ * always opens in the primary view, never in the pane.
  */
 export function transitionDesktopWorkPane(
   state: DesktopWorkPaneState,
@@ -89,12 +89,7 @@ export function transitionDesktopWorkPane(
     case 'close':
       return { state: { ...state, content: null } };
     case 'open-corner':
-      if (state.widthMode === 'narrow' || event.primary !== 'room')
-        return { state, placement: 'primary' };
-      return {
-        state: { ...state, content: { kind: 'corner', cornerId: event.cornerId } },
-        placement: 'pane',
-      };
+      return { state, placement: 'primary' };
     case 'open-artifact':
       if (state.widthMode === 'narrow' || event.primary === 'direct-message')
         return { state, placement: 'primary' };

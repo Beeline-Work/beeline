@@ -31,6 +31,7 @@ export function ConversationRow({
   desktop = false,
   cornersExpanded = false,
   onToggleCorners,
+  onOpenCorners,
   onLongPressCorners,
   testID,
 }: {
@@ -44,6 +45,8 @@ export function ConversationRow({
   desktop?: boolean;
   cornersExpanded?: boolean;
   onToggleCorners?: () => void;
+  /** Tap of the corner glyph opens the Room's corner list instead of toggling it. */
+  onOpenCorners?: () => void;
   /** Long-press of the corner glyph opens a new corner in this Room. */
   onLongPressCorners?: () => void;
   testID: string;
@@ -72,14 +75,18 @@ export function ConversationRow({
   // native window rect from the glyph it encloses.
   const cornerMark = (
     <Pressable
-      accessibilityLabel={`${cornersExpanded ? 'Collapse' : 'Expand'} ${cornerCount} corners`}
+      accessibilityLabel={
+        onOpenCorners
+          ? `Open corners of ${name.sigil}${name.name}`
+          : `${cornersExpanded ? 'Collapse' : 'Expand'} ${cornerCount} corners`
+      }
       accessibilityRole="button"
-      accessibilityState={{ expanded: cornersExpanded }}
+      accessibilityState={onOpenCorners ? undefined : { expanded: cornersExpanded }}
       accessibilityHint={onLongPressCorners ? 'Long press to open a new corner' : undefined}
       delayLongPress={onLongPressCorners ? 450 : undefined}
       hitSlop={8}
       onLongPress={onLongPressCorners}
-      onPress={onToggleCorners}
+      onPress={onOpenCorners ?? onToggleCorners}
       style={[styles.cornerToggle, cornerPosition]}
       testID={`${testID}-corners`}
     >

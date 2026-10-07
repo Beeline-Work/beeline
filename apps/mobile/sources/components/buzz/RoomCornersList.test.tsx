@@ -438,29 +438,99 @@ describe('RoomCornersList on desktop', () => {
       .filter((id: string) => id?.startsWith('room-corner-c-'));
   }
 
-  it('lists every corner under Waiting / Mine / All filters, All selected, with no folds', () => {
+  const filterButton = (tree: ReactTestRenderer, key: string) =>
+    tree.root
+      .findAllByType('Button' as any)
+      .find((node: any) => node.props.testID === `room-corners-filter-${key}`)!;
+
+  it('lists every corner under Waiting / Mine / Others / All / Archived filters, All selected, with no folds', () => {
     const tree = render(corners, { desktop: true });
     const buttons = tree.root.findAllByType('Button' as any);
     expect(buttons.map((node: any) => [node.props.label, node.props.variant])).toEqual([
       ['Waiting · 2', 'secondary'],
       ['Mine · 2', 'secondary'],
+      ['Others · 1', 'secondary'],
       ['All · 3', 'brass'],
+      ['Archived', 'secondary'],
     ]);
     expect(cells(tree)).toEqual(['room-corner-c-waits', 'room-corner-c-theirs', 'room-corner-c-asks-me']);
     expect(pressable(tree, 'room-corners-mine')).toBeUndefined();
     expect(pressable(tree, 'room-corners-others')).toBeUndefined();
+    expect(pressable(tree, 'room-corners-archived')).toBeUndefined();
   });
 
-  it('narrows to waiting corners, and to the viewer\'s own, on the filters', () => {
+  it('narrows to waiting corners, the viewer\'s own, and everyone else\'s on the filters', () => {
     const tree = render(corners, { desktop: true });
-    const filter = (key: string) =>
-      tree.root.findAllByType('Button' as any).find((node: any) => node.props.testID === `room-corners-filter-${key}`)!;
-    act(() => filter('waiting').props.onPress());
+    act(() => filterButton(tree, 'waiting').props.onPress());
     expect(cells(tree)).toEqual(['room-corner-c-waits', 'room-corner-c-asks-me']);
-    act(() => filter('mine').props.onPress());
+    act(() => filterButton(tree, 'mine').props.onPress());
     expect(cells(tree)).toEqual(['room-corner-c-waits', 'room-corner-c-asks-me']);
-    act(() => filter('all').props.onPress());
+    act(() => filterButton(tree, 'others').props.onPress());
+    expect(cells(tree)).toEqual(['room-corner-c-theirs']);
+    act(() => filterButton(tree, 'all').props.onPress());
     expect(cells(tree)).toHaveLength(3);
+  });
+
+  it('reads the archive on the first Archived press and lists closed corners in place of live ones', () => {
+    const onShowArchived = vi.fn();
+    const tree = render(corners, { desktop: true, onShowArchived });
+    act(() => filterButton(tree, 'archived').props.onPress());
+    expect(onShowArchived).toHaveBeenCalledOnce();
+    expect(cells(tree)).toEqual([]);
+
+    act(() => {
+      tree.update(
+        <RoomCornersList
+          corners={corners}
+          parentRoomName="#alpha"
+          parentRoomId="room-1"
+          viewerPubkey={VIEWER}
+          desktop
+          onShowArchived={onShowArchived}
+          archived={{ status: 'loading' }}
+        />,
+      );
+    });
+    expect(text(tree)).toContain('Loading archived');
+    expect(tree.root.findAllByProps({ testID: 'room-corners-archived-loading' }).length).toBeGreaterThan(0);
+
+    const onMoreArchived = vi.fn();
+    act(() => {
+      tree.update(
+        <RoomCornersList
+          corners={corners}
+          parentRoomName="#alpha"
+          parentRoomId="room-1"
+          viewerPubkey={VIEWER}
+          desktop
+          onShowArchived={onShowArchived}
+          onMoreArchived={onMoreArchived}
+          archived={{ status: 'ready', corners: [corner('c-old', 'archived')], next: 'cursor' }}
+        />,
+      );
+    });
+    expect(cells(tree)).toEqual(['room-corner-c-old']);
+    expect(filterButton(tree, 'archived').props.label).toBe('Archived · 1+');
+    act(() => pressable(tree, 'room-corners-archived-more')!.props.onPress());
+    expect(onMoreArchived).toHaveBeenCalledOnce();
+
+    act(() => filterButton(tree, 'archived').props.onPress());
+    expect(onShowArchived).toHaveBeenCalledOnce();
+    act(() => filterButton(tree, 'all').props.onPress());
+    expect(cells(tree)).toHaveLength(3);
+    expect(pressable(tree, 'room-corners-archived-more')).toBeUndefined();
+  });
+
+  it('retries a failed archive read from the Archived filter', () => {
+    const onShowArchived = vi.fn();
+    const tree = render(corners, {
+      desktop: true,
+      onShowArchived,
+      archived: { status: 'error', reason: 'Offline' },
+    });
+    act(() => filterButton(tree, 'archived').props.onPress());
+    expect(onShowArchived).toHaveBeenCalledOnce();
+    expect(text(tree)).toContain('Offline. Tap to retry');
   });
 
   it("hands each cell the corner's objective, live workflow and a brief only when it has one", () => {

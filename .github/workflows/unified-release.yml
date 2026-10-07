@@ -1411,13 +1411,6 @@ jobs:
             echo "terminated_reason=$terminated_reason"
           } >> "$GITHUB_OUTPUT"
           cp "$state" "$RUNNER_TEMP/release-attempt.json"
-      - name: Publish immutable attempt state for component-local retry
-        if: steps.result.outputs.no_op != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: unified-release-state-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/release-attempt.json
-          retention-days: 90
       - name: Stamp the terminated identity into the published attempt state
         # A terminated identity must be recorded as terminated (never merely
         # out-of-attempts): the initialize plan step refuses any later run
@@ -1440,6 +1433,13 @@ jobs:
           console.log(`## Release identity TERMINATED (${state.delivery.terminatedReason})`);
           console.log('- No retry of this identity may run: not the retry job, and not a manual run of the same identity.');
           NODE
+      - name: Publish immutable attempt state for component-local retry
+        if: steps.result.outputs.no_op != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-release-state-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/release-attempt.json
+          retention-days: 90
       - name: Download newly built stable desktop installers
         if: steps.result.outputs.outcome == 'success' && needs.initialize.outputs.run_desktop == 'true'
         uses: actions/download-artifact@v4

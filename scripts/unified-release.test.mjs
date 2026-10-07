@@ -1114,6 +1114,9 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const stampStep = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Stamp the terminated identity'));
   assert.match(stampStep.if, /steps\.result\.outputs\.terminated == 'true'/);
   assert.match(stampStep.run, /state\.terminated = true/);
+  const attemptUpload = workflow.jobs.release_result.steps.find((step) => step.name === 'Publish immutable attempt state for component-local retry');
+  assert.ok(workflow.jobs.release_result.steps.indexOf(stampStep) < workflow.jobs.release_result.steps.indexOf(attemptUpload),
+    'Reproduction release-termination-order: termination must be stamped before immutable upload');
   const planStep = workflow.jobs.initialize.steps.find((step) => step.name?.includes('release plan'));
   assert.match(planStep.run, /was terminated; a terminated identity never retries/);
   assert.equal(workflow.jobs.release_result.outputs.terminated, "${{ steps.result.outputs.terminated }}");

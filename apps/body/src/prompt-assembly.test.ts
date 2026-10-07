@@ -1,5 +1,4 @@
 import * as promptRules from './prompt-assembly.js';
-import { agentToolsFor } from './read-only-mcp.js';
 import { describe, expect, it } from 'vitest';
 import type { CornerBrief } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -17,7 +16,7 @@ import {
   type SessionPromptContext,
   type TurnPromptContext,
   CORNER_REVIEWER_SESSION_INSTRUCTION,
-  CORNER_YOLO_MERGE_NUDGE,
+  CORNER_CHECKS_NUDGE,
   cornerMergeInstruction,
   cornerReviewerInstruction,
   cornerSelfReviewerInstruction,
@@ -158,7 +157,6 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
     cornerPrepareScript: true,
     reviewerHandle: 'sol',
-    yoloMode: true,
   },
   'code-corner-rest': {
     surface: 'code-corner',
@@ -168,17 +166,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
     cornerPrepareScript: true,
     reviewerHandle: 'sol',
-    yoloMode: true,
     githubCli: 'rest',
-  },
-  'code-corner-reviewed-yolo-off': {
-    surface: 'code-corner',
-    agentName: 'Bee',
-    soul,
-    agentCommand: 'claude-agent-acp',
-    worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
-    cornerPrepareScript: true,
-    reviewerHandle: 'sol',
   },
   'code-corner-android': {
     surface: 'code-corner',
@@ -188,7 +176,6 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
     cornerPrepareScript: true,
     reviewerHandle: 'sol',
-    yoloMode: true,
     android: { emulatorPort: '5600' },
   },
   'code-corner-no-reviewer': {
@@ -198,7 +185,6 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
     cornerPrepareScript: true,
-    yoloMode: true,
   },
   'code-corner-self-reviewer': {
     surface: 'code-corner',
@@ -213,7 +199,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     surface: 'code-corner', agentName: 'Bee', soul, agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
     cornerPrepareScript: true,
-    reviewerHandle: 'sol', yoloMode: true,
+    reviewerHandle: 'sol',
     brief: { id: 'corner', revision: 2, authorId: 'author', sourceRoomId: 'room', attachments: [], repositoryWork: false, spec: '## Intent\nRun the desk\n## Non-goals\nNo repository edits or pull requests' },
   },
   'review-corner': {
@@ -378,8 +364,11 @@ describe('prompt assembly guards', () => {
     for (const name of ['code-corner-reviewed', 'code-corner-self-reviewer']) {
       expect(merges(name), name).not.toMatch(/the server merges/i);
     }
-    for (const name of ['code-corner-reviewed-yolo-off', 'code-corner-no-reviewer']) {
-      expect(merges(name), name).toContain('never merge; a person merges it');
+    expect(merges('code-corner-no-reviewer')).toContain(
+      "it merges only on a person's yes: ask a Workspace owner or admin to approve the merge, then record their yes with order_corner_merge.",
+    );
+    for (const name of Object.keys(SESSION_VARIANTS)) {
+      expect(merges(name), name).not.toMatch(/yolo/i);
       expect(merges(name), name).not.toContain('gh pr merge');
     }
     for (const name of Object.keys(SESSION_VARIANTS)) {
@@ -429,12 +418,10 @@ describe('prompt assembly guards', () => {
       ...Object.entries(TURN_VARIANTS).map(
         ([name, context]): [string, string] => [name, assembleTurnPrompt(context).text],
       ),
-      ['yolo checks nudge', CORNER_YOLO_MERGE_NUDGE],
+      ['checks nudge', CORNER_CHECKS_NUDGE],
       ['reviewer session', CORNER_REVIEWER_SESSION_INSTRUCTION],
-      ...[false, true].flatMap((yolo): Array<[string, string]> => [
-        [`author yolo=${yolo}`, cornerMergeInstruction(yolo, 'sol')],
-        [`author no reviewer yolo=${yolo}`, cornerMergeInstruction(yolo)],
-      ]),
+      ['author', cornerMergeInstruction('sol')],
+      ['author no reviewer', cornerMergeInstruction()],
       [
         'reviewer turn',
         cornerReviewerInstruction({
@@ -462,8 +449,8 @@ describe('prompt assembly guards', () => {
       expect(text, name).not.toContain('gh pr merge');
       expect(text, name).not.toMatch(/approved [0-9a-f<][^`]*, merge/);
     }
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain("a reviewer's PASS wakes you to merge with merge_corner");
-    expect(CORNER_YOLO_MERGE_NUDGE).toContain('Never merge it any other way.');
+    expect(CORNER_CHECKS_NUDGE).toContain("a reviewer's PASS wakes you to merge with merge_corner");
+    expect(CORNER_CHECKS_NUDGE).toContain('Never merge it any other way.');
   });
 
   it('tells a code-corner author that a human opening the corner and prompting inside it is not the outline', () => {
@@ -482,25 +469,7 @@ describe('prompt assembly guards', () => {
     expect(promptRules.CORNER_DELIVERY_NUDGE).toContain('Only when the brief calls for repository changes');
   });
 
-  it('R8b shares stage ownership and server checks across all three instructions', () => {
-    const table = (promptRules as unknown as Record<string, string>).VALIDATION_STAGE_OWNERSHIP;
-    expect(table).toBeDefined();
-    for (const stage of ['intent', 'base', 'tests', 'docs', 'lint_types', 'publication', 'ci', 'final_authorization', 'review'])
-      expect(table).toContain(stage);
-    expect(table).toContain('merge effect: none for every stage');
-    expect(table).toContain('current revision/head');
-    expect(table).toContain('server merge gate is the authority');
-    for (const text of [
-      promptRules.CORNER_AUTHOR_CONTRACT,
-      agentToolsFor(true, false, true, true).find((tool) => tool.name === 'record_validation_stage')!.description,
-      beelineReviewSkillMarkdown('test'),
-    ]) {
-      expect(text).toContain(table);
-      expect(text).not.toContain('after pr_checks_status reports checks passed and mergeAllowed true');
-    }
-  });
-
-  it('records the reviewed head SHA in a FAIL verdict', () => {
+  it('names the reviewed head SHA in a FAIL verdict', () => {
     const head = 'a'.repeat(40);
     const instruction = cornerReviewerInstruction({
       isReviewer: true,
@@ -510,11 +479,8 @@ describe('prompt assembly guards', () => {
       headSha: head,
       briefRevision: 2,
     })!;
-    expect(instruction).toContain('record_validation_stage');
-    expect(instruction).toContain('status "failed"');
-    expect(instruction).toContain('reviewed head');
+    expect(instruction).toContain(`reviewed head ${head} to fix`);
     const skill = beelineReviewSkillMarkdown('test');
-    expect(skill).toContain('record_validation_stage');
     expect(skill).toContain('reviewed head SHA');
   });
 
@@ -690,7 +656,7 @@ describe('assembled prompts', () => {
 
 describe('Reproduction runtime-brief-5: delivery capability', () => {
   const base = { id: 'corner', revision: 2, authorId: 'author', sourceRoomId: 'room', attachments: [] };
-  const forbidden = ['corner:prepare', 'record_validation_stage', 'Validation stages', '## Reproduced', '## Demonstrated', 'Use its file manifest', 'gh pr create', 'Once the pull request exists', 'pr_checks_status'];
+  const forbidden = ['corner:prepare', '## Reproduced', '## Demonstrated', 'Use its file manifest', 'gh pr create', 'Once the pull request exists', 'pr_checks_status'];
   it.each([
     ['R5-1 MM desk list', { spec: '## Non-goals\nNo real orders, quoter code changes, repository edits, pull requests, public hosting, …' }, false],
     ['R5-1 bullet list', { spec: '## Non-goals\n- No real orders, quoter code changes, repository edits, pull requests, public hosting, …' }, false],

@@ -417,19 +417,18 @@ describe('corner message attribution', () => {
         {
           cornerId: C,
           headSha: '2'.repeat(40),
-          briefRevision: 1,
         },
         B,
       ),
     ).resolves.toMatchObject({ status: 'approved', headSha: '2'.repeat(40) });
     expect(
       (
-        await db.query<{ head_sha: string; brief_revision: number }>(
-          `SELECT head_sha,brief_revision FROM corner_merge_approvals WHERE corner_id=$1`,
+        await db.query<{ head_sha: string }>(
+          `SELECT head_sha FROM corner_merge_approvals WHERE corner_id=$1`,
           [C],
         )
       ).rows,
-    ).toEqual([{ head_sha: '2'.repeat(40), brief_revision: 1 }]);
+    ).toEqual([{ head_sha: '2'.repeat(40) }]);
   });
 
   /**

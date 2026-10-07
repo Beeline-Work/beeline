@@ -25,11 +25,10 @@ import type {
 import {
   CornerVerdictRejectedError,
   recordCornerMergeApproval,
-  recordExpressMergeOrder,
+  recordPersonMergeYes,
 } from './corner-merge-approval.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import {
-  CORNER_VALIDATION_STAGES,
   CORNER_BRIEF_REVISION_SELECT,
   type CornerBriefRow,
   composeCornerUpgradeBrief,
@@ -388,7 +387,6 @@ export class DaemonService {
       'retrieveLinkSpendRequest',
       'createCorner',
       'reviseCornerBrief',
-      'postCornerValidationStage',
       'upgradeCornerLane',
       'postRoomEvent',
       'requestAgentGrant',
@@ -1117,11 +1115,6 @@ export class DaemonService {
           input as Input<'reviseCornerBrief'>,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'postCornerValidationStage':
-        return (await this.postCornerValidationStage(
-          input as Input<'postCornerValidationStage'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
       case 'getRoomRepositoryState':
         return (await this.repository(
           (input as Input<'getRoomRepositoryState'>).roomId,
@@ -1565,8 +1558,7 @@ export class DaemonService {
       case 'orderCornerMerge': {
         const order = input as Input<'orderCornerMerge'>;
         await this.access(order.cornerId, authenticatedAgentId);
-        const result = await this.database.transaction(async (db) => {
-          await lockCornerLifecycle(db, order.cornerId);
+        const actorId = await this.database.transaction(async (db) => {
           const command = await authorizeCommandOutput(
             db, order.roomId, authenticatedAgentId, order.requestId, order.generationId,
           );
@@ -1577,31 +1569,17 @@ export class DaemonService {
             [command.root_source_message_id],
           )).rows[0];
           if (!actor) throw new Error('merge order requires a human requester');
-          const target = (await db.query<{ number: number | null; head_sha: string | null }>(
-            `SELECT (fact.lifecycle->'pr'->>'number')::int number,
-                    fact.lifecycle->'pr'->>'headSha' head_sha
-             FROM corner_facts fact WHERE fact.corner_id=$1`,
-            [order.cornerId],
-          )).rows[0];
-          if (!target?.number || !target.head_sha)
-            throw new Error('corner has no pull request to merge');
-          const recorded = await recordExpressMergeOrder(
-            db,
-            { cornerId: order.cornerId, pullRequestNumber: target.number, headSha: target.head_sha },
-            actor.author_id,
-          );
-          // The order carries the run straight to `land` from wherever it
-          // sits; the normal land path then merges it, with no second route in.
-          await advanceCorner(db, order.cornerId, { kind: 'express-merge-ordered' });
-          return recorded;
+          return actor.author_id;
         });
-        // The order is durable either way; it merges now, not on a later call.
+        const yes = await recordPersonMergeYes(this.database, order.cornerId, actorId);
+        // The yes is durable either way; with green checks and no hold it
+        // merges now, through the one merge path.
         try {
           await this.landCorner?.(order.cornerId);
         } catch (error) {
           console.error(`[server] merge order's immediate land attempt failed for corner ${order.cornerId}:`, error);
         }
-        return result as Output<Name>;
+        return { roomId: yes.roomId, headSha: yes.headSha } as Output<Name>;
       }
       case 'createCorner':
         return (await this.createCorner(
@@ -1795,7 +1773,7 @@ export class DaemonService {
         },
       };
       await db.query(
-        `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL,updated_at=now()
+        `UPDATE corner_facts SET lifecycle=$2::jsonb,updated_at=now()
          WHERE corner_id=$1`,
         [cornerId, JSON.stringify(lifecycle)],
       );
@@ -3063,31 +3041,6 @@ export class DaemonService {
   }
   private async cornerRestore(cornerId: string) {
     const brief = await currentCornerBrief(this.database, cornerId);
-    const recordedValidation = brief
-      ? (
-          await this.database.query<{
-            brief_revision: number;
-            head_sha: string;
-            stage: import('@beeline/api-contract/daemon').CornerValidationStageName;
-            status: import('@beeline/api-contract/daemon').CornerValidationStage['status'];
-            evidence: string;
-            actor_id: string;
-          }>(
-            `SELECT stage.brief_revision,stage.head_sha,stage.stage,stage.status,stage.evidence,stage.actor_id
-       FROM corner_validation_stages stage JOIN corner_facts fact ON fact.corner_id=stage.corner_id
-       WHERE stage.corner_id=$1 AND stage.brief_revision=$2
-         AND stage.head_sha=COALESCE(fact.lifecycle->'pr'->>'headSha','draft') ORDER BY stage.stage`,
-            [cornerId, brief.revision],
-          )
-        ).rows.map((row) => ({
-          briefRevision: row.brief_revision,
-          headSha: row.head_sha,
-          stage: row.stage,
-          status: row.status,
-          evidence: row.evidence,
-          actorId: row.actor_id,
-        }))
-      : [];
     const row = (
       await this.database.query<{
         parent_room_id: string;
@@ -3112,8 +3065,6 @@ export class DaemonService {
          FROM corner_facts fact
          JOIN rooms room ON room.id=fact.corner_id
          LEFT JOIN corner_merge_approvals approval ON approval.corner_id=fact.corner_id
-           AND approval.brief_revision IS NOT DISTINCT FROM
-             (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id)
          LEFT JOIN identities requester ON requester.id=fact.commissioned_by
          WHERE fact.corner_id=$1`,
         [cornerId],
@@ -3126,21 +3077,6 @@ export class DaemonService {
       objective: row?.objective ?? '',
       ...(held ? { held: true } : {}),
       ...(brief ? { brief } : {}),
-      ...(brief
-        ? {
-            validation: CORNER_VALIDATION_STAGES.map(
-              (stage) =>
-                recordedValidation.find((record) => record.stage === stage) ?? {
-                  briefRevision: brief.revision,
-                  headSha: row?.lifecycle?.pr?.headSha ?? 'draft',
-                  stage,
-                  status: 'pending' as const,
-                  evidence: '',
-                  actorId: '',
-                },
-            ),
-          }
-        : {}),
       ...(row ? { title: row.title, kind: row.kind } : {}),
       ...(row?.title_generated ? { titleGenerated: true } : {}),
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
@@ -3193,21 +3129,15 @@ export class DaemonService {
     };
   }
   /**
-   * The configured reviewer's PASS, from any code-lane corner turn: nothing
-   * here depends on how the reviewer's session booted. The server authorizes
-   * the caller and the exact target, records the verdict, and reports it to
-   * the corner lifecycle in the same transaction; the server merge follows
-   * from the workflow once the whole gate is open.
-   */
-  /**
-   * The implementer starts its own merge. Only the corner's implementer may
-   * call it, and only an open gate on the corner in `land` merges: a
-   * reviewer's PASS moved it there, or a human's order did.
+   * The implementer starts its own merge through the one merge path
+   * (`landCorner`). Only the corner's implementer may call it; it merges only
+   * when `pr_checks_status` reports `mergeAllowed`, and otherwise names the
+   * blocker.
    */
   private async mergeCorner(input: Input<'mergeCorner'>, agentId: string): Promise<Output<'mergeCorner'>> {
     const corner = (
-      await this.database.query<{ worker_agent_id: string | null; workflow_state: string | null; head_sha: string | null }>(
-        `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,fact.workflow_state,
+      await this.database.query<{ worker_agent_id: string | null; head_sha: string | null }>(
+        `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
                 fact.lifecycle->'pr'->>'headSha' head_sha
          FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
          WHERE fact.corner_id=$1 AND corner.archived_at IS NULL`,
@@ -3223,19 +3153,23 @@ export class DaemonService {
     if (!gate.mergeAllowed) {
       const blockers = [
         gate.checks !== 'passed' ? `checks are ${gate.checks}` : '',
-        gate.approvalPending ? 'no reviewer PASS on this head' : '',
-        gate.held ? 'a human hold stands' : '',
-        gate.isWorkerYolo ? '' : 'yolo is off',
+        gate.approved ? '' : 'no non-author yes on this head',
+        gate.held ? 'a hold stands' : '',
       ].filter(Boolean);
-      return { status: 'blocked', blocker: `${blockers.join('; ') || 'the merge gate is closed'}. ${gate.rule}` };
+      return { status: 'blocked', blocker: blockers.join('; ') || 'the merge gate is closed' };
     }
-    if (corner.workflow_state !== 'land')
-      return { status: 'blocked', blocker: `the corner is in ${corner.workflow_state ?? 'no state'}, not land` };
     if (!(await this.landCorner(input.cornerId)))
       return { status: 'blocked', blocker: 'a merge of this head was already attempted, or the head moved' };
     return { status: 'merge-started', headSha: corner.head_sha };
   }
 
+  /**
+   * The configured reviewer's PASS, from any code-lane corner turn: nothing
+   * here depends on how the reviewer's session booted. The server authorizes
+   * the caller and the exact head, records the yes, and reports it to the
+   * corner lifecycle in the same transaction, which wakes the implementer to
+   * merge.
+   */
   private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
     return this.database.transaction(async (db) => {
       await lockCornerLifecycle(db, input.cornerId);
@@ -3243,12 +3177,10 @@ export class DaemonService {
         await db.query<{
           pull_request_number: number | null;
           head_sha: string | null;
-          parent_room_id: string;
-          workspace_id: string;
+          owner_agent_id: string | null;
         }>(
           `SELECT (fact.lifecycle->'pr'->>'number')::int pull_request_number,
-                fact.lifecycle->'pr'->>'headSha' head_sha,
-                parent.id parent_room_id,parent.workspace_id
+                fact.lifecycle->'pr'->>'headSha' head_sha,fact.owner_agent_id
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -3261,6 +3193,11 @@ export class DaemonService {
           'NOT_CONFIGURED_REVIEWER',
           "only this corner's configured reviewer can record PASS",
         );
+      if (target.owner_agent_id === agentId)
+        throw new CornerVerdictRejectedError(
+          'AUTHOR',
+          "this corner's author cannot approve its own pull request; a Workspace owner or admin's yes merges it",
+        );
       if (!target.pull_request_number || !target.head_sha)
         throw new CornerVerdictRejectedError('NO_PULL_REQUEST', 'corner has no pull request');
       if (target.head_sha !== input.headSha)
@@ -3268,20 +3205,13 @@ export class DaemonService {
           'STALE_HEAD',
           `pull request head is ${target.head_sha}; review the current head before approving`,
         );
-      const currentBrief = await currentCornerBrief(db, input.cornerId);
-      if (currentBrief && input.briefRevision !== currentBrief.revision)
-        throw new CornerVerdictRejectedError(
-          'STALE_BRIEF_REVISION',
-          `the assigned brief is revision ${currentBrief.revision}; review the current assignment before approving`,
-        );
       await recordCornerMergeApproval(db, {
         cornerId: input.cornerId,
         approvedBy: agentId,
-        force: false,
         pullRequestNumber: target.pull_request_number,
         headSha: target.head_sha,
       });
-      await advanceCorner(db, input.cornerId, { kind: 'approval', headSha: target.head_sha });
+      await advanceCorner(db, input.cornerId, { kind: 'approval', headSha: target.head_sha, by: 'reviewer' });
       return {
         pullRequestNumber: target.pull_request_number,
         headSha: target.head_sha,
@@ -7374,7 +7304,6 @@ export class DaemonService {
         kind: 'brief-revised',
         revision,
         sourceMessageId: note.id,
-        authorAgentId: agentId,
         command,
       });
       return { ...(await currentCornerBrief(db, input.cornerId))!, wake: outcome.wake ?? {
@@ -7383,104 +7312,6 @@ export class DaemonService {
     });
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });
     return brief!;
-  }
-  private async postCornerValidationStage(
-    input: Input<'postCornerValidationStage'>,
-    agentId: string,
-  ) {
-    const stages = CORNER_VALIDATION_STAGES;
-    const states = ['pending', 'running', 'passed', 'failed', 'skipped', 'not_applicable'];
-    if (
-      !stages.includes(input.stage) ||
-      !states.includes(input.status) ||
-      typeof input.evidence !== 'string' ||
-      input.evidence.length > 4_000 ||
-      ((input.status === 'passed' ||
-        input.status === 'failed' ||
-        input.status === 'skipped' ||
-        input.status === 'not_applicable') &&
-        !input.evidence.trim())
-    )
-      throw new Error('invalid validation stage or missing evidence');
-    const rawHeadSha = typeof input.headSha === 'string' ? input.headSha.trim().toLowerCase() : '';
-    return this.database.transaction(async (db) => {
-      const corner = (
-        await db.query<{
-          reviewer_agent_id: string | null;
-          parent_room_id: string;
-          workspace_id: string;
-          lifecycle: { pr?: { headSha?: string }; checks?: string };
-        }>(
-          `SELECT parent.reviewer_agent_id,parent.id parent_room_id,parent.workspace_id,fact.lifecycle
-         FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
-         JOIN corner_facts fact ON fact.corner_id=corner.id
-         WHERE corner.id=$1 AND corner.archived_at IS NULL FOR UPDATE OF corner`,
-          [input.cornerId],
-        )
-      ).rows[0];
-      if (!corner) throw new Error('corner not found');
-      await authorizeCommandOutput(
-        db,
-        input.cornerId,
-        agentId,
-        input.requestId,
-        input.generationId,
-      );
-      const current = await currentCornerBrief(db, input.cornerId);
-      if ((current?.revision ?? 0) !== input.briefRevision)
-        throw new Error('validation brief revision changed');
-      const currentHead = corner.lifecycle?.pr?.headSha;
-      // The accepted value is `draft` until this corner has a published pull
-      // request, and this corner's current head (full SHA, or an unambiguous
-      // short prefix of it) after publication. Every refusal names what is
-      // expected so an implementer never has to guess.
-      let headSha: string;
-      if (rawHeadSha === 'draft') headSha = 'draft';
-      else if (currentHead && /^[0-9a-f]{40}$/.test(rawHeadSha)) headSha = rawHeadSha;
-      else if (currentHead && /^[0-9a-f]{7,39}$/.test(rawHeadSha) && currentHead.startsWith(rawHeadSha))
-        headSha = currentHead;
-      else
-        throw new Error(
-          currentHead
-            ? `validation head must be this corner's current head (full 40-character SHA or an unambiguous short prefix): ${currentHead}`
-            : 'validation head must be "draft" until this corner has a published pull request',
-        );
-      if (currentHead && headSha !== currentHead)
-        throw new Error(
-          `validation head changed: this corner's current head is ${currentHead}`,
-        );
-      if (input.stage === 'review' && !(await isCornerReviewer(db, input.cornerId, agentId)))
-        throw new Error('only the configured reviewer records the review stage');
-      if (
-        input.stage === 'ci' &&
-        input.status === 'passed' &&
-        corner.lifecycle?.checks !== 'passing'
-      )
-        throw new Error('CI has not passed for this head');
-      await db.query(
-        `INSERT INTO corner_validation_stages(corner_id,brief_revision,head_sha,stage,status,evidence,actor_id)
-         VALUES($1,$2,$3,$4,$5,$6,$7)
-         ON CONFLICT(corner_id,brief_revision,head_sha,stage) DO UPDATE SET
-           status=EXCLUDED.status,evidence=EXCLUDED.evidence,actor_id=EXCLUDED.actor_id,updated_at=now()`,
-        [
-          input.cornerId,
-          input.briefRevision,
-          headSha,
-          input.stage,
-          input.status,
-          input.evidence,
-          agentId,
-        ],
-      );
-      return {
-        briefRevision: input.briefRevision,
-        headSha,
-        stage: input.stage,
-        status: input.status,
-        evidence: input.evidence,
-        actorId: agentId,
-      };
-    });
   }
   private async archiveCorner(cornerId: string, agentId: string) {
     const parentId = await this.database.transaction(async (database) => {
@@ -7986,7 +7817,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getCornerRestoreState: true,
   listCornerBriefRevisions: true,
   reviseCornerBrief: true,
-  postCornerValidationStage: true,
   getPrChecksStatus: true,
   approveCornerMerge: true,
   mergeCorner: true,

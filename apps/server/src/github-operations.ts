@@ -14,7 +14,7 @@ import {
   lockIdentityHandleWorkspaces,
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
-import { recordCornerMergeApproval } from './corner-merge-approval.js';
+import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { reportUnansweredCornerAsks } from './corner-close.js';
 import {
   advanceCorner,
@@ -180,7 +180,8 @@ export function reviewerWakeFromFacts(input: {
   parentMember: boolean;
   cornerMember: boolean;
   lifecycleChecks: string | undefined;
-  commandCheckState: string | null;
+  /** The run sits in `review` after a green head woke the reviewer. */
+  reviewWoken: boolean;
 }): { status: ReviewerWakeStatus; detail: string } {
   const label = input.reviewerHandle ? `@${input.reviewerHandle}` : 'the configured reviewer';
   if (!input.configuredReviewerId) {
@@ -201,7 +202,7 @@ export function reviewerWakeFromFacts(input: {
       detail: `${label} is configured as reviewer but is not a current member of this corner, so the checks-passed transition cannot wake them.`,
     };
   }
-  if (input.lifecycleChecks === 'passing' && input.commandCheckState === 'passing') {
+  if (input.reviewWoken) {
     return {
       status: 'dispatched',
       detail: `The checks-passed transition woke ${label}.`,
@@ -632,7 +633,8 @@ export class GitHubOperations {
         workspace_id: string;
         lifecycle: CornerLifecycleView;
         owner_agent_id: string | null;
-        command_check_state: string | null;
+        archived: boolean;
+        review_woken: boolean;
         configured_reviewer_id: string | null;
         reviewer_fallback_ids: string[];
         reviewer_identity_id: string | null;
@@ -640,7 +642,9 @@ export class GitHubOperations {
         corner_reviewer_id: string | null;
         reviewer_handle: string | null;
       }>(
-        `SELECT r.parent_id,parent.workspace_id,f.lifecycle,f.owner_agent_id,f.command_check_state,
+        `SELECT r.parent_id,parent.workspace_id,f.lifecycle,f.owner_agent_id,
+                r.archived_at IS NOT NULL archived,
+                (f.workflow_state='review' AND f.workflow_outcome IS DISTINCT FROM 'no_reviewer') review_woken,
                 parent.reviewer_agent_id configured_reviewer_id,
                 parent.reviewer_fallback_ids,
                 reviewer_identity.id reviewer_identity_id,
@@ -695,7 +699,7 @@ export class GitHubOperations {
       number,
       headSha: pr.headSha,
     });
-    const { approvalPending, reviewerIsAuthor, reviewerExists } = gate;
+    const { reviewerIsAuthor, reviewerExists } = gate;
     const listed = corner.reviewer_fallback_ids.length
       ? reviewerList({
           reviewer_agent_id: configuredReviewerId,
@@ -718,7 +722,6 @@ export class GitHubOperations {
       : configuredReviewerId && corner.reviewer_handle
         ? `@${corner.reviewer_handle}`
         : null;
-    const reviewerLabel = reviewer ?? 'the configured reviewer';
     const reviewerWake = reviewerIsAuthor
       ? { status: 'not_required' as const, detail: "No agent review is possible because the reviewer is this corner's implementer; a Workspace owner or admin must order the merge." }
       : listLabel
@@ -727,7 +730,7 @@ export class GitHubOperations {
           candidates: listed.filter((id) => id !== corner.owner_agent_id),
           listLabel,
           lifecycleChecks: corner.lifecycle.checks,
-          commandCheckState: corner.command_check_state,
+          reviewWoken: corner.review_woken,
         })
       : reviewerWakeFromFacts({
           configuredReviewerId,
@@ -739,23 +742,23 @@ export class GitHubOperations {
             configuredReviewerId && corner.reviewer_identity_id && corner.corner_reviewer_id,
           ),
           lifecycleChecks: corner.lifecycle.checks,
-          commandCheckState: corner.command_check_state,
+          reviewWoken: corner.review_woken,
         });
-    if (!reviewerIsAuthor && corner.lifecycle.checks !== (checks === 'passed' ? 'passing' : checks === 'failed' ? 'failing' : 'pending'))
-      reviewerWake.detail += ` Recorded checks (${corner.lifecycle.checks ?? 'unknown'}) are behind the live rollup (${checks}); this is the recorded dispatch state.`;
-    const approval = listLabel ? `approve_merge from ${reviewerLabel}` : `${reviewerLabel}'s approve_merge`;
-    const woken = listLabel ? `the first healthy agent on ${listLabel}` : reviewerLabel;
-    const rule = reviewerIsAuthor
-      ? `You are this corner's implementer and also this Room's configured reviewer (${reviewerLabel}), so no other agent can review your work and approve_merge cannot record your own PASS. Nothing merges this corner without a human's yes: ask a current Workspace owner or admin in this corner to approve, and once they do, call order_corner_merge for their order.`
-      : configuredReviewerId
-        ? reviewerWake.status === 'unreachable'
-          ? `Only ${approval} records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. ${reviewerWake.detail} Do not invent a cause and do not poll this gate with a schedule. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
-          : `Only ${approval} records PASS for the reviewer outcome; tagging or asking any other agent to review cannot record an approval or change this verdict. Do not create a schedule to poll this gate — the checks-passed transition wakes ${woken} automatically. No Room owner/admin approve control exists in the app yet, so only ${reviewerLabel} can record PASS.`
-        : 'This Room has no configured reviewer. The reviewer outcome is not failed, but the autonomous merge gate still requires reviewerExists=true, so nothing merges this corner on its own; a current Workspace owner or admin can still order this exact head merged with order_corner_merge.';
-    const mergeAllowed = gate.expressMergeOrdered || (checks === 'passed' && gate.open);
+    const mergeAllowed = checks === 'passed' && gate.open;
+    // Where the corner stands, from the live facts above: building ->
+    // checking -> waiting for a yes -> merged (or closed).
+    const stage = pr.merged
+      ? ('merged' as const)
+      : corner.archived
+        ? ('closed' as const)
+        : checks === 'passed'
+          ? ('waiting_for_yes' as const)
+          : checks === 'failed'
+            ? ('building' as const)
+            : ('checking' as const);
     return {
+      stage,
       checks,
-      recordedChecks: corner.lifecycle.checks,
       checkCount: rollup.total,
       checkStates: {
         passed: rollup.checks.filter((check) => check.status === 'passed').length,
@@ -773,17 +776,14 @@ export class GitHubOperations {
       },
       pullRequest: pr.url,
       headSha: pr.headSha,
-      approvalPending,
+      approved: gate.approved,
       reviewer,
       reviewerExists,
       reviewerIsAuthor,
       reviewerWake,
       held: gate.held,
       holds: gate.holds,
-      isWorkerYolo: gate.isWorkerYolo,
-      expressMergeOrdered: gate.expressMergeOrdered,
       mergeAllowed,
-      rule,
     };
   }
 
@@ -793,7 +793,7 @@ export class GitHubOperations {
     candidates: readonly string[];
     listLabel: string;
     lifecycleChecks: string | undefined;
-    commandCheckState: string | null;
+    reviewWoken: boolean;
   }): Promise<{ status: ReviewerWakeStatus; detail: string }> {
     const health = await roomAgentHealth(this.database, input.parentId, input.candidates);
     if (!health.size)
@@ -806,7 +806,7 @@ export class GitHubOperations {
         status: 'unreachable',
         detail: `Every agent on ${input.listLabel} is offline, recently failed, or out of credit.`,
       };
-    if (input.lifecycleChecks === 'passing' && input.commandCheckState === 'passing')
+    if (input.reviewWoken)
       return {
         status: 'dispatched',
         detail: `The checks-passed transition woke the first healthy agent on ${input.listLabel}.`,
@@ -820,85 +820,39 @@ export class GitHubOperations {
     };
   }
 
+  /**
+   * The phone's approve: a Workspace owner or admin's yes on the current head
+   * (`recordPersonMergeYes`), then the one merge path, `landCorner`. Checks
+   * must be green and no hold may stand; a yes given early merges when the
+   * implementer's `merge_corner` runs after green checks.
+   */
   async approveCornerMerge(viewerId: string, input: Input<'approveCornerMerge'>) {
-    const target = (
-      await this.database.query<{
-        archived_at: Date | null;
-        lifecycle: CornerLifecycleView;
-        feature_branch: string | null;
-        repository_id: string;
-        installation_id: string;
-        full_name: string;
-      }>(
-        `SELECT corner.archived_at,fact.lifecycle,fact.feature_branch,
-           repository.repository_id,repository.installation_id,repository.full_name
-         FROM rooms corner
-         JOIN memberships manager ON manager.room_id=corner.id AND manager.identity_id=$2
-           AND manager.role IN ('owner','admin') AND manager.removed_at IS NULL
-         JOIN rooms parent ON parent.id=corner.parent_id
-         JOIN corner_facts fact ON fact.corner_id=corner.id
-         JOIN github_repositories repository ON repository.installation_id=parent.github_installation_id
-           AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
-             COALESCE(parent.repository_remote,parent.repository_key,''),
-             '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+    const corner = (
+      await this.database.query<{ archived: boolean; lifecycle: CornerLifecycleView }>(
+        `SELECT corner.archived_at IS NOT NULL archived,fact.lifecycle
+         FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
          WHERE corner.id=$1`,
-        [input.cornerId, viewerId],
+        [input.cornerId],
       )
     ).rows[0];
-    if (!target) throw new Error('corner merge access denied');
-    const pullRequest = target.lifecycle.pr;
-    if (!pullRequest) throw new Error('corner has no pull request to merge');
-    if (target.archived_at || target.lifecycle.lifecycle === 'done') {
+    const pullRequest = corner?.lifecycle.pr;
+    if (!corner || !pullRequest) throw new Error('corner has no pull request to merge');
+    if (corner.archived || corner.lifecycle.lifecycle === 'done')
       return { status: 'already-merged' as const, pullRequestUrl: pullRequest.url };
-    }
-    if (target.lifecycle.checks === 'failing' && !input.force) {
-      const names = target.lifecycle.checksSummary?.failing ?? [];
-      throw new Error(
-        `corner checks are failing${names.length ? `: ${names.join(', ')}` : ''}; retry with force=true`,
-      );
-    }
-    const recorded = await recordCornerMergeApproval(this.database, {
-      cornerId: input.cornerId,
-      approvedBy: viewerId,
-      force: input.force === true,
-      pullRequestNumber: pullRequest.number,
-      headSha: pullRequest.headSha,
-    });
-    if (!recorded) {
-      return { status: 'already-requested' as const, pullRequestUrl: pullRequest.url };
-    }
-    try {
-      await this.app.mergePullRequest(
-        Number(target.installation_id),
-        Number(target.repository_id),
-        target.full_name,
-        pullRequest.number,
-        pullRequest.headSha,
-      );
-      if (target.feature_branch) {
-        await this.app.deleteBranch(
-          Number(target.installation_id),
-          Number(target.repository_id),
-          target.full_name,
-          target.feature_branch,
-        );
-      }
-    } catch (error) {
-      await this.database.query(
-        `DELETE FROM corner_merge_approvals
-         WHERE corner_id=$1 AND approved_by=$2 AND pull_request_number=$3 AND head_sha=$4`,
-        [input.cornerId, viewerId, pullRequest.number, pullRequest.headSha],
-      );
-      throw error;
-    }
-    return { status: 'merge-requested' as const, pullRequestUrl: pullRequest.url };
+    const yes = await recordPersonMergeYes(this.database, input.cornerId, viewerId);
+    await this.landCorner(input.cornerId);
+    return {
+      status: yes.recorded ? ('merge-requested' as const) : ('already-requested' as const),
+      pullRequestUrl: pullRequest.url,
+    };
   }
 
   /**
-   * Squash-merges one `land` corner at its exact head when the complete gate
-   * (`pr_checks_status`'s `mergeAllowed`) is open on GitHub's current head.
-   * Called by the implementer's `merge_corner`, a human's `order_corner_merge`,
-   * and recovery of an unfinished attempt; the server never starts it alone.
+   * The one merge path. Squash-merges a corner at its exact head when
+   * `pr_checks_status`'s `mergeAllowed` is true on GitHub's current head:
+   * live checks green, a non-author yes on that head, and no hold. Called by
+   * the implementer's `merge_corner`, a person's yes (`order_corner_merge` or
+   * the phone's approve), and recovery of an unfinished attempt.
    * At most one attempt per head: the attempt is claimed under the run lock
    * before GitHub is called. The merge webhook then lands the corner; a
    * refusal returns it to the implementer with GitHub's reason.
@@ -1951,7 +1905,6 @@ export class GitHubOperations {
     const lifecycle = { ...previous, ...patch };
     await database.query(
       `UPDATE corner_facts SET lifecycle=$2::jsonb,
-       command_check_state=CASE WHEN lifecycle->>'checks' IS DISTINCT FROM $2::jsonb->>'checks' THEN NULL ELSE command_check_state END,
        updated_at=now() WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );

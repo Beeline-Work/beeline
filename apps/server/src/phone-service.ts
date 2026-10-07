@@ -19,7 +19,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { composioToolkitForApp, type ComposioApps } from './composio-apps.js';
 import { appIdentity } from '@beeline/api-contract/workbench';
 import { beginComposioAppSignIn, completeComposioSignIn } from './app-connections.js';
-import { CORNER_VALIDATION_STAGES, currentCornerBrief } from './corner-brief.js';
+import { currentCornerBrief } from './corner-brief.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
@@ -1761,28 +1761,6 @@ export class PhoneService {
       () => currentCornerBrief(this.database, roomId).catch(() => undefined),
       undefined,
     );
-    const cornerValidationPromise = cornerBriefPromise.then((brief) =>
-      brief
-        ? measured(
-            'validation',
-            this.database
-              .query<{
-                stage: string;
-                status: string;
-                evidence: string;
-              }>(
-                `SELECT stage.stage,stage.status,stage.evidence FROM corner_validation_stages stage
-       JOIN corner_facts fact ON fact.corner_id=stage.corner_id
-       WHERE stage.corner_id=$1 AND stage.brief_revision=$2
-         AND stage.head_sha=COALESCE(fact.lifecycle->'pr'->>'headSha','draft')
-       ORDER BY stage.stage`,
-                [roomId, brief.revision],
-              )
-              .then((result) => result.rows)
-              .catch(() => []),
-          )
-        : [],
-    );
     const boundAppPromise = cornerRead(
       'bound-app',
       async () =>
@@ -1867,7 +1845,6 @@ export class PhoneService {
       allowAutoMerge,
       facts,
       cornerBrief,
-      cornerValidation,
       boundApp,
       cornerAppRows,
       briefingRows,
@@ -1886,7 +1863,6 @@ export class PhoneService {
       allowAutoMergePromise,
       factsPromise,
       cornerBriefPromise,
-      cornerValidationPromise,
       boundAppPromise,
       cornerAppRowsPromise,
       briefingRowsPromise,
@@ -1986,18 +1962,6 @@ export class PhoneService {
                 url: `${this.publicOrigin}/v1/media/${file.objectId}`,
               })),
             },
-          }
-        : {}),
-      ...(cornerBrief
-        ? {
-            cornerValidation: CORNER_VALIDATION_STAGES.map(
-              (stage) =>
-                cornerValidation.find((record) => record.stage === stage) ?? {
-                  stage,
-                  status: 'pending',
-                  evidence: '',
-                },
-            ),
           }
         : {}),
       ...((parent ?? room).repository_key && (parent ?? room).repository_remote

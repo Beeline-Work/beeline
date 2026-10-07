@@ -79,7 +79,7 @@ export function cornerRunFromLifecycle(input: {
  * | ------------------------------------------- | -------------------------- |
  * | `landed`, `closed`, or an archived Room     | archived                   |
  * | any other, while a turn runs                | working                    |
- * | `checks`, `review`, `land`                  | review                     |
+ * | `checks`, `review`                          | review                     |
  * | `implement` reached by `failing`            | review, checks-failed      |
  * | `ask_human`                                 | waiting, question          |
  * | `implement` reached by `failed`             | waiting, failed            |
@@ -92,7 +92,7 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   if (facts.archived || run.state === 'landed' || run.state === 'closed')
     return { state: 'archived' };
   if (facts.turnRunning) return { state: 'working' };
-  if (run.state === 'checks' || run.state === 'review' || run.state === 'land')
+  if (run.state === 'checks' || run.state === 'review')
     return { state: 'review' };
   if (run.state === 'implement' && run.outcome === 'failing')
     return { state: 'review', reason: 'checks-failed' };

@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { agentToolsFor, approveMerge, prChecksStatus } from './read-only-mcp.js';
+import { approveMerge, prChecksStatus } from './read-only-mcp.js';
 
 const url = 'https://github.com/owner/widgets/pull/614';
 let restore: Record<string, unknown>, items: Record<string, unknown>[];
-let checks: string, approvalPending: boolean;
-let reviewer: string | null, reviewerExists: boolean, reviewerIsAuthor: boolean, gateRule: string;
-let held: boolean, isWorkerYolo: boolean, mergeAllowed: boolean, expressMergeOrdered: boolean;
+let checks: string, approved: boolean;
+let reviewer: string | null, reviewerExists: boolean, reviewerIsAuthor: boolean;
+let held: boolean, mergeAllowed: boolean;
 let reviewerWake: { status: string; detail: string } | undefined;
 let calls: { name: string; input: Record<string, unknown> }[];
 let checkTally: Record<string, unknown>;
@@ -21,16 +21,12 @@ beforeEach(() => {
   restore = { objective: 'Review PR 614', lifecycle: { checks: 'unknown', lifecycle: 'working' } };
   items = [];
   checks = 'passed';
-  approvalPending = false;
+  approved = true;
   reviewer = '@reviewer';
   reviewerExists = true;
   reviewerIsAuthor = false;
   held = false;
-  isWorkerYolo = true;
-  expressMergeOrdered = false;
   mergeAllowed = true;
-  gateRule =
-    "Only @reviewer's approve_merge clears this gate; tagging or asking any other agent to review cannot record an approval or change this verdict.";
   reviewerWake = {
     status: 'dispatched',
     detail: 'The checks-passed transition woke @reviewer.',
@@ -49,21 +45,19 @@ beforeEach(() => {
             ? { archived: false }
             : name === 'getPrChecksStatus'
               ? {
+                  stage: 'waiting_for_yes',
                   checks,
                   ...checkTally,
                   pullRequest: url,
                   headSha: 'a'.repeat(40),
-                  approvalPending,
+                  approved,
                   reviewer,
                   reviewerExists,
                   reviewerIsAuthor,
                   ...(reviewerWake ? { reviewerWake } : {}),
                   held,
                   holds: held ? [{ id: 'hold-1', actorId: 'human', standing: 'owner', setAt: '2026-10-02' }] : [],
-                  isWorkerYolo,
-                  expressMergeOrdered,
                   mergeAllowed,
-                  rule: gateRule,
                 }
               : name === 'approveCornerMerge'
                 ? { status: 'approved', pullRequestNumber: 614, headSha: 'a'.repeat(40) }
@@ -84,7 +78,7 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     expect(status).toMatchObject({
       held: false,
       mergeAllowed: false,
-      approvalPending: true,
+      approved: false,
     });
     expect(status).not.toHaveProperty('didHumanSayDontMerge');
     expect(status.next).toContain('The PR URL is not yet durable');
@@ -135,7 +129,7 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     expect(first).toMatchObject({
       held: false,
       mergeAllowed: true,
-      approvalPending: false,
+      approved: true,
     });
     expect(first).not.toHaveProperty('didHumanSayDontMerge');
     held = true;
@@ -146,69 +140,44 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
       held: true,
       holds: [{ id: 'hold-1', actorId: 'human', standing: 'owner', setAt: '2026-10-02' }],
       mergeAllowed: false,
-      approvalPending: true,
+      approved: true,
     });
     expect(second).not.toHaveProperty('didHumanSayDontMerge');
-    // The hold and yolo mode are the server's facts: no local lookup remains.
+    // The hold is the server's fact: no local lookup remains.
     expect(calls.map((call) => call.name)).not.toContain('getWorkspaceRoster');
     expect(calls.map((call) => call.name)).not.toContain('getAgentConfiguration');
   });
   it.each([
     {
-      name: 'worker yolo off after reviewer PASS',
-      setup: () => {
-        isWorkerYolo = false;
-        mergeAllowed = false;
-      },
-      expected: { isWorkerYolo: false, mergeAllowed: false, approvalPending: true },
-    },
-    {
-      name: 'no configured reviewer with worker yolo on',
+      name: 'no configured reviewer and no yes',
       setup: () => {
         reviewer = null;
         reviewerExists = false;
+        approved = false;
         mergeAllowed = false;
       },
-      expected: { reviewerExists: false, mergeAllowed: false, approvalPending: true },
+      expected: { reviewerExists: false, approved: false, mergeAllowed: false },
     },
     {
-      name: 'reviewer PASS with worker yolo on and no human hold',
+      name: 'a yes on the current head and no hold',
       setup: () => undefined,
-      expected: {
-        reviewFailed: false,
-        isWorkerYolo: true,
-        held: false,
-        mergeAllowed: true,
-        approvalPending: false,
-      },
+      expected: { approved: true, held: false, mergeAllowed: true },
     },
     {
-      name: 'reviewer FAIL or no PASS on the current head',
+      name: 'no yes on the current head',
       setup: () => {
-        approvalPending = true;
+        approved = false;
         mergeAllowed = false;
       },
-      expected: { reviewFailed: true, mergeAllowed: false, approvalPending: true },
+      expected: { approved: false, mergeAllowed: false },
     },
     {
-      name: 'human hold despite reviewer PASS and worker yolo on',
+      name: 'a hold despite a yes',
       setup: () => {
         held = true;
         mergeAllowed = false;
       },
-      expected: { held: true, approvalPending: true },
-    },
-    {
-      name: 'a Workspace owner or admin expressly ordered this head merged, with no reviewer at all',
-      setup: () => {
-        reviewer = null;
-        reviewerExists = false;
-        held = true;
-        isWorkerYolo = false;
-        expressMergeOrdered = true;
-        mergeAllowed = true;
-      },
-      expected: { reviewerExists: false, held: true, isWorkerYolo: false, expressMergeOrdered: true, mergeAllowed: true },
+      expected: { approved: true, held: true, mergeAllowed: false },
     },
   ])('reports the server merge gate: $name', async ({ setup, expected }) => {
     setup();
@@ -267,17 +236,16 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     mergeAllowed = false;
     expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
       checks: 'passed',
-      reviewFailed: false,
-      isWorkerYolo: true,
+      approved: true,
       held: false,
       reviewerExists: true,
       mergeAllowed: false,
-      approvalPending: true,
     });
   });
-  it('passes through the named reviewer and folds the server rule into the merge-conditions rule', async () => {
+  it('passes through the named reviewer and returns facts, not a rule', async () => {
     const result = JSON.parse(await prChecksStatus({ pullRequest: 614 }));
     expect(result).toMatchObject({
+      stage: 'waiting_for_yes',
       reviewer: '@reviewer',
       reviewerIsAuthor: false,
       reviewerWake: {
@@ -285,27 +253,18 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
         detail: 'The checks-passed transition woke @reviewer.',
       },
     });
-    expect(result.rule).toContain(gateRule);
-    expect(result.rule).toContain(
-      'When mergeAllowed is true the implementer calls merge_corner to squash-merge this exact head; no agent runs gh pr merge.',
-    );
-    expect(result.rule).toContain('the server wakes the implementer with its reason');
-    expect(result.rule).toContain('missing state is never consent');
-    expect(result.rule).toContain('expressMergeOrdered is true');
-    expect(result.rule).toContain('order_corner_merge');
-    expect(result.rule).not.toContain('YOU merge');
-    expect(result.rule).not.toContain('The server never merges');
-    expect(result.rule).not.toContain('didHumanSayDontMerge');
+    expect(result).not.toHaveProperty('rule');
+    expect(result).not.toHaveProperty('isWorkerYolo');
   });
-  it('reports self-review as no gate when the opener is also the reviewer', async () => {
+  it('reports a self-reviewed corner as waiting for a person\'s yes', async () => {
     reviewerIsAuthor = true;
-    gateRule =
-      "You opened this corner and are also this Room's configured reviewer (@reviewer), so self-review is not required.";
+    approved = false;
+    mergeAllowed = false;
     expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
       reviewer: '@reviewer',
       reviewerIsAuthor: true,
-      mergeAllowed: true,
-      approvalPending: false,
+      approved: false,
+      mergeAllowed: false,
     });
   });
   it('fails closed on a server error instead of using green chat prose', async () => {
@@ -321,7 +280,7 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
       reason: `no checks are recorded for PR #614 (head ${'a'.repeat(40)}); the PR may have been opened from a branch that is not this corner's, or checks have not reported yet`,
       held: false,
       mergeAllowed: false,
-      approvalPending: true,
+      approved: true,
     });
   });
   it('asks for a PR when none is known without interpreting chat as authorization', async () => {
@@ -349,18 +308,5 @@ describe('approve_merge', () => {
       'headSha must be a full 40-character SHA',
     );
     expect(calls).toEqual([]);
-  });
-});
-
-describe('tool descriptions agree with what the server will accept', () => {
-  const tool = (name: string) =>
-    agentToolsFor(true, false, true, true).find((candidate) => candidate.name === name)!;
-
-  it('record_validation_stage accepts a short SHA and reserves review for the reviewer', () => {
-    const description = tool('record_validation_stage').description;
-    expect(description).toContain('short prefix');
-    expect(description).toContain('until this corner has a published pull request');
-    expect(description).toContain('full 40-character SHA');
-    expect(description).toContain('configured reviewer records the review stage');
   });
 });

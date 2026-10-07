@@ -593,7 +593,7 @@ it('wakes the opener for failed checks even after a reviewer turn and retries a 
   await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
   const headSha = 'e'.repeat(40);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -667,7 +667,7 @@ it('recovers a dirty PR lifecycle once per head and retries an undelivered confl
 it('keeps a failed-check wake retryable while its opener is unreachable', async () => {
   const headSha = '9'.repeat(40);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -734,7 +734,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
   expect(resume?.action).toBe('resume');
   expect(resume?.turnRequestId).toBe(c!.turnRequestId);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
     [C],
   );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
@@ -761,7 +761,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
     A,
   ]);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"failing"}',command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle='{"checks":"failing"}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -776,7 +776,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
   await db.query(`DELETE FROM agent_commands`);
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -785,8 +785,8 @@ it('routes subscribed events, grants and changed corner checks through actions',
     verb: 'passed a check',
     kind: 'check-passed',
   });
-  expect(await commands(B, C)).toHaveLength(1);
-  expect((await commands(B, C))[0]?.reason).toBe('corner_check');
+  // No reviewer: green checks wake nobody and wait for a person's yes.
+  expect(await commands(B, C)).toHaveLength(0);
 });
 it('holds the green review wake while the corner worker still holds a live turn', async () => {
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
@@ -806,7 +806,7 @@ it('holds the green review wake while the corner worker still holds a live turn'
   await claim(workerCommand!, 'gw');
 
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -835,7 +835,7 @@ it('holds the green review wake while the corner worker still holds a live turn'
   // This suite shares one store, so leave none of the above behind.
   await db.query(`DELETE FROM agent_commands`);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
     [C],
   );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
@@ -847,7 +847,7 @@ it('does not wake the author or consume a green transition when the configured r
     A,
   ]);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}',command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -881,7 +881,7 @@ it('does not wake the author or consume a green transition when the configured r
 it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green head', async () => {
   const headSha = '7'.repeat(40);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state='passing' WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -930,7 +930,7 @@ it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green he
 it('recovers a green head whose earlier GitHub note never dispatched its reviewer', async () => {
   const headSha = '8'.repeat(40);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -1008,7 +1008,7 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
   );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -1040,7 +1040,7 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
   await claim(fix!);
   await result(fix!, 'Pushed the fix');
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -1059,25 +1059,10 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
   });
   const [secondReview] = await commands(A, C);
   await claim(secondReview!, 'g2');
-  await daemon.execute(
-    'postCornerValidationStage',
-    {
-      cornerId: C,
-      requestId: secondReview!.turnRequestId,
-      generationId: 'g2',
-      briefRevision: 2,
-      headSha: approvedHead,
-      stage: 'review',
-      status: 'passed',
-      evidence:
-        'AC-1 met: status rendered. AC-2 met: Responsible owner matches the approved mock. PROD-AC-2-1 resolved.',
-    },
-    A,
-  );
   await expect(
     daemon.execute(
       'approveCornerMerge',
-      { cornerId: C, headSha: approvedHead, briefRevision: 2 },
+      { cornerId: C, headSha: approvedHead },
       A,
     ),
   ).resolves.toEqual({ status: 'approved', pullRequestNumber: 7, headSha: approvedHead });
@@ -1087,15 +1072,14 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
     (
       await db.query(
         `SELECT 1 FROM corner_merge_approvals
-         WHERE corner_id=$1 AND approved_by=$2 AND pull_request_number=7 AND head_sha=$3
-           AND brief_revision=2`,
+         WHERE corner_id=$1 AND approved_by=$2 AND pull_request_number=7 AND head_sha=$3`,
         [C, A, approvedHead],
       )
     ).rowCount,
   ).toBe(1);
   // The PASS wakes the implementer to merge, alongside the reviewer's tag.
   expect((await commands(B, C)).map((command) => command.source.body)).toEqual(
-    expect.arrayContaining(['@system handed off land', `@goosy approved ${approvedHead}, merge`]),
+    expect.arrayContaining(['@system handed off review', `@goosy approved ${approvedHead}, merge`]),
   );
 });
 // The merge webhook writes the parent card, then reports the landing to the

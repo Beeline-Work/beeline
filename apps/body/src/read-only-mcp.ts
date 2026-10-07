@@ -113,7 +113,6 @@ import { readVault } from './connector-squire.js';
 import { sandboxDevicePath } from './bwrap-sandbox.js';
 import { isNetworkFailure } from './network-failure.js';
 import {
-  VALIDATION_STAGE_OWNERSHIP,
   MEMORY_UPKEEP_RULE,
   SEARCH_MEMORY_FIRST_RULE,
   UPGRADE_INTENT_RULE,
@@ -1141,7 +1140,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'order_corner_merge',
     description:
-      'Record this turn’s original human requester’s express instruction to merge the corner’s current pull request now. Only a current Workspace owner or admin’s order is recorded; anyone else is refused. It carries on its own - pr_checks_status reports mergeAllowed true for this head regardless of checks, a hold, worker yolo mode, or whether a reviewer is configured. Chat never orders a merge directly.',
+      'Record this turn’s original human requester’s yes to merge the corner’s current pull request head. Only a current Workspace owner or admin’s yes is recorded; anyone else is refused. The server merges at once when checks are green and no hold stands; otherwise the yes stays on this head until they are. A new commit cancels it. Chat never orders a merge directly.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1222,39 +1221,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
         cornerId: { type: 'string', format: 'uuid', description: 'Omit inside the active corner.' },
         limit: { type: 'integer', minimum: 1, maximum: 20, default: 1 },
         beforeRevision: { type: 'integer', minimum: 1 },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'record_validation_stage',
-    description:
-      `Record one observed stage with concrete evidence. Pass headSha="draft" until this corner has a published pull request; after publication pass this corner's current PR head as a full 40-character SHA or an unambiguous short prefix. ${VALIDATION_STAGE_OWNERSHIP}`,
-    inputSchema: {
-      type: 'object',
-      required: ['briefRevision', 'headSha', 'stage', 'status', 'evidence'],
-      properties: {
-        briefRevision: { type: 'integer', minimum: 0 },
-        headSha: { type: 'string' },
-        stage: {
-          type: 'string',
-          enum: [
-            'intent',
-            'base',
-            'review',
-            'tests',
-            'docs',
-            'lint_types',
-            'publication',
-            'ci',
-            'final_authorization',
-          ],
-        },
-        status: {
-          type: 'string',
-          enum: ['pending', 'running', 'passed', 'failed', 'skipped', 'not_applicable'],
-        },
-        evidence: { type: 'string', maxLength: 4000 },
       },
       additionalProperties: false,
     },
@@ -1430,7 +1396,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'pr_checks_status',
     description:
-      'Read GitHub checks and the complete merge-authority gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; use the PR named in your objective or conversation. Defaults to this corner’s own PR. The result reports the configured reviewer outcome, worker yolo mode, existing human hold, and whether a reviewer is configured; mergeAllowed is true (and approvalPending false) only when checks pass and all four authorize the merge; the implementer then calls merge_corner, and no agent runs gh pr merge. reviewerWake says whether the configured reviewer was woken. Never infer passing checks from local git, gh output, or chat prose, and never invent a cause for a missing review.',
+      'Read live GitHub checks and the merge gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; defaults to this corner’s own PR. Facts only: stage, checks, approved (a non-author yes on this head: a reviewer agent’s PASS or a Workspace owner or admin), held, and mergeAllowed = checks passed AND approved AND not held. reviewerWake says whether the configured reviewer was woken. No agent runs gh pr merge. Never infer passing checks from local git, gh output, or chat prose.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1445,7 +1411,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'approve_merge',
     description:
-      'Record the configured reviewer’s PASS for the exact pull-request head and brief revision you reviewed. The implementer is then woken to merge it with merge_corner once the whole gate is open (checks green, worker yolo on, no human hold); no agent runs gh pr merge. Withhold PASS while a human’s question or proposal in the corner discussion has no answer, and name it. The server rejects a caller who is not the parent Room’s configured reviewer, a head that is not the pull request’s current head, and a stale brief revision. Call it only after a complete beeline-review PASS whose outline ledger has no missing or unverified user story - otherwise send the brief back; use that review’s full head SHA and assigned brief revision, then reply that you approved that SHA without tagging the author. Do not tell the author to merge.',
+      'Record the configured reviewer’s PASS (a yes) for the exact pull-request head you reviewed. The implementer is then woken to merge it with merge_corner; it merges when checks are green and no hold stands. No agent runs gh pr merge. Withhold PASS while a human’s question or proposal in the corner discussion has no answer, and name it. The server rejects a caller who is not the parent Room’s configured reviewer, and a head that is not the pull request’s current head. Call it only after a complete beeline-review PASS whose outline ledger has no missing or unverified user story - otherwise send the brief back; use that review’s full head SHA, then reply that you approved that SHA without tagging the author. Do not tell the author to merge.',
     inputSchema: {
       type: 'object',
       required: ['headSha'],
@@ -1454,11 +1420,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string',
           pattern: '^[0-9a-fA-F]{40}$',
           description: 'The exact 40-character Git head SHA that passed review.',
-        },
-        briefRevision: {
-          type: 'integer',
-          minimum: 1,
-          description: 'The assigned brief revision reviewed; omit only on legacy corners.',
         },
       },
       additionalProperties: false,
@@ -1828,7 +1789,6 @@ export function agentToolsFor(
     // From a corner, open_corner opens a sibling corner in the parent Room.
     if (tool.name === 'open_corner') return !directMessage;
     if (tool.name === 'revise_corner_brief') return !directMessage;
-    if (tool.name === 'record_validation_stage') return cornerTurn;
     if (tool.name === 'upgrade_corner_to_code') return cornerTurn && agentMayUpgradeCorner;
     if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
     if (
@@ -2328,10 +2288,8 @@ async function turnPromptSectionIds(): Promise<string[]> {
 
 /**
  * Daemon operations this helper may safely send again after a network-level
- * failure. A read has no side effect; `postCornerValidationStage` is an
- * upsert keyed on (corner, revision, head, stage), so a repeated write lands
- * on the same row. Everything else is treated as an ordinary write whose
- * retry could duplicate work (a post, an attachment, a payment), so it is
+ * failure. A read has no side effect. Everything else is treated as an
+ * ordinary write whose retry could duplicate work (a post, an attachment, a payment), so it is
  * sent once and its failure says the call may not have run. An operation
  * that carries an idempotency key is safe whatever its name.
  */
@@ -2358,14 +2316,13 @@ const SAFE_TO_REPEAT_DAEMON_OPERATIONS: ReadonlySet<string> = new Set([
   'retrieveLinkSpendRequest',
   'searchInstitutionalHistory',
   'searchInstitutionalMemory',
-  'postCornerValidationStage',
 ]);
 
 const DAEMON_NETWORK_RETRY_LIMIT = 2;
 const DAEMON_NETWORK_RETRY_BASE_MS = 200;
 
-/** Whether a failed daemon call may be sent again: a read or a known
- *  idempotent write, or any call that carries its own idempotency key. */
+/** Whether a failed daemon call may be sent again: a read, or any call
+ *  that carries its own idempotency key. */
 export function daemonOperationIsSafeToRepeat(name: string, input: JsonObject): boolean {
   if (SAFE_TO_REPEAT_DAEMON_OPERATIONS.has(name)) return true;
   return typeof input.idempotencyKey === 'string' && input.idempotencyKey.length > 0;
@@ -2560,22 +2517,6 @@ async function readCornerBrief(args: JsonObject): Promise<string> {
   );
 }
 
-async function recordValidationStage(args: JsonObject): Promise<string> {
-  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
-  const requestId = (await activeCommandContext()).requestId;
-  return JSON.stringify(
-    await daemonExecute('postCornerValidationStage', {
-      cornerId,
-      requestId,
-      briefRevision: args.briefRevision as number,
-      headSha: args.headSha as string,
-      stage: args.stage as import('@beeline/api-contract/daemon').CornerValidationStageName,
-      status: args.status as import('@beeline/api-contract/daemon').CornerValidationStage['status'],
-      evidence: args.evidence as string,
-    }),
-  );
-}
-
 /**
  * Close the corner this tool is running in, chat-only or repository-backed.
  *
@@ -2705,38 +2646,26 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
           ? (tally ?? 'one or more recorded checks failed')
           : (tally ?? 'recorded checks are still pending');
   const reviewer = typeof verdict?.reviewer === 'string' ? verdict.reviewer : null;
-  const reviewerExists = verdict?.reviewerExists === true;
-  const reviewerIsAuthor = verdict?.reviewerIsAuthor === true;
-  const reviewerRule = typeof verdict?.rule === 'string' ? verdict.rule : undefined;
   const reviewerWake =
     verdict?.reviewerWake && typeof verdict.reviewerWake === 'object'
       ? verdict.reviewerWake
       : undefined;
-  // The merge gate is the server's: it owns the human hold, the worker's yolo
-  // mode and the reviewer outcome; merge_corner merges only through it.
-  const reviewFailed = verdict ? verdict.approvalPending !== false : true;
-  const held = verdict?.held === true;
-  const isWorkerYolo = verdict?.isWorkerYolo === true;
-  const expressMergeOrdered = verdict?.expressMergeOrdered === true;
-  const mergeAllowed = verdict?.mergeAllowed === true;
-  const mergeConditionsRule =
-    'When mergeAllowed is true the implementer calls merge_corner to squash-merge this exact head; no agent runs gh pr merge. mergeAllowed is true when expressMergeOrdered is true - a current Workspace owner or admin ordered this exact head merged with order_corner_merge, which carries on its own and is never re-gated behind checks, held, isWorkerYolo, or reviewerExists - or otherwise when checks passed, reviewFailed is false, isWorkerYolo is true, held is false, and reviewerExists is true; missing state is never consent. If GitHub refuses the merge (branch behind its target, conflict, moved head, permissions), the server wakes the implementer with its reason: bring the branch up to date (gh pr update-branch, or merge the target branch in) and push, and the new head needs green checks and a fresh reviewer PASS before it can merge.';
+  // The merge gate is the server's: mergeAllowed = checks passed, approved
+  // (a non-author yes on this head), and not held.
   return JSON.stringify({
+    ...(typeof verdict?.stage === 'string' ? { stage: verdict.stage } : {}),
     checks,
     reason,
     ...(checkCount !== undefined ? { checkCount } : {}),
     ...(checkStates ? { checkStates } : {}),
     ...(headSha ? { headSha } : {}),
-    held,
+    approved: verdict?.approved === true,
+    held: verdict?.held === true,
     ...(verdict?.holds ? { holds: verdict.holds } : {}),
-    reviewFailed,
-    isWorkerYolo,
-    reviewerExists,
-    expressMergeOrdered,
-    mergeAllowed,
-    approvalPending: !mergeAllowed,
+    mergeAllowed: verdict?.mergeAllowed === true,
     reviewer,
-    reviewerIsAuthor,
+    reviewerExists: verdict?.reviewerExists === true,
+    reviewerIsAuthor: verdict?.reviewerIsAuthor === true,
     ...(reviewerWake ? { reviewerWake } : {}),
     archived: authority.archived === true,
     ...(pullRequest ? { pullRequest } : {}),
@@ -2745,7 +2674,6 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
           next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
         }
       : {}),
-    rule: [reviewerRule, mergeConditionsRule].filter(Boolean).join(' '),
   });
 }
 
@@ -2753,15 +2681,7 @@ export async function approveMerge(args: JsonObject = {}): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
   const headSha = typeof args.headSha === 'string' ? args.headSha.toLowerCase() : '';
   if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('headSha must be a full 40-character SHA');
-  return JSON.stringify(
-    await daemonExecute('approveCornerMerge', {
-      cornerId,
-      headSha,
-      ...(Number.isInteger(args.briefRevision)
-        ? { briefRevision: args.briefRevision as number }
-        : {}),
-    }),
-  );
+  return JSON.stringify(await daemonExecute('approveCornerMerge', { cornerId, headSha }));
 }
 
 export interface WriteScratchFileDeps {
@@ -4452,8 +4372,6 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return reviseCornerBrief(args);
     case 'read_corner_brief':
       return readCornerBrief(args);
-    case 'record_validation_stage':
-      return recordValidationStage(args);
     case 'steer_corner':
       return relayMessage('down', args);
     case 'ask_corner':
@@ -4576,19 +4494,19 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
         checks: verdict?.checks ?? status.lifecycle?.checks ?? 'unknown',
         verdict: verdict
           ? {
-              approvalPending: verdict.approvalPending,
+              stage: verdict.stage,
+              approved: verdict.approved,
+              held: verdict.held,
+              mergeAllowed: verdict.mergeAllowed,
               reviewer: verdict.reviewer,
               reviewerExists: verdict.reviewerExists,
               reviewerIsAuthor: verdict.reviewerIsAuthor,
               reviewerWake: verdict.reviewerWake,
             }
-          : { approvalPending: true, status: 'unavailable' },
+          : { mergeAllowed: false, status: 'unavailable' },
         merge: {
           mergeability: pr?.mergeability ?? 'unknown',
           ...(pr?.mergedAt ? { mergedAt: pr.mergedAt } : {}),
-          // This read lacks the worker's yolo setting and the latest human hold.
-          // It must never imply that a passing reviewer verdict authorizes a merge.
-          authorization: 'check pr_checks_status in the corner',
         },
       });
     }

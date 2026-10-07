@@ -6,6 +6,7 @@
 import { monolithSession } from '@/auth/monolith-session';
 import { readFileBytes } from '@/utils/readFileBytes';
 import { getBuzzRuntimeConfig } from './runtime-config';
+import { compressDictationWav } from './wav-adpcm';
 
 // Upload plus Groq normally finishes well under a second for a short message.
 export const DICTATION_TRANSCRIPTION_TIMEOUT_MS = 5000;
@@ -40,8 +41,9 @@ async function transcribeOne(
   language: string,
   timeoutMs: number,
 ): Promise<string | null> {
-  const audio = await readFileBytes(uri);
-  if (!audio.length) return null;
+  const recorded = await readFileBytes(uri);
+  if (!recorded.length) return null;
+  const audio = compressDictationWav(recorded);
   const response = await monolithSession.fetch(
     `${getBuzzRuntimeConfig().monolithUrl}/v1/phone/transcriptions`,
     {

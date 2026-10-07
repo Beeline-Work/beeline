@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sessionFetch = vi.hoisted(() => vi.fn());
 const deleted = vi.hoisted(() => [] as string[]);
+const recordings = vi.hoisted(() => new Map<string, Uint8Array>());
 
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: { fetch: sessionFetch } }));
 vi.mock('@/utils/readFileBytes', () => ({
-  readFileBytes: vi.fn(async (uri: string) => new TextEncoder().encode(uri)),
+  readFileBytes: vi.fn(async (uri: string) => recordings.get(uri) ?? new TextEncoder().encode(uri)),
 }));
 vi.mock('./runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.test' }),
@@ -27,6 +28,7 @@ async function load() {
 beforeEach(() => {
   sessionFetch.mockReset();
   deleted.length = 0;
+  recordings.clear();
 });
 
 describe('transcribeDictation', () => {
@@ -80,5 +82,33 @@ describe('transcribeDictation', () => {
     const { transcribeDictation } = await load();
     expect(await transcribeDictation(['file:///a.wav'], [], 'en-US')).toBeNull();
     expect(deleted).toEqual(['file:///a.wav']);
+  });
+
+  it('uploads a PCM recording as IMA ADPCM, a quarter of the bytes', async () => {
+    const samples = 16000 * 3;
+    const wav = new Uint8Array(44 + samples * 2);
+    const view = new DataView(wav.buffer);
+    [...'RIFF'].forEach((c, i) => view.setUint8(i, c.charCodeAt(0)));
+    view.setUint32(4, wav.length - 8, true);
+    [...'WAVEfmt '].forEach((c, i) => view.setUint8(8 + i, c.charCodeAt(0)));
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, 16000, true);
+    view.setUint32(28, 32000, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    [...'data'].forEach((c, i) => view.setUint8(36 + i, c.charCodeAt(0)));
+    view.setUint32(40, samples * 2, true);
+    for (let i = 0; i < samples; i++)
+      view.setInt16(44 + i * 2, Math.round(4000 * Math.sin(i / 7)), true);
+    recordings.set('file:///take.wav', wav);
+    sessionFetch.mockResolvedValueOnce(Response.json({ text: 'Groq Whisper' }));
+    const { transcribeDictation } = await load();
+
+    expect(await transcribeDictation(['file:///take.wav'], [], 'en-US')).toBe('Groq Whisper');
+    const body = sessionFetch.mock.calls[0]![1].body as Uint8Array;
+    expect(new DataView(body.buffer, body.byteOffset).getUint16(20, true)).toBe(0x11);
+    expect(body.length).toBeLessThan(wav.length / 3.8);
   });
 });

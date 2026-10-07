@@ -4610,7 +4610,7 @@ export class DaemonService {
   ): Promise<Output<'postSquireApprovalDecision'>> {
     const approvalId = input.approvalId.trim();
     if (!approvalId || approvalId.length > 240) throw new Error('Squire approval id is invalid');
-    if (input.status !== 'approved' && input.status !== 'denied')
+    if (input.status !== 'approved' && input.status !== 'denied' && input.status !== 'expired')
       throw new Error('Squire approval status is invalid');
     const tool = input.tool.trim();
     if (!tool || tool.length > 80) throw new Error('Squire tool is invalid');
@@ -4629,7 +4629,7 @@ export class DaemonService {
       id,
       roomId: input.roomId,
       subject: { kind: 'person', id: connectorId, name: connectorDisplayName('trusty-squire') },
-      verb: input.status === 'approved' ? 'approved' : 'denied',
+      verb: input.status === 'expired' ? 'saw no answer to' : input.status,
       object: title,
       ...(detail ? { consequence: detail } : {}),
       // A resume kind: it answers the turn that asked for this approval, and

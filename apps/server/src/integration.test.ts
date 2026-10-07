@@ -12706,6 +12706,33 @@ describe('monolith integration', () => {
       [ROOM, AGENT, askedAgain.messageId],
     );
     expect(resumeDenied.rows).toEqual([{ action: 'resume' }]);
+
+    // A vault approval nobody answered wakes the asking turn with its expiry.
+    const askedVault = (await (
+      await operation('sendRoomMessage', { roomId: ROOM, text: '@bee fetch the groq key', mentions: [AGENT] })
+    ).json()) as { messageId: string };
+    const expired = await daemonOperation('postSquireApprovalDecision', {
+      roomId: ROOM,
+      requestId: askedVault.messageId,
+      approvalId: 'fetch-expired-1',
+      status: 'expired',
+      tool: 'fetch_credential',
+      title: 'Credential access approval',
+      detail: 'Reveal groq',
+    });
+    expect(expired.status).toBe(200);
+    const expiredRow = (
+      await database.query<{ text: string; card: Record<string, unknown> }>(
+        `SELECT text,card FROM messages WHERE card_type='squire-approval-decision' AND card->>'approvalId'='fetch-expired-1'`,
+      )
+    ).rows[0]!;
+    expect(expiredRow.text).toBe('@trusty-squire saw no answer to Credential access approval · Reveal groq');
+    expect(expiredRow.card).toMatchObject({ status: 'expired', tool: 'fetch_credential' });
+    const resumeExpired = await database.query<{ action: string }>(
+      `SELECT action FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action='resume'`,
+      [ROOM, AGENT, askedVault.messageId],
+    );
+    expect(resumeExpired.rows).toEqual([{ action: 'resume' }]);
   });
 
   it("lets another human trigger the agent owner's mounted Squire without a card", async () => {

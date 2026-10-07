@@ -55,17 +55,17 @@ function staleLeaseResult(value: unknown): boolean {
   } catch { return false; }
 }
 
-function resultStatus(value: unknown, depth = 0): string | undefined {
+function resultString(value: unknown, key: string, depth = 0): string | undefined {
   if (depth > 8 || !value) return undefined;
   if (typeof value === 'string') {
     if (value.length > 100_000 || !value.trimStart().startsWith('{')) return undefined;
-    try { return resultStatus(JSON.parse(value), depth + 1); } catch { return undefined; }
+    try { return resultString(JSON.parse(value), key, depth + 1); } catch { return undefined; }
   }
-  if (Array.isArray(value)) return value.map((item) => resultStatus(item, depth + 1)).find(Boolean);
+  if (Array.isArray(value)) return value.map((item) => resultString(item, key, depth + 1)).find(Boolean);
   if (typeof value !== 'object') return undefined;
   const item = value as Record<string, unknown>;
-  if (typeof item.status === 'string') return item.status;
-  return Object.values(item).map((entry) => resultStatus(entry, depth + 1)).find(Boolean);
+  if (typeof item[key] === 'string') return item[key];
+  return Object.values(item).map((entry) => resultString(entry, key, depth + 1)).find(Boolean);
 }
 
 type PendingApproval = {
@@ -74,6 +74,7 @@ type PendingApproval = {
   tool: string;
   title: string;
   detail: string;
+  expiry?: ReturnType<typeof setTimeout>;
 };
 
 type TaskConnection = {
@@ -91,7 +92,7 @@ type TaskConnection = {
 export type SquireApprovalDecision = {
   readonly requestId: string;
   readonly approvalId: string;
-  readonly status: 'approved' | 'denied';
+  readonly status: 'approved' | 'denied' | 'expired';
   readonly tool: string;
   readonly title: string;
   readonly detail: string;
@@ -375,17 +376,28 @@ export class SquireTaskRelay {
         const ids = requestedIds.length ? requestedIds : [...task.sessions];
         const approvalKey = createHash('sha256')
           .update(approval.approvalId ?? approval.approvalUrl).digest('hex');
-        const status = resultStatus(result);
+        const status = resultString(result, 'status');
         // inject_card returns approval_pending; operate_drive wraps it as pending_approval.
         const pending = status === 'approval_pending' || status === 'pending_approval';
-        if (pending && ids.length) {
-          task.pendingApprovals.set(approvalKey, {
+        // Vault approvals (fetch_credential, edit_credential, delete_credential,
+        // edit_payment_card) have no browser session; they are tracked too.
+        if (pending && (ids.length || approval.approvalId)) {
+          clearTimeout(task.pendingApprovals.get(approvalKey)?.expiry);
+          const entry: PendingApproval = {
             requestId: active!.requestId, sessionIds: new Set(ids),
             tool: approval.tool, title: approval.title, detail: approval.detail,
-          });
+          };
+          const expiresAt = Date.parse(resultString(result, 'expires_at') ?? '');
+          if (approval.approvalId && Number.isFinite(expiresAt)) {
+            entry.expiry = setTimeout(() => this.expireApproval(task, approvalKey, entry, approval.approvalId!),
+              Math.min(Math.max(expiresAt - Date.now(), 0), 2 ** 31 - 1));
+            entry.expiry.unref?.();
+          }
+          task.pendingApprovals.set(approvalKey, entry);
           this.log('approval-pending', task, { tool: safeToolName ?? null,
             sessionId: redactedSessionId(ids[0]) });
         } else if (!pending) {
+          clearTimeout(task.pendingApprovals.get(approvalKey)?.expiry);
           task.pendingApprovals.delete(approvalKey);
         }
       }
@@ -409,9 +421,28 @@ export class SquireTaskRelay {
 
   private releasePendingApprovals(task: TaskConnection, sessionIdsToRelease: string[]): void {
     for (const [id, approval] of task.pendingApprovals) {
+      if (!approval.sessionIds.size) continue; // a vault approval belongs to no browser session
       for (const sessionId of sessionIdsToRelease) approval.sessionIds.delete(sessionId);
-      if (!approval.sessionIds.size) task.pendingApprovals.delete(id);
+      if (!approval.sessionIds.size) {
+        clearTimeout(approval.expiry);
+        task.pendingApprovals.delete(id);
+      }
     }
+  }
+
+  /**
+   * Squire stops watching an approval at its `expires_at` and sends nothing,
+   * so the relay wakes the asking turn itself with `expired`.
+   */
+  private expireApproval(task: TaskConnection, approvalKey: string, entry: PendingApproval,
+    approvalId: string): void {
+    if (task.pendingApprovals.get(approvalKey) !== entry) return;
+    task.pendingApprovals.delete(approvalKey);
+    this.onApprovalDecided({
+      requestId: entry.requestId, approvalId, status: 'expired',
+      tool: entry.tool, title: entry.title, detail: entry.detail,
+    });
+    if (!this.active && !this.approvalRequestId && !task.pendingApprovals.size) this.scheduleIdle();
   }
 
   /**
@@ -431,6 +462,7 @@ export class SquireTaskRelay {
     const approvalKey = createHash('sha256').update(approvalId).digest('hex');
     const pending = task.pendingApprovals.get(approvalKey);
     if (!pending) return;
+    clearTimeout(pending.expiry);
     task.pendingApprovals.delete(approvalKey);
     this.onApprovalDecided({
       requestId: pending.requestId, approvalId, status,

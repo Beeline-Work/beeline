@@ -472,16 +472,14 @@ export type DaemonOperationMap = {
    */
   authorizeSquireCall: Operation<AuthorizeSquireCallInput, AuthorizeSquireCallResult>;
   /**
-   * Per-call personal-resource gate. A call that belongs to a connected app —
-   * a Registry route, or a Squire call whose `appKeys` name one — is
-   * authorized as `app:<key>` and recorded in that app's usage ledger.
+   * Per-call personal-resource gate. A Registry route that belongs to a
+   * connected app is authorized as `app:<key>` and recorded in that app's
+   * usage ledger.
    */
   authorizeResourceCall: Operation<
     AuthorizeSquireCallInput & {
       readonly target: string;
       readonly consume?: boolean;
-      /** The app keys a Squire call names (`squireCallAppKeys`). */
-      readonly appKeys?: readonly string[];
       /** The MCP tool (or method) being called, for the usage ledger. */
       readonly operation?: string;
     },

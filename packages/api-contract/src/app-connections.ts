@@ -188,32 +188,6 @@ export function selectOfficialHostedServer<Candidate extends RegistryCandidate>(
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))[0];
 }
 
-/**
- * The app keys a Trusty Squire tool call is FOR, read from its non-secret
- * arguments: the credential's service, and every page or API URL it points
- * at. A call that names an app is authorized as that app, so the Squire route
- * can never be a way around the app's one permission decision.
- */
-export function squireCallAppKeys(args: Record<string, unknown> | undefined): readonly string[] {
-  if (!args) return [];
-  const keys = new Set<string>();
-  const service = args.service;
-  if (typeof service === 'string') {
-    const identity = appIdentity(service);
-    if (identity) keys.add(identity.key);
-  }
-  const urls: unknown[] = [args.url, args.signin_url];
-  const http = args.http;
-  if (http && typeof http === 'object' && !Array.isArray(http))
-    urls.push((http as Record<string, unknown>).url);
-  for (const url of urls) {
-    if (typeof url !== 'string' || url.length > 2_048) continue;
-    const key = appKeyForHost(url);
-    if (key) keys.add(key);
-  }
-  return [...keys].sort();
-}
-
 /** A result the agent-facing `connect_app` tool returns. */
 export type ConnectAppStatus =
   | 'connected'

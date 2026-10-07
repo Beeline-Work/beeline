@@ -853,9 +853,6 @@ describe('connect_app', () => {
     await expect(daemon.execute('executeAppTool', { ...turn, appId: connected.appId!,
       tool: 'SLACK_POST_MESSAGE', arguments: {} }, HELPER))
       .resolves.toEqual({ status: 'needs_connection' });
-    await expect(daemon.execute('authorizeResourceCall', { ...turn,
-      target: 'squire', appKeys: ['slack'] }, HELPER))
-      .resolves.toEqual({ allowed: false });
     expect(provider.execute).not.toHaveBeenCalled();
   });
 
@@ -950,69 +947,20 @@ describe('connect_app', () => {
 
 
 
-  it('refuses a Squire call that names a disconnected app or two apps, whatever else it names', async () => {
-    const squireId = await connectSquire();
-    const daemon = daemonWith(fakeRegistry([linearServer]).client);
-    const linear = (await daemon.execute(
-      'connectApp',
-      { ...turn, app: 'Linear', reason: 'file the bug' },
-      HELPER,
-    )) as { appId: string };
-    await applyVaultList(database, { id: squireId, owner_identity_id: OWNER }, [
-      {
-        reference: 'vault:stripe',
-        service: 'stripe',
-        label: 'live',
-        fieldNames: ['secret_key'],
-        allowedHosts: ['api.stripe.com'],
-        createdAt: 1,
-        stale: false,
-        state: 'active',
-      },
-    ]);
-    await daemon.execute('connectApp', { ...turn, app: 'Stripe', reason: 'refund' }, HELPER);
-    // Every decision is approved, so only the gate's own rule can refuse.
-    await database.query(`UPDATE agents SET yolo_mode=true WHERE agent_id=$1`, [HELPER]);
-    const mixed = { ...turn, target: 'squire', operation: 'use_credential' };
-    // Two connected apps in one call: no single decision or ledger to charge.
-    await expect(
-      daemon.execute('authorizeResourceCall', { ...mixed, appKeys: ['linear', 'stripe'] }, HELPER),
-    ).resolves.toEqual({ allowed: false });
-    // Stripe active, Linear disconnected: Stripe's approval never covers Linear.
-    const phone = new PhoneService(database, 'http://placeholder');
-    await phone.execute(
-      'disconnectWorkbenchApp',
-      { workspaceId: WORKSPACE, appId: linear.appId },
-      OWNER,
-    );
-    for (const appKeys of [['linear', 'stripe'], ['stripe', 'linear'], ['linear']])
-      await expect(
-        daemon.execute('authorizeResourceCall', { ...mixed, appKeys }, HELPER),
-      ).resolves.toEqual({ allowed: false });
-    expect((await database.query(`SELECT 1 FROM workspace_app_usage`)).rowCount).toBe(0);
-    // The one-app call still answers to its own app.
-    await expect(
-      daemon.execute('authorizeResourceCall', { ...mixed, appKeys: ['stripe'] }, HELPER),
-    ).resolves.toMatchObject({ allowed: true });
-    const usage = await database.query<{ app_key: string }>(
-      `SELECT a.app_key FROM workspace_app_usage u JOIN workspace_apps a ON a.id=u.app_id`,
-    );
-    expect(usage.rows).toEqual([{ app_key: 'stripe' }]);
-  });
-
-  it('does not treat another owner’s connected app as this helper’s resource', async () => {
+  it('lets the owner use Squire for an app another person has connected', async () => {
     const other = 'c'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Other','other')`, [other]);
     await database.query(
       `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route)
-       VALUES('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',$1,$2,'linear','Linear','squire-api','squire-api')`,
+       VALUES('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',$1,$2,'fly','Fly','squire-api','squire-api')`,
       [WORKSPACE, other],
     );
     const daemon = daemonWith(fakeRegistry([]).client);
+    // Older helpers still send the app keys a Squire call names; the gate ignores them.
     await expect(
-      daemon.execute('authorizeResourceCall', { ...turn, target: 'squire', appKeys: ['linear'] }, HELPER),
-    ).resolves.toEqual({ allowed: false });
-    expect((await database.query(`SELECT id FROM agent_grants`)).rows).toEqual([]);
+      daemon.execute('authorizeResourceCall', { ...turn, target: 'squire', appKeys: ['fly'] } as never, HELPER),
+    ).resolves.toEqual({ allowed: true });
+    expect((await database.query(`SELECT 1 FROM workspace_app_usage`)).rowCount).toBe(0);
   });
 
 

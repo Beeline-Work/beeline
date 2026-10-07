@@ -6667,14 +6667,10 @@ export class DaemonService {
    * authorized call lands in that app's one usage ledger.
    */
   private async authorizeResource(input: Input<'authorizeResourceCall'>, agentId: string) {
-    const appKeys = Array.isArray(input.appKeys)
-      ? input.appKeys.filter((key): key is string => typeof key === 'string').slice(0, 8)
-      : undefined;
     const gate = await appGateFor(this.database, {
       roomId: input.roomId,
       agentId,
       target: typeof input.target === 'string' ? input.target.trim() : '',
-      ...(appKeys ? { appKeys } : {}),
     });
     if (gate.kind === 'refuse') return { allowed: false };
     const result = await this.authorizeScopedGrant(input, agentId, 'mcp', gate.target);

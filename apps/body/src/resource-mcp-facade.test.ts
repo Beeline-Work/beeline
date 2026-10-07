@@ -46,44 +46,20 @@ describe('the page a Squire session is driving', () => {
 });
 
 describe('what the gate learns about one resource call', () => {
-  it('names the apps a Squire call is for, so it answers to that app’s one decision', () => {
+  it('names only the tool, never the apps a Squire call mentions', () => {
     expect(
-      resourceCallFacts(
-        {
-          method: 'tools/call',
-          params: {
-            name: 'use_credential',
-            arguments: {
-              service: 'linear',
-              http: { method: 'POST', url: 'https://api.linear.app/graphql' },
-            },
+      resourceCallFacts({
+        method: 'tools/call',
+        params: {
+          name: 'use_credential',
+          arguments: {
+            service: 'fly',
+            http: { method: 'GET', url: 'https://api.fly.io/api/v1/apps/x/logs' },
           },
         },
-        'squire',
-      ),
-    ).toEqual({ operation: 'use_credential', appKeys: ['linear'] });
-    expect(
-      resourceCallFacts(
-        {
-          method: 'tools/call',
-          params: { name: 'operate_start', arguments: { url: 'https://resend.com' } },
-        },
-        'squire',
-      ),
-    ).toEqual({ operation: 'operate_start', appKeys: ['resend'] });
-  });
-
-  it('never reads app hints off another route, and discovery carries nothing', () => {
-    expect(
-      resourceCallFacts(
-        {
-          method: 'tools/call',
-          params: { name: 'search', arguments: { url: 'https://linear.app' } },
-        },
-        'registry-mcp:app.linear/linear',
-      ),
-    ).toEqual({ operation: 'search' });
-    expect(resourceCallFacts({ method: 'tools/list' }, 'squire')).toEqual({});
+      }),
+    ).toEqual({ operation: 'use_credential' });
+    expect(resourceCallFacts({ method: 'tools/list' })).toEqual({});
   });
 });
 

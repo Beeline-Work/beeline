@@ -269,6 +269,9 @@ describe('monolith phone session', () => {
       },
     );
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    // Load secure storage before the clock is faked, so the refresh deadline
+    // is armed before the timers advance.
+    await session.identityId();
     vi.useFakeTimers();
     try {
       const bounded = session.fetch('https://server.example/v1/phone/rooms/r/corners', {}, {
@@ -280,6 +283,7 @@ describe('monolith phone session', () => {
       expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-0');
 
       hangRefresh = false;
+      vi.useRealTimers();
       const next = await session.fetch('https://server.example/v1/phone/rooms/r/corners', {}, {
         timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
       });

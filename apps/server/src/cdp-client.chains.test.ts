@@ -283,6 +283,29 @@ describe('typed data', () => {
     expect(calls[0]!.body.domain.chainId).toBe(1337);
   });
 
+  it('derives EIP712Domain for any protocol, not only Hyperliquid', () => {
+    const field = (name: string, type: string) => ({ name, type });
+    const cases = [
+      // EIP-2612 USDC permit on Arbitrum.
+      [
+        { name: 'USD Coin', version: '2', chainId: 42161, verifyingContract: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' },
+        [field('name', 'string'), field('version', 'string'), field('chainId', 'uint256'), field('verifyingContract', 'address')],
+      ],
+      // Permit2 has no version.
+      [
+        { name: 'Permit2', chainId: 8453, verifyingContract: '0x000000000022D473030F116dDEE9F6B43aC78BA3' },
+        [field('name', 'string'), field('chainId', 'uint256'), field('verifyingContract', 'address')],
+      ],
+      // A salted domain on Polygon; unknown fields are not domain fields.
+      [
+        { chainId: 137, salt: `0x${'11'.repeat(32)}`, extra: 'ignored' },
+        [field('chainId', 'uint256'), field('salt', 'bytes32')],
+      ],
+    ] as const;
+    for (const [domain, expected] of cases)
+      expect(withEip712Domain({ ...hyperliquid, domain }).EIP712Domain).toEqual(expected);
+  });
+
   it('leaves a caller-supplied EIP712Domain untouched', () => {
     const types = { EIP712Domain: [{ name: 'name', type: 'string' }], ...hyperliquid.types };
     expect(withEip712Domain({ ...hyperliquid, types })).toBe(types);

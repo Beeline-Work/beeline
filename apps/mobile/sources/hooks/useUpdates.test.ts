@@ -310,5 +310,6 @@ describe('root OTA update coordinator', () => {
     });
     expect(downloadAndInstall).toHaveBeenCalledTimes(2);
     await unmount(renderer);
-  });
+    // Above the 10 s install wait, so a slow CI runner does not kill it at the 5 s default.
+  }, 20_000);
 });

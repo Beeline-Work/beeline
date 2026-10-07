@@ -42,6 +42,8 @@ type LiveConnectionDeps = {
 };
 
 const FALLBACK_INTERVAL_MS = 30_000;
+/** A socket stuck opening on a bad network fires no close on its own. */
+const LIVE_CONNECT_TIMEOUT_MS = 15_000;
 /** The same window the server's own `liveDraftSnapshot` is gated on: past it a
  *  cached draft is no longer live text, so a late join must not paint it. A
  *  turn that ends `failed` or `cancelled` leaves no `retract` behind, so this
@@ -268,7 +270,15 @@ export class LiveConnection {
       const url = this.deps.liveUrl();
       const next = new WebSocket(url, [`bearer.${token}`]);
       this.socket = next;
+      const connectTimer = setTimeout(() => {
+        if (this.socket !== next || next.readyState !== 0) return;
+        this.socket = undefined;
+        this.dropSocketState();
+        next.close();
+        this.scheduleReconnect();
+      }, LIVE_CONNECT_TIMEOUT_MS);
       next.onopen = () => {
+        clearTimeout(connectTimer);
         if (this.socket !== next) return;
         this.reconnectDelayMs = 1_000;
         this.sendSubscribe([...this.refcount.keys()]);
@@ -285,6 +295,7 @@ export class LiveConnection {
         this.dispatch(live, next);
       };
       next.onclose = () => {
+        clearTimeout(connectTimer);
         if (this.socket !== next) return;
         this.socket = undefined;
         this.dropSocketState();

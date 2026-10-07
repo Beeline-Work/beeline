@@ -23,6 +23,7 @@ vi.mock('@/buzz/runtime-config', () => ({
   }),
 }));
 vi.mock('@/auth/monolith-session', () => ({
+  MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
   monolithSession: {
     fetch: controls.fetch,
     authorization: controls.authorization,
@@ -379,6 +380,7 @@ describe('monolith Room send path', () => {
     expect(controls.fetch).toHaveBeenCalledWith(
       'https://server.example/v1/phone/operations/sendRoomMessage',
       expect.objectContaining({ method: 'POST' }),
+      { timeoutMs: 15_000 },
     );
   });
 
@@ -417,6 +419,7 @@ describe('monolith Room send path', () => {
     expect(controls.fetch).toHaveBeenCalledWith(
       'https://server.example/v1/phone/operations/sendRoomReply',
       expect.objectContaining({ method: 'POST' }),
+      { timeoutMs: 15_000 },
     );
     expect(JSON.parse(String(controls.fetch.mock.calls[0]![1]?.body))).toEqual({
       roomId: ROOM,

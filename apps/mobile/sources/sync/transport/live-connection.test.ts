@@ -583,6 +583,27 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('replaces a socket stuck opening instead of waiting on it forever', async () => {
+    vi.useFakeTimers();
+    const { connection, foreground } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(1);
+
+    foreground();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(sockets[0]!.closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.open();
+    expect(sockets[1]!.sent).toContain(JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] }));
+
+    connection.dispose();
+  });
+
   it('skips the reconnect backoff on foreground', async () => {
     vi.useFakeTimers();
     const { connection, foreground } = createConnection();
@@ -594,6 +615,7 @@ describe('LiveConnection', () => {
     foreground();
     await vi.advanceTimersByTimeAsync(0);
     expect(sockets).toHaveLength(2);
+    sockets[1]!.open();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(sockets).toHaveLength(2);
 

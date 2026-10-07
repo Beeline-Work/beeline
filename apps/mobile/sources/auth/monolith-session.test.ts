@@ -252,6 +252,47 @@ describe('monolith phone session', () => {
     }
   });
 
+  it('bounds a phone read whose shared token refresh hangs, and lets the next read refresh again', async () => {
+    secure.set('buzzy.monolith.refresh.v1', 'refresh-0');
+    let hangRefresh = true;
+    const fetcher = vi.fn(
+      (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        if (String(input).endsWith('/v1/auth/refresh') && hangRefresh)
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            );
+          });
+        if (String(input).endsWith('/v1/auth/refresh'))
+          return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
+        return Promise.resolve(new Response(null, { status: 204 }));
+      },
+    );
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    // Load secure storage before the clock is faked, so the refresh deadline
+    // is armed before the timers advance.
+    await session.identityId();
+    vi.useFakeTimers();
+    try {
+      const bounded = session.fetch('https://server.example/v1/phone/rooms/r/corners', {}, {
+        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+      });
+      const assertion = expect(bounded).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
+      await vi.advanceTimersByTimeAsync(MONOLITH_REQUEST_TIMEOUT_MS);
+      await assertion;
+      expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-0');
+
+      hangRefresh = false;
+      vi.useRealTimers();
+      const next = await session.fetch('https://server.example/v1/phone/rooms/r/corners', {}, {
+        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+      });
+      expect(next.status).toBe(204);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('leaves a request without timeoutMs unbounded, so large uploads are never aborted', async () => {
     let hang = false;
     let aborted = false;

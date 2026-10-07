@@ -22,12 +22,27 @@ export interface MonolithTokens {
 
 /** Deadline for room/workspace reads; long uploads stay unbounded by default. */
 export const MONOLITH_REQUEST_TIMEOUT_MS = 15_000;
+/** Shorter than a read's deadline, so a read that waited on it can retry. */
+const MONOLITH_REFRESH_TIMEOUT_MS = 10_000;
 
 export class MonolithRequestTimeoutError extends Error {
   constructor() {
-    super('The server did not respond in time.');
+    super('The server timed out before it responded.');
     this.name = 'MonolithRequestTimeoutError';
   }
+}
+
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      const error = new Error('The request was aborted.');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    if (signal.aborted) return onAbort();
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
 }
 
 export class MonolithSessionRequiredError extends Error {
@@ -195,8 +210,10 @@ export class MonolithSession {
             }, options.timeoutMs);
       const forwardExternalAbort = () => controller.abort();
       init.signal?.addEventListener('abort', forwardExternalAbort);
+      if (init.signal?.aborted) controller.abort();
       try {
-        const authorized = await this.authorization();
+        // Token restore or refresh can stall too; the deadline covers it.
+        const authorized = await untilAborted(this.authorization(), controller.signal);
         return await this.fetchImpl(input, {
           ...init,
           signal: controller.signal,
@@ -232,11 +249,27 @@ export class MonolithSession {
     const refreshToken =
       this.refreshToken ?? (await (await this.secureStorage()).getItemAsync(REFRESH_KEY));
     if (!refreshToken) throw new MonolithSessionRequiredError();
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/refresh`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ refreshToken }),
-    });
+    // Every caller shares this refresh, so a stalled one must still settle.
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, MONOLITH_REFRESH_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.baseUrl}/v1/auth/refresh`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (timedOut) throw new MonolithRequestTimeoutError();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!response.ok) {
       await this.clear();
       throw new MonolithSessionRequiredError();

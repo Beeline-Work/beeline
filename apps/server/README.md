@@ -38,6 +38,12 @@ Direct iOS delivery uses APNs token authentication. Set `APNS_KEY_P8_BASE64` to 
 
 The mounted auth routes also require `PUBLIC_ORIGIN`, `BUZZY_AUTH_TENANTS_JSON`, and the six `BUZZY_AUTH_OIDC_*` values documented in `apps/auth/README.md`. The tenants JSON must contain an entry whose host and origin match `PUBLIC_ORIGIN`; production uses `server.usebeeline.app`.
 
+Dictation uses a server-only `GROQ_API_KEY`. With it, phones post each
+dictation's recorded audio to `/v1/phone/transcriptions`, which returns Groq
+`whisper-large-v3-turbo` text prompted with the Room lexicon. Without it, the
+route answers 503 and phones keep their on-device transcript. Unset the key to
+turn Groq off without an app release.
+
 Managed app sign-in uses a server-only `BEELINE_COMPOSIO_API_KEY`. Configure the
 provider's callback verifier to `${PUBLIC_ORIGIN}/v1/apps/oauth/verify` before
 enabling the API key.

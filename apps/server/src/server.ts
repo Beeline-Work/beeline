@@ -25,6 +25,7 @@ import { MESSAGE_SEARCH_QUERY_MAX_BYTES, messageSearchTerms } from '@beeline/api
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
+import { TRANSCRIPTION_MAXIMUM_BYTES, type SpeechTranscriber } from './speech-transcription.js';
 import { isMediaId } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { connectorLogo } from './workbench.js';
@@ -116,6 +117,8 @@ export interface ServerOptions {
   review?: ReviewAccess;
   /** Absent when no release-notify secret is configured; the endpoint then refuses like any wrong secret. */
   releaseNotify?: ReleaseNotifier;
+  /** Absent without `GROQ_API_KEY`: dictation keeps the phone's on-device text. */
+  speechTranscriber?: SpeechTranscriber;
   helperVersionGate?: HelperVersionGate;
   /** Server-side secret for the private operator proxy only. */
   dashboardSecret?: string;
@@ -1810,6 +1813,45 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
         return;
       }
       json(response, 400, { error: 'upload_rejected', reason });
+    }
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/phone/transcriptions') {
+    if (!options.speechTranscriber) {
+      json(response, 503, { error: 'transcription_unavailable' });
+      return;
+    }
+    let audio: Buffer;
+    try {
+      audio = await bytes(request, TRANSCRIPTION_MAXIMUM_BYTES);
+    } catch {
+      json(response, 413, { error: 'audio_too_large' });
+      return;
+    }
+    if (!audio.length) {
+      json(response, 400, { error: 'audio_required' });
+      return;
+    }
+    const header = (name: string) =>
+      typeof request.headers[name] === 'string' ? (request.headers[name] as string) : undefined;
+    let prompt: string | undefined;
+    try {
+      prompt = header('x-speech-prompt') && decodeURIComponent(header('x-speech-prompt')!);
+    } catch {
+      prompt = undefined;
+    }
+    try {
+      const text = await options.speechTranscriber.transcribe({
+        audio,
+        mimeType: header('content-type') ?? 'audio/wav',
+        ...(prompt ? { prompt } : {}),
+        ...(header('x-speech-language') ? { language: header('x-speech-language')! } : {}),
+      });
+      json(response, 200, { text });
+    } catch (error) {
+      // The reason names only the provider status; audio and text are never logged.
+      console.warn('[transcription]', error instanceof Error ? error.message : 'failed');
+      json(response, 502, { error: 'transcription_failed' });
     }
     return;
   }

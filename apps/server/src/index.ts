@@ -36,6 +36,7 @@ import { McpRegistryClient } from './mcp-registry.js';
 import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { ReviewAccess } from './review-access.js';
 import { ReleaseNotifier } from './release-notify.js';
+import { speechTranscriberFromEnv } from './speech-transcription.js';
 import { createWebPushSender } from './web-push.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
@@ -324,6 +325,7 @@ async function main() {
       ? { secret: process.env.BEELINE_RELEASE_NOTIFY_SECRET }
       : {}),
   });
+  const speechTranscriber = speechTranscriberFromEnv();
   const backgroundJobs = new BackgroundJobRunner();
   const server = createBeelineServer({
     database,
@@ -343,6 +345,7 @@ async function main() {
     connectionPresence,
     review,
     releaseNotify,
+    ...(speechTranscriber ? { speechTranscriber } : {}),
     dashboardSecret: process.env.BEELINE_DASHBOARD_SECRET,
     livePaintDiagnostics: process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
     mediaMaximumBytes: mediaExpiryMediaMaximumBytes,

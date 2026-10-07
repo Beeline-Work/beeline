@@ -8,6 +8,11 @@ import {
   useSpeechInput,
 } from './speech-input';
 import { getRecognitionModule } from './speech-recognition-adapter';
+import {
+  discardDictationRecordings,
+  dictationTranscriptionAvailable,
+  transcribeDictation,
+} from './speech-transcription';
 
 vi.mock('react-native', () => ({
   Platform: {
@@ -22,6 +27,11 @@ vi.mock('react-native', () => ({
 }));
 vi.mock('./speech-recognition-adapter', () => ({
   getRecognitionModule: vi.fn(),
+}));
+vi.mock('./speech-transcription', () => ({
+  dictationTranscriptionAvailable: vi.fn(() => true),
+  transcribeDictation: vi.fn(),
+  discardDictationRecordings: vi.fn(async () => {}),
 }));
 vi.mock('./speech-locale', () => ({
   getDeviceSpeechLocale: () => 'en-GB',
@@ -631,5 +641,196 @@ describe('useSpeechInput', () => {
     vi.mocked(getRecognitionModule).mockReturnValue(null);
     const { probe } = renderHook();
     expect(probe()['data-capability']).toBe('unavailable');
+  });
+
+  describe('recorded take for server transcription', () => {
+    const supportsRecording = vi.fn(() => true);
+
+    beforeEach(() => {
+      (mockMod as any).supportsRecording = supportsRecording;
+      supportsRecording.mockReturnValue(true);
+      vi.mocked(dictationTranscriptionAvailable).mockReturnValue(true);
+    });
+
+    afterEach(() => {
+      delete (mockMod as any).supportsRecording;
+    });
+
+    async function dictate(speech: () => any) {
+      await act(async () => {
+        await speech().start();
+      });
+      await act(async () => {
+        fireEvent('result', { results: [{ transcript: 'ask jelly bean' }], isFinal: true });
+        fireEvent('result', { results: [{ transcript: 'to open a corner' }], isFinal: false });
+      });
+    }
+
+    it('records, shows live on-device words, and commits the server text on stop', async () => {
+      vi.mocked(transcribeDictation).mockResolvedValue('Ask Jellybean to open a corner.');
+      const { onResult, speech, probe } = renderHook(vi.fn(), ['Jellybean', 'corner']);
+      await dictate(speech);
+
+      expect(mockMod.start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recordingOptions: {
+            persist: true,
+            outputSampleRate: 16000,
+            outputEncoding: 'pcmFormatInt16',
+          },
+        }),
+      );
+      expect(probe()['data-partial']).toBe('ask Jellybean to open a corner');
+      expect(onResult).not.toHaveBeenCalled();
+
+      let captured: boolean | null = null;
+      await act(async () => {
+        const stopped = speech().stop();
+        fireEvent('audioend', { uri: 'file:///cache/take-1.wav' });
+        fireEvent('end');
+        captured = await stopped;
+      });
+
+      expect(transcribeDictation).toHaveBeenCalledWith(
+        ['file:///cache/take-1.wav'],
+        ['Jellybean', 'corner'],
+        'en-GB',
+      );
+      expect(onResult).toHaveBeenCalledTimes(1);
+      expect(onResult).toHaveBeenCalledWith('Ask Jellybean to open a corner.');
+      expect(captured).toBe(true);
+      expect(speech().state).toBe('idle');
+    });
+
+    it('commits the on-device text when server transcription fails', async () => {
+      vi.mocked(transcribeDictation).mockResolvedValue(null);
+      const { onResult, speech } = renderHook();
+      await dictate(speech);
+
+      await act(async () => {
+        const stopped = speech().stop();
+        fireEvent('audioend', { uri: 'file:///cache/take-1.wav' });
+        fireEvent('end');
+        await stopped;
+      });
+
+      expect(onResult).toHaveBeenCalledWith('ask jelly bean to open a corner');
+    });
+
+    it('transcribes every restarted segment of one take together', async () => {
+      vi.mocked(transcribeDictation).mockResolvedValue('one two');
+      const { onResult, speech } = renderHook();
+      await act(async () => {
+        await speech().start();
+      });
+      await act(async () => {
+        fireEvent('result', { results: [{ transcript: 'one' }], isFinal: true });
+        fireEvent('audioend', { uri: 'file:///cache/a.wav' });
+        fireEvent('end');
+      });
+      expect(mockMod.start).toHaveBeenCalledTimes(2);
+      expect(mockMod.start.mock.lastCall?.[0]).toHaveProperty('recordingOptions');
+
+      await act(async () => {
+        fireEvent('result', { results: [{ transcript: 'two' }], isFinal: true });
+        const stopped = speech().stop();
+        fireEvent('audioend', { uri: 'file:///cache/b.wav' });
+        fireEvent('end');
+        await stopped;
+      });
+
+      expect(vi.mocked(transcribeDictation).mock.lastCall?.[0]).toEqual([
+        'file:///cache/a.wav',
+        'file:///cache/b.wav',
+      ]);
+      expect(onResult).toHaveBeenCalledTimes(1);
+      expect(onResult).toHaveBeenCalledWith('one two');
+    });
+
+    it('waits for native end after a silence stop, then commits the server text', async () => {
+      vi.useFakeTimers();
+      vi.mocked(transcribeDictation).mockResolvedValue('Hello there.');
+      const { onResult, speech } = renderHook();
+      await act(async () => {
+        await speech().start();
+      });
+      await act(async () => {
+        fireEvent('result', { results: [{ transcript: 'hello there' }], isFinal: false });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS);
+      });
+      expect(speech().state).toBe('finalizing');
+      expect(onResult).not.toHaveBeenCalled();
+
+      await act(async () => {
+        fireEvent('audioend', { uri: 'file:///cache/take-1.wav' });
+        fireEvent('end');
+      });
+      expect(onResult).toHaveBeenCalledWith('Hello there.');
+      expect(speech().state).toBe('idle');
+    });
+
+    it('does not upload a take with no on-device words', async () => {
+      const { onResult, speech } = renderHook();
+      await act(async () => {
+        await speech().start();
+      });
+      await act(async () => {
+        const stopped = speech().stop();
+        fireEvent('audioend', { uri: 'file:///cache/silence.wav' });
+        fireEvent('end');
+        await stopped;
+      });
+      expect(transcribeDictation).not.toHaveBeenCalled();
+      expect(discardDictationRecordings).toHaveBeenCalledWith(['file:///cache/silence.wav']);
+      expect(onResult).not.toHaveBeenCalled();
+    });
+
+    it('keeps the old path when the device cannot record or the server has no key', async () => {
+      supportsRecording.mockReturnValue(false);
+      const first = renderHook();
+      await act(async () => {
+        await first.speech().start();
+      });
+      expect(mockMod.start.mock.lastCall?.[0]).not.toHaveProperty('recordingOptions');
+
+      supportsRecording.mockReturnValue(true);
+      vi.mocked(dictationTranscriptionAvailable).mockReturnValue(false);
+      const second = renderHook();
+      await act(async () => {
+        await second.speech().start();
+      });
+      expect(mockMod.start.mock.lastCall?.[0]).not.toHaveProperty('recordingOptions');
+      await act(async () => {
+        fireEvent('result', { results: [{ transcript: 'hello' }], isFinal: true });
+      });
+      expect(second.onResult).toHaveBeenCalledWith('hello');
+    });
+
+    it('drops a transcription that returns after the composer unmounts', async () => {
+      let resolve!: (text: string) => void;
+      vi.mocked(transcribeDictation).mockReturnValue(
+        new Promise<string>((done) => {
+          resolve = done;
+        }),
+      );
+      const { renderer, onResult, speech } = renderHook();
+      await dictate(speech);
+      let stopped!: Promise<boolean | null>;
+      await act(async () => {
+        stopped = speech().stop();
+        fireEvent('audioend', { uri: 'file:///cache/take-1.wav' });
+        fireEvent('end');
+      });
+      await act(async () => {
+        renderer.unmount();
+      });
+      await act(async () => {
+        resolve('late text');
+      });
+      expect(await stopped).toBeNull();
+      expect(onResult).not.toHaveBeenCalled();
+    });
   });
 });

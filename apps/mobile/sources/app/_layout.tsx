@@ -42,6 +42,7 @@ import {
   whenInitialLandingResolved,
 } from '@/navigation/initial-landing';
 import { createNotificationNavigator } from '@/navigation/notification-stack';
+import { armLaunchSplash } from '@/navigation/splash-watchdog';
 import { useTauriZoom } from '@/hooks/useTauriZoom';
 import { useTauriDrag } from '@/hooks/useTauriDrag';
 import { BrowserNavigationShortcuts } from '@/hooks/useBrowserNavigationShortcuts';
@@ -129,6 +130,11 @@ SplashScreen.setOptions({
   duration: 0,
 });
 SplashScreen.preventAutoHideAsync();
+// Armed outside React: a root render error that unmounts the layout, or fonts
+// that never settle, must not keep the splash over the app.
+const launchSplash = armLaunchSplash(() => void SplashScreen.hideAsync(), {
+  log: (message) => console.warn(message),
+});
 
 // Set window background color - now handled by Unistyles
 // SystemUI.setBackgroundColorAsync('white');
@@ -313,26 +319,15 @@ export default function RootLayout() {
     const promise = new Promise<void>((wake) => { resolve = wake; });
     rootReady.current = { promise, resolve };
   }
-  const splashHidden = React.useRef(false);
-  const hideNativeSplash = React.useCallback(() => {
-    if (splashHidden.current) return;
-    splashHidden.current = true;
-    void SplashScreen.hideAsync();
-  }, []);
   React.useEffect(() => {
-    (async () => {
-      try {
-        await loadFonts();
-        setInitialized(true);
-      } catch (error) {
-        console.error('Error initializing:', error);
-      }
-    })();
+    void loadFonts()
+      .catch((error) => console.error('Error initializing:', error))
+      .finally(() => setInitialized(true));
   }, []);
 
   React.useEffect(() => {
-    if (initialized) hideNativeSplash();
-  }, [hideNativeSplash, initialized]);
+    if (initialized) launchSplash.release();
+  }, [initialized]);
   React.useEffect(() => {
     if (navigationRef.isReady()) {
       rootReady.current?.resolve();
@@ -387,8 +382,9 @@ export default function RootLayout() {
   //
 
   // Mount the navigator on the first render. The native splash stays visible
-  // until fonts load, while Expo Router needs its first focused child before
-  // an imperative landing replace or push navigation can be dispatched.
+  // until fonts settle or the splash watchdog fires, while Expo Router needs
+  // its first focused child before an imperative landing replace or push
+  // navigation can be dispatched.
 
   let providers = (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>

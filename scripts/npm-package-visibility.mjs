@@ -1,12 +1,22 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const NPM_VISIBILITY_TIMEOUT_MS = 5 * 60_000;
+export const NPM_VISIBILITY_TIMEOUT_MS = 15 * 60_000;
 export const NPM_VIEW_TIMEOUT_MS = 20_000;
 const MAX_BACKOFF_MS = 60_000;
 const PUBLIC_NPM_REGISTRY = 'https://registry.npmjs.org';
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+export function npmVisibilityTimeoutMs(env = process.env) {
+  const value = env.NPM_VISIBILITY_TIMEOUT_MS;
+  if (value === undefined) return NPM_VISIBILITY_TIMEOUT_MS;
+  const timeoutMs = Number(value);
+  if (!value.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('NPM_VISIBILITY_TIMEOUT_MS must be a positive integer in milliseconds');
+  }
+  return timeoutMs;
+}
 
 function isNotFound(result) {
   const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
@@ -41,7 +51,7 @@ export function lookupPublicNpmPackage({ packageName, version, timeoutMs }) {
 export async function waitForNpmPackageVisibility({
   packageName,
   version,
-  timeoutMs = NPM_VISIBILITY_TIMEOUT_MS,
+  timeoutMs = npmVisibilityTimeoutMs(),
   commandTimeoutMs = NPM_VIEW_TIMEOUT_MS,
   initialBackoffMs = 5_000,
   lookup = lookupPublicNpmPackage,

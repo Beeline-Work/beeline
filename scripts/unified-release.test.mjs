@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { NPM_VISIBILITY_TIMEOUT_MS } from './npm-package-visibility.mjs';
 import {
   applyComponentCheckpoints,
   changedPathsFromPublishedInputs,
@@ -947,13 +948,13 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.match(source, /release ceiling is 20 minutes/);
   // Only the legs that build a store binary, run the emulator proof, or build a
   // native helper bundle from cold cargo may exceed the 20-minute ceiling; every
-  // other job stays inside the fix-to-phone promise.
+  // other job stays within the release ceiling.
   const slowLegs = new Set(['release_proof', 'mobile_native_android', 'mobile_native_ios', 'helper_macos']);
   for (const [name, job] of Object.entries(workflow.jobs)) {
     const cap = job['timeout-minutes'];
     if (cap === undefined) continue;
     if (slowLegs.has(name)) continue;
-    assert.ok(cap < 20, `${name} timeout-minutes ${cap} exceeds the release ceiling`);
+    assert.ok(name === 'helper' ? cap <= RELEASE_BUDGET_MINUTES : cap < RELEASE_BUDGET_MINUTES, `${name} timeout-minutes ${cap} exceeds the release ceiling`);
   }
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /selection:[\s\S]*default: auto/);
@@ -1114,6 +1115,9 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const stampStep = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Stamp the terminated identity'));
   assert.match(stampStep.if, /steps\.result\.outputs\.terminated == 'true'/);
   assert.match(stampStep.run, /state\.terminated = true/);
+  const attemptUpload = workflow.jobs.release_result.steps.find((step) => step.name === 'Publish immutable attempt state for component-local retry');
+  assert.ok(workflow.jobs.release_result.steps.indexOf(stampStep) < workflow.jobs.release_result.steps.indexOf(attemptUpload),
+    'Reproduction release-termination-order: termination must be stamped before immutable upload');
   const planStep = workflow.jobs.initialize.steps.find((step) => step.name?.includes('release plan'));
   assert.match(planStep.run, /was terminated; a terminated identity never retries/);
   assert.equal(workflow.jobs.release_result.outputs.terminated, "${{ steps.result.outputs.terminated }}");
@@ -1831,4 +1835,10 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
+});
+
+test('helper job accommodates the npm visibility deadline plus publication overhead', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const budgetMs = workflow.jobs.helper['timeout-minutes'] * 60_000;
+  assert.ok(budgetMs >= NPM_VISIBILITY_TIMEOUT_MS + 5 * 60_000, 'helper job must allow the default npm visibility deadline plus five minutes for setup and publication');
 });

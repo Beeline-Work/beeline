@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   NPM_VIEW_TIMEOUT_MS,
   NPM_VISIBILITY_TIMEOUT_MS,
+  npmVisibilityTimeoutMs,
   waitForNpmPackageVisibility,
 } from './npm-package-visibility.mjs';
 
@@ -14,8 +15,39 @@ function npmResult({ status, stdout = '', stderr = '' }) {
 }
 
 test('npm visibility and command deadlines stay bounded', () => {
-  assert.equal(NPM_VISIBILITY_TIMEOUT_MS, 300_000);
+  assert.equal(NPM_VISIBILITY_TIMEOUT_MS, 900_000);
   assert.equal(NPM_VIEW_TIMEOUT_MS, 20_000);
+});
+
+test('visibility deadline is configurable in milliseconds and rejects invalid overrides', () => {
+  assert.equal(npmVisibilityTimeoutMs({}), 900_000);
+  assert.equal(npmVisibilityTimeoutMs({ NPM_VISIBILITY_TIMEOUT_MS: '420000' }), 420_000);
+  for (const value of ['', ' ', '0', '-1', '1.5', 'no', 'Infinity']) {
+    assert.throws(
+      () => npmVisibilityTimeoutMs({ NPM_VISIBILITY_TIMEOUT_MS: value }),
+      /positive integer/,
+    );
+  }
+});
+
+test('Reproduction npm-delayed-visibility: a version visible after five minutes passes within the default deadline', async () => {
+  let now = 0;
+  const result = await waitForNpmPackageVisibility({
+    packageName: PACKAGE,
+    version: VERSION,
+    now: () => now,
+    sleep: async (milliseconds) => {
+      now += milliseconds;
+    },
+    lookup: async ({ timeoutMs }) => {
+      assert.ok(timeoutMs <= 20_000);
+      return now >= 360_000
+        ? npmResult({ status: 0, stdout: VERSION })
+        : npmResult({ status: 1, stderr: 'npm error code E404' });
+    },
+  });
+  assert.ok(result.elapsedMs >= 360_000);
+  assert.ok(result.elapsedMs < 900_000);
 });
 
 test('temporary npm 404s are retried until the exact version is visible', async () => {

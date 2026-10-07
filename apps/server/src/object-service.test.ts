@@ -92,6 +92,11 @@ describe('ObjectService', () => {
     expect(Number(row!.retention_hours)).toBeLessThanOrEqual(ARTIFACT_TTL_HOURS);
   });
 
+  it('stores a media artifact whatever its first bytes', async () => {
+    const result = await service.uploadArtifact(AGENT, Buffer.from('odd header'), 'video/mp4', 'clip.mp4');
+    expect(result).toMatchObject({ mimeType: 'video/mp4', title: 'clip.mp4' });
+  });
+
   it('refuses bad mime, empty bytes, over-cap bytes, and a blank title', async () => {
     await expect(
       service.uploadArtifact(AGENT, Buffer.from('x'), 'audio/flac', 't'),
@@ -104,9 +109,6 @@ describe('ObjectService', () => {
     await expect(service.uploadArtifact(AGENT, Buffer.from('x'), 'text/html', '  ')).rejects.toThrow(
       /title/,
     );
-    await expect(
-      service.uploadArtifact(AGENT, Buffer.from('not a video'), 'video/mp4', 'clip.mp4'),
-    ).rejects.toThrow(/ftyp box/);
     expect(fake.put).not.toHaveBeenCalled();
   });
 

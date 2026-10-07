@@ -913,6 +913,22 @@ it('Reproduction F1-7: opener revises a delegated sibling from its own command',
   expect((await daemon.execute('listCornerBriefRevisions', { cornerId }, A)).revisions[0]!.revision).toBe(3);
 });
 
+it('the agent a person handed the corner to revises its brief', async () => {
+  const cornerId = await open(undefined, 'owner/widgets');
+  const command = await commissioned(cornerId);
+  const G = '8'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Heir','heir') ON CONFLICT DO NOTHING`, [G]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [G, H]);
+  for (const roomId of [null, R, cornerId])
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [W, roomId, G]);
+  const turn = await createAgentCommand(db, { roomId: cornerId, agentId: G, sourceMessageId: command.sourceMessageId, reason: 'human_tag' });
+  await daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: turn!.id, generationId: 'g1' }, G);
+  const input = { cornerId, requestId: turn!.turn_request_id, generationId: 'g1', expectedRevision: 1, brief: { ...brief(command.sourceMessageId), spec: 'Heir scope', change: 'Take over' } };
+  await expect(daemon.execute('reviseCornerBrief', input, G)).rejects.toThrow('revision denied');
+  await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [cornerId, G]);
+  expect(await daemon.execute('reviseCornerBrief', input, G)).toMatchObject({ revision: 2 });
+});
+
 it('Reproduction F1-9: brief history defaults to one revision with a cursor', async () => {
   const cornerId = await open(undefined, 'owner/widgets');
   await revise(cornerId);

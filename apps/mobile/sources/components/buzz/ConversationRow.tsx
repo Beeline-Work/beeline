@@ -134,7 +134,7 @@ export function ConversationRow({
           </View>
           <View style={styles.previewLine}>
             <Text
-              numberOfLines={1}
+              numberOfLines={desktop ? 2 : 1}
               style={[
                 styles.preview,
                 item.unread && !showReason && styles.unreadPreview,

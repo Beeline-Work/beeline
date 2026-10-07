@@ -130,22 +130,9 @@ describe('post_artifact validation matrix', () => {
     );
   });
 
-  it('requires video and audio bytes to match the declared format', () => {
-    expect(() => validateArtifact('audio/mpeg', Buffer.from([0xff, 0xfb, 0x90, 0x64]), 'Song'))
-      .not.toThrow();
-    expect(() => validateArtifact('video/quicktime', Buffer.from('\0\0\0\x08wide'), 'Clip'))
-      .not.toThrow();
-    const mismatches: readonly [string, Buffer, RegExp][] = [
-      ['video/mp4', Buffer.from('not a video'), /ftyp box/],
-      ['video/mp4', webm, /ftyp box/],
-      ['audio/mp4', wav, /ftyp box/],
-      ['video/quicktime', Buffer.from('plain text here'), /QuickTime/],
-      ['video/webm', ftyp('isom'), /EBML/],
-      ['audio/mpeg', wav, /ID3 tag or MPEG frame sync/],
-      ['audio/wav', Buffer.from('RIFF\0\0\0\0AVI LIST'), /RIFF\/WAVE/],
-    ];
-    for (const [mime, bytes, reason] of mismatches)
-      expect(() => validateArtifact(mime, bytes, 'Clip')).toThrow(reason);
+  it('accepts video and audio whatever their first bytes', () => {
+    for (const mime of ['video/mp4', 'video/quicktime', 'video/webm', 'audio/mpeg', 'audio/wav', 'audio/mp4'])
+      expect(() => validateArtifact(mime, Buffer.from('odd header'), 'Clip')).not.toThrow();
   });
 
   it('checks size only for Markdown', () => {

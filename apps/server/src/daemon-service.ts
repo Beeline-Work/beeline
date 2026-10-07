@@ -7285,14 +7285,28 @@ export class DaemonService {
     const brief = await this.database.transaction(async (db) => {
       await lockCornerLifecycle(db, input.cornerId);
       const corner = (
-        await db.query<{ parent_id: string; owner_agent_id: string | null; kind: string; created_by: string }>(
-          `SELECT room.parent_id,fact.owner_agent_id,fact.kind,room.created_by FROM rooms room
+        await db.query<{
+          parent_id: string;
+          owner_agent_id: string | null;
+          implementer_agent_id: string | null;
+          kind: string;
+          created_by: string;
+        }>(
+          `SELECT room.parent_id,fact.owner_agent_id,${cornerImplementerSql('fact', 'room')} implementer_agent_id,
+             fact.kind,room.created_by FROM rooms room
          JOIN corner_facts fact ON fact.corner_id=room.id
          WHERE room.id=$1 AND room.archived_at IS NULL FOR UPDATE OF room`,
           [input.cornerId],
         )
       ).rows[0];
-      if (!corner?.parent_id || (corner.owner_agent_id !== agentId && corner.created_by !== agentId && corner.kind !== 'human'))
+      // The agent a person handed the corner to revises its brief like the opener.
+      if (
+        !corner?.parent_id ||
+        (corner.owner_agent_id !== agentId &&
+          corner.implementer_agent_id !== agentId &&
+          corner.created_by !== agentId &&
+          corner.kind !== 'human')
+      )
         throw new Error('corner brief revision denied');
       const commandRoomId = input.roomId ?? input.cornerId;
       if (commandRoomId !== input.cornerId) {

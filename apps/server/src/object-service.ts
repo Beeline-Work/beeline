@@ -23,7 +23,6 @@ import type {
 import {
   ARTIFACT_MAXIMUM_BYTES,
   ARTIFACT_MIME_TYPES,
-  artifactSignatureMismatch,
   type ArtifactMimeType,
 } from '@beeline/api-contract/daemon';
 import type { AppFile } from './composio-apps.js';
@@ -125,8 +124,6 @@ export class ObjectService {
       throw new Error(`artifact mime must be one of ${ARTIFACT_MIME_TYPES.join(', ')}`);
     if (!bytes.length || bytes.length > ARTIFACT_MAXIMUM_BYTES)
       throw new Error(`artifact size must be between 1 and ${ARTIFACT_MAXIMUM_BYTES} bytes`);
-    const mismatch = artifactSignatureMismatch(mimeType, bytes);
-    if (mismatch) throw new Error(mismatch);
     if (!title.trim()) throw new Error('artifact title is required');
     return this.#putReadyObject(agentId, bytes, mimeType, title.slice(0, 200), 'artifact');
   }

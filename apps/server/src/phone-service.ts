@@ -131,6 +131,7 @@ import { deriveCornerState } from './corner-state.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { chatCornerCounts } from './chat-corner-counts.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
+import { followsCornerSql } from './corner-follow.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
@@ -389,6 +390,7 @@ interface CornerRow extends RoomRow {
   /** `cornerOwedLookupSql`'s facts; null on the archived page, which skips them. */
   owed: boolean | null;
   owed_viewer: boolean | null;
+  follows_viewer: boolean | null;
   /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
   archived_us: string | null;
   agent_id: string | null;
@@ -1490,8 +1492,7 @@ export class PhoneService {
           workflow_state: string | null;
           workflow_outcome: string | null;
           latest_turn_status: string | null;
-          commissioned_by_viewer: boolean | null;
-          latest_tags_viewer: boolean | null;
+          follows_viewer: boolean | null;
           latest_created_at: Date | null;
           owed: boolean;
           owed_viewer: boolean;
@@ -1499,13 +1500,10 @@ export class PhoneService {
         }>(
           `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
            turn.status latest_turn_status,
-           initiator.id=$2 commissioned_by_viewer,
-           $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
+           ${followsCornerSql('c', '$2')} follows_viewer,
            lm.created_at latest_created_at,
            owed.owed,owed.owed_viewer,owed.attention
          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
-         LEFT JOIN identities initiator
-           ON initiator.id=f.commissioned_by AND initiator.kind='human'
          LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
          LEFT JOIN LATERAL (
            SELECT status FROM agent_turns WHERE room_id=c.id
@@ -2694,6 +2692,7 @@ export class PhoneService {
         app_binding.installation_id app_installation_id,
         app_binding.instance_id app_instance_id,app_installation.manifest app_manifest,
         ${archived ? 'NULL::boolean owed,NULL::boolean owed_viewer' : 'owed.owed,owed.owed_viewer'},
+        ${archived ? 'NULL::boolean' : followsCornerSql('c', '$2')} follows_viewer,
         ${archivedMicros}::text archived_us,
         (SELECT max(brief.revision) FROM corner_brief_revisions brief WHERE brief.corner_id=c.id) brief_revision
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
@@ -2764,6 +2763,7 @@ export class PhoneService {
         (corner.latest_tags_viewer && (derived.state === 'waiting' || derived.state === 'review'))
           ? { awaitsViewer: true as const }
           : {}),
+        ...(corner.follows_viewer ? { followsViewer: true as const } : {}),
         ...(corner.initiator_id && corner.initiator_name
           ? {
               initiator: {

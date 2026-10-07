@@ -203,6 +203,15 @@ describe('RoomCornersList', () => {
     expect(pressable(tree, 'room-corners-others').props.accessibilityLabel).toBe('Others · 1');
   });
 
+  it('counts a corner the viewer follows as Mine though someone else started it', () => {
+    const tree = render([
+      { ...theirs('posted-in', 'working'), followsViewer: true },
+      theirs('untouched', 'working'),
+    ]);
+    expect(rowIds(tree)).toEqual(['room-corner-posted-in']);
+    expect(pressable(tree, 'room-corners-others').props.accessibilityLabel).toBe('Others · 1');
+  });
+
   it('does not remember a fold: a fresh screen starts with Mine open and Others folded', () => {
     const first = render([corner('mine', 'working'), theirs('theirs')]);
     act(() => pressable(first, 'room-corners-others').props.onPress());

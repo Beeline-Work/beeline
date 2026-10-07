@@ -1371,6 +1371,7 @@ function readCorner(value: unknown): CornerListItem | null {
     ...field('reason', oneOf(item.reason, ['failed', 'checks-failed', 'question'])),
     ...field('initiator', initiator && initiator.kind === 'human' ? initiator : undefined),
     ...field('awaitsViewer', item.awaitsViewer === true ? (true as const) : undefined),
+    ...field('followsViewer', item.followsViewer === true ? (true as const) : undefined),
     ...field('agent', readIdentityOnly(item.agent)),
     ...field('app', readCornerAppBinding(item.app)),
     ...field(

@@ -5,7 +5,7 @@ import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './me
 import type { ObjectStorage } from './object-storage.js';
 import type { ObjectService } from './object-service.js';
 import { addressedToPersonSql } from './corner-owed.js';
-import { tagsKnownIdentitySql } from './message-mentions.js';
+import { followsCornerSql } from './corner-follow.js';
 import {
   claimReleaseCatchup,
   PUSH_MAX_ATTEMPTS,
@@ -320,22 +320,9 @@ export class PushDeliveryLoop {
               AND ${addressedToPersonSql('m', 'recipient.id', 'recipient.handle', 'recipient.kind')})
             OR (m.presentation='message' AND m.card_type IS NULL
               AND (recipient.push_level='all'
-                -- A person follows a corner they opened, requested, posted
-                -- in, steered from its Room, or were tagged in.
                 OR (recipient.push_level='mine' AND room.parent_id IS NOT NULL
                   AND room.archived_at IS NULL
-                  AND (room.created_by=recipient.id
-                    OR EXISTS (SELECT 1 FROM corner_facts mine WHERE mine.corner_id=room.id
-                      AND mine.commissioned_by=recipient.id)
-                    OR EXISTS (SELECT 1 FROM messages posted WHERE posted.room_id=room.id
-                      AND posted.author_id=recipient.id AND posted.deleted_at IS NULL)
-                    OR EXISTS (SELECT 1 FROM agent_commands steer
-                      JOIN messages steered_by ON steered_by.id=steer.root_source_message_id
-                      WHERE steer.room_id=room.id AND steer.reason='relay_steer'
-                        AND steered_by.author_id=recipient.id)
-                    OR EXISTS (SELECT 1 FROM messages tagged WHERE tagged.room_id=room.id
-                      AND tagged.deleted_at IS NULL
-                      AND ${tagsKnownIdentitySql('tagged', 'recipient.id', 'recipient.handle', 'recipient.kind')})))))
+                  AND ${followsCornerSql('room', 'recipient.id')})))
           )
         UNION ALL
         SELECT notification.id message_id,notification.workspace_id::text workspace_id,

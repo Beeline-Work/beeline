@@ -13,8 +13,8 @@ export function chatCornerCounts(
     workflow_state?: string | null;
     workflow_outcome?: string | null;
     latest_turn_status: string | null;
-    commissioned_by_viewer?: boolean | null;
-    latest_tags_viewer?: boolean | null;
+    /** `viewerFollowsCornerSql`: the push Followed rule for this viewer. */
+    follows_viewer?: boolean | null;
     latest_created_at?: Date | null;
     /** `cornerOwedLookupSql`'s facts for this corner and viewer. */
     owed?: boolean | null;
@@ -44,12 +44,9 @@ export function chatCornerCounts(
     };
     count.cornerCount += 1;
     if (state === 'waiting') count.waitingCornerCount += 1;
-    // Mine: the viewer commissioned it, it owes them something, or it is
-    // parked on a person and its latest message tags the viewer.
-    const mine =
-      row.commissioned_by_viewer ||
-      row.owed_viewer ||
-      (row.latest_tags_viewer && (state === 'waiting' || state === 'review'));
+    // Mine: the viewer follows it (opened, requested, posted, steered or was
+    // tagged), or it owes them something.
+    const mine = row.follows_viewer || row.owed_viewer;
     // The viewer's corner handing back is activity in its Room.
     const waitingSince =
       mine && state === 'waiting' && row.latest_created_at

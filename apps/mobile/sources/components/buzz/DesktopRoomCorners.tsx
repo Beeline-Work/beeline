@@ -6,8 +6,8 @@ import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
 import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
 import { CornerWaitingPulse } from './CornerWaitingPulse';
 
-/** The viewer's open corners in one Room: ones they commissioned or that
- * await them, waiting first. Everyone else's corners stay off the rail. The
+/** The viewer's open corners in one Room: ones they follow (started, posted,
+ * steered or were tagged in) or that owe them something, waiting first. Everyone else's corners stay off the rail. The
  * phone Room list shows the same dropdown under its row. */
 export function DesktopRoomCorners({
   item,

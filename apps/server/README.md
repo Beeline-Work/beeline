@@ -38,9 +38,10 @@ Direct iOS delivery uses APNs token authentication. Set `APNS_KEY_P8_BASE64` to 
 
 The mounted auth routes also require `PUBLIC_ORIGIN`, `BUZZY_AUTH_TENANTS_JSON`, and the six `BUZZY_AUTH_OIDC_*` values documented in `apps/auth/README.md`. The tenants JSON must contain an entry whose host and origin match `PUBLIC_ORIGIN`; production uses `server.usebeeline.app`.
 
-Dictation uses a server-only `GROQ_API_KEY`. With it, phones post each
-dictation's recorded audio to `/v1/phone/transcriptions`, which returns Groq
-`whisper-large-v3-turbo` text prompted with the Room lexicon. Without it, the
+Dictation uses a server-only `GROQ_API_KEY`. With it, phones post each piece
+of a dictation's recorded audio to `/v1/phone/transcriptions` as the piece
+closes, one at a time, and get back Groq `whisper-large-v3-turbo` text prompted
+with the Room lexicon and the text before that piece. Without it, the
 route answers 503 and phones keep their on-device transcript. Unset the key to
 turn Groq off without an app release.
 

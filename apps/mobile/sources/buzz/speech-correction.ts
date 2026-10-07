@@ -164,3 +164,44 @@ export function createSpeechCorrector(lexicon: readonly string[]): SpeechCorrect
     },
   };
 }
+
+// Words that start a sentence only by accident of a pause. Names and "I" are
+// absent so a seam never lowercases them.
+const SEAM_FUNCTION_WORDS = new Set(
+  (
+    'a an the and but or so to of in on at for with from by about into like as if ' +
+    'than then that this these those there it its is was are were be been do does ' +
+    'did have has had can could will would should may might must not just also ' +
+    'still even maybe because which who what when where how my his her our their ' +
+    'your we you he she they me him them us some any all'
+  ).split(' '),
+);
+
+/**
+ * Joins the text of consecutive dictation pieces. Each pause starts a new
+ * recognizer or Whisper request, which capitalises its first word; when the
+ * piece before it did not end a sentence, an English function word there is
+ * lowercased. Room lexicon terms keep their case.
+ */
+export function joinSpeechPieces(
+  pieces: readonly string[],
+  lexicon: readonly string[],
+  locale: string,
+): string {
+  const english = locale.toLowerCase().startsWith('en');
+  const terms = new Set(lexicon.map((term) => term.toLowerCase()));
+  let joined = '';
+  for (const raw of pieces) {
+    let piece = raw.trim();
+    if (!piece) continue;
+    if (english && joined && !/[.!?…]["')\]]*$/.test(joined)) {
+      const first = /^[A-Z][a-z]*\b/.exec(piece)?.[0];
+      const lower = first?.toLowerCase();
+      if (lower && SEAM_FUNCTION_WORDS.has(lower) && !terms.has(lower)) {
+        piece = lower + piece.slice(first!.length);
+      }
+    }
+    joined = joined ? `${joined} ${piece}` : piece;
+  }
+  return joined;
+}

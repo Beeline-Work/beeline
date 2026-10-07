@@ -8,11 +8,7 @@ import {
   useSpeechInput,
 } from './speech-input';
 import { getRecognitionModule } from './speech-recognition-adapter';
-import {
-  discardDictationRecordings,
-  dictationTranscriptionAvailable,
-  transcribeDictation,
-} from './speech-transcription';
+import { dictationTranscriptionAvailable, startDictationUpload } from './speech-transcription';
 
 vi.mock('react-native', () => ({
   Platform: {
@@ -28,9 +24,14 @@ vi.mock('react-native', () => ({
 vi.mock('./speech-recognition-adapter', () => ({
   getRecognitionModule: vi.fn(),
 }));
+const upload = vi.hoisted(() => ({
+  add: vi.fn(),
+  finish: vi.fn<() => Promise<string | null>>(),
+  discard: vi.fn(),
+}));
 vi.mock('./speech-transcription', () => ({
   dictationTranscriptionAvailable: vi.fn(() => true),
-  transcribeDictation: vi.fn(),
+  startDictationUpload: vi.fn(() => upload),
   discardDictationRecordings: vi.fn(async () => {}),
 }));
 vi.mock('./speech-locale', () => ({
@@ -647,6 +648,9 @@ describe('useSpeechInput', () => {
     const supportsRecording = vi.fn(() => true);
 
     beforeEach(() => {
+      upload.add.mockReset();
+      upload.finish.mockReset();
+      upload.discard.mockReset();
       (mockMod as any).supportsRecording = supportsRecording;
       supportsRecording.mockReturnValue(true);
       vi.mocked(dictationTranscriptionAvailable).mockReturnValue(true);
@@ -667,7 +671,7 @@ describe('useSpeechInput', () => {
     }
 
     it('records, shows live on-device words, and commits the server text on stop', async () => {
-      vi.mocked(transcribeDictation).mockResolvedValue('Ask Jellybean to open a corner.');
+      upload.finish.mockResolvedValue('Ask Jellybean to open a corner.');
       const { onResult, speech, probe } = renderHook(vi.fn(), ['Jellybean', 'corner']);
       await dictate(speech);
 
@@ -691,11 +695,8 @@ describe('useSpeechInput', () => {
         captured = await stopped;
       });
 
-      expect(transcribeDictation).toHaveBeenCalledWith(
-        ['file:///cache/take-1.wav'],
-        ['Jellybean', 'corner'],
-        'en-GB',
-      );
+      expect(startDictationUpload).toHaveBeenCalledWith(['Jellybean', 'corner'], 'en-GB');
+      expect(upload.add).toHaveBeenCalledWith('file:///cache/take-1.wav');
       expect(onResult).toHaveBeenCalledTimes(1);
       expect(onResult).toHaveBeenCalledWith('Ask Jellybean to open a corner.');
       expect(captured).toBe(true);
@@ -703,7 +704,7 @@ describe('useSpeechInput', () => {
     });
 
     it('commits the on-device text when server transcription fails', async () => {
-      vi.mocked(transcribeDictation).mockResolvedValue(null);
+      upload.finish.mockResolvedValue(null);
       const { onResult, speech } = renderHook();
       await dictate(speech);
 
@@ -717,8 +718,8 @@ describe('useSpeechInput', () => {
       expect(onResult).toHaveBeenCalledWith('ask jelly bean to open a corner');
     });
 
-    it('transcribes every restarted segment of one take together', async () => {
-      vi.mocked(transcribeDictation).mockResolvedValue('one two');
+    it('uploads each restarted segment as it closes and commits the joined text once', async () => {
+      upload.finish.mockResolvedValue('one two');
       const { onResult, speech } = renderHook();
       await act(async () => {
         await speech().start();
@@ -730,6 +731,9 @@ describe('useSpeechInput', () => {
       });
       expect(mockMod.start).toHaveBeenCalledTimes(2);
       expect(mockMod.start.mock.lastCall?.[0]).toHaveProperty('recordingOptions');
+      // The first piece is already uploading while the user keeps talking.
+      expect(upload.add.mock.calls).toEqual([['file:///cache/a.wav']]);
+      expect(upload.finish).not.toHaveBeenCalled();
 
       await act(async () => {
         fireEvent('result', { results: [{ transcript: 'two' }], isFinal: true });
@@ -739,17 +743,15 @@ describe('useSpeechInput', () => {
         await stopped;
       });
 
-      expect(vi.mocked(transcribeDictation).mock.lastCall?.[0]).toEqual([
-        'file:///cache/a.wav',
-        'file:///cache/b.wav',
-      ]);
+      expect(upload.add.mock.calls).toEqual([['file:///cache/a.wav'], ['file:///cache/b.wav']]);
+      expect(upload.finish).toHaveBeenCalledTimes(1);
       expect(onResult).toHaveBeenCalledTimes(1);
       expect(onResult).toHaveBeenCalledWith('one two');
     });
 
     it('waits for native end after a silence stop, then commits the server text', async () => {
       vi.useFakeTimers();
-      vi.mocked(transcribeDictation).mockResolvedValue('Hello there.');
+      upload.finish.mockResolvedValue('Hello there.');
       const { onResult, speech } = renderHook();
       await act(async () => {
         await speech().start();
@@ -782,8 +784,8 @@ describe('useSpeechInput', () => {
         fireEvent('end');
         await stopped;
       });
-      expect(transcribeDictation).not.toHaveBeenCalled();
-      expect(discardDictationRecordings).toHaveBeenCalledWith(['file:///cache/silence.wav']);
+      expect(upload.finish).not.toHaveBeenCalled();
+      expect(upload.discard).toHaveBeenCalled();
       expect(onResult).not.toHaveBeenCalled();
     });
 
@@ -810,7 +812,7 @@ describe('useSpeechInput', () => {
 
     it('drops a transcription that returns after the composer unmounts', async () => {
       let resolve!: (text: string) => void;
-      vi.mocked(transcribeDictation).mockReturnValue(
+      upload.finish.mockReturnValue(
         new Promise<string>((done) => {
           resolve = done;
         }),
@@ -831,6 +833,34 @@ describe('useSpeechInput', () => {
       });
       expect(await stopped).toBeNull();
       expect(onResult).not.toHaveBeenCalled();
+    });
+
+    it('lowercases a function word at an on-device seam when the server text fails', async () => {
+      upload.finish.mockResolvedValue(null);
+      const { onResult, speech } = renderHook();
+      await act(async () => {
+        await speech().start();
+      });
+      await act(async () => {
+        fireEvent('result', { results: [{ transcript: 'ask jelly bean' }], isFinal: true });
+        fireEvent('result', { results: [{ transcript: 'And his snapshot' }], isFinal: true });
+      });
+      await act(async () => {
+        const stopped = speech().stop();
+        fireEvent('end');
+        await stopped;
+      });
+      expect(onResult).toHaveBeenCalledWith('ask jelly bean and his snapshot');
+    });
+
+    it('discards the take when the microphone permission is lost', async () => {
+      const { speech } = renderHook();
+      await dictate(speech);
+      await act(async () => {
+        fireEvent('error', { error: 'not-allowed' });
+      });
+      expect(upload.discard).toHaveBeenCalled();
+      expect(upload.finish).not.toHaveBeenCalled();
     });
   });
 });

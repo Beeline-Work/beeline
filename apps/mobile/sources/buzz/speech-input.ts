@@ -6,9 +6,9 @@
  * Silence is a result-gap with no speech-level volume, not merely a sparse
  * Android interim; captured text never shares the page with "didn't catch
  * that". Transcripts are corrected against the Room lexicon (speech-correction).
- * Where the device can record, the take's audio also goes to the server's Groq
- * Whisper on stop; its text replaces the on-device text, which stays the
- * fallback (speech-transcription).
+ * Where the device can record, each piece of the take's audio goes to the
+ * server's Groq Whisper as it closes; on stop their text replaces the
+ * on-device text, which stays the fallback (speech-transcription).
  */
 import * as React from 'react';
 import { Platform } from 'react-native';
@@ -17,11 +17,12 @@ import {
   type SpeechRecognitionInterface,
 } from './speech-recognition-adapter';
 import { getDeviceSpeechLocale } from './speech-locale';
-import { createSpeechCorrector } from './speech-correction';
+import { createSpeechCorrector, joinSpeechPieces } from './speech-correction';
 import {
   discardDictationRecordings,
   dictationTranscriptionAvailable,
-  transcribeDictation,
+  startDictationUpload,
+  type DictationUpload,
 } from './speech-transcription';
 
 export type SpeechInputState =
@@ -72,8 +73,8 @@ const DICTATION_RECORDING_OPTIONS = {
 };
 
 /** One dictation recorded for server transcription. */
-type RecordedTake = { recorded: boolean; uris: string[]; finals: string[] };
-const NO_TAKE: RecordedTake = { recorded: false, uris: [], finals: [] };
+type RecordedTake = { upload: DictationUpload | null; finals: string[] };
+const NO_TAKE: RecordedTake = { upload: null, finals: [] };
 
 function sameLocale(a: string, b: string): boolean {
   return a.replace(/_/g, '-').toLowerCase() === b.replace(/_/g, '-').toLowerCase();
@@ -214,7 +215,7 @@ export function useSpeechInput(
       Platform.OS === 'android' && !androidGoogleService
         ? { ...startOptions, requiresOnDeviceRecognition: androidOnDeviceRef.current }
         : startOptions;
-    return takeRef.current.recorded
+    return takeRef.current.upload
       ? { ...options, recordingOptions: DICTATION_RECORDING_OPTIONS }
       : options;
   }, [androidGoogleService, startOptions]);
@@ -254,23 +255,21 @@ export function useSpeechInput(
       finalizationTimerRef.current = null;
     }
     const take = takeRef.current;
-    if (!take.recorded) return;
+    if (!take.upload) return;
     takeRef.current = NO_TAKE;
     const takeId = takeIdRef.current;
-    const onDevice = [...take.finals, pendingPartialRef.current]
-      .filter((text) => text.trim())
-      .join(' ');
+    const onDevice = joinSpeechPieces(
+      [...take.finals, pendingPartialRef.current],
+      lexiconRef.current,
+      startOptions.lang,
+    );
     let text = onDevice;
-    if (onDevice.trim() && take.uris.length) {
-      const transcribed = await transcribeDictation(
-        take.uris,
-        lexiconRef.current,
-        startOptions.lang,
-      );
+    if (onDevice) {
+      const transcribed = await take.upload.finish();
       if (takeId !== takeIdRef.current) return;
       if (transcribed) text = correctorRef.current.correct([transcribed]);
     } else {
-      void discardDictationRecordings(take.uris);
+      take.upload.discard();
     }
     const captured = finishStopWithCapture(text);
     if (stopSettlementRef.current) {
@@ -294,7 +293,7 @@ export function useSpeechInput(
     if (!listeningRef.current) return;
     if (restartCountRef.current >= MAX_RESTARTS) {
       doStop();
-      if (takeRef.current.recorded) {
+      if (takeRef.current.upload) {
         awaitTakeEnd();
         return;
       }
@@ -317,7 +316,7 @@ export function useSpeechInput(
     silenceTimerRef.current = setTimeout(() => {
       if (!listeningRef.current) return;
       doStop();
-      if (takeRef.current.recorded) {
+      if (takeRef.current.upload) {
         awaitTakeEnd();
         return;
       }
@@ -352,7 +351,7 @@ export function useSpeechInput(
       if (listeningRef.current) armSilenceTimer();
 
       const take = takeRef.current;
-      if (take.recorded) {
+      if (take.upload) {
         // The take commits once, on stop; meanwhile show every segment so far.
         if (event.isFinal) {
           take.finals.push(transcript);
@@ -360,7 +359,13 @@ export function useSpeechInput(
         } else {
           pendingPartialRef.current = transcript;
         }
-        setPartialText([...take.finals, pendingPartialRef.current].filter(Boolean).join(' '));
+        setPartialText(
+          joinSpeechPieces(
+            [...take.finals, pendingPartialRef.current],
+            lexiconRef.current,
+            startOptions.lang,
+          ),
+        );
         return;
       }
 
@@ -385,7 +390,7 @@ export function useSpeechInput(
 
     const onError = (event: any) => {
       if (event.error === 'not-allowed') {
-        void discardDictationRecordings(takeRef.current.uris);
+        takeRef.current.upload?.discard();
         takeRef.current = NO_TAKE;
         if (stopSettlementRef.current) {
           const captured = finishStopWithCapture(pendingPartialRef.current);
@@ -414,13 +419,14 @@ export function useSpeechInput(
     const onAudioEnd = (event: any) => {
       const uri = typeof event?.uri === 'string' ? event.uri : '';
       if (!uri) return;
-      if (takeRef.current.recorded) takeRef.current.uris.push(uri);
+      // A closed piece uploads now, while the user keeps talking.
+      if (takeRef.current.upload) takeRef.current.upload.add(uri);
       else void discardDictationRecordings([uri]);
     };
 
     const onEnd = () => {
       if (stopRequestedRef.current) {
-        if (takeRef.current.recorded) {
+        if (takeRef.current.upload) {
           void finishTake();
           return;
         }
@@ -476,6 +482,7 @@ export function useSpeechInput(
     finishTake,
     restartIfStillListening,
     settleExplicitStop,
+    startOptions.lang,
   ]);
 
   const start = React.useCallback(async () => {
@@ -515,9 +522,12 @@ export function useSpeechInput(
       setPartialText('');
       pendingPartialRef.current = '';
       takeIdRef.current += 1;
+      takeRef.current.upload?.discard();
       takeRef.current = {
-        recorded: recordingSupported(m) && dictationTranscriptionAvailable(),
-        uris: [],
+        upload:
+          recordingSupported(m) && dictationTranscriptionAvailable()
+            ? startDictationUpload(lexiconRef.current, startOptions.lang)
+            : null,
         finals: [],
       };
       setVolumeLevel(0);
@@ -559,7 +569,7 @@ export function useSpeechInput(
     });
     stopSettlementRef.current = { promise, resolve: resolveStop };
     const finishWithoutNativeEnd = () => {
-      if (takeRef.current.recorded) {
+      if (takeRef.current.upload) {
         void finishTake();
         return;
       }
@@ -588,7 +598,7 @@ export function useSpeechInput(
       }
       startAttemptRef.current += 1;
       takeIdRef.current += 1;
-      void discardDictationRecordings(takeRef.current.uris);
+      takeRef.current.upload?.discard();
       takeRef.current = NO_TAKE;
       listeningRef.current = false;
       stopRequestedRef.current = false;

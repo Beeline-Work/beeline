@@ -133,3 +133,46 @@ export function compressDictationWav(wav: Uint8Array): Uint8Array {
   }
   return out;
 }
+
+/** Seconds of audio in a 16-bit mono PCM WAV, or null for any other file. */
+export function dictationWavSeconds(wav: Uint8Array): number | null {
+  const pcm = pcmSamples(wav);
+  return pcm ? pcm.samples.length / pcm.rate : null;
+}
+
+/**
+ * Joins 16-bit mono PCM WAVs of one rate into one PCM WAV, in order. Answers
+ * null when any input is another format or the rates differ.
+ */
+export function concatDictationWavs(wavs: readonly Uint8Array[]): Uint8Array | null {
+  const parts = wavs.map(pcmSamples);
+  const rate = parts[0]?.rate;
+  if (!rate || parts.some((part) => !part || part.rate !== rate)) return null;
+  const count = parts.reduce((total, part) => total + part!.samples.length, 0);
+  const out = new Uint8Array(44 + count * 2);
+  const view = new DataView(out.buffer);
+  const text = (offset: number, value: string) => {
+    for (let i = 0; i < 4; i++) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+  text(0, 'RIFF');
+  view.setUint32(4, out.length - 8, true);
+  text(8, 'WAVE');
+  text(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  text(36, 'data');
+  view.setUint32(40, count * 2, true);
+  let offset = 44;
+  for (const part of parts) {
+    for (const sample of part!.samples) {
+      view.setInt16(offset, sample, true);
+      offset += 2;
+    }
+  }
+  return out;
+}

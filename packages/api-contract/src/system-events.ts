@@ -89,7 +89,7 @@ export const SERVER_EVENT_KIND_DETAIL: Readonly<Record<ServerEventKind, string>>
   'merged': "fires when a corner's pull request merges",
   'grant-decided': 'carries the grant id and status and resumes the turn that asked for the grant',
   'squire-approval-decided':
-    'carries what was approved or denied and the Squire approval id, and resumes the turn that asked',
+    'carries what was approved, denied, or left to expire and the Squire approval id, and resumes the turn that asked',
   'connector-offer-decided':
     'fires when a human accepts or declines an offered connector, or a reconnect ceremony finishes, and resumes the turn that offered it',
   'turn-cancelled': 'fires when a running turn is stopped',

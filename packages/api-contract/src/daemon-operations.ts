@@ -1410,7 +1410,7 @@ export type PostSquireApprovalInput = TurnOutputAuthority &
 export type PostSquireApprovalDecisionInput = RoomInput & {
   readonly requestId: string;
   readonly approvalId: string;
-  readonly status: 'approved' | 'denied';
+  readonly status: 'approved' | 'denied' | 'expired';
   readonly tool: string;
   readonly title: string;
   readonly detail: string;

@@ -281,6 +281,61 @@ describe('helper-owned Squire task relay', () => {
     })]);
   });
 
+  it.each([
+    ['fetch_credential', 'Credential access approval', 'Reveal groq'],
+    ['edit_credential', 'Credential edit approval', 'Edit groq'],
+    ['delete_credential', 'Credential deletion approval', 'Delete groq'],
+    ['edit_payment_card', 'Card edit approval', 'Edit groq'],
+  ])('wakes the asking turn when a session-less %s vault approval is decided', async (tool, title, detail) => {
+    const decisions: unknown[] = [];
+    const { relay, stats, notify } = fixture('/tmp/context', async () => true, async () => ({
+      content: [{ type: 'text', text: JSON.stringify({
+        status: 'approval_pending', approval_id: 'vault-1',
+        approval_url: 'https://trustysquire.ai/vault/fetch/vault-1',
+        expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+      }) }],
+    }), (decision) => decisions.push(decision));
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: tool, arguments: { service: 'groq' } });
+    vi.useFakeTimers();
+    relay.deactivate('turn-one');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS * 2);
+    expect(stats().exits).toBe(0); // the open vault approval keeps Squire's watcher connected
+    notify({ jsonrpc: '2.0', method: 'notifications/approval_decided',
+      params: { approval_id: 'vault-1', status: 'approved' } });
+    expect(decisions).toEqual([{ requestId: 'turn-one', approvalId: 'vault-1', status: 'approved', tool, title, detail }]);
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
+    expect(stats().exits).toBe(1);
+  });
+
+  it('wakes the asking turn when a vault approval expires undecided, then frees the connection', async () => {
+    const decisions: unknown[] = [];
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const { relay, stats, notify } = fixture('/tmp/context', async () => true, async () => ({
+      content: [{ type: 'text', text: JSON.stringify({
+        status: 'approval_pending', approval_id: 'vault-2',
+        approval_url: 'https://trustysquire.ai/vault/fetch/vault-2',
+        expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+      }) }],
+    }), (decision) => decisions.push(decision));
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'fetch_credential', arguments: { service: 'groq' },
+    });
+    relay.deactivate('turn-one');
+    await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
+    expect(decisions).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(decisions).toEqual([expect.objectContaining({
+      requestId: 'turn-one', approvalId: 'vault-2', status: 'expired', tool: 'fetch_credential',
+    })]);
+    notify({ jsonrpc: '2.0', method: 'notifications/approval_decided',
+      params: { approval_id: 'vault-2', status: 'approved' } });
+    expect(decisions).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
+    expect(stats().exits).toBe(1);
+  });
+
   it('ignores a notification for an approval it never tracked, or a malformed one', async () => {
     const decisions: unknown[] = [];
     const { relay, notify } = fixture('/tmp/context', async () => true, async (_method, params) =>

@@ -344,6 +344,7 @@ export function resumePrompt(item: { body: string; systemEvent?: SystemEvent }):
       'Your paused work resumes now.',
       'If it was approved, continue exactly where you left off with Trusty Squire; do not ask the person to approve again, and do not restart the task.',
       'If it was denied, stop that Trusty Squire action and say plainly what you cannot do.',
+      'If it got no answer, the approval expired; say so plainly, and ask again only if the person still wants it.',
     ].join(' ');
   }
   if (item.systemEvent?.kind === 'connector-offer-decided') {

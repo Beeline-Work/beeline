@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSpeechCorrector } from './speech-correction';
+import { createSpeechCorrector, joinSpeechPieces } from './speech-correction';
 
 const LEXICON = [
   'Groq',
@@ -54,5 +54,30 @@ describe('createSpeechCorrector', () => {
 
   it('returns text unchanged with an empty lexicon', () => {
     expect(createSpeechCorrector([]).correct(['Croc open rotor'])).toBe('Croc open rotor');
+  });
+});
+
+describe('joinSpeechPieces', () => {
+  it('lowercases a function word that a pause capitalised mid-sentence', () => {
+    expect(
+      joinSpeechPieces(['ask', 'Just essentially', 'And his current snapshot'], [], 'en-US'),
+    ).toBe('ask just essentially and his current snapshot');
+  });
+
+  it('keeps the capital after a finished sentence', () => {
+    expect(joinSpeechPieces(['Open a corner.', 'And then stop'], [], 'en-GB')).toBe(
+      'Open a corner. And then stop',
+    );
+  });
+
+  it('keeps names, lexicon terms and "I" capitalised', () => {
+    expect(joinSpeechPieces(['ask', 'Groq', 'I think', 'London'], ['Groq'], 'en-US')).toBe(
+      'ask Groq I think London',
+    );
+    expect(joinSpeechPieces(['ask', 'Just'], ['Just'], 'en-US')).toBe('ask Just');
+  });
+
+  it('only joins with spaces outside English', () => {
+    expect(joinSpeechPieces(['hola', 'The', ''], [], 'es-ES')).toBe('hola The');
   });
 });

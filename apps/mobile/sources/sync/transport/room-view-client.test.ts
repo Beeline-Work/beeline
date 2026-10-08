@@ -117,20 +117,49 @@ describe('mobile transport cutover switch', () => {
     controls.enabled = true;
     const workspaceId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
     const { monolithSession } = await import('@/auth/monolith-session');
-    vi.mocked(monolithSession.fetch).mockResolvedValueOnce(Response.json({ workspaceId, results: [] }));
+    let sent: AbortSignal | undefined;
+    vi.mocked(monolithSession.fetch).mockImplementationOnce(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          sent = init?.signal ?? undefined;
+          sent?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        }),
+    );
     const client = new RoomViewClient({
       baseUrl: 'https://relay.example',
       identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) },
     });
     const controller = new AbortController();
-    await expect(
-      client.searchMessages(workspaceId, 'gradle cache', undefined, controller.signal),
-    ).resolves.toEqual({ workspaceId, results: [] });
+    const search = client.searchMessages(workspaceId, 'gradle cache', undefined, controller.signal);
     expect(vi.mocked(monolithSession.fetch)).toHaveBeenLastCalledWith(
       `https://server.example/v1/phone/workspaces/${workspaceId}/search?q=gradle+cache`,
-      expect.objectContaining({ method: 'GET', signal: controller.signal }),
+      expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) }),
       { timeoutMs: 15_000 },
     );
+    expect(sent?.aborted).toBe(false);
+    controller.abort();
+    expect(sent?.aborted).toBe(true);
+    await expect(search).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('fails a read whose body stalls after the headers at the request deadline', async () => {
+    controls.enabled = true;
+    vi.useFakeTimers();
+    try {
+      const { monolithSession } = await import('@/auth/monolith-session');
+      const stalled = new Response(new ReadableStream({ start() {} }), { status: 200 });
+      vi.mocked(monolithSession.fetch).mockResolvedValueOnce(stalled);
+      const client = new RoomViewClient({
+        baseUrl: 'https://relay.example',
+        identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) },
+      });
+      const read = client.historyAround('room', 'b'.repeat(64));
+      const settled = expect(read).rejects.toMatchObject({ status: 0, code: 'timeout' });
+      await vi.advanceTimersByTimeAsync(15_000);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('requests older agent work with the server cursor instead of repeating the first page', async () => {

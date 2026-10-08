@@ -25,18 +25,12 @@ const offsetExpression = nativeList
   .replace('    const offset =', 'return (')
   .replace(';', ');');
 const nativeOffset = new Function('index', 'viewPosition', 'viewOffset', 'frame', offsetExpression);
+// One landing path: the store keeps the target near the newest end of the
+// window, and one scroll aligns its beginning.
 const sections = {
-  initial: surface.slice(
-    surface.indexOf('// Reveal the exact fact that caused the alert.'),
-    surface.indexOf('    const residentIndex = combinedMessages'),
-  ),
-  measured: surface.slice(
-    surface.indexOf('  const settleMessageSourceLandingIfVisible ='),
+  landing: surface.slice(
+    surface.indexOf('  const attemptSourceLanding = useCallback('),
     surface.indexOf('  const observeVisibleTranscriptMessages'),
-  ),
-  retry: surface.slice(
-    surface.indexOf('                  onScrollToIndexFailed='),
-    surface.indexOf('                    if (\n                      notification &&'),
   ),
 };
 
@@ -90,7 +84,7 @@ describe('notification target beginning below fixed chrome', () => {
           );
         }
       }
-      expect(sections.initial).toContain("scrollIntoView({ block: 'start' })");
+      expect(sections.landing).toContain("scrollIntoView({ block: 'start' })");
     },
   );
 });

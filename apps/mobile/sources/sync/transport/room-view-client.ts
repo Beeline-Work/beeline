@@ -172,11 +172,31 @@ class MonolithRoomViewClient {
     body?: unknown,
     signal?: AbortSignal,
   ): Promise<T> {
-    const response = await this.request(path, method, body, signal);
-    const value = (await response.json()) as unknown;
-    const projected = guard(value);
-    if (projected === null) throw new RoomViewHttpError(502, 'invalid_surface_response');
-    return projected;
+    // The session's deadline ends at the response headers. A body that
+    // stalls after them would leave the read pending forever, so one deadline
+    // covers the headers and the body together.
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, MONOLITH_REQUEST_TIMEOUT_MS);
+    const forwardAbort = () => controller.abort();
+    signal?.addEventListener('abort', forwardAbort);
+    if (signal?.aborted) controller.abort();
+    try {
+      const response = await this.request(path, method, body, controller.signal);
+      const value = await untilAborted(response.json() as Promise<unknown>, controller.signal);
+      const projected = guard(value);
+      if (projected === null) throw new RoomViewHttpError(502, 'invalid_surface_response');
+      return projected;
+    } catch (error) {
+      if (timedOut) throw new RoomViewHttpError(0, 'timeout');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', forwardAbort);
+    }
   }
   private async request(
     path: string,
@@ -205,13 +225,28 @@ class MonolithRoomViewClient {
     if (!response.ok) {
       let code = 'request_failed';
       try {
-        const value = (await response.json()) as { error?: unknown };
+        const json = response.json() as Promise<{ error?: unknown }>;
+        const value = signal ? await untilAborted(json, signal) : await json;
         if (typeof value.error === 'string') code = value.error;
       } catch {}
       throw new RoomViewHttpError(response.status, code);
     }
     return response;
   }
+}
+
+/** Reject with an AbortError once `signal` aborts, whatever `promise` does. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      const error = new Error('The request was aborted.');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    if (signal.aborted) return onAbort();
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
 }
 
 /** A push can begin this read before the Room identity/relay setup completes. */

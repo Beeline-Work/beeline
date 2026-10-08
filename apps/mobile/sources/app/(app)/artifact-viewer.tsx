@@ -4,6 +4,7 @@ import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { codeDocumentFromMessages, type CodeDocument } from '@/buzz/code-document';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
+import { findInRoomHistory } from '@/buzz/room-message-store';
 
 export default function ArtifactViewerRoute() {
   const { roomId, messageId, blockIndex } = useLocalSearchParams<{
@@ -29,13 +30,12 @@ export default function ArtifactViewerRoute() {
       const oldest = [...view.messages].sort(
         (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
       )[0];
-      let cursor = oldest ? { createdAt: oldest.createdAt, id: oldest.id } : undefined;
-      while (!next) {
-        const history = await client.history(roomId, cursor);
-        next = codeDocumentFromMessages(history.messages, messageId, index);
-        if (next || !history.nextBefore) break;
-        cursor = history.nextBefore;
-      }
+      next ??= await findInRoomHistory(
+        client,
+        roomId,
+        oldest ? { createdAt: oldest.createdAt, id: oldest.id } : undefined,
+        (rows) => codeDocumentFromMessages(rows, messageId, index),
+      );
       if (!next) throw new Error();
       if (live) setDocument(next);
     })().catch(() => {

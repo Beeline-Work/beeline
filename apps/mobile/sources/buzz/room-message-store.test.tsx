@@ -8,7 +8,7 @@ import {
   type RoomViewMessage,
 } from '@beeline/buzz-client';
 
-import { useRoomTranscriptHistory } from './use-room-transcript-history';
+import { useRoomMessageStore } from './room-message-store';
 
 const originalConsoleError = console.error;
 
@@ -52,14 +52,14 @@ function Transcript({
   history: (roomId: string, before?: { createdAt: number; id: string }) => Promise<RoomHistoryView>;
   corner?: boolean;
 }) {
-  const page = useRoomTranscriptHistory({
+  const page = useRoomMessageStore({
     roomId: 'corner',
     tailMessages: tail,
     roomClient: { history },
     enabled: true,
     initialVisibleCount: 2,
   });
-  const rows = [...page.olderPages.flat(), ...tail].slice(-page.visibleMessageCount);
+  const rows = [...page.rows, ...tail].slice(-page.visibleMessageCount);
   const line =
     page.status === 'loading'
       ? 'Loading earlier messages…'
@@ -74,7 +74,7 @@ function Transcript({
     'Transcript',
     {
       onEndReached: () => page.loadOlder(rows.length),
-      onRetry: () => page.retry(rows.length),
+      onRetry: () => page.retryOlder(rows.length),
       onReset: page.reset,
     },
     line ? React.createElement('HistoryLine', null, line) : null,

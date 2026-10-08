@@ -5601,7 +5601,7 @@ export class DaemonService {
   private async renameCorner(input: Input<'renameCorner'>, agentId: string) {
     const refusal = cornerTextRefusal('name', input.name);
     if (refusal) throw new Error(refusal);
-    const name = normalizeCornerText(input.name);
+    const name = input.name;
     const objective = input.objective === undefined ? undefined : normalizeCornerText(input.objective);
     if (input.objective !== undefined) {
       const objectiveRefusal = cornerTextRefusal('objective', input.objective);
@@ -6914,11 +6914,11 @@ export class DaemonService {
 
   private async createCorner(input: Input<'createCorner'>, agentId: string) {
     // Objectives are normalized paragraphs; names must already be continuous.
-    const objective = normalizeCornerText(input.objective ?? '');
-    const name = normalizeCornerText(input.name ?? '');
     const refusal =
       cornerTextRefusal('name', input.name) ?? cornerTextRefusal('objective', input.objective);
     if (refusal) throw new Error(refusal);
+    const objective = normalizeCornerText(input.objective ?? '');
+    const name = input.name ?? '';
     if (input.brief) validateCornerBrief(input.brief);
     const idempotencyKey = input.idempotencyKey ?? input.requestId;
     if (!idempotencyKey || idempotencyKey.length > 128) {

@@ -1,6 +1,7 @@
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { ROOM_WEBHOOK_SCHEMA } from './room-webhooks.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
+import { hyphenateCornerNames } from './migrations/corner-names.js';
 import {
   normalizeLegacyWorkflowRuns,
   reportAbandonedWorkflowEndings,
@@ -2855,6 +2856,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
   await dataStep('corner owner backfill', () => backfillCornerOwners(database));
   await dataStep('corner owed backfill', () => backfillCornerOwed(database));
+  await dataStep('continuous corner names', () =>
+    workflowBackfillOnce(database, 'corner-names-continuous-v1', hyphenateCornerNames));
   await dataStep('corner follows backfill', () =>
     workflowBackfillOnce(database, 'corner-follows-v1', backfillCornerFollows));
   await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));

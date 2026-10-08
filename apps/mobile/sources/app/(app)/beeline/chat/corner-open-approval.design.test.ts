@@ -42,8 +42,4 @@ describe('corner-open approval card design contract', () => {
     );
     expect(source).toContain('const cornerObjectiveText = useMemo(');
   });
-
-  it('lets the corner title wrap because the name is the objective verbatim', () => {
-    expect(source).toContain('numberOfLines={isCorner ? 2 : 1}');
-  });
 });

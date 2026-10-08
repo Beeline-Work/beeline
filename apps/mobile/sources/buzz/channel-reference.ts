@@ -33,8 +33,6 @@
  * loads a corner list to paint the token.
  */
 
-import { CORNER_NAME_MAX_WORDS } from '@beeline/api-contract/phone';
-
 export type ChannelReferenceTarget =
   | { readonly kind: 'room'; readonly channelId: string }
   | {
@@ -252,23 +250,7 @@ export function findChannelReferences(
   return matches;
 }
 
-function wordEnds(text: string, from: number, maxWords: number): number[] {
-  const ends: number[] = [];
-  let index = from;
-  for (let word = 0; word < maxWords && index < text.length; word += 1) {
-    if (word > 0) {
-      if (text[index] !== ' ') break;
-      index += 1;
-    }
-    const start = index;
-    while (index < text.length && !ALLOWED_AFTER.test(text[index]!)) index += 1;
-    if (index === start) break;
-    ends.push(index);
-  }
-  return ends;
-}
-
-/** `#knownRoom/` plus up to three words, for a tap to resolve later. */
+/** `#knownRoom/` plus one continuous name, for a tap to resolve later. */
 function pendingCornerMatch(
   text: string,
   hash: number,
@@ -288,20 +270,19 @@ function pendingCornerMatch(
   }
   if (!roomHit) return undefined;
   const nameStart = hash + prefixLength;
-  const ends = wordEnds(text, nameStart, CORNER_NAME_MAX_WORDS);
-  for (let indexWord = ends.length - 1; indexWord >= 0; indexWord -= 1) {
-    const end = ends[indexWord]!;
-    if (end < text.length && !ALLOWED_AFTER.test(text[end]!)) continue;
-    const name = text.slice(nameStart, end);
-    if (!name.trim()) continue;
-    return {
-      text: text.slice(hash, end),
-      start: hash,
-      end,
-      target: { kind: 'corner', parentChannelId: roomHit.channelId, name },
-    };
-  }
-  return undefined;
+  let end = nameStart;
+  while (end < text.length && !ALLOWED_AFTER.test(text[end]!)) end += 1;
+  if (end === nameStart) return undefined;
+  return {
+    text: text.slice(hash, end),
+    start: hash,
+    end,
+    target: {
+      kind: 'corner',
+      parentChannelId: roomHit.channelId,
+      name: text.slice(nameStart, end),
+    },
+  };
 }
 
 /**

@@ -23,7 +23,7 @@ import {
   CORNER_CHECKS_NUDGE,
   cornerMergeInstruction,
   cornerReviewerInstruction,
-  cornerSelfReviewerInstruction,
+  CORNER_REVIEWER_AUTHOR_MERGE,
 } from './prompt-assembly.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
@@ -192,11 +192,10 @@ describe('corner merge instructions', () => {
     for (const instruction of [none, reviewed]) expect(instruction).not.toMatch(/yolo/i);
   });
 
-  it('selects the reviewer role by identity only for a non-opener', () => {
+  it('selects the reviewer role by the reviewer post alone', () => {
     const reviewer = {
       isReviewer: true,
       authorHandle: 'bee',
-      openedByAgent: false,
       pullRequestNumber: 42,
       headSha: 'a'.repeat(40),
       briefRevision: 2,
@@ -217,29 +216,20 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain('Never say you are holding or waiting for checks');
     expect(instruction).not.toContain('pending checks');
     expect(instruction).not.toContain('unknown checks');
-    expect(cornerReviewerInstruction({ ...reviewer, openedByAgent: true })).toBeUndefined();
     expect(cornerReviewerInstruction({ ...reviewer, isReviewer: false })).toBeUndefined();
   });
 
-  it('gives the self-reviewer line only when the reviewer opens its own corner', () => {
-    const selfReviewer = { isReviewer: true, openedByAgent: true };
-    const instruction = cornerSelfReviewerInstruction(selfReviewer)!;
+  it('gives a reviewer that writes code a person as its reviewer', () => {
+    const instruction = CORNER_REVIEWER_AUTHOR_MERGE;
     expect(instruction).toContain("You are this Room's reviewer");
-    expect(instruction).toContain('do not request one');
-    expect(instruction).toContain('tag any agent for review');
-    // No other agent can review it, so only a human's yes merges it.
+    expect(instruction).toContain('a person is your reviewer');
+    // No other agent can review it, so only a person's yes merges it.
     expect(instruction).toContain(
-      "It merges only on a human's yes: ask a Workspace owner or admin to approve the merge, then record their yes with order_corner_merge.",
+      'tag the person who assigned you this work, and ask them to approve the merge',
     );
+    expect(instruction).toContain('Record their yes with order_corner_merge.');
     expect(instruction).toContain('Never merge it any other way.');
     expect(instruction).not.toContain('gh pr merge');
-    // A non-reviewer opener (someone else is the configured reviewer): nothing.
-    expect(cornerSelfReviewerInstruction({ ...selfReviewer, isReviewer: false })).toBeUndefined();
-    // The reviewer on someone else's corner: `cornerReviewerInstruction` covers
-    // that case instead, so this stays undefined.
-    expect(
-      cornerSelfReviewerInstruction({ ...selfReviewer, openedByAgent: false }),
-    ).toBeUndefined();
   });
 
   it('nudges delivery for dirty work without disposing of it', async () => {
@@ -592,6 +582,123 @@ describe('corner merge instructions', () => {
     const durableReplies = api.execute.mock.calls.filter(([name]) => name === 'postRoomMessage');
     expect(durableReplies).toHaveLength(2);
     expect(durableReplies[1]?.[1]).toEqual(expect.objectContaining({ text: `review pass ${stableRuns + 2}` }));
+    await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
+  }, 30_000);
+});
+
+describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its corner', () => {
+  it('gets the reviewer rules, and its green-checks wake reviews instead of pushing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-reviewer-opener-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    await execFileAsync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
+    await execFileAsync('git', ['-C', root, 'config', 'user.name', 'Test']);
+    await writeFile(join(root, 'fix.txt'), 'implementer head\n');
+    await execFileAsync('git', ['-C', root, 'add', 'fix.txt']);
+    await execFileAsync('git', ['-C', root, 'commit', '-m', 'implementer head']);
+    const head = (await execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'])).stdout.trim();
+    const agent = stored('33'.repeat(32), 'Ruby');
+    const runtime = {
+      version: 2,
+      communityId: 'workspace',
+      pairedBy: 'human',
+      agent,
+      body: stored('44'.repeat(32), 'Body'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      agentBinary: '/fake-agent',
+      agentKind: 'claude',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const api = {
+      execute: vi.fn(async (name: string) => {
+        if (name === 'getAgentConfiguration')
+          return { commands: [], yoloMode: false, isReviewer: true };
+        if (name === 'getWorkspaceRoster')
+          return {
+            members: [
+              { identityId: agent.publicKey, kind: 'agent', name: 'Ruby', handle: 'ruby', role: 'member' },
+              { identityId: 'candy-id', kind: 'agent', name: 'Candy', handle: 'candy', role: 'member' },
+            ],
+          };
+        if (name === 'getCornerRestoreState')
+          return {
+            cornerId: 'corner-id',
+            objective: 'Fix the widget',
+            closeRequested: false,
+            lifecycle: {
+              lifecycle: 'in-review',
+              checks: 'passing',
+              pr: { number: 7, url: 'https://github.com/acme/widgets/pull/7', title: 'Widget', targetBranch: 'main', headSha: head },
+            },
+          };
+        if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+        if (name.startsWith('post')) return { id: 'write-id', createdAt: 1 };
+        if (name === 'listRoomCorners') return { corners: [] };
+        if (name === 'listCornerBriefRevisions') return { revisions: [] };
+        if (name === 'retractAgentLiveOutput') return { id: 'write-id', createdAt: 1 };
+        throw new Error(`unexpected operation ${name}`);
+      }),
+      connection: () => ({ baseUrl: 'https://server.example', daemonToken: 'daemon-token', agentId: agent.publicKey }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
+    const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'reviewer-session', raw: {} });
+    const loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      // The reviewer opened this corner, then handed the work to Candy.
+      openedBy: agent.publicKey,
+      objective: 'Fix the widget',
+      worktreePath: root,
+      repository: { featureBranch: 'feature/widget', targetBranch: 'main', gitCommonDir: join(root, '.git'), githubToken: 'room-token' },
+      runtime,
+      config: {
+        agentBinary: '/fake-agent',
+        agentKind: 'claude',
+        agentCommand: '/fake-agent',
+        agentArgs: [],
+        mcpBinary: '/fake-dev-mcp',
+        readonlyMcpCommand: '/fake-beeline-mcp',
+        agentEnv: {},
+        workspaceRoot: root,
+        autoApprovePermissions: true,
+        codegraphCommand: '/usr/bin/false',
+      },
+      api,
+      scheduler: new SessionScheduler({ maxLiveSessions: 1 }),
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: () => acp,
+    });
+    vi.spyOn(loop as unknown as { syncBranch(): Promise<void> }, 'syncBranch').mockResolvedValue(undefined);
+    const prompts: string[] = [];
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (_session: string, text: string) => {
+      prompts.push(text);
+      return { stopReason: 'end_turn', updates: [], agentText: 'reviewed', toolCalls: [] };
+    });
+
+    const turn = (loop as unknown as {
+      prompt(requestId: string, trigger: string, attachments?: [], requestedById?: string, restates?: string[]): Promise<void>;
+    }).prompt.bind(loop);
+    await turn('green-wake', `GitHub passed a check on ${head}`);
+
+    const session = sessionNew.mock.calls[0]?.[0]?.systemPrompt ?? '';
+    expect(session).toContain(CORNER_REVIEWER_SESSION_INSTRUCTION);
+    expect(prompts[0]).toContain(`Checks are green on PR #7 at ${head}`);
+    for (const text of prompts) {
+      expect(text).not.toContain('push a fix');
+      expect(text).not.toContain('fix the failure and push');
+      expect(text).not.toContain(CORNER_DELIVERY_NUDGE);
+    }
+    // No verdict on the first pass: the one bounded second pass is the reviewer target again.
+    expect(prompts[1]).toContain(`Checks are green on PR #7 at ${head}`);
     await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
   }, 30_000);
 });

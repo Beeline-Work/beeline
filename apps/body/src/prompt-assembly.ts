@@ -48,16 +48,11 @@ export const PROMPT_SURFACES = [
   'room',
   'dm',
   'code-corner',
-  'review-corner',
   'no-code-corner',
 ] as const;
 export type PromptSurface = (typeof PROMPT_SURFACES)[number];
 
-const CORNERS: readonly PromptSurface[] = [
-  'code-corner',
-  'review-corner',
-  'no-code-corner',
-];
+const CORNERS: readonly PromptSurface[] = ['code-corner', 'no-code-corner'];
 const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
 
 /**
@@ -102,7 +97,12 @@ export interface SessionPromptContext {
   /** This agent's emulator console port, when the host has an Android SDK (`android-agent-env.ts`). */
   readonly android?: { readonly emulatorPort: string };
   readonly reviewerHandle?: string;
-  readonly selfReviewer?: boolean;
+  /**
+   * This agent holds the parent Room's reviewer post
+   * (`getAgentConfiguration.isReviewer`). The post is fixed, so it is the one
+   * role the prompt is built from; whether to write code is the agent's call.
+   */
+  readonly reviewer?: boolean;
   /**
    * Whether this checkout's own package.json defines a `corner:prepare`
    * script (`corner-prepare-script.ts`). Beeline's own checkout does; another
@@ -188,20 +188,20 @@ The PR body MUST have ## Reproduced and ## Demonstrated. Cite Reproduction <id> 
 No unrequested features, flags, compatibility shims or refactors.`;
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
-  "You are this Room's configured reviewer. The active turn prompt names the latest stable green PR head. Review and approve only that exact head; if no stable green head is named, end the turn without a verdict. Never merge yourself.";
+  "You are this Room's configured reviewer. A review turn prompt names the latest stable green PR head. Review and approve only that exact head; if no stable green head is named, end the turn without a verdict. Never merge a pull request you review.";
 
 export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
   'There is no stable green PR head for this active reviewer turn. Do not review or call approve_merge. End this turn without a verdict; the next green transition will wake you.';
 
 export const CORNER_DELIVERY_NUDGE =
-  'Only when the brief calls for repository changes, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the brief; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn. Otherwise do not commit, push or open a PR; deliver with post_artifact.';
+  'Only when you write code in this corner and the brief calls for repository changes, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the brief; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn. Otherwise do not commit, push or open a PR; deliver with post_artifact.';
 
 /** What the implementer does when a reviewer's PASS wakes it in `land`. */
 export const CORNER_LAND_RULE =
   "Then, if a human's question or proposal in the corner has no answer, name it and do not merge; otherwise call merge_corner.";
 
 export const CORNER_CHECKS_NUDGE =
-  'Call pr_checks_status now. If checks="failed", fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Never merge it any other way.';
+  'Call pr_checks_status now. If checks="failed" and you write code in this corner, fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Never merge it any other way.';
 
 /** Shared verbatim between the upgrade_corner_to_code tool description
  *  (`read-only-mcp.ts`) and this corner's own no-code prompt clause below, so
@@ -254,31 +254,26 @@ export function cornerMergeInstruction(reviewerHandle?: string): string {
 export function cornerReviewerInstruction(input: {
   isReviewer: boolean;
   authorHandle?: string;
-  openedByAgent: boolean;
   pullRequestNumber?: number;
   headSha?: string;
   briefRevision?: number;
 }): string | undefined {
-  if (!input.isReviewer || input.openedByAgent) return undefined;
-  const author = input.authorHandle ? handle(input.authorHandle) : 'author';
+  if (!input.isReviewer) return undefined;
+  // A reviewer that opened the corner is not its author; the agent that wrote
+  // the head is named in the transcript, so it is described, not guessed.
+  const author = input.authorHandle ? handle(input.authorHandle) : undefined;
   const number = input.pullRequestNumber ?? 'N';
   const headSha = input.headSha ?? '<head sha>';
-  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: reply \`@${author}\` with the confirmed findings and the reviewed head ${headSha} to fix. PASS: call the approve_merge tool for ${headSha}, then reply \`approved ${headSha}\` without tagging ${author}: your PASS wakes the author to merge, so a tag adds nothing. A human's question or proposal in the corner discussion with no answer is a FAIL finding; name it. Never merge yourself or tell the author to merge. Never say you are holding or waiting for checks.`;
+  return `Checks are green on PR #${number} at ${headSha}${input.briefRevision ? ` with assigned brief revision ${input.briefRevision}` : ''}. Review it now with the beeline-review skill against that exact head and current assigned brief. FAIL: ${author ? `reply \`@${author}\`` : 'tag the agent that wrote this head'} with the confirmed findings and the reviewed head ${headSha} to fix. PASS: call the approve_merge tool for ${headSha}, then reply \`approved ${headSha}\` without tagging ${author ?? 'the author'}: your PASS wakes the author to merge, so a tag adds nothing. A human's question or proposal in the corner discussion with no answer is a FAIL finding; name it. Never merge yourself or tell the author to merge. Never say you are holding or waiting for checks.`;
 }
 
 /**
- * A Room's sole configured reviewer who also opens its own corner has no
- * other reviewer to wait on: `cornerReviewerInstruction` never fires for an
- * opener, so without this the ordinary author instructions would tell this
- * agent to wait for `@<its own handle>` to tag it, a permanent deadlock.
+ * The merge rule for a Room's reviewer that writes code itself: no agent can
+ * review its own work, so a person is its reviewer. Without this the ordinary
+ * author rule would tell it to wait for its own PASS, a permanent deadlock.
  */
-export function cornerSelfReviewerInstruction(input: {
-  isReviewer: boolean;
-  openedByAgent: boolean;
-}): string | undefined {
-  if (!input.isReviewer || !input.openedByAgent) return undefined;
-  return 'Once the pull request exists, reply with its full URL and end the turn. You are this Room\'s reviewer, so no other agent can review your pull request: do not request one or tag any agent for review. It merges only on a human\'s yes: ask a Workspace owner or admin to approve the merge, then record their yes with order_corner_merge. Never merge it any other way. You are woken to fix failing checks or a merge GitHub refused.';
-}
+export const CORNER_REVIEWER_AUTHOR_MERGE =
+  "You are this Room's reviewer, so no agent can review your own code; a person is your reviewer. Once the pull request exists, reply with its full URL, tag the person who assigned you this work, and ask them to approve the merge; only a Workspace owner or admin's yes counts. Record their yes with order_corner_merge. Never merge it any other way. You are woken to fix failing checks or a merge GitHub refused.";
 
 function shellLine(shell: RoomShellState | undefined): string {
   if (!shell) return '';
@@ -492,7 +487,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     why: 'Active corner turns can steer member siblings without borrowing parent Room authority.',
     budgetBytes: 160,
     layer: 'surface',
-    surfaces: ['code-corner', 'no-code-corner', 'review-corner'],
+    surfaces: ['code-corner', 'no-code-corner'],
     render: () =>
       'Use steer_corner during a turn to send input to a member sibling under this parent. Membership alone grants no turn.',
   },
@@ -509,21 +504,12 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
   {
     id: 'corner.worktree',
     topic: 'place',
-    why: 'The agent must know its branch and target; only a code-corner author is told to push and open the pull request.',
-    budgetBytes: 900,
+    why: 'Every agent in a code corner must know its branch and target, whether or not it writes code.',
+    budgetBytes: 200,
     layer: 'surface',
-    surfaces: ['code-corner', 'review-corner'],
-    render: ({ worktree, surface, githubCli, brief }) =>
-      [
-        `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
-        surface !== 'code-corner' || !cornerHasRepositoryWork(brief)
-          ? ''
-          : githubCli === 'rest'
-            ? `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push. Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
-            : `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push. Open the pull request with gh.`,
-      ]
-        .filter(Boolean)
-        .join('\n'),
+    surfaces: ['code-corner'],
+    render: ({ worktree }) =>
+      `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
   },
   {
     id: 'corner.android',
@@ -537,6 +523,16 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME, AVDs are in $ANDROID_AVD_HOME, and /dev/kvm works. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android?.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`,
   },
   {
+    id: 'corner.implementer',
+    topic: 'implementer-condition',
+    why: 'A reviewer that opened its corner was given push steps and pushed a fix (PR #2224); only the agent knows whether it was told to write code, so the author rules are conditional.',
+    budgetBytes: 400,
+    layer: 'surface',
+    surfaces: ['code-corner'],
+    render: ({ reviewer }) =>
+      `Implementer rules: the rules below${reviewer ? ', up to the reviewer rules,' : ''} apply only when the brief or a person in this corner told you to write code or do this corner's work. A hand-over of the work to another agent ends that. Otherwise do not commit, push, or open a pull request.`,
+  },
+  {
     id: 'corner.prepare',
     topic: 'corner-prepare',
     why: 'Only a checkout that defines the command can run it; another repository fails on its first step.',
@@ -548,6 +544,19 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     render: () => 'Run npm run corner:prepare first.',
   },
   {
+    id: 'corner.push',
+    topic: 'push',
+    why: 'The author must push only its own branch and rebase before each push, or it overwrites or loses work.',
+    budgetBytes: 800,
+    layer: 'surface',
+    surfaces: ['code-corner'],
+    when: ({ brief }) => cornerHasRepositoryWork(brief),
+    render: ({ worktree, githubCli }) =>
+      githubCli === 'rest'
+        ? `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push. Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
+        : `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push. Open the pull request with gh.`,
+  },
+  {
     id: 'corner.contract',
     topic: 'author-contract',
     why: 'The reviewer enforces this contract; an author that never saw it fails review.',
@@ -555,20 +564,6 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: ['code-corner'],
     render: ({ brief }) => cornerHasRepositoryWork(brief) ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
-  },
-  {
-    id: 'corner.merge',
-    topic: 'merge',
-    why: 'Exactly one rule may say who merges and when; two rules here once said both "merge" and "never merge".',
-    budgetBytes: 520,
-    layer: 'surface',
-    surfaces: ['code-corner'],
-    when: ({ brief }) => cornerHasRepositoryWork(brief),
-    render: ({ reviewerHandle, selfReviewer }) =>
-      (selfReviewer
-        ? cornerSelfReviewerInstruction({ isReviewer: true, openedByAgent: true })!
-        : cornerMergeInstruction(reviewerHandle)) +
-      ' Never merge any other pull request.',
   },
   {
     id: 'corner.checks',
@@ -582,14 +577,27 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never schedule polls of pr_checks_status or the merge gate; the server wakes you when it changes.',
   },
   {
-    id: 'corner.review',
+    id: 'corner.merge',
     topic: 'merge',
-    why: 'The reviewer approves one exact green head and never merges.',
-    budgetBytes: 400,
+    why: 'Exactly one rule may say who merges and when; two rules here once said both "merge" and "never merge".',
+    budgetBytes: 520,
     layer: 'surface',
-    surfaces: ['review-corner'],
+    surfaces: ['code-corner'],
+    when: ({ brief }) => cornerHasRepositoryWork(brief),
+    render: ({ reviewerHandle, reviewer }) =>
+      (reviewer ? CORNER_REVIEWER_AUTHOR_MERGE : cornerMergeInstruction(reviewerHandle)) +
+      ' Never merge any other pull request.',
+  },
+  {
+    id: 'corner.review',
+    topic: 'review',
+    why: 'The reviewer approves one exact green head, never merges it, and returns defects instead of pushing them.',
+    budgetBytes: 450,
+    layer: 'surface',
+    surfaces: ['code-corner'],
+    when: ({ reviewer }) => reviewer === true,
     render: () =>
-      `${CORNER_REVIEWER_SESSION_INSTRUCTION} Report findings to the author; never edit or push the author's branch.`,
+      `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Report findings to the author; never edit or push another agent's branch.`,
   },
   {
     id: 'corner.no-code',
@@ -757,7 +765,8 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     budgetBytes: 350,
     layer: 'turn',
     surfaces: ['code-corner'],
-    when: ({ task }) => task.commandReason !== 'schedule' && (
+    // A reviewer's green-checks wake is a review turn, not a fix turn.
+    when: ({ task, reviewerTarget }) => !reviewerTarget && task.commandReason !== 'schedule' && (
       ['corner_check', 'corner_merge_refused', 'corner_merge_conflict'].includes(task.commandReason ?? '') ||
       ['check-passed', 'check-failed'].includes(task.outsideEvent?.kind ?? '')
     ),
@@ -866,7 +875,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     why: 'Room and corner agents need exact member corner ids for supported relay actions.',
     budgetBytes: 8_000,
     layer: 'turn',
-    surfaces: ['room', 'code-corner', 'no-code-corner', 'review-corner'],
+    surfaces: ['room', 'code-corner', 'no-code-corner'],
     render: ({ surface, corners, closedCorners }) =>
       [
         corners?.length
@@ -890,7 +899,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     why: 'The reviewer must review the head that is green now, not one named in an older message.',
     budgetBytes: 1_200,
     layer: 'turn',
-    surfaces: ['review-corner'],
+    surfaces: ['code-corner'],
     render: ({ reviewerTarget }) => reviewerTarget ?? '',
   },
   {

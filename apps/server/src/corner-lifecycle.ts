@@ -6,6 +6,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import {
   CORNER_CHECKS_BLOCKED_CARD_TYPE,
+  CORNER_MERGE_YES_CARD_TYPE,
   CORNER_REVIEW_DEADLOCK_CARD_TYPE,
   createAgentCommand,
   repairReviewerCornerMembership,
@@ -759,15 +760,21 @@ async function checksReported(
   }
   if (plan.outcome === 'no_reviewer') {
     await ensureSystemIdentity(db);
+    const approverIds = await mergeYesApprovers(db, cornerId);
     await systemLine(db, {
       id: createHash('sha256').update(`beeline:${cornerId}:waiting-for-yes:${headSha ?? event.sourceMessageId}`).digest('hex'),
       roomId: cornerId,
       authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', name: 'A Workspace owner or admin' },
+      subject:
+        approverIds.length === 1
+          ? { kind: 'person', id: approverIds[0]!, name: 'A Workspace owner or admin' }
+          : { kind: 'system', name: 'A Workspace owner or admin' },
       verb: 'needs to approve',
       object: 'this pull request',
       consequence: 'checks passed and no other agent can review it',
       afterMessageId: event.sourceMessageId,
+      cardType: CORNER_MERGE_YES_CARD_TYPE,
+      card: { cornerId, approverIds },
     });
     return OK;
   }
@@ -1092,6 +1099,33 @@ async function askHuman(
     cardType: input.cardType,
     card: { cornerId },
   });
+}
+
+/**
+ * Who a no-reviewer green head is sent to: the person who approved the current
+ * brief when their yes can merge it (`recordPersonMergeYes`: a human corner
+ * member who is a Workspace owner or admin), otherwise every such person.
+ */
+async function mergeYesApprovers(db: SqlDatabase, cornerId: string): Promise<string[]> {
+  const rows = (
+    await db.query<{ id: string; approved_brief: boolean }>(
+      `SELECT person.id,
+              person.id=(SELECT brief.approval_basis->>'approvedBy' FROM corner_brief_revisions brief
+                         WHERE brief.corner_id=corner.id ORDER BY brief.revision DESC LIMIT 1)
+                AS approved_brief
+       FROM rooms corner
+       JOIN memberships room_member ON room_member.room_id=corner.id AND room_member.removed_at IS NULL
+       JOIN memberships workspace_member ON workspace_member.workspace_id=corner.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=room_member.identity_id
+         AND workspace_member.removed_at IS NULL AND workspace_member.role IN ('owner','admin')
+       JOIN identities person ON person.id=room_member.identity_id AND person.kind='human'
+       WHERE corner.id=$1
+       ORDER BY person.id`,
+      [cornerId],
+    )
+  ).rows;
+  const approver = rows.find((row) => row.approved_brief);
+  return approver ? [approver.id] : rows.map((row) => row.id);
 }
 
 const REVIEWER_NOT_PARENT_MEMBER = 'not a current member of the parent Room';

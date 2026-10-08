@@ -37,13 +37,11 @@ async function activationFacts(agentId: string) {
   return {
     isReviewer: configuration.isReviewer,
     openedBy: corner?.createdBy,
-    // `cornerReviewerInstruction` in apps/body refuses when the agent is not
-    // the gate's reviewer or opened the corner; only then is the reviewer
-    // instruction (and the beeline-review skill) delivered.
-    reviewerSurface: configuration.isReviewer && corner?.createdBy !== agentId,
-    // The reviewer who opened its own corner gets the self-review line, which
-    // the gate's `reviewerIsAuthor` path also treats as no separate PASS.
-    selfReviewer: configuration.isReviewer && corner?.createdBy === agentId,
+    // apps/body appends the reviewer rules (and mounts the beeline-review
+    // skill) from the reviewer post alone; who opened the corner no longer
+    // picks the prompt (PR #2224: a reviewer that opened its corner was given
+    // the implementer prompt and pushed a fix).
+    reviewerSurface: configuration.isReviewer,
   };
 }
 
@@ -129,7 +127,6 @@ describe('the turn a reconciled reviewer is woken into', () => {
       isReviewer: true,
       openedBy: IMPLEMENTER,
       reviewerSurface: true,
-      selfReviewer: false,
     });
   });
 
@@ -150,20 +147,18 @@ describe('the turn a reconciled reviewer is woken into', () => {
       isReviewer: true,
       openedBy: H,
       reviewerSurface: true,
-      selfReviewer: false,
     });
   });
 
   it('agrees with the configuration query when the reviewer opened the corner itself', async () => {
     await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [C, REVIEWER]);
-    // Self-review is not review: the gate's `reviewerIsAuthor` path needs no
-    // separate PASS, so the body delivers the self-review line, never the
-    // reviewer instruction (and never mounts the beeline-review skill).
+    // The reviewer keeps its reviewer rules; if it writes the code itself,
+    // its conditional merge rule sends the yes to a person, matching the
+    // gate's `reviewerIsAuthor` path.
     await expect(activationFacts(REVIEWER)).resolves.toEqual({
       isReviewer: true,
       openedBy: REVIEWER,
-      reviewerSurface: false,
-      selfReviewer: true,
+      reviewerSurface: true,
     });
   });
 

@@ -288,8 +288,10 @@ async function main(): Promise<void> {
       .lifecycle;
     const instruction = cornerReviewerInstruction({
       isReviewer: configuration.isReviewer === true,
-      authorHandle: members.find((member) => member.identityId === openedBy)?.handle,
-      openedByAgent: !openedBy || openedBy === REVIEWER,
+      authorHandle:
+        openedBy === REVIEWER
+          ? undefined
+          : members.find((member) => member.identityId === openedBy)?.handle,
       ...(lifecycle?.pr
         ? { pullRequestNumber: lifecycle.pr.number, headSha: lifecycle.pr.headSha }
         : {}),

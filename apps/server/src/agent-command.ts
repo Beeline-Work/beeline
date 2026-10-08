@@ -775,6 +775,14 @@ export const CORNER_REVIEW_DEADLOCK_CARD_TYPE = 'corner-review-deadlock';
 export const CORNER_CHECKS_BLOCKED_CARD_TYPE = 'corner-checks-blocked';
 
 /**
+ * Marks the line a green head with no other reviewer writes. Its card names
+ * the people whose yes can merge it (`card.approverIds`), and push delivery
+ * (`corner-owed.ts`) sends it to them; like the two above it renders as a
+ * plain system line.
+ */
+export const CORNER_MERGE_YES_CARD_TYPE = 'corner-merge-yes';
+
+/**
  * How long a failing head must sit after its fix turn ends before the corner
  * counts as blocked. A fix the worker pushed near the end of its turn reaches
  * the server through the GitHub webhook, which can land a little after the

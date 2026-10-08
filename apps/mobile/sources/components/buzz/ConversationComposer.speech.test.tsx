@@ -23,6 +23,7 @@ vi.mock('react-native', () => {
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
+    ScrollView: host('ScrollView'),
     View: host('View'),
     Linking: { openSettings: vi.fn() },
     Platform: {
@@ -768,6 +769,124 @@ describe('stop button', () => {
   });
 });
 
+describe('stop button while a dictated message is sent', () => {
+  const tagHandles = new Set(['ruby']);
+
+  /** Sends land in `sends`; the test decides when each enters the Room. */
+  function renderSending() {
+    const sends: { dictated: any; text: string; enterRoom(): void }[] = [];
+    let renderer: any;
+    function ControlledComposer() {
+      const [value, setValue] = React.useState('@ruby ');
+      const [revision, setRevision] = React.useState(0);
+      const valueRef = React.useRef(value);
+      return (
+        <ConversationComposer
+          value={value}
+          height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+          maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
+          focused={false}
+          disabled={false}
+          tagHandles={tagHandles}
+          inputRevision={revision}
+          onAttach={vi.fn()}
+          onBlur={vi.fn()}
+          onChangeText={(next) => {
+            valueRef.current = next;
+            setValue(next);
+          }}
+          onContentSizeChange={vi.fn()}
+          onFocus={vi.fn()}
+          onKeyPress={vi.fn()}
+          onSend={(dictated) =>
+            new Promise<void>(() => {
+              sends.push({
+                dictated,
+                text: valueRef.current,
+                enterRoom: () => {
+                  dictated!.committed = true;
+                  valueRef.current = '';
+                  setValue('');
+                  setRevision((current) => current + 1);
+                },
+              });
+            })
+          }
+        />
+      );
+    }
+    act(() => {
+      renderer = create(<ControlledComposer />);
+    });
+    renderers.push(renderer);
+    return { renderer: () => renderer, sends };
+  }
+
+  async function dictateAndSend(renderer: any, words: string) {
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: words }], isFinal: true });
+    });
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => fireEvent('end'));
+  }
+
+  it('keeps ■, the mark and the waveform while the message is sent; ■ drops it and keeps the chip', async () => {
+    const { renderer, sends } = renderSending();
+    await dictateAndSend(renderer(), 'make it smaller');
+
+    expect(sends).toHaveLength(1);
+    expect(sends[0].text).toBe('@ruby make it smaller');
+    const root = renderer().root;
+    expect(root.findAllByProps({ testID: 'chat-speech-discard' }).length).toBeGreaterThan(0);
+    expect(root.findAllByProps({ testID: 'chat-speech-finalizing' }).length).toBeGreaterThan(0);
+    expect(root.findAllByProps({ testID: 'chat-speech-waveform' }).length).toBeGreaterThan(0);
+    expect(root.findAllByProps({ testID: 'chat-send' })).toHaveLength(0);
+    expect(renderedText(renderer())).not.toContain('make it smaller');
+
+    await act(async () => root.findByProps({ testID: 'chat-speech-discard' }).props.onPress());
+
+    expect(sends[0].dictated.cancelled).toBe(true);
+    expect(root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
+    expect(root.findAllByProps({ testID: 'chat-tag-ruby' }).length).toBeGreaterThan(0);
+    expect(root.findAllByProps({ testID: 'chat-speech-finalizing' })).toHaveLength(0);
+    expect(root.findByProps({ testID: 'chat-attach-button' })).toBeTruthy();
+    expect(root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
+  });
+
+  it('takes back words a final result already wrote while recording', async () => {
+    const { renderer, sends } = renderSending();
+    await act(async () => renderer().root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {
+      fireEvent('result', { results: [{ transcript: 'half a thought' }], isFinal: true });
+    });
+    await act(async () =>
+      renderer().root.findByProps({ testID: 'chat-speech-discard' }).props.onPress(),
+    );
+
+    const root = renderer().root;
+    expect(sends).toHaveLength(0);
+    expect(root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
+    expect(root.findAllByProps({ testID: 'chat-tag-ruby' }).length).toBeGreaterThan(0);
+  });
+
+  it('turns ■ back into ＋ once the message enters the Room', async () => {
+    const { renderer, sends } = renderSending();
+    await dictateAndSend(renderer(), 'ship it');
+    const discard = renderer().root.findByProps({ testID: 'chat-speech-discard' });
+
+    await act(async () => sends[0].enterRoom());
+    // A ■ tap that raced the Room entry cannot pull the message back.
+    await act(async () => discard.props.onPress());
+
+    const root = renderer().root;
+    expect(sends[0].dictated.cancelled).toBe(false);
+    expect(root.findAllByProps({ testID: 'chat-speech-discard' })).toHaveLength(0);
+    expect(root.findByProps({ testID: 'chat-attach-button' })).toBeTruthy();
+    expect(root.findAllByProps({ testID: 'chat-speech-finalizing' })).toHaveLength(0);
+  });
+});
+
 describe('recipient chips', () => {
   const tagHandles = new Set(['ruby', 'sol']);
 
@@ -783,6 +902,27 @@ describe('recipient chips', () => {
     ).toBe('Remove @ruby');
     expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
     expect(renderer.root.findAllByProps({ testID: 'chat-send' })).toHaveLength(0);
+  });
+
+  it('makes each chip a full-row target, and scrolls many chips in a capped strip beside the mic', () => {
+    const many = new Set(['ruby', 'sol', 'fathom', 'goosy', 'hoots', 'milo']);
+    const { renderer } = render({
+      value: '@ruby @sol @fathom @goosy @hoots @milo ',
+      tagHandles: many,
+      onEditTags: vi.fn(),
+    });
+    const strip = renderer.root.findByProps({ testID: 'chat-tags' });
+    expect(strip.props.horizontal).toBe(true);
+    expect(strip.props.style).toMatchObject({ flexShrink: 1, maxWidth: '50%' });
+    for (const handle of many) {
+      expect(renderer.root.findByProps({ testID: `chat-tag-${handle}` }).props.style.height).toBe(
+        42,
+      );
+    }
+    expect(renderer.root.findByProps({ testID: 'chat-tag-ruby-remove' }).props.style.width).toBe(
+      28,
+    );
+    expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
   });
 
   it('leaves a person or unknown handle as typed text', () => {

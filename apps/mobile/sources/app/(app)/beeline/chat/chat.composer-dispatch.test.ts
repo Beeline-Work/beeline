@@ -26,7 +26,10 @@ describe('composer dispatch transaction', () => {
     expect(chatSource).toMatch(
       /if \(desktopAction === 'send'\) \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?void handleSend\(\);/,
     );
-    expect(chatSource).toMatch(/onSend=\{[\s\S]*?: handleSend\s*\}/);
+    // A dictated send passes its ■ handle through the same dispatch.
+    expect(chatSource).toMatch(
+      /onSend=\{[\s\S]*?: \(dictated\?: DictatedSend\) => handleSend\(undefined, dictated\)\s*\}/,
+    );
     expect(send).toContain('composerInputRevisionRef.current = nextInputRevision;');
     expect(send).toContain('setComposerInputRevision(nextInputRevision);');
   });

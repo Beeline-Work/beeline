@@ -420,6 +420,7 @@ import {
   COMPOSER_MAX_INPUT_HEIGHT,
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
   ConversationComposer,
+  type DictatedSend,
 } from '@/components/buzz/ConversationComposer';
 import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 
@@ -3923,7 +3924,7 @@ export function BuzzChatSurface({
   const retryOutboxMessage = outbox.retry;
   const dismissOutboxMessage = outbox.dismiss;
   const handleSend = useCallback(
-    async (shortcut?: MessageShortcut) => {
+    async (shortcut?: MessageShortcut, dictated?: DictatedSend) => {
       // A leaked responder event must never read as a shortcut (#1340's
       // `onPress={onSend}` handed the PressEvent straight in; `!shortcut` then
       // skipped the composer-clear block and the field kept its text after
@@ -4009,10 +4010,19 @@ export function BuzzChatSurface({
         }
         if (!transport) setSessionTransport(sendTransport);
         preparedTransport = sendTransport;
+        // ■ on a dictated message drops it at any step before it enters the Room.
+        const dictationCancelled = () => {
+          if (!dictated?.cancelled) return false;
+          setPendingAck(null);
+          if (desktopExperience) setDesktopDeliveryState(null);
+          return true;
+        };
+        if (dictationCancelled()) return;
         const attachments = await attachmentUploader.uploadAll(
           await sendTransport.ensureClient(),
           activePendingAttachments,
         );
+        if (dictationCancelled()) return;
         // Sign before append. The authoritative event id is the optimistic row
         // identity and the durable outbox key from its first frame onward.
         preparedEvent = preparedReply?.reference
@@ -4055,6 +4065,8 @@ export function BuzzChatSurface({
         } satisfies ChatDisplayMessage;
         const activeOutbox = outbox.current();
         if (!activeOutbox) throw new Error('Message outbox is unavailable');
+        if (dictationCancelled()) return;
+        if (dictated) dictated.committed = true;
         await activeOutbox.enqueue(preparedEvent, {
           id: preparedEvent.id,
           text,
@@ -6953,7 +6965,7 @@ export function BuzzChatSurface({
                           ? () => {
                               selectHighlightedPaletteItem();
                             }
-                          : handleSend
+                          : (dictated?: DictatedSend) => handleSend(undefined, dictated)
                       }
                     />
                   </Animated.View>

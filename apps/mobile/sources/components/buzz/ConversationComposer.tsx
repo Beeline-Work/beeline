@@ -4,6 +4,7 @@ import {
   TextInput,
   TouchableOpacity,
   Pressable,
+  ScrollView,
   View,
   Linking,
   Platform,
@@ -20,6 +21,12 @@ import { BeelineMarkSpinner } from './BeelineMarkSpinner';
 import { DictationWaveform } from './DictationWaveform';
 import { useSpeechInput } from '@/buzz/speech-input';
 import { removeComposerTag, removeLastComposerTag, splitComposerTags } from '@/buzz/composer-tags';
+
+/**
+ * A dictated message on its way out. ■ sets `cancelled` until the parent sets
+ * `committed`, the moment the message enters the Room.
+ */
+export type DictatedSend = { cancelled: boolean; committed: boolean };
 
 type Props = {
   value: string;
@@ -44,7 +51,8 @@ type Props = {
   onFocus(): void;
   onKeyPress(event: NativeSyntheticEvent<TextInputKeyPressEventData>): void;
   onSelectionChange?(event: NativeSyntheticEvent<TextInputSelectionChangeEventData>): void;
-  onSend(): void;
+  /** A dictated send passes its ■ handle; the call may return the send's promise. */
+  onSend(dictated?: DictatedSend): unknown;
   /**
    * Speech recognition is always available when the hook can use the native
    * platform recogniser. Pass `false` to disable it (e.g. when the parent
@@ -147,13 +155,22 @@ export function ConversationComposer({
   const commitRestChange = (nextRest: string) => commitInputChange(tagSplit.prefix + nextRest);
 
   // Speech recognition — internal hook, scoped to the composer.
+  // What the current take added to the text, so ■ can take exactly that out.
+  const takeTextRef = React.useRef<string[]>([]);
   const speech = useSpeechInput((transcript) => {
     const separator = value && transcript && !/\s$/.test(value) ? ' ' : '';
+    takeTextRef.current.push(separator + transcript);
     commitInputChange(value + separator + transcript);
   }, speechHints);
   const isListening = speech.state === 'listening';
   const isFinalizing = speech.state === 'finalizing';
   const isCapturingSpeech = isListening || isFinalizing;
+  // A dictated message stays cancellable while it is sent, until it enters the Room.
+  const [sendingTake, setSendingTake] = React.useState<DictatedSend | null>(null);
+  // The parent replaces the input once it has taken the message into the Room.
+  React.useEffect(() => setSendingTake(null), [inputRevision]);
+  const dictationBusy = isCapturingSpeech || sendingTake !== null;
+  const messageOnItsWay = sendingTake !== null && !isCapturingSpeech;
   const speechAvailable = speech.capability === 'available' && speechEnabled !== false;
   // Chips alone are not a message: the field reads as empty and keeps the mic.
   const hasSomethingToSend = canSend ?? Boolean(tagSplit.rest.trim());
@@ -164,7 +181,7 @@ export function ConversationComposer({
   // there is something to send, the send control shows (disabled when nothing
   // is sendable), so the corner is never empty — including while an agent is
   // working, when a tap queues the next instruction.
-  const showMic = speechAvailable && (isCapturingSpeech || !hasSomethingToSend);
+  const showMic = speechAvailable && (dictationBusy || !hasSomethingToSend);
   const showSend = !showMic;
 
   // Dictation shows a waveform, never live words. Only a failure that needs
@@ -184,6 +201,22 @@ export function ConversationComposer({
     node.addEventListener('paste', listener);
     return () => node.removeEventListener('paste', listener);
   }, [onDesktopPaste]);
+  const discardTake = () => {
+    if (sendingTake?.committed) return;
+    if (sendingTake) sendingTake.cancelled = true;
+    if (isCapturingSpeech) speech.cancel();
+    setSendingTake(null);
+    const added = takeTextRef.current;
+    takeTextRef.current = [];
+    if (added.length === 0) return;
+    // Chips, typed text and the reply stay; only the take's words go.
+    commitInputChange(
+      added.reduceRight((text, part) => {
+        const at = text.lastIndexOf(part);
+        return at < 0 ? text : text.slice(0, at) + text.slice(at + part.length);
+      }, value),
+    );
+  };
   const visibleAttachments = attachments.slice(0, 3);
   const hiddenAttachmentCount = Math.max(0, attachments.length - visibleAttachments.length);
   return (
@@ -282,12 +315,12 @@ export function ConversationComposer({
         style={[styles.inputRow, multiline && styles.composerMultiline]}
         testID={`${testIDPrefix}-composer-input-row`}
       >
-        {isCapturingSpeech ? (
+        {dictationBusy ? (
           <TouchableOpacity
             accessibilityLabel="Discard recording"
             accessibilityRole="button"
             hitSlop={9}
-            onPress={speech.cancel}
+            onPress={discardTake}
             style={styles.attachButton}
             testID={`${testIDPrefix}-speech-discard`}
           >
@@ -306,46 +339,63 @@ export function ConversationComposer({
             <Text style={styles.attachButtonText}>＋</Text>
           </TouchableOpacity>
         )}
-        {tagSplit.tags.map((handle, index) => (
-          <View
-            key={`${handle}:${index}`}
-            style={styles.tagChip}
-            testID={`${testIDPrefix}-tag-${handle}`}
+        {tagSplit.tags.length > 0 || (isCapturingSpeech && onEditTags) ? (
+          // Chips scroll sideways inside a capped strip, so any number of tags
+          // leaves the field and the mic their room.
+          <ScrollView
+            horizontal
+            keyboardShouldPersistTaps="handled"
+            showsHorizontalScrollIndicator={false}
+            style={styles.tagStrip}
+            contentContainerStyle={styles.tagStripContent}
+            testID={`${testIDPrefix}-tags`}
           >
-            <TouchableOpacity
-              accessibilityLabel={`Edit tags, @${handle}`}
-              accessibilityRole="button"
-              disabled={!onEditTags}
-              onPress={onEditTags}
-              style={styles.tagChipBody}
-              testID={`${testIDPrefix}-tag-${handle}-edit`}
-            >
-              <Text numberOfLines={1} style={styles.tagChipText}>
-                @{handle}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              accessibilityLabel={`Remove @${handle}`}
-              accessibilityRole="button"
-              hitSlop={9}
-              onPress={() => commitInputChange(removeComposerTag(value, tagHandles, handle))}
-              style={styles.tagChipRemove}
-              testID={`${testIDPrefix}-tag-${handle}-remove`}
-            >
-              <Text style={styles.tagChipRemoveText}>×</Text>
-            </TouchableOpacity>
-          </View>
-        ))}
-        {isCapturingSpeech && tagSplit.tags.length === 0 && onEditTags ? (
-          <TouchableOpacity
-            accessibilityLabel="Tag an agent"
-            accessibilityRole="button"
-            onPress={onEditTags}
-            style={[styles.tagChip, styles.tagChipEmpty]}
-            testID={`${testIDPrefix}-tag-empty`}
-          >
-            <Text style={styles.tagChipEmptyText}>@</Text>
-          </TouchableOpacity>
+            {tagSplit.tags.map((handle, index) => (
+              <View
+                key={`${handle}:${index}`}
+                style={styles.tagChip}
+                testID={`${testIDPrefix}-tag-${handle}`}
+              >
+                <View style={styles.tagChipFace} />
+                <TouchableOpacity
+                  accessibilityLabel={`Edit tags, @${handle}`}
+                  accessibilityRole="button"
+                  // The message is already on its way; its tags are final.
+                  disabled={!onEditTags || messageOnItsWay}
+                  onPress={onEditTags}
+                  style={styles.tagChipBody}
+                  testID={`${testIDPrefix}-tag-${handle}-edit`}
+                >
+                  <Text numberOfLines={1} style={styles.tagChipText}>
+                    @{handle}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityLabel={`Remove @${handle}`}
+                  accessibilityRole="button"
+                  disabled={messageOnItsWay}
+                  onPress={() => commitInputChange(removeComposerTag(value, tagHandles, handle))}
+                  style={styles.tagChipRemove}
+                  testID={`${testIDPrefix}-tag-${handle}-remove`}
+                >
+                  <Text style={styles.tagChipRemoveText}>×</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+            {isCapturingSpeech && tagSplit.tags.length === 0 && onEditTags ? (
+              <TouchableOpacity
+                accessibilityLabel="Tag an agent"
+                accessibilityRole="button"
+                onPress={onEditTags}
+                style={styles.tagChipEmpty}
+                testID={`${testIDPrefix}-tag-empty`}
+              >
+                <View style={styles.tagChipEmptyFace}>
+                  <Text style={styles.tagChipEmptyText}>@</Text>
+                </View>
+              </TouchableOpacity>
+            ) : null}
+          </ScrollView>
         ) : null}
         <View style={styles.inputWrapper}>
           <TextInput
@@ -361,7 +411,7 @@ export function ConversationComposer({
               Platform.OS === 'android' && styles.inputAndroid,
               // The input stays mounted, and focused for the keyboard, under
               // the waveform; its typed text returns when dictation ends.
-              isCapturingSpeech ? styles.inputHidden : undefined,
+              dictationBusy ? styles.inputHidden : undefined,
             ]}
             value={tagSplit.rest}
             onChangeText={commitRestChange}
@@ -411,7 +461,7 @@ export function ConversationComposer({
             testID={`${testIDPrefix}-input`}
             accessibilityLabel="Message"
           />
-          {isCapturingSpeech ? (
+          {dictationBusy ? (
             <View style={styles.waveformOverlay}>
               <DictationWaveform
                 level={speech.volumeLevel}
@@ -424,7 +474,7 @@ export function ConversationComposer({
         {showMic && speechAvailable ? (
           <TouchableOpacity
             accessibilityLabel={
-              isFinalizing
+              isFinalizing || sendingTake
                 ? 'Finishing speech input'
                 : isListening
                   ? listeningWillSend
@@ -436,7 +486,7 @@ export function ConversationComposer({
             }
             accessibilityRole="button"
             accessibilityHint={
-              isFinalizing
+              isFinalizing || sendingTake
                 ? 'Waits for the final transcription before sending'
                 : isListening
                   ? listeningWillSend
@@ -445,7 +495,9 @@ export function ConversationComposer({
                   : 'Dictates into the message field'
             }
             accessibilityState={
-              isFinalizing ? { selected: true, busy: true } : { selected: isListening }
+              isFinalizing || sendingTake
+                ? { selected: true, busy: true }
+                : { selected: isListening }
             }
             hitSlop={9}
             onPress={() => {
@@ -453,13 +505,24 @@ export function ConversationComposer({
                 void Linking.openSettings();
                 return;
               }
-              if (isFinalizing) return;
+              if (isFinalizing || sendingTake) return;
               if (isListening) {
                 const hadTypedText = Boolean(tagSplit.rest.trim());
+                // Held from the press, so the field stays a waveform from the
+                // transcription through the send.
+                const send: DictatedSend = { cancelled: false, committed: false };
+                const settle = () =>
+                  setSendingTake((current) => (current === send ? null : current));
+                setSendingTake(send);
                 void speech.stop().then((captured) => {
-                  if (captured !== null && (hadTypedText || captured)) onSend?.();
+                  if (send.cancelled || captured === null || !(hadTypedText || captured)) {
+                    settle();
+                    return;
+                  }
+                  void Promise.resolve(onSend(send)).finally(settle);
                 });
               } else {
+                takeTextRef.current = [];
                 speech.start();
               }
             }}
@@ -469,7 +532,7 @@ export function ConversationComposer({
             ]}
             testID={`${testIDPrefix}-mic`}
           >
-            {isFinalizing ? (
+            {isFinalizing || sendingTake ? (
               <BeelineMarkSpinner live testID={`${testIDPrefix}-speech-finalizing`} />
             ) : (
               <MicGlyph color={theme.buzz.textPrimary} testID={`${testIDPrefix}-mic-glyph`} />
@@ -668,26 +731,48 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.buzz.radius,
     backgroundColor: theme.buzz.textPrimary,
   },
+  // The strip is the row's full height, so every chip is a full-height target.
+  tagStrip: {
+    flexGrow: 0,
+    flexShrink: 1,
+    maxWidth: '50%',
+    marginVertical: -8,
+  },
+  tagStripContent: { alignItems: 'stretch' },
   tagChip: {
-    height: 22,
-    flexShrink: 0,
+    height: 42,
     flexDirection: 'row',
-    alignItems: 'center',
     marginRight: theme.buzz.space.xs,
+  },
+  tagChipFace: {
+    position: 'absolute',
+    top: 10,
+    left: 0,
+    right: 0,
+    height: 22,
     borderWidth: 1,
     borderColor: theme.buzz.border,
     borderRadius: theme.buzz.radius,
     backgroundColor: theme.buzz.bgHighlight,
   },
-  tagChipBody: { height: '100%', justifyContent: 'center', paddingLeft: theme.buzz.space.sm },
+  tagChipBody: { justifyContent: 'center', paddingLeft: theme.buzz.space.sm },
   tagChipText: { ...theme.buzz.type.machine, color: theme.buzz.accent },
-  tagChipRemove: { width: 18, height: '100%', alignItems: 'center', justifyContent: 'center' },
+  tagChipRemove: { width: 28, alignItems: 'center', justifyContent: 'center' },
   tagChipRemoveText: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   tagChipEmpty: {
+    height: 42,
+    minWidth: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tagChipEmptyFace: {
+    height: 22,
     justifyContent: 'center',
     paddingHorizontal: theme.buzz.space.sm,
+    borderWidth: 1,
     borderStyle: 'dashed',
-    backgroundColor: 'transparent',
+    borderColor: theme.buzz.border,
+    borderRadius: theme.buzz.radius,
   },
   tagChipEmptyText: { ...theme.buzz.type.machine, color: theme.buzz.textMuted },
   input: {

@@ -198,6 +198,7 @@ import {
   saveWorkflow,
   failOverUnansweredTurn,
   startWorkflow,
+  workflowRunRequester,
 } from './workflow-runs.js';
 import { activeWorkflowRunIds, scheduleWorkflowName } from './workflow-admin.js';
 import { isCornerReviewer } from './agent-health.js';
@@ -6126,6 +6127,32 @@ export class DaemonService {
       )
     ).rows[0];
     if (!requester) throw new Error('resource requester not found');
+    // A saved workflow run's turns answer to the run's person, not the wake
+    // card's author: a handoff card is written by the agent handing off, and a
+    // lease failover card by the system. `workflowRunRequester` returns the
+    // person who answered the run's latest gate, else the person it started
+    // from, and keeps an agent requester for an agent- or schedule-only run so
+    // app use stays refused. `undefined` means the turn is not a run wake.
+    const workflow = await workflowRunRequester(this.database, {
+      roomId: command.room_id,
+      agentId: command.agent_id,
+      rootSourceMessageId: command.root_source_message_id,
+    });
+    if (workflow && workflow.id !== requester.id) {
+      const resolved = (
+        await this.database.query<{
+          id: string;
+          kind: 'human' | 'agent';
+          name: string;
+          handle: string | null;
+          avatar: string | null;
+        }>(
+          `SELECT id,kind,name,handle,avatar FROM identities WHERE id=$1`,
+          [workflow.id],
+        )
+      ).rows[0];
+      if (resolved) return resolved;
+    }
     return requester;
   }
 

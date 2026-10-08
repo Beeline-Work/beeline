@@ -145,20 +145,22 @@ function mount({
 }
 
 describe('Room header Repository control', () => {
-  it('opens as one Repository · None row with Cancel and Save off (H1)', () => {
-    const { renderer, host, text, save } = mount();
+  it('opens as one Repository · None row with no Save/Cancel footer (H1)', () => {
+    const { renderer, host } = mount();
     expect(host('room-repo-row').props).toMatchObject({ label: 'Repository', metadata: 'None' });
     expect(host('room-repo-mode')).toBeUndefined();
-    expect(text('room-actions-close')).toBe('Cancel');
-    expect(save().label).toBe('Save');
-    expect(save().disabled).toBe(true);
+    expect(host('room-actions-close')).toBeUndefined();
+    expect(renderer.root.findAllByType('Button' as never)).toHaveLength(0);
     act(() => renderer.unmount());
   });
 
   it('turns the row into the None / Link / Create switch, on None (H2)', () => {
-    const { renderer, host, press, save, calls } = mount();
+    const { renderer, host, text, press, save, calls } = mount();
     press('room-repo-row');
     expect(host('room-repo-row')).toBeUndefined();
+    // Save/Cancel appear only while the Repository choice is open.
+    expect(text('room-actions-close')).toBe('Cancel');
+    expect(save().label).toBe('Save');
     expect(host('room-repo-mode-none')?.props.accessibilityState.selected).toBe(true);
     expect(host('room-repo-link')).toBeUndefined();
     expect(calls.load).toHaveBeenCalledTimes(1);

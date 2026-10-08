@@ -30,7 +30,7 @@ const screens: Record<
   corners: { Screen: BuzzCorners, title: 'Corners', eyebrow: '#alpha' },
   workspace: { Screen: WorkspaceSettings, title: 'Workspace' },
   changelog: { Screen: ChangelogScreen, title: "What's New" },
-  schedules: { Screen: ScheduledWork, title: 'Scheduled Work', eyebrow: '#alpha' },
+  schedules: { Screen: ScheduledWork, title: 'Schedules and Webhooks', eyebrow: '#alpha' },
 };
 
 const pause = () => new Promise((resolve) => setTimeout(resolve, 100));

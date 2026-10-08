@@ -7288,27 +7288,11 @@ export function BuzzChatSurface({
               }}
               testID="room-participant-roster-trigger"
             />
-            {getBuzzRuntimeConfig().monolithUrl ? (
-              <HullActionSheetRow
-                accessibilityLabel="View workflows and runs"
-                chevron="right"
-                label="Workflows"
-                onPress={() => {
-                  setRoomActionsVisible(false);
-                  router.push({ pathname: '/beeline/workflow', params: { roomId: decodedId } });
-                }}
-                testID="room-workflows-trigger"
-              />
-            ) : null}
-            {!viewerIsAgent && (canManageWorkspace || viewerChannelRole === 'owner' || viewerChannelRole === 'admin') && getBuzzRuntimeConfig().monolithEnabled && (
-              <HullActionSheetRow label="Webhooks" chevron="right" testID="room-webhooks-action"
-                onPress={() => { setRoomActionsVisible(false); router.push({ pathname: '/beeline/settings/webhooks', params: { roomId: decodedId } } as Href); }} />
-            )}
             {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
               <HullActionSheetRow
-                accessibilityLabel={`View ${ROOM_LABEL} scheduled work`}
+                accessibilityLabel={`View ${ROOM_LABEL} schedules and webhooks`}
                 chevron="right"
-                label="Scheduled work"
+                label="Schedules and webhooks"
                 onPress={() => {
                   setRoomActionsVisible(false);
                   router.push({
@@ -7319,6 +7303,8 @@ export function BuzzChatSurface({
                 testID="room-schedules-action"
               />
             )}
+            {/* Leave and Delete end the sheet in their own group, apart from settings. */}
+            <View style={styles.roomLifecycleGap} />
             {canManageWorkspace && (
               <HullActionSheetRow
                 accessibilityLabel={`Delete ${ROOM_LABEL}`}
@@ -7673,6 +7659,7 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'flex-end',
       gap: groknight.space.sm,
     },
+    roomLifecycleGap: { height: groknight.space.lg },
     // The sheet's one box: a notice the reader must act on, held to the same
     // trailing axis as the rows above it (DESIGN.md → Shape).
     membershipError: {

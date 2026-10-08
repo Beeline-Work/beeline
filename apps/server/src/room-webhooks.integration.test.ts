@@ -105,6 +105,9 @@ it('demonstrates request → admin card → private one-time URL → quoted subs
   expect(unmatched.status).toBe(202); expect(await unmatched.json()).toEqual({ delivered: 0 });
   expect((await db.query(`SELECT id FROM messages WHERE system_event->>'kind'='webhook:price-feed'`)).rowCount).toBe(0);
   expect((await op('daemon', 'setEventSubscriptions', { roomId: ROOM, kinds: ['webhook:price-feed'] })).body.kinds).toContain('webhook:price-feed');
+  expect((await op('daemon', 'listRoomWebhooks', { roomId: ROOM })).body.sources).toEqual([
+    expect.objectContaining({ source: 'price-feed', revoked: false, agents: ['Bee'] }),
+  ]);
   const matched = await hook(url, raw, { ...signed, 'idempotency-key': 'first-delivery' });
   expect(matched.status).toBe(202); expect(await matched.json()).toEqual({ delivered: 1 });
   const duplicate = await hook(url, raw, { ...signed, 'idempotency-key': 'first-delivery' });

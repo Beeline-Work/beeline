@@ -404,6 +404,61 @@ async function workflowRequester(
 }
 
 /**
+ * The identity a workflow turn answers to, for resource authority such as
+ * connected apps. The latest person who answered a gate wins, read from the
+ * server-written receipt actor rather than agent-supplied contents, so an
+ * agent handoff cannot name a person; otherwise the person the run started
+ * from. A run with no person on record — started by an agent or a schedule,
+ * with no person's gate answer — resolves to an agent (the run's own starter
+ * when that is an agent, else the agent being woken), so app use stays
+ * refused there.
+ *
+ * `undefined` when the command is not a wake from a saved run, so a normal
+ * turn keeps its own root requester. `rootSourceMessageId` is used rather than
+ * the turn's own source so a delegated or failover turn keeps the run's one
+ * requester: a handoff card is written by the agent handing off, and a lease
+ * failover card by the system, but both cite the run.
+ */
+export async function workflowRunRequester(
+  db: SqlDatabase,
+  input: { roomId: string; agentId: string; rootSourceMessageId: string },
+): Promise<{ id: string; kind: 'human' | 'agent' } | undefined> {
+  const card = (
+    await db.query<{ run_id: string }>(
+      `SELECT card->>'runId' run_id FROM messages
+       WHERE id=$1 AND room_id=$2 AND card_type=$3`,
+      [input.rootSourceMessageId, input.roomId, WORKFLOW_HANDOFF_CARD_TYPE],
+    )
+  ).rows[0];
+  if (!card?.run_id) return undefined;
+  const runId = card.run_id;
+  const answered = (
+    await db.query<{ id: string; kind: 'human' | 'agent' }>(
+      `SELECT identity.id,identity.kind
+       FROM messages card
+       JOIN identities identity ON identity.id=card.card->'receipt'->'exit'->>'actorId'
+       WHERE card.room_id=$1 AND card.card_type=$2 AND card.card->>'runId'=$3
+         AND identity.kind='human' AND NOT COALESCE(identity.hidden_from_roster,false)
+       ORDER BY (card.card->>'seq')::int DESC NULLS LAST,card.created_at DESC,card.id DESC
+       LIMIT 1`,
+      [input.roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId],
+    )
+  ).rows[0];
+  if (answered) return answered;
+  const start = await loadRunStart(db, input.roomId, runId);
+  const requester = (
+    await db.query<{ id: string; kind: 'human' | 'agent'; hidden: boolean }>(
+      `SELECT id,kind,COALESCE(hidden_from_roster,false) hidden FROM identities WHERE id=$1`,
+      [start.card.requesterId ?? start.authorId],
+    )
+  ).rows[0];
+  if (requester?.kind === 'human' && !requester.hidden)
+    return { id: requester.id, kind: 'human' };
+  if (requester?.kind === 'agent') return { id: requester.id, kind: 'agent' };
+  return { id: input.agentId, kind: 'agent' };
+}
+
+/**
  * The person a run's notices go to: the person who started it. A human start
  * is that person; an agent's start answers the person whose message it
  * served; a scheduled start carries the owner the schedule recorded when it

@@ -11,6 +11,7 @@ import {
   repairReviewerCornerMembership,
   type CommandRow,
 } from './agent-command.js';
+import { assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import {
   firstHealthyAgent,
@@ -1264,6 +1265,8 @@ export async function claimCornerMergeAttempt(
     if (!corner || corner.archived || !pr?.number || pr.headSha !== headSha) return false;
     // Recheck local authority at claim after the earlier gate read.
     // No provider request belongs in this transaction.
+    // A brief revised during the GitHub read is seen here: revisions take this lock.
+    await assertCornerBriefAllowsMerge(db, cornerId);
     const gate = await cornerMergeGate(db, cornerId, { number: pr.number, headSha });
     if (!gate.open) return false;
     const claimed = await db.query(

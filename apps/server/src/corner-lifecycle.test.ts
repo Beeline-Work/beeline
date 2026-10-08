@@ -2623,6 +2623,22 @@ describe('the brief gate on landing: only a brief that assigns repository work m
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
   });
 
+  it('a brief revised to no repository work during the GitHub read is refused at claim', async () => {
+    const cornerId = await approved();
+    // Passes the early brief check, then the brief is revised while landCorner reads GitHub.
+    let revised = false;
+    githubApp.readCommitCheckRollup.mockImplementationOnce(async () => {
+      await briefSays(cornerId, false);
+      revised = true;
+      return { state: 'passed', total: 1, failing: [], checks: [{ name: 'typecheck', status: 'passed' }] };
+    });
+    await expect(github.landCorner(cornerId)).rejects.toThrow(REFUSAL);
+    expect(revised).toBe(true);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT merge_attempt_head FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ merge_attempt_head: null });
+  });
+
   it('merges when the current brief assigns repository work', async () => {
     const cornerId = await approved();
     await briefSays(cornerId, true);

@@ -62,23 +62,23 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => db?.close());
 
-async function open(watchMerge?: boolean) {
+async function open(watchMerge?: boolean, roomId = R) {
   await phone.execute(
     'sendRoomMessage',
-    { roomId: R, messageId: randomBytes(32).toString('hex'), text: '@ruby please do this' },
+    { roomId, messageId: randomBytes(32).toString('hex'), text: '@ruby please do this' },
     H,
   );
-  const command = (await daemon.execute('getAgentCommands', { roomId: R }, A)).commands.at(-1)!;
+  const command = (await daemon.execute('getAgentCommands', { roomId }, A)).commands.at(-1)!;
   await daemon.execute(
     'claimAgentCommand',
-    { roomId: R, commandId: command.id, generationId: 'g1' },
+    { roomId, commandId: command.id, generationId: 'g1' },
     A,
   );
   pr += 1;
   return daemon.execute(
     'createCorner',
     {
-      roomId: R,
+      roomId,
       requestId: command.turnRequestId,
       generationId: 'g1',
       name: `Step-${pr}`,
@@ -226,4 +226,19 @@ it('an opener also subscribed to Room merged is woken once by one merge', async 
   } finally {
     await daemon.execute('setEventSubscriptions', { roomId: R, kinds: [] }, A);
   }
+}, 30_000);
+
+it('a watch held by an archived opener corner is a no-op on merge', async () => {
+  const opener = await open(false);
+  const created = await open(undefined, opener.cornerId);
+  expect(created.watch).toEqual({ roomId: opener.cornerId, kinds: ['merged'] });
+  await daemon.execute('archiveCorner', { cornerId: opener.cornerId }, A);
+  await merge(created.cornerId);
+  const wakes = await db.query(
+    `SELECT c.room_id,c.reason FROM agent_commands c JOIN messages m ON m.id=c.source_message_id
+     WHERE c.agent_id=$1 AND m.system_event->>'kind'='merged'
+       AND (m.room_id::text=$2 OR m.card->>'cornerId'=$2)`,
+    [A, created.cornerId],
+  );
+  expect(wakes.rows).toEqual([]);
 }, 30_000);

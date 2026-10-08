@@ -562,10 +562,11 @@ export function BuzzChatSurface({
   // arrivals can decide whether to follow or queue against the pre-append view.
   const isPinnedToTailRef = useRef(true);
   const handledNotificationAnchorRef = useRef<string | null>(null);
-  // The message a source landing (notification, tray, quote) still has to
-  // bring to the top of the screen. Set until the row is drawn and scrolled
-  // to, or until the reader scrolls. Nothing covers the room meanwhile.
-  const pendingSourceLandingRef = useRef<string | null>(null);
+  // The source landing (notification, tray, quote) in progress. `scrolled`
+  // turns true after the first scroll to the row; the landing ends when a
+  // visibility report shows that row, or when the reader scrolls. Nothing
+  // covers the room meanwhile.
+  const sourceLandingRef = useRef<{ messageId: string; scrolled: boolean } | null>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
   // immediately taps send. Keep the authoritative in-flight draft beside the
@@ -2349,7 +2350,7 @@ export function BuzzChatSurface({
   // Newer rows wait until a pending source landing has scrolled, so the
   // rows it measured stay where they are.
   const loadNewerTranscriptIfLanded = useCallback(() => {
-    if (pendingSourceLandingRef.current === null) loadNewerTranscriptMessages();
+    if (sourceLandingRef.current === null) loadNewerTranscriptMessages();
   }, [loadNewerTranscriptMessages]);
   const phoneUnderfill = usePhoneUnderfillHistory({
     enabled: !desktopTranscript && transcriptMessages.length > 0,
@@ -2723,7 +2724,7 @@ export function BuzzChatSurface({
     desktopRowRefCallbacksRef.current.clear();
     desktopIntersectingIdsRef.current.clear();
     desktopReadingAnchorRef.current = null;
-    pendingSourceLandingRef.current = null;
+    sourceLandingRef.current = null;
     activeMessageSourceAnchorRef.current = null;
   }, [decodedId]);
   const completePendingNewMessageLanding = useCallback(() => {
@@ -2758,17 +2759,19 @@ export function BuzzChatSurface({
     }
     return true;
   }, [raiseArrivalFlash, settleQueueAtBoundary]);
-  // Bring the row that shows the pending source message to the top of the
-  // screen, once, and flash it. The store keeps that row a screen's worth of
-  // rows from the newest end of the window, so the phone list draws it within
-  // its first few batches. Until the
-  // list has measured it, `scrollToIndex` fails at once; the next layout or
-  // viewability pass calls this again. No timer, no estimated offset.
+  // Bring the row that shows the source message to the top of the screen
+  // and flash it. The store keeps that row a screen's worth of rows from the
+  // newest end of the window, so the phone list draws it within its first
+  // few batches. Until the list has measured it, `scrollToIndex` fails at
+  // once. A scroll made with measurements from before a window change can
+  // miss the row. Each layout or visibility pass calls this again until a
+  // visibility report shows the row. No timer, no estimated offset.
   const attemptSourceLanding = useCallback(() => {
-    const messageId = pendingSourceLandingRef.current;
-    if (!messageId) return;
+    const landing = sourceLandingRef.current;
+    if (!landing) return;
+    const { messageId } = landing;
     if (messageSourceLandingAbandonedRef.current) {
-      pendingSourceLandingRef.current = null;
+      sourceLandingRef.current = null;
       return;
     }
     const rows = transcriptMessagesRef.current;
@@ -2786,7 +2789,8 @@ export function BuzzChatSurface({
       flatListRef.current?.scrollToIndex({ index, viewPosition: 1, animated: false });
       if (sourceLandingFailedRef.current) return;
     }
-    pendingSourceLandingRef.current = null;
+    if (landing.scrolled) return;
+    landing.scrolled = true;
     endTranscriptJump();
     raiseSourceLandingFlash(rowId);
   }, [desktopTranscript, endTranscriptJump, raiseSourceLandingFlash]);
@@ -2796,7 +2800,15 @@ export function BuzzChatSurface({
         .filter((token) => token.isViewable)
         .map((token) => token.item);
       transcriptScrubber.observeVisibleRows(visibleTranscriptMessagesRef.current);
-      attemptSourceLanding();
+      const landing = sourceLandingRef.current;
+      if (
+        landing?.scrolled &&
+        hostRowIndex(visibleTranscriptMessagesRef.current, transcriptHostIdsRef.current, landing.messageId) >= 0
+      ) {
+        sourceLandingRef.current = null;
+      } else {
+        attemptSourceLanding();
+      }
       // The list recomputes viewability on scroll AND on every committed
       // update, so an arrival that lands below the fold reports itself unseen
       // without the reader touching anything.
@@ -2949,7 +2961,7 @@ export function BuzzChatSurface({
       if (
         anchoredSegmentActive &&
         isPinnedToTailRef.current &&
-        pendingSourceLandingRef.current === null
+        sourceLandingRef.current === null
       )
         loadNewerTranscriptMessages();
       if (
@@ -3093,7 +3105,7 @@ export function BuzzChatSurface({
   const landAtNewestMessage = useCallback(() => {
     pendingNewMessageLandingRef.current = null;
     messageSourceLandingAbandonedRef.current = true;
-    pendingSourceLandingRef.current = null;
+    sourceLandingRef.current = null;
     loadLatestTranscriptMessages();
     scrollToNewestMessage();
     // The badge is NOT cleared here. A press is not visibility: this scroll
@@ -3113,7 +3125,7 @@ export function BuzzChatSurface({
     (messageId: string) => {
       pendingNewMessageLandingRef.current = null;
       messageSourceLandingAbandonedRef.current = true;
-      pendingSourceLandingRef.current = null;
+      sourceLandingRef.current = null;
       loadLatestTranscriptMessages();
       if (desktopTranscript) pendingOwnSendTailIdRef.current = messageId;
       if (firstUnreadMessageId) completedUnreadLandingRef.current = firstUnreadMessageId;
@@ -3176,13 +3188,17 @@ export function BuzzChatSurface({
     }
     if (messageSourceLandingAbandonedRef.current) return;
     const hostIndex = hostRowIndex(transcriptMessages, transcriptHostIdsRef.current, messageId);
-    const jumpReady = transcriptJump?.messageId === messageId && transcriptJump.status === 'ready';
+    // A row that is already shown lands now, even while a read for it is
+    // still out; the landing ends that read.
+    const jumpPending =
+      transcriptJump?.messageId === messageId &&
+      (transcriptJump.status === 'ready' || transcriptJump.status === 'loading');
     if (
       hostIndex >= 0 &&
-      (desktopTranscript || hostIndex < PHONE_FIRST_RENDER_ROWS || jumpReady)
+      (desktopTranscript || hostIndex < PHONE_FIRST_RENDER_ROWS || jumpPending)
     ) {
       handledNotificationAnchorRef.current = anchorKey;
-      pendingSourceLandingRef.current = messageId;
+      sourceLandingRef.current = { messageId, scrolled: false };
       scheduleAnimationFrame(attemptSourceLanding);
       return;
     }
@@ -3210,7 +3226,7 @@ export function BuzzChatSurface({
     if (
       !desktopTranscript ||
       !anchoredSegmentActive ||
-      pendingSourceLandingRef.current !== null ||
+      sourceLandingRef.current !== null ||
       transcriptNewerStatus !== 'idle'
     )
       return;
@@ -6238,7 +6254,7 @@ export function BuzzChatSurface({
                     if (
                       anchoredSegmentActive &&
                       event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD &&
-                      pendingSourceLandingRef.current === null
+                      sourceLandingRef.current === null
                     )
                       loadNewerTranscriptMessages();
                   }}
@@ -6255,7 +6271,7 @@ export function BuzzChatSurface({
                     // touch: this never fires for a programmatic scrollToIndex/
                     // scrollToOffset, only an actual drag gesture.
                     messageSourceLandingAbandonedRef.current = true;
-                    pendingSourceLandingRef.current = null;
+                    sourceLandingRef.current = null;
                     endTranscriptJump();
                   }}
                   onScrollEndDrag={(event) => {

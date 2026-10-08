@@ -16,6 +16,7 @@ import { answerRoomChoice, postRoomChoice } from './room-choice.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { PhoneService } from './phone-service.js';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
+import { ensureSystemIdentity } from './system-line.js';
 import {
   activeRunIdsForSchedule,
   archiveWorkflow,
@@ -34,6 +35,7 @@ import {
   saveWorkflow,
   settleWorkflowGate,
   startWorkflow,
+  workflowRunRequester,
   workflowRunLockKey,
   WORKFLOW_LEGACY_STEP_TIMEOUT_SECONDS,
 } from './workflow-runs.js';
@@ -821,6 +823,83 @@ async function answerGate(runId: string, label?: string, viewerId = OWNER) {
       : { choiceId: choice.id, viewerId, optionId: choice.options.find((option) => option.label === label)!.optionId }),
   );
 }
+
+/** The newest workflow card of a run, i.e. the message a wake cites. */
+async function latestRunCard(runId: string): Promise<string> {
+  return (
+    await database.query<{ id: string }>(
+      `SELECT id FROM messages WHERE room_id=$1 AND card_type='workflow-handoff'
+         AND card->>'runId'=$2 ORDER BY (card->>'seq')::int DESC NULLS LAST,created_at DESC,id DESC LIMIT 1`,
+      [ROOM, runId],
+    )
+  ).rows[0]!.id;
+}
+
+describe('workflowRunRequester', () => {
+  it('answers a handoff wake with the person who started the run', async () => {
+    const { runId } = await startedRun(OWNER);
+    await expect(
+      workflowRunRequester(database, {
+        roomId: ROOM,
+        agentId: IMPLEMENTER,
+        rootSourceMessageId: runId,
+      }),
+    ).resolves.toEqual({ id: OWNER, kind: 'human' });
+  });
+
+  it('answers with the person who last answered a gate, over the agent starter', async () => {
+    const { runId } = await startedRun();
+    await handoff(database, await commandFor(IMPLEMENTER), {
+      runId,
+      outcome: 'stuck',
+      contents: { summary: 'blocked', prUrl: 'https://example.com/pr' },
+    });
+    await answerGate(runId, 'resume', OWNER);
+    await expect(
+      workflowRunRequester(database, {
+        roomId: ROOM,
+        agentId: IMPLEMENTER,
+        rootSourceMessageId: await latestRunCard(runId),
+      }),
+    ).resolves.toEqual({ id: OWNER, kind: 'human' });
+  });
+
+  it('keeps an agent requester for an agent-started run with no person gate answer', async () => {
+    const { runId } = await startedRun();
+    await expect(
+      workflowRunRequester(database, {
+        roomId: ROOM,
+        agentId: IMPLEMENTER,
+        rootSourceMessageId: runId,
+      }),
+    ).resolves.toEqual({ id: IMPLEMENTER, kind: 'agent' });
+  });
+
+  it('keeps one requester for an agent handoff card and a system failover card of the same run', async () => {
+    const { runId } = await startedRun(OWNER);
+    await ensureSystemIdentity(database);
+    const wake = (rootSourceMessageId: string) =>
+      workflowRunRequester(database, { roomId: ROOM, agentId: IMPLEMENTER, rootSourceMessageId });
+    const handoffCard = await latestRunCard(runId);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,card_type,card)
+       VALUES('rr-failover-card',$1,$2,'failover','workflow-handoff',$3::jsonb)`,
+      [ROOM, SYSTEM_IDENTITY_ID, JSON.stringify({ runId, seq: 1, toState: 'implement' })],
+    );
+    await expect(wake(handoffCard)).resolves.toEqual({ id: OWNER, kind: 'human' });
+    await expect(wake('rr-failover-card')).resolves.toEqual({ id: OWNER, kind: 'human' });
+  });
+
+  it('is undefined for a turn that is not a saved-run wake', async () => {
+    await expect(
+      workflowRunRequester(database, {
+        roomId: ROOM,
+        agentId: IMPLEMENTER,
+        rootSourceMessageId: await rootMessage(OWNER, 'ordinary message'),
+      }),
+    ).resolves.toBeUndefined();
+  });
+});
 
 describe('handoff', () => {
   it('lists every missing field and outcome together, even for an invalid outcome', async () => {

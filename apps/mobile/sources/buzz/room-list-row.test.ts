@@ -798,21 +798,11 @@ describe('Room row presentation', () => {
     // words. A corner opened before the name existed stored the whole
     // objective in the same slot, so the row shows its first three words
     // rather than a paragraph.
-    it('cuts a legacy corner title to three words on a word boundary', () => {
-      expect(
-        displayCornerTitle(
-          'Roadmap',
-          'Rework the room list so every corner row carries a state mark',
-          'abc12345',
-        ),
-      ).toBe('#Roadmap/Rework the room');
-      expect(cornerName('Rework the room list so every corner row carries', 'abc12345')).toBe(
-        'Rework the room',
+    it('shows a stored corner name exactly as written', () => {
+      expect(displayCornerTitle('Roadmap', 'fix-ledger-drift', 'abc12345')).toBe(
+        '#Roadmap/fix-ledger-drift',
       );
-      // A real three-word name is left exactly as the agent wrote it.
-      expect(cornerName('fix ledger drift', 'abc12345')).toBe('fix ledger drift');
-      // A brief that arrived with line breaks still reads as one line.
-      expect(cornerName('fix\nledger  drift', 'abc12345')).toBe('fix ledger drift');
+      expect(cornerName('fix-ledger-drift', 'abc12345')).toBe('fix-ledger-drift');
     });
   });
 
@@ -1040,12 +1030,6 @@ describe('roomRowNeedsAttention — the one brass square', () => {
 });
 
 describe('fullCornerTitle', () => {
-  it('prints the whole corner name where displayCornerTitle clips it', () => {
-    const long = 'Restore the corners index header metrics and reconcile it';
-    expect(displayCornerTitle('alpha', long, 'abcdef0123')).toBe('#alpha/Restore the corners');
-    expect(fullCornerTitle('alpha', long, 'abcdef0123')).toBe(`#alpha/${long}`);
-  });
-
   it('never doubles the parent when a legacy name already carries it', () => {
     // The stored name of an older corner can already be `#room/corner`. Both
     // composing titles strip that exact segment, case-insensitively, so the

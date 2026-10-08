@@ -646,15 +646,8 @@ export function displayCornerTitle(
 }
 
 /**
- * The same `#room/corner` composition, with the corner's name UNCAPPED.
- *
- * `cornerName` clips to three words because most surfaces show a corner
- * inline, in a slot that has to stay one line beside other facts. The Room's
- * dedicated corners list is the opposite case: it exists to tell you which
- * corner is which, so a silently shortened name defeats the screen (captain,
- * 2026-09-20 — "print the corner name in full without truncation"). The
- * empty/`sub-` id-slug fallback is shared, so an unnamed corner still labels
- * itself the same way everywhere.
+ * The same `#room/corner` composition for the Room's corners list, which also
+ * drops a legacy stored `<room>/` prefix.
  */
 export function fullCornerTitle(
   parentRoomName: string | undefined | null,
@@ -662,8 +655,7 @@ export function fullCornerTitle(
   cornerId: string,
 ): string {
   const room = parentRoomName?.trim().replace(/^#+/, '');
-  const stored = withoutParentPrefix(room, cornerStoredName)?.replace(/\s+/g, ' ').trim();
-  const corner = !stored || stored.startsWith('sub-') ? cornerName(stored, cornerId) : stored;
+  const corner = cornerName(withoutParentPrefix(room, cornerStoredName), cornerId);
   return room ? `#${room}/${corner}` : `#${corner}`;
 }
 

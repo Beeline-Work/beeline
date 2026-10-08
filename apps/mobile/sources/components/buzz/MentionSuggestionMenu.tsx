@@ -7,12 +7,36 @@ import {
   SYSTEM_MENTION_LABEL,
   SYSTEM_MENTION_PUBKEY,
 } from '@/buzz/room-participants';
+import { channelCornerRoom, type ChannelSuggestion } from '@/buzz/channel-suggestions';
+import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { memberRosterModel, memberRosterSubtitle } from '@/components/buzz/MemberRosterRow';
 import type { RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 
 /** One-line mention row height; also the unit of the scroll cap. */
 export const MENTION_ROW_HEIGHT = 44;
+
+/** Keep the highlighted row inside the 3-row (keyboard open) or 5-row scroll window. */
+function useHighlightedRowScroll(highlightedIndex: number, keyboardOpen: boolean) {
+  const visibleRows = keyboardOpen ? 3 : 5;
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollOffset = useRef(0);
+
+  useEffect(() => {
+    const top = highlightedIndex * MENTION_ROW_HEIGHT;
+    const bottom = top + MENTION_ROW_HEIGHT;
+    const windowHeight = visibleRows * MENTION_ROW_HEIGHT;
+    let target: number | undefined;
+    if (top < scrollOffset.current) target = top;
+    else if (bottom > scrollOffset.current + windowHeight) target = bottom - windowHeight;
+    if (target === undefined) return;
+    // Record the offset now: onScroll may not fire before the next highlight change.
+    scrollOffset.current = target;
+    scrollRef.current?.scrollTo({ y: target, animated: false });
+  }, [highlightedIndex, visibleRows]);
+
+  return { visibleRows, scrollRef, scrollOffset };
+}
 
 /**
  * The composer's @-mention menu. The MENTION label stays fixed; rows scroll
@@ -34,22 +58,10 @@ export function MentionSuggestionMenu({
   personAvatar: (pubkey: string) => string | undefined;
   onSelect: (participant: RoomRosterParticipant) => void;
 }) {
-  const visibleRows = keyboardOpen ? 3 : 5;
-  const scrollRef = useRef<ScrollView>(null);
-  const scrollOffset = useRef(0);
-
-  useEffect(() => {
-    const top = highlightedIndex * MENTION_ROW_HEIGHT;
-    const bottom = top + MENTION_ROW_HEIGHT;
-    const windowHeight = visibleRows * MENTION_ROW_HEIGHT;
-    let target: number | undefined;
-    if (top < scrollOffset.current) target = top;
-    else if (bottom > scrollOffset.current + windowHeight) target = bottom - windowHeight;
-    if (target === undefined) return;
-    // Record the offset now: onScroll may not fire before the next highlight change.
-    scrollOffset.current = target;
-    scrollRef.current?.scrollTo({ y: target, animated: false });
-  }, [highlightedIndex, visibleRows]);
+  const { visibleRows, scrollRef, scrollOffset } = useHighlightedRowScroll(
+    highlightedIndex,
+    keyboardOpen,
+  );
 
   return (
     <View
@@ -179,6 +191,96 @@ export function MentionSuggestionMenu({
   );
 }
 
+/**
+ * The composer's `#` menu: Rooms with the `#` glyph, corners with the corner
+ * glyph. Same shell, scroll cap and row height as the @-mention menu.
+ */
+export function ChannelSuggestionMenu({
+  query,
+  matches,
+  overflow,
+  highlightedIndex,
+  keyboardOpen,
+  onSelect,
+}: {
+  query: string;
+  matches: readonly ChannelSuggestion[];
+  overflow: number;
+  highlightedIndex: number;
+  keyboardOpen: boolean;
+  onSelect: (suggestion: ChannelSuggestion) => void;
+}) {
+  const { visibleRows, scrollRef, scrollOffset } = useHighlightedRowScroll(
+    highlightedIndex,
+    keyboardOpen,
+  );
+  const cornerRoom = channelCornerRoom(query, matches);
+  return (
+    <View
+      accessibilityLabel="Reference a Room or corner"
+      style={styles.mentionMenu}
+      testID="channel-suggestions"
+    >
+      <Text style={styles.mentionMenuLabel}>
+        {cornerRoom ? `CORNERS IN #${cornerRoom.toUpperCase()}` : 'ROOMS AND CORNERS'}
+      </Text>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        onScroll={(event) => {
+          scrollOffset.current = event.nativeEvent.contentOffset.y;
+        }}
+        ref={scrollRef}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        style={{ maxHeight: visibleRows * MENTION_ROW_HEIGHT }}
+      >
+        {matches.map((suggestion, index) => {
+          const selected = index === highlightedIndex;
+          const kind = suggestion.kind === 'room' ? 'ROOM' : 'CORNER';
+          const subtitle = cornerRoom ? undefined : suggestion.subtitle;
+          return (
+            <TouchableOpacity
+              accessibilityLabel={[`#${suggestion.token}`, subtitle, suggestion.kind]
+                .filter(Boolean)
+                .join(', ')}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              key={suggestion.id}
+              onPress={() => onSelect(suggestion)}
+              style={[styles.mentionRow, selected && styles.mentionRowSelected]}
+              testID={`channel-suggestion-${suggestion.token}`}
+            >
+              <View style={styles.mentionChannelGlyph}>
+                {suggestion.kind === 'room' ? (
+                  <Text style={styles.mentionChannelGlyphText}>#</Text>
+                ) : (
+                  <CornerGlyph color={styles.mentionChannelGlyphText.color} size={14} />
+                )}
+              </View>
+              <View style={styles.mentionAgentIdentity}>
+                <Text numberOfLines={1} style={[styles.mentionName, styles.channelToken]}>
+                  #{suggestion.token}
+                </Text>
+                {subtitle ? (
+                  <Text numberOfLines={1} style={styles.mentionHandle}>
+                    {subtitle}
+                  </Text>
+                ) : null}
+              </View>
+              <Text style={styles.mentionKind}>{kind}</Text>
+            </TouchableOpacity>
+          );
+        })}
+        {overflow > 0 && (
+          <Text style={styles.mentionOverflow} testID="channel-suggestion-overflow">
+            AND {overflow} OTHERS
+          </Text>
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
@@ -252,6 +354,9 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: groknight.proseSemibold,
       flexShrink: 0,
       color: groknight.textPrimary,
+    },
+    channelToken: {
+      flexShrink: 1,
     },
     mentionHandle: {
       ...groknight.type.machine,

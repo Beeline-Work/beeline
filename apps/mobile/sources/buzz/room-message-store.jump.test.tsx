@@ -247,6 +247,53 @@ describe('Reproduction NOTIFICATION-TAP-HANG', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('a missing target from a detached window returns to the newest rows', async () => {
+    const all = room(227);
+    const tail = all.slice(197);
+    const { state, renderer } = await mountStore(tail, serverOver(all));
+
+    await act(async () => state.current.jumpTo(all[26]!.id));
+    act(() => state.current.endJump());
+    expect(state.current.attached).toBe(false);
+
+    await act(async () => state.current.jumpTo('f'.repeat(64)));
+
+    expect(state.current.jump).toEqual({ messageId: 'f'.repeat(64), status: 'missing' });
+    expect(state.current.attached).toBe(true);
+    expect(shownIds(state.current, tail).slice(-tail.length)).toEqual(
+      tail.map((message) => message.id),
+    );
+    await act(async () => renderer.unmount());
+  });
+
+  it('a page without the target from a detached window returns to the newest rows', async () => {
+    const all = room(227);
+    const tail = all.slice(197);
+    const server = serverOver(all);
+    const client = {
+      ...server,
+      historyAround: vi.fn(async (roomId: string, messageId: string) =>
+        messageId === 'e'.repeat(64)
+          ? { roomId, messages: all.slice(11, 41) }
+          : server.historyAround(roomId, messageId),
+      ),
+    };
+    const { state, renderer } = await mountStore(tail, client);
+
+    await act(async () => state.current.jumpTo(all[26]!.id));
+    act(() => state.current.endJump());
+    expect(state.current.attached).toBe(false);
+
+    await act(async () => state.current.jumpTo('e'.repeat(64)));
+
+    expect(state.current.jump).toEqual({ messageId: 'e'.repeat(64), status: 'missing' });
+    expect(state.current.attached).toBe(true);
+    expect(shownIds(state.current, tail).slice(-tail.length)).toEqual(
+      tail.map((message) => message.id),
+    );
+    await act(async () => renderer.unmount());
+  });
+
   it('a reader who scrolls before the read answers keeps their place', async () => {
     const all = room(227);
     const tail = all.slice(197);

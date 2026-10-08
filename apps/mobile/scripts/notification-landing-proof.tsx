@@ -11,6 +11,8 @@ import { createRoot } from 'react-dom/client';
  *   stall   — never answers
  *   answer  — answers once the room is on screen
  *   missing — rejects with a 404 once the room is on screen
+ *   landed-then-missing — answers, then a second tap names a message the
+ *     server answers with a 404
  */
 type Around = {
   calls: number;
@@ -209,6 +211,24 @@ async function run() {
   const typing = await typeIntoComposer('still typing');
   if (mode === 'stall') {
     report(JSON.stringify({ mode, pending, typing }));
+    return;
+  }
+  if (mode === 'landed-then-missing') {
+    around().pending.splice(0).forEach(({ resolve }) => resolve(around().page));
+    await waitFor(() => target().flashed, 2000);
+    await pause(1500);
+    const landed = observe();
+    const query = new URLSearchParams(location.search);
+    (globalThis as unknown as { __setParams(next: unknown): void }).__setParams({
+      channelId: query.get('room'),
+      notificationResponseId: 'push-2',
+      notificationMessageId: query.get('gone'),
+    });
+    await waitFor(() => around().calls > 1, 2000);
+    around().pending.splice(0).forEach(({ reject }) => reject(around().makeMissing()));
+    await waitFor(() => pageHasText('That message is no longer available'), 2000);
+    await pause(500);
+    report(JSON.stringify({ mode, pending, typing, landed, settled: observe() }));
     return;
   }
   if (mode === 'answer') around().pending.forEach(({ resolve }) => resolve(around().page));

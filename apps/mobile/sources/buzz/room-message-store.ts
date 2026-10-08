@@ -246,6 +246,24 @@ export function useRoomMessageStore({
     [attachToTail, reveal, setDetached, setNewerStatus, setWindowOlderStatus],
   );
 
+  /** Drop a detached window so the transcript shows the newest rows again. */
+  const showLatest = useCallback(() => {
+    if (!detachedRef.current) return;
+    setDetached(null);
+    setNewerStatus('idle');
+    setWindowOlderStatus('idle');
+    const tail = tailRef.current;
+    const oldest =
+      (addRoomPage({ pages: olderPagesRef.current }, []).pages[0] ?? [])[0] ?? tail?.[0];
+    cursorRef.current = { roomId: previousRoomIdRef.current, before: cursorOf(oldest) };
+    completedTailIdRef.current = null;
+    requestVersionRef.current += 1;
+    loadingRef.current = false;
+    updateStatus('idle');
+    visibleCountRef.current = initialVisibleCountRef.current;
+    setVisibleMessageCount(initialVisibleCountRef.current);
+  }, [setDetached, setNewerStatus, setWindowOlderStatus, updateStatus]);
+
   const jumpTo = useCallback(
     (messageId: string) => {
       const request = ++windowRequestRef.current;
@@ -297,6 +315,7 @@ export function useRoomMessageStore({
             return;
           const index = page.messages.findIndex((row) => row.id === messageId);
           if (index < 0) {
+            showLatest();
             setJump({ messageId, status: 'missing' });
             return;
           }
@@ -319,10 +338,15 @@ export function useRoomMessageStore({
         .catch((error: unknown) => {
           if (request !== windowRequestRef.current || requestedRoomId !== previousRoomIdRef.current)
             return;
-          setJump({ messageId, status: missingJump(error) ? 'missing' : 'error' });
+          if (!missingJump(error)) {
+            setJump({ messageId, status: 'error' });
+            return;
+          }
+          showLatest();
+          setJump({ messageId, status: 'missing' });
         });
     },
-    [openWindowAt, setJump],
+    [openWindowAt, setJump, showLatest],
   );
 
   const clear = useCallback(() => {
@@ -549,21 +573,8 @@ export function useRoomMessageStore({
   const loadLatest = useCallback(() => {
     windowRequestRef.current += 1;
     setJump(null);
-    if (!detachedRef.current) return;
-    setDetached(null);
-    setNewerStatus('idle');
-    setWindowOlderStatus('idle');
-    const tail = tailRef.current;
-    const oldest =
-      (addRoomPage({ pages: olderPagesRef.current }, []).pages[0] ?? [])[0] ?? tail?.[0];
-    cursorRef.current = { roomId: previousRoomIdRef.current, before: cursorOf(oldest) };
-    completedTailIdRef.current = null;
-    requestVersionRef.current += 1;
-    loadingRef.current = false;
-    updateStatus('idle');
-    visibleCountRef.current = initialVisibleCountRef.current;
-    setVisibleMessageCount(initialVisibleCountRef.current);
-  }, [setDetached, setJump, setNewerStatus, setWindowOlderStatus, updateStatus]);
+    showLatest();
+  }, [setJump, showLatest]);
 
   /**
    * The jump is over: its target landed, or the reader scrolled first. An

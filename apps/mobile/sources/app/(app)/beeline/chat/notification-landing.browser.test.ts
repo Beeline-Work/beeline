@@ -8,6 +8,7 @@ const VIEWER = 'a'.repeat(64);
 const ANN = { pubkey: 'b'.repeat(64), kind: 'human', name: 'Ann' };
 const id = (prefix: string, n: number) => prefix + String(n).padStart(63, '0');
 const TARGET = id('e', 0);
+const GONE = id('f', 0);
 const BASE = 1_790_000_000;
 
 function row(messageId: string, text: string, createdAt: number) {
@@ -91,7 +92,13 @@ function shims(mobile: string): Record<string, string> {
     // The notification tap: the Room route opened with the response and the message it names.
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
-    export const useLocalSearchParams = () => ({ channelId: '${ROOM}', notificationResponseId: 'push-1', notificationMessageId: '${TARGET}' });
+    // The entry can deliver a second tap by replacing globalThis.__params.
+    const listeners = new Set();
+    globalThis.__params = { channelId: '${ROOM}', notificationResponseId: 'push-1', notificationMessageId: '${TARGET}' };
+    globalThis.__setParams = (next) => { globalThis.__params = next; listeners.forEach((listener) => listener()); };
+    export const useLocalSearchParams = () => React.useSyncExternalStore(
+      (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+      () => globalThis.__params);
     export const useRouter = () => router;
     export const router = { push() {}, back() {}, replace() {}, navigate() {}, setParams() {}, canGoBack: () => false };
     export const usePathname = () => '/beeline/chat/${ROOM}';
@@ -165,7 +172,7 @@ type Proof = {
   console: string[];
 };
 
-async function proof(mode: 'stall' | 'answer' | 'missing'): Promise<Proof> {
+async function proof(mode: 'stall' | 'answer' | 'missing' | 'landed-then-missing'): Promise<Proof> {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/notification-landing-proof.tsx'),
@@ -173,7 +180,7 @@ async function proof(mode: 'stall' | 'answer' | 'missing'): Promise<Proof> {
     shims: shims(mobile),
     width: 390,
     height: 844,
-    query: `?mode=${mode}`,
+    query: `?mode=${mode}&room=${ROOM}&gone=${GONE}`,
     budgetMs: 15_000,
   });
   expect(status, stderr).toBe(0);
@@ -235,6 +242,26 @@ describe.skipIf(!existsSync(CHROME))(
       expect(settled.rows.every((text) => tailRow.test(text))).toBe(true);
       expect(settled.rows).toContain('Tail message 29');
       expect(settled.composer).toBe(true);
+    }, 120_000);
+
+    it('returns to the newest rows when a second tap names a gone message after a landing', async () => {
+      const page = await proof('landed-then-missing');
+      const { landed, settled } = page as Proof & { landed: Observation };
+      console.log(
+        `landed then 404: first landing target present=${landed.target.present}, top=${landed.target.top}px, rows=${JSON.stringify(landed.rows.slice(0, 2))}…; ` +
+          `after 404 historyAround calls=${settled!.historyAroundCalls}; "That message is no longer available" shown=${settled!.noLongerAvailable}; ` +
+          `visible rows=${settled!.rows.length} (${settled!.rows[0]} … ${settled!.rows.at(-1)}); composer present=${settled!.composer}`,
+      );
+      expect(landed.target.present).toBe(true);
+      expect(landed.rows.every((text) => tailRow.test(text))).toBe(false);
+      // The new tap reopens the session, and its reset runs the pending jump again.
+      expect(settled!.historyAroundCalls).toBeGreaterThanOrEqual(2);
+      expect(settled!.noLongerAvailable).toBe(true);
+      expect(settled!.locating).toBe(false);
+      expect(settled!.rows.length).toBeGreaterThan(0);
+      expect(settled!.rows.every((text) => tailRow.test(text))).toBe(true);
+      expect(settled!.rows).toContain('Tail message 29');
+      expect(settled!.composer).toBe(true);
     }, 120_000);
   },
 );

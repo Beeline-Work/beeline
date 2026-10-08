@@ -73,7 +73,7 @@ const gateCalls = () => calls.filter((call) => call.name === 'getPrChecksStatus'
 
 describe('pr_checks_status PR selection and reviewer gate', () => {
   it('adds no hold of its own to a corner with no pull request yet', async () => {
-    restore = { lane: 'code', objective: 'Investigate' };
+    restore = { objective: 'Investigate' };
     const status = JSON.parse(await prChecksStatus());
     expect(status).toMatchObject({
       held: false,

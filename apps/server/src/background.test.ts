@@ -1264,7 +1264,7 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
-  it('pushes finished messages in commissioned code and no-code corners', async () => {
+  it('pushes finished messages in commissioned repository and repo-less corners', async () => {
     const db = new PgliteDatabase();
     try {
       await migrate(db);
@@ -1275,7 +1275,8 @@ describe('background advisory-lock ownership', () => {
         workspace = '11111111-1111-4111-8111-111111111111',
         room = '22222222-2222-4222-8222-222222222222',
         noCode = '33333333-3333-4333-8333-333333333333',
-        code = '44444444-4444-4444-8444-444444444444';
+        code = '44444444-4444-4444-8444-444444444444',
+        repoRoom = '55555555-5555-4555-8555-555555555555';
       await db.query(
         `INSERT INTO identities(id,kind,name,handle) VALUES
          ($1,'human','Owner','owner'),($2,'human','Other','other'),
@@ -1285,18 +1286,24 @@ describe('background advisory-lock ownership', () => {
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
       await db.query(
         `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES
-         ($1,$4,'Room',NULL),($2,$4,'Report',$1),($3,$4,'Code',$1)`,
-        [room, noCode, code, workspace],
+         ($1,$3,'Room',NULL),($2,$3,'Report',$1)`,
+        [room, noCode, workspace],
       );
-      for (const corner of [room, noCode, code])
+      // A corner has a pull request path exactly when its parent Room has a repository.
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name,parent_id,repository_key,repository_resolution) VALUES
+         ($1,$3,'Widgets',NULL,'owner/widgets','repository'),($2,$3,'Code',$1,NULL,'none')`,
+        [repoRoom, code, workspace],
+      );
+      for (const corner of [room, repoRoom, noCode, code])
         await db.query(
           `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
            ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
           [workspace, corner, commissioner, other, agent, helper],
         );
       await db.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,lane) VALUES
-         ($1,$3,$4,'Write the report','no_code'),($2,$3,$4,'Ship code','code')`,
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective) VALUES
+         ($1,$3,$4,'Write the report'),($2,$3,$4,'Ship code')`,
         [noCode, code, agent, commissioner],
       );
       await db.query(

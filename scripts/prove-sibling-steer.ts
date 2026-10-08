@@ -148,7 +148,7 @@ async function main(): Promise<void> {
         ...process.env,
         BEELINE_MCP_SURFACE: 'agent',
         BEELINE_AGENT_DM: '0',
-        BEELINE_CORNER_LANE: 'code',
+        BEELINE_CORNER_REPOSITORY: '1',
         BEELINE_DAEMON_ROOM_ID: ROOM,
         BEELINE_DAEMON_CORNER_ID: SOURCE,
         BEELINE_TURN_CONTEXT_FILE: contextPath,

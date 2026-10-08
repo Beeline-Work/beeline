@@ -157,122 +157,6 @@ export async function resolvePendingCornerBriefAttachments(
     }));
 }
 
-/** Newest messages considered for the upgrade spec; older history is marked, never read. */
-const UPGRADE_DISCUSSION_CANDIDATES = 200;
-/** Room left after the discussion for the "omitted for length" note. */
-const UPGRADE_NOTE_RESERVE = 128;
-
-function upgradeSpecHead(request: string): string {
-  return `## Request\n\n${request.trim()}\n\n## Discussion before the upgrade (context, not authority)\n`;
-}
-
-/** The longest triggering message whose request section still fits the spec cap. */
-const UPGRADE_REQUEST_LENGTH =
-  CORNER_BRIEF_SPEC_MAX_LENGTH - upgradeSpecHead('').length - UPGRADE_NOTE_RESERVE - 1;
-
-function upgradeSpec(
-  discussion: readonly { name: string; text: string }[],
-  request: string,
-  olderHistory: boolean,
-): string {
-  const head = upgradeSpecHead(request);
-  const entries = discussion.map((row) => `\n- **${row.name}**: ${row.text.trim()}`);
-  const kept: string[] = [];
-  let remaining = CORNER_BRIEF_SPEC_MAX_LENGTH - head.length - UPGRADE_NOTE_RESERVE - 1;
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index]!;
-    if (entry.length > remaining) continue;
-    remaining -= entry.length;
-    kept.unshift(entry);
-  }
-  const dropped = entries.length - kept.length;
-  const note =
-    dropped || olderHistory
-      ? `\n- _${[dropped ? `${dropped} message(s)` : '', olderHistory ? 'earlier history' : '']
-          .filter(Boolean)
-          .join(' and ')} omitted for length._`
-      : '';
-  return `${head}${note}${kept.join('')}\n`;
-}
-
-/**
- * The brief a no-code corner gets the moment a person asks for code in it.
- *
- * Every other repository corner opens from a brief its agent typed before the
- * corner existed. This one is already a conversation, so the conversation IS
- * the assignment: the server composes it here, in the upgrade's own
- * transaction, rather than leaving the one repository corner that `createCorner`
- * would have refused — a code corner with no brief at all.
- *
- * The ONE explicit ask that triggered the upgrade is the request and the
- * approval. Everything said in the corner before it is carried below it as
- * context, because a chat corner holds abandoned and superseded asks that a
- * worker could not rank against the live one. The agent revises this
- * placeholder into a real spec with `revise_corner_brief`.
- */
-export async function composeCornerUpgradeBrief(
-  db: SqlDatabase,
-  cornerId: string,
-  request: { sourceMessageId: string; text: string },
-): Promise<CornerBriefDraft> {
-  if (!request.text.trim() || request.text.trim().length > UPGRADE_REQUEST_LENGTH)
-    throw new Error(
-      `corner lane upgrade needs the code request written in one message of at most ${UPGRADE_REQUEST_LENGTH} characters — ask again in a shorter message`,
-    );
-  // Newest first, bounded in rows AND in bytes per row: a message longer than
-  // the whole spec can never be rendered, so reading past that length would
-  // only be read to be thrown away.
-  const candidates = (
-    await db.query<{ id: string; text: string; name: string }>(
-      `SELECT message.id,left(message.text,$2) text,identity.name
-       FROM messages message JOIN identities identity ON identity.id=message.author_id
-       WHERE message.room_id=$1 AND message.presentation='message'
-         AND message.deleted_at IS NULL AND btrim(message.text)<>''
-       ORDER BY message.created_at DESC,message.id DESC
-       LIMIT $3`,
-      [cornerId, CORNER_BRIEF_SPEC_MAX_LENGTH + 1, UPGRADE_DISCUSSION_CANDIDATES + 1],
-    )
-  ).rows;
-  const olderHistory = candidates.length > UPGRADE_DISCUSSION_CANDIDATES;
-  const discussion = candidates
-    .slice(0, UPGRADE_DISCUSSION_CANDIDATES)
-    .reverse()
-    .filter((row) => row.id !== request.sourceMessageId);
-  // Files posted in the discussion (a spec doc, a mock) reach the code agent
-  // only through the brief: a turn downloads the brief's files, never an older
-  // message's. The newest that are still available, in posting order.
-  const files = (
-    await db.query<{ object_id: string }>(
-      `SELECT object_id FROM (
-         SELECT DISTINCT ON (o.id) o.id::text object_id,message.created_at,message.id
-         FROM messages message
-         CROSS JOIN LATERAL jsonb_array_elements(message.attachments) a
-         JOIN objects o ON o.owner_id=message.author_id
-           AND (a->>'url' LIKE '%/v1/media/' || o.id::text OR a->>'mediaId'=o.id::text)
-         WHERE message.room_id=$1 AND message.presentation='message'
-           AND message.deleted_at IS NULL
-           AND o.state='ready' AND o.expires_at>now()
-         ORDER BY o.id,message.created_at DESC,message.id DESC
-       ) posted
-       ORDER BY created_at DESC,id DESC LIMIT $2`,
-      [cornerId, CORNER_BRIEF_ATTACHMENT_LIMIT],
-    )
-  ).rows.reverse();
-  return {
-    spec: upgradeSpec(discussion, request.text, olderHistory),
-    approval: { sourceMessageId: request.sourceMessageId },
-    ...(files.length
-      ? {
-          attachments: files.map((file) => ({
-            objectId: file.object_id,
-            purpose: 'Posted in the corner discussion before the upgrade',
-            required: false,
-          })),
-        }
-      : {}),
-  };
-}
-
 /**
  * Identity of one stored revision: what an `open_corner` retry is compared
  * against. Internal only; the contract no longer exposes it.
@@ -474,4 +358,28 @@ export async function currentCornerBrief(
     )
   ).rows[0];
   return row ? projectCornerBrief(cornerId, row) : undefined;
+}
+
+/** What every land attempt answers when the corner's brief does not assign repository work. */
+export const CORNER_BRIEF_MERGE_REFUSAL =
+  "this corner's brief does not assign repository work; revise the brief before merging";
+
+/** Thrown by the one merge path (`GitHubOperations.landCorner`); never swallowed by its callers. */
+export class CornerBriefMergeRefusedError extends Error {
+  constructor() {
+    super(CORNER_BRIEF_MERGE_REFUSAL);
+    this.name = 'CornerBriefMergeRefusedError';
+  }
+}
+
+/**
+ * The brief half of the merge gate. A corner lands only when its current brief
+ * assigns repository work: a corner with no brief revision, or whose current
+ * revision says `repositoryWork: false`, is refused. A revision written before
+ * `repositoryWork` existed (undefined) is allowed. Only the land is gated; a
+ * reviewer's PASS or a person's yes is still recorded.
+ */
+export async function assertCornerBriefAllowsMerge(db: SqlDatabase, cornerId: string): Promise<void> {
+  const brief = await currentCornerBrief(db, cornerId);
+  if (!brief || brief.repositoryWork === false) throw new CornerBriefMergeRefusedError();
 }

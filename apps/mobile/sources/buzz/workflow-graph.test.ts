@@ -124,7 +124,7 @@ describe('workflow copy', () => {
   it('turns slugs and state names into sentence case', () => {
     expect(workflowDisplayName('feedback-triage')).toBe('Feedback triage');
     expect(workflowStateLabel('ask_human')).toBe('Ask human');
-    expect(workflowStateLabel('no_code_work')).toBe('No code work');
+    expect(workflowStateLabel('wait_for_checks')).toBe('Wait for checks');
   });
 
   it('reads durations the way a run log does', () => {

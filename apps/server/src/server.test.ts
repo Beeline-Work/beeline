@@ -916,6 +916,9 @@ describe('daemon live command push', () => {
     });
     await expect(connector).resolves.toEqual({ type: 'connector-assignment' });
 
+    // A child corner's status hint is for corner lists, never an inbox replay.
+    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
+
     const closed = nextSocketMessage(socket, 'corner-complete');
     live.publish({
       type: 'invalidate',
@@ -924,19 +927,6 @@ describe('daemon live command push', () => {
       closeRequested: true,
     });
     await expect(closed).resolves.toEqual({ type: 'corner-complete', roomId });
-
-    // A child corner's status hint is for corner lists, never an inbox replay.
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-
-    const restarted = nextSocketMessage(socket, 'corner-restart');
-    live.publish({
-      type: 'invalidate',
-      roomId,
-      reason: 'postgres:corner_facts',
-      lane: 'code',
-      laneChanged: true,
-    });
-    await expect(restarted).resolves.toEqual({ type: 'corner-restart', roomId });
     expect(execute.mock.calls.filter(([name]) => name === 'getRoomInbox')).toHaveLength(1);
   });
 

@@ -46,8 +46,8 @@ describe('GitHub phone operations', () => {
       corners.push(corner);
       await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
         VALUES($1,$2,$3,$4,'Checks')`, [corner, workspace, room, HUMAN]);
-      await database.query(`INSERT INTO corner_facts(corner_id,objective,lane,owner_agent_id,feature_branch,lifecycle,workflow_state)
-        VALUES($1,'Fix checks','code',$2,$3,$4::jsonb,'land')`,
+      await database.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,feature_branch,lifecycle,workflow_state)
+        VALUES($1,'Fix checks',$2,$3,$4::jsonb,'land')`,
       [corner, REVIEWER, `feature/checks-${number}`, JSON.stringify({ checks: 'passing',
         pr: { number, headSha, url: `https://github.com/owner/widgets/pull/${number}`, mergeability: 'clean' } })]);
     }
@@ -171,7 +171,7 @@ describe('GitHub phone operations', () => {
     } finally { release(); await delivery; }
   });
 
-  it('routes a promoted corner PR and checks by its repository-scoped branch prefix', async () => {
+  it('routes a corner PR and checks by its repository-scoped branch prefix', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';
     const corner = '33333333-3333-4333-8333-333333333333';
@@ -196,8 +196,8 @@ describe('GitHub phone operations', () => {
        VALUES($1,$2,$3,$4,'Promoted')`, [corner, workspace, room, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lane,feature_branch,lifecycle)
-       VALUES($1,'Promoted work','code','feature/stale','{"checks":"unknown"}')`, [corner],
+      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
+       VALUES($1,'Promoted work','feature/stale','{"checks":"unknown"}')`, [corner],
     );
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
@@ -250,8 +250,8 @@ describe('GitHub phone operations', () => {
        VALUES($1,$2,$3,$4,'Collision')`, [collision, workspace, room, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lane,lifecycle)
-       VALUES($1,'Another corner','code','{"checks":"unknown"}')`, [collision],
+      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
+       VALUES($1,'Another corner','{"checks":"unknown"}')`, [collision],
     );
     await database.query(
       `UPDATE corner_facts SET feature_branch=NULL,lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
@@ -328,8 +328,8 @@ describe('GitHub phone operations', () => {
         [workspace, corner, opener],
       );
       await tx.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane,feature_branch,lifecycle)
-         VALUES($1,$2,'Convo chains','code',$3,$4::jsonb)`,
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,feature_branch,lifecycle)
+         VALUES($1,$2,'Convo chains',$3,$4::jsonb)`,
         [corner, opener, branch, JSON.stringify({ branch })],
       );
     });
@@ -410,8 +410,8 @@ describe('GitHub phone operations', () => {
       [room, corner],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lane,kind,feature_branch,lifecycle)
-       VALUES($1,'Hidden river','code','human',$2,'{"checks":"unknown"}')`,
+      `INSERT INTO corner_facts(corner_id,objective,kind,feature_branch,lifecycle)
+       VALUES($1,'Hidden river','human',$2,'{"checks":"unknown"}')`,
       [corner, branch],
     );
     // An earlier system note carries the old fallback's author; it must not count.
@@ -447,8 +447,8 @@ describe('GitHub phone operations', () => {
       { card_type: 'github-corner-note', author_id: worker },
     ]);
   });
-  it('matches a post-upgrade webhook on its recorded feature branch, never the prefix fallback', async () => {
-    // upgradeCornerLane records feature_branch exactly, so its webhook must
+  it('matches a webhook on its recorded feature branch, never the prefix fallback', async () => {
+    // A corner with a recorded feature_branch must have its webhook
     // resolve through the exact `fact.feature_branch=$3` join (processCornerEvent
     // line ~1352), not the prefix-recovery path. Proven by giving this corner
     // an existing pull request (`has_pr=true`): the prefix path's own
@@ -480,8 +480,8 @@ describe('GitHub phone operations', () => {
       [corner, workspace, room, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,lane,feature_branch,lifecycle)
-       VALUES($1,'Promoted work','code',$2,$3::jsonb)`,
+      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
+       VALUES($1,'Promoted work',$2,$3::jsonb)`,
       [
         corner,
         branch,

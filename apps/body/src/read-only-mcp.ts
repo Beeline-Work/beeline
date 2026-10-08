@@ -115,7 +115,6 @@ import { isNetworkFailure } from './network-failure.js';
 import {
   MEMORY_UPKEEP_RULE,
   SEARCH_MEMORY_FIRST_RULE,
-  UPGRADE_INTENT_RULE,
 } from './prompt-assembly.js';
 
 type JsonObject = Record<string, unknown>;
@@ -1184,12 +1183,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'boolean',
           description: 'Create a merge hold atomically, for the original human requester.',
         },
-        lane: {
-          type: 'string',
-          enum: ['code', 'no_code'],
-          description:
-            'Defaults to "code". Use "no_code" for artifact work without a repository checkout.',
-        },
       },
       additionalProperties: false,
     },
@@ -1380,12 +1373,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
       },
       additionalProperties: false,
     },
-  },
-  {
-    name: 'upgrade_corner_to_code',
-    description:
-      `Upgrade this repository-backed no-code corner to a writable code corner. ${UPGRADE_INTENT_RULE} The one-way upgrade preserves this corner and its messages, then re-delivers the same request after restarting with a feature branch and checkout. After success, end this turn immediately; do not edit the scratch workspace.`,
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'close_corner',
@@ -1749,11 +1736,10 @@ export function agentToolsFor(
   agentSurface: boolean,
   directMessage: boolean,
   cornerTurn = false,
-  codeLane = false,
+  repositoryCorner = false,
   commandRunnerAvailable = true,
   agentMayCloseCorner = cornerTurn,
   institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
-  agentMayUpgradeCorner = false,
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
   return AGENT_TOOLS.filter((tool) => {
@@ -1779,17 +1765,17 @@ export function agentToolsFor(
     if (tool.name === 'steer_corner' || tool.name === 'watch_corner') return !directMessage;
     if (['ask_corner', 'get_corner_ask', 'inspect_corner'].includes(tool.name))
       return !directMessage && !cornerTurn;
-    // Every code-lane corner turn may record a PASS: the server, not the
-    // session's boot role, decides whether this agent is the configured reviewer.
-    if (tool.name === 'approve_merge') return cornerTurn && codeLane;
-    if (tool.name === 'merge_corner') return cornerTurn && codeLane;
+    // Every turn in a corner whose parent Room has a repository may record a
+    // PASS: the server, not the session's boot role, decides whether this
+    // agent is the configured reviewer.
+    if (tool.name === 'approve_merge') return cornerTurn && repositoryCorner;
+    if (tool.name === 'merge_corner') return cornerTurn && repositoryCorner;
     // Connector installation stays in Rooms and DMs; app discovery and
     // connection are available wherever an app tool can be used.
     if (tool.name === 'offer_connector') return !cornerTurn;
     // From a corner, open_corner opens a sibling corner in the parent Room.
     if (tool.name === 'open_corner') return !directMessage;
     if (tool.name === 'revise_corner_brief') return !directMessage;
-    if (tool.name === 'upgrade_corner_to_code') return cornerTurn && agentMayUpgradeCorner;
     if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
     if (
       tool.name === 'publish_corner_app' ||
@@ -1807,11 +1793,10 @@ const TOOLS = agentToolsFor(
   agentSurface,
   process.env.BEELINE_AGENT_DM === '1',
   Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
-  process.env.BEELINE_CORNER_LANE === 'code',
+  process.env.BEELINE_CORNER_REPOSITORY === '1',
   Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
   process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
   process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
-  process.env.BEELINE_CORNER_CAN_UPGRADE === '1',
 );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
@@ -2430,10 +2415,6 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     throw new Error('open_corner is not available in a direct message');
   }
   const { name, objective } = cornerCallText(args);
-  if (args.lane !== undefined && args.lane !== 'code' && args.lane !== 'no_code') {
-    throw new Error('lane must be "code" or "no_code"');
-  }
-  const lane = args.lane === 'no_code' ? ('no_code' as const) : ('code' as const);
   // In a corner turn this is the parent Room, where the new corner opens.
   const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
@@ -2457,7 +2438,6 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     ...(args.brief
       ? { brief: args.brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
       : {}),
-    lane,
     ...(args.hold === true ? { hold: true } : {}),
     ...(repository.resolution === 'repository'
       ? {
@@ -2476,8 +2456,6 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     name,
     objective,
     ...(args.brief ? { briefRevision: 1 } : {}),
-    // A chat-only Room has no code lane to take, so report what was recorded.
-    lane: repository.resolution === 'repository' ? lane : 'no_code',
     status: 'starting',
   });
 }
@@ -2533,14 +2511,6 @@ async function closeCorner(): Promise<string> {
   }
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
-}
-
-async function upgradeCornerToCode(): Promise<string> {
-  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
-  if (process.env.BEELINE_CORNER_CAN_UPGRADE !== '1') {
-    throw new Error('only a repository-backed no-code corner can upgrade to code');
-  }
-  return JSON.stringify(await daemonExecute('upgradeCornerLane', { cornerId }));
 }
 
 /**
@@ -4514,8 +4484,6 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return reactToMessage(args);
     case 'close_corner':
       return closeCorner();
-    case 'upgrade_corner_to_code':
-      return upgradeCornerToCode();
     case 'pr_checks_status':
       return prChecksStatus(args);
     case 'approve_merge':

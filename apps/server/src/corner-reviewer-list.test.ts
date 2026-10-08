@@ -309,6 +309,12 @@ describe('approve_merge with a reviewer list', () => {
       approved: true,
       open: true,
     });
+    // The claim also requires a brief; this one predates repositoryWork, so it may merge.
+    await db.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+       VALUES($1,1,'Do work',$2,$3)`,
+      [C, OWNER_AGENT, R],
+    );
     expect(await claimCornerMergeAttempt(db, C, '1'.repeat(40))).toBe(true);
     expect(await claimCornerMergeAttempt(db, C, '1'.repeat(40))).toBe(false);
   });

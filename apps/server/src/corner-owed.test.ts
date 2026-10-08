@@ -161,8 +161,8 @@ describe('corner_owed', () => {
         [WORKSPACE, CORNER, id],
       );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,lane)
-       VALUES($1,$2,$3,'no_code')`,
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by)
+       VALUES($1,$2,$3)`,
       [CORNER, AGENT, OWNER],
     );
   });
@@ -259,7 +259,7 @@ describe('corner_owed', () => {
     await step(idle);
   });
 
-  it('owes a no-code deliverable to its commissioner for a day, until they post', async () => {
+  it('owes a repo-less corner\'s deliverable to its commissioner for a day, until they post', async () => {
     const files = [{ name: 'finish.png', url: '/files/finish.png', mimeType: 'image/png' }];
     await post('deliverable', AGENT, 'Here it is.', { attachments: files });
     await step(owedToViewer);

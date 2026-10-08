@@ -591,17 +591,6 @@ export type DaemonOperationMap = {
     CornerInput & TurnOutputAuthority & RoomInput & { requestId: string },
     { roomId: string; headSha: string }
   >;
-  /**
-   * One-way `no_code -> code` promotion of a repository-backed corner. The
-   * active command must come from a human message in that same corner; the
-   * server spends that command, re-arms it as a pending resume and pushes
-   * `corner-restart`, so the caller's turn owns no write authority after this
-   * returns and the same ask is delivered again in the restarted code session.
-   */
-  upgradeCornerLane: Operation<
-    CornerInput & TurnOutputAuthority,
-    { readonly cornerId: string; readonly lane: 'code' }
-  >;
   archiveCorner: Operation<CornerInput, WriteResult>;
   ensureAgentMembership: Operation<AgentRoomInput, WriteResult>;
   getWalletToolState: Operation<
@@ -847,11 +836,9 @@ export type CornerRestoreResult = {
   readonly featureBranch?: string;
   readonly requestId?: string;
   readonly closeRequested: boolean;
-  /** The corner's current lane, after any `upgradeCornerLane`. A restarted helper must not cut a worktree for `no_code`. */
-  readonly lane: CornerLane;
   /** True while a human hold stands on this corner; a held corner publishes nothing. */
   readonly held?: boolean;
-  /** The human who commissioned the corner, as a bare handle. Who a no-code corner reports delivery to. */
+  /** The human who commissioned the corner, as a bare handle. Who a corner without a repository reports delivery to. */
   readonly requesterHandle?: string;
   /** Server-indexed GitHub facts retained across a helper restart. */
   readonly lifecycle?: CornerLifecycleView;
@@ -1187,14 +1174,6 @@ export type CreateCornerInput = TurnOutputAuthority &
     readonly brief?: CornerBriefDraft;
     readonly repository?: string;
     readonly targetBranch?: string;
-    /**
-     * Which lane the corner runs in, chosen at open. `no_code` skips the
-     * worktree, the commit, the pull request and the merge: the work comes back
-     * as artifacts and a reply tagging the requester. A corner with no
-     * repository is `no_code` whatever this says.
-     * The one later change is `upgradeCornerLane`'s one-way `no_code -> code`.
-     */
-    readonly lane?: CornerLane;
   };
 export type CornerBriefAttachment = {
   readonly objectId: string;
@@ -1259,7 +1238,6 @@ export type ReviseCornerBriefInput = TurnOutputAuthority &
     readonly brief: CornerBriefDraft;
   };
 export type CornerResult = { readonly cornerId: string };
-export type CornerLane = 'code' | 'no_code';
 
 /** ask_choice / open_poll: a lettered preference, never a grant. */
 export type ChoiceOptionArg = ChoiceOptionInput;

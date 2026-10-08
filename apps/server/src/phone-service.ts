@@ -5704,13 +5704,12 @@ export class PhoneService {
         [parent.workspace_id, id, viewerId],
       );
       await database.query(
-        `INSERT INTO corner_facts(corner_id,commissioned_by,objective,lane,kind,lifecycle,title_generated)
-         VALUES($1,$2,'','no_code','human','{"lifecycle":"working","checks":"unknown"}',$3)`,
+        `INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind,lifecycle,title_generated)
+         VALUES($1,$2,'','human','{"lifecycle":"working","checks":"unknown"}',$3)`,
         [id, viewerId, input.titleGenerated === true],
       );
       await advanceCorner(database, id, {
         kind: 'open',
-        lane: 'no_code',
         workspaceId: parent.workspace_id,
         implementerAgentId: viewerId,
       });

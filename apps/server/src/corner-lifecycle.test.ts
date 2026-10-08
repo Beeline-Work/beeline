@@ -222,7 +222,7 @@ function brief(sourceMessageId: string) {
   };
 }
 
-async function open(lane?: 'code' | 'no_code', repository?: string, hold?: boolean): Promise<string> {
+async function open(repository?: string, hold?: boolean): Promise<string> {
   const command = await commissioned(R);
   const { cornerId } = await daemon.execute(
     'createCorner',
@@ -233,9 +233,8 @@ async function open(lane?: 'code' | 'no_code', repository?: string, hold?: boole
       name: 'Ship-widget',
       objective: 'Ship the widget end to end',
       ...(hold ? { hold } : {}),
-      ...(lane ? { lane } : {}),
       ...(repository ? { repository, targetBranch: 'main' } : {}),
-      ...(lane !== 'no_code' && repository ? { brief: brief(command.sourceMessageId) } : {}),
+      brief: brief(command.sourceMessageId),
     },
     A,
   );
@@ -244,11 +243,6 @@ async function open(lane?: 'code' | 'no_code', repository?: string, hold?: boole
 
 async function claim(c: AgentCommand, generationId = 'g1') {
   await daemon.execute('claimAgentCommand', { roomId: c.roomId, commandId: c.id, generationId }, c.agentId);
-}
-
-async function upgrade(cornerId: string) {
-  const command = await commissioned(cornerId, A);
-  return daemon.execute('upgradeCornerLane', { cornerId, requestId: command.turnRequestId, generationId: 'g1' }, A);
 }
 
 /** Puts the corner's lifecycle at a green head and fires the check-passed fact directly. */
@@ -408,7 +402,7 @@ describe.each([
   });
 
   it('a code corner opens, advances implement -> checks -> review -> landed, without appearing on the workflow run page', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     expect(await currentState(cornerId)).toBe('implement');
     expect(await projected(cornerId)).toBe('implement');
     const badges = [await badge(cornerId)];
@@ -448,22 +442,22 @@ describe.each([
     expect((await phone.execute('listRoomWorkflowRuns', { roomId: cornerId }, H)).workflows).toEqual([]);
   });
 
-  it('a no-code corner opens on no_code_work and closes', async () => {
-    const cornerId = await open('no_code');
-    expect(await currentState(cornerId)).toBe('no_code_work');
+  it('a corner opens on implement and closes', async () => {
+    const cornerId = await open();
+    expect(await currentState(cornerId)).toBe('implement');
     const opened = await badge(cornerId);
     await daemon.execute('archiveCorner', { cornerId }, A);
     expect(await currentState(cornerId)).toBe('closed');
     expect(await projected(cornerId)).toBe('closed');
-    expect([opened, await badge(cornerId, true)]).toEqual(NO_CODE_BADGES);
+    expect([opened, await badge(cornerId, true)]).toEqual(OPEN_CLOSE_BADGES);
     await expect(phone.execute('readWorkflowRun', { roomId: cornerId, runId: cornerId }, H))
       .rejects.toThrow('workflow run not found');
   });
 });
 
 describe('lifecycle wording in agent conversations', () => {
-  it.each(['code', 'no_code'] as const)('Reproduction C1 R1: opening a %s corner does not announce a workflow', async (lane) => {
-    const cornerId = await open(lane, 'owner/widgets');
+  it('Reproduction C1 R1: opening a corner does not announce a workflow', async () => {
+    const cornerId = await open('owner/widgets');
     const conversation = await daemon.execute('getRoomConversation', { roomId: cornerId }, A);
     const start = conversation.items.find((message) => message.id === cornerId);
     expect(start).toBeDefined();
@@ -473,14 +467,13 @@ describe('lifecycle wording in agent conversations', () => {
       `SELECT card_type,card->>'seq' seq FROM messages WHERE id=$1`, [cornerId],
     );
     expect(persisted.rows).toEqual([{ card_type: 'corner-workflow-handoff', seq: '0' }]);
-    console.log(`Reproduction C1 R1 Demonstrated: open ${lane} corner → agent conversation says ${start!.body}, with no workflow event kind`);
+    console.log(`Reproduction C1 R1 Demonstrated: open corner → agent conversation says ${start!.body}, with no workflow event kind`);
   });
 });
 
 describe('bookkeeping cards never appear in the corner conversation a human reads', () => {
-  it('readRoom shows the real conversation but no workflow-handoff card, through open, upgrade, checks, and review', async () => {
-    const cornerId = await open('no_code', 'owner/widgets');
-    await upgrade(cornerId);
+  it('readRoom shows the real conversation but no workflow-handoff card, through open, checks, and review', async () => {
+    const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 21, '5'.repeat(40));
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(cornerId, 21, '6'.repeat(40));
@@ -517,66 +510,67 @@ describe('bookkeeping cards never appear in the corner conversation a human read
   });
 });
 
-describe('lane decided at open (row 1-3)', () => {
-  it('a no-code corner opens straight onto no_code_work', async () => {
-    const cornerId = await open('no_code', 'owner/widgets');
+describe('a corner opens onto implement (row 1-3)', () => {
+  it('a repository corner opens straight onto implement', async () => {
+    const cornerId = await open('owner/widgets');
     expect(await cards(cornerId)).toEqual([
       expect.objectContaining({ toState: 'opened' }),
-      expect.objectContaining({ fromState: 'opened', outcome: 'no_code', toState: 'no_code_work' }),
+      expect.objectContaining({ fromState: 'opened', outcome: 'opened', toState: 'implement' }),
     ]);
   });
 
-  it('a repository corner with no lane asked opens straight onto implement', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
-    expect(await currentState(cornerId)).toBe('implement');
-  });
-
-  it('has only the code and no_code lanes, and no investigate state', () => {
+  it('has one opening edge, and no investigate, no_code_work or upgrade_to_code state', () => {
     expect(CORNER_LIFECYCLE_CONTRACT.handoffs.opened).toMatchObject({
-      on: { no_code: 'no_code_work', code: 'implement' },
+      on: { opened: 'implement' },
     });
-    expect(Object.keys(CORNER_LIFECYCLE_CONTRACT.handoffs)).not.toContain('investigate');
+    const states = Object.keys(CORNER_LIFECYCLE_CONTRACT.handoffs);
+    expect(states).not.toContain('investigate');
+    expect(states).not.toContain('no_code_work');
+    expect(states).not.toContain('upgrade_to_code');
   });
 });
 
-describe('the no-code -> code upgrade (row 4, report section C)', () => {
-  it('records upgrade_to_code with branch, repository route, CI callback and merge target, landing on implement', async () => {
-    const cornerId = await open('no_code', 'owner/widgets');
-    await upgrade(cornerId);
-    const all = await cards(cornerId);
-    expect(all.slice(-2)).toEqual([
-      expect.objectContaining({ fromState: 'no_code_work', outcome: 'upgrade_requested', toState: 'upgrade_to_code' }),
-      expect.objectContaining({
-        fromState: 'upgrade_to_code',
-        outcome: 'upgraded',
-        toState: 'implement',
-        contents: expect.objectContaining({
-          branch: `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`,
-          repositoryRoute: 'owner/widgets',
-          ciCallbackRegistered: true,
-          mergeTarget: 'main',
-        }),
-      }),
+describe('a person-opened corner in a repository Room', () => {
+  it('opens on implement with no lane, and the first tagged agent owns it and drives it to checks', async () => {
+    const { id: cornerId } = await phone.execute('createHumanCorner', { roomId: R, title: 'Fix-widget' }, H);
+    expect(await cards(cornerId)).toEqual([
+      expect.objectContaining({ toState: 'opened' }),
+      expect.objectContaining({ fromState: 'opened', outcome: 'opened', toState: 'implement' }),
     ]);
-  });
+    expect(await projected(cornerId)).toBe('implement');
+    const columns = await db.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_name='corner_facts' AND column_name='lane'`,
+    );
+    expect(columns.rowCount).toBe(0);
+    expect((await db.query(`SELECT owner_agent_id,worker_agent_id,kind FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+      .rows[0]).toEqual({ owner_agent_id: null, worker_agent_id: null, kind: 'human' });
 
-  it('a second call against an already-upgraded corner posts no duplicate cards', async () => {
-    const cornerId = await open('no_code', 'owner/widgets');
-    await upgrade(cornerId);
-    const before = await cards(cornerId);
-    await upgrade(cornerId);
-    // Claiming the new turn may add output association metadata without a lifecycle move.
-    const lifecycle = (values: Awaited<ReturnType<typeof cards>>) => values.map((card) => {
-      const { outputCommandIds: _output, ...transition } = card as typeof card & { outputCommandIds?: string[] };
-      return transition;
+    // The first agent a person tags owns the corner; a later tag moves only the implementer.
+    await say(cornerId, '@hoots fix the widget');
+    expect((await db.query(`SELECT owner_agent_id,worker_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+      .rows[0]).toEqual({ owner_agent_id: A, worker_agent_id: A });
+    await say(cornerId, '@goosy take this over');
+    expect((await db.query(`SELECT owner_agent_id,worker_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+      .rows[0]).toEqual({ owner_agent_id: A, worker_agent_id: B });
+
+    // A push on the corner's branch is matched by its prefix and moves the run to checks.
+    await github.processWebhook('push', {
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+      ref: `refs/heads/${branchOf(cornerId)}`,
+      after: SHA,
+      commits: [{}],
+      pusher: { name: 'goosy' },
     });
-    expect(lifecycle(await cards(cornerId))).toEqual(lifecycle(before));
+    expect((await db.query(`SELECT feature_branch FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toEqual({ feature_branch: branchOf(cornerId) });
+    expect(await currentState(cornerId)).toBe('checks');
   });
 });
 
 describe('checks dispatch (rows 6-8)', () => {
   it('a push records implement -> checks', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [
       cornerId,
       'feature/corner-test01',
@@ -593,7 +587,7 @@ describe('checks dispatch (rows 6-8)', () => {
   });
 
   it('a failing check sends it back to implement', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await redHead(cornerId, 1, '1'.repeat(40));
     expect(await currentState(cornerId)).toBe('implement');
     expect(await cards(cornerId)).toContainEqual(
@@ -602,14 +596,14 @@ describe('checks dispatch (rows 6-8)', () => {
   });
 
   it('a passing check with a configured reviewer moves to review', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(cornerId, 1, '1'.repeat(40));
     expect(await currentState(cornerId)).toBe('review');
   });
 
   it('a passing check with no configured reviewer waits in review for a person, saying so and waking nobody', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     const before = await reasons(cornerId, A);
     await greenHead(cornerId, 1, '1'.repeat(40));
     expect(await currentState(cornerId)).toBe('review');
@@ -688,7 +682,7 @@ describe('checks dispatch (rows 6-8)', () => {
   });
 
   it('the reviewer role is never pinned to a real agent id, so a mid-corner reassignment is recorded correctly next time (finding 1)', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(cornerId, 1, '1'.repeat(40));
     expect(await currentState(cornerId)).toBe('review');
@@ -716,7 +710,7 @@ describe('checks dispatch (rows 6-8)', () => {
 
 describe('the run lock (a push transition can race a close or another push)', () => {
   it('takes the run lock as the very first statement, before reading the run current state', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     const recording = new RecordingDatabase(db);
     await advanceCorner(recording, cornerId, { kind: 'push', headSha: '1'.repeat(40), contents: {} });
     expect(recording.calls[0]).toEqual({
@@ -730,7 +724,7 @@ describe('the run lock (a push transition can race a close or another push)', ()
   });
 
   it('uses the same lock key format the generic workflow engine uses, so a fresh push transaction and a concurrent close serialize against each other', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     // Simulate the exact race the review found: a push transition's read and
     // write used to be two independent, unlocked round trips. Firing the
     // real push-triggered transition and a real close "concurrently" against
@@ -750,7 +744,7 @@ describe('the run lock (a push transition can race a close or another push)', ()
 
 describe('review dispatch and the fix loop cap (row 9)', () => {
   async function toReview(): Promise<string> {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(cornerId, 7, '7'.repeat(40));
     return cornerId;
@@ -798,7 +792,7 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
 
 describe('landing and closing from any state (finding 3, implicit edges)', () => {
   it('the merge webhook lands the corner even while it is still mid-review', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(cornerId, 9, '9'.repeat(40));
     expect(await currentState(cornerId)).toBe('review');
@@ -825,23 +819,23 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     );
   });
 
-  it('closing a no-code corner lands it on closed from no_code_work', async () => {
-    const cornerId = await open('no_code');
+  it('closing an untouched corner lands it on closed from implement', async () => {
+    const cornerId = await open();
     await daemon.execute('archiveCorner', { cornerId }, A);
     expect(await currentState(cornerId)).toBe('closed');
     expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'no_code_work', outcome: 'closed', toState: 'closed', status: 'abandoned' }),
+      expect.objectContaining({ fromState: 'implement', outcome: 'closed', toState: 'closed', status: 'abandoned' }),
     );
   });
 
   it('a human close request lands whatever state the corner is in', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await phone.execute('requestCornerClose', { roomId: cornerId }, H);
     expect(await currentState(cornerId)).toBe('closed');
   });
 
   it('a human close request abandons a live saved workflow run inside the corner', async () => {
-    const cornerId = await open('no_code');
+    const cornerId = await open();
     const starter = { room_id: cornerId, agent_id: A } as CommandRow;
     await saveWorkflow(db, starter, { contract: describedWorkflow({
       version: 1, name: 'corner-chore', description: 'One step inside a corner', roles: ['worker'], start: 'work',
@@ -861,7 +855,7 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
   });
 
   it('never posts a second terminal card for an already-landed corner', async () => {
-    const cornerId = await open('no_code');
+    const cornerId = await open();
     await daemon.execute('archiveCorner', { cornerId }, A);
     const before = await cards(cornerId);
     // A retried merge webhook or close request must not re-terminate an
@@ -877,8 +871,8 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
 const SHA = '7'.repeat(40);
 /** The phone badge at implement, checks, review, review with a yes, and landed. */
 const BADGES = ['idle', 'review', 'review', 'review', 'archived'];
-/** The phone badge at no_code_work and closed. */
-const NO_CODE_BADGES = ['idle', 'archived'];
+/** The phone badge at a freshly opened implement and closed. */
+const OPEN_CLOSE_BADGES = ['idle', 'archived'];
 const branchOf = (cornerId: string) => `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
 
 async function reasons(cornerId: string, agentId: string): Promise<string[]> {
@@ -901,7 +895,7 @@ async function projected(cornerId: string): Promise<string | null> {
 
 /** A code corner whose green head woke the configured reviewer (Goosy). */
 async function inReview(number = 7, headSha = SHA): Promise<string> {
-  const cornerId = await open(undefined, 'owner/widgets');
+  const cornerId = await open('owner/widgets');
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
   await greenHead(cornerId, number, headSha);
   return cornerId;
@@ -985,7 +979,7 @@ it.each(['passing', 'unknown', 'unreachable'])('Reproduction F1-2: ask_human rev
 });
 
 it('Reproduction F1-7: opener revises a delegated sibling from its own command', async () => {
-  const source = await open(undefined, 'owner/widgets');
+  const source = await open('owner/widgets');
   const command = await commissioned(source);
   const input = { roomId: source, requestId: command.turnRequestId, generationId: 'g1', name: 'Delegate-widget', objective: 'Ship the widget', repository: 'owner/widgets', implementer: 'goosy', brief: brief(command.sourceMessageId) };
   const { cornerId } = await daemon.execute('createCorner', input, A);
@@ -1004,7 +998,7 @@ it('Reproduction F1-7: opener revises a delegated sibling from its own command',
 });
 
 it('the agent a person handed the corner to revises its brief', async () => {
-  const cornerId = await open(undefined, 'owner/widgets');
+  const cornerId = await open('owner/widgets');
   const command = await commissioned(cornerId);
   const G = '8'.repeat(64);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Heir','heir') ON CONFLICT DO NOTHING`, [G]);
@@ -1020,7 +1014,7 @@ it('the agent a person handed the corner to revises its brief', async () => {
 });
 
 it('Reproduction F1-9: brief history defaults to one revision with a cursor', async () => {
-  const cornerId = await open(undefined, 'owner/widgets');
+  const cornerId = await open('owner/widgets');
   await revise(cornerId);
   const result = await daemon.execute('listCornerBriefRevisions', { cornerId }, A);
   console.info(`Reproduction F1-9: wrong=2 full revisions; right=1 with cursor; observed=${result.revisions.length}`);
@@ -1082,7 +1076,7 @@ describe('a brief revision wakes only the implementer and keeps the yes', () => 
   });
 
   it.each(['implement', 'checks', 'review', 'ask_human'])('a green revision from %s wakes the implementer and never the reviewer', async (state) => {
-    const cornerId = state === 'review' ? await inReview() : await open(undefined, 'owner/widgets');
+    const cornerId = state === 'review' ? await inReview() : await open('owner/widgets');
     if (state !== 'review') {
       await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
       if (state === 'checks') await pushToCorner(cornerId, SHA);
@@ -1137,7 +1131,7 @@ describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
   });
 
   it('holds a fallback checks-passed review and releases it on lease expiry', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await fallback(cornerId);
     const worker = (await commands(A, cornerId))[0]!;
@@ -1151,8 +1145,8 @@ describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
 });
 
 describe('Reproduction R5a: entry paths lock the run before corner rows', () => {
-  it.each(['check webhook', 'merged webhook', 'approval', 'upgrade', 'hold', 'brief', 'create', 'zero-check', 'blocker reconciliation'])('%s', async path => {
-    const cornerId = path === 'upgrade' ? await open('no_code', 'owner/widgets') : await inReview();
+  it.each(['check webhook', 'merged webhook', 'approval', 'hold', 'brief', 'create', 'zero-check', 'blocker reconciliation'])('%s', async path => {
+    const cornerId = await inReview();
     const recording = new RecordingDatabase(db);
     const recordedDaemon = new DaemonService(recording, new LiveHub());
     const recordedGithub = new GitHubOperations(recording, {} as GitHubOAuthClient, githubApp as unknown as GitHubAppClient, 'secret');
@@ -1170,9 +1164,6 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
       try { await mergedWebhook(cornerId, 7, SHA); } finally { github = previous; }
     } else if (path === 'approval') {
       await recordedDaemon.execute('approveCornerMerge', { cornerId, headSha: SHA }, B);
-    } else if (path === 'upgrade') {
-      const command = await commissioned(cornerId);
-      await recordedDaemon.execute('upgradeCornerLane', { cornerId, requestId: command.turnRequestId, generationId: 'g1' }, A);
     } else if (path === 'hold') {
       await new PhoneService(recording, 'http://test').execute('setCornerHold', { cornerId }, H);
     } else if (path === 'brief') {
@@ -1267,20 +1258,22 @@ describe('advanceCorner rejects an event the current state does not allow (AC-1)
   it('changes nothing and logs it', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     try {
-      const cornerId = await open('no_code', 'owner/widgets');
+      const cornerId = await open('owner/widgets');
       const before = await cards(cornerId);
-      expect(await advanceCorner(db, cornerId, { kind: 'push', headSha: SHA, contents: {} })).toEqual({
-        state: 'no_code_work',
+      expect(
+        await advanceCorner(db, cornerId, { kind: 'merge-unconfirmed', number: 7, error: 'timeout' }),
+      ).toEqual({
+        state: 'implement',
         accepted: false,
       });
       expect(await advanceCorner(db, cornerId, { kind: 'approval', headSha: SHA, by: 'reviewer' })).toEqual({
-        state: 'no_code_work',
+        state: 'implement',
         accepted: false,
       });
       expect(await cards(cornerId)).toEqual(before);
-      expect(await projected(cornerId)).toBe('no_code_work');
-      expect(info).toHaveBeenCalledWith(expect.stringContaining(`${cornerId}: ignored push in no_code_work`));
-      expect(info).toHaveBeenCalledWith(expect.stringContaining(`${cornerId}: ignored approval in no_code_work`));
+      expect(await projected(cornerId)).toBe('implement');
+      expect(info).toHaveBeenCalledWith(expect.stringContaining(`${cornerId}: ignored merge-unconfirmed in implement`));
+      expect(info).toHaveBeenCalledWith(expect.stringContaining(`${cornerId}: ignored approval in implement`));
     } finally {
       info.mockRestore();
     }
@@ -1289,7 +1282,7 @@ describe('advanceCorner rejects an event the current state does not allow (AC-1)
 
 describe('re-runs and pushes out of review (AC-1)', () => {
   it('a re-run after red checks goes implement -> checks, and its green reaches review', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await redHead(cornerId, 3, SHA);
     await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [
@@ -1362,14 +1355,14 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
   });
 
   it('a redelivered red check wakes the implementer once', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await redHead(cornerId, 3, SHA);
     await systemLine(db, { roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' }, verb: 'found failing checks on', kind: 'check-failed' });
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
   });
 
   it('a redelivered push webhook records one push', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await pushToCorner(cornerId, SHA);
     await pushToCorner(cornerId, SHA);
     expect((await cards(cornerId)).filter((card) => card.outcome === 'pushed')).toHaveLength(1);
@@ -1413,7 +1406,7 @@ describe('a person hands the corner to another agent (the implementer follows th
     ).rows[0]!.worker_agent_id;
 
   it('a tag in the corner moves the failing-check wake off the opener, leaving owner_agent_id alone', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await say(cornerId, '@goosy take this one');
     expect(await workerOf(cornerId)).toBe(B);
     expect(
@@ -1430,7 +1423,7 @@ describe('a person hands the corner to another agent (the implementer follows th
   });
 
   it('a review handback wakes the tagged implementer, not the opener', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await taggableMember(cornerId);
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await say(cornerId, '@sol take this one');
@@ -1443,7 +1436,7 @@ describe('a person hands the corner to another agent (the implementer follows th
   });
 
   it('a refused merge wakes the tagged implementer, not the opener', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await taggableMember(cornerId);
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await say(cornerId, '@sol take this one');
@@ -1463,7 +1456,7 @@ describe('a person hands the corner to another agent (the implementer follows th
   });
 
   it('a merge conflict wakes the tagged implementer', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await say(cornerId, '@goosy take this one');
     await db.query(
       `UPDATE corner_facts SET lifecycle=lifecycle||$2::jsonb WHERE corner_id=$1`,
@@ -1491,7 +1484,7 @@ describe('a person hands the corner to another agent (the implementer follows th
   });
 
   it('blocker reconciliation wakes the tagged implementer', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await say(cornerId, '@goosy take this one');
     await pushToCorner(cornerId, SHA);
     await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
@@ -1508,20 +1501,20 @@ describe('a person hands the corner to another agent (the implementer follows th
   });
 
   it('tagging the configured reviewer does not take the implementer role', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await say(cornerId, '@goosy what do you think?');
     expect(await workerOf(cornerId)).toBeNull();
   });
 
   it('a tag in the parent Room does not move a corner implementer', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await say(R, '@goosy take this one');
     expect(await workerOf(cornerId)).toBeNull();
   });
 
   it('Reproduction H1-1: an agent the person asked hands the corner on by tagging the other agent', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     // The person asks the agent working the corner to give the work to Goosy.
     await say(cornerId, '@hoots hand this corner to goosy');
     const command = (await commands(A, cornerId)).find((c) => c.reason === 'human_tag')!;
@@ -1536,7 +1529,7 @@ describe('a person hands the corner to another agent (the implementer follows th
   });
 
   it('R1 regression: an agent tag the person never asked for does not move the implementer', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     // The person only asks for a status; they do not name Goosy.
     await say(cornerId, '@hoots what is the status?');
     const command = (await commands(A, cornerId)).find((c) => c.reason === 'human_tag')!;
@@ -1547,7 +1540,7 @@ describe('a person hands the corner to another agent (the implementer follows th
   });
 
   it('an agent-to-agent tag with no person behind it does not move the implementer', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     // A peer agent's own message wakes Hoots; no person asked for anything.
     const peerMessageId = randomBytes(32).toString('hex');
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
@@ -1572,7 +1565,7 @@ describe('a person hands the corner to another agent (the implementer follows th
   });
 
   it('an agent hand-over to the configured reviewer does not take the implementer role', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await say(cornerId, '@hoots hand this corner to goosy');
     const command = (await commands(A, cornerId)).find((c) => c.reason === 'human_tag')!;
@@ -1583,7 +1576,7 @@ describe('a person hands the corner to another agent (the implementer follows th
   });
 
   it('a corner nobody redirected still wakes its opener', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await redHead(cornerId, 3, SHA);
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
     expect((await reasons(cornerId, B)).filter((reason) => reason === 'corner_check')).toHaveLength(0);
@@ -1592,7 +1585,7 @@ describe('a person hands the corner to another agent (the implementer follows th
 
 describe('loop caps (AC-3)', () => {
   it(`the ${CHECKS_FAILING_LIMIT + 1}th failing round moves to ask_human naming the requester, and a push resumes`, async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await pushToCorner(cornerId, '0'.repeat(40));
     for (let round = 1; round <= CHECKS_FAILING_LIMIT + 1; round += 1) {
       const headSha = round.toString(16).padStart(40, '0');
@@ -1717,7 +1710,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
 
   it('Reproduction R5c: a departed self-reviewer cannot authorize a merge', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, A]);
     await greenHead(cornerId, 7, SHA);
     githubHead = SHA;
@@ -1764,7 +1757,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
 
   it('Reproduction R2199: never merges a self-reviewed corner without a Workspace owner or admin\'s yes', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     const implementerBefore = await reasons(cornerId, A);
     await greenHead(cornerId, 7, SHA);
     // Wrong before: green checks skipped review straight to merging. Now the
@@ -2235,7 +2228,7 @@ describe('the gate stays shut (AC-8)', () => {
 
   it('Reproduction R5d: an objective turn cannot release a human hold; a direct authorized instruction can', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
-    const cornerId = await open(undefined, 'owner/widgets', true);
+    const cornerId = await open('owner/widgets', true);
     const holds = (await db.query(`SELECT id,actor_id,standing FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows;
     expect(holds).toEqual([{ id: expect.any(String), actor_id: H, standing: 'owner' }]);
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, open: false });
@@ -2259,7 +2252,7 @@ describe('the gate stays shut (AC-8)', () => {
 
   it('Reproduction H1: the holder’s release order in the parent Room releases the hold from that Room turn', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
-    const cornerId = await open(undefined, 'owner/widgets', true);
+    const cornerId = await open('owner/widgets', true);
     const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
     await greenHead(cornerId, 7, SHA);
     githubHead = SHA; githubRollupState = 'passed';
@@ -2275,7 +2268,7 @@ describe('the gate stays shut (AC-8)', () => {
 
   it('a parent Room release order relayed by steer lets the corner agent release the hold', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
-    const cornerId = await open(undefined, 'owner/widgets', true);
+    const cornerId = await open('owner/widgets', true);
     const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
     await greenHead(cornerId, 7, SHA);
     githubHead = SHA; githubRollupState = 'passed';
@@ -2295,7 +2288,7 @@ describe('the gate stays shut (AC-8)', () => {
   });
 
   it('a member-standing parent Room release order still fails the standing check', async () => {
-    const cornerId = await open(undefined, 'owner/widgets', true);
+    const cornerId = await open('owner/widgets', true);
     const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
     const peer = 'f'.repeat(64);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human',$1) ON CONFLICT DO NOTHING`, [peer]);
@@ -2336,7 +2329,8 @@ describe('the gate stays shut (AC-8)', () => {
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, H]);
     try {
       await expect(daemon.execute('createCorner', { roomId: R, requestId: command.turnRequestId,
-        generationId: 'g1', name: 'Held-work', objective: 'Keep this corner held', lane: 'no_code', hold: true }, A))
+        generationId: 'g1', name: 'Held-work', objective: 'Keep this corner held', hold: true,
+        brief: brief(command.sourceMessageId) }, A))
         .rejects.toThrow(/current human corner membership required/);
       expect((await db.query(`SELECT count(*) n FROM rooms WHERE parent_id=$1`, [R])).rows).toEqual(count);
       expect((await db.query(`SELECT count(*) n FROM corner_merge_holds`)).rows).toEqual([{ n: 0 }]);
@@ -2378,7 +2372,7 @@ describe('the gate stays shut (AC-8)', () => {
     };
     try {
       await post('phone', 'updateRoom', { roomId: R, reviewerAgentId: A }, 204);
-      const cornerId = await open(undefined, 'owner/widgets', true);
+      const cornerId = await open('owner/widgets', true);
       await greenHead(cornerId, 7, SHA);
       githubHead = SHA; githubRollupState = 'passed';
       const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
@@ -2434,7 +2428,7 @@ describe('the gate stays shut (AC-8)', () => {
   });
 
   it('when no reviewer is configured at all', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 7, SHA);
     expect(await currentState(cornerId)).toBe('review');
     githubHead = SHA;
@@ -2455,7 +2449,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
   }
 
   it('a corner with no reviewer set merges on its owner\'s yes, but not before and not while a hold stands', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 7, SHA);
     expect(await currentState(cornerId)).toBe('review');
     githubHead = SHA;
@@ -2493,7 +2487,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
   });
 
   it('waits for green checks: the yes is kept, and green on that head wakes the implementer to merge', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await redHead(cornerId, 7, SHA);
     expect(await currentState(cornerId)).toBe('implement');
     githubHead = SHA;
@@ -2528,7 +2522,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
   });
 
   it('a new commit cancels the yes', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 7, SHA);
     await order(cornerId);
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
@@ -2542,7 +2536,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
   });
 
   it('claimCornerMergeAttempt claims only an open gate on the exact current head, once', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 7, SHA);
     expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(false);
     const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
@@ -2555,7 +2549,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
   });
 
   it("the phone's approve is the same yes: it waits for green checks, then the implementer merges", async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await redHead(cornerId, 7, SHA);
     githubHead = SHA;
     githubRollupState = 'failed';
@@ -2569,7 +2563,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
   });
 
   it('refuses an order from someone who is not a current Workspace owner or admin', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 7, SHA);
     githubHead = SHA;
     githubRollupState = 'passed';
@@ -2595,7 +2589,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
   });
 
   it('an immediate order attempts the merge itself rather than waiting for the next sweep', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 7, SHA);
     githubHead = SHA;
     githubRollupState = 'passed';
@@ -2631,6 +2625,98 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
   });
 });
 
+describe('the brief gate on landing: only a brief that assigns repository work merges', () => {
+  const REFUSAL = /this corner's brief does not assign repository work; revise the brief before merging/;
+
+  /** Sets the corner's current brief: none at all, or a revision with this repositoryWork. */
+  async function briefSays(cornerId: string, repositoryWork: boolean | 'none') {
+    if (repositoryWork === 'none') {
+      await db.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId]);
+      return;
+    }
+    const command = await commissioned(cornerId);
+    await daemon.execute('reviseCornerBrief', {
+      cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 1,
+      brief: { ...brief(command.sourceMessageId), repositoryWork, change: 'Say whether files change' },
+    }, A);
+  }
+
+  function wired() {
+    return new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, (id: string) => github.landCorner(id));
+  }
+
+  /** A green head with no reviewer configured, waiting for a person's yes. */
+  async function waitingForPerson(): Promise<string> {
+    const cornerId = await open('owner/widgets');
+    await greenHead(cornerId, 7, SHA);
+    githubHead = SHA;
+    githubRollupState = 'passed';
+    return cornerId;
+  }
+
+  it.each([false, 'none'] as const)('merge_corner after a reviewer PASS is refused when the brief is %s', async (says) => {
+    const cornerId = await approved();
+    await briefSays(cornerId, says);
+    // The reviewer's PASS itself was recorded: only the land is gated.
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
+    await expect(wired().execute('mergeCorner', { cornerId }, A)).rejects.toThrow(REFUSAL);
+    await expect(github.landCorner(cornerId)).rejects.toThrow(REFUSAL);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT merge_attempt_head FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ merge_attempt_head: null });
+  });
+
+  it.each([false, 'none'] as const)('order_corner_merge is refused when the brief is %s', async (says) => {
+    const cornerId = await waitingForPerson();
+    await briefSays(cornerId, says);
+    await say(cornerId, '@hoots merge this now');
+    const direct = (await commands(A, cornerId)).at(-1)!;
+    await claim(direct);
+    await expect(wired().execute('orderCornerMerge',
+      { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A)).rejects.toThrow(REFUSAL);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([false, 'none'] as const)("the phone's approve is refused when the brief is %s", async (says) => {
+    const cornerId = await waitingForPerson();
+    await briefSays(cornerId, says);
+    await expect(github.approveCornerMerge(H, { cornerId })).rejects.toThrow(REFUSAL);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('a brief revised to no repository work during the GitHub read is refused at claim', async () => {
+    const cornerId = await approved();
+    // Passes the early brief check, then the brief is revised while landCorner reads GitHub.
+    let revised = false;
+    githubApp.readCommitCheckRollup.mockImplementationOnce(async () => {
+      await briefSays(cornerId, false);
+      revised = true;
+      return { state: 'passed', total: 1, failing: [], checks: [{ name: 'typecheck', status: 'passed' }] };
+    });
+    await expect(github.landCorner(cornerId)).rejects.toThrow(REFUSAL);
+    expect(revised).toBe(true);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT merge_attempt_head FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ merge_attempt_head: null });
+  });
+
+  it('merges when the current brief assigns repository work', async () => {
+    const cornerId = await approved();
+    await briefSays(cornerId, true);
+    await expect(wired().execute('mergeCorner', { cornerId }, A))
+      .resolves.toEqual({ status: 'merge-started', headSha: SHA });
+    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
+  });
+
+  it("the phone's approve merges when the brief leaves repositoryWork unset", async () => {
+    const cornerId = await waitingForPerson();
+    await expect(github.approveCornerMerge(H, { cornerId })).resolves.toMatchObject({ status: 'merge-requested' });
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('a corner opened before the workflow run existed (AC-10)', () => {
   it('gets a run derived from its lifecycle and continues through review and merge', async () => {
     const cornerId = await inReview();
@@ -2656,7 +2742,7 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
   });
 
   it('a corner with no run at all is given one on its next event', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+    const cornerId = await open('owner/widgets');
     await db.query(`DELETE FROM messages WHERE room_id=$1 AND card_type=$2`, [
       cornerId,
       CORNER_LIFECYCLE_CARD_TYPE,
@@ -2668,37 +2754,51 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
 });
 
 /**
- * Puts a code corner back the way a research corner sat before the lane was
- * removed: lane research under the old CHECK, its run in investigate.
+ * Puts a corner back the way a no-code corner sat before the lane was removed:
+ * a `lane` column of 'no_code', the owed trigger watching it, and its run in
+ * no_code_work.
  */
-async function asLegacyResearchCorner(cornerId: string) {
-  await db.query(`ALTER TABLE corner_facts DROP CONSTRAINT corner_facts_lane_check`);
+async function asLegacyNoCodeCorner(cornerId: string) {
+  await db.query(`ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane text NOT NULL DEFAULT 'code'`);
+  await db.query(`DROP TRIGGER IF EXISTS corner_owed_facts_update ON corner_facts`);
   await db.query(
-    `ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check CHECK (lane IN ('code','no_code','research'))`,
+    `CREATE TRIGGER corner_owed_facts_update
+       AFTER UPDATE OF commissioned_by,owner_agent_id,lane ON corner_facts
+       FOR EACH ROW WHEN ((OLD.commissioned_by,OLD.owner_agent_id,OLD.lane) IS DISTINCT FROM
+         (NEW.commissioned_by,NEW.owner_agent_id,NEW.lane))
+       EXECUTE FUNCTION corner_owed_facts_changed()`,
   );
   await db.query(
-    `UPDATE corner_facts SET lane='research',workflow_state='investigate',workflow_outcome='research' WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lane='no_code',workflow_state='no_code_work',workflow_outcome=NULL WHERE corner_id=$1`,
     [cornerId],
   );
   await db.query(
-    `UPDATE messages SET card=card || '{"outcome":"research","toState":"investigate"}'::jsonb
+    `UPDATE messages SET card=card || '{"outcome":"no_code","toState":"no_code_work"}'::jsonb
      WHERE room_id=$1 AND card_type=$2 AND card->>'fromState'='opened'`,
     [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
   );
 }
 
-describe('migrating a research corner to the code lane', () => {
-  it('moves it to code in implement, unheld, and the server merges it after the reviewer passes it', async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
-    await asLegacyResearchCorner(cornerId);
-    expect(await currentState(cornerId)).toBe('investigate');
+async function laneColumn(): Promise<number> {
+  return (
+    await db.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_name='corner_facts' AND column_name='lane'`,
+    )
+  ).rowCount;
+}
+
+describe('migrating a no-code corner onto implement', () => {
+  it('moves its run and newest card to implement, drops the lane, and the server merges it after the reviewer passes it', async () => {
+    const cornerId = await open('owner/widgets');
+    await asLegacyNoCodeCorner(cornerId);
+    expect(await currentState(cornerId)).toBe('no_code_work');
+    expect(await laneColumn()).toBe(1);
 
     await migrate(db);
+    // Idempotent: a second boot finds nothing to move and no column to drop.
+    await migrate(db);
 
-    expect(
-      (await db.query<{ lane: string }>(`SELECT lane FROM corner_facts WHERE corner_id=$1`, [cornerId]))
-        .rows[0]!.lane,
-    ).toBe('code');
+    expect(await laneColumn()).toBe(0);
     expect(await currentState(cornerId)).toBe('implement');
     expect(await projected(cornerId)).toBe('implement');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
@@ -2714,20 +2814,17 @@ describe('migrating a research corner to the code lane', () => {
     expect((await github.prChecksStatus({ cornerId, pullRequest: 7 })).held).toBe(false);
     expect(await implementersMerge()).toBe(1);
     expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
-
-    await expect(
-      db.query(`UPDATE corner_facts SET lane='research' WHERE corner_id=$1`, [cornerId]),
-    ).rejects.toThrow(/corner_facts_lane_check/);
   });
 
-  it("keeps a migrated corner held while a stored hold stands", async () => {
-    const cornerId = await open(undefined, 'owner/widgets');
+  it('keeps a migrated corner held while a stored hold stands', async () => {
+    const cornerId = await open('owner/widgets');
     await phone.execute('setCornerHold', { cornerId }, H);
     await say(cornerId, "don't merge this yet");
-    await asLegacyResearchCorner(cornerId);
+    await asLegacyNoCodeCorner(cornerId);
 
     await migrate(db);
 
+    expect(await currentState(cornerId)).toBe('implement');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(cornerId, 7, SHA);
     const [review] = await commands(B, cornerId);

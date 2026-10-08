@@ -623,11 +623,6 @@ export class RoomRuntimeCoordinator {
         console.error('[thin-core] live corner-complete apply failed', error),
       );
     });
-    this.options.daemonApi.setCornerRestartListener?.((roomId) => {
-      void this.applyCornerRestart(roomId).catch((error) =>
-        console.error('[thin-core] live corner-restart apply failed', error),
-      );
-    });
     // Hot-restart on a phone-side model/effort selection change: retire every
     // retained session now so the next turn cold-activates against the saved
     // selection, exactly as session start reads it. A busy session is left to
@@ -981,30 +976,13 @@ export class RoomRuntimeCoordinator {
     this.running.get(cornerId)?.body.requestClose?.();
   }
 
-  /** Retire the scratch runtime. Ordinary desired-state reconciliation starts
-   * the same corner id again and re-reads its now-code lane. */
-  async applyCornerRestart(cornerId: string): Promise<void> {
-    if (this.stopped) return;
-    const running = this.running.get(cornerId);
-    if (!running) {
-      this.wakeDiscovery();
-      return;
-    }
-    await this.stopRunning(cornerId, running, true);
-    this.wakeDiscovery();
-  }
-
-  private async stopRunning(
-    channelId: string,
-    running: RunningRoom,
-    preserveScratch = false,
-  ): Promise<void> {
+  private async stopRunning(channelId: string, running: RunningRoom): Promise<void> {
     this.deferredRepositoryRestarts.delete(channelId);
     running.controller.abort();
     await running.promise.catch(() => undefined);
     try {
       if (running.worktree) await this.reapCornerWorktree(running.worktree);
-      else if (running.scratch && !preserveScratch) await this.reapCornerScratch(running.scratch);
+      else if (running.scratch) await this.reapCornerScratch(running.scratch);
     } catch (error) {
       console.error(`[thin-core] corner ${channelId} cleanup failed; will retry:`, error);
     }
@@ -1236,15 +1214,13 @@ export class RoomRuntimeCoordinator {
       if (repository.resolution === 'repository' && (!repository.remote || !repository.key)) {
         throw new Error('corner parent Room has an incomplete repository binding');
       }
-      if (!objective) throw new Error('corner has no authoritative objective fact');
-      // The lane is the corner's own durable fact, so a no-code corner in a
-      // repository Room takes the same scratch workspace a chat-only corner
-      // does: no worktree is cut, no feature branch is named, and no GitHub
-      // token is minted for it.
-      const repositoryBacked = repository.resolution === 'repository' && restore.lane !== 'no_code';
-      const scratchPath = resolve(this.roomRoot(corner.cornerId), 'scratch');
-      if (repositoryBacked && existsSync(scratchPath) && !restore.featureBranch)
-        throw new Error('promoted corner has no server-assigned feature branch');
+      // A human-opened corner may carry no objective at all: its first turn
+      // writes the brief from the human's request.
+      if (!objective && restore.kind !== 'human')
+        throw new Error('corner has no authoritative objective fact');
+      // A corner is a code corner exactly when its parent Room has a
+      // repository; any other corner works in a scratch workspace.
+      const repositoryBacked = repository.resolution === 'repository';
       const targetBranch = repositoryBacked ? repository.targetBranch || 'main' : undefined;
       const featureBranch = repositoryBacked
         ? (restore.featureBranch ??
@@ -1262,11 +1238,6 @@ export class RoomRuntimeCoordinator {
             token: granted!.token,
           })
         : undefined;
-      // A no-code corner's scratch is that session's own workspace, with its
-      // harness home inside it. None of it becomes the code branch: the code
-      // session starts from the target branch alone, and the scratch is reaped.
-      if (worktree && existsSync(scratchPath))
-        await this.reapCornerScratch({ path: scratchPath, cornerId: corner.cornerId });
       const workspacePath = worktree?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
       if (!worktree) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
       if (worktree && shouldPostInitialCornerWorkingState(restore)) {
@@ -1289,8 +1260,6 @@ export class RoomRuntimeCoordinator {
         ...(corner.openedBy ? { openedBy: corner.openedBy } : {}),
         objective,
         worktreePath: workspacePath,
-        lane: restore.lane,
-        agentMayUpgradeCorner: repository.resolution === 'repository' && restore.lane === 'no_code',
         ...(restore.requesterHandle ? { requesterHandle: restore.requesterHandle } : {}),
         ...(worktree
           ? {
@@ -1320,10 +1289,6 @@ export class RoomRuntimeCoordinator {
                 token: '',
               })
             : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
-        onLaneChanged: () =>
-          void this.applyCornerRestart(corner.cornerId).catch((error) =>
-            console.error('[thin-core] corner lane-change restart failed', error),
-          ),
         onRestartRequested: () => this.requestLifecycleRestart(),
         canStartTurn: () => !this.restartRequested,
         supervisor: this.supervisor,
@@ -1368,7 +1333,7 @@ export class RoomRuntimeCoordinator {
       console.log(
         worktree
           ? `[thin-core] serving corner ${corner.cornerId} on ${featureBranch} at ${workspacePath}`
-          : `[thin-core] serving no-code corner ${corner.cornerId} at ${workspacePath}`,
+          : `[thin-core] serving repo-less corner ${corner.cornerId} at ${workspacePath}`,
       );
     } catch (error) {
       this.surfaceHealth.degraded(corner.cornerId, 'corner failed to start');

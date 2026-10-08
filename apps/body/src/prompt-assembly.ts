@@ -1,6 +1,5 @@
 import { boundReplyExcerpt, quoteOutsideData, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { CornerGitHubCli } from './corner-github-auth.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
@@ -48,11 +47,11 @@ export const PROMPT_SURFACES = [
   'room',
   'dm',
   'code-corner',
-  'no-code-corner',
+  'repo-less-corner',
 ] as const;
 export type PromptSurface = (typeof PROMPT_SURFACES)[number];
 
-const CORNERS: readonly PromptSurface[] = ['code-corner', 'no-code-corner'];
+const CORNERS: readonly PromptSurface[] = ['code-corner', 'repo-less-corner'];
 const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
 
 /**
@@ -110,9 +109,8 @@ export interface SessionPromptContext {
    * command. Undefined means no.
    */
   readonly cornerPrepareScript?: boolean;
-  /** A no-code corner's requester, tagged once in its reply. */
+  /** A repo-less corner's requester, tagged once in its reply. */
   readonly requesterHandle?: string;
-  readonly agentMayUpgradeCorner?: boolean;
 }
 
 export interface PromptSection<C> {
@@ -140,12 +138,13 @@ export interface SectionReport {
 // ---------------------------------------------------------------------------
 
 /**
- * New briefs carry an explicit capability. Legacy briefs keep their code lane
- * unless their assignment or non-goals explicitly exclude repository work.
+ * New briefs carry an explicit capability. Legacy briefs keep repository work
+ * unless their assignment or non-goals explicitly exclude it. A corner with no
+ * brief has nothing assigned yet, so it has no repository work either.
  * Attachments are reference material, never repository assignments.
  */
 export function cornerHasRepositoryWork(brief?: CornerBrief): boolean {
-  if (!brief) return true;
+  if (!brief) return false;
   if (brief.repositoryWork !== undefined) return brief.repositoryWork;
   const nonGoalsSections = [
     ...brief.spec.matchAll(/^## (?:Non-goals|Not doing)\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/gim),
@@ -202,26 +201,6 @@ export const CORNER_LAND_RULE =
 
 export const CORNER_CHECKS_NUDGE =
   'Call pr_checks_status now. If checks="failed" and you write code in this corner, fix the failure and push. If checks="unknown", reply in this corner with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Never merge it any other way.';
-
-/** Shared verbatim between the upgrade_corner_to_code tool description
- *  (`read-only-mcp.ts`) and this corner's own no-code prompt clause below, so
- *  the two surfaces can never say something different. The agent decides when
- *  the work needs the repository; nobody has to ask, and the server does not
- *  gate on a human request. When the turn answers a human message in this
- *  corner, the server writes a placeholder brief quoting it; the code session
- *  then writes the real spec (`CORNER_PLACEHOLDER_BRIEF_RULE`). */
-export const UPGRADE_INTENT_RULE =
-  'Call this on your own judgment when the work in this corner needs the repository; nobody has to ask. Then write the brief in the restarted code session.';
-
-/** Appended to a code corner's turn.brief only while the current brief is the
- *  upgrade's placeholder (revision 1 by the system identity). Approval is best effort:
- *  nothing enforces it, and no-code work never waits on it. */
-export const CORNER_PLACEHOLDER_BRIEF_RULE =
-  "This brief is the placeholder the upgrade wrote from the request. Read the code, write the real spec with revise_corner_brief, then post it in this corner and ask the corner's opener to approve it before editing. This is best effort: if the opener is away or the request was already explicit, use your judgment and proceed. When the opener replies, record their reply as the approval in the next revision.";
-
-export function isPlaceholderCornerBrief(brief: CornerBrief): boolean {
-  return brief.revision === 1 && brief.authorId === SYSTEM_IDENTITY_ID;
-}
 
 /** Shared verbatim into the search_memory tool description (`read-only-mcp.ts`)
  *  so it is the one place this rule is stated. Meaning-based matching finds a
@@ -487,7 +466,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     why: 'Active corner turns can steer member siblings without borrowing parent Room authority.',
     budgetBytes: 160,
     layer: 'surface',
-    surfaces: ['code-corner', 'no-code-corner'],
+    surfaces: ['code-corner', 'repo-less-corner'],
     render: () =>
       'Use steer_corner during a turn to send input to a member sibling under this parent. Membership alone grants no turn.',
   },
@@ -497,7 +476,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     why: 'An agent asked to hand the corner on opened a duplicate sibling corner instead of tagging the other agent.',
     budgetBytes: 360,
     layer: 'surface',
-    surfaces: ['code-corner', 'no-code-corner'],
+    surfaces: ['code-corner', 'repo-less-corner'],
     render: () =>
       'When a person asks you to hand this corner to another agent, tag in your reply only an agent that person named by handle or display name: it moves the implementer role here. A tag for any other reason does not move the role. Do not open a second corner for a hand-over.',
   },
@@ -600,27 +579,25 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Report findings to the author; never edit or push another agent's branch.`,
   },
   {
-    id: 'corner.no-code',
+    id: 'corner.repo-less',
     topic: 'place',
-    why: 'A no-code corner has no repository; the agent delivers files, not commits.',
+    why: 'A repo-less corner has no repository; the agent delivers files, not commits.',
     budgetBytes: 1_000,
     layer: 'surface',
-    surfaces: ['no-code-corner'],
-    render: ({ agentMayUpgradeCorner }) =>
+    surfaces: ['repo-less-corner'],
+    render: () =>
       [
-        "This is a no-code corner with no repository checkout and no GitHub workflow. Work in this corner's writable workspace: create files with write_scratch_file or your own tools, then send them with post_artifact.",
-        agentMayUpgradeCorner
-          ? `Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks. The one exception is beeline-agent upgrade_corner_to_code. ${UPGRADE_INTENT_RULE} That one-way upgrade restarts this same corner with a feature branch and writable checkout, keeps its discussion, and re-delivers that same request in the code session, so end this turn immediately once it succeeds and do not edit this workspace.`
-          : 'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
+        "This is a repo-less corner with no repository checkout and no GitHub workflow. Work in this corner's writable workspace: create files with write_scratch_file or your own tools, then send them with post_artifact.",
+        'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
       ].join('\n'),
   },
   {
-    id: 'corner.no-code-reply',
+    id: 'corner.repo-less-reply',
     topic: 'reply-target',
     why: 'Every turn was told to end with a one-line summary of files it posted, so answers were followed by a restatement of themselves.',
     budgetBytes: 260,
     layer: 'surface',
-    surfaces: ['no-code-corner'],
+    surfaces: ['repo-less-corner'],
     render: ({ requesterHandle }) =>
       `${requesterHandle ? `Tag @${handle(requesterHandle)} once, when the deliverable is posted or you need their input. ` : ''}When you posted files, name them in one line; never restate your answer. Only a human closes this corner.`,
   },
@@ -812,10 +789,12 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     budgetBytes: 24_000,
     layer: 'turn',
     surfaces: CORNERS,
-    render: ({ brief, surface }) =>
+    render: ({ brief, surface, generatedTitle }) =>
       brief
-        ? `${renderAssignedCornerBrief(brief.brief)}${cornerHasRepositoryWork(brief.brief) ? `\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}` : brief.fileLines.length ? `\n\nBrief attachments:\n${brief.fileLines.join('\n')}` : ''}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}${surface === 'code-corner' && isPlaceholderCornerBrief(brief.brief) ? `\n\n${CORNER_PLACEHOLDER_BRIEF_RULE}` : ''}`
-        : 'No assigned brief: the human messages in this corner are the authority; skip steps that need a brief revision.',
+        ? `${renderAssignedCornerBrief(brief.brief)}${cornerHasRepositoryWork(brief.brief) ? `\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}` : brief.fileLines.length ? `\n\nBrief attachments:\n${brief.fileLines.join('\n')}` : ''}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
+        : surface === 'code-corner'
+          ? `No assigned brief yet. Before any code, write the first brief from the newest human request with ${generatedTitle ? 'rename_corner' : 'revise_corner_brief at expectedRevision 0'}.`
+          : 'No assigned brief: the human messages in this corner are the authority; skip steps that need a brief revision.',
   },
   {
     id: 'turn.checkout',
@@ -875,7 +854,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     why: 'Room and corner agents need exact member corner ids for supported relay actions.',
     budgetBytes: 8_000,
     layer: 'turn',
-    surfaces: ['room', 'code-corner', 'no-code-corner'],
+    surfaces: ['room', 'code-corner', 'repo-less-corner'],
     render: ({ surface, corners, closedCorners }) =>
       [
         corners?.length

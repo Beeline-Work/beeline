@@ -89,9 +89,9 @@ beforeEach(async () => {
     [ROOT, ROOM, CAPTAIN, NOTE, CORNER, SYSTEM_IDENTITY_ID, CARD, OTHER_CORNER],
   );
   await database.query(
-    `INSERT INTO corner_facts(corner_id,commissioned_by,objective,lane,kind,lifecycle,title_generated)
-     VALUES($1,$2,'Fix login','code','human','{"lifecycle":"working","checks":"passing"}',false),
-           ($3,$2,'Triage','code','human','{"lifecycle":"working","checks":"passing"}',false)`,
+    `INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind,lifecycle,title_generated)
+     VALUES($1,$2,'Fix login','human','{"lifecycle":"working","checks":"passing"}',false),
+           ($3,$2,'Triage','human','{"lifecycle":"working","checks":"passing"}',false)`,
     [CORNER, CAPTAIN, OTHER_CORNER],
   );
   await database.query(

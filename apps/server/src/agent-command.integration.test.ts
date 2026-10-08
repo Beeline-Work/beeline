@@ -2198,7 +2198,7 @@ describe('Room/corner relays', () => {
     ).toBeUndefined();
   });
 
-  it('relays into a phone-opened no-code corner with no owner agent by falling back to a member', async () => {
+  it('relays into a phone-opened corner with no owner agent by falling back to a member', async () => {
     const humanCorner = randomUUID();
     await db.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Pane UX')`,
@@ -2206,8 +2206,8 @@ describe('Room/corner relays', () => {
     );
     // `createHumanCorner` never records an owner agent for a phone-opened corner.
     await db.query(
-      `INSERT INTO corner_facts(corner_id,objective,lane,kind,lifecycle)
-       VALUES($1,'','no_code','human','{"lifecycle":"working","checks":"unknown"}'::jsonb)`,
+      `INSERT INTO corner_facts(corner_id,objective,kind,lifecycle)
+       VALUES($1,'','human','{"lifecycle":"working","checks":"unknown"}'::jsonb)`,
       [humanCorner],
     );
     // B joins before A, so the deterministic fallback (earliest agent member) picks B.

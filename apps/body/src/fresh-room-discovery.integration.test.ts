@@ -670,7 +670,7 @@ describe('fresh Room discovery through the live membership wake', () => {
     // an env var set here would never reach it. Write the key to the file
     // the harness reads fresh at prompt-handling time instead (see
     // BEELINE_TEST_REPO_KEY_FILE above), so this test actually exercises a
-    // repository corner rather than always falling back to a no-code one.
+    // repository corner rather than always falling back to a repo-less one.
     await writeFile(resolve(supervisorRoot, 'test-repo-key'), 'owner/widgets');
     await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 10_000 });
     await operation('sendRoomMessage', {

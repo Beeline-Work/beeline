@@ -178,9 +178,6 @@ BEGIN
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
         'cornerId', COALESCE(NEW.corner_id, OLD.corner_id),
         'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false),
-        'lane', COALESCE(NEW.lane, OLD.lane),
-        'laneChanged', CASE WHEN TG_OP = 'UPDATE'
-          THEN NEW.lane IS DISTINCT FROM OLD.lane ELSE false END,
         'cornerParentId', CASE WHEN TG_OP <> 'UPDATE'
             OR NEW.lifecycle IS DISTINCT FROM OLD.lifecycle
             OR NEW.close_requested IS DISTINCT FROM OLD.close_requested
@@ -287,8 +284,6 @@ interface LiveNotificationPayload {
   archived?: boolean;
   removed?: boolean;
   closeRequested?: boolean;
-  lane?: string;
-  laneChanged?: boolean;
   /** Parent Room of a corner whose list status inputs (turn status, lifecycle, close) changed. */
   cornerParentId?: string;
   pending?: boolean;
@@ -337,8 +332,6 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.closeRequested === 'boolean'
         ? { closeRequested: parsed.closeRequested }
         : {}),
-      ...(typeof parsed.lane === 'string' ? { lane: parsed.lane } : {}),
-      ...(typeof parsed.laneChanged === 'boolean' ? { laneChanged: parsed.laneChanged } : {}),
       ...(typeof parsed.cornerParentId === 'string'
         ? { cornerParentId: parsed.cornerParentId }
         : {}),
@@ -719,8 +712,6 @@ export class PostgresLiveListener {
       ...(payload.archived ? { archived: true } : {}),
       ...(payload.removed ? { removed: true } : {}),
       ...(payload.closeRequested ? { closeRequested: true } : {}),
-      ...(payload.lane ? { lane: payload.lane } : {}),
-      ...(payload.laneChanged ? { laneChanged: true } : {}),
       ...(payload.repositoryChanged ? { repositoryChanged: true } : {}),
       ...(payload.agentId ? { agentId: payload.agentId } : {}),
       ...(payload.traceId && payload.databaseAt

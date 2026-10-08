@@ -58,14 +58,14 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Fix it')`,
     [CORNER, WORKSPACE, ROOM, PERSON],
   );
-  // The Issues triage corner: an ordinary no-code corner, with no setting.
+  // The Issues triage corner: an ordinary corner, with no setting.
   await database.query(
     `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Issues triage')`,
     [TRIAGE_CORNER, WORKSPACE, ROOM, PERSON],
   );
   await database.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,lane) VALUES
-      ($1,$3,'no_code'),($2,$3,'no_code')`,
+    `INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES
+      ($1,$3),($2,$3)`,
     [CORNER, TRIAGE_CORNER, TRIAGE],
   );
   await database.query(
@@ -513,7 +513,6 @@ describe('triage corner: sibling fix corners and its daily schedule, with no set
         idempotencyKey: `fix-${turn.requestId}`,
         name: 'Fix-grant-card',
         objective: 'Fix the grant card that stays pending',
-        lane: 'no_code',
         brief: {
           spec: 'Fix the grant card that stays pending (feedback fb_123).\n\n## Checklist\n\n- AC-1: The grant card resolves after approval',
           approval: { sourceMessageId: trigger },

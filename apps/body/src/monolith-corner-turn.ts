@@ -349,20 +349,6 @@ function toolArguments(call: ToolCallEntry): { command?: string; input?: string 
   return input ? { input: clampBytes(redactToolDetail(input), TOOL_ARGUMENT_MAX_BYTES) } : {};
 }
 
-/**
- * A lane upgrade the harness reports COMPLETED keeps no durable activity row:
- * that call spent this turn's command inside `upgradeCornerLane`, so the write
- * is refused and only logs a failure over work that succeeded. A refused
- * upgrade committed nothing, so it keeps its row and its reason like every
- * other failed call. Whether the upgrade HAPPENED is read from the corner's
- * own lane, never from this title.
- */
-function spentAuthorityOnLaneUpgrade(call: ToolCallEntry): boolean {
-  return (
-    /(?:^|[._:/-])upgrade_corner_to_code$/i.test(call.title ?? '') && isCompletedToolCall(call)
-  );
-}
-
 function toolCallKey(call: ToolCallEntry, index: number): string {
   return call.id ? `id-${createHash('sha256').update(call.id).digest('hex')}` : `tool-${index}`;
 }
@@ -431,16 +417,9 @@ export interface MonolithCornerTurnOptions {
   openedBy?: string;
   objective: string;
   worktreePath: string;
-  /**
-   * The server's lane for this session. Only `no_code -> code` ever moves, once,
-   * and the session is retired and restarted for it rather than mutated in place.
-   */
-  lane?: 'code' | 'no_code';
-  /** The parent is repository-backed while this corner is still no-code. */
-  agentMayUpgradeCorner?: boolean;
-  /** The human who commissioned the corner, as a bare handle. Who a no-code corner reports back to. */
+  /** The human who commissioned the corner, as a bare handle. Who a repo-less corner reports back to. */
   requesterHandle?: string;
-  /** Present only when the parent Room is bound to a repository AND the corner is on the code lane. */
+  /** Present exactly when the parent Room is bound to a repository: this is then a code corner. */
   repository?: {
     featureBranch: string;
     targetBranch: string;
@@ -459,8 +438,6 @@ export interface MonolithCornerTurnOptions {
   onSubscriptionState?: (connected: boolean) => void;
   onIntakeError?: (error: unknown) => void;
   onCloseRequested(): Promise<void>;
-  /** The server now reports a different lane than this session was started for. */
-  onLaneChanged?: () => void;
   onRestartRequested?: () => void;
   canStartTurn?: () => boolean;
   /** Keeps this corner's intake alive across failed reads. */
@@ -862,7 +839,7 @@ export class MonolithCornerTurnLoop {
             : {}),
         }
       : undefined;
-    this.sessionSurface = this.options.repository ? 'code-corner' : 'no-code-corner';
+    this.sessionSurface = this.options.repository ? 'code-corner' : 'repo-less-corner';
     this.repositoryWork = cornerHasRepositoryWork(restored.brief);
     const cornerPrepareScript = await hasCornerPrepareScript(this.options.worktreePath);
     this.sessionPromptContext = {
@@ -1149,9 +1126,8 @@ export class MonolithCornerTurnLoop {
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
         agentMayCloseCorner: Boolean(repository),
-        agentMayUpgradeCorner: this.options.agentMayUpgradeCorner,
         reviewer,
-        lane: this.options.lane ?? (repository ? 'code' : 'no_code'),
+        repositoryBacked: Boolean(repository),
         attachRoot: this.options.worktreePath,
         // The whole per-session overlay, not an enumerated subset: see
         // `monolith-room-turn.ts`'s matching comment.
@@ -1202,7 +1178,6 @@ export class MonolithCornerTurnLoop {
           }
         : {}),
       ...(this.options.requesterHandle ? { requesterHandle: this.options.requesterHandle } : {}),
-      ...(this.options.agentMayUpgradeCorner ? { agentMayUpgradeCorner: true } : {}),
       ...(agentEnv.BEELINE_ANDROID_EMULATOR_PORT
         ? { android: { emulatorPort: agentEnv.BEELINE_ANDROID_EMULATOR_PORT } }
         : {}),
@@ -1342,26 +1317,6 @@ export class MonolithCornerTurnLoop {
     return this.pinnedProviderOverride ? [this.pinnedProviderOverride] : this.pinnedProviders;
   }
 
-  /**
-   * Did this corner's lane already move under the running turn?
-   *
-   * The upgrade is a server fact, and only the server can say it happened: a
-   * harness that reports no tool calls at all (`cursor-acp-bridge.ts` emits
-   * message chunks only) would otherwise finish its turn believing it still
-   * owns write authority the upgrade has already spent. One bounded read, and
-   * only where an upgrade is possible — the tool is mounted nowhere else.
-   */
-  private async laneUpgradeCommitted(): Promise<boolean> {
-    if (this.options.lane !== 'no_code' || !this.options.agentMayUpgradeCorner) return false;
-    const state = await this.options.api
-      .execute('getCornerRestoreState', { cornerId: this.options.cornerId })
-      .catch((error) => {
-        console.error(`[thin-core] corner ${this.options.cornerId} lane read failed:`, error);
-        return undefined;
-      });
-    return Boolean(state?.lane && state.lane !== 'no_code');
-  }
-
   /** Why a turn carried no answer text, or undefined when it did. */
   private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
     if (durableReplyText(result.agentText)) return undefined;
@@ -1473,11 +1428,6 @@ export class MonolithCornerTurnLoop {
       await trace.finish(outcome, reason);
     };
     let deliberateNoReply = false;
-    // Observed LIVE from the stream, where the catch below can reach it: the
-    // server settles this turn and its command inside `upgradeCornerLane`, so
-    // from that tool call onwards this session owns no write authority at all
-    // and every later reply, activity row and receipt would be refused.
-    let laneUpgraded = false;
     try {
       await withTurnReceiptHeartbeat(
         api,
@@ -1766,7 +1716,6 @@ export class MonolithCornerTurnLoop {
                 exceptKey?: string,
               ) => {
                 calls.forEach((call, index) => {
-                  if (spentAuthorityOnLaneUpgrade(call)) return;
                   const key = `${activityAttempt}:${toolCallKey(call, index)}`;
                   if (settledOnly && !observedToolCalls.has(key)) {
                     observedToolCalls.add(key);
@@ -1972,20 +1921,6 @@ export class MonolithCornerTurnLoop {
               };
               let result = await runPrompt();
               trace.promptSettled();
-              // A successful lane upgrade ends this turn textlessly, like a
-              // Room turn that only opened a corner: the corner is already
-              // restarting on its code lane, and the human's own request is
-              // re-delivered there. Anything this session still wanted to say
-              // would be refused, and the refusal would fail a turn whose work
-              // succeeded.
-              laneUpgraded = await this.laneUpgradeCommitted();
-              if (laneUpgraded) {
-                console.log(
-                  `[thin-core] corner ${cornerId} turn ${requestId} upgraded to the code lane`,
-                );
-                await stream.retract();
-                return;
-              }
               // An instantly approved device grant cannot reach the running
               // sandbox: replace the session and continue this same turn there.
               const grantedDevice = approvedDeviceGrant(result.toolCalls);
@@ -2200,10 +2135,6 @@ export class MonolithCornerTurnLoop {
           this.stopTurn(requestId);
         },
       );
-      if (laneUpgraded) {
-        void finishTrace('complete').catch(() => undefined);
-        return;
-      }
       startTraceStats();
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
@@ -2225,18 +2156,6 @@ export class MonolithCornerTurnLoop {
       if (error instanceof TurnStoppedError || this.stoppedTurns.has(requestId)) {
         console.log(`[thin-core] corner ${cornerId} turn ${requestId} stopped by the requester`);
         void finishTrace('cancelled').catch(() => undefined);
-        return;
-      }
-      // The upgrade already settled this turn complete. A later stumble in a
-      // session the corner is discarding is not a failed turn, and saying so
-      // would inscribe "could not answer" over work that succeeded.
-      laneUpgraded ||= await this.laneUpgradeCommitted();
-      if (laneUpgraded) {
-        console.log(
-          `[thin-core] corner ${cornerId} turn ${requestId} ended after its lane upgrade:`,
-          error,
-        );
-        void finishTrace('complete').catch(() => undefined);
         return;
       }
       const reason = distillTurnFailureReason(error);
@@ -2427,14 +2346,6 @@ export class MonolithCornerTurnLoop {
           if (!this.reconcileCloseRequested) return false;
           this.reconcileCloseRequested = false;
           const state = await api.execute('getCornerRestoreState', { cornerId });
-          // The lane upgrade's retire arrives as an ephemeral live push, which a
-          // disconnected socket never receives. This timed read is the recovery:
-          // a scratch session whose corner is no longer no-code must not keep
-          // serving code requests it has no checkout for.
-          if (this.options.lane === 'no_code' && state.lane !== 'no_code') {
-            this.options.onLaneChanged?.();
-            return true;
-          }
           if (!state.closeRequested) return false;
           // The reap deletes the worktree a harvest is still reading.
           await this.harvest;

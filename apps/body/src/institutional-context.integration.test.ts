@@ -433,7 +433,6 @@ describe('institutional context prefetch, proven against the real server', () =>
       workspaceId: WORKSPACE,
       objective: "Fulfill Ren's birthday cake order",
       worktreePath,
-      lane: 'no_code',
       runtime: roomRuntime,
       config: cornerConfig,
       api: cornerApi,

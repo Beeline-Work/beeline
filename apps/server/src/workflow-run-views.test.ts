@@ -161,7 +161,6 @@ describe('listRoomWorkflowRuns', () => {
     const runId = await triageRun();
     await advanceCorner(database, CORNER, {
       kind: 'open',
-      lane: 'code',
       workspaceId: WORKSPACE,
       implementerAgentId: TRIAGER,
     });
@@ -199,7 +198,6 @@ describe('listRoomWorkflowRuns', () => {
     });
     await advanceCorner(database, CORNER, {
       kind: 'open',
-      lane: 'code',
       workspaceId: WORKSPACE,
       implementerAgentId: TRIAGER,
     });
@@ -370,7 +368,7 @@ describe('readWorkflowRun', () => {
 
   it('Reproduction C1: a corner lifecycle has no workflow listing or run page, including legacy cards', async () => {
     await advanceCorner(database, CORNER, {
-      kind: 'open', lane: 'code', workspaceId: WORKSPACE, implementerAgentId: TRIAGER,
+      kind: 'open', workspaceId: WORKSPACE, implementerAgentId: TRIAGER,
     });
     for (const legacy of [false, true]) {
       if (legacy) await database.query(
@@ -401,7 +399,6 @@ describe('readWorkflowRun', () => {
     });
     await advanceCorner(database, CORNER, {
       kind: 'open',
-      lane: 'code',
       workspaceId: WORKSPACE,
       implementerAgentId: TRIAGER,
     });

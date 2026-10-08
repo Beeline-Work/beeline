@@ -36,8 +36,7 @@ describe('deriveCornerState from the workflow run', () => {
   const pr = { number: 1, url: 'https://example.test/pr/1', title: 'PR', targetBranch: 'main', headSha: 'a' };
   it.each([
     ['opened', undefined, { state: 'waiting' }],
-    ['no_code_work', undefined, { state: 'waiting' }],
-    ['upgrade_to_code', 'upgrade_requested', { state: 'waiting' }],
+    ['implement', 'opened', { state: 'waiting' }],
     ['implement', 'code', { state: 'waiting' }],
     ['implement', 'no_reviewer', { state: 'waiting' }],
     ['implement', 'changes_requested', { state: 'waiting' }],
@@ -69,8 +68,6 @@ describe('deriveCornerState from the workflow run', () => {
 describe('deriveCornerState with the owed fact', () => {
   it.each([
     ['opened', undefined],
-    ['no_code_work', undefined],
-    ['upgrade_to_code', 'upgrade_requested'],
     ['implement', 'code'],
   ] as const)('%s reads idle with nothing owed and waiting with something owed', (state, outcome) => {
     const run = { state, ...(outcome ? { outcome } : {}) };

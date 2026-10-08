@@ -68,7 +68,14 @@ export function addressedToPersonSql(
           (${m}.card_type='daemon-fact' AND ${m}.card->>'type'='corner-complete'
             AND finished.corner_id::text=${m}.card->>'cornerId')
           OR (${m}.presentation='message' AND finished.corner_id=${m}.room_id
-            AND finished.lane<>'code' AND ${m}.author_id=finished.owner_agent_id
+            AND ${m}.author_id=finished.owner_agent_id
+            -- A corner without a pull request path: its parent Room has no repository.
+            AND NOT EXISTS (
+              SELECT 1 FROM rooms finished_corner
+              JOIN rooms finished_parent ON finished_parent.id=finished_corner.parent_id
+              WHERE finished_corner.id=finished.corner_id
+                AND (finished_parent.repository_resolution='repository'
+                  OR finished_parent.repository_key IS NOT NULL))
             AND jsonb_typeof(${m}.attachments)='array'
             AND jsonb_array_length(${m}.attachments)>0)
           OR (${m}.card_type IN ('${CORNER_CHECKS_BLOCKED_CARD_TYPE}',
@@ -299,7 +306,7 @@ CREATE TRIGGER corner_owed_handle_update AFTER UPDATE OF handle,kind ON identiti
   FOR EACH ROW WHEN ((OLD.handle,OLD.kind) IS DISTINCT FROM (NEW.handle,NEW.kind))
   EXECUTE FUNCTION corner_owed_handle_changed();
 
--- The commissioner, owner and lane decide whose deliverables and finished
+-- The commissioner and owner decide whose deliverables and finished
 -- states are owed to whom.
 CREATE OR REPLACE FUNCTION corner_owed_facts_changed() RETURNS trigger
 LANGUAGE plpgsql AS $corner_owed$
@@ -320,10 +327,10 @@ CREATE TRIGGER corner_owed_facts_insert AFTER INSERT ON corner_facts
   FOR EACH ROW EXECUTE FUNCTION corner_owed_facts_changed();
 DROP TRIGGER IF EXISTS corner_owed_facts_update ON corner_facts;
 CREATE TRIGGER corner_owed_facts_update
-  AFTER UPDATE OF commissioned_by,owner_agent_id,lane ON corner_facts
+  AFTER UPDATE OF commissioned_by,owner_agent_id ON corner_facts
   FOR EACH ROW WHEN (
-    (OLD.commissioned_by,OLD.owner_agent_id,OLD.lane) IS DISTINCT FROM
-    (NEW.commissioned_by,NEW.owner_agent_id,NEW.lane)
+    (OLD.commissioned_by,OLD.owner_agent_id) IS DISTINCT FROM
+    (NEW.commissioned_by,NEW.owner_agent_id)
   ) EXECUTE FUNCTION corner_owed_facts_changed();
 
 -- A grant changing status recomputes the cards that ask it: the owed ones,

@@ -1425,7 +1425,8 @@ describe('connect_app', () => {
          VALUES($1,$2,$3,'answered gate','system','workflow-handoff',$4::jsonb)`,
         [`${input.runId}-gate`, ROOM, input.gateAnswerer, JSON.stringify({ runId: input.runId, seq: 2,
           workflowSlug: 'sweep', workflowVersion: 1, toState: 'work',
-          contents: { decision: 'go', answeredBy: input.gateAnswerer } })],
+          contents: { decision: 'go', answeredBy: input.gateAnswerer },
+          receipt: { exit: { gate: 'go', actorId: input.gateAnswerer } } })],
       );
     }
     await database.query(`UPDATE agent_commands SET root_source_message_id=$1 WHERE id=$2`,

@@ -32,6 +32,12 @@ vi.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 'light' },
 }));
 
+import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
+import { useRoomMessageStore } from '@/buzz/room-message-store';
+import {
+  createTranscriptScrollController,
+  type TranscriptScrollList,
+} from '@/buzz/transcript-scroll-controller';
 import { createTranscriptScrubberStore, SCRUBBER_LINGER_MS } from '@/buzz/use-transcript-scrubber';
 import { TranscriptScrubber } from './TranscriptScrubber';
 
@@ -54,20 +60,43 @@ const scroll = (y: number, contentHeight: number) => ({
   layoutMeasurement: { height: RAIL },
 });
 
+/** A scroll controller over a list that records each offset it is moved to. */
+function controllerOver(toOffset: (offset: number) => void, cancelled: string[] = []) {
+  const list: TranscriptScrollList = {
+    toNewest: () => {},
+    toRow: () => true,
+    toEstimatedRow: () => {},
+    toOffset,
+    shiftBy: () => {},
+  };
+  return createTranscriptScrollController<{ id: string }>({
+    list: () => list,
+    rows: () => [],
+    rowIndex: () => -1,
+    onCancelled: (destination, reason) => cancelled.push(`${destination.kind}:${reason}`),
+    schedule: () => {},
+  });
+}
+
 function render(contentHeight = 5_600, offset = 0) {
   const store = createTranscriptScrubberStore();
-  const onScrubTo = vi.fn((y: number) =>
+  const listToOffset = vi.fn((y: number) =>
     store.observeScroll(scroll(y, store.getSnapshot().metrics?.contentHeight ?? contentHeight)),
   );
+  const loadOlder = vi.fn();
+  const cancelled: string[] = [];
+  const controller = controllerOver(listToOffset, cancelled);
   let renderer!: ReactTestRenderer;
   act(() => {
-    renderer = create(<TranscriptScrubber scrubber={store} onScrubTo={onScrubTo} />);
+    renderer = create(
+      <TranscriptScrubber positions={store} scrollController={controller} loadOlder={loadOlder} />,
+    );
   });
   const strip = () => renderer.root.findByProps({ testID: 'transcript-scrubber' });
   act(() => strip().props.onLayout({ nativeEvent: { layout: { height: RAIL } } }));
   act(() => store.observeScroll(scroll(offset, contentHeight)));
   const grab = () => renderer.root.findByProps({ testID: 'transcript-scrubber-grab' });
-  return { renderer, store, onScrubTo, strip, grab };
+  return { renderer, store, listToOffset, loadOlder, controller, cancelled, strip, grab };
 }
 
 describe('TranscriptScrubber', () => {
@@ -94,7 +123,7 @@ describe('TranscriptScrubber', () => {
   });
 
   it('scrolls the list with the finger as soon as the bar is pressed', () => {
-    const { renderer, store, onScrubTo, grab } = render(5_600, 0);
+    const { renderer, store, listToOffset, grab } = render(5_600, 0);
     act(() =>
       store.observeVisibleRows([
         { id: 'a', text: 'a', isUser: false, timestamp: at('2026-09-01T09:10:00Z') },
@@ -104,7 +133,7 @@ describe('TranscriptScrubber', () => {
     expect(haptics.impact).toHaveBeenCalledTimes(1);
     // A quarter of the track up is a quarter of the way into the loaded rows.
     act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 4 }));
-    expect(onScrubTo).toHaveBeenLastCalledWith(1_250);
+    expect(listToOffset).toHaveBeenLastCalledWith(1_250);
     expect(grab().props.style[1].top).toBe(0.75 * (RAIL - 36) - 14);
     expect(
       renderer.root.findByProps({ testID: 'transcript-scrubber-bubble' }).findByType('Text').props
@@ -112,7 +141,7 @@ describe('TranscriptScrubber', () => {
     ).toBe('TUE 1 SEP');
     // Past the top: the list goes to its oldest loaded row and no further.
     act(() => grab().props.onPanResponderMove({}, { dy: -RAIL }));
-    expect(onScrubTo).toHaveBeenLastCalledWith(5_000);
+    expect(listToOffset).toHaveBeenLastCalledWith(5_000);
     act(() => grab().props.onPanResponderRelease());
     expect(renderer.root.findAllByProps({ testID: 'transcript-scrubber-bubble' })).toHaveLength(0);
     // The bar stays long enough to grab again.
@@ -120,22 +149,31 @@ describe('TranscriptScrubber', () => {
     expect(grab().props.style[1].top).toBe(-14);
   });
 
+  it('asks the store for older rows only once the scrub reaches the oldest loaded ones', () => {
+    const { loadOlder, grab } = render(5_600, 0);
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
+    act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 2 }));
+    expect(loadOlder).not.toHaveBeenCalled();
+    act(() => grab().props.onPanResponderMove({}, { dy: -RAIL }));
+    expect(loadOlder).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps scrolling into older rows as they load under the finger', () => {
-    const { store, onScrubTo, grab } = render(5_600, 5_000);
+    const { store, listToOffset, grab } = render(5_600, 5_000);
     act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
     act(() => grab().props.onPanResponderMove({}, { dy: -2 }));
-    expect(onScrubTo).toHaveBeenLastCalledWith(5_000);
+    expect(listToOffset).toHaveBeenLastCalledWith(5_000);
     // An older page lands: the content grows, the offset holds, and no scroll
     // event follows. The held finger goes on to the new oldest row.
     act(() => store.observeContentSize(8_600));
-    expect(onScrubTo).toHaveBeenLastCalledWith(8_000);
+    expect(listToOffset).toHaveBeenLastCalledWith(8_000);
   });
 
   it('leaves the list alone under a finger held partway up', () => {
-    const { store, onScrubTo, grab } = render(5_600, 0);
+    const { store, listToOffset, grab } = render(5_600, 0);
     act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
     act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 2 }));
-    expect(onScrubTo).toHaveBeenCalledTimes(1);
+    expect(listToOffset).toHaveBeenCalledTimes(1);
     // Rows measure, a message arrives, the keyboard opens: the finger has
     // not moved, so the list must not either.
     act(() => store.observeContentSize(6_000));
@@ -146,32 +184,65 @@ describe('TranscriptScrubber', () => {
         layoutMeasurement: { height: 300 },
       }),
     );
-    expect(onScrubTo).toHaveBeenCalledTimes(1);
+    expect(listToOffset).toHaveBeenCalledTimes(1);
+  });
+
+  it('lands where the finger lifts after a fling, once momentum ends', () => {
+    const { listToOffset, controller, grab } = render(5_600, 0);
+    // The reader flings the list, then grabs the bar while it still coasts.
+    act(() => {
+      controller.dragStarted();
+      controller.dragEnded(true);
+      controller.momentumStarted();
+    });
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
+    act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 4 }));
+    act(() => grab().props.onPanResponderRelease());
+    expect(listToOffset).toHaveBeenLastCalledWith(1_250);
+    // Momentum carried the list past it; its end lands the scrub again.
+    listToOffset.mockClear();
+    act(() => controller.momentumEnded());
+    expect(listToOffset).toHaveBeenCalledExactlyOnceWith(1_250);
+    expect(controller.active()).toBeNull();
+  });
+
+  it('replaces a message jump in progress with the scrubbed offset', () => {
+    const { listToOffset, controller, cancelled, grab } = render(5_600, 0);
+    act(() => controller.request({ kind: 'message', messageId: 'm1', align: 'top', jump: true }));
+    expect(controller.isLanding()).toBe(true);
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
+    act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 2 }));
+    expect(listToOffset).toHaveBeenLastCalledWith(2_500);
+    expect(controller.isLanding()).toBe(false);
+    // A later layout pass does not pull the list back to the jump.
+    act(() => controller.observeLayout());
+    expect(listToOffset).toHaveBeenCalledTimes(1);
+    expect(cancelled).toEqual(['message:replaced']);
   });
 });
 
 /**
  * The Room screen's wiring around a stand-in inverted list: onScroll feeds
- * observeScroll, onContentSizeChange feeds observeContentSize, a drag calls
- * scrollToOffset, and onEndReached (threshold 0.5) loads an older page. Like
- * iOS, scrollToOffset to the offset the list already has does nothing and
- * sends no scroll event.
+ * observeScroll, onContentSizeChange feeds observeContentSize, the scroll
+ * controller calls scrollToOffset, and the bar asks a stand-in store for an
+ * older page, which loads one page at a time. The list's own onEndReached
+ * waits for a drag on the list, so it never loads here. Like iOS,
+ * scrollToOffset to the offset the list already has does nothing and sends
+ * no scroll event.
  */
 describe('TranscriptScrubber on the Room transcript', () => {
   const PAGE = 3_000;
 
   function mountRoom() {
     const store = createTranscriptScrubberStore();
-    const list = { offset: 0, contentHeight: 5_600, loads: 0, pending: 0, endSentFor: 0 };
+    const list = { offset: 0, contentHeight: 5_600, loads: 0, pending: 0 };
     const scrollEvent = () => ({
       contentOffset: { y: list.offset },
       contentSize: { height: list.contentHeight },
       layoutMeasurement: { height: RAIL },
     });
-    const maybeEndReached = () => {
-      const distance = list.contentHeight - RAIL - list.offset;
-      if (distance >= RAIL * 0.5 || list.endSentFor === list.contentHeight) return;
-      list.endSentFor = list.contentHeight;
+    const loadOlder = () => {
+      if (list.pending) return;
       list.loads += 1;
       list.pending += 1;
     };
@@ -181,18 +252,23 @@ describe('TranscriptScrubber on the Room transcript', () => {
       list.pending -= 1;
       list.contentHeight += PAGE;
       store.observeContentSize(list.contentHeight);
-      maybeEndReached();
     };
     const scrollToOffset = (offset: number) => {
       const next = Math.min(Math.max(0, offset), list.contentHeight - RAIL);
       if (next === list.offset) return;
       list.offset = next;
       store.observeScroll(scrollEvent());
-      maybeEndReached();
     };
+    const controller = controllerOver(scrollToOffset);
     let renderer!: ReactTestRenderer;
     act(() => {
-      renderer = create(<TranscriptScrubber scrubber={store} onScrubTo={scrollToOffset} />);
+      renderer = create(
+        <TranscriptScrubber
+          positions={store}
+          scrollController={controller}
+          loadOlder={loadOlder}
+        />,
+      );
     });
     act(() =>
       renderer.root
@@ -234,9 +310,94 @@ describe('TranscriptScrubber on the Room transcript', () => {
       resolve(__dirname, '../../app/(app)/beeline/chat/_chat-surface.tsx'),
       'utf8',
     );
-    expect(surface).toContain('transcriptScrubber.observeContentSize(height);');
-    expect(surface).toContain(
-      'useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);',
+    expect(surface).toContain('positions: transcriptPositions,');
+    expect(surface).toContain('transcriptPositions.observeScroll(event.nativeEvent);');
+    expect(surface).toContain('transcriptPositions.observeContentSize(height);');
+    expect(surface).toContain('positions={transcriptPositions}');
+    expect(surface).toContain('loadOlder={loadOlderTranscriptMessages}');
+    expect(surface).toContain('scrollController={scrollController}');
+  });
+});
+
+/**
+ * The bar over the real Room message store: it reads the store's
+ * `positions` and pages older history through the store's `loadOlder`.
+ */
+describe('TranscriptScrubber on the Room message store', () => {
+  const roomMessage = (id: string, createdAt: number): RoomViewMessage => ({
+    id: id.repeat(64),
+    createdAt,
+    text: `message-${id}`,
+    presentation: 'message',
+    author: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Owner' },
+  });
+
+  function Room({
+    roomId,
+    history,
+    onStore,
+    toOffset,
+  }: {
+    roomId: string;
+    history: (
+      roomId: string,
+      before?: { createdAt: number; id: string },
+    ) => Promise<RoomHistoryView>;
+    onStore: (store: ReturnType<typeof useRoomMessageStore>) => void;
+    toOffset: (offset: number) => void;
+  }) {
+    const store = useRoomMessageStore({
+      roomId,
+      tailMessages: [roomMessage('b', 2), roomMessage('c', 3)],
+      roomClient: { history },
+      enabled: true,
+      initialVisibleCount: 2,
+    });
+    onStore(store);
+    const [controller] = React.useState(() => controllerOver(toOffset));
+    return (
+      <TranscriptScrubber
+        positions={store.positions}
+        loadOlder={() => store.loadOlder(2)}
+        scrollController={controller}
+      />
     );
+  }
+
+  it('reads positions and pages history through the store, and starts fresh in the next Room', async () => {
+    const history = vi.fn(() => new Promise<RoomHistoryView>(() => {}));
+    const toOffset = vi.fn();
+    let store!: ReturnType<typeof useRoomMessageStore>;
+    let renderer!: ReactTestRenderer;
+    const element = (roomId: string) => (
+      <Room
+        roomId={roomId}
+        history={history}
+        toOffset={toOffset}
+        onStore={(value) => (store = value)}
+      />
+    );
+    act(() => {
+      renderer = create(element('room-a'));
+    });
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'transcript-scrubber' })
+        .props.onLayout({ nativeEvent: { layout: { height: RAIL } } }),
+    );
+    // The list reports where it is to the store; the bar draws from it.
+    act(() => store.positions.observeScroll(scroll(0, 5_600)));
+    const grab = () => renderer.root.findByProps({ testID: 'transcript-scrubber-grab' });
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
+    act(() => grab().props.onPanResponderMove({}, { dy: -RAIL }));
+    act(() => grab().props.onPanResponderRelease());
+    expect(toOffset).toHaveBeenLastCalledWith(5_000);
+    expect(history).toHaveBeenCalledExactlyOnceWith('room-a', { createdAt: 2, id: 'b'.repeat(64) });
+
+    // Another Room: the store forgets the last Room's positions, so no bar.
+    act(() => renderer.update(element('room-b')));
+    expect(store.positions.getSnapshot().metrics).toBeNull();
+    expect(renderer.root.findAllByProps({ testID: 'transcript-scrubber-grab' })).toHaveLength(0);
+    renderer.unmount();
   });
 });

@@ -18,6 +18,10 @@ import {
 import { boundaryRowIndex, messageBoundaryIds } from '@/buzz/room-new-message-boundary';
 import { foldSettledActivityRuns, type ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { anchorRelayReports } from '@/buzz/system-lines';
+import {
+  createTranscriptScrubberStore,
+  type TranscriptScrubberStore,
+} from '@/buzz/use-transcript-scrubber';
 import { rendersTranscriptRow } from '@/buzz/transcript-presentation';
 
 /**
@@ -51,6 +55,9 @@ export type RoomJump = { readonly messageId: string; readonly status: RoomJumpSt
 export const JUMP_NEWER_ROWS = 20;
 
 const PAGE_SIZE = 30;
+
+/** Where the list shows a Room's window, as the scrubber reads it. */
+export type RoomMessagePositions = TranscriptScrubberStore;
 
 export type RoomHistoryClient = {
   history(roomId: string, before?: RoomHistoryCursor): Promise<RoomHistoryView>;
@@ -106,6 +113,9 @@ export function useRoomMessageStore({
   const [status, setStatus] = useState<TranscriptHistoryStatus>('idle');
   const cursorRef = useRef<RoomHistoryCursorState | null>(null);
   const loadingRef = useRef(false);
+  // A screen-fill page added no rows. Fill stops until the window changes or
+  // a page adds rows, so a short Room cannot loop on an empty page.
+  const fillStalledRef = useRef(false);
   const visibleCountRef = useRef(initialVisibleCount);
   const statusRef = useRef<TranscriptHistoryStatus>('idle');
   const requestVersionRef = useRef(0);
@@ -120,6 +130,10 @@ export function useRoomMessageStore({
   enabledRef.current = enabled;
   const initialVisibleCountRef = useRef(initialVisibleCount);
   initialVisibleCountRef.current = initialVisibleCount;
+  // Where the list shows the window: offset, sizes, the oldest day on screen.
+  // Kept outside React state so a scroll frame re-renders only the scrubber.
+  const [positions] = useState(createTranscriptScrubberStore);
+  useEffect(() => positions.dispose, [positions]);
 
   const setOlder = useCallback(
     (
@@ -208,6 +222,7 @@ export function useRoomMessageStore({
       cursorRef.current = { roomId: previousRoomIdRef.current, before: olderBefore };
       requestVersionRef.current += 1;
       loadingRef.current = false;
+      fillStalledRef.current = false;
       completedTailIdRef.current = complete ? (tail[0]?.id ?? null) : null;
       updateStatus(complete ? 'complete' : 'idle');
       reveal(rows.length + tail.length);
@@ -259,6 +274,7 @@ export function useRoomMessageStore({
     completedTailIdRef.current = null;
     requestVersionRef.current += 1;
     loadingRef.current = false;
+    fillStalledRef.current = false;
     updateStatus('idle');
     visibleCountRef.current = initialVisibleCountRef.current;
     setVisibleMessageCount(initialVisibleCountRef.current);
@@ -358,6 +374,7 @@ export function useRoomMessageStore({
     cursorRef.current = null;
     completedTailIdRef.current = null;
     loadingRef.current = false;
+    fillStalledRef.current = false;
     visibleCountRef.current = initialVisibleCountRef.current;
     setOlder([]);
     setVisibleMessageCount(initialVisibleCountRef.current);
@@ -379,7 +396,8 @@ export function useRoomMessageStore({
     previousRoomIdRef.current = roomId;
     clear();
     setJump(null);
-  }, [roomId, clear, setJump]);
+    positions.reset();
+  }, [roomId, clear, setJump, positions]);
 
   useEffect(() => {
     visibleCountRef.current = Math.max(visibleCountRef.current, initialVisibleCount);
@@ -387,7 +405,7 @@ export function useRoomMessageStore({
   }, [initialVisibleCount]);
 
   const requestOlderAttached = useCallback(
-    (residentRowCount: number, retry: boolean) => {
+    (residentRowCount: number, retry: boolean, fill = false) => {
       if (
         loadingRef.current ||
         statusRef.current === 'complete' ||
@@ -401,6 +419,7 @@ export function useRoomMessageStore({
         return;
       }
 
+      if (fill && fillStalledRef.current) return;
       const cursor = cursorRef.current;
       const client = clientRef.current;
       if (!client || !enabledRef.current) return;
@@ -419,9 +438,10 @@ export function useRoomMessageStore({
             return;
           const tail = tailRef.current;
           cursorRef.current = advanceRoomHistoryCursor(requestedRoomId, page);
-          if (page.messages.length > 0) {
-            const tailIds = new Set(tail?.map((message) => message.id) ?? []);
-            const fresh = page.messages.filter((message) => !tailIds.has(message.id));
+          const tailIds = new Set(tail?.map((message) => message.id) ?? []);
+          const fresh = page.messages.filter((message) => !tailIds.has(message.id));
+          fillStalledRef.current = fresh.length === 0;
+          if (fresh.length > 0) {
             setOlder((current) => addRoomPage({ pages: current }, fresh).pages);
             visibleCountRef.current += fresh.length;
             setVisibleMessageCount(visibleCountRef.current);
@@ -566,6 +586,18 @@ export function useRoomMessageStore({
     },
     [requestOlderAttached, requestOlderDetached],
   );
+  /**
+   * One step of filling a screen that the rows do not cover: newer rows for a
+   * detached window, older history otherwise. It stops at the start of
+   * history, on a failed page and after a page that adds no rows.
+   */
+  const fill = useCallback(
+    (residentRowCount: number) => {
+      if (detachedRef.current) requestNewer(false);
+      else requestOlderAttached(residentRowCount, false, true);
+    },
+    [requestNewer, requestOlderAttached],
+  );
   const loadNewer = useCallback(() => requestNewer(false), [requestNewer]);
   const retryNewer = useCallback(() => requestNewer(true), [requestNewer]);
 
@@ -597,16 +629,21 @@ export function useRoomMessageStore({
   return {
     /** History rows of the window; an attached window continues into the tail. */
     rows,
+    /** Where the list shows the window. The list reports it; the scrubber reads it. */
+    positions,
     attached: !detached,
     jump: sameRoom ? jump : null,
     visibleMessageCount,
     status: sameRoom ? (detached ? windowOlderStatus : statusRef.current) : 'idle',
     newerStatus: detached ? newerStatus : ('complete' as TranscriptHistoryStatus),
+    /** The status `fill` reads: the newer side of a detached window, else older history. */
+    fillStatus: sameRoom ? (detached ? newerStatus : statusRef.current) : ('idle' as const),
     loadLatest,
     loadOlder,
     retryOlder,
     loadNewer,
     retryNewer,
+    fill,
     jumpTo,
     endJump,
     revealThrough: reveal,

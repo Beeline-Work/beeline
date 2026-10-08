@@ -2,12 +2,31 @@ import React, { useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { TranscriptScrubber } from '../sources/components/buzz/TranscriptScrubber';
 import { createTranscriptScrubberStore } from '../sources/buzz/use-transcript-scrubber';
+import { createTranscriptScrollController } from '../sources/buzz/transcript-scroll-controller';
 import { beelineThemes } from '../sources/buzz/groknight';
 
-// Exercise the real component, store and pointer responder over a scrollable
-// transcript. Only platform haptics and theme selection are supplied by the runner.
+// Exercise the real component, position store, scroll controller and pointer
+// responder over a scrollable transcript. Only platform haptics and theme
+// selection are supplied by the runner.
 const theme = beelineThemes.obsidian;
 const store = createTranscriptScrubberStore();
+let listElement = null;
+let observeList = () => {};
+const controller = createTranscriptScrollController({
+  list: () => ({
+    toNewest() {},
+    toRow: () => false,
+    toEstimatedRow() {},
+    toOffset(offset) {
+      listElement.scrollTop = offset;
+      observeList();
+      document.body.dataset.scrubOffset = String(offset);
+    },
+    shiftBy() {},
+  }),
+  rows: () => [],
+  rowIndex: () => -1,
+});
 const rows = Array.from({ length: 80 }, (_, index) => ({
   timestamp: Date.UTC(2024, 8, 30 - index) / 1000,
   text: `Transcript message ${index + 1}`,
@@ -26,7 +45,10 @@ function Proof() {
       rows[Math.min(rows.length - 1, Math.floor(element.scrollTop / 60))],
     ]);
   };
+  listElement = list.current;
+  observeList = observe;
   useEffect(() => {
+    listElement = list.current;
     list.current.scrollTop = 1500;
     observe();
     return store.dispose;
@@ -45,11 +67,13 @@ function Proof() {
             </button>
           </div>)}
         </div>
-        <TranscriptScrubber scrubber={store} onScrubTo={(offset) => {
-          list.current.scrollTop = offset;
-          observe();
-          document.body.dataset.scrubOffset = String(offset);
-        }} />
+        <TranscriptScrubber
+          positions={store}
+          loadOlder={() => {
+            document.body.dataset.loadOlder = String(Number(document.body.dataset.loadOlder ?? 0) + 1);
+          }}
+          scrollController={controller}
+        />
       </main>
       <footer style={{ padding: 20, borderTop: `1px solid ${theme.borderStrong}` }}>Write a message</footer>
     </div>

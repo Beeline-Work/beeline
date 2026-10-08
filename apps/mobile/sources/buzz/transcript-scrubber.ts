@@ -41,33 +41,10 @@ export function scrubDate(rows: readonly ChatDisplayMessage[]): string | null {
   return ledgerDayCaption(oldest);
 }
 
-/** A landing on a distant row while native measures its way to it. */
-export type ScrubLanding = {
-  messageId: string;
-  /** The furthest row native had measured at the last failed attempt. */
-  highestMeasured: number;
-  /** Failed attempts in a row that measured nothing further. */
-  stalls: number;
-  failures: number;
-};
-
-/** Failed attempts in a row, measuring nothing further, before a landing gives up. */
-export const SCRUB_LANDING_STALLS = 8;
-
 /**
- * Whether a scrubbed landing should try again after `scrollToIndex` failed.
- * A list without `getItemLayout` lays out content only as far as its furthest
- * measured row, so a row hundreds back is reached about a batch of rows per
- * attempt. The landing keeps going while attempts measure further, and stops
- * only once they no longer do.
+ * Whether a scrub to `offset` reaches the oldest loaded rows: within half a
+ * screen of them, the reach at which the list itself loads older history.
  */
-export function continueScrubLanding(landing: ScrubLanding, highestMeasured: number): boolean {
-  landing.failures += 1;
-  if (highestMeasured > landing.highestMeasured) {
-    landing.highestMeasured = highestMeasured;
-    landing.stalls = 0;
-    return true;
-  }
-  landing.stalls += 1;
-  return landing.stalls <= SCRUB_LANDING_STALLS;
+export function scrubReachesOldest(metrics: TranscriptScrollMetrics, offset: number): boolean {
+  return scrollRange(metrics) - offset < metrics.viewportHeight * 0.5;
 }

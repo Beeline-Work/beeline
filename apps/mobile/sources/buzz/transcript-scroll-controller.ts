@@ -21,7 +21,9 @@ import { scheduleAnimationFrame } from './host-scheduler';
  *   reader's return).
  * - `firstUnread`: the row that holds the unread boundary, centered. It is
  *   done when the row is visible, whether or not it had to scroll.
- * - `offset`: a raw list offset (the scrubber). Runs at once.
+ * - `offset`: a raw list offset (the scrubber). Runs at once. During
+ *   momentum the list may coast past it, so it stays active and runs again
+ *   when momentum ends. A drag on the list cancels it.
  */
 export type TranscriptScrollDestination =
   | { kind: 'newest'; untilRowId?: string }
@@ -92,8 +94,10 @@ export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   observeLayout(): void;
   observeVisibleRows(rows: readonly Row[]): void;
   observeTailPinned(pinned: boolean): void;
-  /** A touch drag or momentum began. Cancels the active request. */
+  /** A touch drag began. Cancels the active request. */
   dragStarted(): void;
+  /** Momentum began. Cancels the active request; a later offset waits for its end. */
+  momentumStarted(): void;
   /** The finger lifted. With `momentumMayFollow`, wait a frame for momentum to claim it. */
   dragEnded(momentumMayFollow: boolean): void;
   momentumEnded(): void;
@@ -129,6 +133,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   let visibleRows: readonly Row[] = [];
   let pinned = true;
   let dragging = false;
+  let momentum = false;
   let dragSequence = 0;
 
   const end = (reason: TranscriptScrollCancelReason) => {
@@ -168,7 +173,11 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       pinned = true;
       return;
     }
-    if (!isRowDestination(destination)) return;
+    if (destination.kind === 'offset') {
+      if (!momentum) active = null;
+      list?.toOffset(destination.offset);
+      return;
+    }
     const settled = settledRow(current);
     if (settled) {
       land(current, settled.id);
@@ -201,12 +210,12 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
 
   const request = (destination: TranscriptScrollDestination) => {
     end('replaced');
-    if (destination.kind === 'offset') {
-      options.list()?.toOffset(destination.offset);
-      return;
-    }
     const current: Active = { destination, scrolled: false };
     active = current;
+    if (destination.kind === 'offset') {
+      attempt(current);
+      return;
+    }
     // The viewer asked for the newest end; an arrival in the meantime follows.
     if (destination.kind === 'newest') pinned = true;
     // A boundary already on screen is a completed landing.
@@ -255,6 +264,13 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     dragStarted() {
       dragSequence += 1;
       dragging = true;
+      momentum = false;
+      end('drag');
+    },
+    momentumStarted() {
+      dragSequence += 1;
+      dragging = true;
+      momentum = true;
       end('drag');
     },
     dragEnded(momentumMayFollow) {
@@ -270,6 +286,8 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     momentumEnded() {
       dragSequence += 1;
       dragging = false;
+      momentum = false;
+      if (active?.destination.kind === 'offset') attempt(active);
     },
     userScrolled() {
       end('drag');

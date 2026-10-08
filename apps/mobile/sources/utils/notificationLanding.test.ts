@@ -89,7 +89,7 @@ describe('notification target beginning below fixed chrome', () => {
         }
       }
       expect(surface).toContain(
-        "scrollController.request({ kind: 'message', messageId, align: 'top', jump: true });",
+        'requestMessageJump(scrollController, messageId, needsRead ? jumpToTranscriptMessage : null);',
       );
       expect(controller).toContain(
         "row.scrollIntoView({ block: align === 'top' ? 'start' : 'center' });",

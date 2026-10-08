@@ -65,7 +65,7 @@ describe('message-source landing', () => {
 
   it('lands with one scroll to the top of the screen, without estimated offsets or timers', () => {
     expect(surface).toContain(
-      "scrollController.request({ kind: 'message', messageId, align: 'top', jump: true });",
+      'requestMessageJump(scrollController, messageId, needsRead ? jumpToTranscriptMessage : null);',
     );
     const controller = readFileSync(
       path.join(__dirname, '..', '..', '..', '..', 'buzz', 'transcript-scroll-controller.ts'),

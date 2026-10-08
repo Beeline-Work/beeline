@@ -281,6 +281,22 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   };
 }
 
+/**
+ * Land a message jump (a notification, a quote, a retry) at the top of the
+ * screen, reading its row into the window first when `read` is given. The
+ * request goes first: it cancels the request it replaces, and that request's
+ * cancellation drops its own read. Reading first would let that cancellation
+ * drop the new read instead.
+ */
+export function requestMessageJump(
+  controller: Pick<TranscriptScrollController<TranscriptScrollRow>, 'request'>,
+  messageId: string,
+  read: ((messageId: string) => void) | null,
+): void {
+  controller.request({ kind: 'message', messageId, align: 'top', jump: true });
+  read?.(messageId);
+}
+
 /** One controller per transcript surface; option callbacks always read the latest render. */
 export function useTranscriptScrollController<Row extends TranscriptScrollRow>(
   options: TranscriptScrollControllerOptions<Row>,

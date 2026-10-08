@@ -212,6 +212,7 @@ import {
 import {
   desktopTranscriptList,
   phoneTranscriptList,
+  requestMessageJump,
   useTranscriptScrollController,
 } from '@/buzz/transcript-scroll-controller';
 import {
@@ -644,10 +645,16 @@ export function BuzzChatSurface({
         raiseArrivalFlash(destination.messageId);
       }
     },
-    // A jump the reader left (a drag, the newest disc, a send) drops its read
-    // so it cannot move them later.
+    // A jump the reader left (a drag, the newest disc, a send, another jump)
+    // drops its own read so it cannot move them later. Only its own: a read
+    // for another message belongs to the request that replaced this one.
     onCancelled: (destination) => {
-      if (destination.kind === 'message' && destination.jump) endTranscriptJump();
+      if (
+        destination.kind === 'message' &&
+        destination.jump &&
+        transcriptJump?.messageId === destination.messageId
+      )
+        endTranscriptJump();
     },
   });
   const handledNotificationAnchorRef = useRef<string | null>(null);
@@ -1523,13 +1530,7 @@ export function BuzzChatSurface({
   }, [foldedMessages, retryOlderHistory]);
   const retryTranscriptJump = useCallback(() => {
     if (!transcriptJump) return;
-    jumpToTranscriptMessage(transcriptJump.messageId);
-    scrollController.request({
-      kind: 'message',
-      messageId: transcriptJump.messageId,
-      align: 'top',
-      jump: true,
-    });
+    requestMessageJump(scrollController, transcriptJump.messageId, jumpToTranscriptMessage);
   }, [jumpToTranscriptMessage, scrollController, transcriptJump]);
   // Lines at the newest end of the transcript, beside the composer, where the
   // reader of a notification is looking. A jump never covers the room.
@@ -3139,15 +3140,12 @@ export function BuzzChatSurface({
     const messageId = notificationMessageId?.trim();
     if (!messageId) return;
     const hostIndex = hostRowIndex(transcriptMessages, transcriptHostIdsRef.current, messageId);
-    if (
+    const needsRead =
       transcriptJump?.messageId !== messageId &&
-      !(hostIndex >= 0 && messageJumpCanScrollTo(messageId, hostIndex))
-    ) {
-      if (!roomClient || !cacheViewerPubkey) return;
-      jumpToTranscriptMessage(messageId);
-    }
+      !(hostIndex >= 0 && messageJumpCanScrollTo(messageId, hostIndex));
+    if (needsRead && (!roomClient || !cacheViewerPubkey)) return;
     handledNotificationAnchorRef.current = anchorKey;
-    scrollController.request({ kind: 'message', messageId, align: 'top', jump: true });
+    requestMessageJump(scrollController, messageId, needsRead ? jumpToTranscriptMessage : null);
   }, [
     cacheViewerPubkey,
     jumpToTranscriptMessage,

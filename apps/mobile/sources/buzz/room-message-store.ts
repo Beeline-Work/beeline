@@ -18,6 +18,10 @@ import {
 import { boundaryRowIndex, messageBoundaryIds } from '@/buzz/room-new-message-boundary';
 import { foldSettledActivityRuns, type ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { anchorRelayReports } from '@/buzz/system-lines';
+import {
+  createTranscriptScrubberStore,
+  type TranscriptScrubberStore,
+} from '@/buzz/use-transcript-scrubber';
 import { rendersTranscriptRow } from '@/buzz/transcript-presentation';
 
 /**
@@ -51,6 +55,9 @@ export type RoomJump = { readonly messageId: string; readonly status: RoomJumpSt
 export const JUMP_NEWER_ROWS = 20;
 
 const PAGE_SIZE = 30;
+
+/** Where the list shows a Room's window, as the scrubber reads it. */
+export type RoomMessagePositions = TranscriptScrubberStore;
 
 export type RoomHistoryClient = {
   history(roomId: string, before?: RoomHistoryCursor): Promise<RoomHistoryView>;
@@ -123,6 +130,10 @@ export function useRoomMessageStore({
   enabledRef.current = enabled;
   const initialVisibleCountRef = useRef(initialVisibleCount);
   initialVisibleCountRef.current = initialVisibleCount;
+  // Where the list shows the window: offset, sizes, the oldest day on screen.
+  // Kept outside React state so a scroll frame re-renders only the scrubber.
+  const [positions] = useState(createTranscriptScrubberStore);
+  useEffect(() => positions.dispose, [positions]);
 
   const setOlder = useCallback(
     (
@@ -385,7 +396,8 @@ export function useRoomMessageStore({
     previousRoomIdRef.current = roomId;
     clear();
     setJump(null);
-  }, [roomId, clear, setJump]);
+    positions.reset();
+  }, [roomId, clear, setJump, positions]);
 
   useEffect(() => {
     visibleCountRef.current = Math.max(visibleCountRef.current, initialVisibleCount);
@@ -617,6 +629,8 @@ export function useRoomMessageStore({
   return {
     /** History rows of the window; an attached window continues into the tail. */
     rows,
+    /** Where the list shows the window. The list reports it; the scrubber reads it. */
+    positions,
     attached: !detached,
     jump: sameRoom ? jump : null,
     visibleMessageCount,

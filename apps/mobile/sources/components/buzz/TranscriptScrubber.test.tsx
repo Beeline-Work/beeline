@@ -32,6 +32,8 @@ vi.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 'light' },
 }));
 
+import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
+import { useRoomMessageStore } from '@/buzz/room-message-store';
 import {
   createTranscriptScrollController,
   type TranscriptScrollList,
@@ -87,7 +89,7 @@ function render(contentHeight = 5_600, offset = 0) {
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(
-      <TranscriptScrubber scrubber={store} scrollController={controller} loadOlder={loadOlder} />,
+      <TranscriptScrubber positions={store} scrollController={controller} loadOlder={loadOlder} />,
     );
   });
   const strip = () => renderer.root.findByProps({ testID: 'transcript-scrubber' });
@@ -261,7 +263,11 @@ describe('TranscriptScrubber on the Room transcript', () => {
     let renderer!: ReactTestRenderer;
     act(() => {
       renderer = create(
-        <TranscriptScrubber scrubber={store} scrollController={controller} loadOlder={loadOlder} />,
+        <TranscriptScrubber
+          positions={store}
+          scrollController={controller}
+          loadOlder={loadOlder}
+        />,
       );
     });
     act(() =>
@@ -304,11 +310,94 @@ describe('TranscriptScrubber on the Room transcript', () => {
       resolve(__dirname, '../../app/(app)/beeline/chat/_chat-surface.tsx'),
       'utf8',
     );
-    expect(surface).toContain('transcriptScrubber.observeContentSize(height);');
-    expect(surface).toContain('scrollController={scrollController}');
+    expect(surface).toContain('positions: transcriptPositions,');
+    expect(surface).toContain('transcriptPositions.observeScroll(event.nativeEvent);');
+    expect(surface).toContain('transcriptPositions.observeContentSize(height);');
+    expect(surface).toContain('positions={transcriptPositions}');
     expect(surface).toContain('loadOlder={loadOlderTranscriptMessages}');
-    expect(surface).toContain(
-      'useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);',
+    expect(surface).toContain('scrollController={scrollController}');
+  });
+});
+
+/**
+ * The bar over the real Room message store: it reads the store's
+ * `positions` and pages older history through the store's `loadOlder`.
+ */
+describe('TranscriptScrubber on the Room message store', () => {
+  const roomMessage = (id: string, createdAt: number): RoomViewMessage => ({
+    id: id.repeat(64),
+    createdAt,
+    text: `message-${id}`,
+    presentation: 'message',
+    author: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Owner' },
+  });
+
+  function Room({
+    roomId,
+    history,
+    onStore,
+    toOffset,
+  }: {
+    roomId: string;
+    history: (
+      roomId: string,
+      before?: { createdAt: number; id: string },
+    ) => Promise<RoomHistoryView>;
+    onStore: (store: ReturnType<typeof useRoomMessageStore>) => void;
+    toOffset: (offset: number) => void;
+  }) {
+    const store = useRoomMessageStore({
+      roomId,
+      tailMessages: [roomMessage('b', 2), roomMessage('c', 3)],
+      roomClient: { history },
+      enabled: true,
+      initialVisibleCount: 2,
+    });
+    onStore(store);
+    const [controller] = React.useState(() => controllerOver(toOffset));
+    return (
+      <TranscriptScrubber
+        positions={store.positions}
+        loadOlder={() => store.loadOlder(2)}
+        scrollController={controller}
+      />
     );
+  }
+
+  it('reads positions and pages history through the store, and starts fresh in the next Room', async () => {
+    const history = vi.fn(() => new Promise<RoomHistoryView>(() => {}));
+    const toOffset = vi.fn();
+    let store!: ReturnType<typeof useRoomMessageStore>;
+    let renderer!: ReactTestRenderer;
+    const element = (roomId: string) => (
+      <Room
+        roomId={roomId}
+        history={history}
+        toOffset={toOffset}
+        onStore={(value) => (store = value)}
+      />
+    );
+    act(() => {
+      renderer = create(element('room-a'));
+    });
+    act(() =>
+      renderer.root
+        .findByProps({ testID: 'transcript-scrubber' })
+        .props.onLayout({ nativeEvent: { layout: { height: RAIL } } }),
+    );
+    // The list reports where it is to the store; the bar draws from it.
+    act(() => store.positions.observeScroll(scroll(0, 5_600)));
+    const grab = () => renderer.root.findByProps({ testID: 'transcript-scrubber-grab' });
+    act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
+    act(() => grab().props.onPanResponderMove({}, { dy: -RAIL }));
+    act(() => grab().props.onPanResponderRelease());
+    expect(toOffset).toHaveBeenLastCalledWith(5_000);
+    expect(history).toHaveBeenCalledExactlyOnceWith('room-a', { createdAt: 2, id: 'b'.repeat(64) });
+
+    // Another Room: the store forgets the last Room's positions, so no bar.
+    act(() => renderer.update(element('room-b')));
+    expect(store.positions.getSnapshot().metrics).toBeNull();
+    expect(renderer.root.findAllByProps({ testID: 'transcript-scrubber-grab' })).toHaveLength(0);
+    renderer.unmount();
   });
 });

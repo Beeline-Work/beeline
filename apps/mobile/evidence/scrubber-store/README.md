@@ -8,11 +8,11 @@ Rooms: `scroll-probe-2232` (60 probe messages) and `short-probe-2234` (3 message
 |---|---|---|
 | Scrub and release (bar dragged 150px up from scrollTop 600) | scrollTop 1202, rows 31–44 at release, 100 ms later and 2 s later | same |
 | Scrub after a fling | scrollTop 1802, rows 21–34 at release, 100 ms later and 2 s later | same |
-| Scrub held at the top | message 1 on screen; 1 older-history request | message 1 on screen after 4 s; 2 identical older-history requests |
+| Scrub held at the top | message 1 on screen; each older-history request asks for a different page (1 or 2 requests across runs) | message 1 on screen after 4 s; 2 identical older-history requests |
 | Short room (3 messages) | all 3 rows and "Beginning of Room" at 3 s and 10 s; 1 history request | same rows; 2 identical history requests |
 | Notification landing (message 38), fresh session | 0px from the list top at 2 s and 6 s | same |
-| Jump-to-newest disc after scrolling to scrollTop 1500 | rows 52–60, scrollTop 0, disc gone | same |
+| Jump-to-newest disc after scrolling up (scrollTop 1013–1500 across runs) | rows 52–60, scrollTop 0, disc gone | same |
 
-Notification landing also ran in a session that had opened the Room before. There the target was not on screen at 6 s on both builds. This PR does not change that path.
+The PR rows come from the final head, where the scrubber reads positions from the Room message store (`positions`). Notification landing also ran in a session that had opened the Room before. There the target was not on screen at 6 s on both builds. This PR does not change that path.
 
 Files: `scrub-release`, `scrub-after-fling`, `scrub-top`, `short-room`, `notification-2s`, `jump-button` from this PR; `main-*` from `web.usebeeline.app`. The "after deploy" check on `web.usebeeline.app` is still to do after merge.

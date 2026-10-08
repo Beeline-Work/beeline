@@ -340,7 +340,6 @@ import {
 import { useNewMessageControl, useUnreadLineControl } from '@/buzz/use-new-message-control';
 import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
-import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
 import { usePhoneUnderfillHistory } from '@/buzz/phone-underfill-history';
 import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
 import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
@@ -1341,6 +1340,7 @@ export function BuzzChatSurface({
   // transcript or folded into the current Room response.
   const {
     rows: historyRows,
+    positions: transcriptPositions,
     attached: historyAttached,
     jump: transcriptJump,
     newerStatus: transcriptNewerStatus,
@@ -2518,8 +2518,6 @@ export function BuzzChatSurface({
   // durable boundary away from the numeric index we retry.
   const transcriptMessagesRef = useRef(transcriptMessages);
   transcriptMessagesRef.current = transcriptMessages;
-  const transcriptScrubber = useTranscriptScrubber();
-  useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);
   // A detached window fills with newer rows only once a pending landing has
   // landed, so the rows it measured stay where they are.
   const fillShortTranscript = useCallback(() => {
@@ -2871,7 +2869,7 @@ export function BuzzChatSurface({
       const visibleRows = viewableItems
         .filter((token) => token.isViewable)
         .map((token) => token.item);
-      transcriptScrubber.observeVisibleRows(visibleRows);
+      transcriptPositions.observeVisibleRows(visibleRows);
       // The list recomputes viewability on scroll AND on every committed
       // update, so an arrival that lands below the fold reports itself unseen
       // without the reader touching anything.
@@ -2885,7 +2883,7 @@ export function BuzzChatSurface({
       // report scrolls to it again.
       scrollController.observeVisibleRows(visibleRows);
     },
-    [advanceReadCursor, observeVisibleMessages, scrollController, transcriptScrubber],
+    [advanceReadCursor, observeVisibleMessages, scrollController, transcriptPositions],
   );
   // Back from the code reader: center the row the reader opened it from.
   const scrollToArtifactOrigin = useCallback(
@@ -6240,7 +6238,7 @@ export function BuzzChatSurface({
                   showsVerticalScrollIndicator={false}
                   onScroll={(event) => {
                     observePhoneTailOffset(event.nativeEvent.contentOffset.y);
-                    transcriptScrubber.observeScroll(event.nativeEvent);
+                    transcriptPositions.observeScroll(event.nativeEvent);
                     if (
                       anchoredSegmentActive &&
                       event.nativeEvent.contentOffset.y <= TAIL_PIN_THRESHOLD &&
@@ -6292,7 +6290,7 @@ export function BuzzChatSurface({
                     phoneUnderfill.observeListHeight(event.nativeEvent.layout.height)
                   }
                   onContentSizeChange={(_width, height) => {
-                    transcriptScrubber.observeContentSize(height);
+                    transcriptPositions.observeContentSize(height);
                     phoneUnderfill.observeContentHeight(height);
                     scrollController.observeLayout();
                   }}
@@ -6335,9 +6333,9 @@ export function BuzzChatSurface({
               )}
               {!desktopTranscript && (
                 <TranscriptScrubber
-                  scrubber={transcriptScrubber}
-                  scrollController={scrollController}
+                  positions={transcriptPositions}
                   loadOlder={loadOlderTranscriptMessages}
+                  scrollController={scrollController}
                 />
               )}
               <RoomCatchUpControls

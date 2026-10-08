@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import type { ChatDisplayMessage } from './room-view-presentation';
 import { scrubDate, type TranscriptScrollMetrics } from './transcript-scrubber';
 
@@ -24,7 +23,8 @@ export type TranscriptScrubberStore = ReturnType<typeof createTranscriptScrubber
 
 /**
  * State for `TranscriptScrubber`, kept outside React state so a scroll frame
- * re-renders only the bar, not the Room screen that feeds it.
+ * re-renders only the bar, not the Room screen that feeds it. The Room
+ * message store owns one per Room as its `positions`.
  */
 export function createTranscriptScrubberStore() {
   let snapshot: TranscriptScrubberSnapshot = { metrics: null, date: null, visible: false };
@@ -84,10 +84,4 @@ export function createTranscriptScrubberStore() {
       linger = null;
     },
   };
-}
-
-export function useTranscriptScrubber(): TranscriptScrubberStore {
-  const [store] = useState(createTranscriptScrubberStore);
-  useEffect(() => store.dispose, [store]);
-  return store;
 }

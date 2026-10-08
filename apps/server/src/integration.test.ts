@@ -9591,7 +9591,7 @@ describe('monolith integration', () => {
     const first = await daemonOperation('createCorner', input);
     expect(first.status).toBe(200);
     const { cornerId } = (await first.json()) as { cornerId: string };
-    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId });
+    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId, watch: { roomId: ROOM, kinds: ['merged'] } });
     const revisions = await database.query<{ revision: number }>(
       `SELECT revision FROM corner_brief_revisions WHERE corner_id=$1`,
       [cornerId],
@@ -9678,7 +9678,7 @@ describe('monolith integration', () => {
     });
     // A retry of the original open still names the same corner after a later
     // correction; the retry is compared with revision 1, not the latest brief.
-    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId });
+    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId, watch: { roomId: ROOM, kinds: ['merged'] } });
     expect(
       (
         await database.query<{ revision: number }>(

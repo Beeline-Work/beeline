@@ -1115,6 +1115,12 @@ export type PostAgentModelCatalogInput = AgentInput & {
 export type CornerWatchKind = 'merged' | 'check-passed' | 'check-failed';
 export type CornerWatchResult = {
   readonly kinds: readonly CornerWatchKind[];
+  /**
+   * `merged`: the corner already merged; no watch is stored and `woken` says
+   * whether one merge wake was queued now. `closed`: it closed without merging.
+   */
+  readonly state: 'active' | 'merged' | 'closed';
+  readonly woken?: boolean;
   readonly snapshot: {
     readonly id: string;
     readonly name: string;
@@ -1163,6 +1169,8 @@ export type CreateCornerInput = TurnOutputAuthority &
     /** Exact handle, without @, of an agent member of the parent Room; defaults to the caller. */
     readonly implementer?: string;
     readonly hold?: boolean;
+    /** Defaults to true: the opener watches the new corner for `merged` in the calling Room. */
+    readonly watchMerge?: boolean;
     readonly requestId: string;
     /** Stable for one tool call, distinct between separate calls in the same turn. */
     readonly idempotencyKey?: string;
@@ -1237,7 +1245,11 @@ export type ReviseCornerBriefInput = TurnOutputAuthority &
     readonly expectedRevision: number;
     readonly brief: CornerBriefDraft;
   };
-export type CornerResult = { readonly cornerId: string };
+export type CornerResult = {
+  readonly cornerId: string;
+  /** The opener's merge watch, absent when the opener opted out. */
+  readonly watch?: { readonly roomId: string; readonly kinds: readonly CornerWatchKind[] };
+};
 
 /** ask_choice / open_poll: a lettered preference, never a grant. */
 export type ChoiceOptionArg = ChoiceOptionInput;

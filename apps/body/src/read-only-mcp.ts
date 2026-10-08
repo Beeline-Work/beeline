@@ -1069,7 +1069,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'watch_corner',
     description:
-      'Watch a sibling corner (or a child of this Room) for merged, check-passed or check-failed events and get its current snapshot. Replaces any earlier watch on that corner; an empty list removes it. Wakes arrive in your own Room or corner and name the watched corner and event.',
+      'Watch a sibling corner (or a child of this Room) for merged, check-passed or check-failed events and get its current snapshot. Replaces any earlier watch on that corner; an empty list removes it. Wakes arrive in your own Room or corner and name the watched corner and event. open_corner already watches the corners you open for merged. On a corner that already merged, the result has state "merged" and the snapshot\'s mergeCommitSha, and a "merged" watch queues one wake now; on a corner closed without merging, state is "closed".',
     inputSchema: {
       type: 'object',
       required: ['cornerId', 'kinds'],
@@ -1151,7 +1151,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Set implementer to hand the corner work to another agent member; the caller then does not work the corner. Open one corner after any material unresolved choice is settled. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words.',
+      'Set implementer to hand the corner work to another agent member; the caller then does not work the corner. Open one corner after any material unresolved choice is settled. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words. By default you watch the new corner for merged: its merge wakes you once here, naming the corner and merge commit. Set watchMerge false to skip that watch.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -1182,6 +1182,10 @@ const AGENT_TOOLS: ToolDefinition[] = [
         hold: {
           type: 'boolean',
           description: 'Create a merge hold atomically, for the original human requester.',
+        },
+        watchMerge: {
+          type: 'boolean',
+          description: 'Defaults to true: the merge of this corner wakes you here. False skips that watch.',
         },
       },
       additionalProperties: false,
@@ -2439,6 +2443,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
       ? { brief: args.brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
       : {}),
     ...(args.hold === true ? { hold: true } : {}),
+    ...(args.watchMerge === false ? { watchMerge: false } : {}),
     ...(repository.resolution === 'repository'
       ? {
           repository: repository.key,
@@ -2456,6 +2461,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     name,
     objective,
     ...(args.brief ? { briefRevision: 1 } : {}),
+    ...(created.watch ? { watch: created.watch } : {}),
     status: 'starting',
   });
 }
@@ -4569,7 +4575,15 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
         kinds: args.kinds,
       });
       const kinds = (result.kinds as string[]).join(', ');
-      return `${kinds ? `Watching for ${kinds}` : 'Watch removed'}\n${JSON.stringify(result.snapshot, null, 2)}`;
+      const headline =
+        result.state === 'merged'
+          ? `Corner already merged${result.woken ? '; one merged wake queued now' : '; no new wake (already delivered)'}`
+          : result.state === 'closed'
+            ? 'Corner closed without merging; nothing to watch'
+            : kinds
+              ? `Watching for ${kinds}`
+              : 'Watch removed';
+      return `${headline}\n${JSON.stringify(result.snapshot, null, 2)}`;
     }
     case 'list_event_subscriptions':
       return listEventSubscriptions();

@@ -12788,6 +12788,11 @@ describe('monolith integration', () => {
     ).toEqual(
       expect.objectContaining({ status: 'pending', auto: false, escalations: ['unseen-script'] }),
     );
+    // The files directly in the agent's runtime folder hold its identity keys,
+    // so a read there still stops even though the rest of the state tree is clear.
+    expect(await ask('cat /home/op/.local/state/beeline/agents/a1/runtime.json')).toEqual(
+      expect.objectContaining({ status: 'pending', auto: false, escalations: ['credential'] }),
+    );
   });
 
   const redeemReview = (secret: unknown) =>

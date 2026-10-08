@@ -313,6 +313,23 @@ function isBeelineKeyStore(segments: readonly string[]): boolean {
   });
 }
 
+/**
+ * The files directly inside an agent's runtime folder — `beeline/agents/<id>/`
+ * — hold the agent's own identity secret keys (`runtime.json`, written by
+ * `storeIdentity` in `apps/body/src/runtime.ts`). Everything deeper is the
+ * agent's work area (rooms, scratch, workspace, corner checkouts), so only a
+ * path that ends exactly one level below the agent folder is a credential
+ * path.
+ */
+function isAgentRuntimeFile(segments: readonly string[]): boolean {
+  return segments.some(
+    (segment, index) =>
+      segment.toLowerCase() === 'beeline' &&
+      segments[index + 1]?.toLowerCase() === 'agents' &&
+      index + 3 === segments.length - 1,
+  );
+}
+
 const CREDENTIAL_EXTENSIONS = /\.(pem|p12|pfx|key|jks|keystore|kdbx|asc|gpg|ppk|crt|pkcs12)$/i;
 const CREDENTIAL_WORD =
   /(^|[-_.])(secret|secrets|credential|credentials|password|passwd|token|apikey|api_key|keystore|privatekey)([-_.]|$)/i;
@@ -346,7 +363,9 @@ function namesCredential(word: string): boolean {
     return true;
   }
   // A path through the Beeline operator config directory, but not its state tree.
-  return isBeelineKeyStore(segments);
+  if (isBeelineKeyStore(segments)) return true;
+  // A file directly inside an agent's runtime folder holds its identity keys.
+  return isAgentRuntimeFile(segments);
 }
 
 /**

@@ -178,6 +178,15 @@ describe('the two hard stops', () => {
     expect(commandGrantEscalations(['python3', scratch], { hasScript: true })).toEqual([
       'unseen-script',
     ]);
+    // The files directly in an agent's runtime folder are not a work area: they
+    // hold the agent's own identity secret keys (`runtime.json`).
+    expect(
+      commandGrantEscalations(['cat', '/home/op/.local/state/beeline/agents/a1/runtime.json']),
+    ).toEqual(['credential']);
+    // A path one level deeper is judged on its own basename alone.
+    expect(
+      namesCredentialFile(['cat', '/home/op/.local/state/beeline/agents/a1/rooms/runtime.json']),
+    ).toBe(false);
   });
 
   it('keeps real Beeline secrets flagged, config store and state tree alike', () => {

@@ -1380,4 +1380,89 @@ describe('connect_app', () => {
     )).rows[0]!;
     expect(slackRow.composio_account_id).toBe('ca_fixture'); // the stale id was replaced
   });
+
+  /**
+   * Connects Slack for OWNER and returns its appId, the state the reported
+   * feedback-triage run reached before its app step stalled.
+   */
+  async function connectedSlack(daemon: DaemonService, provider: ComposioApps): Promise<string> {
+    const connected = await daemon.execute('connectApp',
+      { ...turn, app: 'Slack', reason: 'post the launch notes' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: connected.appId! }, OWNER);
+    return connected.appId!;
+  }
+
+  /**
+   * Seeds a saved workflow run and points this turn's command at a handoff
+   * wake card for it. `startRequester` is the run's recorded starter (a
+   * person for a person-started run, an agent otherwise); `gateAnswerer` adds
+   * a newer card answered by that person.
+   */
+  async function seedWorkflowWake(input: {
+    runId: string;
+    startRequester: string;
+    gateAnswerer?: string;
+  }): Promise<void> {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+       VALUES($1,$2,$3,'started workflow','system','workflow-handoff',$4::jsonb)`,
+      [input.runId, ROOM, HELPER, JSON.stringify({ runId: input.runId, seq: 0, runStatus: 'live',
+        workflowSlug: 'sweep', workflowVersion: 1, requesterId: input.startRequester, toState: 'work' })],
+    );
+    const handoffId = `${input.runId}-handoff`;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+       VALUES($1,$2,$3,'handed off','system','workflow-handoff',$4::jsonb)`,
+      [handoffId, ROOM, HELPER, JSON.stringify({ runId: input.runId, seq: 1,
+        workflowSlug: 'sweep', workflowVersion: 1, toState: 'work' })],
+    );
+    if (input.gateAnswerer) {
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+         VALUES($1,$2,$3,'answered gate','system','workflow-handoff',$4::jsonb)`,
+        [`${input.runId}-gate`, ROOM, input.gateAnswerer, JSON.stringify({ runId: input.runId, seq: 2,
+          workflowSlug: 'sweep', workflowVersion: 1, toState: 'work',
+          contents: { decision: 'go', answeredBy: input.gateAnswerer },
+          receipt: { exit: { gate: 'go', actorId: input.gateAnswerer } } })],
+      );
+    }
+    await database.query(`UPDATE agent_commands SET root_source_message_id=$1 WHERE id=$2`,
+      [handoffId, COMMAND]);
+  }
+
+  it('runs an app tool on a handoff wake of a person-started run', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const appId = await connectedSlack(daemon, provider);
+    await seedWorkflowWake({ runId: 'wf-person', startRequester: OWNER });
+    const used = await daemon.execute('executeAppTool', { ...turn, appId,
+      tool: 'SLACK_POST_MESSAGE', arguments: { text: 'Launch notes' } }, HELPER);
+    expect(used).toMatchObject({ status: 'executed' });
+    expect((await database.query<{ requester_id: string }>(
+      `SELECT requester_id FROM workspace_app_usage`)).rows[0]?.requester_id).toBe(OWNER);
+  });
+
+  it('runs an app tool when a person answered the run\u2019s latest gate', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const appId = await connectedSlack(daemon, provider);
+    await seedWorkflowWake({ runId: 'wf-gate', startRequester: HELPER, gateAnswerer: OWNER });
+    await expect(daemon.execute('executeAppTool', { ...turn, appId,
+      tool: 'SLACK_POST_MESSAGE', arguments: { text: 'Launch notes' } }, HELPER))
+      .resolves.toMatchObject({ status: 'executed' });
+  });
+
+  it('still refuses app use on a handoff wake of an agent-only run', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const appId = await connectedSlack(daemon, provider);
+    await seedWorkflowWake({ runId: 'wf-agent', startRequester: HELPER });
+    await expect(daemon.execute('executeAppTool', { ...turn, appId,
+      tool: 'SLACK_POST_MESSAGE', arguments: { text: 'Launch notes' } }, HELPER))
+      .rejects.toThrow('App use requires a person\u2019s request');
+    expect(provider.execute).not.toHaveBeenCalled();
+  });
 });

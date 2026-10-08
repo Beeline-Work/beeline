@@ -12766,6 +12766,28 @@ describe('monolith integration', () => {
     expect(cornerLine.rows[0]!.text).toBe(
       '@bee was granted command npm test · auto-approved, free to write the worktree and act on the host',
     );
+
+    // A script in the agent's own state directory is not a credential file: a
+    // plain read of an absolute scratch path is an ordinary yolo command again,
+    // and an unread script named by that same path carries only its own stop.
+    const scratchPath =
+      '/home/op/.local/state/beeline/agents/a1/rooms/r1/scratch/agent-home/ops/watchdog.py';
+    expect(await ask(`cat ${scratchPath}`)).toEqual(
+      expect.objectContaining({ status: 'approved', auto: true }),
+    );
+    const scratchScript = 'print("watchdog")\n';
+    expect(
+      await ask(`python3 ${scratchPath}`, {
+        script: {
+          path: scratchPath,
+          sha256: createHash('sha256').update(scratchScript).digest('hex'),
+          bytes: Buffer.byteLength(scratchScript),
+          contents: scratchScript,
+        },
+      }),
+    ).toEqual(
+      expect.objectContaining({ status: 'pending', auto: false, escalations: ['unseen-script'] }),
+    );
   });
 
   const redeemReview = (secret: unknown) =>

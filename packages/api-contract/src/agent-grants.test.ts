@@ -13,6 +13,7 @@ import {
   isCommandGrantScript,
   isAgentGrantKind,
   isRequestableAgentGrantKind,
+  namesCredentialFile,
   parseCommandGrantTarget,
   parseGrantDecisionLine,
 } from './agent-grants.js';
@@ -162,6 +163,54 @@ describe('the two hard stops', () => {
     expect(commandGrantEscalations(['env', 'FOO=1', 'npm', 'test'])).toEqual([]);
     expect(commandGrantEscalations(['cat', 'src/environment.ts'])).toEqual([]);
     expect(commandGrantEscalations(['cat', 'tokenizer.py'])).toEqual([]);
+  });
+
+  it('does not read the agent state tree as a Beeline key store', () => {
+    // Every agent work area lives under the state tree; a scratch script named
+    // by absolute path must escalate for its own shape, never for the directory.
+    const scratch =
+      '/home/op/.local/state/beeline/agents/a1/rooms/r1/scratch/agent-home/ops/watchdog_check.py';
+    const checkout =
+      '/home/op/.local/state/beeline/corners/c1/room-runtime/packages/api-contract/src/agent-grants.ts';
+    expect(namesCredentialFile(['python3', scratch])).toBe(false);
+    expect(namesCredentialFile(['python3', checkout])).toBe(false);
+    expect(commandGrantEscalations(['python3', scratch])).toEqual([]);
+    expect(commandGrantEscalations(['python3', scratch], { hasScript: true })).toEqual([
+      'unseen-script',
+    ]);
+  });
+
+  it('keeps real Beeline secrets flagged, config store and state tree alike', () => {
+    // The operator key store itself is `$XDG_CONFIG_HOME/beeline`.
+    expect(commandGrantEscalations(['cat', '/home/op/.config/beeline/providers.json'])).toEqual([
+      'credential',
+    ]);
+    expect(commandGrantEscalations(['cat', '/home/op/.config/beeline/secrets.json'])).toEqual([
+      'credential',
+    ]);
+    // A key file whose name no basename rule matches is still a path through it.
+    expect(commandGrantEscalations(['cat', '/home/op/.config/beeline/identity'])).toEqual([
+      'credential',
+    ]);
+    // A real secret inside the state tree keeps its own basename escalation.
+    expect(
+      commandGrantEscalations([
+        'cat',
+        '/home/op/.local/state/beeline/agents/a1/rooms/r1/agent-home/claude/.credentials.json',
+      ]),
+    ).toEqual(['credential']);
+    expect(
+      commandGrantEscalations([
+        'cat',
+        '/home/op/.local/state/beeline/agents/a1/rooms/r1/scratch/secrets.json',
+      ]),
+    ).toEqual(['credential']);
+    expect(
+      commandGrantEscalations([
+        'cat',
+        '/home/op/.local/state/beeline/agents/a1/rooms/r1/scratch/.env',
+      ]),
+    ).toEqual(['credential']);
   });
 
   it('lets an approved shape run and stops what the prefix never showed', () => {

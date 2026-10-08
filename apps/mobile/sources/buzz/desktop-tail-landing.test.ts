@@ -58,16 +58,16 @@ describe('desktop tail-follow wiring (2026-09, superseding eight prior scroll-ti
       chatSource.indexOf('const setDesktopScrollNode = useCallback'),
     );
     expect(follow).toContain('shouldFollowDesktopTail({');
-    expect(follow).toContain('scrollNode.scrollTop = scrollNode.scrollHeight');
+    expect(follow).toContain('scrollController.followNow();');
     expect(follow).not.toContain('setTimeout');
     expect(follow).not.toContain('LandingsRef');
-    // Regression guard: pin state must come from isPinnedToTailRef (which
+    // Regression guard: pin state must come from the scroll controller (which
     // starts true and is corrected only by a real scroll event), not a
     // fresh scrollHeight/scrollTop/clientHeight read taken here. A cold
     // open has scrollTop still 0 against the full, taller-than-viewport
     // content, so a fresh read at that instant says "not pinned" and the
     // first landing never happens — reproduced and fixed in this corner.
-    expect(follow).toContain('isPinnedToTail: isPinnedToTailRef.current');
+    expect(follow).toContain('isPinnedToTail: scrollController.isPinnedToTail()');
     expect(follow).toContain('restoreDesktopReadingAnchor();');
     expect(follow).not.toMatch(
       /const isPinnedToTail =\s*\n\s*scrollNode\.scrollHeight - scrollNode\.scrollTop/,
@@ -77,9 +77,11 @@ describe('desktop tail-follow wiring (2026-09, superseding eight prior scroll-ti
   it('holds older-history prepends using row displacement, excluding live tail growth', () => {
     const prepend = chatSource.slice(
       chatSource.indexOf('const restoreDesktopReadingAnchor ='),
-      chatSource.indexOf('const landAtNewMessageBoundary ='),
+      chatSource.indexOf('const messageJumpCanScrollTo ='),
     );
-    expect(prepend).toMatch(/node\.scrollTop \+=\s*row\.getBoundingClientRect\(\)\.top/);
+    expect(prepend).toMatch(
+      /scrollController\.holdReadingPosition\(\s*row\.getBoundingClientRect\(\)\.top/,
+    );
     expect(prepend).not.toContain('node.scrollHeight - previousScrollHeight');
     expect(chatSource).toContain("overflowAnchor: 'none'");
   });

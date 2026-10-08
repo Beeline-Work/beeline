@@ -6,6 +6,10 @@ const surface = readFileSync(
   new URL('../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url),
   'utf8',
 );
+const controller = readFileSync(
+  new URL('../buzz/transcript-scroll-controller.ts', import.meta.url),
+  'utf8',
+);
 const nativeList = readFileSync(
   new URL(
     '../../node_modules/@react-native/virtualized-lists/Lists/VirtualizedList.js',
@@ -26,11 +30,11 @@ const offsetExpression = nativeList
   .replace(';', ');');
 const nativeOffset = new Function('index', 'viewPosition', 'viewOffset', 'frame', offsetExpression);
 // One landing path: the store keeps the target near the newest end of the
-// window, and one scroll aligns its beginning.
+// window, and one scroll controller request aligns its beginning.
 const sections = {
-  landing: surface.slice(
-    surface.indexOf('  const attemptSourceLanding = useCallback('),
-    surface.indexOf('  const observeVisibleTranscriptMessages'),
+  landing: controller.slice(
+    controller.indexOf('export function phoneTranscriptList('),
+    controller.indexOf('export function desktopTranscriptList('),
   ),
 };
 
@@ -59,7 +63,7 @@ describe('notification target beginning below fixed chrome', () => {
       const viewport = 600;
       const rowOffset = 2000;
       for (const [stage, section] of Object.entries(sections)) {
-        const position = Number(section.match(/viewPosition: ([\d.]+)/)?.[1]);
+        const position = Number(section.match(/viewPosition: align === 'top' \? ([\d.]+)/)?.[1]);
         expect(position, stage).toBe(1);
         for (const height of [100, 1800]) {
           const scroll = nativeOffset.call(
@@ -84,7 +88,12 @@ describe('notification target beginning below fixed chrome', () => {
           );
         }
       }
-      expect(sections.landing).toContain("scrollIntoView({ block: 'start' })");
+      expect(surface).toContain(
+        "scrollController.request({ kind: 'message', messageId, align: 'top', jump: true });",
+      );
+      expect(controller).toContain(
+        "row.scrollIntoView({ block: align === 'top' ? 'start' : 'center' });",
+      );
     },
   );
 });

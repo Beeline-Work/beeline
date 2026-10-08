@@ -578,7 +578,9 @@ describe('navigateToBuzzChannelFromNotification', () => {
   });
 
   it('leaves message anchoring in the screen but keeps fallback in the resolver', () => {
-    expect(buzzChatSource).toMatch(/scrollToIndex\(\{ index, viewPosition: 1, animated: false \}\)/);
+    expect(buzzChatSource).toContain(
+      "scrollController.request({ kind: 'message', messageId, align: 'top', jump: true });",
+    );
     expect(buzzChatSource).not.toContain('notificationFallbackChannelId');
   });
 });

@@ -18,14 +18,15 @@ const groknight = readFileSync(path.join(__dirname, 'groknight.ts'), 'utf8');
 describe('the arrival flash', () => {
   it('CHEV-19: fires on landing completion, never on row mount', () => {
     const completion = surface.slice(
-      surface.indexOf('const completePendingNewMessageLanding'),
-      surface.indexOf('const observeVisibleTranscriptMessages'),
+      surface.indexOf('    onLanded: (destination) => {'),
+      surface.indexOf('    onCancelled: (destination) => {'),
     );
-    // The same success signal the badge settles on: the row is on screen.
+    // The same success signal the badge settles on: the scroll controller
+    // reports a landing only when a visibility report shows the row.
     expect(completion).toContain('landingFlashesArrival({');
-    expect(completion).toContain('landedBoundaryId: pending.boundaryId');
+    expect(completion).toContain('landedBoundaryId: destination.messageId');
     expect(completion).toContain('messageAnchorId: messageAnchorIdRef.current');
-    expect(completion).toContain('raiseArrivalFlash(pending.boundaryId)');
+    expect(completion).toContain('raiseArrivalFlash(destination.messageId)');
     // The cell is handed a row id, not a mount hook of its own.
     expect(cell).toContain('arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}');
     expect(surface).toContain('arrivalFlashMessageId,');

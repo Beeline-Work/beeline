@@ -765,7 +765,6 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomLeftRadius: theme.buzz.radius,
   },
   tagChipFaceEnd: {
-    paddingRight: 2,
     borderRightWidth: 1,
     borderTopRightRadius: theme.buzz.radius,
     borderBottomRightRadius: theme.buzz.radius,
@@ -780,7 +779,7 @@ const styles = StyleSheet.create((theme) => ({
   tagChipRemove: { width: 44, flexDirection: 'row', alignItems: 'center' },
   tagChipRemoveText: {
     ...theme.buzz.type.meta,
-    width: 18,
+    width: 20,
     textAlign: 'center',
     color: theme.buzz.ledgerQuiet,
   },

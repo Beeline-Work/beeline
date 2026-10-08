@@ -2080,6 +2080,7 @@ export class GitHubOperations {
             title: pullRequest.title,
             url: pullRequest.url,
             ...(pullRequest.targetBranch ? { targetBranch: pullRequest.targetBranch } : {}),
+            ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
           },
         },
       });

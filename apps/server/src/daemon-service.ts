@@ -49,6 +49,7 @@ import {
   readCornerAppDefinition,
   normalizeCornerText,
   shouldCompletePendingFailedCommand,
+  type CornerWatchKind,
 } from '@beeline/api-contract/daemon';
 import {
   MAX_EVENT_CONSEQUENCE_LENGTH,
@@ -104,6 +105,7 @@ import {
   systemIdentityMention,
   systemLine,
   type SystemPhrase,
+  wakeLateCornerWatcher,
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
@@ -5459,18 +5461,31 @@ export class DaemonService {
       );
       if (!member.rowCount) throw new Error('daemon room access denied');
       if (input.cornerId === input.roomId) throw new Error('a corner cannot watch itself');
-      const corner = await db.query<Output<'watchCorner'>['snapshot']>(
+      const corner = await db.query<Output<'watchCorner'>['snapshot'] & { archived: boolean; landed: boolean }>(
         `SELECT c.id,c.name,f.workflow_state "workflowState",
            (f.lifecycle->'pr'->>'number')::int "pullRequestNumber",
            f.lifecycle->'pr'->>'url' "pullRequestUrl",f.lifecycle->'pr'->>'headSha' "headSha",
-           f.lifecycle->>'checks' checks,f.lifecycle->'pr'->>'mergeCommitSha' "mergeCommitSha"
+           f.lifecycle->>'checks' checks,f.lifecycle->'pr'->>'mergeCommitSha' "mergeCommitSha",
+           c.archived_at IS NOT NULL archived,
+           COALESCE(f.lifecycle->>'outcome'='landed' OR f.lifecycle->'pr' ? 'mergedAt',false) landed
          FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
-         WHERE c.id=$1 AND c.parent_id IS NOT NULL AND c.archived_at IS NULL
+         WHERE c.id=$1 AND c.parent_id IS NOT NULL
            AND (c.parent_id=$2 OR c.parent_id=$3) FOR SHARE OF c,f`,
         [input.cornerId, input.roomId, member.rows[0]!.parent_id],
       );
       if (!corner.rowCount)
-        throw new Error('watched corner must be an active child or sibling of this Room');
+        throw new Error('watched corner must be a child or sibling of this Room');
+      const { archived, landed, ...snapshot } = corner.rows[0]!;
+      // A closed corner has no further events to watch. A merged one returns
+      // its merge now: one wake on its merge line, unless this agent already
+      // had one for that merge (from a watch or a Room `merged` subscription).
+      if (archived) {
+        if (!landed) return { kinds: [], state: 'closed', snapshot };
+        const woken = kinds.includes('merged')
+          ? await wakeLateCornerWatcher(db, input.roomId, agentId, input.cornerId)
+          : false;
+        return { kinds: [], state: 'merged', woken, snapshot };
+      }
       if (!kinds.length)
         await db.query(
           `DELETE FROM corner_watches WHERE watcher_room_id=$1 AND agent_id=$2 AND corner_id=$3`,
@@ -5482,7 +5497,7 @@ export class DaemonService {
          ON CONFLICT(watcher_room_id,agent_id,corner_id) DO UPDATE SET kinds=EXCLUDED.kinds,updated_at=now()`,
           [input.roomId, agentId, input.cornerId, JSON.stringify(kinds)],
         );
-      return { kinds, snapshot: corner.rows[0]! };
+      return { kinds, state: 'active', snapshot };
     });
   }
   private async cornerRemote(input: Input<'postCornerRemoteState'>, agentId: string) {
@@ -7211,9 +7226,22 @@ export class DaemonService {
         workspaceId: parent.workspace_id,
         implementerAgentId,
       });
+      // The opener hears the merge where it opened the corner, unless it opts out.
+      if (input.watchMerge !== false)
+        await db.query(
+          `INSERT INTO corner_watches(watcher_room_id,agent_id,corner_id,kinds) VALUES($1,$2,$3,'["merged"]'::jsonb)
+           ON CONFLICT(watcher_room_id,agent_id,corner_id) DO NOTHING`,
+          [commandRoomId, agentId, cornerId],
+        );
     });
     this.live.publish({ type: 'invalidate', roomId, reason: 'corner', agentId });
-    return { cornerId };
+    const watch = (
+      await this.database.query<{ kinds: CornerWatchKind[] }>(
+        `SELECT kinds FROM corner_watches WHERE watcher_room_id=$1 AND agent_id=$2 AND corner_id=$3`,
+        [commandRoomId, agentId, cornerId],
+      )
+    ).rows[0];
+    return { cornerId, ...(watch ? { watch: { roomId: commandRoomId, kinds: watch.kinds } } : {}) };
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
     validateCornerBrief(input.brief);

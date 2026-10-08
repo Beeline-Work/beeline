@@ -87,13 +87,11 @@ it('Reproduction O-2: a watcher receives a named sibling merge in A', async () =
   expect(commands[0]!.source.body).toContain(`Watched corner B (${B}): merged`);
 });
 
-it.each(['non-member', 'non-sibling', 'self', 'archived', 'room', 'invalid kind'])(
+it.each(['non-member', 'non-sibling', 'self', 'room', 'invalid kind'])(
   'refuses %s and writes nothing',
   async (reason) => {
     if (reason === 'non-sibling')
       await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [B, OTHER]);
-    if (reason === 'archived')
-      await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [B]);
     await expect(
       watch(
         reason === 'invalid kind' ? ['joined' as CornerWatchKind] : ['merged'],
@@ -108,7 +106,7 @@ it.each(['non-member', 'non-sibling', 'self', 'archived', 'room', 'invalid kind'
           ? 'cannot watch itself'
           : reason === 'invalid kind'
             ? 'watch kinds'
-            : 'active child or sibling',
+            : 'child or sibling',
     );
     expect((await db.query(`SELECT * FROM corner_watches`)).rowCount).toBe(0);
   },
@@ -133,6 +131,7 @@ it('returns all merged PR snapshot fields from corner facts', async () => {
   );
   expect(await watch()).toEqual({
     kinds: ['merged'],
+    state: 'active',
     snapshot: {
       id: B,
       name: 'B',

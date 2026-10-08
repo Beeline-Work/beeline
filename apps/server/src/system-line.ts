@@ -518,7 +518,12 @@ export async function systemLine(
            JOIN rooms watcher ON watcher.id=w.watcher_room_id AND watcher.archived_at IS NULL
            JOIN memberships m ON m.room_id=w.watcher_room_id AND m.identity_id=w.agent_id
              AND m.removed_at IS NULL
-           WHERE w.corner_id=$1 AND w.kinds @> $2::jsonb FOR SHARE OF w,m,watcher`,
+           WHERE w.corner_id=$1 AND w.kinds @> $2::jsonb
+             -- The parent Room gets its own merge card; a member subscribed to
+             -- merged there is woken by that card, so the watch stays quiet.
+             AND NOT ($2::jsonb='["merged"]'::jsonb AND w.watcher_room_id=corner.parent_id
+               AND m.event_subscriptions @> $2::jsonb)
+           FOR SHARE OF w,m,watcher`,
               [input.roomId, JSON.stringify([input.kind])],
             )
           ).rows
@@ -535,6 +540,45 @@ export async function systemLine(
     );
     return write(tx, cascade, notBefore, watches);
   });
+}
+
+/**
+ * `watch_corner` on a corner that already merged: queue one `watched_corner`
+ * wake on the corner's merge line in the watcher's Room. An agent that already
+ * had a wake for that merge — the line itself, or the parent Room's merge card
+ * through a `merged` subscription — gets none. Returns whether a wake was queued.
+ */
+export async function wakeLateCornerWatcher(
+  db: SqlDatabase,
+  watcherRoomId: string,
+  agentId: string,
+  cornerId: string,
+): Promise<boolean> {
+  const line = (
+    await db.query<{ id: string }>(
+      `SELECT id FROM messages WHERE room_id=$1 AND system_event->>'kind'='merged'
+       ORDER BY created_at DESC,id DESC LIMIT 1`,
+      [cornerId],
+    )
+  ).rows[0];
+  if (!line) return false;
+  const earlier = await db.query(
+    `SELECT 1 FROM agent_commands c JOIN messages m ON m.id=c.source_message_id
+     WHERE c.agent_id=$1 AND (m.id=$2 OR (m.system_event->>'kind'='merged'
+       AND m.card->>'type'='corner-complete' AND m.card->>'cornerId'=$3))
+     LIMIT 1`,
+    [agentId, line.id, cornerId],
+  );
+  if (earlier.rowCount) return false;
+  return Boolean(
+    await createAgentCommand(db, {
+      roomId: watcherRoomId,
+      agentId,
+      sourceMessageId: line.id,
+      reason: 'watched_corner',
+      action: 'input',
+    }),
+  );
 }
 
 /**

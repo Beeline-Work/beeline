@@ -130,7 +130,10 @@ it('Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as a
   const workflow = (await db.query(`SELECT card FROM messages WHERE id=$1`, [cornerId])).rows[0];
   expect(workflow?.card.roleBindings.implementer).toBe(B);
   const beforeReplay = await openingCounts();
-  expect(await daemon.execute('createCorner', request, A)).toEqual({ cornerId });
+  expect(await daemon.execute('createCorner', request, A)).toEqual({
+    cornerId,
+    watch: { roomId: request.roomId, kinds: ['merged'] },
+  });
   expect(await openingCounts()).toEqual(beforeReplay);
   await expect(
     daemon.execute('createCorner', { ...request, implementer: 'alpha' }, A),
@@ -226,5 +229,6 @@ it.each([undefined, 'alpha'])('keeps caller assignment for implementer %s', asyn
   ).toEqual([{ agent_id: A }]);
   expect(await daemon.execute('createCorner', { ...request, implementer: 'alpha' }, A)).toEqual({
     cornerId,
+    watch: { roomId: request.roomId, kinds: ['merged'] },
   });
 });

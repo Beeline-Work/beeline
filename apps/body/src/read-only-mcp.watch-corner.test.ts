@@ -70,3 +70,21 @@ it('describes replacement and removal on both Room and corner surfaces', () => {
     expect(tool.inputSchema.required).toEqual(['cornerId', 'kinds']);
   }
 });
+
+it('reports an already merged corner with its merge commit, and a closed one', async () => {
+  const merged = { ...snapshot, workflowState: 'done', mergeCommitSha: 'f'.repeat(40) };
+  vi.stubGlobal('fetch', async () =>
+    Response.json({ kinds: [], state: 'merged', woken: true, snapshot: merged }),
+  );
+  const text = await callAgentTool(
+    'watch_corner',
+    { cornerId: 'sibling', kinds: ['merged'] },
+    'watch-3',
+  );
+  expect(text).toContain('Corner already merged; one merged wake queued now');
+  expect(text).toContain('f'.repeat(40));
+  vi.stubGlobal('fetch', async () => Response.json({ kinds: [], state: 'closed', snapshot }));
+  expect(
+    await callAgentTool('watch_corner', { cornerId: 'sibling', kinds: ['merged'] }, 'watch-4'),
+  ).toContain('Corner closed without merging');
+});

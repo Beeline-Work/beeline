@@ -80,12 +80,12 @@ function controllerOver(toOffset: (offset: number) => void, cancelled: string[] 
 
 function render(contentHeight = 5_600, offset = 0) {
   const store = createTranscriptScrubberStore();
-  const onScrubTo = vi.fn((y: number) =>
+  const listToOffset = vi.fn((y: number) =>
     store.observeScroll(scroll(y, store.getSnapshot().metrics?.contentHeight ?? contentHeight)),
   );
   const loadOlder = vi.fn();
   const cancelled: string[] = [];
-  const controller = controllerOver(onScrubTo, cancelled);
+  const controller = controllerOver(listToOffset, cancelled);
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(
@@ -96,7 +96,7 @@ function render(contentHeight = 5_600, offset = 0) {
   act(() => strip().props.onLayout({ nativeEvent: { layout: { height: RAIL } } }));
   act(() => store.observeScroll(scroll(offset, contentHeight)));
   const grab = () => renderer.root.findByProps({ testID: 'transcript-scrubber-grab' });
-  return { renderer, store, onScrubTo, loadOlder, controller, cancelled, strip, grab };
+  return { renderer, store, listToOffset, loadOlder, controller, cancelled, strip, grab };
 }
 
 describe('TranscriptScrubber', () => {
@@ -123,7 +123,7 @@ describe('TranscriptScrubber', () => {
   });
 
   it('scrolls the list with the finger as soon as the bar is pressed', () => {
-    const { renderer, store, onScrubTo, grab } = render(5_600, 0);
+    const { renderer, store, listToOffset, grab } = render(5_600, 0);
     act(() =>
       store.observeVisibleRows([
         { id: 'a', text: 'a', isUser: false, timestamp: at('2026-09-01T09:10:00Z') },
@@ -133,7 +133,7 @@ describe('TranscriptScrubber', () => {
     expect(haptics.impact).toHaveBeenCalledTimes(1);
     // A quarter of the track up is a quarter of the way into the loaded rows.
     act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 4 }));
-    expect(onScrubTo).toHaveBeenLastCalledWith(1_250);
+    expect(listToOffset).toHaveBeenLastCalledWith(1_250);
     expect(grab().props.style[1].top).toBe(0.75 * (RAIL - 36) - 14);
     expect(
       renderer.root.findByProps({ testID: 'transcript-scrubber-bubble' }).findByType('Text').props
@@ -141,7 +141,7 @@ describe('TranscriptScrubber', () => {
     ).toBe('TUE 1 SEP');
     // Past the top: the list goes to its oldest loaded row and no further.
     act(() => grab().props.onPanResponderMove({}, { dy: -RAIL }));
-    expect(onScrubTo).toHaveBeenLastCalledWith(5_000);
+    expect(listToOffset).toHaveBeenLastCalledWith(5_000);
     act(() => grab().props.onPanResponderRelease());
     expect(renderer.root.findAllByProps({ testID: 'transcript-scrubber-bubble' })).toHaveLength(0);
     // The bar stays long enough to grab again.
@@ -159,21 +159,21 @@ describe('TranscriptScrubber', () => {
   });
 
   it('keeps scrolling into older rows as they load under the finger', () => {
-    const { store, onScrubTo, grab } = render(5_600, 5_000);
+    const { store, listToOffset, grab } = render(5_600, 5_000);
     act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
     act(() => grab().props.onPanResponderMove({}, { dy: -2 }));
-    expect(onScrubTo).toHaveBeenLastCalledWith(5_000);
+    expect(listToOffset).toHaveBeenLastCalledWith(5_000);
     // An older page lands: the content grows, the offset holds, and no scroll
     // event follows. The held finger goes on to the new oldest row.
     act(() => store.observeContentSize(8_600));
-    expect(onScrubTo).toHaveBeenLastCalledWith(8_000);
+    expect(listToOffset).toHaveBeenLastCalledWith(8_000);
   });
 
   it('leaves the list alone under a finger held partway up', () => {
-    const { store, onScrubTo, grab } = render(5_600, 0);
+    const { store, listToOffset, grab } = render(5_600, 0);
     act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
     act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 2 }));
-    expect(onScrubTo).toHaveBeenCalledTimes(1);
+    expect(listToOffset).toHaveBeenCalledTimes(1);
     // Rows measure, a message arrives, the keyboard opens: the finger has
     // not moved, so the list must not either.
     act(() => store.observeContentSize(6_000));
@@ -184,11 +184,11 @@ describe('TranscriptScrubber', () => {
         layoutMeasurement: { height: 300 },
       }),
     );
-    expect(onScrubTo).toHaveBeenCalledTimes(1);
+    expect(listToOffset).toHaveBeenCalledTimes(1);
   });
 
   it('lands where the finger lifts after a fling, once momentum ends', () => {
-    const { onScrubTo, controller, grab } = render(5_600, 0);
+    const { listToOffset, controller, grab } = render(5_600, 0);
     // The reader flings the list, then grabs the bar while it still coasts.
     act(() => {
       controller.dragStarted();
@@ -198,25 +198,25 @@ describe('TranscriptScrubber', () => {
     act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
     act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 4 }));
     act(() => grab().props.onPanResponderRelease());
-    expect(onScrubTo).toHaveBeenLastCalledWith(1_250);
+    expect(listToOffset).toHaveBeenLastCalledWith(1_250);
     // Momentum carried the list past it; its end lands the scrub again.
-    onScrubTo.mockClear();
+    listToOffset.mockClear();
     act(() => controller.momentumEnded());
-    expect(onScrubTo).toHaveBeenCalledExactlyOnceWith(1_250);
+    expect(listToOffset).toHaveBeenCalledExactlyOnceWith(1_250);
     expect(controller.active()).toBeNull();
   });
 
   it('replaces a message jump in progress with the scrubbed offset', () => {
-    const { onScrubTo, controller, cancelled, grab } = render(5_600, 0);
+    const { listToOffset, controller, cancelled, grab } = render(5_600, 0);
     act(() => controller.request({ kind: 'message', messageId: 'm1', align: 'top', jump: true }));
     expect(controller.isLanding()).toBe(true);
     act(() => grab().props.onPanResponderGrant({ nativeEvent: {} }));
     act(() => grab().props.onPanResponderMove({}, { dy: -(RAIL - 36) / 2 }));
-    expect(onScrubTo).toHaveBeenLastCalledWith(2_500);
+    expect(listToOffset).toHaveBeenLastCalledWith(2_500);
     expect(controller.isLanding()).toBe(false);
     // A later layout pass does not pull the list back to the jump.
     act(() => controller.observeLayout());
-    expect(onScrubTo).toHaveBeenCalledTimes(1);
+    expect(listToOffset).toHaveBeenCalledTimes(1);
     expect(cancelled).toEqual(['message:replaced']);
   });
 });

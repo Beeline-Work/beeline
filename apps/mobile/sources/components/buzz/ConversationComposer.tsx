@@ -356,7 +356,6 @@ export function ConversationComposer({
                 style={styles.tagChip}
                 testID={`${testIDPrefix}-tag-${handle}`}
               >
-                <View style={styles.tagChipFace} />
                 <TouchableOpacity
                   accessibilityLabel={`Edit tags, @${handle}`}
                   accessibilityRole="button"
@@ -366,9 +365,11 @@ export function ConversationComposer({
                   style={styles.tagChipBody}
                   testID={`${testIDPrefix}-tag-${handle}-edit`}
                 >
-                  <Text numberOfLines={1} style={styles.tagChipText}>
-                    @{handle}
-                  </Text>
+                  <View style={[styles.tagChipFace, styles.tagChipFaceStart]}>
+                    <Text numberOfLines={1} style={styles.tagChipText}>
+                      @{handle}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
                 <TouchableOpacity
                   accessibilityLabel={`Remove @${handle}`}
@@ -378,7 +379,9 @@ export function ConversationComposer({
                   style={styles.tagChipRemove}
                   testID={`${testIDPrefix}-tag-${handle}-remove`}
                 >
-                  <Text style={styles.tagChipRemoveText}>×</Text>
+                  <View style={[styles.tagChipFace, styles.tagChipFaceEnd]}>
+                    <Text style={styles.tagChipRemoveText}>×</Text>
+                  </View>
                 </TouchableOpacity>
               </View>
             ))}
@@ -743,23 +746,44 @@ const styles = StyleSheet.create((theme) => ({
     height: 42,
     flexDirection: 'row',
   },
-  // The × target runs past the face's right edge, so the face keeps its
-  // size while both targets are 44 wide; that overhang is the gap between chips.
+  // The mock's pill is drawn in two halves, one inside each 44-wide target:
+  // the handle half ends its target, the × half starts the next. A short
+  // handle's spare target width sits before the pill, and the × target's
+  // last 24 px make the gap after it, so the pill hugs its handle.
   tagChipFace: {
-    position: 'absolute',
-    top: 10,
-    left: 0,
-    right: 14,
     height: 22,
-    borderWidth: 1,
+    justifyContent: 'center',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
     borderColor: theme.buzz.border,
-    borderRadius: theme.buzz.radius,
     backgroundColor: theme.buzz.bgHighlight,
   },
-  tagChipBody: { minWidth: 44, justifyContent: 'center', paddingLeft: theme.buzz.space.sm },
+  tagChipFaceStart: {
+    paddingLeft: theme.buzz.space.sm,
+    borderLeftWidth: 1,
+    borderTopLeftRadius: theme.buzz.radius,
+    borderBottomLeftRadius: theme.buzz.radius,
+  },
+  tagChipFaceEnd: {
+    paddingRight: 2,
+    borderRightWidth: 1,
+    borderTopRightRadius: theme.buzz.radius,
+    borderBottomRightRadius: theme.buzz.radius,
+  },
+  tagChipBody: {
+    minWidth: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
   tagChipText: { ...theme.buzz.type.machine, color: theme.buzz.accent },
-  tagChipRemove: { width: 44, alignItems: 'center', justifyContent: 'center' },
-  tagChipRemoveText: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
+  tagChipRemove: { width: 44, flexDirection: 'row', alignItems: 'center' },
+  tagChipRemoveText: {
+    ...theme.buzz.type.meta,
+    width: 18,
+    textAlign: 'center',
+    color: theme.buzz.ledgerQuiet,
+  },
   tagChipEmpty: {
     height: 42,
     minWidth: 44,

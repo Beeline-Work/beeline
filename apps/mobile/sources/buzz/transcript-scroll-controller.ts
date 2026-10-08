@@ -196,7 +196,10 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     const rowId = rows[index]!.id;
     const align = destination.kind === 'message' ? destination.align : 'center';
     if (!list.toRow(index, rowId, align)) {
-      if (destination.kind === 'firstUnread') list.toEstimatedRow(index);
+      // Scroll near the row so the list draws and measures it. A list that
+      // has nothing left to draw sends no later pass by itself, and a row
+      // request waiting for one never lands.
+      list.toEstimatedRow(index);
       return;
     }
     if (!current.scrolled) {

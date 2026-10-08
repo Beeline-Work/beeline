@@ -365,30 +365,36 @@ export function useRoomMessageStore({
     [openWindowAt, setJump, showLatest],
   );
 
-  const clear = useCallback(() => {
-    requestVersionRef.current += 1;
-    windowRequestRef.current += 1;
-    setDetached(null);
-    setNewerStatus('idle');
-    setWindowOlderStatus('idle');
-    cursorRef.current = null;
-    completedTailIdRef.current = null;
-    loadingRef.current = false;
-    fillStalledRef.current = false;
-    visibleCountRef.current = initialVisibleCountRef.current;
-    setOlder([]);
-    setVisibleMessageCount(initialVisibleCountRef.current);
-    updateStatus('idle');
-  }, [setDetached, setNewerStatus, setOlder, setWindowOlderStatus, updateStatus]);
+  const clear = useCallback(
+    (keepJumpRead = false) => {
+      requestVersionRef.current += 1;
+      if (!keepJumpRead) windowRequestRef.current += 1;
+      setDetached(null);
+      setNewerStatus('idle');
+      setWindowOlderStatus('idle');
+      cursorRef.current = null;
+      completedTailIdRef.current = null;
+      loadingRef.current = false;
+      fillStalledRef.current = false;
+      visibleCountRef.current = initialVisibleCountRef.current;
+      setOlder([]);
+      setVisibleMessageCount(initialVisibleCountRef.current);
+      updateStatus('idle');
+    },
+    [setDetached, setNewerStatus, setOlder, setWindowOlderStatus, updateStatus],
+  );
 
   /**
-   * The session re-reads the Room: drop loaded history. A jump that has not
-   * failed for good runs again, so a reset never strands its target.
+   * The session re-reads the Room: drop loaded history. A jump whose read is
+   * still out keeps that read, which opens its window when it answers, so a
+   * tap on an open Room reads once. Another jump that has not failed for good
+   * runs again, so a reset never strands its target.
    */
   const reset = useCallback(() => {
     const pending = jumpRef.current;
-    clear();
-    if (pending && pending.status !== 'missing') jumpTo(pending.messageId);
+    const reading = pending?.status === 'loading';
+    clear(reading);
+    if (pending && !reading && pending.status !== 'missing') jumpTo(pending.messageId);
   }, [clear, jumpTo]);
 
   useEffect(() => {

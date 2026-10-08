@@ -104,17 +104,22 @@ describe('transcript scroll controller', () => {
     expect(events).toEqual(['scrolled:message:m3', 'landed:message:m3']);
   });
 
-  it('waits for a later pass when the list has not measured the row', () => {
+  it('scrolls near a message row the list has not measured, then lands it on the next pass', () => {
     const { controller, moves, unmeasured, events, flush } = setup();
     unmeasured.add('m4');
     controller.request(message('m4'));
     flush();
-    expect(moves).toEqual(['miss:m4']);
+    // A list that has drawn every row it means to sends no further layout
+    // pass by itself. The estimated scroll draws and measures the row.
+    expect(moves).toEqual(['miss:m4', 'estimate:3']);
     expect(events).toEqual([]);
+    expect(controller.isLanding()).toBe(true);
     unmeasured.clear();
-    controller.observeLayout();
-    expect(moves).toEqual(['miss:m4', 'row:m4@3:top']);
+    controller.observeVisibleRows([{ id: 'm3' }]);
+    expect(moves).toEqual(['miss:m4', 'estimate:3', 'row:m4@3:top']);
     expect(events).toEqual(['scrolled:message:m4']);
+    controller.observeVisibleRows([{ id: 'm4' }]);
+    expect(events).toEqual(['scrolled:message:m4', 'landed:message:m4']);
   });
 
   it('asks the feature for a row that is not drawn, and lands it when it arrives', () => {

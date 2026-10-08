@@ -3134,16 +3134,22 @@ export function BuzzChatSurface({
     const needsRead =
       transcriptJump?.messageId !== messageId &&
       !(hostIndex >= 0 && messageJumpCanScrollTo(messageId, hostIndex));
-    if (needsRead && (!roomClient || !cacheViewerPubkey)) return;
+    // The store finds a target in the Room's rows without a read, and joins a
+    // read's page to them. A read answered before the Room's first rows opens
+    // a window that cannot join them, and the target settles mid-screen.
+    if (needsRead && (!roomClient || !cacheViewerPubkey || roomSurface?.room.id !== decodedId))
+      return;
     handledNotificationAnchorRef.current = anchorKey;
     requestMessageJump(scrollController, messageId, needsRead ? jumpToTranscriptMessage : null);
   }, [
     cacheViewerPubkey,
+    decodedId,
     jumpToTranscriptMessage,
     notificationMessageId,
     notificationResponseId,
     notificationTarget,
     roomClient,
+    roomSurface,
     scrollController,
     transcriptJump,
     transcriptMessages,

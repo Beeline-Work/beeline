@@ -173,7 +173,7 @@ describe('jumpTo', () => {
 });
 
 describe('Reproduction NOTIFICATION-TAP-HANG', () => {
-  it('path 1: a session reset during the read runs the jump again', async () => {
+  it('path 1: a session reset during the read keeps that read, so one tap reads once', async () => {
     const all = room(227);
     const tail = all.slice(197);
     const target = all[26]!;
@@ -186,14 +186,16 @@ describe('Reproduction NOTIFICATION-TAP-HANG', () => {
     const { state, renderer } = await mountStore(tail, { ...server, historyAround });
 
     await act(async () => state.current.jumpTo(target.id));
-    // The session effect resets the transcript in the same commit.
+    // A tap on a Room that is already open re-reads the Room, and the
+    // session effect resets the transcript in the same commit.
     await act(async () => state.current.reset());
+    expect(state.current.jump).toEqual({ messageId: target.id, status: 'loading' });
     await act(async () => {
-      first.resolve({ roomId: 'room', messages: [] });
+      first.resolve(await server.historyAround('room', target.id));
       await first.promise;
     });
 
-    expect(historyAround).toHaveBeenCalledTimes(2);
+    expect(historyAround).toHaveBeenCalledTimes(1);
     expect(state.current.jump).toEqual({ messageId: target.id, status: 'ready' });
     expect(shownIds(state.current, tail)).toContain(target.id);
     await act(async () => renderer.unmount());

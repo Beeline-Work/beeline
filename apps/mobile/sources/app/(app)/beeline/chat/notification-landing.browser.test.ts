@@ -94,7 +94,11 @@ function shims(mobile: string): Record<string, string> {
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
     // The entry can deliver a second tap by replacing globalThis.__params.
     const listeners = new Set();
-    globalThis.__params = { channelId: '${ROOM}', notificationResponseId: 'push-1', notificationMessageId: '${TARGET}' };
+    // \`?warm=1\` opens the Room first with no notification; the entry taps later.
+    const query = new URLSearchParams(location.search);
+    globalThis.__params = query.get('warm')
+      ? { channelId: '${ROOM}' }
+      : { channelId: '${ROOM}', notificationResponseId: 'push-1', notificationMessageId: query.get('target') ?? '${TARGET}' };
     globalThis.__setParams = (next) => { globalThis.__params = next; listeners.forEach((listener) => listener()); };
     export const useLocalSearchParams = () => React.useSyncExternalStore(
       (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
@@ -114,7 +118,9 @@ function shims(mobile: string): Record<string, string> {
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzViewerPubkey = async () => '${VIEWER}';
     export const loadBuzzIdentity = async () => ({ publicKey: '${VIEWER}', secretKey: new Uint8Array(32) });`,
-    '@/buzz/surface-storage': `export const mobileSurfaceCache = { read: async () => null, write: async () => undefined, remove: async () => undefined };
+    // \`?cache=1\`: the Room was opened earlier, so its last response is saved.
+    '@/buzz/surface-storage': `const cached = new URLSearchParams(location.search).get('cache') ? ${JSON.stringify(roomView)} : null;
+    export const mobileSurfaceCache = { read: async (address) => (address === '/room/${ROOM}' ? cached : null), write: async () => undefined, remove: async () => undefined };
     export const surfaceAddress = (_relay, _viewer, path) => path;
     export const createRoomOutbox = () => ({ restore: async () => undefined, list: () => [], reconcile: async () => undefined,
       fail: async () => undefined, retry: async () => undefined, remove: async () => undefined, attempted: async () => undefined,
@@ -130,19 +136,30 @@ function shims(mobile: string): Record<string, string> {
     '@/sync/transport/room-view-client': `import { RoomViewHttpError } from '@beeline/buzz-client';
     export { RoomViewHttpError };
     const view = ${JSON.stringify(roomView)};
+    // A read around a row of the tail answers with the tail rows around it, as the server does.
+    const aroundTail = (messageId) => {
+      const at = view.messages.findIndex((row) => row.id === messageId);
+      return at < 0 ? null : { roomId: '${ROOM}', messages: view.messages.slice(Math.max(0, at - 15), at + 15), nextBefore: null };
+    };
     globalThis.__around = { calls: 0, pending: [], page: ${JSON.stringify(aroundPage)},
       makeMissing: () => new RoomViewHttpError(404, 'not_found') };
     export const isRoomViewTimeoutError = () => false;
     export const readPushedMonolithRoom = async () => view;
     class Client {
-      async room() { return view; }
+      async room() {
+        const delay = Number(new URLSearchParams(location.search).get('roomDelay') ?? 0);
+        globalThis.__roomCalls = (globalThis.__roomCalls ?? 0) + 1;
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        return view;
+      }
       async markRead() {}
       async markUnread() {}
       async history(roomId) { return { roomId, messages: [] }; }
       async historyAfter(roomId) { return { roomId, messages: [] }; }
-      historyAround() {
+      historyAround(_roomId, messageId) {
         globalThis.__around.calls += 1;
-        return new Promise((resolve, reject) => globalThis.__around.pending.push({ resolve, reject }));
+        return new Promise((resolve, reject) => globalThis.__around.pending.push({
+          resolve: (page) => resolve(aroundTail(messageId) ?? page), reject }));
       }
     }
     // Any other read the Room screen makes stays unanswered rather than inventing data.
@@ -172,7 +189,10 @@ type Proof = {
   console: string[];
 };
 
-async function proof(mode: 'stall' | 'answer' | 'missing' | 'landed-then-missing'): Promise<Proof> {
+async function proof(
+  mode: 'stall' | 'answer' | 'missing' | 'landed-then-missing' | 'warm' | 'warm-retap' | 'cold',
+  extra = '',
+): Promise<Proof> {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/notification-landing-proof.tsx'),
@@ -180,7 +200,7 @@ async function proof(mode: 'stall' | 'answer' | 'missing' | 'landed-then-missing
     shims: shims(mobile),
     width: 390,
     height: 844,
-    query: `?mode=${mode}&room=${ROOM}&gone=${GONE}`,
+    query: `?mode=${mode}&room=${ROOM}&gone=${GONE}${extra}`,
     budgetMs: 15_000,
   });
   expect(status, stderr).toBe(0);
@@ -263,5 +283,89 @@ describe.skipIf(!existsSync(CHROME))(
       expect(settled!.rows).toContain('Tail message 29');
       expect(settled!.composer).toBe(true);
     }, 120_000);
+
+    // The tap reaches a Room screen that is already open (the reader is in
+    // the Room, or `cache=1`: opened earlier, so its last response paints
+    // first). Same target, same answer as a cold open.
+    describe.each([
+      ['open now', `&warm=1&target=${TARGET}`, 'TARGET MESSAGE'],
+      ['opened earlier', `&warm=1&cache=1&target=${TARGET}`, 'TARGET MESSAGE'],
+      // In the Room's tail, but further up than the first screen.
+      [
+        'open now, target in the tail',
+        `&warm=1&target=${id('c', 5)}&targetText=Tail%20message%205`,
+        'Tail message 5',
+      ],
+      [
+        'opened earlier, target in the tail',
+        `&warm=1&cache=1&target=${id('c', 5)}&targetText=Tail%20message%205`,
+        'Tail message 5',
+      ],
+    ])('a tap on a Room %s', (_name, extra, text) => {
+      it('lands the target at the top of the list', async () => {
+        const page = (await proof('warm', extra)) as Proof & {
+          beforeTap: Observation;
+          landed: Observation;
+        };
+        console.log(
+          `warm (${_name}): before tap rows=${page.beforeTap.rows.length} (${page.beforeTap.rows[0]} … ${page.beforeTap.rows.at(-1)}); ` +
+            `2 s after tap target present=${page.landed.target.present}, top=${page.landed.target.top}px, ` +
+            `historyAround calls=${page.landed.historyAroundCalls}, rows=${JSON.stringify(page.landed.rows.slice(0, 2))}`,
+        );
+        expect(page.beforeTap.rows).toContain('Tail message 29');
+        // One store jump per tap: a target outside the Room's rows is read once.
+        expect(page.landed.historyAroundCalls).toBe(text === 'TARGET MESSAGE' ? 1 : 0);
+        expect(page.landed.rows).toContain(text);
+        expect(page.landed.target.top).not.toBeNull();
+        expect(page.landed.target.top!).toBeGreaterThanOrEqual(-10);
+        expect(page.landed.target.top!).toBeLessThan(120);
+      }, 120_000);
+    });
+
+    it('lands again on a second tap with a new response id for the same target', async () => {
+      const page = (await proof('warm-retap', `&warm=1&target=${TARGET}`)) as Proof & {
+        landed: Observation;
+        atNewest: Observation;
+        relanded: Observation;
+      };
+      console.log(
+        `warm retap: first top=${page.landed.target.top}px; at newest rows=${JSON.stringify(page.atNewest.rows.slice(-2))}; ` +
+          `second tap top=${page.relanded.target.top}px, historyAround calls=${page.relanded.historyAroundCalls}`,
+      );
+      expect(page.landed.target.top!).toBeLessThan(120);
+      expect(page.atNewest.rows).toContain('Tail message 29');
+      expect(page.atNewest.rows).not.toContain('TARGET MESSAGE');
+      expect(page.relanded.historyAroundCalls).toBe(2);
+      expect(page.relanded.rows).toContain('TARGET MESSAGE');
+      expect(page.relanded.target.top!).toBeGreaterThanOrEqual(-10);
+      expect(page.relanded.target.top!).toBeLessThan(120);
+    }, 120_000);
+
+    // A notification opens the Room route itself. The target is in the Room's
+    // tail, above the first screen. Opened earlier: the saved response paints
+    // first. A slow Room read: the Room's rows arrive after the screen asks
+    // for the target.
+    it.each([
+      ['opened earlier', '&cache=1'],
+      ['opened earlier, slow Room read', '&cache=1&roomDelay=800'],
+      ['not opened before, slow Room read', '&roomDelay=800'],
+    ])(
+      'lands a tap that opens the Room (%s) on a target in its tail',
+      async (name, extra) => {
+        const page = (await proof(
+          'cold',
+          `${extra}&target=${id('c', 5)}&targetText=Tail%20message%205`,
+        )) as Proof & { landed: Observation; roomCalls: number };
+        console.log(
+          `open from tap (${name}): 2 s after open target present=${page.landed.target.present}, top=${page.landed.target.top}px, ` +
+            `rows=${JSON.stringify(page.landed.rows.slice(0, 2))}; historyAround calls=${page.landed.historyAroundCalls}; Room reads=${page.roomCalls}`,
+        );
+        expect(page.roomCalls).toBeGreaterThan(0);
+        expect(page.landed.rows).toContain('Tail message 5');
+        expect(page.landed.target.top!).toBeGreaterThanOrEqual(-10);
+        expect(page.landed.target.top!).toBeLessThan(120);
+      },
+      120_000,
+    );
   },
 );

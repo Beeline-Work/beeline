@@ -350,22 +350,25 @@ export function ConversationComposer({
             contentContainerStyle={styles.tagStripContent}
             testID={`${testIDPrefix}-tags`}
           >
+            {/* The handle and × targets are siblings in the strip, so the ×
+            target can overlap the pill and the gap on Android, where a target
+            never reaches outside its parent. */}
             {tagSplit.tags.map((handle, index) => (
-              <View
-                key={`${handle}:${index}`}
-                style={styles.tagChip}
-                testID={`${testIDPrefix}-tag-${handle}`}
-              >
+              <React.Fragment key={`${handle}:${index}`}>
                 <TouchableOpacity
                   accessibilityLabel={`Edit tags, @${handle}`}
                   accessibilityRole="button"
                   // The message is already on its way; its tags are final.
                   disabled={!onEditTags || messageOnItsWay}
+                  hitSlop={TAG_TARGET_SLOP}
                   onPress={onEditTags}
                   style={styles.tagChipBody}
                   testID={`${testIDPrefix}-tag-${handle}-edit`}
                 >
-                  <View style={[styles.tagChipFace, styles.tagChipFaceStart]}>
+                  <View
+                    style={[styles.tagChipFace, styles.tagChipFaceStart]}
+                    testID={`${testIDPrefix}-tag-${handle}`}
+                  >
                     <Text numberOfLines={1} style={styles.tagChipText}>
                       @{handle}
                     </Text>
@@ -375,6 +378,7 @@ export function ConversationComposer({
                   accessibilityLabel={`Remove @${handle}`}
                   accessibilityRole="button"
                   disabled={messageOnItsWay}
+                  hitSlop={TAG_TARGET_SLOP}
                   onPress={() => commitInputChange(removeComposerTag(value, tagHandles, handle))}
                   style={styles.tagChipRemove}
                   testID={`${testIDPrefix}-tag-${handle}-remove`}
@@ -383,12 +387,13 @@ export function ConversationComposer({
                     <Text style={styles.tagChipRemoveText}>×</Text>
                   </View>
                 </TouchableOpacity>
-              </View>
+              </React.Fragment>
             ))}
             {isCapturingSpeech && tagSplit.tags.length === 0 && onEditTags ? (
               <TouchableOpacity
                 accessibilityLabel="Tag an agent"
                 accessibilityRole="button"
+                hitSlop={TAG_TARGET_SLOP}
                 onPress={onEditTags}
                 style={styles.tagChipEmpty}
                 testID={`${testIDPrefix}-tag-empty`}
@@ -603,6 +608,8 @@ export function ConversationComposer({
 }
 
 const MIC_SIZE = 26;
+// Like ＋ and the mic: a 26-tall target reaches 44 with 9 above and below.
+const TAG_TARGET_SLOP = { top: 9, bottom: 9 };
 
 const styles = StyleSheet.create((theme) => ({
   // Speech recognition styles
@@ -734,22 +741,16 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.buzz.radius,
     backgroundColor: theme.buzz.textPrimary,
   },
-  // The strip is the row's full height, so every chip is a full-height target.
+  // The strip spans the row's full height, so the chip targets' slop fits in it.
   tagStrip: {
     flexGrow: 0,
     flexShrink: 1,
     maxWidth: '50%',
     marginVertical: -8,
   },
-  tagStripContent: { alignItems: 'stretch' },
-  tagChip: {
-    height: 42,
-    flexDirection: 'row',
-  },
-  // The mock's pill is drawn in two halves, one inside each 44-wide target:
-  // the handle half ends its target, the × half starts the next. A short
-  // handle's spare target width sits before the pill, and the × target's
-  // last 24 px make the gap after it, so the pill hugs its handle.
+  tagStripContent: { alignItems: 'center' },
+  // The v6 pill, drawn in two halves: the handle half in the handle target,
+  // the × half in the middle of the 44-wide × target.
   tagChipFace: {
     height: 22,
     justifyContent: 'center',
@@ -769,14 +770,21 @@ const styles = StyleSheet.create((theme) => ({
     borderTopRightRadius: theme.buzz.radius,
     borderBottomRightRadius: theme.buzz.radius,
   },
-  tagChipBody: {
-    minWidth: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
+  tagChipBody: { height: 26, justifyContent: 'center' },
   tagChipText: { ...theme.buzz.type.machine, color: theme.buzz.accent },
-  tagChipRemove: { width: 44, flexDirection: 'row', alignItems: 'center' },
+  // 16 + the 20 px × + 8 = 44: the target reaches 16 back over the handle
+  // and 8 past the pill, 4 of them over the next pill's padding, which keeps
+  // the v6 4 px gap. Drawn above its neighbours so the × always wins.
+  tagChipRemove: {
+    width: 44,
+    height: 26,
+    justifyContent: 'center',
+    paddingLeft: theme.buzz.space.md,
+    paddingRight: theme.buzz.space.sm,
+    marginLeft: -theme.buzz.space.md,
+    marginRight: -theme.buzz.space.xs,
+    zIndex: 1,
+  },
   tagChipRemoveText: {
     ...theme.buzz.type.meta,
     width: 20,
@@ -784,7 +792,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerQuiet,
   },
   tagChipEmpty: {
-    height: 42,
+    height: 26,
     minWidth: 44,
     alignItems: 'center',
     justifyContent: 'center',

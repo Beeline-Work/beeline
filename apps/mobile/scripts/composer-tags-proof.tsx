@@ -221,12 +221,24 @@ async function run() {
   lines.push(
     `chip targets: body ${edit.width}x${edit.height}, × ${remove.width}x${remove.height}, row ${row.height}`,
   );
+  const face = byTestID('chat-tag-ruby')!.getBoundingClientRect();
+  const xFace = (
+    byTestID('chat-tag-ruby-remove')!.firstElementChild as HTMLElement
+  ).getBoundingClientRect();
+  lines.push(
+    `pill: ${Math.round(xFace.right - face.left)}px wide, × cell ${Math.round(xFace.width)}px`,
+  );
   check(
-    'idle: the chip body and × are 44 wide and the full row tall',
-    edit.width >= 44 &&
-      remove.width >= 44 &&
-      edit.height >= row.height &&
-      remove.height >= row.height,
+    'idle: the × target is 44 wide over the ×, and both targets are 26 tall with 9 px slop like ＋',
+    remove.width === 44 &&
+      remove.left <= xFace.left &&
+      remove.right >= xFace.right &&
+      edit.height === 26 &&
+      remove.height === 26,
+  );
+  check(
+    'idle: the pill is the handle plus a 20 px ×, in one piece',
+    xFace.width === 20 && Math.abs(xFace.left - face.right) < 0.5,
   );
   if (stopAt === 'idle') return;
 
@@ -261,6 +273,27 @@ async function run() {
     `six chips: strip ${Math.round(strip.width)}px of row ${Math.round(inputRow.width)}px`,
   );
   check('many: all six agents are tagged', chips().length === 6);
+  const rubyEnd = (
+    byTestID('chat-tag-ruby-remove')!.firstElementChild as HTMLElement
+  ).getBoundingClientRect();
+  const solStart = byTestID('chat-tag-sol')!.getBoundingClientRect();
+  lines.push(`gap between pills: ${Math.round(solStart.left - rubyEnd.right)}px`);
+  // The × target reaches over its own handle and the next pill, and is drawn above both.
+  const rubyX = byTestID('chat-tag-ruby-remove')!;
+  const rubyXTarget = rubyX.getBoundingClientRect();
+  const solEdit = byTestID('chat-tag-sol-edit')!.getBoundingClientRect();
+  const rubyEdit = byTestID('chat-tag-ruby-edit')!.getBoundingClientRect();
+  lines.push(
+    `× target ${Math.round(rubyXTarget.left)}–${Math.round(rubyXTarget.right)}, handle ends ${Math.round(rubyEdit.right)}, next handle starts ${Math.round(solEdit.left)}, z ${getComputedStyle(rubyX).zIndex}`,
+  );
+  check(
+    'many: the × target overlaps the handle and the next pill and sits above them',
+    rubyXTarget.left < rubyEdit.right &&
+      rubyXTarget.right > solEdit.left &&
+      Number(getComputedStyle(rubyX).zIndex) >
+        (Number(getComputedStyle(byTestID('chat-tag-sol-edit')!).zIndex) || 0),
+  );
+  check('many: pills sit 4 px apart, as in v6', Math.abs(solStart.left - rubyEnd.right - 4) < 0.5);
   check('many: the chip strip takes at most half the row', strip.width <= inputRow.width / 2 + 0.5);
   check('many: the mic stays fully inside the composer', mic.width > 0 && inside(mic, inputRow));
   if (stopAt === 'many') return;

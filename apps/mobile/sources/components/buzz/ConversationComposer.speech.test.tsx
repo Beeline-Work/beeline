@@ -904,7 +904,7 @@ describe('recipient chips', () => {
     expect(renderer.root.findAllByProps({ testID: 'chat-send' })).toHaveLength(0);
   });
 
-  it('makes each chip a full-row target, and scrolls many chips in a capped strip beside the mic', () => {
+  it('gives each chip 44 pt targets like ＋ and the mic, and scrolls many chips beside the mic', () => {
     const many = new Set(['ruby', 'sol', 'fathom', 'goosy', 'hoots', 'milo']);
     const { renderer } = render({
       value: '@ruby @sol @fathom @goosy @hoots @milo ',
@@ -914,14 +914,17 @@ describe('recipient chips', () => {
     const strip = renderer.root.findByProps({ testID: 'chat-tags' });
     expect(strip.props.horizontal).toBe(true);
     expect(strip.props.style).toMatchObject({ flexShrink: 1, maxWidth: '50%' });
+    const tall = (testID: string) => {
+      const target = renderer.root.findByProps({ testID });
+      return target.props.style.height + target.props.hitSlop.top + target.props.hitSlop.bottom;
+    };
     for (const handle of many) {
-      expect(renderer.root.findByProps({ testID: `chat-tag-${handle}` }).props.style.height).toBe(
-        42,
-      );
+      expect(tall(`chat-tag-${handle}-edit`)).toBe(44);
+      expect(tall(`chat-tag-${handle}-remove`)).toBe(44);
+      expect(
+        renderer.root.findByProps({ testID: `chat-tag-${handle}-remove` }).props.style.width,
+      ).toBe(44);
     }
-    expect(renderer.root.findByProps({ testID: 'chat-tag-ruby-remove' }).props.style.width).toBe(
-      44,
-    );
     expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
   });
 

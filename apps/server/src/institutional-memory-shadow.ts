@@ -45,9 +45,33 @@ import {
   institutionalWorkspaceRolloutStage,
   rolloutAllowsLive,
 } from './institutional-rollout.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 export const INSTITUTIONAL_MEMORY_SHADOW_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED';
 export const INSTITUTIONAL_MEMORY_LIVE_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_ENABLED';
+
+/**
+ * HTTP status for a refused memory or history call. Every such refusal is the
+ * caller's input or authority, never this server being unavailable.
+ */
+export function institutionalMemoryErrorStatus(message: string): number | undefined {
+  if (
+    !message.startsWith('institutional memory ') &&
+    !message.startsWith('institutional history ') &&
+    !message.startsWith('direct-message facts ')
+  ) {
+    return undefined;
+  }
+  if (
+    message.includes('requester authority is unavailable') ||
+    message.includes('is not enabled for this Workspace') ||
+    message.includes('profile facts need a turn')
+  ) {
+    return 403;
+  }
+  if (message.includes('already has item') || message.includes(' is at version ')) return 409;
+  return 400;
+}
 
 export interface InstitutionalMemoryShadowConfig {
   readonly enabled: boolean;
@@ -508,11 +532,31 @@ type MemoryWriteAuthority = {
   workspaceId: string;
   requesterIdentityId: string;
   directMessage: boolean;
+  /** The requester started this turn; only then may it touch their profile. */
+  requesterTurn: boolean;
 };
 
 /**
- * Who a memory write acts for, and the sources it rests on. A write stays in
- * its root request's Room and cites that request among current Room messages.
+ * A corner's durable requester: the person who commissioned it, else the
+ * person who approved its current brief.
+ */
+const CORNER_REQUESTER_SQL = (cornerId: string) => `COALESCE(
+  (SELECT fact.commissioned_by FROM corner_facts fact
+   JOIN identities person ON person.id=fact.commissioned_by AND person.kind='human'
+     AND person.id<>'${SYSTEM_IDENTITY_ID}'
+   WHERE fact.corner_id=${cornerId}),
+  (SELECT person.id FROM corner_brief_revisions brief
+   JOIN identities person ON person.id=brief.approval_basis->>'approvedBy' AND person.kind='human'
+     AND person.id<>'${SYSTEM_IDENTITY_ID}'
+   WHERE brief.corner_id=${cornerId} ORDER BY brief.revision DESC LIMIT 1))`;
+
+/**
+ * Who a memory write acts for, and the sources it rests on. A person's turn
+ * acts for that person: the write stays in their request's Room and cites it.
+ * A turn woken by a corner event, a watched corner, or an agent message acts
+ * for the corner's durable requester (this Room's corner, else the root
+ * message's corner); it may write shared Workspace facts only, sourced from
+ * current messages in this Room.
  */
 async function memoryWriteAuthority(
   db: SqlDatabase,
@@ -523,26 +567,45 @@ async function memoryWriteAuthority(
     await db.query<{
       workspace_id: string;
       direct_participants: unknown;
-      requester_identity_id: string;
       root_room_id: string;
+      person_id: string | null;
+      corner_requester_id: string | null;
     }>(
-      `SELECT room.workspace_id,room.direct_participants,root.author_id requester_identity_id,
-              root.room_id root_room_id
+      `SELECT room.workspace_id,room.direct_participants,root.room_id root_room_id,
+              CASE WHEN author.kind='human' AND author.id<>'${SYSTEM_IDENTITY_ID}'
+                THEN author.id END person_id,
+              COALESCE(${CORNER_REQUESTER_SQL('room.id')},
+                ${CORNER_REQUESTER_SQL('root.room_id')}) corner_requester_id
        FROM rooms room
        JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
        JOIN rooms root_room ON root_room.id=root.room_id
          AND root_room.workspace_id=room.workspace_id
-       JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
+       JOIN identities author ON author.id=root.author_id
        WHERE room.id=$1`,
       [command.room_id, command.root_source_message_id],
     )
   ).rows[0];
-  if (!authority) throw new Error('institutional memory requester authority is unavailable');
+  if (!authority) {
+    throw new Error(
+      `institutional memory requester authority is unavailable: this turn's root message ${command.root_source_message_id} is not in this Workspace`,
+    );
+  }
+  const requesterIdentityId = authority.person_id ?? authority.corner_requester_id;
+  if (!requesterIdentityId) {
+    const corners =
+      authority.root_room_id === command.room_id
+        ? `Room ${command.room_id} is not`
+        : `neither Room ${command.room_id} nor Room ${authority.root_room_id} is`;
+    throw new Error(
+      `institutional memory requester authority is unavailable: this turn's root message ${command.root_source_message_id} in Room ${authority.root_room_id} is not from a person, and ${corners} a corner with a recorded requester`,
+    );
+  }
   const rolloutStage = await institutionalWorkspaceRolloutStage(db, authority.workspace_id);
   if (!rolloutAllowsLive(rolloutStage)) {
     throw new Error('institutional memory is not enabled for this Workspace');
   }
-  if (authority.root_room_id !== command.room_id) {
+  const requesterTurn = authority.person_id !== null;
+  if (requesterTurn && authority.root_room_id !== command.room_id) {
     throw new Error('institutional memory changes must stay in their root source partition');
   }
   if (typeof input.personAsked !== 'boolean') {
@@ -555,7 +618,7 @@ async function memoryWriteAuthority(
   ) {
     throw new Error('institutional memory source messages are invalid');
   }
-  if (!input.sourceMessageIds.includes(command.root_source_message_id)) {
+  if (requesterTurn && !input.sourceMessageIds.includes(command.root_source_message_id)) {
     throw new Error('institutional memory changes must cite their root requester message');
   }
   const validSources = await db.query<{ id: string }>(
@@ -568,8 +631,9 @@ async function memoryWriteAuthority(
   }
   return {
     workspaceId: authority.workspace_id,
-    requesterIdentityId: authority.requester_identity_id,
+    requesterIdentityId,
     directMessage: Array.isArray(authority.direct_participants),
+    requesterTurn,
   };
 }
 
@@ -587,6 +651,11 @@ function memoryProposal(
 ): InstitutionalMemoryProposal {
   if (input.memoryKind === 'workspace_fact' && authority.directMessage) {
     throw new Error('direct-message facts cannot enter shared workspace memory');
+  }
+  if (input.memoryKind === 'human_profile_fact' && !authority.requesterTurn) {
+    throw new Error(
+      'institutional memory profile facts need a turn the requester started; save a workspace fact instead',
+    );
   }
   const proposal = parseInstitutionalMemoryProposal({
     proposalVersion: 1,
@@ -702,7 +771,12 @@ async function lockMemoryTarget(
          AND ((kind='human_profile_fact' AND subject_identity_id=$3)
            OR ($4::boolean=false AND kind='workspace_fact'))
        FOR UPDATE`,
-      [itemId, authority.workspaceId, authority.requesterIdentityId, authority.directMessage],
+      [
+        itemId,
+        authority.workspaceId,
+        authority.requesterTurn ? authority.requesterIdentityId : null,
+        authority.directMessage,
+      ],
     )
   ).rows[0];
   if (!row) throw new Error(`institutional memory item ${itemId} is unavailable`);

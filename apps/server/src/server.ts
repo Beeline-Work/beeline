@@ -21,6 +21,7 @@ import {
   type PhoneService,
 } from './phone-service.js';
 import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
+import { institutionalMemoryErrorStatus } from './institutional-memory-shadow.js';
 import { ARTIFACT_MAXIMUM_BYTES, decodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
 import { MESSAGE_SEARCH_QUERY_MAX_BYTES, messageSearchTerms } from '@beeline/api-contract/phone';
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
@@ -442,7 +443,8 @@ export function createBeelineServer(options: ServerOptions): Server {
       let status =
         error instanceof WorkflowAuthorizationError || error instanceof WebhookError
           ? error.status
-          : (message.startsWith('corner brief attachment ') &&
+          : institutionalMemoryErrorStatus(message) ??
+            ((message.startsWith('corner brief attachment ') &&
                 message.endsWith('is missing or unavailable in this Room')) ||
               message.includes('required') ||
               message.includes('invalid') ||
@@ -468,7 +470,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                 ? 403
                 : message.includes('not found')
                   ? 404
-                  : 503;
+                  : 503);
       // GitHub's own outage or rate limit is a bad gateway, not this server
       // being unavailable; the message already names GitHub's status.
       if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429)) {

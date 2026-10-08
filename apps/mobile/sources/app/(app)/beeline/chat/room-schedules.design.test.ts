@@ -26,7 +26,7 @@ describe('scheduled Agent work', () => {
     // Webhooks are read-only beside schedules: revoke is the one action.
     expect(screen).toContain("monolithPhoneOperation('readRoomWebhooks'");
     expect(screen).toContain("action: 'revoke'");
-    expect(screen).toContain('CONFIRM REVOKE');
+    expect(screen).not.toContain('CONFIRM REVOKE');
     expect(screen).not.toMatch(/action: '(create|rotate|secret)'/);
   });
 

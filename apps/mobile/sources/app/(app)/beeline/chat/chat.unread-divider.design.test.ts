@@ -11,6 +11,10 @@ import { describe, expect, it } from 'vitest';
  * has grown back beside it.
  */
 const chatSource = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8');
+const storeSource = readFileSync(
+  path.join(__dirname, '../../../../buzz/room-message-store.ts'),
+  'utf8',
+);
 
 describe('the chat surface unread-divider wiring', () => {
   it('draws divider, disc and offer from the one hook, with no second path', () => {
@@ -79,7 +83,8 @@ describe('the chat surface unread-divider wiring', () => {
   });
 
   it('splits folding only at the visible unread divider without consulting the live queue', () => {
-    expect(chatSource).toContain('boundaryRowIndex(anchored, firstNewMessageId)');
+    expect(chatSource).toContain('foldTranscriptRows(combinedMessages, firstNewMessageId)');
+    expect(storeSource).toContain('boundaryRowIndex(anchored, firstNewMessageId)');
   });
 
   it('derives corner state from the same fresh turn receipts as the turn line', () => {

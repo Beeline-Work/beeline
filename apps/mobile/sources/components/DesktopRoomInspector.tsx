@@ -24,7 +24,7 @@ import {
   roomViewTranscriptMessages,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
-import { useRoomTranscriptHistory } from '@/buzz/use-room-transcript-history';
+import { useRoomMessageStore } from '@/buzz/room-message-store';
 import { buildChannelReferenceIndex, type ChannelReferenceIndex, type ChannelReferenceTarget } from '@/buzz/channel-reference';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -299,10 +299,10 @@ function CornerCockpit({
   const [stopping, setStopping] = React.useState(false);
   const [now, setNow] = React.useState(Date.now);
   const {
-    olderPages,
+    rows: historyRows,
     status: historyStatus,
     loadOlder,
-  } = useRoomTranscriptHistory({
+  } = useRoomMessageStore({
     roomId,
     tailMessages: detail?.room.id === roomId ? detail.messages : undefined,
     roomClient: client,
@@ -355,14 +355,14 @@ function CornerCockpit({
         ? foldPrLifecycleRuns(anchorRelayReports(
             projector.project(
               roomViewTranscriptMessages({
-                messages: [...olderPages.flat(), ...detail.messages],
+                messages: [...historyRows, ...detail.messages],
                 toolRows: detail.toolRows,
               }),
               detail.viewer.identity.pubkey,
             ),
           ))
         : [],
-    [detail, olderPages, projector],
+    [detail, historyRows, projector],
   );
   React.useEffect(() => {
     focusedAnchorRef.current = null;

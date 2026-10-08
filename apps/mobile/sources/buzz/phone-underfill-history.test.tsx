@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
 
 import { phoneTranscriptUnderfilled, usePhoneUnderfillHistory } from './phone-underfill-history';
-import { useRoomTranscriptHistory } from './use-room-transcript-history';
+import { useRoomMessageStore } from './room-message-store';
 
 const originalConsoleError = console.error;
 
@@ -52,14 +52,14 @@ function PhoneTranscript({
   history: (roomId: string, before?: { createdAt: number; id: string }) => Promise<RoomHistoryView>;
   measureRef: { current: Measure | null };
 }) {
-  const page = useRoomTranscriptHistory({
+  const page = useRoomMessageStore({
     roomId: 'room',
     tailMessages: tail,
     roomClient: { history },
     enabled: true,
     initialVisibleCount: 30,
   });
-  const rows = [...page.olderPages.flat(), ...tail].slice(-page.visibleMessageCount);
+  const rows = [...page.rows, ...tail].slice(-page.visibleMessageCount);
   measureRef.current = usePhoneUnderfillHistory({
     enabled: rows.length > 0,
     status: page.status,

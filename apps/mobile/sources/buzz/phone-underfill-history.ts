@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import type { TranscriptHistoryStatus } from './use-room-transcript-history';
+import type { TranscriptHistoryStatus } from './room-message-store';
 
 /**
  * The phone transcript only pages older history after the reader scrolls

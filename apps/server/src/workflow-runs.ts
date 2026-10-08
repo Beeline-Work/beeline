@@ -405,11 +405,13 @@ async function workflowRequester(
 
 /**
  * The identity a workflow turn answers to, for resource authority such as
- * connected apps. The latest person who answered a gate wins; otherwise the
- * person the run started from. A run with no person on record — started by an
- * agent or a schedule, with no person's gate answer — resolves to an agent
- * (the run's own starter when that is an agent, else the agent being woken),
- * so app use stays refused there.
+ * connected apps. The latest person who answered a gate wins, read from the
+ * server-written receipt actor rather than agent-supplied contents, so an
+ * agent handoff cannot name a person; otherwise the person the run started
+ * from. A run with no person on record — started by an agent or a schedule,
+ * with no person's gate answer — resolves to an agent (the run's own starter
+ * when that is an agent, else the agent being woken), so app use stays
+ * refused there.
  *
  * `undefined` when the command is not a wake from a saved run, so a normal
  * turn keeps its own root requester. `rootSourceMessageId` is used rather than
@@ -434,10 +436,8 @@ export async function workflowRunRequester(
     await db.query<{ id: string; kind: 'human' | 'agent' }>(
       `SELECT identity.id,identity.kind
        FROM messages card
-       JOIN identities identity ON identity.id=COALESCE(
-         card.card->'contents'->>'answeredBy',card.card->'contents'->>'defaultedBy')
+       JOIN identities identity ON identity.id=card.card->'receipt'->'exit'->>'actorId'
        WHERE card.room_id=$1 AND card.card_type=$2 AND card.card->>'runId'=$3
-         AND card.card->'contents' IS NOT NULL
          AND identity.kind='human' AND NOT COALESCE(identity.hidden_from_roster,false)
        ORDER BY (card.card->>'seq')::int DESC NULLS LAST,card.created_at DESC,card.id DESC
        LIMIT 1`,

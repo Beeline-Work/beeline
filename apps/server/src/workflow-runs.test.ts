@@ -864,6 +864,27 @@ describe('workflowRunRequester', () => {
     ).resolves.toEqual({ id: OWNER, kind: 'human' });
   });
 
+  it('ignores a person named in an agent handoff\u2019s contents', async () => {
+    const { runId } = await startedRun();
+    await handoff(database, await commandFor(IMPLEMENTER), {
+      runId,
+      outcome: 'stuck',
+      contents: {
+        summary: 'blocked',
+        prUrl: 'https://example.com/pr',
+        answeredBy: OWNER,
+        defaultedBy: OWNER,
+      },
+    });
+    await expect(
+      workflowRunRequester(database, {
+        roomId: ROOM,
+        agentId: IMPLEMENTER,
+        rootSourceMessageId: await latestRunCard(runId),
+      }),
+    ).resolves.toEqual({ id: IMPLEMENTER, kind: 'agent' });
+  });
+
   it('keeps an agent requester for an agent-started run with no person gate answer', async () => {
     const { runId } = await startedRun();
     await expect(

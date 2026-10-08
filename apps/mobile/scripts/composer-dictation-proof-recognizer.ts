@@ -19,6 +19,8 @@ export const speechProofRecognizer = {
   },
   downloadRequests: [] as string[],
   services: [] as string[],
+  /** True stands in for a phone that records each piece for Groq. */
+  recording: false,
   emit(event: string, payload?: unknown) {
     handlers.get(event)?.(payload);
   },
@@ -36,6 +38,7 @@ const recognizerModule = {
   getPermissionsAsync: async () => ({ status: 'granted', granted: true, canAskAgain: true }),
   requestPermissionsAsync: async () => ({ status: 'granted', granted: true, canAskAgain: true }),
   supportsOnDeviceRecognition: () => true,
+  supportsRecording: () => speechProofRecognizer.recording,
   getSupportedLocales: async () => ({ locales: ['en-US'], installedLocales: [] as string[] }),
   androidTriggerOfflineModelDownload: async ({ locale }: { locale: string }) => {
     speechProofRecognizer.downloadRequests.push(locale);

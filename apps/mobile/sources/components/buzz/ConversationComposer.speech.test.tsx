@@ -920,7 +920,7 @@ describe('recipient chips', () => {
       );
     }
     expect(renderer.root.findByProps({ testID: 'chat-tag-ruby-remove' }).props.style.width).toBe(
-      28,
+      44,
     );
     expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
   });

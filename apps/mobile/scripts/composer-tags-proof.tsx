@@ -10,6 +10,8 @@ import {
 import { MentionSuggestionMenu } from '../sources/components/buzz/MentionSuggestionMenu';
 import type { RoomRosterParticipant } from '../sources/components/buzz/RoomRosterSheet';
 import { beelineThemes, type BeelineThemeName } from '../sources/buzz/groknight';
+import { prepareMessageReply } from '../sources/buzz/message-reply';
+import { mentionedAgentPubkey } from '../sources/buzz/room-participants';
 import { speechProofRecognizer } from './composer-dictation-proof-recognizer';
 
 // An Android 14 phone with Google's recognition service, so dictation starts
@@ -34,15 +36,33 @@ const AGENTS: RoomRosterParticipant[] = ['Ruby', 'Sol', 'Fathom', 'Goosy', 'Hoot
 const TAG_HANDLES = new Set(AGENTS.map((agent) => agent.handle));
 const RUBY_MESSAGE = 'Posted the v5 mock. The mic stays plain white with no ring or glow…';
 
-type Sent = { text: string; replyTo?: string };
+// `wakes` is the agent the Room's send would address (_chat-surface.tsx handleSend).
+type Sent = { text: string; replyTo?: string; wakes?: string };
+const RUBY_REPLY_TARGET = {
+  messageId: 'ruby-message',
+  authorName: 'Ruby',
+  authorHandle: 'ruby',
+  authorPubkey: AGENTS[0].pubkey,
+  isAgent: true,
+  preview: RUBY_MESSAGE,
+};
 const state = {
   value: '',
   sent: [] as Sent[],
   // A send waits here, as a queued send waits on the network, until released.
   held: [] as (() => void)[],
+  // Groq answers a take here when the proof releases it.
+  groq: [] as ((text: string) => void)[],
   setReply: (_: boolean) => undefined as void,
   setValue: (_: string) => undefined as void,
 };
+
+// The Groq upload the hook starts for a recorded take.
+(globalThis as { __groqUpload?: unknown }).__groqUpload = () => ({
+  add: () => undefined,
+  finish: () => new Promise<string>((answer) => state.groq.push(answer)),
+  discard: () => undefined,
+});
 
 // The tag menu, the backdrop and the send wiring follow _chat-surface.tsx.
 function Proof() {
@@ -66,7 +86,16 @@ function Proof() {
     await new Promise<void>((release) => state.held.push(release));
     if (dictated?.cancelled) return;
     if (dictated) dictated.committed = true;
-    setSent((current) => [...current, { text, ...(reply ? { replyTo: 'ruby' } : {}) }]);
+    const prepared = reply ? prepareMessageReply(text, RUBY_REPLY_TARGET) : undefined;
+    const wakes = prepared?.agentPubkey ?? mentionedAgentPubkey(text, AGENTS);
+    setSent((current) => [
+      ...current,
+      {
+        text,
+        ...(reply ? { replyTo: 'ruby' } : {}),
+        ...(wakes ? { wakes: AGENTS.find((agent) => agent.pubkey === wakes)!.handle } : {}),
+      },
+    ]);
     state.setValue('');
     setRevision((current) => current + 1);
     setReply(false);
@@ -176,6 +205,8 @@ async function dictate(words: string) {
 }
 
 async function run() {
+  // The person keeps talking, so the silence stop never ends a take early.
+  setInterval(() => speechProofRecognizer.emit('volumechange', { value: 4 }), 500);
   await pause();
   // 1 Idle: the prefilled agent is a chip; the field is empty and keeps the mic.
   check('idle: the prefilled @ruby shows as a chip', chips().join() === 'ruby');
@@ -190,7 +221,13 @@ async function run() {
   lines.push(
     `chip targets: body ${edit.width}x${edit.height}, × ${remove.width}x${remove.height}, row ${row.height}`,
   );
-  check('idle: the chip body and × are full-row targets', edit.height >= 42 && remove.height >= 42);
+  check(
+    'idle: the chip body and × are 44 wide and the full row tall',
+    edit.width >= 44 &&
+      remove.width >= 44 &&
+      edit.height >= row.height &&
+      remove.height >= row.height,
+  );
   if (stopAt === 'idle') return;
 
   // 2 Tap the chip: MENTION lists the agents, ✓ on the tagged ones; taps toggle.
@@ -310,7 +347,8 @@ async function run() {
     'R4 sent: a quote reply to Ruby with the @ruby tag',
     state.sent.length === 1 &&
       state.sent[0].replyTo === 'ruby' &&
-      state.sent[0].text === '@ruby make the stop button keep the reply',
+      state.sent[0].text === '@ruby make the stop button keep the reply' &&
+      state.sent[0].wakes === 'ruby',
   );
   check(
     'R4 sent: the banner and chip clear',
@@ -320,6 +358,55 @@ async function run() {
     'R4 sent: ＋ returns',
     Boolean(byTestID('chat-attach-button')) && !byTestID('chat-speech-discard'),
   );
+
+  // G: a recorded take that Groq transcribes, sent as an untagged quote reply.
+  speechProofRecognizer.recording = true;
+  state.setValue('@ruby ');
+  state.setReply(true);
+  await pause();
+  await tap('chat-tag-ruby-remove');
+  check('G: the reply is untagged', chips().length === 0 && state.value === '');
+  await tap('chat-mic');
+  for (let level = 1; level <= 8; level += 1) {
+    speechProofRecognizer.emit('volumechange', { value: level });
+    await pause();
+  }
+  // The on-device guess, which Groq's text replaces.
+  speechProofRecognizer.emit('result', {
+    isFinal: false,
+    results: [{ transcript: 'keep the reply thread it' }],
+  });
+  await pause();
+  await tap('chat-mic');
+  const bars = [...(byTestID('chat-speech-waveform')?.children ?? [])] as HTMLElement[];
+  check('G: Groq is transcribing the take', state.groq.length === 1);
+  check(
+    'G: the gold mark replaces the mic while Groq transcribes',
+    Boolean(byTestID('chat-speech-finalizing')),
+  );
+  check(
+    'G: the waveform freezes grey',
+    bars.length > 0 &&
+      bars.every((bar) => getComputedStyle(bar).backgroundColor === rgb(theme.textMuted)),
+  );
+  check('G: nothing is sent before Groq answers', state.held.length === 0);
+  if (stopAt === 'groq') return;
+  state.groq.shift()!('Keep the reply threaded.');
+  await pause();
+  check('G: the Groq text goes out', state.held.length === 1);
+  state.held.shift()!();
+  await pause();
+  const last = state.sent.at(-1);
+  lines.push(`G sent: ${JSON.stringify(last)}`);
+  check(
+    "G sent: Groq's text, as a quote reply to Ruby, waking no one",
+    last?.text === 'Keep the reply threaded.' && last.replyTo === 'ruby' && !last.wakes,
+  );
+}
+
+function rgb(hex: string) {
+  const [r, g, b] = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 run()

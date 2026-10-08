@@ -742,22 +742,23 @@ const styles = StyleSheet.create((theme) => ({
   tagChip: {
     height: 42,
     flexDirection: 'row',
-    marginRight: theme.buzz.space.xs,
   },
+  // The × target runs past the face's right edge, so the face keeps its
+  // size while both targets are 44 wide; that overhang is the gap between chips.
   tagChipFace: {
     position: 'absolute',
     top: 10,
     left: 0,
-    right: 0,
+    right: 14,
     height: 22,
     borderWidth: 1,
     borderColor: theme.buzz.border,
     borderRadius: theme.buzz.radius,
     backgroundColor: theme.buzz.bgHighlight,
   },
-  tagChipBody: { justifyContent: 'center', paddingLeft: theme.buzz.space.sm },
+  tagChipBody: { minWidth: 44, justifyContent: 'center', paddingLeft: theme.buzz.space.sm },
   tagChipText: { ...theme.buzz.type.machine, color: theme.buzz.accent },
-  tagChipRemove: { width: 28, alignItems: 'center', justifyContent: 'center' },
+  tagChipRemove: { width: 44, alignItems: 'center', justifyContent: 'center' },
   tagChipRemoveText: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   tagChipEmpty: {
     height: 42,

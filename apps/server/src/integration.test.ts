@@ -7708,6 +7708,7 @@ describe('monolith integration', () => {
             title: 'Ship the widget',
             url: 'https://github.com/owner/widgets/pull/42',
             targetBranch: 'main',
+            mergeCommitSha: 'f'.repeat(40),
           },
         },
       }),

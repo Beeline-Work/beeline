@@ -14,6 +14,8 @@ export type ChannelSuggestion = {
   readonly id: string;
   /** `room` or `room/corner`, without the `#` mark. */
   readonly token: string;
+  /** Second row line: a Room's repository, or `in #room` for a corner. */
+  readonly subtitle?: string;
 };
 
 const CHANNEL_QUERY_PATTERN = /(?:^|[\s([{])#([\p{L}\p{M}\p{N}_\-/]*)$/u;
@@ -33,7 +35,11 @@ export function activeChannelAtCursor(text: string, cursor: number): ActiveChann
 
 /** Rooms first, then the current Room's corners; duplicate ids keep their first entry. */
 export function channelSuggestionCandidates(
-  rooms: readonly { readonly id: string; readonly name: string }[],
+  rooms: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly repositoryName?: string;
+  }[],
   cornerRoom: { readonly name: string } | null,
   corners: readonly { readonly id: string; readonly name: string }[],
 ): ChannelSuggestion[] {
@@ -45,12 +51,24 @@ export function channelSuggestionCandidates(
     candidates.push(candidate);
   };
   for (const room of rooms) {
-    if (room.name) add({ kind: 'room', id: room.id, token: room.name });
+    if (room.name) {
+      add({
+        kind: 'room',
+        id: room.id,
+        token: room.name,
+        ...(room.repositoryName ? { subtitle: room.repositoryName } : {}),
+      });
+    }
   }
   if (cornerRoom?.name) {
     for (const corner of corners) {
       if (corner.name) {
-        add({ kind: 'corner', id: corner.id, token: `${cornerRoom.name}/${corner.name}` });
+        add({
+          kind: 'corner',
+          id: corner.id,
+          token: `${cornerRoom.name}/${corner.name}`,
+          subtitle: `in #${cornerRoom.name}`,
+        });
       }
     }
   }
@@ -80,6 +98,23 @@ export function filterChannelSuggestions(
     matches: matching.slice(0, limit).map((item) => item.candidate),
     overflow: Math.max(0, matching.length - limit),
   };
+}
+
+/**
+ * After `#room/`, when every match is a corner of that Room, the menu names the
+ * Room in its heading instead of on each row.
+ */
+export function channelCornerRoom(
+  query: string,
+  matches: readonly ChannelSuggestion[],
+): string | null {
+  const slash = query.indexOf('/');
+  if (slash <= 0 || matches.length === 0) return null;
+  const room = fold(query.slice(0, slash));
+  const inRoom = matches.every(
+    (item) => item.kind === 'corner' && fold(item.token).startsWith(`${room}/`),
+  );
+  return inRoom ? matches[0]!.token.slice(0, matches[0]!.token.indexOf('/')) : null;
 }
 
 /** Replace only the active `#` fragment; add one space unless whitespace already follows. */

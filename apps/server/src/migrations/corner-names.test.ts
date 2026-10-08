@@ -21,18 +21,23 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,name) VALUES($2,$1,'beeline'),($3,$1,'other')`,
     [WORKSPACE, ROOM, OTHER_ROOM],
   );
-  const rows: [string, string, string, string][] = [
+  const rows: [string, string, string, string, string?][] = [
     [corner(1), ROOM, 'fix-ledger', '2026-09-01'],
     [corner(2), ROOM, 'Fix ledger', '2026-09-02'],
     [corner(3), ROOM, 'fix  ledger drift and more words', '2026-09-03'],
     [corner(4), ROOM, 'fix ledger', '2026-09-04'],
     [corner(5), OTHER_ROOM, 'fix ledger', '2026-09-05'],
     [corner(6), ROOM, '   ', '2026-09-06'],
+    // An archived name stays taken, and an archived spaced name is renamed too.
+    [corner(7), ROOM, 'ship-it', '2026-09-07', '2026-09-08'],
+    [corner(8), ROOM, 'ship it', '2026-09-09'],
+    [corner(9), ROOM, 'old idea here', '2026-09-10', '2026-09-11'],
   ];
-  for (const [id, parent, name, at] of rows) {
+  for (const [id, parent, name, at, archivedAt] of rows) {
     await database.query(
-      `INSERT INTO rooms(id,workspace_id,parent_id,name,created_at) VALUES($1,$2,$3,$4,$5)`,
-      [id, WORKSPACE, parent, name, at],
+      `INSERT INTO rooms(id,workspace_id,parent_id,name,created_at,archived_at)
+       VALUES($1,$2,$3,$4,$5,$6)`,
+      [id, WORKSPACE, parent, name, at, archivedAt ?? null],
     );
   }
   await database.query(
@@ -63,6 +68,9 @@ it('hyphenates spaced corner names once, with deterministic suffixes per Room', 
     [corner(4)]: 'fix-ledger-3',
     [corner(5)]: 'fix-ledger',
     [corner(6)]: 'corner-00000000',
+    [corner(7)]: 'ship-it',
+    [corner(8)]: 'ship-it-2',
+    [corner(9)]: 'old-idea-here',
   });
   const cards = await database.query<{ id: string; card: Record<string, unknown> }>(
     `SELECT id,card FROM messages ORDER BY id`,

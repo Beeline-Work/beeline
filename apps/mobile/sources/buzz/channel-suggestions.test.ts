@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { findChannelReferences, buildChannelReferenceIndex } from './channel-reference';
 import {
   activeChannelAtCursor,
+  channelCornerRoom,
   channelSuggestionCandidates,
   filterChannelSuggestions,
   replaceActiveChannel,
@@ -9,7 +10,7 @@ import {
 
 const rooms = [
   { id: 'r1', name: 'beeline' },
-  { id: 'r2', name: 'experiments' },
+  { id: 'r2', name: 'experiments', repositoryName: 'Beeline-Work/beeline-experiments' },
   { id: 'r3', name: 'export-logs' },
 ];
 const corners = [
@@ -49,6 +50,27 @@ describe('filterChannelSuggestions', () => {
 
   it('caps the list and counts the rest', () => {
     expect(filterChannelSuggestions(candidates, '', 2)).toMatchObject({ overflow: 3 });
+  });
+
+  it('gives a Room its repository and a corner its Room as the second line', () => {
+    const subtitles = Object.fromEntries(candidates.map((item) => [item.token, item.subtitle]));
+    expect(subtitles).toEqual({
+      beeline: undefined,
+      experiments: 'Beeline-Work/beeline-experiments',
+      'export-logs': undefined,
+      'beeline/experiment-flags': 'in #beeline',
+      'beeline/composer-handle-chip': 'in #beeline',
+    });
+  });
+
+  it('names the Room in the heading only after room/ with only its corners matching', () => {
+    const corner = (query: string) =>
+      channelCornerRoom(query, filterChannelSuggestions(candidates, query).matches);
+    expect(corner('beeline/')).toBe('beeline');
+    expect(corner('BEELINE/comp')).toBe('beeline');
+    expect(corner('exp')).toBeNull();
+    expect(corner('beeline')).toBeNull();
+    expect(corner('other/')).toBeNull();
   });
 
   it('offers no corners until their Room is known', () => {

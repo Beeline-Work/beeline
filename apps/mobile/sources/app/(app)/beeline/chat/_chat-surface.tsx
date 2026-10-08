@@ -1893,7 +1893,11 @@ export function BuzzChatSurface({
       channelSuggestionCandidates(
         workspaceChats
           .filter((item) => !item.directMessage)
-          .map((item) => ({ id: item.room.id, name: item.room.name })),
+          .map((item) => ({
+            id: item.room.id,
+            name: item.room.name,
+            repositoryName: item.repositoryName,
+          })),
         corners?.room ?? null,
         corners?.corners ?? [],
       ),
@@ -6735,6 +6739,7 @@ export function BuzzChatSurface({
                         matches={channelSuggestions.matches}
                         onSelect={selectChannel}
                         overflow={channelSuggestions.overflow}
+                        query={activeChannel?.query ?? ''}
                       />
                     )}
                     {cornerOpenRepoPrompt && (

@@ -12,6 +12,7 @@ import {
   filterChannelSuggestions,
   replaceActiveChannel,
 } from '../sources/buzz/channel-suggestions';
+import { beelineThemes } from '../sources/buzz/groknight';
 import { ConversationComposer } from '../sources/components/buzz/ConversationComposer';
 import { ChannelSuggestionMenu } from '../sources/components/buzz/MentionSuggestionMenu';
 
@@ -22,14 +23,16 @@ import { ChannelSuggestionMenu } from '../sources/components/buzz/MentionSuggest
  */
 const ROOMS = [
   { id: 'r-beeline', name: 'beeline' },
-  { id: 'r-experiments', name: 'experiments' },
+  { id: 'r-experiments', name: 'experiments', repositoryName: 'Beeline-Work/beeline-experiments' },
   { id: 'r-export', name: 'export-logs' },
 ];
 const CORNERS = [
   { id: 'c-flags', name: 'experiment-flags' },
   { id: 'c-chip', name: 'composer-handle-chip' },
 ];
-const stopAt = new URLSearchParams(location.search).get('stop');
+const params = new URLSearchParams(location.search);
+const stopAt = params.get('stop');
+const theme = beelineThemes[params.get('theme') === 'bone' ? 'bone' : 'obsidian'];
 
 let latest = '';
 function Proof() {
@@ -47,7 +50,7 @@ function Proof() {
     [active?.query],
   );
   return (
-    <View style={{ width: 390, padding: 12, backgroundColor: '#14091A' }}>
+    <View style={{ width: 390, padding: 12, backgroundColor: theme.bgBase }}>
       {suggestions.matches.length > 0 && active && (
         <ChannelSuggestionMenu
           highlightedIndex={0}
@@ -57,6 +60,7 @@ function Proof() {
             setValue(replaceActiveChannel(value, active, suggestion.token).text)
           }
           overflow={suggestions.overflow}
+          query={active.query}
         />
       )}
       <ConversationComposer
@@ -96,6 +100,8 @@ const rows = () =>
     .map((row) => row.dataset.testid!.slice('channel-suggestion-'.length))
     .filter((token) => token !== 'overflow');
 
+const menuText = () => byTestID('channel-suggestions')?.textContent ?? '';
+
 async function run() {
   await pause();
   type('@ruby what is the difference between #exp');
@@ -113,6 +119,14 @@ async function run() {
     'a Room row draws the # glyph',
     byTestID('channel-suggestion-experiments')!.textContent!.startsWith('#'),
   );
+  check('the list is headed ROOMS AND CORNERS', menuText().startsWith('ROOMS AND CORNERS'));
+  check(
+    'a Room row shows its repository underneath',
+    byTestID('channel-suggestion-experiments')!.textContent!.includes(
+      'Beeline-Work/beeline-experiments',
+    ),
+  );
+  check('a corner row shows its Room underneath', cornerRow.textContent!.includes('in #beeline'));
   if (stopAt === 'menu') return;
 
   cornerRow.click();
@@ -138,6 +152,14 @@ async function run() {
   check(
     '#beeline/ lists that Room corners',
     rows().join(',') === 'beeline/experiment-flags,beeline/composer-handle-chip',
+  );
+  check(
+    '#beeline/ heads the list CORNERS IN #BEELINE',
+    menuText().startsWith('CORNERS IN #BEELINE'),
+  );
+  check(
+    'corner rows under that heading drop the Room line',
+    !byTestID('channel-suggestion-beeline/experiment-flags')!.textContent!.includes('in #beeline'),
   );
 }
 

@@ -7,7 +7,7 @@ import {
   SYSTEM_MENTION_LABEL,
   SYSTEM_MENTION_PUBKEY,
 } from '@/buzz/room-participants';
-import type { ChannelSuggestion } from '@/buzz/channel-suggestions';
+import { channelCornerRoom, type ChannelSuggestion } from '@/buzz/channel-suggestions';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { memberRosterModel, memberRosterSubtitle } from '@/components/buzz/MemberRosterRow';
@@ -196,12 +196,14 @@ export function MentionSuggestionMenu({
  * glyph. Same shell, scroll cap and row height as the @-mention menu.
  */
 export function ChannelSuggestionMenu({
+  query,
   matches,
   overflow,
   highlightedIndex,
   keyboardOpen,
   onSelect,
 }: {
+  query: string;
   matches: readonly ChannelSuggestion[];
   overflow: number;
   highlightedIndex: number;
@@ -212,13 +214,16 @@ export function ChannelSuggestionMenu({
     highlightedIndex,
     keyboardOpen,
   );
+  const cornerRoom = channelCornerRoom(query, matches);
   return (
     <View
       accessibilityLabel="Reference a Room or corner"
       style={styles.mentionMenu}
       testID="channel-suggestions"
     >
-      <Text style={styles.mentionMenuLabel}>ROOMS AND CORNERS</Text>
+      <Text style={styles.mentionMenuLabel}>
+        {cornerRoom ? `CORNERS IN #${cornerRoom.toUpperCase()}` : 'ROOMS AND CORNERS'}
+      </Text>
       <ScrollView
         keyboardShouldPersistTaps="handled"
         onScroll={(event) => {
@@ -232,9 +237,12 @@ export function ChannelSuggestionMenu({
         {matches.map((suggestion, index) => {
           const selected = index === highlightedIndex;
           const kind = suggestion.kind === 'room' ? 'ROOM' : 'CORNER';
+          const subtitle = cornerRoom ? undefined : suggestion.subtitle;
           return (
             <TouchableOpacity
-              accessibilityLabel={`#${suggestion.token}, ${suggestion.kind}`}
+              accessibilityLabel={[`#${suggestion.token}`, subtitle, suggestion.kind]
+                .filter(Boolean)
+                .join(', ')}
               accessibilityRole="button"
               accessibilityState={{ selected }}
               key={suggestion.id}
@@ -249,9 +257,16 @@ export function ChannelSuggestionMenu({
                   <CornerGlyph color={styles.mentionChannelGlyphText.color} size={14} />
                 )}
               </View>
-              <Text numberOfLines={1} style={[styles.mentionName, styles.channelToken]}>
-                #{suggestion.token}
-              </Text>
+              <View style={styles.mentionAgentIdentity}>
+                <Text numberOfLines={1} style={[styles.mentionName, styles.channelToken]}>
+                  #{suggestion.token}
+                </Text>
+                {subtitle ? (
+                  <Text numberOfLines={1} style={styles.mentionHandle}>
+                    {subtitle}
+                  </Text>
+                ) : null}
+              </View>
               <Text style={styles.mentionKind}>{kind}</Text>
             </TouchableOpacity>
           );
@@ -341,7 +356,6 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textPrimary,
     },
     channelToken: {
-      flex: 1,
       flexShrink: 1,
     },
     mentionHandle: {

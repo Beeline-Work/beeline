@@ -31,7 +31,7 @@ describe('the chat surface unread-divider wiring', () => {
     expect(chatSource).toContain('canCatchUp: catchUpOfferVisible,');
     // Both lists report tail distance, so a corner's chevron follows a scroll
     // that leaves the viewable set unchanged.
-    expect(chatSource.match(/observeTailPinned\(isPinnedToTailRef\.current\);/g)).toHaveLength(2);
+    expect(chatSource.match(/(?<!\.)observeTailPinned\(pinned\);/g)).toHaveLength(2);
     // The coupling this change removed, in either of the shapes it had. The
     // bare `?? firstUnreadMessageId` fallback is no longer the tell: the
     // catch-up sheet's range legitimately falls back to the server cursor
@@ -50,8 +50,8 @@ describe('the chat surface unread-divider wiring', () => {
       chatSource.indexOf('const landAtNewestMessage'),
       chatSource.indexOf('// Only a different tail row is an arrival'),
     );
-    expect(landing).toContain('scrollToNewestMessage()');
-    expect(landing).not.toContain('landAtNewMessageBoundary');
+    expect(landing).toContain("scrollController.request({ kind: 'newest' });");
+    expect(landing).not.toContain("kind: 'firstUnread'");
     // CHEV-21: the press must not clear the badge. A press is not visibility:
     // this scroll can be clamped, interrupted by a drag, or land short while
     // the extent is still measuring, and clearing on the press alone would
@@ -76,9 +76,9 @@ describe('the chat surface unread-divider wiring', () => {
   it('feeds the hook the list’s own viewability pass', () => {
     const observer = chatSource.slice(
       chatSource.indexOf('const observeVisibleTranscriptMessages'),
-      chatSource.indexOf('const landAtNewMessageBoundary'),
+      chatSource.indexOf('// Back from the code reader'),
     );
-    expect(observer).toContain('observeVisibleMessages(visibleTranscriptMessagesRef.current)');
+    expect(observer).toContain('observeVisibleMessages(visibleRows)');
     expect(chatSource).toContain('onViewableItemsChanged={observeVisibleTranscriptMessages}');
   });
 

@@ -64,22 +64,21 @@ describe('message-source landing', () => {
   });
 
   it('lands with one scroll to the top of the screen, without estimated offsets or timers', () => {
-    const start = surface.indexOf('const attemptSourceLanding = useCallback(');
-    expect(start).toBeGreaterThanOrEqual(0);
-    const landing = surface.slice(
-      start,
-      surface.indexOf('}, [desktopTranscript, endTranscriptJump', start),
+    expect(surface).toContain(
+      'requestMessageJump(scrollController, messageId, needsRead ? jumpToTranscriptMessage : null);',
     );
-    expect(landing).toContain('viewPosition: 1');
-    expect(landing).not.toContain('setTimeout');
-    expect(landing).not.toContain('scrollToOffset');
-    const failed = surface.slice(
-      surface.indexOf('onScrollToIndexFailed='),
-      surface.indexOf(
-        'const pending = pendingNewMessageLandingRef.current;',
-        surface.indexOf('onScrollToIndexFailed='),
-      ),
+    const controller = readFileSync(
+      path.join(__dirname, '..', '..', '..', '..', 'buzz', 'transcript-scroll-controller.ts'),
+      'utf8',
     );
-    expect(failed).not.toMatch(/pendingSourceLanding|notification/);
+    // Top of the screen on the inverted phone list.
+    expect(controller).toContain("viewPosition: align === 'top' ? 1 : 0.5");
+    expect(controller).not.toContain('setTimeout');
+    // Only the unread landing estimates an offset; a message jump waits for
+    // the next layout pass instead.
+    expect(controller).toContain(
+      "if (destination.kind === 'firstUnread') list.toEstimatedRow(index);",
+    );
+    expect(surface).toContain('onScrollToIndexFailed={phoneScrollList.scrollToIndexFailed}');
   });
 });

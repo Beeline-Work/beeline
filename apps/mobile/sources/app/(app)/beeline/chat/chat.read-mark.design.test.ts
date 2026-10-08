@@ -38,11 +38,9 @@ describe('the chat surface read-mark contract', () => {
     expect(sessionSource).not.toContain('markRead(channelId, latest.id)');
     const observer = chatSource.slice(
       chatSource.indexOf('const observeVisibleTranscriptMessages'),
-      chatSource.indexOf('const landAtNewMessageBoundary'),
+      chatSource.indexOf('// Back from the code reader'),
     );
-    expect(observer).toContain(
-      'advanceReadCursor(chronologicalMessagesRef.current, visibleTranscriptMessagesRef.current)',
-    );
+    expect(observer).toContain('advanceReadCursor(chronologicalMessagesRef.current, visibleRows)');
   });
 
   it('re-arms the advancer when a visit begins, not only when the Room changes', () => {
@@ -73,7 +71,7 @@ describe('the chat surface read-mark contract', () => {
     expect(chatSource).toContain('const chronologicalMessagesRef = useRef(visibleMessages)');
     const observer = chatSource.slice(
       chatSource.indexOf('const observeVisibleTranscriptMessages'),
-      chatSource.indexOf('const landAtNewMessageBoundary'),
+      chatSource.indexOf('// Back from the code reader'),
     );
     expect(observer).not.toContain('advanceReadCursor(transcriptMessagesRef');
   });

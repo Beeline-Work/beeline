@@ -27,6 +27,8 @@ describe('code artifact navigation', () => {
     expect(chat).toContain('const handleOpenCode = useArtifactReturn({');
     expect(chat).toContain('residentMessages: combinedMessages');
     expect(chat).toContain('onReveal: revealTranscriptThrough');
-    expect(chat).toContain('scrollToIndex({ index, viewPosition, animated: false })');
+    expect(chat).toContain(
+      "scrollController.request({ kind: 'message', messageId, align: 'center', jump: false });",
+    );
   });
 });

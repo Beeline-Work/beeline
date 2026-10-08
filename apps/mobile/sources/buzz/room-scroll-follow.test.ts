@@ -4,12 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import {
-  historyAnchorKey,
   phoneTranscriptTailPadding,
   roomOpenLandsOnTail,
   scrollFollowOnArrival,
   scrollFollowOnLayoutChange,
-  transcriptLandingAnchor,
 } from './room-scroll-follow';
 
 const chatSource = readFileSync(
@@ -150,66 +148,6 @@ describe('scrollFollowOnArrival', () => {
   });
 });
 
-describe('native variable-height history anchoring', () => {
-
-  it('re-resolves a failed boundary jump after measuring its window', () => {
-    const failedLanding = chatSource.slice(
-      chatSource.indexOf('onScrollToIndexFailed='),
-      chatSource.indexOf('onEndReached='),
-    );
-
-    expect(failedLanding).toContain('pendingNewMessageLandingRef.current');
-    expect(failedLanding).toContain('pending.boundaryId');
-    expect(failedLanding).toContain('transcriptMessagesRef.current');
-    expect(failedLanding).toContain('offset: averageItemLength * currentIndex');
-    expect(failedLanding).toContain('landAtNewMessageBoundary(');
-    const boundaryRetry = failedLanding.slice(
-      failedLanding.indexOf('const pending = pendingNewMessageLandingRef.current'),
-    );
-    expect(boundaryRetry).not.toContain('averageItemLength * index');
-
-    const landing = chatSource.slice(
-      chatSource.indexOf('const landAtNewMessageBoundary ='),
-      chatSource.indexOf('const resumePendingNewMessageLanding ='),
-    );
-    expect(landing).toContain('boundaryRowIndex(transcriptMessagesRef.current, boundaryId)');
-    expect(landing).not.toContain('boundaryRowIndex(transcriptMessages, boundaryId)');
-  });
-
-  it('acknowledges only after the durable boundary is visible', () => {
-    const completion = chatSource.slice(
-      chatSource.indexOf('const completePendingNewMessageLanding ='),
-      chatSource.indexOf('const landAtNewMessageBoundary ='),
-    );
-    const landing = chatSource.slice(
-      chatSource.indexOf('const landAtNewMessageBoundary ='),
-      chatSource.indexOf('const resumePendingNewMessageLanding ='),
-    );
-
-    expect(completion).toContain('visibleTranscriptMessagesRef.current.some');
-    expect(completion).toContain('messageContainsBoundary(message, pending.boundaryId)');
-    expect(completion).toContain('pendingNewMessageLandingRef.current = null');
-    expect(completion).toContain('settleQueueAtBoundary(pending.boundaryId)');
-    expect(landing).toContain('Keep the durable boundary armed');
-    expect(landing).not.toContain('pendingNewMessageLandingRef.current = null');
-  });
-
-  it('keeps pending landings armed through native momentum', () => {
-    const gestureHandlers = chatSource.slice(
-      chatSource.indexOf('onScrollEndDrag='),
-      chatSource.indexOf('onContentSizeChange='),
-    );
-
-    expect(gestureHandlers).toContain('const velocity = event.nativeEvent.velocity?.y');
-    expect(gestureHandlers).toContain('if (velocity !== undefined)');
-    expect(gestureHandlers).toContain('scheduleAnimationFrame(() =>');
-    expect(gestureHandlers).toContain('dragEndSequenceRef.current !== sequence');
-    expect(gestureHandlers).toContain('dragEndSequenceRef.current += 1');
-    expect(gestureHandlers).toContain('onMomentumScrollEnd');
-    expect(gestureHandlers).toContain('resumePendingNewMessageLanding();');
-  });
-});
-
 /**
  * C97: a send that collapses the composer (attach removed, field snaps back
  * to its minimum height) or dismisses the keyboard opens a gap that the
@@ -328,55 +266,15 @@ describe('scrollFollowOnLayoutChange', () => {
   });
 });
 
-describe('a send releases the history anchor', () => {
-  const notification = { messageAnchorId: 'msg-7', firstUnreadMessageId: 'msg-3' };
-
-  it('hands the landing to a notification target, then to the unread boundary', () => {
-    expect(transcriptLandingAnchor({ ...notification, releasedAnchorKey: null })).toBe('msg-7');
-    expect(
-      transcriptLandingAnchor({ firstUnreadMessageId: 'msg-3', releasedAnchorKey: null }),
-    ).toBe('msg-3');
-    expect(transcriptLandingAnchor({ releasedAnchorKey: null })).toBe('');
-  });
-
-  it('gives up both anchors at once, so the tail owns the landing after a send', () => {
-    const released = historyAnchorKey(notification);
-    expect(transcriptLandingAnchor({ ...notification, releasedAnchorKey: released })).toBe('');
-  });
-
-  it('re-arms for an anchor that arrives after the send', () => {
-    const released = historyAnchorKey(notification);
-    // A notification tapped while the Room is already open owns its own
-    // landing; the release covers the pair it was taken against, not the
-    // rest of the visit.
-    expect(
-      transcriptLandingAnchor({
-        messageAnchorId: 'msg-9',
-        firstUnreadMessageId: 'msg-3',
-        releasedAnchorKey: released,
-      }),
-    ).toBe('msg-9');
-  });
-
-  it('does not let a blank anchor read as a released one', () => {
-    expect(
-      transcriptLandingAnchor({
-        messageAnchorId: '  ',
-        firstUnreadMessageId: 'msg-3',
-        releasedAnchorKey: null,
-      }),
-    ).toBe('msg-3');
-    expect(historyAnchorKey({ messageAnchorId: '', firstUnreadMessageId: null })).not.toBe('');
-  });
-});
-
 describe('the chat screen wires the scroll rule', () => {
 
   it('scrolls once per arrival through the pure decision, tracking drags on the FlatList', () => {
     expect(chatSource).toContain("from '@/buzz/room-scroll-follow'");
     expect(chatSource).toContain('useScrollFollowOnArrival({');
-    // One scroll call per arrival, off the render path.
-    expect(chatSource.match(/scrollToOffset\({ offset: 0/g)).toHaveLength(1);
+    // One follow request per arrival, off the render path; the scroll
+    // controller owns the list call.
+    expect(chatSource).toContain('scrollController.follow();');
+    expect(chatSource).not.toContain('scrollToOffset(');
     // Drag and momentum tracking feed the hold decision.
     for (const handler of [
       'onScrollBeginDrag',
@@ -405,12 +303,12 @@ describe('the chat screen wires the scroll rule', () => {
     // a separate scrollToEnd/onContentSizeChange estimate.
     expect(chatSource).toContain('shouldFollowDesktopTail');
     expect(chatSource).toContain('new ResizeObserver(');
-    expect(chatSource).toContain('scrollNode.scrollTop = scrollNode.scrollHeight');
+    expect(chatSource).toContain('scrollController.followNow()');
   });
 
   it('follows a composer/keyboard footprint drop while pinned to the tail', () => {
     expect(chatSource).toContain('useScrollFollowOnLayoutChange({');
-    expect(chatSource).toContain('isPinnedToTailRef');
+    expect(chatSource).toContain('isPinnedToTail: scrollController.isPinnedToTail()');
     expect(chatSource).toContain('useKeyboardState(');
     expect(chatSource).toContain('bottomChromeLayoutKey');
   });
@@ -446,8 +344,10 @@ describe('the chat screen wires the scroll rule', () => {
       beginReply.indexOf('const install = () => {'),
       beginReply.indexOf('};', beginReply.indexOf('const install = () => {')),
     );
-    expect(install).toContain('scrollToNewestMessage();');
+    expect(install).toContain("scrollController.request({ kind: 'newest' });");
     expect(install).not.toContain('scrollToIndex');
-    expect(beginReply).toContain('[applyComposerPrefill, decodedId, replyTargetForMessage, scrollToNewestMessage]');
+    expect(beginReply).toContain(
+      '[applyComposerPrefill, decodedId, replyTargetForMessage, scrollController]',
+    );
   });
 });

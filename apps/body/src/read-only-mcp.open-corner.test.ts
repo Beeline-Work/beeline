@@ -100,9 +100,7 @@ async function daemonDoor(
                   ? { items: conversationItems }
                   : operation === 'createCorner'
                     ? { cornerId: CORNER }
-                    : operation === 'upgradeCornerLane'
-                      ? { cornerId: CORNER, lane: 'code' }
-                      : { ok: true };
+                    : { ok: true };
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify(payload));
     });
@@ -120,10 +118,9 @@ async function callTool(
   options: {
     name?: string;
     cornerId?: string;
-    codeLane?: boolean;
+    repositoryCorner?: boolean;
     directMessage?: boolean;
     agentMayCloseCorner?: boolean;
-    agentMayUpgradeCorner?: boolean;
     toolCallId?: string;
   } = {},
 ): Promise<{ result?: ToolResult; error?: { code: number; message: string } }> {
@@ -148,9 +145,8 @@ async function callTool(
       BEELINE_HELPER_VERSION: 'v0.0.69',
       BEELINE_DAEMON_ROOM_ID: ROOM,
       BEELINE_DAEMON_CORNER_ID: options.cornerId ?? '',
-      BEELINE_CORNER_LANE: options.codeLane ? 'code' : 'no_code',
+      BEELINE_CORNER_REPOSITORY: options.repositoryCorner ? '1' : '',
       BEELINE_CORNER_AGENT_CLOSE: options.agentMayCloseCorner ? '1' : '',
-      BEELINE_CORNER_CAN_UPGRADE: options.agentMayUpgradeCorner ? '1' : '',
       BEELINE_AGENT_DM: options.directMessage ? '1' : '0',
     },
     stdio: ['pipe', 'pipe', 'ignore'],
@@ -281,17 +277,17 @@ describe('open_corner over the grok wire', () => {
       name: 'corner-name',
       objective:
         'Ship the corner name parameter. Make grok able to open a corner. Update every surface that draws the title.',
-      lane: 'code',
       status: 'starting',
     });
     const created = door.calls.find((call) => call.operation === 'createCorner');
     expect(created).toMatchObject({
       roomId: ROOM,
       name: 'corner-name',
-      lane: 'code',
       repository: 'owner/widgets',
       targetBranch: 'main',
     });
+    // The parent Room's repository alone makes this a code corner.
+    expect(created).not.toHaveProperty('lane');
     // The server creates the objective command inside createCorner.
     expect(door.calls.some((call) => call.operation === 'postRoomMessage')).toBe(false);
     expect(created).toMatchObject({ requestId: 'command-request', generationId: 'g1' });
@@ -312,7 +308,6 @@ describe('open_corner over the grok wire', () => {
     expect(JSON.parse(result!.content[0]!.text)).toMatchObject({
       cornerId: CORNER,
       name: 'Sibling-fix',
-      lane: 'code',
       status: 'starting',
     });
     // The repository comes from the parent Room; the command authority is the
@@ -349,57 +344,11 @@ describe('open_corner over the grok wire', () => {
     });
     expect(created).not.toHaveProperty('repository');
     expect(created).not.toHaveProperty('targetBranch');
-    // A Room with no repository has no code lane to take, so what comes back
-    // says so rather than echoing the default the caller never chose.
-    expect(JSON.parse(result!.content[0]!.text)).toMatchObject({ lane: 'no_code' });
+    expect(created).not.toHaveProperty('lane');
+    expect(JSON.parse(result!.content[0]!.text)).not.toHaveProperty('lane');
   }, 30_000);
 
-  it('carries the no-code lane of a repository Room through to createCorner', async () => {
-    const door = await daemonDoor();
-    const { result, error } = await callTool(door.origin, {
-      name: 'Market-scan',
-      objective: 'Survey the five nearest competitors and write it up',
-      lane: 'no_code',
-    });
-
-    expect(error).toBeUndefined();
-    expect(result?.isError).toBeUndefined();
-    expect(JSON.parse(result!.content[0]!.text)).toMatchObject({ lane: 'no_code' });
-    // The repository is still recorded: the corner belongs to that Room and can
-    // read it. The lane is what keeps it off the branch-and-merge path.
-    expect(door.calls.find((call) => call.operation === 'createCorner')).toMatchObject({
-      lane: 'no_code',
-      repository: 'owner/widgets',
-    });
-  }, 30_000);
-
-  it('refuses the research lane, naming the two lanes', async () => {
-    const door = await daemonDoor();
-    const { result } = await callTool(door.origin, {
-      name: 'Market-scan',
-      objective: 'Investigate repository performance and report findings',
-      lane: 'research',
-    });
-
-    expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toBe('lane must be "code" or "no_code"');
-    expect(door.calls.some((call) => call.operation === 'createCorner')).toBe(false);
-  }, 30_000);
-
-  it('refuses a lane it does not know instead of silently opening a code corner', async () => {
-    const door = await daemonDoor();
-    const { result } = await callTool(door.origin, {
-      name: 'Market-scan',
-      objective: 'Survey the five nearest competitors and write it up',
-      lane: 'chat',
-    });
-
-    expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toBe('lane must be "code" or "no_code"');
-    expect(door.calls.some((call) => call.operation === 'createCorner')).toBe(false);
-  }, 30_000);
-
-  it('refuses agent closure for a no-code corner', async () => {
+  it('refuses agent closure for a repo-less corner', async () => {
     const door = await daemonDoor({ resolution: 'none' });
     const { result, error } = await callTool(
       door.origin,
@@ -437,47 +386,6 @@ describe('open_corner over the grok wire', () => {
     // The repository shape of the parent Room is not consulted at all: who may
     // archive is the server's opener check, not a question about the Room.
     expect(door.calls.some((call) => call.operation === 'getRoomRepositoryState')).toBe(false);
-  }, 30_000);
-
-  it('upgrades only an eligible corner through the active human command context', async () => {
-    const door = await daemonDoor();
-    const { result, error } = await callTool(
-      door.origin,
-      {},
-      {
-        name: 'upgrade_corner_to_code',
-        cornerId: CORNER,
-        agentMayUpgradeCorner: true,
-      },
-    );
-
-    expect(error).toBeUndefined();
-    expect(result?.isError).toBeUndefined();
-    expect(JSON.parse(result!.content[0]!.text)).toEqual({ cornerId: CORNER, lane: 'code' });
-    expect(door.calls).toContainEqual(
-      expect.objectContaining({
-        operation: 'upgradeCornerLane',
-        cornerId: CORNER,
-        roomId: CORNER,
-        requestId: 'command-request',
-        generationId: 'g1',
-      }),
-    );
-  }, 30_000);
-
-  it('refuses the upgrade tool when this session is not an upgradeable no-code corner', async () => {
-    const door = await daemonDoor();
-    const { result } = await callTool(
-      door.origin,
-      {},
-      {
-        name: 'upgrade_corner_to_code',
-        cornerId: CORNER,
-      },
-    );
-
-    expect(result?.isError).toBe(true);
-    expect(door.calls.some((call) => call.operation === 'upgradeCornerLane')).toBe(false);
   }, 30_000);
 
   it('refuses close_corner outside a corner instead of archiving something else', async () => {
@@ -706,14 +614,14 @@ describe('relay tools', () => {
     expect(JSON.parse(raw).next).toBeDefined();
   });
   it.each([false, true])(
-    'posts a sibling steer from the actual corner command (code=%s)',
-    async (codeLane) => {
+    'posts a sibling steer from the actual corner command (repository=%s)',
+    async (repositoryCorner) => {
       const door = await daemonDoor();
       const sibling = '33333333-3333-4333-8333-333333333333';
       const steer = await callTool(
         door.origin,
         { text: 'Use the new endpoint', cornerId: sibling },
-        { name: 'steer_corner', cornerId: CORNER, codeLane },
+        { name: 'steer_corner', cornerId: CORNER, repositoryCorner },
       );
       expect(steer.error).toBeUndefined();
       expect(steer.result?.isError).not.toBe(true);

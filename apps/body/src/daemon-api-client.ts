@@ -185,7 +185,6 @@ export class DaemonApiClient {
   private connectorAssignmentListener?: () => void;
   private agentSignInListener?: (frame: AgentSignInFrame) => void;
   private cornerCompleteListener?: (roomId: string) => void;
-  private cornerRestartListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
   private forceUpdateListener?: (minVersion: string) => void;
   private helperIdentity: { releaseVersion: string; sourceSha?: string } = {
@@ -338,11 +337,6 @@ export class DaemonApiClient {
     this.cornerCompleteListener = listener;
   }
 
-  /** A no-code corner entered the code lane and must rebuild its local runtime. */
-  setCornerRestartListener(listener: (roomId: string) => void): void {
-    this.cornerRestartListener = listener;
-  }
-
   setHelperReleaseListener(listener: (release: { version: string; sha: string }) => void): void {
     this.helperReleaseListener = listener;
   }
@@ -454,10 +448,6 @@ export class DaemonApiClient {
     }
     if (event.type === 'corner-complete' && typeof event.roomId === 'string') {
       this.cornerCompleteListener?.(event.roomId);
-      return;
-    }
-    if (event.type === 'corner-restart' && typeof event.roomId === 'string') {
-      this.cornerRestartListener?.(event.roomId);
       return;
     }
     if (event.type === 'connector-assignment') {

@@ -664,6 +664,11 @@ function namesAgentByDisplayName(text: string, name: string | undefined): boolea
  * the corner's never-changing opener (`corner_facts.owner_agent_id`). The
  * parent Room's configured reviewer and its fallbacks hold the review post, so
  * they never take the implementer role from a tag.
+ *
+ * A corner a person opened (`kind='human'`) has no opener agent. The first
+ * agent to take the implementer role here becomes its owner, and keeps it:
+ * that is the agent a restarted helper records the feature branch for and
+ * whose deliverables the corner owes its requester.
  */
 async function setCornerImplementer(
   db: SqlDatabase,
@@ -672,13 +677,17 @@ async function setCornerImplementer(
 ): Promise<void> {
   await db.query(
     `UPDATE corner_facts fact
-     SET worker_agent_id=$2,updated_at=now()
+     SET worker_agent_id=$2,
+         owner_agent_id=CASE WHEN fact.kind='human'
+           THEN COALESCE(fact.owner_agent_id,$2) ELSE fact.owner_agent_id END,
+         updated_at=now()
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
      WHERE fact.corner_id=corner.id AND corner.id=$1
        AND $2<>COALESCE(parent.reviewer_agent_id,'')
        AND NOT ($2=ANY(parent.reviewer_fallback_ids))
-       AND fact.worker_agent_id IS DISTINCT FROM $2`,
+       AND (fact.worker_agent_id IS DISTINCT FROM $2
+            OR (fact.kind='human' AND fact.owner_agent_id IS NULL))`,
     [cornerId, agentId],
   );
 }

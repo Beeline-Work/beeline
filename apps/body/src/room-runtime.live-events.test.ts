@@ -136,7 +136,6 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
           cornerId: 'corner-1',
           objective: 'Fix the widget',
           closeRequested: false,
-          lane: 'no_code',
         };
       if (name === 'getRoomRepositoryState') return { resolution: 'none' };
       if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
@@ -184,7 +183,6 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
           title: 'Release notes',
           kind: 'human',
           closeRequested: false,
-          lane: 'no_code',
         };
       if (name === 'getRoomRepositoryState') return { resolution: 'none' };
       if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };

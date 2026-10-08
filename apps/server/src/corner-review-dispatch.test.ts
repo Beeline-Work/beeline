@@ -65,6 +65,11 @@ beforeAll(async () => {
     W,
   ]);
   await db.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [R, C]);
+  // A repository Room: its corners have a pull request path.
+  await db.query(
+    `UPDATE rooms SET repository_key='owner/widgets',repository_resolution='repository' WHERE id=$1`,
+    [R],
+  );
   await db.query(
     `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Do work','{"checks":"unknown"}')`,
     [C, A],
@@ -544,8 +549,11 @@ describe('corner message attribution', () => {
     expect(send.mock.calls.map(([, message]) => message.text)).toContain(line);
   });
 
-  it('tells the requester when a no-code corner posts its deliverable, tag or no tag', async () => {
-    await db.query(`UPDATE corner_facts SET lane='no_code' WHERE corner_id=$1`, [C]);
+  it('tells the requester when a corner in a Room without a repository posts its deliverable, tag or no tag', async () => {
+    await db.query(
+      `UPDATE rooms SET repository_key=NULL,repository_resolution='none' WHERE id=$1`,
+      [R],
+    );
     await db.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment)
        VALUES('human-device-token-123456789012345678903',$1,'android','physical')`,
@@ -581,7 +589,10 @@ describe('corner message attribution', () => {
         'Hoots: The report is attached.',
       ]);
     } finally {
-      await db.query(`UPDATE corner_facts SET lane='code' WHERE corner_id=$1`, [C]);
+      await db.query(
+        `UPDATE rooms SET repository_key='owner/widgets',repository_resolution='repository' WHERE id=$1`,
+        [R],
+      );
       await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
     }
   });

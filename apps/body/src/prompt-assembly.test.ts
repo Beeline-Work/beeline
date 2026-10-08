@@ -1,7 +1,6 @@
 import * as promptRules from './prompt-assembly.js';
 import { describe, expect, it } from 'vitest';
 import type { CornerBrief } from '@beeline/api-contract/daemon';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   CORE_BUDGET_BYTES,
   PROMPT_SURFACES,
@@ -20,8 +19,7 @@ import {
   cornerMergeInstruction,
   cornerReviewerInstruction,
   cornerSelfReviewerInstruction,
-  CORNER_PLACEHOLDER_BRIEF_RULE,
-  UPGRADE_INTENT_RULE,
+  cornerHasRepositoryWork,
   renderAssignedCornerBrief,
   renderReplyContext,
 } from './prompt-assembly.js';
@@ -37,10 +35,21 @@ const soul = {
   instructions: 'Be succinct and direct with your answers.',
 };
 
+/** A code corner's assigned repository work: without a brief nothing is assigned yet. */
+const repositoryBrief: CornerBrief = {
+  id: 'corner',
+  revision: 1,
+  authorId: 'author',
+  sourceRoomId: 'room',
+  attachments: [],
+  repositoryWork: true,
+  spec: '## Intent\nFix the widget\n## Assigned files\napps/body/src/widget.ts',
+};
+
 describe('corner wake reporting (Reproduction schedule-silence-4)', () => {
   const silence = 'say nothing unless you push a fix';
   const session = assembleSessionPrompt({
-    surface: 'code-corner', agentName: 'Bee', agentCommand: 'codex-acp',
+    surface: 'code-corner', agentName: 'Bee', agentCommand: 'codex-acp', brief: repositoryBrief,
   });
   const turn = (reason: string) => assembleTurnPrompt({
     surface: 'code-corner', sessionPrefix: session.turnPrefix,
@@ -151,6 +160,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
   },
   'code-corner-reviewed': {
     surface: 'code-corner',
+    brief: repositoryBrief,
     agentName: 'Bee',
     soul,
     agentCommand: 'claude-agent-acp',
@@ -160,6 +170,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
   },
   'code-corner-rest': {
     surface: 'code-corner',
+    brief: repositoryBrief,
     agentName: 'Bee',
     soul,
     agentCommand: 'claude-agent-acp',
@@ -170,6 +181,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
   },
   'code-corner-android': {
     surface: 'code-corner',
+    brief: repositoryBrief,
     agentName: 'Bee',
     soul,
     agentCommand: 'claude-agent-acp',
@@ -180,6 +192,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
   },
   'code-corner-no-reviewer': {
     surface: 'code-corner',
+    brief: repositoryBrief,
     agentName: 'Bee',
     soul,
     agentCommand: 'claude-agent-acp',
@@ -188,6 +201,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
   },
   'code-corner-self-reviewer': {
     surface: 'code-corner',
+    brief: repositoryBrief,
     agentName: 'Sol',
     agentCommand: 'claude-agent-acp',
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
@@ -209,13 +223,12 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
     cornerPrepareScript: true,
   },
-  'no-code-corner': {
-    surface: 'no-code-corner',
+  'repo-less-corner': {
+    surface: 'repo-less-corner',
     agentName: 'Bee',
     soul,
     agentCommand: 'claude-agent-acp',
     requesterHandle: 'lunchboxfortwo',
-    agentMayUpgradeCorner: true,
   },
 };
 
@@ -540,6 +553,29 @@ describe('prompt assembly guards', () => {
     expect(turn).not.toContain('Continue the current assigned brief');
   });
 
+  it('treats a corner with no brief as having nothing assigned yet', () => {
+    expect(cornerHasRepositoryWork(undefined)).toBe(false);
+    expect(cornerHasRepositoryWork(repositoryBrief)).toBe(true);
+  });
+
+  it('tells an unbriefed code corner to write the brief before any code', () => {
+    const { brief: _brief, ...unbriefed } = SESSION_VARIANTS['code-corner-reviewed']!;
+    const session = assembleSessionPrompt(unbriefed).systemPrompt;
+    expect(session).toContain('isolated git worktree on feature/corner-abc');
+    expect(session).toContain('write it with revise_corner_brief first');
+    expect(session).not.toContain('Open the pull request with gh');
+    expect(session).not.toContain(cornerMergeInstruction('sol'));
+    const turn = assembleTurnPrompt(TURN_VARIANTS['code-corner-turn']!).text;
+    expect(turn).toContain('Before any code, write the first brief from the newest human request with revise_corner_brief at expectedRevision 0.');
+    const generated = assembleTurnPrompt({
+      ...TURN_VARIANTS['code-corner-turn']!,
+      generatedTitle: 'still harbor corner',
+    }).text;
+    expect(generated).toContain('write the first brief from the newest human request with rename_corner.');
+    const repoLess = assembleTurnPrompt({ ...TURN_VARIANTS['code-corner-turn']!, surface: 'repo-less-corner' }).text;
+    expect(repoLess).toContain('No assigned brief: the human messages in this corner are the authority');
+  });
+
   it('asks for a rename only while the corner still has its generated name', () => {
     const named = assembleTurnPrompt(TURN_VARIANTS['code-corner-turn']!).text;
     const generated = assembleTurnPrompt({
@@ -561,7 +597,7 @@ describe('prompt assembly guards', () => {
   });
 
   it('gives both corner lanes sibling steer context without Room question instructions', () => {
-    for (const surface of ['code-corner', 'no-code-corner', 'review-corner'] as const) {
+    for (const surface of ['code-corner', 'repo-less-corner', 'review-corner'] as const) {
       const session = assembleSessionPrompt({ surface, agentName: 'Bee' }).systemPrompt;
       expect(session).toContain('Use steer_corner during a turn');
       expect(session).toContain('Membership alone grants no turn');
@@ -611,25 +647,6 @@ describe('assigned corner brief', () => {
     expect(turnWith(brief)).toContain(
       'Approved by lunchboxfortwo, message m2: Also keep the marker write last.\n\nAssigned files:\n(none)',
     );
-  });
-
-  it('asks for the real spec only on the upgrade placeholder in a code corner', () => {
-    const placeholder = { ...brief, revision: 1, authorId: SYSTEM_IDENTITY_ID };
-    expect(turnWith(placeholder)).toContain(CORNER_PLACEHOLDER_BRIEF_RULE);
-    expect(CORNER_PLACEHOLDER_BRIEF_RULE).toContain('best effort');
-    expect(turnWith(placeholder, 'review-corner')).not.toContain(CORNER_PLACEHOLDER_BRIEF_RULE);
-    expect(turnWith({ ...placeholder, revision: 2 })).not.toContain(
-      CORNER_PLACEHOLDER_BRIEF_RULE,
-    );
-    expect(turnWith({ ...brief, revision: 1 })).not.toContain(CORNER_PLACEHOLDER_BRIEF_RULE);
-  });
-
-  it('lets the agent upgrade on its own judgment and write the brief afterwards', () => {
-    expect(UPGRADE_INTENT_RULE).not.toContain("becomes the code corner's brief");
-    expect(UPGRADE_INTENT_RULE).toContain('on your own judgment');
-    expect(UPGRADE_INTENT_RULE).toContain('nobody has to ask');
-    expect(UPGRADE_INTENT_RULE).toContain('Then write the brief');
-    expect(UPGRADE_INTENT_RULE).not.toContain('human message');
   });
 });
 

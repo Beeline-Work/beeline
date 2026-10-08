@@ -15,6 +15,7 @@ import {
   reassignCollidingAgentHandles,
 } from './workspace-handles.js';
 import { recordPersonMergeYes } from './corner-merge-approval.js';
+import { assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { reportUnansweredCornerAsks } from './corner-close.js';
 import {
   advanceCorner,
@@ -856,8 +857,14 @@ export class GitHubOperations {
    * At most one attempt per head: the attempt is claimed under the run lock
    * before GitHub is called. The merge webhook then lands the corner; a
    * refusal returns it to the implementer with GitHub's reason.
+   *
+   * The brief gate lives here, for all of those callers: a corner whose
+   * current brief does not assign repository work (no brief, or
+   * `repositoryWork: false`) throws `CornerBriefMergeRefusedError` before
+   * GitHub is read, so every caller reports the same refusal.
    */
   async landCorner(cornerId: string): Promise<boolean> {
+    await assertCornerBriefAllowsMerge(this.database, cornerId);
     let status: Awaited<ReturnType<GitHubOperations['prChecksStatus']>>;
     try {
       status = await this.prChecksStatus({ cornerId });
@@ -1029,7 +1036,7 @@ export class GitHubOperations {
     await this.syncInstallation(owner, install.id);
   }
 
-  /** One startup pass for promoted corners whose first GitHub events were missed. */
+  /** One startup pass for repository corners whose first GitHub events were missed. */
   async repairPromotedCornerBranches(): Promise<void> {
     const candidates = await this.database.query<{
       corner_id: string;
@@ -1048,7 +1055,7 @@ export class GitHubOperations {
          AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
            COALESCE(parent.repository_remote,parent.repository_key,''),
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-       WHERE fact.lane='code' AND corner.archived_at IS NULL AND parent.archived_at IS NULL
+       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
          AND fact.lifecycle->'pr' IS NULL
          AND (fact.lifecycle->>'branch' IS NULL OR fact.lifecycle->>'branch'=
            'feature/corner-' || left(replace(corner.id::text,'-',''),12))
@@ -1126,7 +1133,7 @@ export class GitHubOperations {
         });
       } catch (error) {
         if (error instanceof GitHubHttpError && error.status === 404) continue;
-        console.error(`[github] promoted corner ${candidate.corner_id} repair failed:`, error);
+        console.error(`[github] repository corner ${candidate.corner_id} repair failed:`, error);
       }
     }
   }
@@ -1507,8 +1514,7 @@ export class GitHubOperations {
            SELECT 1 FROM rooms corner
            JOIN corner_facts fact ON fact.corner_id=corner.id
            WHERE corner.parent_id=room.id
-             AND (fact.feature_branch=$3 OR (fact.lane='code'
-               AND $4::text ~ '^feature/corner-[0-9a-f]{12}$'
+             AND (fact.feature_branch=$3 OR ($4::text ~ '^feature/corner-[0-9a-f]{12}$'
                AND left(replace(corner.id::text,'-',''),12)=right($4,12)))
          ))`,
       [installationId, repository, branch ?? null, fallbackBranch],
@@ -1567,7 +1573,7 @@ export class GitHubOperations {
          ORDER BY message.created_at,message.id LIMIT 1
        )first_agent ON fact.owner_agent_id IS NULL
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND (fact.feature_branch=$3 OR (fact.lane='code' AND $4::text IS NOT NULL
+         AND (fact.feature_branch=$3 OR ($4::text IS NOT NULL
            AND left(replace(corner.id::text,'-',''),12)=$4))
          AND parent.github_installation_id=$1
          AND lower(regexp_replace(regexp_replace(

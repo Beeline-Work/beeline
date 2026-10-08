@@ -461,7 +461,7 @@ describe('Postgres live fanout', () => {
     const opener = 'b'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [opener]);
     await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane) VALUES($1,$2,'fix it','code')`,
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'fix it')`,
       [corner, opener],
     );
     received.length = 0;
@@ -569,7 +569,7 @@ describe('Postgres live fanout', () => {
       [corner, WORKSPACE, ROOM, AUTHOR],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lane) VALUES($1,$2,'fix it','code')`,
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'fix it')`,
       [corner, agent],
     );
     const nudges = () =>
@@ -623,43 +623,6 @@ describe('Postgres live fanout', () => {
     expect(nudges()).toHaveLength(5);
     expect(nudges()).toEqual(
       Array(5).fill({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' }),
-    );
-  });
-
-  it('marks the one-way no-code lane change so every subscribed helper can restart', async () => {
-    const live = new LiveHub();
-    const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
-    listeners.push(listener);
-    const received: LiveEvent[] = [];
-    live.subscribeAll((event) => received.push(event));
-    void listener.run();
-    await eventually(() => client.listenerCount('notification') === 1);
-
-    const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-    await database.query(
-      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'upgrade')`,
-      [corner, WORKSPACE, ROOM, AUTHOR],
-    );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,commissioned_by,objective,lane,kind)
-       VALUES($1,$2,'', 'no_code','human')`,
-      [corner, AUTHOR],
-    );
-    await eventually(() => received.some((event) => event.type === 'invalidate'));
-    received.length = 0;
-
-    await database.query(`UPDATE corner_facts SET lane='code' WHERE corner_id=$1`, [corner]);
-
-    await eventually(() =>
-      received.some(
-        (event) =>
-          event.type === 'invalidate' &&
-          event.reason === 'postgres:corner_facts' &&
-          event.roomId === corner &&
-          event.lane === 'code' &&
-          event.laneChanged === true,
-      ),
     );
   });
 

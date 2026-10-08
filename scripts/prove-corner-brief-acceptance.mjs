@@ -79,8 +79,7 @@ run('npm', [
   'src/room-session.test.ts',
   'src/agent-home.test.ts',
   'src/monolith-corner-turn.test.ts',
-  'src/corner-no-code-lane.test.ts',
-  'src/no-code-lane.integration.test.ts',
+  'src/corner-repository-restore.test.ts',
   `--testTimeout=${BODY_TEST_TIMEOUT}`,
 ]);
 

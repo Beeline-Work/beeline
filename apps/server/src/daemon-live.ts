@@ -439,14 +439,6 @@ export class DaemonAgentSession {
           if (transport.isOpen()) transport.send({ type: 'corner-complete', roomId });
           return;
         }
-        if (
-          event.reason === 'postgres:corner_facts' &&
-          event.laneChanged &&
-          event.lane === 'code'
-        ) {
-          if (transport.isOpen()) transport.send({ type: 'corner-restart', roomId });
-          return;
-        }
         void replay(trigger);
       }),
     );

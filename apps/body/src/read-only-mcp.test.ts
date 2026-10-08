@@ -150,29 +150,29 @@ describe('save_workflow description', () => {
   });
 });
 
-describe('open_corner lane', () => {
-  it('offers only the code and no_code lanes', () => {
+describe('open_corner repository', () => {
+  it('has no lane: the parent Room repository alone decides code or repo-less', () => {
     const openCorner = agentToolsFor(true, false).find((tool) => tool.name === 'open_corner');
-    const schema = openCorner?.inputSchema as { properties: { lane: { enum: string[] } } };
-    expect(schema.properties.lane.enum).toEqual(['code', 'no_code']);
+    const schema = openCorner?.inputSchema as { properties: Record<string, unknown> };
+    expect(schema.properties).not.toHaveProperty('lane');
   });
 });
 
 describe('approve_merge surface', () => {
-  const names = (cornerTurn: boolean, codeLane: boolean, institutionalMemory: boolean) =>
-    agentToolsFor(true, false, cornerTurn, codeLane, true, cornerTurn, institutionalMemory).map(
+  const names = (cornerTurn: boolean, repositoryCorner: boolean, institutionalMemory: boolean) =>
+    agentToolsFor(true, false, cornerTurn, repositoryCorner, true, cornerTurn, institutionalMemory).map(
       (tool) => tool.name,
     );
 
-  it('mounts on every code-lane corner turn, whoever the session booted as', () => {
+  it('mounts on every repository corner turn, whoever the session booted as', () => {
     // The Sol case: the configured reviewer's session did not boot as the
     // reviewer and institutional memory is off, yet it can still record PASS.
     expect(names(true, true, false)).toContain('approve_merge');
     expect(names(true, true, true)).toContain('approve_merge');
   });
 
-  it('stays off no-code corners and outside corners', () => {
-    // Only the code lane sets codeLane; no_code never does.
+  it('stays off repo-less corners and outside corners', () => {
+    // Only a corner whose parent Room has a repository sets repositoryCorner.
     for (const memory of [false, true]) {
       expect(names(true, false, memory)).not.toContain('approve_merge');
       expect(names(false, false, memory)).not.toContain('approve_merge');
@@ -237,13 +237,12 @@ describe('corner lifecycle tool surfaces', () => {
       expect(names).toContain('rename_corner');
       expect(names).toContain('open_corner');
     }
-    const noCodeCorner = agentToolsFor(true, false, true, false, true, false);
-    expect(noCodeCorner.map((tool) => tool.name)).not.toContain('close_corner');
-    expect(noCodeCorner.map((tool) => tool.name)).not.toContain('upgrade_corner_to_code');
-    expect(noCodeCorner.map((tool) => tool.name)).toContain('post_artifact');
-    const upgradeableCorner = agentToolsFor(true, false, true, false, true, false, false, true);
-    expect(upgradeableCorner.map((tool) => tool.name)).toContain('upgrade_corner_to_code');
-    expect(room.map((tool) => tool.name)).not.toContain('upgrade_corner_to_code');
+    const repoLessCorner = agentToolsFor(true, false, true, false, true, false);
+    expect(repoLessCorner.map((tool) => tool.name)).not.toContain('close_corner');
+    expect(repoLessCorner.map((tool) => tool.name)).toContain('post_artifact');
+    for (const tools of [room, directMessage, corner, reviewerCorner, repoLessCorner]) {
+      expect(tools.map((tool) => tool.name)).not.toContain('upgrade_corner_to_code');
+    }
     for (const tools of [room, directMessage]) {
       expect(tools.map((tool) => tool.name)).not.toContain('publish_corner_app');
       expect(tools.map((tool) => tool.name)).not.toContain('open_corner_app');
@@ -343,12 +342,12 @@ it('advertises sibling steers in both corner lanes, but reads and questions only
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('inspect_corner');
   expect(agentToolsFor(true, false).map((t) => t.name)).not.toContain('report_to_room');
   expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('report_to_room');
-  for (const codeLane of [false, true]) {
-    const names = agentToolsFor(true, false, true, codeLane).map((t) => t.name);
+  for (const repositoryCorner of [false, true]) {
+    const names = agentToolsFor(true, false, true, repositoryCorner).map((t) => t.name);
     expect(names).toContain('steer_corner');
     for (const name of ['ask_corner', 'get_corner_ask', 'inspect_corner'])
       expect(names).not.toContain(name);
-    expect(agentToolsFor(true, true, true, codeLane).map((t) => t.name)).not.toContain('steer_corner');
+    expect(agentToolsFor(true, true, true, repositoryCorner).map((t) => t.name)).not.toContain('steer_corner');
   }
   expect(agentToolsFor(true, true).map((t) => t.name)).not.toContain('steer_corner');
   expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('ask_corner');

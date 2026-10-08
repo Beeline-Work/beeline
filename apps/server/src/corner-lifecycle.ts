@@ -33,9 +33,9 @@ import { workflowRunLockKey } from './workflow-runs.js';
  * The corner lifecycle as a declarative contract, and the one
  * authority that moves a corner through it.
  *
- * Every corner state change goes through `advanceCorner`: lane open, lane
- * upgrade, push, checks passed/failed, review verdict, merge refusal, merge
- * webhook, brief revision and close. The callers (`createCorner`, `upgradeCornerLane`, the
+ * Every corner state change goes through `advanceCorner`: open, push,
+ * checks passed/failed, review verdict, merge refusal, merge webhook, brief
+ * revision and close. The callers (`createCorner`, `createHumanCorner`, the
  * GitHub webhook handlers, `routeSystemCommand`, `approveCornerMerge`,
  * `queueCornerWorkerAfterReview`, `closeCornerState`, and the merge in
  * `GitHubOperations.landCorner`) only REPORT their event. Under the run lock,
@@ -77,22 +77,13 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
   roles: ['implementer', 'reviewer'],
   start: 'opened',
   handoffs: {
-    // The lane is decided by `createCorner` in the same transaction that
-    // opens the Room.
+    // `createCorner` / `createHumanCorner` report `open` in the same
+    // transaction that opens the Room; every corner starts implementing. A
+    // corner in a Room without a repository simply never pushes.
     opened: { does: 'Set up the corner for the agreed work.',
       kind: 'server',
       requires: [],
-      on: { no_code: 'no_code_work', code: 'implement' },
-    },
-    // The opener's own turn. The only programmatic exit is a human asking for
-    // the code upgrade.
-    no_code_work: { does: 'Prepare the requested result.', role: 'implementer', requires: [], on: { upgrade_requested: 'upgrade_to_code' } },
-    // `upgradeCornerLane`: lane flip + feature-branch write (which IS the CI
-    // callback registration — GitHub webhook matching joins on it).
-    upgrade_to_code: { does: 'Prepare a branch for repository changes.',
-      kind: 'server',
-      requires: ['branch', 'repositoryRoute', 'ciCallbackRegistered', 'mergeTarget'],
-      on: { upgraded: 'implement' },
+      on: { opened: 'implement' },
     },
     // The implementer's turn. A push reported by the GitHub webhook moves it
     // to checks. `rechecked` is a checks verdict on the same head arriving
@@ -163,20 +154,9 @@ function loopCap(state: string): number {
   return loop.cap;
 }
 
-export type CornerLane = 'no_code' | 'code';
-
 /** Everything that can move a corner. Each adapter reports exactly one of these. */
 export type CornerEvent =
-  | { kind: 'open'; lane: CornerLane; workspaceId: string; implementerAgentId: string }
-  | {
-      kind: 'upgrade';
-      contents: {
-        branch: string;
-        repositoryRoute: string;
-        ciCallbackRegistered: true;
-        mergeTarget: string;
-      };
-    }
+  | { kind: 'open'; workspaceId: string; implementerAgentId: string }
   | { kind: 'push'; headSha: string; contents: Record<string, unknown> }
   | { kind: 'checks'; result: 'passing' | 'failing'; sourceMessageId: string }
   | {
@@ -221,7 +201,6 @@ type CornerRow = {
   commissioned_by: string | null;
   lifecycle: CornerLifecycleView;
   archived: boolean;
-  lane: string;
   configured_reviewer_id: string | null;
   configured_reviewer_kind: string | null;
   configured_reviewer_name: string | null;
@@ -283,7 +262,7 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
       `SELECT corner.parent_id,parent.workspace_id,
               ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
               fact.owner_agent_id,fact.commissioned_by,fact.lifecycle,
-              corner.archived_at IS NOT NULL archived,fact.lane,
+              corner.archived_at IS NOT NULL archived,
               parent.reviewer_agent_id configured_reviewer_id,
               configured.kind configured_reviewer_kind,
               configured.name configured_reviewer_name,
@@ -492,10 +471,7 @@ async function backfillRun(
   const derived = cornerRunFromLifecycle({ archived: corner.archived, lifecycle: corner.lifecycle });
   let toState = derived.state;
   let outcome = derived.outcome;
-  if (!terminalStatus(toState) && corner.lane === 'no_code') {
-    toState = 'no_code_work';
-    outcome = undefined;
-  } else if (toState === 'review') {
+  if (toState === 'review') {
     if (!(await checksVerdictDispatched(db, cornerId, 'check-passed', 'subscribed_event')))
       toState = 'checks';
   } else if (
@@ -575,7 +551,7 @@ export async function advanceCorner(
         { toState: 'opened', outcome: undefined, headSha: undefined, roleBindings, seq: 0 },
         corner.lifecycle.pr?.headSha,
       );
-      return { state: await transition.take(event.lane), accepted: true };
+      return { state: await transition.take('opened'), accepted: true };
     }
     run ??= await backfillRun(db, cornerId, corner);
     const transition = new Transition(db, cornerId, run, corner.lifecycle.pr?.headSha);
@@ -604,11 +580,6 @@ async function applyEvent(
   event: Exclude<CornerEvent, { kind: 'open' }>,
 ): Promise<Applied> {
   switch (event.kind) {
-    case 'upgrade':
-      if (!transition.allows('upgrade_requested')) return no('not a no-code corner');
-      await transition.take('upgrade_requested');
-      await transition.take('upgraded', event.contents);
-      return OK;
     case 'push':
       if (!transition.allows('pushed')) return no('no push edge');
       await transition.take('pushed', event.contents);

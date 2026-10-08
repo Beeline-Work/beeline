@@ -15,13 +15,11 @@ Room data and writes go through `DaemonApiClient`. The helper has no relay trans
 pairing-code redemption, approval or mandate engine, work calendar, repository lifecycle, or
 GitHub event consumer. Its action surface is repository corner start/status plus Room-to-corner
 and sibling-corner steering: `read-only-mcp.ts` exposes `steer_corner` in top-level Rooms and
-code/no-code corners, `open_corner` in Rooms
+corners, `open_corner` in Rooms
 and corners (a corner's new corner opens beside it in the parent Room), and `pr_checks_status` in
-corners through the `beeline-agent` MCP surface. A no-code corner of a
-repository-backed Room also gets `upgrade_corner_to_code`, its one-way lane upgrade, which the
-agent calls on its own judgment when the work needs the repository, while answering a human
-message in that same corner; the corner then restarts with a branch, token and worktree, and the
-code session writes the brief. Corners do not post
+corners through the `beeline-agent` MCP surface. A corner is a code corner exactly when its parent
+Room has a repository: it gets a feature branch, token and worktree. A corner of a Room without a
+repository is repo-less: it works in a scratch workspace and delivers with `post_artifact`. Corners do not post
 reports back to their parent Room; their Room-facing output is server-owned cards.
 Corner turns receive the parent's current member-corner list and may steer a distinct sibling
 under that parent. The server checks live source, destination and parent membership and preserves

@@ -30,8 +30,8 @@ import {
 import { cornerImplementerSql } from './corner-worker.js';
 import {
   CORNER_BRIEF_REVISION_SELECT,
+  CornerBriefMergeRefusedError,
   type CornerBriefRow,
-  composeCornerUpgradeBrief,
   cornerBriefRevisionHash,
   currentCornerBrief,
   projectCornerBrief,
@@ -388,7 +388,6 @@ export class DaemonService {
       'retrieveLinkSpendRequest',
       'createCorner',
       'reviseCornerBrief',
-      'upgradeCornerLane',
       'postRoomEvent',
       'requestAgentGrant',
       'requestWebhook',
@@ -496,7 +495,7 @@ export class DaemonService {
             : undefined;
       const committedTasks: Parameters<AfterCommit>[0][] = [];
       const output = await this.database.transaction(async (db) => {
-        if (name === 'createCorner' || name === 'upgradeCornerLane' || name === 'reviseCornerBrief')
+        if (name === 'createCorner' || name === 'reviseCornerBrief')
           await lockCornerLifecycle(db, scopedRoom);
         const requestId = candidate.requestId ?? candidate.turnId;
         if (name === 'postAgentTurnReceipt' && candidate.status === 'failed') {
@@ -1578,6 +1577,7 @@ export class DaemonService {
         try {
           await this.landCorner?.(order.cornerId);
         } catch (error) {
+          if (error instanceof CornerBriefMergeRefusedError) throw error;
           console.error(`[server] merge order's immediate land attempt failed for corner ${order.cornerId}:`, error);
         }
         return { roomId: yes.roomId, headSha: yes.headSha } as Output<Name>;
@@ -1585,11 +1585,6 @@ export class DaemonService {
       case 'createCorner':
         return (await this.createCorner(
           input as Input<'createCorner'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'upgradeCornerLane':
-        return (await this.upgradeCornerLane(
-          (input as Input<'upgradeCornerLane'>).cornerId,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'archiveCorner':
@@ -3053,7 +3048,6 @@ export class DaemonService {
         feature_branch: string | null;
         request_id: string | null;
         close_requested: boolean;
-        lane: string | null;
         requester_handle: string | null;
         lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
         pull_request_number: number | null;
@@ -3061,7 +3055,7 @@ export class DaemonService {
       }>(
         `SELECT room.parent_id parent_room_id,room.archived_at IS NOT NULL archived,
            fact.objective,room.name title,fact.title_generated,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
-           fact.lane,requester.handle requester_handle,
+           requester.handle requester_handle,
            approval.pull_request_number,approval.head_sha approval_head_sha
          FROM corner_facts fact
          JOIN rooms room ON room.id=fact.corner_id
@@ -3083,9 +3077,6 @@ export class DaemonService {
       ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
       closeRequested: row?.close_requested ?? false,
-      // A row written before the lane existed reads back as its backfilled
-      // default, never as an unknown third lane.
-      lane: row?.lane === 'no_code' ? ('no_code' as const) : ('code' as const),
       ...(row?.requester_handle ? { requesterHandle: row.requester_handle } : {}),
       ...(row?.lifecycle ? { lifecycle: row.lifecycle } : {}),
       ...(row?.pull_request_number && row.approval_head_sha
@@ -3165,7 +3156,7 @@ export class DaemonService {
   }
 
   /**
-   * The configured reviewer's PASS, from any code-lane corner turn: nothing
+   * The configured reviewer's PASS, from any repository corner turn: nothing
    * here depends on how the reviewer's session booted. The server authorizes
    * the caller and the exact head, records the yes, and reports it to the
    * corner lifecycle in the same transaction, which wakes the implementer to
@@ -6973,14 +6964,13 @@ export class DaemonService {
         roomId,
       ])
     ).rows[0]!;
-    // A no-code corner is scratch-backed even when its parent Room has a
-    // repository. It has no checkout or repository authority, so keep that
-    // existing lane available without pretending it is repository work.
+    // A corner is repository work exactly when its parent Room has a
+    // repository (or the caller names one). A corner in a Room without one
+    // works in a scratch workspace and never opens a pull request.
     const repositoryWork =
-      input.lane !== 'no_code' &&
-      (Boolean(input.repository) ||
-        parent.repository_resolution === 'repository' ||
-        Boolean(parent.repository_key));
+      Boolean(input.repository) ||
+      parent.repository_resolution === 'repository' ||
+      Boolean(parent.repository_key);
     if (repositoryWork && !input.brief)
       throw new Error('a brief is required for repository corners');
     let cornerId: string = randomUUID();
@@ -7002,14 +6992,13 @@ export class DaemonService {
           request_id: string;
           repository_key: string | null;
           repository_target_branch: string;
-          lane: string;
           brief_revision: number | null;
           brief_revision_hash: string | null;
           brief_change: string | null;
           brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
         }>(
           `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,child.created_by,
-                  fact.request_id,child.repository_key,child.repository_target_branch,fact.lane,
+                  fact.request_id,child.repository_key,child.repository_target_branch,
                   initial.revision brief_revision,
                   initial.revision_hash brief_revision_hash,initial.change brief_change,
                   initial.attachments brief_attachments
@@ -7057,7 +7046,6 @@ export class DaemonService {
           existing.objective !== objective ||
           existing.repository_key !== (input.repository ?? null) ||
           existing.repository_target_branch !== (input.targetBranch ?? 'main') ||
-          existing.lane !== (input.repository ? (input.lane ?? 'code') : 'no_code') ||
           !sameBrief
         ) {
           const mismatches = [
@@ -7068,7 +7056,6 @@ export class DaemonService {
             existing.objective !== objective && 'objective',
             existing.repository_key !== (input.repository ?? null) && 'repository',
             existing.repository_target_branch !== (input.targetBranch ?? 'main') && 'target branch',
-            existing.lane !== (input.repository ? (input.lane ?? 'code') : 'no_code') && 'lane',
             !sameBrief && 'brief',
           ].filter(Boolean);
           throw new Error(
@@ -7135,13 +7122,9 @@ export class DaemonService {
          DO UPDATE SET role='owner',removed_at=NULL`,
         [parent.workspace_id, cornerId, implementerAgentId],
       );
-      // A corner with no repository has nothing to commit, so it is the no-code
-      // lane however the caller asked. Recording anything else would tell a
-      // later reader of `corner_facts` that a pull request was possible here.
-      const lane = input.repository ? (input.lane ?? 'code') : 'no_code';
       await db.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,open_idempotency_key,lane,lifecycle)
-         VALUES($1,$2,$3,$4,$5,$6,$7,'{"lifecycle":"working","checks":"unknown"}')`,
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,open_idempotency_key,lifecycle)
+         VALUES($1,$2,$3,$4,$5,$6,'{"lifecycle":"working","checks":"unknown"}')`,
         [
           cornerId,
           implementerAgentId,
@@ -7149,7 +7132,6 @@ export class DaemonService {
           objective,
           input.requestId,
           idempotencyKey,
-          lane,
         ],
       );
       if (input.hold === true) {
@@ -7226,7 +7208,6 @@ export class DaemonService {
       });
       await advanceCorner(db, cornerId, {
         kind: 'open',
-        lane,
         workspaceId: parent.workspace_id,
         implementerAgentId,
       });
@@ -7361,185 +7342,6 @@ export class DaemonService {
     this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
     this.live.publish({ type: 'invalidate', roomId: parentId, reason: 'corner', agentId });
     return this.writeResult();
-  }
-  /**
-   * The sole legal lane mutation: the agent working one turn in a repository
-   * Room's no-code corner promotes it on its own judgment. No human has to
-   * ask; the live command only proves the caller is that corner's agent turn.
-   */
-  private async upgradeCornerLane(cornerId: string, agentId: string) {
-    const command = this.authorizedCommand;
-    if (!this.commandTransaction || !command)
-      throw new Error('corner lane upgrade requires an active agent turn in this corner');
-    // A human message in this corner seeds the placeholder brief. Any other
-    // trigger leaves the corner briefless and the code session writes it.
-    const requester = (
-      await this.database.query<{ kind: string; text: string }>(
-        `SELECT identity.kind,message.text
-         FROM messages message JOIN identities identity ON identity.id=message.author_id
-         WHERE message.id=$1 AND message.room_id=$2`,
-        [command.source_message_id, cornerId],
-      )
-    ).rows[0];
-    const humanRequest = requester?.kind === 'human' ? requester.text : undefined;
-
-    // Everything below is one transaction: the lane flip, the feature-branch
-    // write, the brief, and the resume/complete bookkeeping commit together
-    // or not at all. A corner already sitting on lane='code' with no branch
-    // (an interrupted earlier attempt, or a row touched some other way) is
-    // not a second, refused transition - it is the same transition, and this
-    // converges it: the lane UPDATE below is then a no-op (its own WHERE
-    // already requires lane='no_code'), the branch UPDATE fills the gap, and
-    // a corner that finished cleanly the first time re-runs the same writes
-    // as harmless no-ops, so an interrupted retry always converges instead
-    // of throwing. A corner that is ALREADY fully upgraded (branch already
-    // recorded) is a different case entirely: it must not restart the
-    // corner every time the tool is called again, whether from a stale tool
-    // mount, a retry after success, or a model mistake, so it short-circuits
-    // to an idempotent no-op below before any resume/complete bookkeeping.
-    let alreadyUpgraded = false;
-    await this.database.transaction(async (db) => {
-      await lockCornerLifecycle(db, cornerId);
-      const target = (
-        await db.query<{
-          lane: string;
-          feature_branch: string | null;
-          repository_key: string | null;
-          repository_remote: string | null;
-          repository_resolution: string;
-          repository_target_branch: string;
-        }>(
-          `SELECT fact.lane,fact.feature_branch,parent.repository_key,parent.repository_remote,
-                  parent.repository_resolution,parent.repository_target_branch
-           FROM corner_facts fact
-           JOIN rooms corner ON corner.id=fact.corner_id
-           JOIN rooms parent ON parent.id=corner.parent_id
-           WHERE fact.corner_id=$1 AND corner.archived_at IS NULL AND parent.archived_at IS NULL
-           FOR UPDATE OF fact,corner,parent`,
-          [cornerId],
-        )
-      ).rows[0];
-      if (!target) throw new Error('corner not found');
-      if (target.lane !== 'no_code' && target.lane !== 'code')
-        throw new Error(`corner lane upgrade requires no_code, found ${target.lane}`);
-      if (target.lane === 'code' && target.feature_branch) {
-        alreadyUpgraded = true;
-        return;
-      }
-      if (
-        target.repository_resolution !== 'repository' ||
-        !target.repository_key ||
-        !target.repository_remote
-      )
-        throw new Error('corner lane upgrade requires a repository-backed parent Room');
-
-      const featureBranch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
-      await advanceCorner(db, cornerId, {
-        kind: 'upgrade',
-        contents: {
-          branch: featureBranch,
-          repositoryRoute: target.repository_key ?? target.repository_remote ?? '',
-          ciCallbackRegistered: true,
-          mergeTarget: target.repository_target_branch,
-        },
-      });
-      await db.query(
-        `UPDATE corner_facts
-         SET lane='code',owner_agent_id=COALESCE(owner_agent_id,$2),updated_at=now()
-         WHERE corner_id=$1 AND lane='no_code'`,
-        [cornerId, agentId],
-      );
-      // GitHub's PR and check events find a corner only by its recorded branch.
-      // The daemon records it on start only when it restarts as the corner's
-      // owner, so an upgraded corner records it here instead.
-      await db.query(
-        `UPDATE corner_facts
-         SET feature_branch=$2,
-             lifecycle=lifecycle||jsonb_build_object('lifecycle','working','branch',$2::text,'checks','unknown'),
-             updated_at=now()
-         WHERE corner_id=$1 AND feature_branch IS NULL AND NOT lifecycle ? 'pr'`,
-        [cornerId, featureBranch],
-      );
-      // A repository corner works from a brief. This one already existed as
-      // chat, so its discussion so far is what the brief has to carry, written
-      // by the server rather than the agent whose work it authorizes. A corner
-      // that already holds revisions keeps them: they are already its authority.
-      const briefed = await db.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`, [
-        cornerId,
-      ]);
-      if (!briefed.rowCount && humanRequest !== undefined) {
-        await ensureSystemIdentity(db);
-        const draft = await composeCornerUpgradeBrief(db, cornerId, {
-          sourceMessageId: command.source_message_id,
-          text: humanRequest,
-        });
-        const attachments = await resolveCornerBriefAttachments(db, [cornerId], draft);
-        const authority = await resolveCornerBriefApproval(
-          db,
-          [cornerId],
-          draft,
-          attachments,
-          command.source_message_id,
-        );
-        await db.query(
-          `INSERT INTO corner_brief_revisions(
-             corner_id,revision,spec,approval_basis,revision_hash,author_id,
-             source_room_id,source_message_id,attachments
-           ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8::jsonb)`,
-          [
-            cornerId,
-            draft.spec.trim(),
-            JSON.stringify(authority.approvalBasis),
-            authority.revisionHash,
-            SYSTEM_IDENTITY_ID,
-            authority.sourceRoomId,
-            command.source_message_id,
-            JSON.stringify(attachments),
-          ],
-        );
-      }
-      const laneRequestId = `lane-upgrade:${command.turn_request_id}`;
-      const resumed = await createAgentCommand(db, {
-        roomId: cornerId,
-        agentId,
-        sourceMessageId: command.source_message_id,
-        turnRequestId: laneRequestId,
-        action: 'resume',
-        reason: 'corner_lane_upgrade',
-        parent: command,
-        retainDepth: true,
-      });
-      if (!resumed) throw new Error('corner lane upgrade could not resume the requested agent');
-      // `agent_commands` is unique on (room,message,agent,action), so a request
-      // that was ITSELF a resume returns its own already-claimed row here. Then
-      // completing `command.id` below would consume the very re-delivery it just
-      // created and the human's ask would vanish. Re-arm whatever row came back.
-      await db.query(
-        `UPDATE agent_commands SET
-           state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,
-           completed_at=NULL,turn_request_id=$2,reason='corner_lane_upgrade'
-         WHERE id=$1 AND state<>'pending'`,
-        [resumed.id, laneRequestId],
-      );
-      if (resumed.id !== command.id)
-        await db.query(
-          `UPDATE agent_commands SET state='complete',completed_at=now()
-           WHERE id=$1 AND state='claimed'`,
-          [command.id],
-        );
-      await db.query(
-        `UPDATE agent_turns SET status='complete',created_at=now()
-         WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
-        [cornerId, agentId, command.turn_request_id],
-      );
-    });
-    // An already-upgraded corner changed nothing above (no resume, no
-    // completion, no invalidate): the caller gets the same idempotent
-    // success shape as a real upgrade, but nothing here restarts the corner
-    // or re-delivers the triggering command a second time.
-    if (!alreadyUpgraded)
-      this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
-    return { cornerId, lane: 'code' as const };
   }
   private async ensureMembership(input: Input<'ensureAgentMembership'>, agentId: string) {
     const room = (
@@ -7940,7 +7742,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   createCorner: true,
   setCornerHold: true,
   orderCornerMerge: true,
-  upgradeCornerLane: true,
   archiveCorner: true,
   ensureAgentMembership: true,
   getWalletToolState: true,

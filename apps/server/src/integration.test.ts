@@ -342,7 +342,6 @@ describe('monolith integration', () => {
       idempotencyKey: 'fix-grant-card',
       name: 'Fix-grant-card',
       objective: 'Fix the grant card that stays pending',
-      lane: 'no_code',
       brief: {
         spec: 'Fix the grant card that stays pending after approval (feedback fb_000000000000000000000000).\n\n## Checklist\n\n- AC-1: The grant card resolves after approval',
         approval: { sourceMessageId: fix.messageId },
@@ -6351,11 +6350,10 @@ describe('monolith integration', () => {
         created_by: string;
         commissioned_by: string;
         objective: string;
-        lane: string;
         kind: string;
         commands: number;
       }>(
-        `SELECT room.name,room.created_by,fact.commissioned_by,fact.objective,fact.lane,fact.kind,
+        `SELECT room.name,room.created_by,fact.commissioned_by,fact.objective,fact.kind,
           (SELECT count(*)::integer FROM agent_commands WHERE room_id=room.id) commands
          FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
         [cornerId],
@@ -6366,7 +6364,6 @@ describe('monolith integration', () => {
       created_by: HUMAN,
       commissioned_by: HUMAN,
       objective: '',
-      lane: 'no_code',
       kind: 'human',
       commands: 0,
     });
@@ -6382,7 +6379,6 @@ describe('monolith integration', () => {
       objective: '',
       title: 'Release-notes',
       kind: 'human',
-      lane: 'no_code',
     });
 
     const taggedMessageId = '4'.repeat(64);
@@ -9851,7 +9847,6 @@ describe('monolith integration', () => {
       requestId: 'missing-code-brief',
       name: 'Missing-brief',
       objective: 'Do repository work',
-      lane: 'code',
       repository: 'example/repository',
       fixtureOmitBrief: true,
     });
@@ -10049,7 +10044,7 @@ describe('monolith integration', () => {
   });
 
   it.each([
-    ...['opened', 'no_code_work', 'upgrade_to_code', 'implement', 'checks', 'review', 'ask_human', 'landed', 'closed']
+    ...['opened', 'implement', 'checks', 'review', 'ask_human', 'landed', 'closed']
       .map(state => ({ state, health: 'healthy' })),
     ...['implement', 'ask_human'].flatMap(state =>
       ['offline', 'removed', 'recent-failure', 'out-of-credit'].map(health => ({ state, health }))),
@@ -10734,17 +10729,17 @@ describe('monolith integration', () => {
     ).toEqual(['@owner turned yolo on for @bee · grant requests are now approved automatically']);
   });
   it.each([
-    ['code', false],
-    ['code', true],
-    ['no_code', false],
-    ['no_code', true],
+    ['repository', false],
+    ['repository', true],
+    ['scratch', false],
+    ['scratch', true],
   ] as const)(
     'opens a fresh %s corner for a non-owner requester without a grant (yolo=%s)',
-    async (lane, yolo) => {
+    async (cornerKind, yolo) => {
       await database.query(`UPDATE agents SET yolo_mode=$2 WHERE agent_id=$1`, [AGENT, yolo]);
-      const token = await phoneToken(`corner-requester-${lane}-${yolo}`);
+      const token = await phoneToken(`corner-requester-${cornerKind}-${yolo}`);
       const member = createHash('sha256')
-        .update(`github:corner-requester-${lane}-${yolo}`)
+        .update(`github:corner-requester-${cornerKind}-${yolo}`)
         .digest('hex');
       await operation('addWorkspaceMember', {
         workspaceId: WORKSPACE,
@@ -10762,11 +10757,10 @@ describe('monolith integration', () => {
       const opened = await daemonOperation('createCorner', {
         roomId: ROOM,
         requestId: source.messageId,
-        name: `${lane}-work`,
+        name: `${cornerKind}-work`,
         objective: 'Answer this request',
-        lane,
-        ...(lane === 'no_code' ? {} : { repository: 'owner/widgets', targetBranch: 'main' }),
-        ...(lane === 'no_code'
+        ...(cornerKind === 'scratch' ? {} : { repository: 'owner/widgets', targetBranch: 'main' }),
+        ...(cornerKind === 'scratch'
           ? {}
           : {
               brief: {

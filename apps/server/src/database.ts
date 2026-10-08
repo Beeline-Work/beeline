@@ -190,7 +190,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 21;
+export const REQUIRED_SCHEMA_VERSION = 22;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1738,7 +1738,6 @@ CREATE TABLE IF NOT EXISTS corner_facts (
   open_idempotency_key text,
   feature_branch text,
   close_requested boolean NOT NULL DEFAULT false,
-  lane text NOT NULL DEFAULT 'code' CHECK (lane IN ('code', 'no_code')),
   kind text NOT NULL DEFAULT 'agent' CHECK (kind IN ('agent', 'human')),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1750,10 +1749,6 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS worker_agent_id text REFERENCES identities(id);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS commissioned_by text REFERENCES identities(id);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS open_idempotency_key text;
--- Every corner that existed before the lane did was a commit-and-merge corner,
--- so the default backfills them truthfully. The CHECK rides the same pattern
--- as agent_turns_status_check: drop by generated name, re-add, idempotent.
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane text NOT NULL DEFAULT 'code';
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'agent';
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
 ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_kind_check
@@ -1768,20 +1763,25 @@ CREATE INDEX IF NOT EXISTS corner_facts_owner_agent_idx ON corner_facts(owner_ag
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_state text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS workflow_outcome text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS merge_attempt_head text;
--- The research lane is gone: a research corner is a code corner, and its run
--- leaves the removed investigate state for implement. Its newest handoff card
+-- The corner lane is gone: a corner is repository work exactly when its
+-- parent Room has a repository. A run waiting in the removed no-code states
+-- (no_code_work, upgrade_to_code) moves to implement. Its newest handoff card
 -- is the run's state (corner-lifecycle.ts), so that card moves with it.
 UPDATE messages SET card=card || '{"toState":"implement"}'::jsonb
-  || CASE WHEN card->>'outcome'='research' THEN '{"outcome":"code"}'::jsonb ELSE '{}'::jsonb END
-  WHERE card_type='corner-workflow-handoff' AND card->>'toState'='investigate'
-    AND room_id IN (SELECT corner_id FROM corner_facts WHERE lane='research');
-UPDATE corner_facts SET workflow_state='implement',
-    workflow_outcome=CASE WHEN workflow_outcome='research' THEN 'code' ELSE workflow_outcome END
-  WHERE lane='research' AND workflow_state='investigate';
-UPDATE corner_facts SET lane='code' WHERE lane='research';
+  WHERE id IN (
+    SELECT DISTINCT ON (room_id) id FROM messages
+    WHERE card_type='corner-workflow-handoff' AND card->>'runId'=room_id::text
+      AND room_id IN (SELECT corner_id FROM corner_facts
+        WHERE workflow_state IN ('no_code_work','upgrade_to_code'))
+    ORDER BY room_id,(card->>'seq')::int DESC
+  ) AND card->>'toState' IN ('no_code_work','upgrade_to_code');
+UPDATE corner_facts SET workflow_state='implement',workflow_outcome=NULL
+  WHERE workflow_state IN ('no_code_work','upgrade_to_code');
+-- The owed trigger watched the lane column; it is recreated without it by
+-- cornerOwedSchemaSql, so drop it first or the column cannot be dropped.
+DROP TRIGGER IF EXISTS corner_owed_facts_update ON corner_facts;
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
-ALTER TABLE corner_facts ADD CONSTRAINT corner_facts_lane_check
-  CHECK (lane IN ('code', 'no_code'));
+ALTER TABLE corner_facts DROP COLUMN IF EXISTS lane;
 -- The land state is gone: a yes keeps the run in review, and the merge gate
 -- (corner-lifecycle.ts) no longer reads the run state. A run in land moves to
 -- review with the same outcome; its newest handoff card is its state.

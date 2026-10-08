@@ -290,9 +290,8 @@ describe('corner merge instructions', () => {
   });
 
   it.each([
-    { label: 'agent-opened code', lane: 'code', openedBy: undefined },
-    { label: 'agent-opened no-code', lane: 'no_code', openedBy: undefined },
-    { label: 'BBC in a forwarded human corner', lane: 'no_code', openedBy: 'human-id' },
+    { label: 'an agent-opened corner', openedBy: undefined },
+    { label: 'BBC in a forwarded human corner', openedBy: 'human-id' },
   ] as const)('starts $label without a repository or host permission request', async (case_) => {
     const agent = stored('11'.repeat(32), case_.openedBy ? 'BBC' : 'Bee');
     const execute = vi.fn(async (name: string) =>
@@ -309,7 +308,6 @@ describe('corner merge instructions', () => {
       parentRoomId: 'room-id',
       workspaceId: 'workspace',
       objective: 'Answer the human request',
-      lane: case_.lane,
       ...(case_.openedBy ? { openedBy: case_.openedBy } : {}),
       worktreePath: root,
       runtime: { agent, supervisorRoot: root } as AgentRuntimeRecord,
@@ -484,7 +482,7 @@ describe('corner merge instructions', () => {
         { name: 'BEELINE_DAEMON_CORNER_ID', value: 'corner-id' },
         { name: 'BEELINE_CORNER_AGENT_CLOSE', value: '1' },
         { name: 'BEELINE_CORNER_REVIEWER', value: '1' },
-        { name: 'BEELINE_CORNER_LANE', value: 'code' },
+        { name: 'BEELINE_CORNER_REPOSITORY', value: '1' },
       ]),
     );
     const agentEnvironment = new Map(agentServer?.env.map(({ name, value }) => [name, value]));
@@ -493,7 +491,7 @@ describe('corner merge instructions', () => {
         agentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
         agentEnvironment.get('BEELINE_AGENT_DM') === '1',
         Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
-        agentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
+        agentEnvironment.get('BEELINE_CORNER_REPOSITORY') === '1',
         Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
         agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
       ).map((tool) => tool.name),
@@ -733,7 +731,7 @@ describe('corner close-request delivery', () => {
       cwd: workspace,
       mode: 'edit',
       mcpServers: [expect.objectContaining({ name: 'beeline-agent' })],
-      systemPrompt: expect.stringContaining('no-code corner with no repository checkout'),
+      systemPrompt: expect.stringContaining('repo-less corner with no repository checkout'),
     });
     expect(sessionInput?.systemPrompt).not.toContain(CORNER_AUTHOR_CONTRACT);
     expect(sessionInput?.mcpServers.some((server) => server.name === 'buzz-dev-mcp')).toBe(false);
@@ -3198,7 +3196,7 @@ describe('thin monolith corner turn', () => {
     );
     const repositorySystemPrompt = String(sessionNew.mock.calls[0]?.[0].systemPrompt);
     expect(repositorySystemPrompt).not.toContain('gh pr merge');
-    // A code-lane session that did not boot as the reviewer still mounts
+    // A repository corner session that did not boot as the reviewer still mounts
     // approve_merge, even with institutional memory off: the server decides
     // whether this caller is the configured reviewer.
     const codeAgentEnvironment = new Map(
@@ -3206,14 +3204,14 @@ describe('thin monolith corner turn', () => {
         .find((server) => server.name === 'beeline-agent')
         ?.env.map(({ name, value }) => [name, value]),
     );
-    expect(codeAgentEnvironment.get('BEELINE_CORNER_LANE')).toBe('code');
+    expect(codeAgentEnvironment.get('BEELINE_CORNER_REPOSITORY')).toBe('1');
     expect(codeAgentEnvironment.has('BEELINE_CORNER_REVIEWER')).toBe(false);
     expect(
       agentToolsFor(
         codeAgentEnvironment.get('BEELINE_MCP_SURFACE') === 'agent',
         codeAgentEnvironment.get('BEELINE_AGENT_DM') === '1',
         Boolean(codeAgentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
-        codeAgentEnvironment.get('BEELINE_CORNER_LANE') === 'code',
+        codeAgentEnvironment.get('BEELINE_CORNER_REPOSITORY') === '1',
         Boolean(codeAgentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
         codeAgentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
         false,

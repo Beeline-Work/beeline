@@ -13,6 +13,8 @@ const decorativeAccentFills = new Set([
   'app/(app)/beeline/workflow-run.tsx:liveDot',
   'components/buzz/ConversationRow.tsx:dot',
   'components/buzz/DesktopWorkspaceRail.tsx:pill',
+  // The live dictation waveform's level bars.
+  'components/buzz/DictationWaveform.tsx:barLive',
   'components/buzz/Ledger.tsx:bylineDotViewer',
   'components/buzz/MemberPickerSheet.tsx:checkOn',
   'components/buzz/MonoHull.tsx:mechanismRailLive',

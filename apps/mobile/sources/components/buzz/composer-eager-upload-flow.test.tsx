@@ -44,7 +44,13 @@ vi.mock('react-native-svg', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   const Svg = host('RNSVG');
-  return { default: Svg, Svg, Line: host('RNSVGLine') };
+  return {
+    default: Svg,
+    Svg,
+    Line: host('RNSVGLine'),
+    Path: host('RNSVGPath'),
+    Rect: host('RNSVGRect'),
+  };
 });
 vi.mock('expo-image-manipulator', () => ({ manipulateAsync: vi.fn(), SaveFormat: {} }));
 vi.mock('expo-clipboard', () => ({}));

@@ -44,6 +44,8 @@ export interface SpeechInputValue {
   start(): Promise<void>;
   /** Stops native capture and resolves after its final result or bounded fallback. */
   stop(): Promise<boolean | null>;
+  /** Ends capture and drops the take: nothing is transcribed or committed. */
+  cancel(): void;
 }
 
 // Long enough for a short multi-word phrase when Android's first interim is
@@ -589,6 +591,33 @@ export function useSpeechInput(
     return promise;
   }, [clearSilenceTimer, finishStopWithCapture, finishTake, settleExplicitStop]);
 
+  const cancel = React.useCallback(() => {
+    clearSilenceTimer();
+    if (finalizationTimerRef.current !== null) {
+      clearTimeout(finalizationTimerRef.current);
+      finalizationTimerRef.current = null;
+    }
+    startAttemptRef.current += 1;
+    takeIdRef.current += 1;
+    takeRef.current.upload?.discard();
+    takeRef.current = NO_TAKE;
+    listeningRef.current = false;
+    stopRequestedRef.current = false;
+    restartCountRef.current = 0;
+    pendingPartialRef.current = '';
+    setState('idle');
+    setPartialText('');
+    setVolumeLevel(0);
+    // `null` tells a waiting mic press that nothing was captured to send.
+    stopSettlementRef.current?.resolve(null);
+    stopSettlementRef.current = null;
+    try {
+      modRef.current?.abort();
+    } catch {
+      /* ignore */
+    }
+  }, [clearSilenceTimer]);
+
   React.useEffect(() => {
     return () => {
       clearSilenceTimer();
@@ -637,5 +666,6 @@ export function useSpeechInput(
     declineModelDownload,
     start,
     stop,
+    cancel,
   };
 }

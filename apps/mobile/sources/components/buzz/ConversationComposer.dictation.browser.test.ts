@@ -20,7 +20,7 @@ function composerDictationProofShims(mobile: string): Record<string, string> {
 }
 
 describe.skipIf(!existsSync(CHROME))('Composer dictation in a browser', () => {
-  it('asks for the voice model in a Beeline dialog and keeps the newest words in view', async () => {
+  it('asks for the voice model in a Beeline dialog, then shows a waveform that stop discards', async () => {
     const mobile = process.cwd();
     const { result, status, stderr } = await runBrowserProof({
       entry: path.join(mobile, 'scripts/composer-dictation-proof.tsx'),

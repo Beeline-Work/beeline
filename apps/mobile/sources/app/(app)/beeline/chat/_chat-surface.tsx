@@ -261,6 +261,11 @@ import {
   type ComposerPrefillPlan,
 } from '@/buzz/composer-prefill';
 import {
+  composerFieldSelection,
+  splitComposerTags,
+  toggleComposerTag,
+} from '@/buzz/composer-tags';
+import {
   composerBottomPadding,
   mentionKeyboardAction,
   transcriptKeyboardDismissMode,
@@ -898,11 +903,16 @@ export function BuzzChatSurface({
   useEffect(() => {
     // The composer mounts only once the new corner has loaded, so the staged
     // forward's cursor waits for it.
-    const selection = stagedComposerFocusRef.current;
-    if (!composerMounted || !selection) return;
+    const fullSelection = stagedComposerFocusRef.current;
+    if (!composerMounted || !fullSelection) return;
     stagedComposerFocusRef.current = null;
     scheduleAnimationFrame(() => {
       const composer = composerRef.current;
+      const selection = composerFieldSelection(
+        inputTextRef.current,
+        composerTagHandlesRef.current,
+        fullSelection,
+      );
       // React Native Web hands back the DOM textarea, which has no
       // setNativeProps; focusing after the selection scrolls the cursor into view.
       if (Platform.OS === 'web') {
@@ -1780,6 +1790,15 @@ export function BuzzChatSurface({
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
     [roomParticipants],
   );
+  // A leading `@agent ` in the composer shows as a chip (`buzz/composer-tags.ts`).
+  const composerTagHandles = useMemo(
+    () => new Set(roomAgents.map((agent) => agent.handle).filter(Boolean)),
+    [roomAgents],
+  );
+  const composerTagHandlesRef = useRef(composerTagHandles);
+  composerTagHandlesRef.current = composerTagHandles;
+  const [tagMenuOpen, setTagMenuOpen] = useState(false);
+  useEffect(() => setTagMenuOpen(false), [decodedId]);
   // kind:30078 is the sole delivery-availability truth. Transcript/activity
   // events can describe work, but they never mint or renew availability.
   const agentPresences = heartbeatPresences;
@@ -1830,6 +1849,7 @@ export function BuzzChatSurface({
     [activeMention, mentionCandidateRoster, agentPresences, presenceNow],
   );
   const mentionMenuVisible = Boolean(
+    !tagMenuOpen &&
     composerFocused &&
     mentionMenuKey &&
     mentionMenuKey !== dismissedMentionKey &&
@@ -3968,6 +3988,7 @@ export function BuzzChatSurface({
         Boolean(mentionedAgent) ||
         (roomAgents.length === 1 && roomParticipants.length <= 2);
       setReceivedSteer(null);
+      setTagMenuOpen(false);
       setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
 
       sendInFlightRef.current = true;
@@ -4287,11 +4308,34 @@ export function BuzzChatSurface({
         composerRef.current?.focus();
         // Normal Android typing owns its cursor. Set selection only for this
         // explicit replacement, after React has applied the new text.
-        composerRef.current?.setNativeProps({ selection: nextSelection });
+        composerRef.current?.setNativeProps({
+          selection: composerFieldSelection(
+            inserted.text,
+            composerTagHandlesRef.current,
+            nextSelection,
+          ),
+        });
       });
       void Haptics.selectionAsync();
     },
     [activeMention],
+  );
+
+  /** A tap in the tag menu adds the agent as a chip, or removes its chip. */
+  const toggleComposerAgentTag = useCallback(
+    (participant: RoomMemberOption) => {
+      const before = inputTextRef.current;
+      const next = toggleComposerTag(before, composerTagHandlesRef.current, participant.handle);
+      if (splitComposerTags(next, composerTagHandlesRef.current).tags.includes(participant.handle)) {
+        selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
+        recordMentionPick(selectedMentionsRef.current, participant);
+      }
+      inputTextRef.current = next;
+      setInputText(next);
+      setInputSelection({ start: next.length, end: next.length });
+      void Haptics.selectionAsync();
+    },
+    [setInputText],
   );
 
   const handleWritePermission = useCallback(
@@ -6532,6 +6576,15 @@ export function BuzzChatSurface({
                 discVisible={newestJumpDiscShown}
                 onJumpToNewest={landAtNewestMessage}
               />
+              {tagMenuOpen && (
+                <Pressable
+                  accessibilityLabel="Close tag menu"
+                  accessibilityRole="button"
+                  onPress={() => setTagMenuOpen(false)}
+                  style={styles.tagMenuBackdrop}
+                  testID="tag-menu-backdrop"
+                />
+              )}
               {!isCorner && (
                 <RoomCatchUpSheet
                   agents={catchUpAgents}
@@ -6623,13 +6676,26 @@ export function BuzzChatSurface({
                           />
                         );
                       })()}
-                    {mentionMenuVisible && (
+                    {/* One menu: the @ suggestions while typing, or the tag
+                    menu a chip opens, which ticks tagged agents and toggles. */}
+                    {(tagMenuOpen || mentionMenuVisible) && (
                       <MentionSuggestionMenu
-                        highlightedIndex={highlightedMentionIndex}
+                        checkedHandles={
+                          tagMenuOpen
+                            ? new Set(splitComposerTags(inputText, composerTagHandles).tags)
+                            : undefined
+                        }
+                        highlightedIndex={tagMenuOpen ? -1 : highlightedMentionIndex}
                         keyboardOpen={keyboardHeight > 0}
-                        matches={mentionSuggestions.matches}
-                        onSelect={selectMention}
-                        overflow={mentionSuggestions.overflow}
+                        matches={
+                          tagMenuOpen
+                            ? describedRoomParticipants.filter(
+                                (participant) => participant.kind === 'agent',
+                              )
+                            : mentionSuggestions.matches
+                        }
+                        onSelect={tagMenuOpen ? toggleComposerAgentTag : selectMention}
+                        overflow={tagMenuOpen ? 0 : mentionSuggestions.overflow}
                         personAvatar={(pubkey) => personProfileByPubkey.get(pubkey)?.avatar}
                       />
                     )}
@@ -6747,6 +6813,8 @@ export function BuzzChatSurface({
                           : undefined
                       }
                       onCancelReply={() => setReplyTarget(null)}
+                      tagHandles={composerTagHandles}
+                      onEditTags={() => setTagMenuOpen((open) => !open)}
                       attachments={pendingAttachments.map((attachment) => ({
                         uri: attachment.uri,
                         name: attachment.name,
@@ -6781,7 +6849,10 @@ export function BuzzChatSurface({
                       canSend={
                         slashMenuVisible
                           ? Boolean(inputText.trim())
-                          : Boolean(inputText.trim() || pendingAttachments.length)
+                          : Boolean(
+                              splitComposerTags(inputText, composerTagHandles).rest.trim() ||
+                              pendingAttachments.length,
+                            )
                       }
                       onAttach={chooseAttachment}
                       attachDisabled={sending}
@@ -6808,7 +6879,10 @@ export function BuzzChatSurface({
                           ),
                         );
                       }}
-                      onFocus={() => setComposerFocused(true)}
+                      onFocus={() => {
+                        setComposerFocused(true);
+                        setTagMenuOpen(false);
+                      }}
                       onBlur={() => setComposerFocused(false)}
                       onKeyPress={(event) => {
                         const action = mentionKeyboardAction(event.nativeEvent.key);
@@ -7889,6 +7963,8 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: groknight.monoSemibold,
       color: groknight.textSecondary,
     },
+    // Under the composer's tag menu: a tap anywhere else closes the menu.
+    tagMenuBackdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
     repoPromptBanner: {
       minWidth: 0,
       marginBottom: groknight.space.sm,

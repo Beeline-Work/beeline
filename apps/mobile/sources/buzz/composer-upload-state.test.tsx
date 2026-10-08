@@ -28,7 +28,13 @@ vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { default: host('RNSVG'), Svg: host('RNSVG'), Line: host('RNSVGLine') };
+  return {
+    default: host('RNSVG'),
+    Svg: host('RNSVG'),
+    Line: host('RNSVGLine'),
+    Path: host('RNSVGPath'),
+    Rect: host('RNSVGRect'),
+  };
 });
 vi.mock('./HullDialog', () => ({ HullDialog: () => null }));
 vi.mock('@/components/buzz/HullDialog', () => ({ HullDialog: () => null }));

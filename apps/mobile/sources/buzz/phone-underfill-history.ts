@@ -7,8 +7,9 @@ import type { TranscriptHistoryStatus } from './room-message-store';
  * than fill the list never scrolls, so no drag ever arrives and the reader
  * is stuck below an empty screen. This mirrors the desktop underfill rule
  * (`handleDesktopScroll`): while the content is no taller than the list,
- * older history loads without a gesture, one page at a time, until the
- * content fills the list or history reports its start.
+ * the Room message store fills it without a gesture (`fill`), one page at a
+ * time, until the content fills the list. The store stops it at the start of
+ * history, on a failed page and after a page that adds no rows.
  */
 export function phoneTranscriptUnderfilled({
   contentHeight,
@@ -28,24 +29,26 @@ export function usePhoneUnderfillHistory({
   status,
   historyRevision,
   threshold,
-  loadOlder,
+  fill,
 }: {
   /** The transcript has resident rows to measure. */
   enabled: boolean;
+  /** The store's `fillStatus`. */
   status: TranscriptHistoryStatus;
   /** Changes whenever older rows are revealed, so a page that folds away still re-checks. */
   historyRevision: number;
   threshold: number;
-  loadOlder: () => void;
+  /** The store's `fill`. */
+  fill: () => void;
 }) {
   const listHeightRef = useRef(0);
   const contentHeightRef = useRef(0);
   const enabledRef = useRef(enabled);
   const statusRef = useRef(status);
-  const loadOlderRef = useRef(loadOlder);
+  const fillRef = useRef(fill);
   enabledRef.current = enabled;
   statusRef.current = status;
-  loadOlderRef.current = loadOlder;
+  fillRef.current = fill;
 
   const check = useCallback(() => {
     if (!enabledRef.current || statusRef.current !== 'idle') return;
@@ -57,7 +60,7 @@ export function usePhoneUnderfillHistory({
       })
     )
       return;
-    loadOlderRef.current();
+    fillRef.current();
   }, [threshold]);
 
   // A page that lands (status back to idle) or a revealed window that folds

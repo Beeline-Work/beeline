@@ -41,8 +41,8 @@ type Measure = {
 };
 
 // The phone transcript as the surface wires it: older history only on a
-// reader gesture (`onEndReached` behind the drag gate), plus the underfill
-// check on layout and content size. No drag is ever sent here.
+// reader gesture (`onEndReached` behind the drag gate), plus the store's
+// screen fill on layout and content size. No drag is ever sent here.
 function PhoneTranscript({
   tail,
   history,
@@ -62,10 +62,10 @@ function PhoneTranscript({
   const rows = [...page.rows, ...tail].slice(-page.visibleMessageCount);
   measureRef.current = usePhoneUnderfillHistory({
     enabled: rows.length > 0,
-    status: page.status,
+    status: page.fillStatus,
     historyRevision: page.visibleMessageCount,
     threshold: THRESHOLD,
-    loadOlder: () => page.loadOlder(rows.length),
+    fill: () => page.fill(rows.length),
   });
   return React.createElement('Transcript', { status: page.status, rows: rows.length });
 }
@@ -89,20 +89,28 @@ function mount(history: ReturnType<typeof vi.fn>) {
 
 describe('phoneTranscriptUnderfilled', () => {
   it('is underfilled only once both heights are measured and content fits the list', () => {
-    expect(phoneTranscriptUnderfilled({ contentHeight: 0, listHeight: 700, threshold: 50 })).toBe(false);
-    expect(phoneTranscriptUnderfilled({ contentHeight: 300, listHeight: 0, threshold: 50 })).toBe(false);
-    expect(phoneTranscriptUnderfilled({ contentHeight: 300, listHeight: 700, threshold: 50 })).toBe(true);
-    expect(phoneTranscriptUnderfilled({ contentHeight: 750, listHeight: 700, threshold: 50 })).toBe(true);
-    expect(phoneTranscriptUnderfilled({ contentHeight: 751, listHeight: 700, threshold: 50 })).toBe(false);
+    expect(phoneTranscriptUnderfilled({ contentHeight: 0, listHeight: 700, threshold: 50 })).toBe(
+      false,
+    );
+    expect(phoneTranscriptUnderfilled({ contentHeight: 300, listHeight: 0, threshold: 50 })).toBe(
+      false,
+    );
+    expect(phoneTranscriptUnderfilled({ contentHeight: 300, listHeight: 700, threshold: 50 })).toBe(
+      true,
+    );
+    expect(phoneTranscriptUnderfilled({ contentHeight: 750, listHeight: 700, threshold: 50 })).toBe(
+      true,
+    );
+    expect(phoneTranscriptUnderfilled({ contentHeight: 751, listHeight: 700, threshold: 50 })).toBe(
+      false,
+    );
   });
 });
 
 describe('phone transcript shorter than the screen', () => {
   it('requests exactly one older page without a drag when the folded tail underfills the list', async () => {
     const pending: Array<(view: RoomHistoryView) => void> = [];
-    const history = vi.fn(
-      () => new Promise<RoomHistoryView>((resolve) => pending.push(resolve)),
-    );
+    const history = vi.fn(() => new Promise<RoomHistoryView>((resolve) => pending.push(resolve)));
     const { renderer, measure } = mount(history);
 
     act(() => {
@@ -138,7 +146,9 @@ describe('phone transcript shorter than the screen', () => {
   });
 
   it('stops at the start of the Room instead of looping', async () => {
-    const history = vi.fn(async () => ({ messages: [], nextBefore: null }) as unknown as RoomHistoryView);
+    const history = vi.fn(
+      async () => ({ messages: [], nextBefore: null }) as unknown as RoomHistoryView,
+    );
     const { renderer, measure } = mount(history);
 
     await act(async () => {
@@ -148,6 +158,70 @@ describe('phone transcript shorter than the screen', () => {
     await act(async () => measure().observeContentHeight(240));
     expect(history).toHaveBeenCalledTimes(1);
     expect(renderer.toJSON().props.status).toBe('complete');
+    renderer.unmount();
+  });
+
+  it('keeps loading page after page until the content fills the screen', async () => {
+    let page = 0;
+    const history = vi.fn(async () => {
+      page += 1;
+      return {
+        messages: [
+          message(String.fromCharCode(98 + page * 2), -page * 2),
+          message(String.fromCharCode(99 + page * 2), -page * 2 + 1),
+        ],
+        nextBefore: { createdAt: -page * 2, id: 'x'.repeat(64) },
+      } as unknown as RoomHistoryView;
+    });
+    const { renderer, measure } = mount(history);
+
+    await act(async () => {
+      measure().observeListHeight(LIST_HEIGHT);
+      measure().observeContentHeight(240);
+    });
+    // The first page lands: still short, so the next page loads.
+    await act(async () => measure().observeContentHeight(480));
+    expect(history).toHaveBeenCalledTimes(2);
+    // The second page fills the screen: loading stops.
+    await act(async () => measure().observeContentHeight(900));
+    expect(history).toHaveBeenCalledTimes(2);
+    renderer.unmount();
+  });
+
+  it('stops on a page that adds no rows instead of looping', async () => {
+    const history = vi.fn(
+      async () =>
+        ({
+          messages: [],
+          nextBefore: { createdAt: 0, id: 'z'.repeat(64) },
+        }) as unknown as RoomHistoryView,
+    );
+    const { renderer, measure } = mount(history);
+
+    await act(async () => {
+      measure().observeListHeight(LIST_HEIGHT);
+      measure().observeContentHeight(240);
+    });
+    await act(async () => measure().observeContentHeight(240));
+    await act(async () => measure().observeListHeight(LIST_HEIGHT));
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(renderer.toJSON().props.status).toBe('idle');
+    renderer.unmount();
+  });
+
+  it('stops on a failed page instead of looping', async () => {
+    const history = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    const { renderer, measure } = mount(history);
+
+    await act(async () => {
+      measure().observeListHeight(LIST_HEIGHT);
+      measure().observeContentHeight(240);
+    });
+    await act(async () => measure().observeContentHeight(240));
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(renderer.toJSON().props.status).toBe('error');
     renderer.unmount();
   });
 

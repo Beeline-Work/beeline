@@ -1,8 +1,24 @@
 import * as Haptics from 'expo-haptics';
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { PanResponder, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { scrollBarPosition, scrubOffset } from '@/buzz/transcript-scrubber';
+import type {
+  TranscriptScrollController,
+  TranscriptScrollRow,
+} from '@/buzz/transcript-scroll-controller';
+import {
+  scrollBarPosition,
+  scrubOffset,
+  scrubReachesOldest,
+  type TranscriptScrollMetrics,
+} from '@/buzz/transcript-scrubber';
 import type { TranscriptScrubberStore } from '@/buzz/use-transcript-scrubber';
 
 /** The thumb's touch target, wider and taller than the bar it holds. */
@@ -17,26 +33,37 @@ const HANDLE_WIDTH = 6;
  * the list's offset over the rows the phone has loaded. Grab it and drag: the
  * list scrolls with the finger, and a bubble names the day on screen. Only the
  * thumb takes touches; the rest of the right edge belongs to the list.
+ *
+ * The scroll controller moves the list; the bar only requests an offset.
+ * Reaching the oldest loaded rows asks the Room message store for older ones.
  */
 export function TranscriptScrubber({
   scrubber,
-  onScrubTo,
+  scrollController,
+  loadOlder,
 }: {
   scrubber: TranscriptScrubberStore;
-  /** Scroll the list to this offset. */
-  onScrubTo: (offset: number) => void;
+  scrollController: Pick<TranscriptScrollController<TranscriptScrollRow>, 'request'>;
+  /** The Room message store's older page. */
+  loadOlder: () => void;
 }) {
   const { metrics, date, visible } = useSyncExternalStore(scrubber.subscribe, scrubber.getSnapshot);
   const [railHeight, setRailHeight] = useState(0);
   // The thumb follows the finger while dragging, not the list's echo.
   const [dragPosition, setDragPosition] = useState<number | null>(null);
   const position = dragPosition ?? (metrics ? scrollBarPosition(metrics) : null);
-  const live = useRef({ position, dragPosition, railHeight, onScrubTo });
-  live.current = { position, dragPosition, railHeight, onScrubTo };
+  const live = useRef({ position, dragPosition, railHeight, scrollController, loadOlder });
+  live.current = { position, dragPosition, railHeight, scrollController, loadOlder };
   const grabbedAt = useRef(0);
 
+  const scrubTo = useCallback((metrics: TranscriptScrollMetrics, next: number) => {
+    const offset = scrubOffset(metrics, next);
+    live.current.scrollController.request({ kind: 'offset', offset });
+    if (scrubReachesOldest(metrics, offset)) live.current.loadOlder();
+  }, []);
+
   // Older rows that load under a finger held at the top change the list's
-  // size, not its offset. Re-aim the list at the new oldest row, which loads
+  // size, not its offset. Re-aim the list at the new oldest row and ask for
   // the next page. Held anywhere else, the list stays put: rows measuring,
   // a new message or the keyboard must not move it under a still finger.
   const contentHeight = metrics?.contentHeight;
@@ -45,8 +72,8 @@ export function TranscriptScrubber({
     const held = live.current.dragPosition;
     const current = scrubber.getSnapshot().metrics;
     if (held === null || held < 1 || !current) return;
-    live.current.onScrubTo(scrubOffset(current, held));
-  }, [contentHeight, viewportHeight, scrubber]);
+    scrubTo(current, held);
+  }, [contentHeight, viewportHeight, scrubber, scrubTo]);
 
   const pan = useMemo(() => {
     const finish = () => {
@@ -68,12 +95,12 @@ export function TranscriptScrubber({
         // Up the screen is older: position grows as dy goes negative.
         const next = Math.min(1, Math.max(0, grabbedAt.current - state.dy / track));
         setDragPosition(next);
-        live.current.onScrubTo(scrubOffset(current, next));
+        scrubTo(current, next);
       },
       onPanResponderRelease: finish,
       onPanResponderTerminate: finish,
     });
-  }, [scrubber]);
+  }, [scrubber, scrubTo]);
 
   const dragging = dragPosition !== null;
   const shown = position !== null && (visible || dragging);

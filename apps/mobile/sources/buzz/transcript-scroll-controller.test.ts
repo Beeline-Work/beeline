@@ -236,7 +236,7 @@ describe('transcript scroll controller', () => {
     controller.dragEnded(true);
     expect(controller.isUserDragging()).toBe(true);
     // Momentum begins before the frame: the drag stays held.
-    controller.dragStarted();
+    controller.momentumStarted();
     flush();
     expect(controller.isUserDragging()).toBe(true);
     controller.momentumEnded();
@@ -270,6 +270,36 @@ describe('transcript scroll controller', () => {
     controller.request({ kind: 'offset', offset: 420 });
     expect(moves).toEqual(['offset:420']);
     expect(events).toEqual(['cancelled:message:replaced']);
+    expect(controller.active()).toBeNull();
+  });
+
+  it('keeps a scrub requested during momentum pending and lands it when momentum ends', () => {
+    const { controller, moves, events } = setup();
+    controller.dragStarted();
+    controller.dragEnded(true);
+    controller.momentumStarted();
+    // The list coasts past each offset the scrubber asks for.
+    controller.request({ kind: 'offset', offset: 300 });
+    controller.request({ kind: 'offset', offset: 900 });
+    expect(controller.active()).toEqual({ kind: 'offset', offset: 900 });
+    controller.observeLayout();
+    controller.momentumEnded();
+    expect(moves).toEqual(['offset:300', 'offset:900', 'offset:900', 'offset:900']);
+    expect(controller.active()).toBeNull();
+    // A later momentum end does not move the list again.
+    controller.momentumEnded();
+    expect(moves).toHaveLength(4);
+    expect(events).toEqual(['cancelled:offset:replaced']);
+  });
+
+  it('lets a drag on the list cancel a scrub pending on momentum', () => {
+    const { controller, moves, events } = setup();
+    controller.momentumStarted();
+    controller.request({ kind: 'offset', offset: 900 });
+    controller.dragStarted();
+    controller.momentumEnded();
+    expect(moves).toEqual(['offset:900']);
+    expect(events).toEqual(['cancelled:offset:drag']);
     expect(controller.active()).toBeNull();
   });
 

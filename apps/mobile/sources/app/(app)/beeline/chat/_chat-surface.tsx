@@ -340,7 +340,6 @@ import {
 import { useNewMessageControl, useUnreadLineControl } from '@/buzz/use-new-message-control';
 import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
-import { continueScrubLanding, type ScrubLanding } from '@/buzz/transcript-scrubber';
 import { useTranscriptScrubber } from '@/buzz/use-transcript-scrubber';
 import { usePhoneUnderfillHistory } from '@/buzz/phone-underfill-history';
 import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
@@ -1346,6 +1345,8 @@ export function BuzzChatSurface({
     jump: transcriptJump,
     newerStatus: transcriptNewerStatus,
     loadNewer: loadNewerTranscriptMessages,
+    fill: fillTranscript,
+    fillStatus: transcriptFillStatus,
     retryNewer: retryNewerTranscriptMessages,
     endJump: endTranscriptJump,
     loadLatest: loadLatestTranscriptMessages,
@@ -2519,17 +2520,18 @@ export function BuzzChatSurface({
   transcriptMessagesRef.current = transcriptMessages;
   const transcriptScrubber = useTranscriptScrubber();
   useEffect(() => transcriptScrubber.reset(), [decodedId, transcriptScrubber]);
-  // Newer rows wait until a pending landing has landed, so the rows it
-  // measured stay where they are.
-  const loadNewerTranscriptIfLanded = useCallback(() => {
-    if (!scrollController.isLanding()) loadNewerTranscriptMessages();
-  }, [loadNewerTranscriptMessages, scrollController]);
+  // A detached window fills with newer rows only once a pending landing has
+  // landed, so the rows it measured stay where they are.
+  const fillShortTranscript = useCallback(() => {
+    if (anchoredSegmentActive && scrollController.isLanding()) return;
+    fillTranscript(visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length);
+  }, [anchoredSegmentActive, fillTranscript, foldedMessages, scrollController]);
   const phoneUnderfill = usePhoneUnderfillHistory({
     enabled: !desktopTranscript && transcriptMessages.length > 0,
-    status: anchoredSegmentActive ? transcriptNewerStatus : transcriptHistoryStatus,
+    status: transcriptFillStatus,
     historyRevision: visibleMessageCount,
     threshold: TAIL_PIN_THRESHOLD,
-    loadOlder: anchoredSegmentActive ? loadNewerTranscriptIfLanded : loadOlderTranscriptMessages,
+    fill: fillShortTranscript,
   });
   // The read cursor ranks rows by index to decide which is newest, so it reads
   // the chronological order for the same reason the jump control does: on the
@@ -3063,15 +3065,6 @@ export function BuzzChatSurface({
     if (isCorner || !firstUnreadMessageId || messageAnchorId) return;
     scrollController.request({ kind: 'firstUnread', messageId: firstUnreadMessageId });
   }, [decodedId, firstUnreadMessageId, isCorner, messageAnchorId, scrollController]);
-  // Dragging the scroll bar scrolls the list. Reaching the top loads older
-  // history, the same as the reader scrolling there by hand.
-  const scrubTranscriptTo = useCallback(
-    (offset: number) => {
-      allowOlderHistoryRef.current = true;
-      scrollController.request({ kind: 'offset', offset });
-    },
-    [scrollController],
-  );
   // The disc's one job. It lands on the tail itself rather than on a queued
   // boundary row, so a reader who is merely re-reading history — no queue at
   // all — gets back to the live end in one tap, and a reader with unread mail
@@ -6281,7 +6274,7 @@ export function BuzzChatSurface({
                   }}
                   onMomentumScrollBegin={() => {
                     allowOlderHistoryRef.current = true;
-                    scrollController.dragStarted();
+                    scrollController.momentumStarted();
                   }}
                   onMomentumScrollEnd={(event) => {
                     observePhoneTailOffset(event.nativeEvent.contentOffset.y);
@@ -6341,7 +6334,11 @@ export function BuzzChatSurface({
                 />
               )}
               {!desktopTranscript && (
-                <TranscriptScrubber scrubber={transcriptScrubber} onScrubTo={scrubTranscriptTo} />
+                <TranscriptScrubber
+                  scrubber={transcriptScrubber}
+                  scrollController={scrollController}
+                  loadOlder={loadOlderTranscriptMessages}
+                />
               )}
               <RoomCatchUpControls
                 corner={isCorner}

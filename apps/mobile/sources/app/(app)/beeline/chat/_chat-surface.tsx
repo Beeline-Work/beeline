@@ -67,7 +67,11 @@ import {
   AGENT_PRESENCE_STALE_MS,
   isChatListView,
 } from '@beeline/buzz-client';
-import type { AgentComposerCommand, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+import {
+  cornerDisplayName,
+  type AgentComposerCommand,
+  type WorkflowRunSummaryView,
+} from '@beeline/api-contract/phone';
 import {
   createRoomMessageProjector,
   conversationIdentityByPubkey,
@@ -90,6 +94,13 @@ import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-roo
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
+import {
+  activeChannelAtCursor,
+  channelSuggestionCandidates,
+  filterChannelSuggestions,
+  replaceActiveChannel,
+  type ChannelSuggestion,
+} from '@/buzz/channel-suggestions';
 import { planComposerFill, type ComposerMention } from '@/buzz/composer-fill';
 import { roomStarterIntro, roomStarterPrompts } from '@/buzz/starter-prompts';
 import { agentPairingCommand } from '@/buzz/agent-pairing-command';
@@ -407,7 +418,10 @@ import {
   LedgerSystemLine,
 } from '@/components/buzz/Ledger';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { MentionSuggestionMenu } from '@/components/buzz/MentionSuggestionMenu';
+import {
+  ChannelSuggestionMenu,
+  MentionSuggestionMenu,
+} from '@/components/buzz/MentionSuggestionMenu';
 import { DirectMessageHeaderIdentity } from '@/components/buzz/DirectMessageHeaderIdentity';
 import { RoomRosterSheet, type RoomRosterParticipant } from '@/components/buzz/RoomRosterSheet';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
@@ -1856,6 +1870,73 @@ export function BuzzChatSurface({
     mentionMenuKey !== dismissedMentionKey &&
     mentionSuggestions.matches.length > 0,
   );
+  const activeChannel = useMemo(
+    () =>
+      inputSelection.start === inputSelection.end
+        ? activeChannelAtCursor(inputText, inputSelection.start)
+        : null,
+    [inputSelection.end, inputSelection.start, inputText],
+  );
+  const channelMenuKey = activeChannel
+    ? `#${inputText}:${activeChannel.start}:${activeChannel.end}`
+    : null;
+  // The current Room's open corners, read once the first `#` opens the menu.
+  const channelCornerRoomId = isDirectMessage ? null : (parentChannelId ?? decodedId);
+  const [channelCorners, setChannelCorners] = useState<{
+    roomId: string;
+    room: { name: string };
+    corners: readonly { id: string; name: string }[];
+  } | null>(null);
+  const channelCornersWanted = Boolean(activeChannel && channelCornerRoomId);
+  useEffect(() => {
+    if (!channelCornersWanted || !channelCornerRoomId || !roomClient) return;
+    if (channelCorners?.roomId === channelCornerRoomId) return;
+    let cancelled = false;
+    void roomClient
+      .corners(channelCornerRoomId)
+      .then((list) => {
+        if (cancelled) return;
+        setChannelCorners({
+          roomId: channelCornerRoomId,
+          room: { name: list.room.name },
+          corners: list.corners.map((item) => ({ id: item.corner.id, name: item.corner.name })),
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [channelCornersWanted, channelCornerRoomId, channelCorners?.roomId, roomClient]);
+  const channelSuggestions = useMemo(() => {
+    if (!activeChannel) return { matches: [], overflow: 0 };
+    const corners = channelCorners?.roomId === channelCornerRoomId ? channelCorners : null;
+    return filterChannelSuggestions(
+      channelSuggestionCandidates(
+        workspaceChats
+          .filter((item) => !item.directMessage)
+          .map((item) => ({
+            id: item.room.id,
+            name: item.room.name,
+            repositoryName: item.repositoryName,
+          })),
+        corners?.room ?? null,
+        corners?.corners ?? [],
+      ),
+      activeChannel.query,
+    );
+  }, [activeChannel, channelCorners, channelCornerRoomId, workspaceChats]);
+  const channelMenuVisible = Boolean(
+    !tagMenuOpen &&
+    composerFocused &&
+    channelMenuKey &&
+    channelMenuKey !== dismissedMentionKey &&
+    channelSuggestions.matches.length > 0,
+  );
+  const suggestionCount = mentionMenuVisible
+    ? mentionSuggestions.matches.length
+    : channelMenuVisible
+      ? channelSuggestions.matches.length
+      : 0;
   // The latest signed lifecycle receipt is server-indexed. Draft/thought
   // overlays carry content only and can neither start nor extend a turn.
   const agentTurnMarkers = useMemo(
@@ -4350,6 +4431,30 @@ export function BuzzChatSurface({
     [setInputText],
   );
 
+  const selectChannel = useCallback(
+    (suggestion: ChannelSuggestion) => {
+      if (!activeChannel) return;
+      const inserted = replaceActiveChannel(inputTextRef.current, activeChannel, suggestion.token);
+      const nextSelection = { start: inserted.cursor, end: inserted.cursor };
+      inputTextRef.current = inserted.text;
+      setInputText(inserted.text);
+      setInputSelection(nextSelection);
+      setHighlightedMentionIndex(0);
+      scheduleAnimationFrame(() => {
+        composerRef.current?.focus();
+        composerRef.current?.setNativeProps({
+          selection: composerFieldSelection(
+            inserted.text,
+            composerTagHandlesRef.current,
+            nextSelection,
+          ),
+        });
+      });
+      void Haptics.selectionAsync();
+    },
+    [activeChannel],
+  );
+
   const handleWritePermission = useCallback(
     async (message: ChatDisplayMessage, decision: 'allow' | 'deny') => {
       const permission = message.writePermission;
@@ -5250,7 +5355,7 @@ export function BuzzChatSurface({
       return (
         <View key={marker.id}>
           <CornerOpenedMarker
-            title={cornerName(fact.name ?? fact.objective, fact.cornerId)}
+            title={cornerName(fact.name ?? cornerDisplayName(fact.objective), fact.cornerId)}
             closed={fact.type === 'corner-complete' || fact.type === 'worktree-cleaned'}
             onOpen={() => openCorner(fact.cornerId)}
             testID={`corner-opened-marker-${fact.cornerId}`}
@@ -6156,9 +6261,7 @@ export function BuzzChatSurface({
               ) : (
                 <ChannelHeaderTitle
                   kind={headerTitleKind}
-                  // A corner's name is its objective verbatim; let it wrap once
-                  // rather than truncate to a slug fragment.
-                  numberOfLines={isCorner ? 2 : 1}
+                  numberOfLines={1}
                   onLongPress={canRenameTitle ? startRenameFromTitle : undefined}
                   onPress={
                     !isCorner && !isDirectMessage ? () => setRoomActionsVisible(true) : undefined
@@ -6711,6 +6814,19 @@ export function BuzzChatSurface({
                         personAvatar={(pubkey) => personProfileByPubkey.get(pubkey)?.avatar}
                       />
                     )}
+                    {channelMenuVisible && (
+                      <ChannelSuggestionMenu
+                        highlightedIndex={Math.min(
+                          highlightedMentionIndex,
+                          channelSuggestions.matches.length - 1,
+                        )}
+                        keyboardOpen={keyboardHeight > 0}
+                        matches={channelSuggestions.matches}
+                        onSelect={selectChannel}
+                        overflow={channelSuggestions.overflow}
+                        query={activeChannel?.query ?? ''}
+                      />
+                    )}
                     {cornerOpenRepoPrompt && (
                       <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
                         <Text style={styles.repoPromptTitle}>
@@ -6921,7 +7037,7 @@ export function BuzzChatSurface({
                           }
                           return;
                         }
-                        if (!mentionMenuVisible) {
+                        if (!suggestionCount) {
                           const desktopAction = desktopComposerKeyAction(
                             Platform.OS,
                             event.nativeEvent.key,
@@ -6935,21 +7051,32 @@ export function BuzzChatSurface({
                           }
                           return;
                         }
-                        if (!mentionMenuVisible || !action) return;
+                        if (!action) return;
                         if (action === 'select') {
                           event.preventDefault();
-                          const selected = mentionSuggestions.matches[highlightedMentionIndex];
-                          if (selected) selectMention(selected);
+                          const index = Math.min(highlightedMentionIndex, suggestionCount - 1);
+                          if (mentionMenuVisible) {
+                            const selected = mentionSuggestions.matches[index];
+                            if (selected) selectMention(selected);
+                          } else {
+                            const selected = channelSuggestions.matches[index];
+                            if (selected) selectChannel(selected);
+                          }
                         } else if (action === 'next' || action === 'previous') {
                           event.preventDefault();
                           const direction = action === 'next' ? 1 : -1;
-                          setHighlightedMentionIndex((current) => {
-                            const count = mentionSuggestions.matches.length;
-                            return (current + direction + count) % count;
-                          });
+                          setHighlightedMentionIndex(
+                            (current) =>
+                              (Math.min(current, suggestionCount - 1) +
+                                direction +
+                                suggestionCount) %
+                              suggestionCount,
+                          );
                         } else {
                           event.preventDefault();
-                          setDismissedMentionKey(mentionMenuKey);
+                          setDismissedMentionKey(
+                            mentionMenuVisible ? mentionMenuKey : channelMenuKey,
+                          );
                         }
                       }}
                       onSelectionChange={(event) => {

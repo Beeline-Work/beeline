@@ -2399,7 +2399,7 @@ export function cornerCallText(args: JsonObject): { name: string; objective: str
     cornerTextRefusal('name', args.name) ?? cornerTextRefusal('objective', args.objective);
   if (refusal) throw new Error(refusal);
   return {
-    name: normalizeCornerText(String(args.name)),
+    name: String(args.name),
     objective: normalizeCornerText(String(args.objective)),
   };
 }
@@ -4575,7 +4575,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       if (refusal) throw new Error(refusal);
       const result = await daemonExecute('renameCorner', {
         cornerId,
-        name: normalizeCornerText(String(args.name)),
+        name: String(args.name),
         ...(args.objective !== undefined ? { objective: args.objective } : {}),
         ...(args.brief !== undefined ? { brief: args.brief } : {}),
       });

@@ -9,7 +9,11 @@ import {
   type AttachmentReference,
   type MessageReactionEmoji,
 } from '@beeline/buzz-client';
-import { CHOICE_NOTE_MAX_LENGTH, formatChoiceClock } from '@beeline/api-contract/phone';
+import {
+  CHOICE_NOTE_MAX_LENGTH,
+  cornerDisplayName,
+  formatChoiceClock,
+} from '@beeline/api-contract/phone';
 
 import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
@@ -969,7 +973,7 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
   // The NAME titles the card; the objective is its body. A card written
   // before the name existed falls back to the same three-word derivation
   // every other corner surface uses (C89).
-  const title = cornerName(fact.name ?? fact.objective, fact.cornerId);
+  const title = cornerName(fact.name ?? cornerDisplayName(fact.objective), fact.cornerId);
   const prNumber = fact.pullRequest?.number;
   const closedCorner = fact.type === 'corner-complete' || fact.type === 'worktree-cleaned';
   const state = landedCorner

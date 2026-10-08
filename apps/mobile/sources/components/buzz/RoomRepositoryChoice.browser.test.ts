@@ -25,7 +25,7 @@ describe.skipIf(!existsSync(CHROME))('Room header Repository control in the brow
     console.log(result);
     expect(status, stderr).toBe(0);
     const lines = result.split('\n');
-    expect(lines[0]).toBe('H1: #thecollector Repository None Cancel Save');
+    expect(lines[0]).toBe('H1: #thecollector Repository None');
     expect(lines[1]).toBe('H2: #thecollector Repository None Link Create Cancel Save');
     expect(lines[2]).toBe(
       'H3: #thecollector Repository None Link Create Choose a repo Cancel Save',
@@ -49,7 +49,7 @@ describe.skipIf(!existsSync(CHROME))('Room header Repository control in the brow
     const { result, status, stderr } = await proof('?linked=1');
     console.log(result);
     expect(status, stderr).toBe(0);
-    expect(result).toContain('H9: #thecollector Repository castellan Cancel Save');
+    expect(result).toContain('H9: #thecollector Repository castellan\n');
     expect(result).toContain('saved: unlink');
   }, 90_000);
 });

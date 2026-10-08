@@ -51,8 +51,10 @@ describe('Room and corner actions sheets', () => {
     expect(chat).toContain('<HullActionSheetModal');
     expect(chat).toContain(`<HullActionSheetCancel`);
     expect(chat).toContain('testID="corner-actions-close"');
-    // The Room sheet's footer is Cancel + Save from the Repository control.
+    // The Room sheet's footer is Cancel + Save, only while the Repository
+    // choice is open; otherwise the sheet has no footer.
     expect(roomChoice).toContain('testID="room-actions-close"');
+    expect(roomChoice).toContain('const footer = control || listOpen ? (');
   });
 
   it('docks the room name and Repository control, and scrolls everything beneath them', () => {
@@ -156,7 +158,12 @@ describe('Room and corner actions sheets', () => {
 
   it('keeps values and section-head capitals out of the row titles', () => {
     expect(chat).toContain('label="Mute notifications"');
-    expect(chat).toContain('label="Scheduled work"');
+    expect(chat).toContain('label="Schedules and webhooks"');
+    // Workflows and Webhooks are not Room settings: definitions belong to
+    // agents, and live webhooks show read-only beside schedules.
+    expect(chat).not.toContain('testID="room-workflows-trigger"');
+    expect(chat).not.toContain('testID="room-webhooks-action"');
+    expect(chat).not.toContain("pathname: '/beeline/settings/webhooks'");
     expect(chat).toContain('label="Members"');
     expect(chat).toContain('<RoomReviewerActions');
     // The old titles crammed the value and the verb into the label, and the

@@ -21,6 +21,7 @@ function shims(mobile: string): Record<string, string> {
     export const monolithPhoneOperation = async (name) =>
       name === 'readNeedsYou' ? { items: [] }
         : name === 'listRoomSchedules' ? { schedules: [] }
+        : name === 'readRoomWebhooks' ? { sources: [], requests: [], deliveries: [] }
         : name === 'listRoomWorkflowRuns' ? { workflows: [] } : { bookmarks: [] };
     export const phoneOperationFailureReason = (reason) => String(reason);`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {
@@ -104,7 +105,7 @@ describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => 
       };
       expect(header, `${page} header differs from Corners`).toEqual(expected);
     }
-    // Scheduled Work shares the corner and workflow-run pages' title role
+    // Schedules and Webhooks shares the corner and workflow-run pages' title role
     // (bodyStrong under a meta eyebrow) and otherwise the Corners frame.
     const { page: _schedules, ...schedules } = await measure('schedules');
     expect(schedules).toEqual({

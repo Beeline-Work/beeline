@@ -43,7 +43,9 @@ type Options = {
 
 /**
  * The Room header sheet's Repository control: the same None / Link / Create
- * choice as New Room, held as a draft until Save.
+ * choice as New Room, held as a draft until Save. The Save/Cancel footer
+ * exists only while that choice is open; the rest of the sheet is rows that
+ * navigate or act on the spot.
  */
 export function useRoomRepositoryChoice({
   visible,
@@ -201,7 +203,7 @@ export function useRoomRepositoryChoice({
     </View>
   );
 
-  const footer = (
+  const footer = control || listOpen ? (
     <View style={styles.actions}>
       <TouchableOpacity
         accessibilityRole="button"
@@ -223,7 +225,7 @@ export function useRoomRepositoryChoice({
         />
       )}
     </View>
-  );
+  ) : null;
 
   return {
     listOpen,

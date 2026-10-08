@@ -236,7 +236,11 @@ export class RoomWebhooks {
       await this.member(db, roomId, identityId, false);
       await this.expire(db, roomId);
       const sources = await db.query<RoomWebhooksResult['sources'][number]>(
-        `SELECT id,source,(signing_secret_enc IS NOT NULL) signed,(revoked_at IS NOT NULL) revoked FROM room_webhooks WHERE room_id=$1 ORDER BY source`, [roomId]);
+        `SELECT w.id,w.source,(w.signing_secret_enc IS NOT NULL) signed,(w.revoked_at IS NOT NULL) revoked,
+          ARRAY(SELECT i.name FROM memberships m JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
+            WHERE m.room_id=w.room_id AND m.removed_at IS NULL AND m.event_subscriptions @> jsonb_build_array('webhook:'||w.source)
+            ORDER BY 1) agents
+         FROM room_webhooks w WHERE w.room_id=$1 ORDER BY w.source`, [roomId]);
       const requests = await db.query<WebhookRequestCard>(
         `SELECT q.id "requestId",q.agent_id "agentId",i.name "agentName",q.source,q.reason,q.status,floor(extract(epoch FROM q.expires_at))::int "expiresAt" FROM room_webhook_requests q JOIN identities i ON i.id=q.agent_id WHERE q.room_id=$1 AND q.status='pending' ORDER BY q.created_at`, [roomId]);
       const deliveries = await db.query<RoomWebhooksResult['deliveries'][number]>(

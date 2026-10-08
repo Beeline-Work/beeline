@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import type { RoomScheduleView } from '@beeline/api-contract/phone';
+import type { RoomScheduleView, RoomWebhooksResult } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
@@ -27,10 +27,11 @@ const NEXT_RUN = new Intl.DateTimeFormat(undefined, {
 });
 
 /**
- * Agents control recurring work. Room managers can only inspect or stop it.
- * The page wears the shared section header (Room name over Scheduled Work, the
- * corner and workflow-run pages' title role) and lists schedules only;
- * workflow runs are reached from a corner's objective panel.
+ * Everything that wakes the Room's agents without a human tag: timers and
+ * webhooks. Agents set both up. Room managers can only inspect, stop a
+ * schedule, or revoke a webhook. The page wears the shared section header
+ * (Room name over Schedules and Webhooks); workflow runs are reached from a
+ * corner's objective panel.
  */
 export default function ScheduledWork() {
   const insets = useSafeAreaInsets();
@@ -43,6 +44,7 @@ export default function ScheduledWork() {
   const [roomName, setRoomName] = useState<string | null>(null);
   const [agents, setAgents] = useState<Array<{ id: string; name: string }>>([]);
   const [schedules, setSchedules] = useState<readonly RoomScheduleView[]>([]);
+  const [webhooks, setWebhooks] = useState<RoomWebhooksResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [confirmStop, setConfirmStop] = useState<string | null>(null);
@@ -50,7 +52,7 @@ export default function ScheduledWork() {
 
   const reload = useCallback(async () => {
     if (!roomId || !workspaceId) {
-      setError('Scheduled-work target is missing.');
+      setError('Schedules target is missing.');
       setLoading(false);
       return;
     }
@@ -63,7 +65,10 @@ export default function ScheduledWork() {
       const relayUrl = await getEffectiveRelayUrl();
       const room = await new RoomViewClient({ baseUrl: relayUrl, identity }).room(roomId);
       if (!room.viewer.permissions.manage) throw new Error('Room manager required');
-      const listed = await monolithPhoneOperation('listRoomSchedules', { roomId });
+      const [listed, hooks] = await Promise.all([
+        monolithPhoneOperation('listRoomSchedules', { roomId }),
+        monolithPhoneOperation('readRoomWebhooks', { roomId }),
+      ]);
       setRoomName(room.room.name);
       setAgents(
         room.members
@@ -71,9 +76,10 @@ export default function ScheduledWork() {
           .map((member) => ({ id: member.identity.pubkey, name: member.identity.name })),
       );
       setSchedules(listed.schedules);
+      setWebhooks(hooks);
       setError(null);
     } catch (caught) {
-      setError(`Could not load scheduled work: ${String(caught)}`);
+      setError(`Could not load schedules and webhooks: ${String(caught)}`);
     } finally {
       setLoading(false);
     }
@@ -107,6 +113,75 @@ export default function ScheduledWork() {
     },
     [roomId],
   );
+
+  const revoke = useCallback(
+    async (webhookId: string) => {
+      if (!roomId) return;
+      setWorking(true);
+      setError(null);
+      try {
+        await monolithPhoneOperation('manageRoomWebhook', { roomId, action: 'revoke', webhookId });
+        setWebhooks((current) =>
+          current && {
+            ...current,
+            sources: current.sources.filter((hook) => hook.id !== webhookId),
+          },
+        );
+      } catch (caught) {
+        setError(`Could not revoke webhook: ${String(caught)}`);
+      } finally {
+        setWorking(false);
+      }
+    },
+    [roomId],
+  );
+
+  const liveWebhooks = useMemo(
+    () => webhooks?.sources.filter((hook) => !hook.revoked) ?? [],
+    [webhooks],
+  );
+  // Deliveries arrive newest first, so the first one per source is its last.
+  const lastFired = useMemo(() => {
+    const last = new Map<string, number>();
+    for (const delivery of webhooks?.deliveries ?? [])
+      if (!last.has(delivery.source)) last.set(delivery.source, delivery.receivedAt);
+    return last;
+  }, [webhooks]);
+
+  const renderWebhook = (hook: RoomWebhooksResult['sources'][number]) => {
+    const fired = lastFired.get(hook.source);
+    return (
+      <View key={hook.id} style={styles.row} testID={`webhook-${hook.id}`}>
+        <View style={styles.cadenceLine}>
+          <Text numberOfLines={1} style={styles.cadence}>
+            {hook.source}
+          </Text>
+          <Text numberOfLines={1} style={styles.next}>
+            {fired ? `LAST ${NEXT_RUN.format(new Date(fired * 1_000))}` : 'NEVER FIRED'}
+          </Text>
+        </View>
+        <Text numberOfLines={1} style={styles.agent}>
+          {hook.agents.length
+            ? hook.agents.map((name) => `@${name}`).join(' · ')
+            : 'No agent subscribed'}
+        </Text>
+        <View style={styles.rowFooter}>
+          <Text numberOfLines={1} style={styles.cornerName}>
+            {hook.signed ? 'Signed' : 'Unsigned'}
+          </Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            disabled={working}
+            onPress={() => void revoke(hook.id)}
+            style={styles.stopAction}
+            testID={`revoke-webhook-${hook.id}`}
+          >
+            <Text style={styles.stopText}>REVOKE</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
 
   const renderSchedule = (schedule: RoomScheduleView) => {
     const confirming = confirmStop === schedule.id;
@@ -180,7 +255,7 @@ export default function ScheduledWork() {
         eyebrow={displayRoomIndexTitle(roomName ?? undefined) ?? 'Room'}
         onBack={() => router.back()}
         testID="scheduled-work-header"
-        title="Scheduled Work"
+        title="Schedules and Webhooks"
       />
       {error && (
         <Pressable
@@ -204,14 +279,21 @@ export default function ScheduledWork() {
           keyboardShouldPersistTaps="handled"
           testID="scheduled-work-list"
         >
-          {schedules.length === 0 ? (
+          {schedules.length === 0 && liveWebhooks.length === 0 ? (
             <View style={styles.emptyBlock} testID="scheduled-work-empty">
               <Ionicons color={styles.emptyIcon.color} name="time-outline" size={22} />
-              <Text style={styles.emptyTitle}>No scheduled work</Text>
-              <Text style={styles.empty}>Agents in this Room have nothing on a schedule.</Text>
+              <Text style={styles.emptyTitle}>Nothing wakes agents here yet</Text>
+              <Text style={styles.empty}>
+                Agents set up schedules and webhooks. Ask an agent in this Room to add one.
+              </Text>
             </View>
           ) : (
-            schedules.map(renderSchedule)
+            <>
+              {schedules.length > 0 && <Text style={styles.section}>SCHEDULES</Text>}
+              {schedules.map(renderSchedule)}
+              {liveWebhooks.length > 0 && <Text style={styles.section}>WEBHOOKS</Text>}
+              {liveWebhooks.map(renderWebhook)}
+            </>
           )}
         </ScrollView>
       )}
@@ -229,6 +311,13 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.border,
   },
   rowPressed: { backgroundColor: theme.buzz.bgHighlight },
+  section: {
+    ...theme.buzz.type.sectionHead,
+    color: theme.buzz.ledgerQuiet,
+    paddingHorizontal: 16,
+    paddingTop: theme.buzz.space.lg,
+    paddingBottom: theme.buzz.space.xs,
+  },
   cadenceLine: { flexDirection: 'row', alignItems: 'baseline', gap: theme.buzz.space.sm },
   cadence: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
   next: { ...theme.buzz.type.meta, flexShrink: 0, color: theme.buzz.ledgerQuiet },

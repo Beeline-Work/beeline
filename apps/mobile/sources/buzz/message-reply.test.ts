@@ -5,18 +5,31 @@ import {
   activityReplyParent,
   agentActivityReplyExcerpt,
   prepareMessageReply,
-  replyMessageText,
 } from './message-reply';
 
+const sol = {
+  messageId: 'agent-final-message-id',
+  authorName: 'Sol',
+  authorHandle: 'sol',
+  authorPubkey: 'sol-agent-id',
+  isAgent: true,
+  preview: 'The final answer',
+};
+
 describe('message replies', () => {
-  it('encodes an agent reply as an exact canonical tag', () => {
-    expect(replyMessageText('  Can you expand on that?  ', 'codex')).toBe(
-      '@codex Can you expand on that?',
-    );
+  it('sends the composer text as typed and never adds a hidden tag', () => {
+    expect(prepareMessageReply('  @sol Can you expand on that?  ', sol)).toEqual({
+      text: '@sol Can you expand on that?',
+      agentPubkey: 'sol-agent-id',
+    });
+    expect(prepareMessageReply('  Thanks  ', { ...sol, isAgent: false })).toEqual({
+      text: 'Thanks',
+    });
   });
 
-  it('keeps a human reply untagged', () => {
-    expect(replyMessageText('  Thanks  ')).toBe('Thanks');
+  it('does not address the agent once its prefilled handle is deleted', () => {
+    expect(prepareMessageReply('Thanks', sol)).toEqual({ text: 'Thanks' });
+    expect(prepareMessageReply('@solo Thanks', sol)).toEqual({ text: '@solo Thanks' });
   });
 
   it('keeps a corner agent reply bound to its parent and exact agent', () => {
@@ -27,7 +40,7 @@ describe('message replies', () => {
     };
 
     expect(
-      prepareMessageReply('  Can you clarify?  ', {
+      prepareMessageReply('  @sol Can you clarify?  ', {
         messageId: 'agent-final-message-id',
         authorName: 'Sol',
         authorHandle: 'sol',
@@ -84,7 +97,7 @@ describe('message replies', () => {
       preview: final.text,
       reference: final.reference,
     });
-    expect(prepareMessageReply('Why?', target)).toEqual({
+    expect(prepareMessageReply('@sol Why?', target)).toEqual({
       text: '@sol Why?',
       reference: final.reference,
       agentPubkey: 'sol-agent-id',
@@ -139,7 +152,7 @@ describe('message replies', () => {
 
     expect(activityReplyParent(activity, [activity])).toBeUndefined();
     expect(
-      prepareMessageReply('Check the mobile suite too.', {
+      prepareMessageReply('@sol Check the mobile suite too.', {
         messageId: activity.id,
         authorName: 'Sol',
         authorHandle: 'sol',

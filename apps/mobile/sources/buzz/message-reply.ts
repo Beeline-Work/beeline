@@ -1,4 +1,5 @@
 import type { KnownMessageReference } from '@beeline/buzz-client';
+import { textTagsAgent } from './composer-prefill';
 import type { ChatDisplayMessage } from './room-view-presentation';
 
 export type MessageReplyDisplayTarget = {
@@ -22,21 +23,26 @@ export type PreparedMessageReply = {
   agentPubkey?: string;
 };
 
-export function replyMessageText(text: string, agentHandle?: string): string {
-  const body = text.trim();
-  return agentHandle ? `@${agentHandle} ${body}` : body;
-}
-
-/** Preserve the snapshot's parent proof and the parent agent's exact identity together. */
+/**
+ * Preserve the snapshot's parent proof. The composer already shows the agent's
+ * handle as typed text; the reply addresses the agent only while that tag is
+ * still there, so a person who deletes it sends an untagged reply.
+ */
 export function prepareMessageReply(
   text: string,
   target: MessageReplyTarget,
 ): PreparedMessageReply {
-  const addressed = replyMessageText(text, target.isAgent ? target.authorHandle : undefined);
+  const body = text.trim();
+  const addressesAgent = Boolean(
+    target.isAgent &&
+      target.authorHandle &&
+      target.authorPubkey &&
+      textTagsAgent(body, target.authorHandle, target.authorPubkey),
+  );
   return {
-    text: addressed,
+    text: body,
     ...(target.reference ? { reference: target.reference } : {}),
-    ...(target.isAgent && target.authorPubkey ? { agentPubkey: target.authorPubkey } : {}),
+    ...(addressesAgent ? { agentPubkey: target.authorPubkey } : {}),
   };
 }
 

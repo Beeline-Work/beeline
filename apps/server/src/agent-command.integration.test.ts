@@ -287,9 +287,9 @@ describe.each([R, C])('server command authority in %s', (room) => {
     expect(await commands(A, room)).toEqual([]);
     expect(await commands(B, room)).toEqual([]);
 
-    // A reply composed through the mobile helper (replyMessageText in
-    // apps/mobile/sources/buzz/message-reply.ts) prepends the parent agent's
-    // @handle, so it routes as a tag.
+    // A reply to an agent starts with the parent agent's @handle in the mobile
+    // composer (apps/mobile/sources/buzz/composer-prefill.ts), so it routes as
+    // a tag.
     const agentReply = (
       await db.query<{ id: string; text: string }>(
         `SELECT id,text FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation='message'

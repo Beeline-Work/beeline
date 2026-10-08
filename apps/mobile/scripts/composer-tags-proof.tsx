@@ -227,12 +227,13 @@ async function run() {
   ).getBoundingClientRect();
   lines.push(
     `pill: ${Math.round(xFace.right - face.left)}px wide, × cell ${Math.round(xFace.width)}px`,
+    `× target reach: ${Math.round(xFace.left - remove.left)}px before the ×, ${Math.round(remove.right - xFace.right)}px after`,
   );
   check(
-    'idle: the × target is 44 wide over the ×, and both targets are 26 tall with 9 px slop like ＋',
+    'idle: the × target is 44 wide centred on the ×, and both targets are 26 tall with 9 px slop like ＋',
     remove.width === 44 &&
-      remove.left <= xFace.left &&
-      remove.right >= xFace.right &&
+      Math.abs(xFace.left - remove.left - 12) < 0.5 &&
+      Math.abs(remove.right - xFace.right - 12) < 0.5 &&
       edit.height === 26 &&
       remove.height === 26,
   );

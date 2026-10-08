@@ -766,23 +766,25 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomLeftRadius: theme.buzz.radius,
   },
   tagChipFaceEnd: {
+    width: 20,
     borderRightWidth: 1,
     borderTopRightRadius: theme.buzz.radius,
     borderBottomRightRadius: theme.buzz.radius,
   },
-  tagChipBody: { height: 26, justifyContent: 'center' },
+  // With the × target's own 8, the 4 here pulls it 12 back over the handle.
+  tagChipBody: { height: 26, justifyContent: 'center', marginRight: -theme.buzz.space.xs },
   tagChipText: { ...theme.buzz.type.machine, color: theme.buzz.accent },
-  // 16 + the 20 px × + 8 = 44: the target reaches 16 back over the handle
-  // and 8 past the pill, 4 of them over the next pill's padding, which keeps
-  // the v6 4 px gap. Drawn above its neighbours so the × always wins.
+  // 12 + the 20 px × + 12 = 44, centred on the ×: the target reaches 12
+  // back over the handle and 12 past the pill, 8 of them over the next
+  // pill, which keeps the v6 4 px gap. Drawn above its neighbours so the
+  // × always wins.
   tagChipRemove: {
     width: 44,
     height: 26,
+    alignItems: 'center',
     justifyContent: 'center',
-    paddingLeft: theme.buzz.space.md,
-    paddingRight: theme.buzz.space.sm,
-    marginLeft: -theme.buzz.space.md,
-    marginRight: -theme.buzz.space.xs,
+    marginLeft: -theme.buzz.space.sm,
+    marginRight: -theme.buzz.space.sm,
     zIndex: 1,
   },
   tagChipRemoveText: {

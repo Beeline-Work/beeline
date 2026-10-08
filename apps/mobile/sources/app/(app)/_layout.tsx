@@ -107,7 +107,7 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
-        {/* Scheduled work draws the shared PageHeader (Room over Scheduled Work). */}
+        {/* Schedules and webhooks draws the shared PageHeader (Room over Schedules and Webhooks). */}
         <Stack.Screen
           name="beeline/settings/schedules"
           options={{

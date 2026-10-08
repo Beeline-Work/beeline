@@ -10,7 +10,7 @@ describe('scheduled Agent work', () => {
     expect(chat).toContain('getBuzzRuntimeConfig().monolithEnabled');
     expect(chat).toContain('testID="room-schedules-action"');
     expect(chat).toContain("pathname: '/beeline/settings/schedules'");
-    expect(chat).toContain('label="Scheduled work"');
+    expect(chat).toContain('label="Schedules and webhooks"');
     expect(chat).not.toContain('View or stop Agent-managed recurring work.');
   });
 
@@ -23,6 +23,11 @@ describe('scheduled Agent work', () => {
     expect(screen).not.toContain('repository notifications');
     expect(screen).toContain('CONFIRM STOP');
     expect(screen).not.toContain('Alert.alert');
+    // Webhooks are read-only beside schedules: revoke is the one action.
+    expect(screen).toContain("monolithPhoneOperation('readRoomWebhooks'");
+    expect(screen).toContain("action: 'revoke'");
+    expect(screen).toContain('CONFIRM REVOKE');
+    expect(screen).not.toMatch(/action: '(create|rotate|secret)'/);
   });
 
   it('labels corner schedules and opens their corner from the parent Room list', () => {
@@ -32,9 +37,9 @@ describe('scheduled Agent work', () => {
     expect(screen).toContain('testID={`open-scheduled-work-${schedule.id}`}');
   });
 
-  it('draws the shared PageHeader, Room over Scheduled Work, and no stack header', () => {
+  it('draws the shared PageHeader, Room over Schedules and Webhooks, and no stack header', () => {
     expect(screen).toContain('<PageHeader');
-    expect(screen).toContain('title="Scheduled Work"');
+    expect(screen).toContain('title="Schedules and Webhooks"');
     expect(screen).toContain("eyebrow={displayRoomIndexTitle(roomName ?? undefined) ?? 'Room'}");
     expect(screen).toContain('onBack={() => router.back()}');
     expect(layout).toMatch(

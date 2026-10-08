@@ -11,27 +11,19 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
+/** One workflow's runs, reached from a run's "All runs" link. */
 export default function Workflow() {
-  const params = useLocalSearchParams<{ roomId: string; name?: string }>();
+  const params = useLocalSearchParams<{ roomId: string; name: string }>();
   const roomId = Array.isArray(params.roomId) ? params.roomId[0] : params.roomId;
   const name = Array.isArray(params.name) ? params.name[0] : params.name;
   const insets = useSafeAreaInsets();
   const [detail, setDetail] = useState<
     PhoneOperationMap['readWorkflowDefinition']['output'] | null
   >(null);
-  const [definitions, setDefinitions] = useState<
-    PhoneOperationMap['listWorkflowDefinitions']['output'] | null
-  >(null);
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(async () => {
     try {
-      if (name) {
-        setDefinitions(null);
-        setDetail(await monolithPhoneOperation('readWorkflowDefinition', { roomId, name }));
-      } else {
-        setDetail(null);
-        setDefinitions(await monolithPhoneOperation('listWorkflowDefinitions', { roomId }));
-      }
+      setDetail(await monolithPhoneOperation('readWorkflowDefinition', { roomId, name }));
       setError(null);
     } catch (caught) {
       setError(String(caught));
@@ -45,7 +37,7 @@ export default function Workflow() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <PageHeader
-        title={name ? workflowDisplayName(name) : 'Workflows'}
+        title={workflowDisplayName(name)}
         onBack={() => router.back()}
         backAccessibilityLabel="Back"
         testID="workflow-header"
@@ -57,30 +49,8 @@ export default function Workflow() {
           </Text>
         </Pressable>
       ) : null}
-      {!detail && !definitions && !error ? <SurfaceGlyphLoader /> : null}
-      {definitions ? (
-        <ScrollView contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}>
-          {definitions.workflows.map((workflow) => (
-            <Pressable
-              key={workflow.name}
-              accessibilityRole="button"
-              style={styles.run}
-              onPress={() =>
-                router.push({
-                  pathname: '/beeline/workflow',
-                  params: { roomId, name: workflow.name },
-                })
-              }
-            >
-              <Text style={styles.title}>{workflowDisplayName(workflow.name)}</Text>
-            </Pressable>
-          ))}
-          {!definitions.workflows.length ? (
-            <Text style={styles.description}>No saved workflows.</Text>
-          ) : null}
-        </ScrollView>
-      ) : null}
-      {detail && name ? (
+      {!detail && !error ? <SurfaceGlyphLoader /> : null}
+      {detail ? (
         <ScrollView contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}>
           <Text style={styles.description}>
             {detail.contract.summary ?? detail.contract.description}

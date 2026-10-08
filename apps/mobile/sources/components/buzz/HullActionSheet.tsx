@@ -238,7 +238,10 @@ export function HullActionSheetRow({
             disabled={toggle.disabled ?? disabled}
             onValueChange={toggle.onValueChange}
             thumbColor={theme.buzz.textPrimary}
-            trackColor={{ false: theme.buzz.bgRaised, true: theme.buzz.accent }}
+            // The off track must stand apart from the sheet surface, or the
+            // thumb floats alone and the state cannot be read.
+            ios_backgroundColor={theme.buzz.textDisabled}
+            trackColor={{ false: theme.buzz.textDisabled, true: theme.buzz.accent }}
             value={toggle.value}
           />
         </View>

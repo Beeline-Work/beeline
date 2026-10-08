@@ -16,6 +16,14 @@ function shims(mobile: string): Record<string, string> {
     '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
     export const monolithPhoneOperation = async (name) => {
       (globalThis.__operations ??= []).push(name);
+      if (name === 'readRoomWebhooks') return {
+        sources: [
+          { id: 'hook-1', source: 'price-feed', signed: true, revoked: false, agents: ['Niglet'] },
+          { id: 'hook-2', source: 'old-feed', signed: false, revoked: true, agents: [] },
+        ],
+        requests: [],
+        deliveries: [{ id: 'd-1', source: 'price-feed', receivedAt: ${NEXT_RUN}, delivered: 1 }],
+      };
       if (name !== 'listRoomSchedules') throw new Error('unexpected ' + name);
       return {
       schedules: [
@@ -45,8 +53,8 @@ function shims(mobile: string): Record<string, string> {
   };
 }
 
-describe.skipIf(!existsSync(CHROME))('Scheduled work page in a browser', () => {
-  it('lists schedules only, titled Room over Scheduled Work, each cadence in words', async () => {
+describe.skipIf(!existsSync(CHROME))('Schedules and Webhooks page in a browser', () => {
+  it('lists schedules and live webhooks, titled Room over Schedules and Webhooks', async () => {
     const mobile = process.cwd();
     const { result, status, stderr } = await runBrowserProof({
       entry: path.join(mobile, 'scripts/scheduled-work-proof.tsx'),
@@ -69,19 +77,20 @@ describe.skipIf(!existsSync(CHROME))('Scheduled work page in a browser', () => {
       operations: string[];
     };
     // The corner and workflow-run pages' header: small Room name over a bodyStrong title.
-    expect(page.text.slice(0, 2)).toEqual(['#beeline', 'Scheduled Work']);
+    expect(page.text.slice(0, 2)).toEqual(['#beeline', 'Schedules and Webhooks']);
     expect(page).toMatchObject({
       back: true,
       eyebrowFont: '13px SpaceGrotesk-Regular',
       titleFont: '16px SpaceGrotesk-SemiBold',
       eyebrowAboveTitle: true,
     });
-    // Schedules only: no Workflows section, no section heads, and no workflow read.
+    // No Workflows section and no workflow read; revoked webhooks stay hidden.
     expect(page.workflowSection).toBe(false);
     expect(page.text).not.toContain('Workflows');
-    expect(page.text).not.toContain('Schedules');
-    expect(page.operations).toEqual(['listRoomSchedules']);
+    expect(page.text).not.toContain('old-feed');
+    expect([...page.operations].sort()).toEqual(['listRoomSchedules', 'readRoomWebhooks']);
     expect(page.text.slice(2)).toEqual([
+      'SCHEDULES',
       'Daily at 08:00 UTC',
       expect.stringMatching(/^NEXT /),
       '@Niglet',
@@ -93,6 +102,12 @@ describe.skipIf(!existsSync(CHROME))('Scheduled work page in a browser', () => {
       'Check the deploy queue',
       'quiet amber corner',
       'STOP',
+      'WEBHOOKS',
+      'price-feed',
+      expect.stringMatching(/^LAST /),
+      '@Niglet',
+      'Signed',
+      'REVOKE',
     ]);
     // A schedule in a corner opens that corner; STOP asks to confirm, as before.
     expect(page.pushed).toEqual([
@@ -103,6 +118,7 @@ describe.skipIf(!existsSync(CHROME))('Scheduled work page in a browser', () => {
     ]);
     expect(page.afterStop).toContain('CANCEL');
     expect(page.afterStop).toContain('CONFIRM STOP');
+    expect(page.afterStop).toContain('CONFIRM REVOKE');
     // No explainer paragraph, and no raw cron expression.
     expect(page.text.join(' ')).not.toMatch(/repository notifications|Agents create/);
     expect(page.text.join(' ')).not.toContain('0 8 * * *');

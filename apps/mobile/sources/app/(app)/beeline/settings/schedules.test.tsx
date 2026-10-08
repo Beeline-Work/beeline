@@ -4,7 +4,8 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 const room = vi.hoisted(() => vi.fn(async () => ({ room: { name: 'Room' }, viewer: { permissions: { manage: true } }, members: [] })));
-const operation = vi.hoisted(() => vi.fn(async (name: string) => name === 'listRoomSchedules' ? { schedules: [{ id: 'daily', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Morning summary', nextRunAt: 1790000000 }] } : {}));
+const operation = vi.hoisted(() => vi.fn(async (name: string, _input?: unknown) => name === 'listRoomSchedules' ? { schedules: [{ id: 'daily', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Morning summary', nextRunAt: 1790000000 }] }
+  : name === 'readRoomWebhooks' ? { sources: [{ id: 'hook', source: 'price-feed', signed: false, revoked: false, agents: ['Niglet'] }], requests: [], deliveries: [] } : {}));
 vi.mock('expo-router', () => ({ router: { back: vi.fn() }, useLocalSearchParams: () => ({ roomId: 'room', workspaceId: 'ws' }), useFocusEffect: (effect: any) => React.useEffect(effect, [effect]) }));
 vi.mock('react-native', async () => {
   const { createElement } = await import('react');
@@ -33,5 +34,19 @@ it('R12f: stopping a schedule removes its row without another Room or list read'
     expect(room).toHaveBeenCalledTimes(1);
     expect(operation.mock.calls.filter(([name]) => name === 'listRoomSchedules')).toHaveLength(1);
     console.log('R12f Demonstrated: stopped schedule absent; Room and list read once.');
+  } finally { await act(async () => tree?.unmount()); }
+});
+
+it('revoking a webhook asks to confirm, then removes its row', async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  let tree: any;
+  try {
+    await act(async () => { tree = create(<ScheduledWork />); });
+    await act(async () => tree.root.findByProps({ testID: 'revoke-webhook-hook' }).props.onPress());
+    expect(operation.mock.calls.some(([name]) => name === 'manageRoomWebhook')).toBe(false);
+    const confirm = tree.root.findAllByType('TouchableOpacity').find((node: any) => node.findAllByType('Text').some((text: any) => text.props.children === 'CONFIRM REVOKE'));
+    await act(async () => { confirm.props.onPress(); });
+    expect(operation).toHaveBeenCalledWith('manageRoomWebhook', { roomId: 'room', action: 'revoke', webhookId: 'hook' });
+    expect(tree.root.findAllByProps({ testID: 'webhook-hook' })).toHaveLength(0);
   } finally { await act(async () => tree?.unmount()); }
 });

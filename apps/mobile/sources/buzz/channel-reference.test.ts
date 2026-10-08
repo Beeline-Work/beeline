@@ -111,20 +111,22 @@ describe('findChannelReferences — unknown tokens stay ordinary text', () => {
     const roomsOnly = buildChannelReferenceIndex(rooms, []);
     expect(findChannelReferences('#infra/unknown-corner stays plain.', roomsOnly)).toEqual([
       {
-        text: '#infra/unknown-corner stays plain',
+        text: '#infra/unknown-corner',
         start: 0,
-        end: 33,
+        end: 21,
         target: {
           kind: 'corner',
           parentChannelId: 'room-infra',
-          name: 'unknown-corner stays plain',
+          name: 'unknown-corner',
         },
       },
     ]);
     expect(
-      resolveCornerFromList('#infra/unknown-corner stays plain.', { id: 'room-infra', name: 'infra' }, [
-        { id: 'corner-unknown', name: 'unknown-corner' },
-      ]),
+      resolveCornerFromList(
+        '#infra/unknown-corner stays plain.',
+        { id: 'room-infra', name: 'infra' },
+        [{ id: 'corner-unknown', name: 'unknown-corner' }],
+      ),
     ).toEqual({
       kind: 'corner',
       channelId: 'corner-unknown',

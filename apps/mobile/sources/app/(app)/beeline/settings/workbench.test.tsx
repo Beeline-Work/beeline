@@ -575,6 +575,27 @@ describe('Workbench settings screen', () => {
     expect(navigation.push.mock.calls.at(-1)![0].params.workspaceId).toBe('workspace-1');
   });
 
+  it('opens a connected Wallet without dropping its explainer under the row', async () => {
+    const source = new MockWorkbenchSource();
+    const read = source.readWorkbench.bind(source);
+    source.readWorkbench = async (input) => {
+      const view = await read(input);
+      return {
+        ...view,
+        connectors: view.connectors.map((connector) =>
+          connector.id === 'wallet' ? { ...connector, status: 'connected' as const } : connector,
+        ),
+      };
+    };
+    setWorkbenchSource(source);
+    const renderer = await render();
+    await act(async () => {
+      await renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' }).props.onPress();
+    });
+    expect(navigation.push.mock.calls.at(-1)![0].pathname).toBe('/beeline/settings/workbench/wallet');
+    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-wallet-details' })).toHaveLength(0);
+  });
+
   it('does not create or open Wallet when the viewer has no Workspace', async () => {
     searchParams.params = { viewerId: 'human-dani' };
     workspace.resolve.mockResolvedValue(null);

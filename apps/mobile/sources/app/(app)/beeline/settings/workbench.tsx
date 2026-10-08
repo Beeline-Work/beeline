@@ -349,7 +349,7 @@ export default function WorkbenchScreen() {
               }))}
               leading={<View style={[styles.toolMark, isWallet ? styles.walletMark : styles.squireMark]}><Text style={[styles.toolMarkText, !isWallet && styles.squireMarkText]}>{isWallet ? 'C' : '{ }'}</Text></View>}
               onAction={canConnect ? isWallet ? () => void connectWallet() : () => connectConnector(connector.id) : undefined}
-              onToggle={isWallet && connector.status === 'connected' ? openWallet : undefined}
+              onOpen={isWallet && connector.status === 'connected' ? () => void openWallet() : undefined}
               testID={`workbench-connector-${connector.id}`}
               title={isWallet ? 'Wallet' : connector.name}
               value={instrument.value}

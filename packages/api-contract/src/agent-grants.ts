@@ -276,7 +276,13 @@ const CREDENTIAL_BASENAMES = new Set([
   'providers.json',
 ]);
 
-/** Directory names that ARE a key store; a path through one is a credential path. */
+/**
+ * Directory names that ARE a key store; a path through one is a credential path.
+ *
+ * `beeline` is deliberately absent: the same name covers the operator's key
+ * store AND every agent's state tree, so it is matched by its parent instead
+ * ({@link isBeelineKeyStore}).
+ */
 const CREDENTIAL_DIRECTORIES = new Set([
   '.ssh',
   '.gnupg',
@@ -288,8 +294,41 @@ const CREDENTIAL_DIRECTORIES = new Set([
   'keyrings',
   'gh',
   'trusty-squire',
-  'beeline',
 ]);
+
+/**
+ * The Beeline operator key store is `$XDG_CONFIG_HOME/beeline` — by default
+ * `~/.config/beeline` — holding `providers.json`, `secrets.json` and operator
+ * key files. Its known store files are matched by basename anywhere; this
+ * catches an operator key file whose name no basename rule knows, when it sits
+ * under the default config root. The Beeline STATE tree
+ * (`~/.local/state/beeline/agents/<agent>/...`,
+ * `.../beeline/corners/<corner>`) is every agent's work area, scratch and
+ * corner checkout, so the bare name `beeline` is not a key store there.
+ */
+function isBeelineKeyStore(segments: readonly string[]): boolean {
+  return segments.some((segment, index) => {
+    if (segment.toLowerCase() !== 'beeline' || index === 0) return false;
+    return segments[index - 1]!.toLowerCase() === '.config';
+  });
+}
+
+/**
+ * The files directly inside an agent's runtime folder — `beeline/agents/<id>/`
+ * — hold the agent's own identity secret keys (`runtime.json`, written by
+ * `storeIdentity` in `apps/body/src/runtime.ts`). Everything deeper is the
+ * agent's work area (rooms, scratch, workspace, corner checkouts), so only a
+ * path that ends exactly one level below the agent folder is a credential
+ * path.
+ */
+function isAgentRuntimeFile(segments: readonly string[]): boolean {
+  return segments.some(
+    (segment, index) =>
+      segment.toLowerCase() === 'beeline' &&
+      segments[index + 1]?.toLowerCase() === 'agents' &&
+      index + 3 === segments.length - 1,
+  );
+}
 
 const CREDENTIAL_EXTENSIONS = /\.(pem|p12|pfx|key|jks|keystore|kdbx|asc|gpg|ppk|crt|pkcs12)$/i;
 const CREDENTIAL_WORD =
@@ -320,7 +359,13 @@ function namesCredential(word: string): boolean {
   if (CREDENTIAL_WORD.test(base)) return true;
   if (base.endsWith('.env') || ENV_FILE.test(base)) return true;
   // A path THROUGH a key store, e.g. ~/.ssh/config or ~/.config/gh/hosts.yml.
-  return segments.slice(0, -1).some((segment) => CREDENTIAL_DIRECTORIES.has(segment.toLowerCase()));
+  if (segments.slice(0, -1).some((segment) => CREDENTIAL_DIRECTORIES.has(segment.toLowerCase()))) {
+    return true;
+  }
+  // A path through the Beeline operator config directory, but not its state tree.
+  if (isBeelineKeyStore(segments)) return true;
+  // A file directly inside an agent's runtime folder holds its identity keys.
+  return isAgentRuntimeFile(segments);
 }
 
 /**

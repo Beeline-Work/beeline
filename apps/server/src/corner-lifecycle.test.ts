@@ -9,6 +9,7 @@ import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
+import { addressedToPersonSql } from './corner-owed.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import {
@@ -611,11 +612,73 @@ describe('checks dispatch (rows 6-8)', () => {
     );
     expect(await reasons(cornerId, A)).toEqual(before);
     expect(await reasons(cornerId, B)).toEqual([]);
-    const waiting = (await db.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%needs to approve%'`, [cornerId],
+    const waiting = (await db.query<{ text: string; card: unknown }>(
+      `SELECT text,card FROM messages WHERE room_id=$1 AND text LIKE '%needs to approve%'`, [cornerId],
     )).rows;
-    expect(waiting).toEqual([{ text: expect.stringContaining('A Workspace owner or admin needs to approve this pull request') }]);
+    // The one Workspace owner in the corner is tagged: their yes is the only way it merges.
+    expect(waiting).toEqual([{ text: expect.stringContaining('@human needs to approve this pull request'), card: { cornerId, approverIds: [H] } }]);
     expect(waiting[0]!.text).toContain('checks passed and no other agent can review it');
+  });
+
+  describe('a green head no agent can review reaches the people whose yes merges it', () => {
+    const P = 'f1'.repeat(32), M = 'f2'.repeat(32);
+    const waitingFor = async (cornerId: string) => (await db.query<{ text: string; card: { approverIds: string[] } }>(
+      `SELECT text,card FROM messages WHERE room_id=$1 AND text LIKE '%needs to approve%'`, [cornerId],
+    )).rows;
+    const approvedBy = (cornerId: string, who: string) => db.query(
+      `UPDATE corner_brief_revisions SET approval_basis=jsonb_set(COALESCE(approval_basis,'{}'::jsonb),'{approvedBy}',to_jsonb($2::text))
+       WHERE corner_id=$1`, [cornerId, who],
+    );
+    beforeAll(async () => {
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Pat','pat'),($2,'human','Mo','mo') ON CONFLICT DO NOTHING`,
+        [P, M],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'admin'),($1,NULL,$3,'member')`,
+        [W, P, M],
+      );
+    });
+    const withPeople = async () => {
+      const cornerId = await open(undefined, 'owner/widgets');
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+        [W, cornerId, P, M],
+      );
+      return cornerId;
+    };
+
+    it('tags the brief approver alone when they are an owner or admin', async () => {
+      const cornerId = await withPeople();
+      await approvedBy(cornerId, P);
+      await greenHead(cornerId, 1, '1'.repeat(40));
+      const [line] = await waitingFor(cornerId);
+      expect(line!.text).toContain('@pat needs to approve this pull request');
+      expect(line!.card.approverIds).toEqual([P]);
+      const reached = await db.query<{ id: string }>(
+        `SELECT person.id FROM messages m JOIN identities person ON person.kind='human'
+         WHERE m.room_id=$1 AND m.text LIKE '%needs to approve%'
+           AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind', false)}
+         ORDER BY person.id`, [cornerId],
+      );
+      expect(reached.rows.map((row) => row.id)).toEqual([P]);
+    });
+
+    it('reaches every owner and admin in the corner when the approver cannot merge', async () => {
+      const cornerId = await withPeople();
+      await approvedBy(cornerId, M);
+      await greenHead(cornerId, 1, '1'.repeat(40));
+      const [line] = await waitingFor(cornerId);
+      expect(line!.text).toContain('A Workspace owner or admin needs to approve this pull request');
+      expect([...line!.card.approverIds].sort()).toEqual([H, P].sort());
+      const reached = await db.query<{ id: string }>(
+        `SELECT person.id FROM messages m JOIN identities person ON person.kind='human'
+         WHERE m.room_id=$1 AND m.text LIKE '%needs to approve%'
+           AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind', false)}
+         ORDER BY person.id`, [cornerId],
+      );
+      expect(reached.rows.map((row) => row.id)).toEqual([H, P].sort());
+    });
   });
 
   it('the reviewer role is never pinned to a real agent id, so a mid-corner reassignment is recorded correctly next time (finding 1)', async () => {
@@ -1706,7 +1769,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     );
     expect(await reasons(cornerId, A)).toEqual(implementerBefore);
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
-      AND text LIKE '%A Workspace owner or admin needs to approve this pull request%checks passed and no other agent can review it%'`,
+      AND text LIKE '%@human needs to approve this pull request%checks passed and no other agent can review it%'`,
     [cornerId])).rowCount).toBe(1);
     githubHead = SHA;
     githubRollupState = 'passed';

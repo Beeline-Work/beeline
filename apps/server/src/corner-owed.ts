@@ -1,6 +1,7 @@
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   CORNER_CHECKS_BLOCKED_CARD_TYPE,
+  CORNER_MERGE_YES_CARD_TYPE,
   CORNER_REVIEW_DEADLOCK_CARD_TYPE,
 } from './agent-command.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
@@ -39,6 +40,9 @@ export function addressedToPersonSql(
         AND addressed.author_id=${personIdExpr}
     )
     OR ${tagsKnownIdentitySql(m, personIdExpr, personHandleExpr, personKindExpr)}
+    -- A green head no agent can review reaches the people whose yes merges it.
+    OR (${m}.card_type='${CORNER_MERGE_YES_CARD_TYPE}'
+      AND COALESCE(${m}.card->'approverIds','[]'::jsonb) ? ${personIdExpr})
     -- An open question card reaches one person: the one human it
     -- tags, or the requester when it tags nobody. A question that
     -- tags several people, and every poll, reaches nobody.

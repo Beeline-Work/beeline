@@ -109,7 +109,6 @@ import {
   CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION,
   CORNER_CHECKS_NUDGE,
   cornerReviewerInstruction,
-  cornerSelfReviewerInstruction,
   roomMentionDirectory,
   renderReplyContext,
   type PromptSurface,
@@ -144,6 +143,16 @@ const GITHUB_OUTAGE_WAIT_MS = 120_000;
 
 function isCornerChecksTurn(trigger: string, restates?: readonly string[]): boolean {
   return Boolean(restates) || /\b(?:passed|failed) a check\b/i.test(trigger);
+}
+
+/**
+ * A green-checks wake of the Room's reviewer: the server wakes only the
+ * reviewer on a green head (`corner-lifecycle.ts` `checksReported`). A
+ * failing-checks wake goes to the agent that writes the code, so a reviewer
+ * that writes code still gets its fix-and-push turn.
+ */
+function isCornerReviewTurn(reviewer: boolean, trigger: string): boolean {
+  return reviewer && /\bpassed a check\b/i.test(trigger);
 }
 
 export async function cornerHasUndeliveredRepositoryWork(
@@ -493,7 +502,10 @@ export class MonolithCornerTurnLoop {
   private modelTakesImages?: boolean;
   /** The one provider re-pinned after an empty completion, until the session ends. */
   private pinnedProviderOverride?: string;
-  /** Identity-only reviewer context; the exact PR head is refreshed inside each active turn. */
+  /**
+   * Identity-only reviewer context, set when this agent holds the Room's
+   * reviewer post; the exact PR head is refreshed inside each review turn.
+   */
   private reviewerInstructionInput?: ReviewerInstructionInput;
   /** The role-specific second-chance instruction for this session. */
   /** Repository state already given a delivery reminder, until that state changes. */
@@ -815,21 +827,19 @@ export class MonolithCornerTurnLoop {
     const opener = this.options.openedBy
       ? roster.members.find((member) => member.identityId === this.options.openedBy)
       : undefined;
-    const reviewerInput = {
-      isReviewer: configuration.isReviewer === true,
-      authorHandle: opener?.handle,
-      openedByAgent: !this.options.openedBy || this.options.openedBy === this.agent.publicKey,
-    };
-    const reviewerInstruction = cornerReviewerInstruction(reviewerInput)
-      ? CORNER_REVIEWER_SESSION_INSTRUCTION
+    // The reviewer post is the one fixed role. Who opened the corner, and who
+    // writes its code, never pick the prompt: the implementer rules are
+    // conditional and the agent decides whether it was told to write code.
+    const reviewer = Boolean(this.options.repository) && configuration.isReviewer === true;
+    this.reviewerInstructionInput = reviewer
+      ? {
+          isReviewer: true,
+          ...(opener?.handle && opener.identityId !== this.agent.publicKey
+            ? { authorHandle: opener.handle }
+            : {}),
+        }
       : undefined;
-    this.reviewerInstructionInput = reviewerInstruction ? reviewerInput : undefined;
-    const selfReviewerInstruction = cornerSelfReviewerInstruction(reviewerInput);
-    this.sessionSurface = !this.options.repository
-      ? 'repo-less-corner'
-      : reviewerInstruction
-        ? 'review-corner'
-        : 'code-corner';
+    this.sessionSurface = this.options.repository ? 'code-corner' : 'repo-less-corner';
     this.repositoryWork = cornerHasRepositoryWork(restored.brief);
     const cornerPrepareScript = await hasCornerPrepareScript(this.options.worktreePath);
     this.sessionPromptContext = {
@@ -837,7 +847,7 @@ export class MonolithCornerTurnLoop {
       surface: this.sessionSurface,
       agentName: self?.name ?? this.agent.name,
       ...(configuration.reviewerHandle ? { reviewerHandle: configuration.reviewerHandle } : {}),
-      selfReviewer: Boolean(selfReviewerInstruction),
+      reviewer,
       cornerPrepareScript,
     };
     await mkdir(this.options.worktreePath, { recursive: true });
@@ -878,7 +888,7 @@ export class MonolithCornerTurnLoop {
           root: this.options.config.agentHomeRoot,
           squireScope,
           sharedSkills: this.options.config.sharedSkills ?? [],
-          isReviewer: Boolean(reviewerInstruction),
+          isReviewer: reviewer,
           grantedHostRoutes: mountedHostRoutes,
           extraHostRoutes: registryHostDeclarations,
           resourceAuthFile,
@@ -1116,7 +1126,7 @@ export class MonolithCornerTurnLoop {
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
         agentMayCloseCorner: Boolean(repository),
-        reviewer: Boolean(reviewerInstruction),
+        reviewer,
         repositoryBacked: Boolean(repository),
         attachRoot: this.options.worktreePath,
         // The whole per-session overlay, not an enumerated subset: see
@@ -1448,6 +1458,7 @@ export class MonolithCornerTurnLoop {
               this.turnMetrics = {};
               this.turnUsage = new TurnUsageAccumulator();
               await this.syncBranch();
+              const reviewTurn = isCornerReviewTurn(Boolean(this.reviewerInstructionInput), trigger);
               const [
                 conversation,
                 roster,
@@ -1464,7 +1475,7 @@ export class MonolithCornerTurnLoop {
                   }),
                   this.roster(),
                   api.execute('getCornerRestoreState', { cornerId }),
-                  this.activeReviewerInstruction(),
+                  reviewTurn ? this.activeReviewerInstruction() : undefined,
                   awaitInstitutionalContext(institutionalContextFetch, (message) =>
                     console.warn(`[thin-core] corner ${cornerId}: ${message}`),
                   ),
@@ -1987,7 +1998,7 @@ export class MonolithCornerTurnLoop {
               let refreshedReviewerInstruction: string | undefined;
               let reviewerSecondPass = false;
               let reviewerTargetChanged = false;
-              if (!explained && checksTurn && this.reviewerInstructionInput) {
+              if (!explained && reviewTurn) {
                 await this.syncBranch();
                 refreshedReviewerInstruction = await this.activeReviewerInstruction();
                 reviewerTargetChanged = refreshedReviewerInstruction !== activeReviewerInstruction;
@@ -2004,7 +2015,7 @@ export class MonolithCornerTurnLoop {
                 !explained &&
                 (needsDeliveryNudge ||
                   (checksTurn &&
-                    (this.reviewerInstructionInput
+                    (reviewTurn
                       ? reviewerSecondPass
                       : repositoryWork && !repositoryHeld &&
                         !result.toolCalls.some(
@@ -2023,7 +2034,7 @@ export class MonolithCornerTurnLoop {
                 // Even a focused follow-up needs the current assignment;
                 // runPrompt refreshes it before adding this instruction.
                 result = await runPrompt(
-                  this.reviewerInstructionInput
+                  reviewTurn
                     ? (refreshedReviewerInstruction ?? CORNER_REVIEWER_SESSION_INSTRUCTION)
                     : checksTurn
                       ? CORNER_CHECKS_NUDGE

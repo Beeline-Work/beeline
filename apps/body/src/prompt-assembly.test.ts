@@ -18,8 +18,8 @@ import {
   CORNER_CHECKS_NUDGE,
   cornerMergeInstruction,
   cornerReviewerInstruction,
-  cornerSelfReviewerInstruction,
   cornerHasRepositoryWork,
+  CORNER_REVIEWER_AUTHOR_MERGE,
   renderAssignedCornerBrief,
   renderReplyContext,
 } from './prompt-assembly.js';
@@ -199,7 +199,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
     cornerPrepareScript: true,
   },
-  'code-corner-self-reviewer': {
+  'code-corner-reviewer': {
     surface: 'code-corner',
     brief: repositoryBrief,
     agentName: 'Sol',
@@ -207,7 +207,7 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
     cornerPrepareScript: true,
     reviewerHandle: 'sol',
-    selfReviewer: true,
+    reviewer: true,
   },
   'code-corner-runtime': {
     surface: 'code-corner', agentName: 'Bee', soul, agentCommand: 'claude-agent-acp',
@@ -215,13 +215,6 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     cornerPrepareScript: true,
     reviewerHandle: 'sol',
     brief: { id: 'corner', revision: 2, authorId: 'author', sourceRoomId: 'room', attachments: [], repositoryWork: false, spec: '## Intent\nRun the desk\n## Non-goals\nNo repository edits or pull requests' },
-  },
-  'review-corner': {
-    surface: 'review-corner',
-    agentName: 'Sol',
-    agentCommand: 'claude-agent-acp',
-    worktree: { featureBranch: 'feature/corner-abc', targetBranch: 'main' },
-    cornerPrepareScript: true,
   },
   'repo-less-corner': {
     surface: 'repo-less-corner',
@@ -370,11 +363,13 @@ describe('prompt assembly guards', () => {
     expect(merges('code-corner-reviewed')).toContain('its PASS wakes you to merge');
     expect(merges('code-corner-reviewed')).toContain('otherwise call merge_corner.');
     expect(merges('code-corner-reviewed')).toContain('a refused merge');
-    expect(merges('code-corner-self-reviewer')).toContain(
-      "It merges only on a human's yes: ask a Workspace owner or admin to approve the merge, then record their yes with order_corner_merge.",
+    expect(merges('code-corner-reviewer')).toContain(
+      'tag the person who assigned you this work, and ask them to approve the merge',
     );
-    expect(merges('code-corner-self-reviewer')).toContain('a merge GitHub refused');
-    for (const name of ['code-corner-reviewed', 'code-corner-self-reviewer']) {
+    expect(merges('code-corner-reviewer')).toContain('Record their yes with order_corner_merge.');
+    expect(merges('code-corner-reviewer')).toContain('a merge GitHub refused');
+    expect(merges('code-corner-reviewer')).not.toContain('its PASS wakes you to merge');
+    for (const name of ['code-corner-reviewed', 'code-corner-reviewer']) {
       expect(merges(name), name).not.toMatch(/the server merges/i);
     }
     expect(merges('code-corner-no-reviewer')).toContain(
@@ -388,10 +383,9 @@ describe('prompt assembly guards', () => {
       expect(merges(name), name).not.toMatch(/approvalPending|held=false|once checks pass/);
     }
     expect(merges('code-corner-reviewed')).not.toContain('@sol');
-    const review = merges('review-corner');
-    expect(review).toContain('Never merge yourself');
+    const review = merges('code-corner-reviewer');
+    expect(review).toContain('Never merge a pull request you review.');
     expect(review).not.toContain('On a checks turn');
-    expect(review).not.toContain('Open the pull request');
   });
 
   it('names the app-token PR path when no host gh exists', () => {
@@ -440,19 +434,12 @@ describe('prompt assembly guards', () => {
         cornerReviewerInstruction({
           isReviewer: true,
           authorHandle: 'bee',
-          openedByAgent: false,
           pullRequestNumber: 7,
           headSha: 'a'.repeat(40),
           briefRevision: 2,
         })!,
       ],
-      [
-        'self reviewer',
-        cornerSelfReviewerInstruction({
-          isReviewer: true,
-          openedByAgent: true,
-        })!,
-      ],
+      ['reviewer author', CORNER_REVIEWER_AUTHOR_MERGE],
       ['using-beeline skill', usingBeelineSkillMarkdown('test')],
       ['beeline-review skill', beelineReviewSkillMarkdown('test')],
       ['beeline-spec skill', beelineSpecSkillMarkdown('test')],
@@ -479,7 +466,7 @@ describe('prompt assembly guards', () => {
     expect(author).not.toMatch(/^Commit and push/m);
     expect(author).toContain('Only when the brief calls for repository changes');
     expect(author).toContain('do not commit, push or open a PR; deliver with post_artifact');
-    expect(promptRules.CORNER_DELIVERY_NUDGE).toContain('Only when the brief calls for repository changes');
+    expect(promptRules.CORNER_DELIVERY_NUDGE).toContain('Only when you write code in this corner and the brief calls for repository changes');
   });
 
   it('names the reviewed head SHA in a FAIL verdict', () => {
@@ -487,7 +474,6 @@ describe('prompt assembly guards', () => {
     const instruction = cornerReviewerInstruction({
       isReviewer: true,
       authorHandle: 'bee',
-      openedByAgent: false,
       pullRequestNumber: 7,
       headSha: head,
       briefRevision: 2,
@@ -597,7 +583,7 @@ describe('prompt assembly guards', () => {
   });
 
   it('gives both corner lanes sibling steer context without Room question instructions', () => {
-    for (const surface of ['code-corner', 'repo-less-corner', 'review-corner'] as const) {
+    for (const surface of ['code-corner', 'repo-less-corner'] as const) {
       const session = assembleSessionPrompt({ surface, agentName: 'Bee' }).systemPrompt;
       expect(session).toContain('Use steer_corner during a turn');
       expect(session).toContain('Membership alone grants no turn');
@@ -611,6 +597,56 @@ describe('prompt assembly guards', () => {
       expect(turn).not.toContain('ask_corner');
       expect(turn).not.toContain('inspect_corner');
     }
+  });
+});
+
+describe('corner role prompts (PR #2224: a reviewer that opened its corner pushed a fix)', () => {
+  const prompt = (name: string) => assembleSessionPrompt(SESSION_VARIANTS[name]!).systemPrompt;
+
+  it('puts every implementer rule under one condition the agent decides', () => {
+    for (const name of ['code-corner-reviewed', 'code-corner-no-reviewer', 'code-corner-reviewer']) {
+      const text = prompt(name);
+      const condition = text.indexOf('Implementer rules:');
+      expect(condition, name).toBeGreaterThan(-1);
+      expect(text, name).toContain(
+        "apply only when the brief or a person in this corner told you to write code or do this corner's work. A hand-over of the work to another agent ends that.",
+      );
+      for (const rule of ['Run npm run corner:prepare first.', 'commit and push only', '## Reproduced', 'Once the pull request exists'])
+        expect(text.indexOf(rule), `${name}: ${rule}`).toBeGreaterThan(condition);
+      expect(text.indexOf('You are in an isolated git worktree'), name).toBeLessThan(condition);
+    }
+  });
+
+  it('appends the reviewer rules only for the Room reviewer, after the implementer rules', () => {
+    for (const name of ['code-corner-reviewed', 'code-corner-no-reviewer'])
+      expect(prompt(name), name).not.toContain('Reviewer rules:');
+    const reviewer = prompt('code-corner-reviewer');
+    expect(reviewer).toContain('the rules below, up to the reviewer rules, apply only when');
+    expect(reviewer.indexOf('Reviewer rules:')).toBeGreaterThan(
+      reviewer.indexOf('Never merge any other pull request.'),
+    );
+    expect(reviewer).toContain("never edit or push another agent's branch");
+    expect(reviewer).toContain(CORNER_REVIEWER_AUTHOR_MERGE);
+  });
+
+  it('keeps fix-and-push text out of a reviewer green-checks turn', () => {
+    const turn = (reviewerTarget?: string) =>
+      assembleTurnPrompt({
+        surface: 'code-corner',
+        ...(reviewerTarget ? { reviewerTarget } : {}),
+        task: { body: 'GitHub passed a check on abc', outsideEvent: { kind: 'check-passed', payload: {} } as never },
+      }).text;
+    expect(turn()).toContain('say nothing unless you push a fix');
+    const review = turn('Checks are green on PR #7 at abc.');
+    expect(review).toContain('Checks are green on PR #7 at abc.');
+    expect(review).not.toContain('push a fix');
+    expect(CORNER_CHECKS_NUDGE).toContain('If checks="failed" and you write code in this corner, fix the failure and push.');
+  });
+
+  it('describes the author when the reviewer opened the corner itself', () => {
+    const text = cornerReviewerInstruction({ isReviewer: true, pullRequestNumber: 7, headSha: 'abc' })!;
+    expect(text).toContain('FAIL: tag the agent that wrote this head with the confirmed findings');
+    expect(text).not.toContain('@author');
   });
 });
 

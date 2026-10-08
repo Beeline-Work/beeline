@@ -81,6 +81,7 @@
         "scripts/room-repo-choice-proof.tsx",
         "scripts/room-webhooks-proof.tsx",
         "scripts/composer-dictation-proof.tsx",
+        "scripts/composer-tags-proof.tsx",
         "scripts/composer-dictation-correction-proof.tsx",
         "scripts/channel-suggestion-proof.tsx",
         "scripts/page-headers-proof.tsx",

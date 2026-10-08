@@ -49,6 +49,7 @@ export function BeelineGlyphPaint({
   framing,
   live = true,
   onPainted,
+  ink: inkOverride,
   testID,
 }: {
   loop: BeelineGlyphPaintLoop;
@@ -56,6 +57,8 @@ export function BeelineGlyphPaint({
   framing: GlyphPaintFraming;
   live?: boolean;
   onPainted?: () => void;
+  /** Paints the mark in this colour instead of the theme's glyph ink. */
+  ink?: string;
   testID?: string;
 }) {
   const { theme } = useUnistyles();
@@ -133,7 +136,7 @@ export function BeelineGlyphPaint({
   const strokeProps = useAnimatedProps(() => ({
     strokeDashoffset: ribbon.length * (1 - progress.value),
   }));
-  const ink = glyphPaintInk(theme.buzz.dark);
+  const ink = inkOverride ?? glyphPaintInk(theme.buzz.dark);
   const content = showFill ? (
     <Path d={ribbon.path} fill={ink} fillRule={ribbon.fillRule as 'evenodd' | 'nonzero'} />
   ) : (

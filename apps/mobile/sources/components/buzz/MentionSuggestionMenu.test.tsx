@@ -210,6 +210,38 @@ describe('MentionSuggestionMenu', () => {
     expect(onSelect).toHaveBeenCalledWith(system);
   });
 
+  it('as the tag menu, ticks tagged agents in place of the model and reads as checkboxes', () => {
+    const agents: RoomRosterParticipant[] = ['ruby', 'sol'].map((handle) => ({
+      pubkey: `a-${handle}`,
+      name: handle,
+      handle,
+      kind: 'agent',
+      agent: { pubkey: `a-${handle}`, displayName: handle },
+      model: 'claude-opus-5-5',
+    }));
+    const renderer = render(
+      menu({
+        matches: agents,
+        overflow: 0,
+        highlightedIndex: -1,
+        checkedHandles: new Set(['ruby']),
+      }),
+    );
+    const ruby = renderer.root.findByProps({ testID: 'mention-suggestion-ruby' });
+    const sol = renderer.root.findByProps({ testID: 'mention-suggestion-sol' });
+    expect(ruby.props.accessibilityRole).toBe('checkbox');
+    expect(ruby.props.accessibilityState).toEqual({ checked: true });
+    expect(sol.props.accessibilityState).toEqual({ checked: false });
+    expect(
+      renderer.root.findAllByProps({ testID: 'mention-suggestion-ruby-checked' }),
+    ).not.toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'mention-suggestion-sol-checked' })).toHaveLength(
+      0,
+    );
+    // Every row keeps the same left edge, ticked or not.
+    expect(flat(ruby.props.style)).toEqual(flat(sol.props.style));
+  });
+
   it('selects on press', () => {
     const onSelect = vi.fn();
     const renderer = render(menu({ onSelect }));

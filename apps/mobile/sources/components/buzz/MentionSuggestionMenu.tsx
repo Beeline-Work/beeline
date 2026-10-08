@@ -41,7 +41,8 @@ function useHighlightedRowScroll(highlightedIndex: number, keyboardOpen: boolean
 /**
  * The composer's @-mention menu. The MENTION label stays fixed; rows scroll
  * under a cap of 3 rows while the keyboard is open (so the text input stays
- * above it) and 5 rows otherwise.
+ * above it) and 5 rows otherwise. As the tag menu, `checkedHandles` marks the
+ * agents already tagged with ✓, and a tap toggles the tag.
  */
 export function MentionSuggestionMenu({
   matches,
@@ -50,6 +51,7 @@ export function MentionSuggestionMenu({
   keyboardOpen,
   personAvatar,
   onSelect,
+  checkedHandles,
 }: {
   matches: readonly RoomRosterParticipant[];
   overflow: number;
@@ -57,6 +59,7 @@ export function MentionSuggestionMenu({
   keyboardOpen: boolean;
   personAvatar: (pubkey: string) => string | undefined;
   onSelect: (participant: RoomRosterParticipant) => void;
+  checkedHandles?: ReadonlySet<string>;
 }) {
   const { visibleRows, scrollRef, scrollOffset } = useHighlightedRowScroll(
     highlightedIndex,
@@ -83,6 +86,7 @@ export function MentionSuggestionMenu({
       >
         {matches.map((participant, index) => {
           const selected = index === highlightedIndex;
+          const checked = checkedHandles?.has(participant.handle) ?? false;
           // The two reserved rows (`@channel`, `@system`) are tokens, not
           // identities: a glyph instead of a face, and words for what they do.
           const reserved =
@@ -113,8 +117,8 @@ export function MentionSuggestionMenu({
                         .join(', ')
                     : `${participant.name}, @${participant.handle}, ${participant.kind}`
               }
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
+              accessibilityRole={checkedHandles ? 'checkbox' : 'button'}
+              accessibilityState={checkedHandles ? { checked } : { selected }}
               key={participant.pubkey}
               onPress={() => onSelect(participant)}
               style={[styles.mentionRow, selected && styles.mentionRowSelected]}
@@ -148,8 +152,17 @@ export function MentionSuggestionMenu({
               {!reserved ? (
                 <View style={styles.mentionAgentIdentity}>
                   <View style={styles.mentionTitleLine}>
-                    <Text style={styles.mentionName}>@{participant.handle}</Text>
-                    {model ? (
+                    <Text style={[styles.mentionName, checked && styles.mentionNameChecked]}>
+                      @{participant.handle}
+                    </Text>
+                    {checked ? (
+                      <Text
+                        style={styles.mentionCheck}
+                        testID={`mention-suggestion-${participant.handle}-checked`}
+                      >
+                        ✓
+                      </Text>
+                    ) : model ? (
                       <Text numberOfLines={1} style={styles.mentionModel}>
                         {model}
                       </Text>
@@ -354,6 +367,12 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: groknight.proseSemibold,
       flexShrink: 0,
       color: groknight.textPrimary,
+    },
+    mentionNameChecked: { color: groknight.accent },
+    mentionCheck: {
+      ...groknight.type.machine,
+      marginLeft: 'auto',
+      color: groknight.accent,
     },
     channelToken: {
       flexShrink: 1,

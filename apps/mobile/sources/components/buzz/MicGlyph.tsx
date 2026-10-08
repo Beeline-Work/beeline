@@ -1,34 +1,22 @@
 import React from 'react';
-import Svg, { Line } from 'react-native-svg';
+import Svg, { Line, Path, Rect } from 'react-native-svg';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 
 export const MIC_GLYPH_STROKE_WIDTH = 1.6;
 
 /**
- * Glyph A — three vertical strokes, the middle taller.
- * Matches the Level icon from the spec (section 0).
- *
- * While listening, the three strokes form a small level meter driven by the
- * recognizer's volume events. This is state feedback rather than decoration:
- * a silent microphone stays still and speech moves the mark immediately.
+ * A microphone: capsule, pickup arc and stand. It stays still in every
+ * state; while dictating, the composer's waveform shows that the take is live.
  */
 export function MicGlyph({
   color,
   size = 18,
-  animating = false,
-  level = 0,
   testID,
 }: {
   color: string;
   size?: number;
-  animating?: boolean;
-  level?: number;
   testID?: string;
 }) {
-  const activity = animating ? Math.max(0, Math.min(1, level)) : 0;
-  const leftHalfHeight = 2 + activity * 3;
-  const middleHalfHeight = 5 + activity * 3;
-  const rightHalfHeight = 2.5 + activity * 4;
   return (
     <Svg
       {...DECORATIVE_GLYPH_PROPS}
@@ -37,15 +25,22 @@ export function MicGlyph({
       viewBox="0 0 20 20"
       width={size}
     >
-      <Line
+      <Rect
+        fill="none"
+        height="9.5"
+        rx="2.5"
+        stroke={color}
+        strokeWidth={MIC_GLYPH_STROKE_WIDTH}
+        width="5"
+        x="7.5"
+        y="2"
+      />
+      <Path
+        d="M4.5 9.5a5.5 5.5 0 0 0 11 0"
         fill="none"
         stroke={color}
         strokeLinecap="round"
         strokeWidth={MIC_GLYPH_STROKE_WIDTH}
-        x1="5"
-        x2="5"
-        y1={10 - leftHalfHeight}
-        y2={10 + leftHalfHeight}
       />
       <Line
         fill="none"
@@ -54,18 +49,8 @@ export function MicGlyph({
         strokeWidth={MIC_GLYPH_STROKE_WIDTH}
         x1="10"
         x2="10"
-        y1={10 - middleHalfHeight}
-        y2={10 + middleHalfHeight}
-      />
-      <Line
-        fill="none"
-        stroke={color}
-        strokeLinecap="round"
-        strokeWidth={MIC_GLYPH_STROKE_WIDTH}
-        x1="15"
-        x2="15"
-        y1={10 - rightHalfHeight}
-        y2={10 + rightHalfHeight}
+        y1="15"
+        y2="18"
       />
     </Svg>
   );

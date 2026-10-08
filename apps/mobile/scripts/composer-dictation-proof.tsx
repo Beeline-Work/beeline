@@ -31,8 +31,12 @@ const ROOM_LEXICON = buildSpeechLexicon({
   ],
 });
 
+let currentValue = '';
+const composerValue = () => currentValue;
+
 function Proof() {
   const [value, setValue] = useState('');
+  currentValue = value;
   return (
     <View style={{ width: 390, padding: 12 }}>
       <ConversationComposer
@@ -102,29 +106,26 @@ async function run() {
   setInterval(() => speechProofRecognizer.emit('volumechange', { value: 6 }), 500);
   await pause();
 
-  const overlay = byTestID('chat-speech-interim')!;
-  const box = overlay.getBoundingClientRect();
-  const walker = document.createTreeWalker(overlay, NodeFilter.SHOW_TEXT);
-  let last: Text | null = null;
-  while (walker.nextNode()) {
-    if ((walker.currentNode.textContent ?? '').trim()) last = walker.currentNode as Text;
-  }
-  const range = document.createRange();
-  range.setStart(last!, last!.length - 'right here'.length);
-  range.setEnd(last!, last!.length);
-  const newest = range.getBoundingClientRect();
-  lines.push(
-    `overlay top=${box.top.toFixed(1)} bottom=${box.bottom.toFixed(1)}; ` +
-      `newest words top=${newest.top.toFixed(1)} bottom=${newest.bottom.toFixed(1)}`,
-  );
+  const waveform = byTestID('chat-speech-waveform');
+  const bars = waveform?.children.length ?? 0;
+  lines.push(`waveform bars=${bars}`);
+  check('dictation shows a waveform in the field', Boolean(waveform) && bars > 0);
   check(
-    'the transcript outgrows the composer field',
-    (overlay.firstElementChild as HTMLElement).getBoundingClientRect().height > box.height,
+    'no dictated words show before sending',
+    !(document.body.textContent ?? '').includes('right here'),
   );
+  const field = byTestID('chat-composer-input-row')!.getBoundingClientRect();
+  const wave = waveform!.getBoundingClientRect();
   check(
-    'the newest dictated words are inside the visible field',
-    newest.top >= box.top - 0.5 && newest.bottom <= box.bottom + 0.5,
+    'the waveform stays inside the composer row',
+    wave.left >= field.left - 0.5 && wave.right <= field.right + 0.5,
   );
+  check('the stop button takes the attach slot', Boolean(byTestID('chat-speech-discard')));
+  byTestID('chat-speech-discard')!.click();
+  await pause();
+  check('stop discards the take', !byTestID('chat-speech-waveform'));
+  check('stop sends and commits nothing', composerValue() === '');
+  check('the attach button returns', Boolean(byTestID('chat-attach-button')));
 }
 
 run()

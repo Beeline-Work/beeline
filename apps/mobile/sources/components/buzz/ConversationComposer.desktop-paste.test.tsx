@@ -31,6 +31,8 @@ vi.mock('react-native-svg', () => ({
   default: (props: any) => null,
   Svg: (props: any) => null,
   Line: (props: any) => null,
+  Path: (props: any) => null,
+  Rect: (props: any) => null,
 }));
 
 import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT, ConversationComposer } from './ConversationComposer';

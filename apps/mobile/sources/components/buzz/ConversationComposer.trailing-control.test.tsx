@@ -41,7 +41,7 @@ vi.mock('react-native-svg', () => {
     return (props: any) => React.createElement(name, props, props.children);
   }
   const Svg = host('RNSVG');
-  return { default: Svg, Svg, Line: host('RNSVGLine') };
+  return { default: Svg, Svg, Line: host('RNSVGLine'), Path: host('RNSVGPath'), Rect: host('RNSVGRect') };
 });
 
 // Mock the speech adapter; `modulePresent` simulates a device without a

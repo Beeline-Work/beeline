@@ -44,6 +44,8 @@ vi.mock('react-native-svg', () => {
     default: Svg,
     Svg,
     Line: host('RNSVGLine'),
+    Path: host('RNSVGPath'),
+    Rect: host('RNSVGRect'),
   };
 });
 import {

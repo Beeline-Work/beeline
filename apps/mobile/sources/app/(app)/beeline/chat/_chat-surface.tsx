@@ -254,6 +254,13 @@ import {
   type MessageReplyTarget,
 } from '@/buzz/message-reply';
 import {
+  answerPrefillCandidate,
+  planAnswerPrefill,
+  planReplyPrefill,
+  type ComposerPrefill,
+  type ComposerPrefillPlan,
+} from '@/buzz/composer-prefill';
+import {
   composerBottomPadding,
   mentionKeyboardAction,
   transcriptKeyboardDismissMode,
@@ -2356,6 +2363,53 @@ export function BuzzChatSurface({
   // picks the oldest visible row and reads a scroll back up as progress.
   const chronologicalMessagesRef = useRef(visibleMessages);
   chronologicalMessagesRef.current = visibleMessages;
+  // The composer offers an agent's handle as visible, deletable text: on a
+  // quote-reply, and when the newest message is that agent's answer to the
+  // viewer. Each answer is offered once (`buzz/composer-prefill.ts`).
+  const composerPrefillRef = useRef<ComposerPrefill | null>(null);
+  const offeredPrefillsRef = useRef(new Set<string>());
+  const answerPrefill = useMemo(
+    () =>
+      viewerIsAgent || anchoredSegmentActive
+        ? undefined
+        : answerPrefillCandidate(
+            visibleMessages,
+            userPubkey,
+            (message) =>
+              message.authorIdentity?.handle ??
+              (message.pubkey ? agentByPubkey.get(message.pubkey)?.handle : undefined),
+          ),
+    [agentByPubkey, anchoredSegmentActive, userPubkey, viewerIsAgent, visibleMessages],
+  );
+  const answerPrefillRef = useRef(answerPrefill);
+  answerPrefillRef.current = answerPrefill;
+  const applyComposerPrefill = useCallback(
+    (plan: ComposerPrefillPlan, agent?: { handle: string; pubkey: string }) => {
+      if (plan.kind === 'keep') return;
+      const text = plan.kind === 'fill' ? plan.text : '';
+      composerPrefillRef.current = plan.kind === 'fill' ? plan.prefill : null;
+      if (plan.kind === 'fill' && agent) {
+        const handle = agent.handle.replace(/^@/, '');
+        selectedAgentMentionsRef.current.set(handle, agent.pubkey);
+        selectedMentionsRef.current.set(handle, agent.pubkey);
+      }
+      inputTextRef.current = text;
+      setInputText(text);
+      setInputSelection({ start: text.length, end: text.length });
+    },
+    [setInputText],
+  );
+  useEffect(() => {
+    const candidate = answerPrefillRef.current;
+    const plan = planAnswerPrefill({
+      draft: inputTextRef.current,
+      prefill: composerPrefillRef.current,
+      candidate,
+      offered: offeredPrefillsRef.current,
+    });
+    if (plan.kind === 'fill' && candidate) offeredPrefillsRef.current.add(candidate.sourceMessageId);
+    applyComposerPrefill(plan, candidate);
+  }, [answerPrefill?.sourceMessageId, applyComposerPrefill]);
   // The row the jump control exists to reach. Read from the chronological
   // order so the inverted phone list and the desktop list name the same row.
   const newestTranscriptMessageId = newestTranscriptRowId(visibleMessages);
@@ -3625,6 +3679,18 @@ export function BuzzChatSurface({
           };
       const install = () => {
         setReplyTarget(target);
+        if (target.isAgent && target.authorHandle && target.authorPubkey) {
+          applyComposerPrefill(
+            planReplyPrefill({
+              draft: inputTextRef.current,
+              prefill: composerPrefillRef.current,
+              handle: target.authorHandle,
+              pubkey: target.authorPubkey,
+              sourceMessageId: target.messageId,
+            }),
+            { handle: target.authorHandle, pubkey: target.authorPubkey },
+          );
+        }
         setDismissedMentionKey(null);
         void Haptics.selectionAsync();
         // A reply started from a message the reader scrolled up to read keeps
@@ -3639,7 +3705,7 @@ export function BuzzChatSurface({
     },
     // Read through the ref: a transcript dependency here would hand every
     // row a new renderer on each live message.
-    [decodedId, replyTargetForMessage, scrollToNewestMessage],
+    [applyComposerPrefill, decodedId, replyTargetForMessage, scrollToNewestMessage],
   );
 
   const handleReactToMessage = useCallback(

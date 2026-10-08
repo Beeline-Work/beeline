@@ -13,14 +13,17 @@ export { MARK_CELL };
  */
 export const BeelineMarkSpinner = React.memo(function BeelineMarkSpinner({
   live = false,
+  ink,
   testID,
 }: {
   live?: boolean;
+  ink?: string;
   testID?: string;
 }) {
   return (
     <BeelineGlyphPaint
       framing="cell"
+      ink={ink}
       live={live}
       loop="release"
       size={MARK_CELL}

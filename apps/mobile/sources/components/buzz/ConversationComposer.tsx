@@ -541,7 +541,11 @@ export function ConversationComposer({
             testID={`${testIDPrefix}-mic`}
           >
             {isFinalizing || sendingTake ? (
-              <BeelineMarkSpinner live testID={`${testIDPrefix}-speech-finalizing`} />
+              <BeelineMarkSpinner
+                ink={theme.buzz.accent}
+                live
+                testID={`${testIDPrefix}-speech-finalizing`}
+              />
             ) : (
               <MicGlyph color={theme.buzz.textPrimary} testID={`${testIDPrefix}-mic-glyph`} />
             )}

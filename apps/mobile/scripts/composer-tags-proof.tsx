@@ -193,6 +193,14 @@ const visibleText = () => {
   page.querySelectorAll('textarea, #result').forEach((node) => node.remove());
   return page.textContent ?? '';
 };
+// Every painted path of the mark (its fill and its stroke) is the given colour.
+const markInk = (id: string) => {
+  const paints = [...(byTestID(id)?.querySelectorAll('path') ?? [])]
+    .flatMap((path) => [path.getAttribute('fill'), path.getAttribute('stroke')])
+    .filter((paint) => paint && paint !== 'none')
+    .map((paint) => paint!.toLowerCase());
+  return [...new Set(paints)].join();
+};
 const inside = (inner: DOMRect, outer: DOMRect) =>
   inner.left >= outer.left - 0.5 && inner.right <= outer.right + 0.5;
 
@@ -352,9 +360,10 @@ async function run() {
   await tap('chat-mic');
   await pause();
   check('R4: the message is on its way', state.held.length === 1);
+  lines.push(`R4 mark ink: ${markInk('chat-speech-finalizing')}`);
   check(
     'R4: the gold mark replaces the mic while it is sent',
-    Boolean(byTestID('chat-speech-finalizing')),
+    markInk('chat-speech-finalizing') === theme.accent.toLowerCase(),
   );
   check('R4: ■ stays while it is sent', Boolean(byTestID('chat-speech-discard')));
   check(
@@ -416,7 +425,7 @@ async function run() {
   check('G: Groq is transcribing the take', state.groq.length === 1);
   check(
     'G: the gold mark replaces the mic while Groq transcribes',
-    Boolean(byTestID('chat-speech-finalizing')),
+    markInk('chat-speech-finalizing') === theme.accent.toLowerCase(),
   );
   check(
     'G: the waveform freezes grey',

@@ -14,6 +14,10 @@ import { IdentityMark } from './IdentityMark';
  * with its state/action. Tapping the row reveals the tool's existing one-line
  * capability copy beneath it.
  *
+ * A tool with a page of its own passes `onOpen`: the tap opens that page and
+ * the row never expands, so no details flash before the page loads. The page
+ * carries the capability copy instead.
+ *
  * Controlled or uncontrolled: pass `expanded`/`onToggle` to lift the state
  * (a parent that shows one tool's details at a time), or neither to let the
  * cell own it.
@@ -43,6 +47,8 @@ export type ToolDetailsCellProps = {
    *  flight reads accent). */
   valueTone?: 'danger' | 'accent';
   expanded?: boolean;
+  /** Open the tool's own page in place of expanding the details. */
+  onOpen?: () => void;
   onToggle?: (expanded: boolean) => void;
   testID: string;
   title: string;
@@ -63,6 +69,7 @@ export function ToolDetailsCell({
   value,
   valueTone,
   expanded: expandedProp,
+  onOpen,
   onToggle,
   testID,
   title,
@@ -87,7 +94,7 @@ export function ToolDetailsCell({
         action={action}
         description={errorText ?? descriptionText}
         descriptionTone={errorText ? 'danger' : undefined}
-        onPress={toggle}
+        onPress={onOpen ?? toggle}
         testID={`${testID}-head`}
         title={title}
         value={value}

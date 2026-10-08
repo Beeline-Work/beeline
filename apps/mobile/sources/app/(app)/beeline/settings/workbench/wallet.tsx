@@ -13,7 +13,7 @@ import { WalletQr } from '@/components/buzz/WalletQr';
 import { chainIcon, tokenIcon } from '@/buzz/wallet-icons';
 import { getWalletSource } from '@/buzz/wallet-source';
 import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
-import { WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
+import { CONNECTOR_DESCRIPTIONS, WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 import type { WalletLedgerEntry, WalletView } from '@beeline/api-contract/wallet';
 
@@ -178,6 +178,7 @@ export default function WalletScreen() {
         testID="wallet-scroll"
       >
         <View testID="wallet-screen">
+          <Text style={styles.explainer} testID="wallet-explainer">{CONNECTOR_DESCRIPTIONS.wallet}</Text>
           {needsGrant ? (
             // Nothing of the wallet shows until the connect sequence (the
             // grant to sign) has finished.
@@ -429,6 +430,7 @@ const styles = StyleSheet.create((theme) => {
       paddingTop: hull.space.sm,
     },
     quietLine: { ...hull.type.meta, color: hull.textMuted, paddingVertical: hull.space.sm },
+    explainer: { ...hull.type.meta, color: hull.textSecondary, paddingBottom: hull.space.md },
     coinRow: {
       alignItems: 'center',
       borderBottomColor: hull.border,

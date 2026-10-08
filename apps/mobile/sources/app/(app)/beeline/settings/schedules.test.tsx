@@ -37,15 +37,12 @@ it('R12f: stopping a schedule removes its row without another Room or list read'
   } finally { await act(async () => tree?.unmount()); }
 });
 
-it('revoking a webhook asks to confirm, then removes its row', async () => {
+it('one tap on REVOKE revokes the webhook and removes its row', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   let tree: any;
   try {
     await act(async () => { tree = create(<ScheduledWork />); });
     await act(async () => tree.root.findByProps({ testID: 'revoke-webhook-hook' }).props.onPress());
-    expect(operation.mock.calls.some(([name]) => name === 'manageRoomWebhook')).toBe(false);
-    const confirm = tree.root.findAllByType('TouchableOpacity').find((node: any) => node.findAllByType('Text').some((text: any) => text.props.children === 'CONFIRM REVOKE'));
-    await act(async () => { confirm.props.onPress(); });
     expect(operation).toHaveBeenCalledWith('manageRoomWebhook', { roomId: 'room', action: 'revoke', webhookId: 'hook' });
     expect(tree.root.findAllByProps({ testID: 'webhook-hook' })).toHaveLength(0);
   } finally { await act(async () => tree?.unmount()); }

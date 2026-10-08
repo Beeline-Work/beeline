@@ -48,7 +48,6 @@ export default function ScheduledWork() {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [confirmStop, setConfirmStop] = useState<string | null>(null);
-  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -122,7 +121,6 @@ export default function ScheduledWork() {
       setError(null);
       try {
         await monolithPhoneOperation('manageRoomWebhook', { roomId, action: 'revoke', webhookId });
-        setConfirmRevoke(null);
         setWebhooks((current) =>
           current && {
             ...current,
@@ -151,7 +149,6 @@ export default function ScheduledWork() {
   }, [webhooks]);
 
   const renderWebhook = (hook: RoomWebhooksResult['sources'][number]) => {
-    const confirming = confirmRevoke === hook.id;
     const fired = lastFired.get(hook.source);
     return (
       <View key={hook.id} style={styles.row} testID={`webhook-${hook.id}`}>
@@ -175,22 +172,12 @@ export default function ScheduledWork() {
           <TouchableOpacity
             accessibilityRole="button"
             disabled={working}
-            onPress={() => setConfirmRevoke(confirming ? null : hook.id)}
+            onPress={() => void revoke(hook.id)}
             style={styles.stopAction}
             testID={`revoke-webhook-${hook.id}`}
           >
-            <Text style={styles.stopText}>{confirming ? 'CANCEL' : 'REVOKE'}</Text>
+            <Text style={styles.stopText}>REVOKE</Text>
           </TouchableOpacity>
-          {confirming && (
-            <TouchableOpacity
-              accessibilityRole="button"
-              disabled={working}
-              onPress={() => void revoke(hook.id)}
-              style={styles.stopAction}
-            >
-              <Text style={styles.confirmText}>CONFIRM REVOKE</Text>
-            </TouchableOpacity>
-          )}
         </View>
       </View>
     );

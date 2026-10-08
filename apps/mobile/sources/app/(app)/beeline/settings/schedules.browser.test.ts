@@ -24,6 +24,7 @@ function shims(mobile: string): Record<string, string> {
         requests: [],
         deliveries: [{ id: 'd-1', source: 'price-feed', receivedAt: ${NEXT_RUN}, delivered: 1 }],
       };
+      if (name === 'manageRoomWebhook') return {};
       if (name !== 'listRoomSchedules') throw new Error('unexpected ' + name);
       return {
       schedules: [
@@ -88,7 +89,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and Webhooks page in a browser',
     expect(page.workflowSection).toBe(false);
     expect(page.text).not.toContain('Workflows');
     expect(page.text).not.toContain('old-feed');
-    expect([...page.operations].sort()).toEqual(['listRoomSchedules', 'readRoomWebhooks']);
+    expect([...page.operations].sort()).toEqual(['listRoomSchedules', 'manageRoomWebhook', 'readRoomWebhooks']);
     expect(page.text.slice(2)).toEqual([
       'SCHEDULES',
       'Daily at 08:00 UTC',
@@ -110,6 +111,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and Webhooks page in a browser',
       'REVOKE',
     ]);
     // A schedule in a corner opens that corner; STOP asks to confirm, as before.
+    // REVOKE acts on one tap: the webhook row is gone, with no confirm step.
     expect(page.pushed).toEqual([
       {
         pathname: '/beeline/chat/[channelId]',
@@ -118,7 +120,8 @@ describe.skipIf(!existsSync(CHROME))('Schedules and Webhooks page in a browser',
     ]);
     expect(page.afterStop).toContain('CANCEL');
     expect(page.afterStop).toContain('CONFIRM STOP');
-    expect(page.afterStop).toContain('CONFIRM REVOKE');
+    expect(page.afterStop).not.toContain('price-feed');
+    expect(page.afterStop).not.toContain('CONFIRM REVOKE');
     // No explainer paragraph, and no raw cron expression.
     expect(page.text.join(' ')).not.toMatch(/repository notifications|Agents create/);
     expect(page.text.join(' ')).not.toContain('0 8 * * *');

@@ -153,6 +153,82 @@ beforeEach(async () => {
   );
 });
 
+it('Reproduction workflow-corner-objective: a corner objective rooted on a parent workflow handoff carries no run instruction', async () => {
+  // A workflow handoff card in the parent Room R carries the run id, workflow
+  // name and a receipt hint, exactly as a real handoff does. When a workflow
+  // step opens a corner, `createCorner` roots the corner objective command on
+  // this parent-Room message, so the read path sees it in the corner.
+  const parentRunId = id();
+  const parentHandoffId = id();
+  await db.query(
+    `INSERT INTO messages(id,room_id,author_id,text,card_type,card)
+     VALUES($1,$2,$3,$4,'workflow-handoff',$5::jsonb)`,
+    [
+      parentHandoffId,
+      R,
+      B,
+      'Goosy handed off workflow feedback-triage',
+      JSON.stringify({
+        runId: parentRunId,
+        workflowSlug: 'feedback-triage',
+        toState: 'dispatch',
+        seq: 6,
+        receiptHint: 'Finish dispatch then stop.',
+      }),
+    ],
+  );
+  await createAgentCommand(db, {
+    roomId: C,
+    agentId: B,
+    sourceMessageId: parentHandoffId,
+    reason: 'corner_objective',
+  });
+  const [objective] = await commands(B, C);
+  expect(objective?.reason).toBe('corner_objective');
+  // The parent run is not reachable from the corner: its first turn must not
+  // tell the implementer to hand off a run that lives in another Room.
+  expect(objective?.source.body).not.toContain('You are in run');
+  expect(objective?.source.body).not.toContain('This wake is attempt');
+  expect(objective?.source.body).not.toContain('Receipt hint for this state');
+  console.log(
+    `Reproduction workflow-corner-objective: a corner objective rooted on the parent Room handoff (run ${parentRunId}) reads as: ${JSON.stringify(objective?.source.body)}`,
+  );
+});
+
+it('a workflow wake for a run in the turn’s own Room still carries the run instruction', async () => {
+  const runId = id();
+  const handoffId = id();
+  await db.query(
+    `INSERT INTO messages(id,room_id,author_id,text,card_type,card)
+     VALUES($1,$2,$3,$4,'workflow-handoff',$5::jsonb)`,
+    [
+      handoffId,
+      C,
+      B,
+      'Goosy handed off workflow feedback-triage',
+      JSON.stringify({
+        runId,
+        workflowSlug: 'feedback-triage',
+        toState: 'dispatch',
+        seq: 6,
+        receiptHint: 'Finish dispatch then stop.',
+      }),
+    ],
+  );
+  await createAgentCommand(db, {
+    roomId: C,
+    agentId: B,
+    sourceMessageId: handoffId,
+    reason: 'workflow_handoff',
+  });
+  const [wake] = await commands(B, C);
+  expect(wake?.source.body).toContain(`You are in run ${runId} of feedback-triage`);
+  expect(wake?.source.body).toContain('This wake is attempt 6');
+  console.log(
+    `Demonstrated workflow-corner-objective: a same-Room workflow wake (run ${runId}) still reads as: ${JSON.stringify(wake?.source.body)}`,
+  );
+});
+
 it('persists one declarative app per corner and projects agent open requests', async () => {
   await send('@hoots build the release board', C);
   const [command] = await commands(A, C);

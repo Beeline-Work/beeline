@@ -16,6 +16,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { withAdapterInstallLock } from './adapter-install-lock.js';
+import { AcpResourceScope } from './acp-resource-scope.js';
 import type { SessionMode } from './config.js';
 import {
   cornerAutonomyModeCandidates,
@@ -131,6 +132,14 @@ export class AcpRuntimeExitedError extends Error {
   constructor(detail: string) {
     super(`runtime_exited: ${detail}`);
     this.name = 'AcpRuntimeExitedError';
+  }
+}
+
+export class AcpResourceLimitError extends Error {
+  override readonly cause = 'resource_limit';
+  constructor(memoryMaxBytes: number) {
+    super(`resource_limit: ACP session exceeded its ${Math.floor(memoryMaxBytes / 1024 / 1024)} MiB memory limit`);
+    this.name = 'AcpResourceLimitError';
   }
 }
 
@@ -722,6 +731,9 @@ export class AcpClient extends EventEmitter {
   private permissionAllowlist?: AcpPermissionAllowlist;
   private commandsHandler?: (commands: readonly AcpAvailableCommand[]) => void;
   private oomKills: OomKillDetector;
+  private readonly useResourceScope: boolean;
+  private readonly resourceScopeMemoryMaxBytes?: number;
+  private resourceScope?: AcpResourceScope;
   /** A deliberate stop owns its SIGKILL; that exit is never labelled OOM. */
   private stopping = false;
 
@@ -770,6 +782,10 @@ export class AcpClient extends EventEmitter {
      * own `memory.events` counter; tests inject a stub.
      */
     oomKills?: OomKillDetector;
+    /** Managed Linux helpers use a scope by default; tests may opt out. */
+    resourceScope?: 'systemd' | 'none';
+    /** Test seam for the scope's hard memory ceiling. */
+    resourceScopeMemoryMaxBytes?: number;
   }) {
     super();
     const command = opts.agentCommand ?? opts.agentBinary;
@@ -787,6 +803,10 @@ export class AcpClient extends EventEmitter {
     this.permissionAllowlist = opts.permissionAllowlist;
     this.commandsHandler = opts.onCommands;
     this.oomKills = opts.oomKills ?? new OomKillTracker(cgroupOomKillProbe());
+    this.useResourceScope = opts.resourceScope === 'systemd' ||
+      (opts.resourceScope === undefined && process.platform === 'linux' &&
+        process.env.BEELINE_MANAGED_BY_SYSTEMD === '1');
+    this.resourceScopeMemoryMaxBytes = opts.resourceScopeMemoryMaxBytes;
   }
 
   async start(timeoutMs = 60_000): Promise<void> {
@@ -796,16 +816,19 @@ export class AcpClient extends EventEmitter {
     // probe at exit time (which would miss it).
     await this.oomKills.prime().catch(() => undefined);
     this.stopping = false;
+    const childEnv = this.inheritProcessEnv ? { ...process.env, ...this.agentEnv } : this.agentEnv;
+    this.resourceScope = this.useResourceScope
+      ? new AcpResourceScope(this.resourceScopeMemoryMaxBytes) : undefined;
+    const launch = this.resourceScope?.launch(this.agentCommand, this.agentArgs, childEnv);
     this.child = await withAdapterInstallLock(() =>
-      spawn(this.agentCommand, this.agentArgs, {
+      spawn(launch?.command ?? this.agentCommand, launch?.args ?? this.agentArgs, {
         // agentEnv is the child's whole environment: buildAgentEnv's allowlist is
         // a real boundary, not a decorative one layered over a full inherit.
-        env: this.inheritProcessEnv ? { ...process.env, ...this.agentEnv } : this.agentEnv,
+        env: launch?.env ?? childEnv,
         ...(this.agentCwd ? { cwd: this.agentCwd } : {}),
-        // The harness and every tool it spawns share a disposable process
-        // group. A hard turn deadline can therefore retire the whole tree,
-        // never just the ACP parent while a shell/compiler keeps running.
-        detached: process.platform !== 'win32',
+        // Managed Linux sessions use a cgroup scope. The process-group fallback
+        // covers helpers without a user systemd manager.
+        detached: !launch && process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
       }),
     );
@@ -856,14 +879,20 @@ export class AcpClient extends EventEmitter {
     });
 
     // ACP handshake: initialize, then send initialized notification.
-    const initResult = (await this.request(
-      'initialize',
-      {
-        protocolVersion: 1,
-        clientCapabilities: {},
-      },
-      timeoutMs,
-    )) as Record<string, unknown>;
+    let initResult: Record<string, unknown>;
+    try {
+      initResult = (await this.request(
+        'initialize',
+        {
+          protocolVersion: 1,
+          clientCapabilities: {},
+        },
+        timeoutMs,
+      )) as Record<string, unknown>;
+    } catch (error) {
+      await this.stop().catch(() => undefined);
+      throw error;
+    }
     const initMeta = initResult._meta as Record<string, unknown> | undefined;
     const steering = initMeta?.steering as Record<string, unknown> | undefined;
     this.supportsStandardSteering = steering?.supported === true;
@@ -880,20 +909,24 @@ export class AcpClient extends EventEmitter {
 
   /**
    * One child exit: reject every in-flight request so the turn fails and is
-   * reported instead of hanging, then publish the exit. A SIGKILL is checked
-   * against the daemon cgroup's OOM counter so the rejection can name the real
-   * cause instead of a bare signal.
+   * reported instead of hanging, then publish the exit. A scoped exit reads
+   * that scope's result; an unscoped SIGKILL uses the daemon cgroup's OOM
+   * counter so the rejection can name the cause instead of a bare signal.
    */
   private async handleChildExit(
     code: number | null,
     signal: NodeJS.Signals | null,
   ): Promise<void> {
+    const child = this.child;
     this.alive = false;
     // Exit owns the outcome immediately; diagnostic I/O cannot turn it into
     // a backstop timeout or keep an already-dead runtime's turn hanging.
     for (const p of this.pending.values()) this.clearTimer(p);
+    const scope = this.resourceScope;
+    const memoryLimited = scope && !this.stopping
+      ? await scope.exceededMemoryLimit() : false;
     let oomKilled = false;
-    if (signal === 'SIGKILL' && !this.stopping) {
+    if (!memoryLimited && signal === 'SIGKILL' && !this.stopping) {
       let diagnosticTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         oomKilled = await Promise.race([
@@ -913,13 +946,21 @@ export class AcpClient extends EventEmitter {
     const stderrSuffix = meaningful ? `: ${meaningful}` : '';
     for (const [, p] of this.pending) {
       this.clearTimer(p);
-      p.reject(new AcpRuntimeExitedError(`${exitText}${stderrSuffix}`));
+      p.reject(memoryLimited
+        ? new AcpResourceLimitError(scope!.memoryMaxBytes)
+        : new AcpRuntimeExitedError(`${exitText}${stderrSuffix}`));
     }
     this.pending.clear();
     this.activeRunIds.clear();
     this.activePromptSessions.clear();
     this.toolCallMetadata.clear();
     this.sessionCommands.clear();
+    if (scope) {
+      await scope.stop().then(() => {
+        if (this.resourceScope === scope) this.resourceScope = undefined;
+        if (this.child === child) this.child = null;
+      }).catch((error) => console.error('[acp] resource scope cleanup failed:', error));
+    }
     this.emit('exit', { code, signal });
   }
 
@@ -930,32 +971,33 @@ export class AcpClient extends EventEmitter {
       p.reject(new AcpRuntimeExitedError(detail));
     }
     this.pending.clear();
+    if (this.resourceScope) void this.resourceScope.stop().catch((error) =>
+      console.error('[acp] resource scope cleanup failed:', error));
   }
 
   async stop(): Promise<void> {
     const child = this.child;
-    if (!child) return;
+    const scope = this.resourceScope;
+    if (!child && !scope) return;
     this.stopping = true;
     try {
       // Send shutdown if child is still alive.
-      if (this.child?.stdin.writable) {
+      if (child?.stdin.writable) {
         this.notify('shutdown', {});
       }
     } catch {
       /* ignore */
     }
-    // Give it time to flush.
-    await new Promise<void>((r) => setTimeout(r, 300));
-    try {
-      killChildProcessGroup(child, 'SIGTERM');
-    } catch {
-      /* ignore */
-    }
-    await new Promise<void>((r) => setTimeout(r, 500));
-    try {
-      killChildProcessGroup(child, 'SIGKILL');
-    } catch {
-      /* ignore */
+    // A scope contains even grandchildren that opened a new process group.
+    // Fall back to the old group teardown only for unscoped sessions.
+    if (scope) {
+      await scope.stop();
+      if (this.resourceScope === scope) this.resourceScope = undefined;
+    } else if (child) {
+      await new Promise<void>((r) => setTimeout(r, 300));
+      try { killChildProcessGroup(child, 'SIGTERM'); } catch { /* ignore */ }
+      await new Promise<void>((r) => setTimeout(r, 500));
+      try { killChildProcessGroup(child, 'SIGKILL'); } catch { /* ignore */ }
     }
     this.child = null;
     this.alive = false;

@@ -327,7 +327,7 @@ export type DaemonOperationMap = {
   listAgentToolSchedules: Operation<AgentRoomInput, WorkScheduleListResult>;
   getAgentToolMandate: Operation<AgentRoomInput, AgentToolMandateResult>;
   getTargetAgentAuthority: Operation<TargetAgentAuthorityInput, AuthorityDecisionResult>;
-  listRoomCorners: Operation<RoomInput, CornerListResult>;
+  listRoomCorners: Operation<RoomInput & { activeOnly?: boolean }, CornerListResult>;
   getCornerRestoreState: Operation<CornerInput, CornerRestoreResult>;
   listCornerBriefRevisions: Operation<
     CornerInput & {
@@ -1075,6 +1075,7 @@ export type PostTurnReceiptInput = AgentRoomInput & {
     | 'update-interrupted'
     | 'offline'
     | 'context-overflow'
+    | 'resource-limit'
     | 'model-selection-unavailable';
 };
 export type PostAgentActivityInput = TurnOutputAuthority &

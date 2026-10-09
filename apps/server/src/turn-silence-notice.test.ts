@@ -248,6 +248,13 @@ describe('first-silence notice', () => {
         text: "@candy could not answer · the helper is out of date. Run `beeline start` on the helper's machine.",
         silence: 'helper-out-of-date',
       },
+      {
+        requestId: '7'.repeat(64),
+        reason: 'resource_limit: ACP session exceeded its 8192 MiB memory limit',
+        reasonKind: 'resource-limit' as const,
+        text: '@candy could not answer · the session exceeded its memory limit. Run fewer tools at once or split the task.',
+        silence: 'resource-limit',
+      },
     ];
     const daemon = new DaemonService(database, new LiveHub());
     for (const testCase of cases) {

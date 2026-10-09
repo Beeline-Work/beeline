@@ -6329,6 +6329,24 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
 
+    // Parent membership does not stand in for corner membership, even when the
+    // caller names the parent as its turn room.
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [cornerId, helper],
+    );
+    expect(
+      (await daemonOperation('archiveCorner', { roomId: ROOM, cornerId }, helperToken)).status,
+    ).toBe(403);
+    expect(
+      (await daemonOperation('closeCornerPullRequest', { roomId: ROOM, cornerId }, helperToken))
+        .status,
+    ).toBe(403);
+    await database.query(
+      `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
+      [cornerId, helper],
+    );
+
     // A member that did not open the corner closes it, no merge required.
     expect((await daemonOperation('archiveCorner', { cornerId }, helperToken)).status).toBe(200);
     expect(

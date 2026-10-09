@@ -3218,6 +3218,8 @@ export class DaemonService {
     input: Input<'closeCornerPullRequest'>,
     agentId: string,
   ): Promise<Output<'closeCornerPullRequest'>> {
+    // The generic gate checks the turn's roomId; the target corner needs its own check.
+    await this.access(input.cornerId, agentId);
     if (!this.closePullRequest)
       return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
     const closed = await this.closePullRequest(input.cornerId);
@@ -7452,6 +7454,8 @@ export class DaemonService {
     return brief!;
   }
   private async archiveCorner(cornerId: string, agentId: string) {
+    // The generic gate checks the turn's roomId; the target corner needs its own check.
+    await this.access(cornerId, agentId);
     const parentId = await this.database.transaction(async (database) => {
       return (await closeCornerState(database, cornerId)).parentId;
     });

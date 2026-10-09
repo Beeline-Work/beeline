@@ -44,6 +44,10 @@ type LiveConnectionDeps = {
 const FALLBACK_INTERVAL_MS = 30_000;
 /** A socket stuck opening on a bad network fires no close on its own. */
 const LIVE_CONNECT_TIMEOUT_MS = 15_000;
+/** An open socket can die without a close event, e.g. when the phone changes
+ *  network on unlock. A foreground app pings on this interval; a socket that
+ *  delivered no frame by the next ping is replaced. */
+const LIVE_PING_INTERVAL_MS = 20_000;
 /** The same window the server's own `liveDraftSnapshot` is gated on: past it a
  *  cached draft is no longer live text, so a late join must not paint it. A
  *  turn that ends `failed` or `cancelled` leaves no `retract` behind, so this
@@ -92,6 +96,10 @@ export class LiveConnection {
   private connectInFlight: Promise<void> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private fallbackTimer: ReturnType<typeof setInterval> | undefined;
+  private pingTimer: ReturnType<typeof setInterval> | undefined;
+  /** Set by the first pong: a server without ping support never kills a socket. */
+  private serverAnswersPing = false;
+  private heardSinceLastPing = true;
   private reconnectDelayMs = 1_000;
   private nextRegistrationId = 1;
   private generation = 0;
@@ -192,6 +200,8 @@ export class LiveConnection {
     const current = this.socket;
     this.socket = undefined;
     current?.close();
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.pingTimer = undefined;
     for (const registration of this.registrations.values()) registration.closed = true;
     this.registrations.clear();
     this.refcount.clear();
@@ -281,11 +291,13 @@ export class LiveConnection {
         clearTimeout(connectTimer);
         if (this.socket !== next) return;
         this.reconnectDelayMs = 1_000;
+        this.startPing(next);
         this.sendSubscribe([...this.refcount.keys()]);
         for (const listener of this.connectedListeners) listener();
       };
       next.onmessage = (message) => {
         if (this.socket !== next) return;
+        this.heardSinceLastPing = true;
         let live: LiveWireEvent;
         try {
           live = JSON.parse(String(message.data)) as LiveWireEvent;
@@ -308,6 +320,8 @@ export class LiveConnection {
   }
 
   private dropSocketState(): void {
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.pingTimer = undefined;
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     this.overlays.clear();
@@ -322,6 +336,25 @@ export class LiveConnection {
       this.reconnectTimer = undefined;
       void this.ensureSocket();
     }, delayMs);
+  }
+
+  private startPing(socket: WebSocket): void {
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.heardSinceLastPing = true;
+    this.pingTimer = setInterval(() => {
+      if (this.socket !== socket || !isSocketOpen(socket)) return;
+      // A hidden app sends nothing; the foreground replaces the socket anyway.
+      if (this.deps.isBackground()) {
+        this.heardSinceLastPing = true;
+        return;
+      }
+      if (!this.heardSinceLastPing && this.serverAnswersPing) {
+        this.reconnect();
+        return;
+      }
+      this.heardSinceLastPing = false;
+      socket.send(JSON.stringify({ type: 'ping' }));
+    }, LIVE_PING_INTERVAL_MS);
   }
 
   private sendSubscribe(roomIds: readonly string[]): void {
@@ -341,7 +374,11 @@ export class LiveConnection {
     for (const event of cache.presence.values()) registration.listener({ monolithLive: event });
   }
 
-  private dispatch(live: LiveWireEvent, generation: WebSocket): void {
+  private dispatch(live: LiveWireEvent | { type: 'pong' }, generation: WebSocket): void {
+    if (live.type === 'pong') {
+      this.serverAnswersPing = true;
+      return;
+    }
     if (live.type === 'trace-painted') {
       const owner = this.traceOwners.get(live.id);
       this.traceOwners.delete(live.id);

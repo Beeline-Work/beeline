@@ -427,7 +427,10 @@ export class DaemonAgentSession {
           return;
         }
         if (event.reason === 'postgres:agent_commands') {
-          if (event.targetAgentId === agentId) void pushCommands(trigger);
+          // A review wake is held while another agent in the corner holds a
+          // live lease. That agent's command ending writes no row for this
+          // agent, so its release is the wake.
+          if (event.targetAgentId === agentId || event.commandReleased) void pushCommands(trigger);
           return;
         }
         if (event.reason === 'postgres:rooms' && event.repositoryChanged) {

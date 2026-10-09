@@ -604,6 +604,67 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('Reproduction R1: replaces a foreground socket that went silent without a close', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    const room = vi.fn();
+    await connection.register([{ '#h': [ROOM_A] }], room);
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(sockets[0]!.sent).toContain(JSON.stringify({ type: 'ping' }));
+    sockets[0]!.emit({ type: 'pong' });
+
+    // The network path dies: no frame and no close event reach the app.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(sockets).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(sockets[0]!.closed).toBe(true);
+    expect(sockets).toHaveLength(2);
+
+    room.mockClear();
+    sockets[1]!.open();
+    expect(sockets[1]!.sent).toContain(JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] }));
+    sockets[1]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    expect(room).toHaveBeenCalledWith({ monolithLive: { type: 'subscribed', roomId: ROOM_A } });
+
+    connection.dispose();
+  });
+
+  it('keeps a socket whose server never answers a ping', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.open();
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]!.closed).toBe(false);
+
+    connection.dispose();
+  });
+
+  it('pings nothing while the app is in the background', async () => {
+    vi.useFakeTimers();
+    const { connection, app } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.open();
+    await vi.advanceTimersByTimeAsync(20_000);
+    sockets[0]!.emit({ type: 'pong' });
+
+    app.background = true;
+    const sent = sockets[0]!.sent.length;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(sockets[0]!.sent).toHaveLength(sent);
+    expect(sockets).toHaveLength(1);
+
+    connection.dispose();
+  });
+
   it('skips the reconnect backoff on foreground', async () => {
     vi.useFakeTimers();
     const { connection, foreground } = createConnection();

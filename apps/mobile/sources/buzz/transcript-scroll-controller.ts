@@ -105,7 +105,11 @@ export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   observeTailPinned(pinned: boolean): void;
   /** A touch drag began. Cancels the active request. */
   dragStarted(): void;
-  /** Momentum began. Cancels the active request; a later offset waits for its end. */
+  /**
+   * Momentum began. After a drag it cancels the active request; a later
+   * offset waits for its end. Without one (Android can start momentum after a
+   * layout change) it is not the reader, and the request stays.
+   */
   momentumStarted(): void;
   /** The finger lifted. With `momentumMayFollow`, wait a frame for momentum to claim it. */
   dragEnded(momentumMayFollow: boolean): void;
@@ -149,6 +153,8 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   let dragging = false;
   let momentum = false;
   let dragSequence = 0;
+  // A drag ended with momentum still to come.
+  let momentumOwed = false;
   let held = false;
 
   const end = (reason: TranscriptScrollCancelReason) => {
@@ -277,6 +283,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     reset() {
       active = null;
       held = false;
+      momentumOwed = false;
       visibleRows = [];
       visibleRowsOf = null;
     },
@@ -295,12 +302,16 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       dragSequence += 1;
       dragging = true;
       momentum = false;
+      momentumOwed = false;
       end('drag');
     },
     momentumStarted() {
       dragSequence += 1;
-      dragging = true;
       momentum = true;
+      const fromDrag = dragging || momentumOwed;
+      momentumOwed = false;
+      if (!fromDrag) return;
+      dragging = true;
       end('drag');
     },
     dragEnded(momentumMayFollow) {
@@ -309,6 +320,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
         dragging = false;
         return;
       }
+      momentumOwed = true;
       schedule(() => {
         if (dragSequence === current) dragging = false;
       });
@@ -317,6 +329,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       dragSequence += 1;
       dragging = false;
       momentum = false;
+      momentumOwed = false;
       if (active?.destination.kind === 'offset') attempt(active);
     },
     userScrolled() {

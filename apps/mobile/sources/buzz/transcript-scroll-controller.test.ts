@@ -274,6 +274,31 @@ describe('transcript scroll controller', () => {
     expect(controller.isUserDragging()).toBe(false);
   });
 
+  it('keeps a landing when momentum begins with no drag before it', () => {
+    const { controller, events, flush } = setup();
+    controller.request(message('m3'));
+    flush();
+    // Android can start momentum after a layout change, with no gesture.
+    controller.momentumStarted();
+    expect(controller.isLanding()).toBe(true);
+    expect(controller.isUserDragging()).toBe(false);
+    controller.momentumEnded();
+    controller.observeVisibleRows([{ id: 'm3' }]);
+    expect(events).toEqual(['scrolled:message:m3', 'landed:message:m3']);
+  });
+
+  it('cancels a landing on momentum after a drag, even past the held frame', () => {
+    const { controller, events, flush } = setup();
+    controller.dragStarted();
+    controller.dragEnded(true);
+    flush();
+    controller.request(message('m3'));
+    flush();
+    controller.momentumStarted();
+    expect(events).toEqual(['scrolled:message:m3', 'cancelled:message:drag']);
+    expect(controller.isUserDragging()).toBe(true);
+  });
+
   it('lands a send once more when its own row is drawn', () => {
     const { controller, moves, flush, setRows } = setup();
     controller.observeTailPinned(false);

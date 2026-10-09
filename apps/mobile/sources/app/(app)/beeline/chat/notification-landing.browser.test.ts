@@ -117,7 +117,48 @@ function shims(mobile: string): Record<string, string> {
       absoluteFillObject: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 } };
     export const useUnistyles = () => ({ theme });
     export const UnistylesRuntime = { setTheme() {}, setRootViewBackgroundColor() {} };`,
-    'react-native-reanimated': `${base['react-native-reanimated']}
+    // The shared stand-in settles every animation at once, so a flash would be
+    // invisible from its first frame. Here a shared value re-renders its owner
+    // and a timing or delay settles after its duration, so the arrival flash
+    // holds visibly and then clears, as the app's does.
+    'react-native-reanimated': `import React from 'react';
+    import { Animated } from 'react-native';
+    const identity = value => value;
+    export const Easing = new Proxy({}, { get: () => (...args) => (typeof args[0] === 'function' ? args[0] : identity) });
+    const entering = new Proxy({}, { get: () => () => entering });
+    export const FadeInDown = entering;
+    export const ReduceMotion = { System: 'system' };
+    export const useReducedMotion = () => true;
+    export const useAnimatedStyle = factory => factory();
+    export const useFrameCallback = () => ({ setActive: () => undefined, isActive: false });
+    const after = (ms, settle) => ({ run: (set) => setTimeout(() => settle(set), ms) });
+    export const withTiming = (to, config) => after(config?.duration ?? 0, (set) => set(to));
+    export const withDelay = (ms, next) => after(ms, (set) => (next?.run ? next.run(set) : set(next)));
+    export const useSharedValue = (initial) => {
+      const [, rerender] = React.useReducer((n) => n + 1, 0);
+      const shared = React.useRef(null);
+      if (!shared.current) {
+        let current = initial;
+        let timer = null;
+        const set = (next) => { current = next; rerender(); };
+        shared.current = {
+          get value() { return current; },
+          set value(next) {
+            clearTimeout(timer);
+            if (next?.run) timer = next.run(set);
+            else set(next);
+          },
+        };
+      }
+      return shared.current;
+    };
+    export const withRepeat = identity; export const withSequence = (...v) => v[0];
+    export const cancelAnimation = () => undefined;
+    export const runOnJS = fn => fn; export const runOnUI = fn => fn;
+    export const useAnimatedProps = factory => factory();
+    export const useDerivedValue = factory => ({ value: factory() });
+    export const interpolate = identity;
+    export default { View: Animated.View, Text: Animated.Text, createAnimatedComponent: c => c };
     const builder = new Proxy({}, { get: () => () => builder });
     export const FadeOut = builder; export const FadeIn = builder; export const Layout = builder;
     export const FadeOutDown = builder; export const FadeInUp = builder; export const FadeOutUp = builder;
@@ -241,6 +282,7 @@ type Observation = {
     present: boolean;
     flashed: boolean;
     flashColor: string | null;
+    flashOpacity: number | null;
     top: number | null;
     /** The target's text, whether or not its row still flashes. */
     textTop: number | null;
@@ -450,7 +492,7 @@ describe.skipIf(!existsSync(CHROME))(
           );
           console.log(
             `W1 (${_name}, ${_target}): before tap rows=${page.beforeTap.rows.length} (${page.beforeTap.rows[0]} … ${page.beforeTap.rows.at(-1)}); ` +
-              `on arrival top=${arrival?.top ?? null}px flashed=${arrival?.flashed ?? null}; ` +
+              `on arrival top=${arrival?.top ?? null}px flashed=${arrival?.flashed ?? null} (${arrival?.flashColor ?? null} at opacity ${arrival?.flashOpacity ?? null}); ` +
               `2 s after tap top=${page.landed.target.top}px, historyAround calls=${page.landed.historyAroundCalls}, rows=${JSON.stringify(page.landed.rows.slice(0, 2))}`,
           );
           expect(page.beforeTap.rows).toContain('Tail message 170');
@@ -459,8 +501,11 @@ describe.skipIf(!existsSync(CHROME))(
           expect(page.landed.target.top).not.toBeNull();
           expect(page.landed.target.top!).toBeGreaterThanOrEqual(-10);
           expect(page.landed.target.top!).toBeLessThan(120);
-          // The flash runs from the landing, so the reader sees it there.
+          // The flash runs from the landing, so the reader sees it there: the
+          // source-landing fill, opaque.
           expect(arrival?.flashed).toBe(true);
+          expect(arrival?.flashOpacity).toBeGreaterThan(0);
+          expect(arrival?.flashColor).toBe('rgba(176, 138, 74, 0.28)');
         },
         120_000,
       );

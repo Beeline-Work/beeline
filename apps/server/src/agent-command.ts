@@ -1130,7 +1130,7 @@ export async function readAgentCommands(
      EXISTS(
        SELECT 1 FROM rooms corner
        JOIN rooms parent ON parent.id=corner.parent_id
-       JOIN corner_facts fact ON fact.corner_id=corner.id
+       LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
        WHERE corner.id=c.room_id
          AND (parent.reviewer_agent_id=c.agent_id OR c.agent_id=ANY(parent.reviewer_fallback_ids))
          AND (c.reason='corner_check' OR c.reason='corner_review_dispatch'

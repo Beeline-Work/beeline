@@ -113,20 +113,28 @@ export async function runMachineHelper(
   const hosted = new Map<string, HostedAgent>();
   const links = new Map<string, MachineLink>();
   let diskSweepRunning = false;
+  let lastModelSweepAt = 0;
   let lastRetentionSweepAt = 0;
   const sweepHostDisk = async () => {
+    const now = Date.now();
     if (
+      controller.signal.aborted ||
       diskSweepRunning ||
       [...slots.values()].some((slot) => slot.state === 'starting' || slot.state === 'restarting') ||
-      [...hosted.values()].some((agent) => !agent.core.isWorkspaceIdle())
+      [...hosted.values()].some((agent) => !agent.core.isWorkspaceIdle()) ||
+      (now - lastModelSweepAt < 60 * 60_000 && now - lastRetentionSweepAt < 24 * 60 * 60_000)
     ) return;
     diskSweepRunning = true;
     try {
-      const removed = await pruneSharedModelCache(resolve(supervisorRoot, 'beeline', 'model-cache'));
-      if (Date.now() - lastRetentionSweepAt >= 24 * 60 * 60_000) {
+      const modelDue = now - lastModelSweepAt >= 60 * 60_000;
+      const removed = modelDue
+        ? await pruneSharedModelCache(resolve(supervisorRoot, 'beeline', 'model-cache'))
+        : [];
+      if (modelDue) lastModelSweepAt = now;
+      if (now - lastRetentionSweepAt >= 24 * 60 * 60_000) {
         removed.push(...await pruneDeletedRuntimes(supervisorRoot));
         removed.push(...await pruneRepositoryCaches(supervisorRoot));
-        lastRetentionSweepAt = Date.now();
+        lastRetentionSweepAt = now;
       }
       if (removed.length) console.log(`[helper] idle disk sweep removed ${removed.length} expired cache/runtime directories`);
     } catch (error) {
@@ -342,6 +350,7 @@ export async function runMachineHelper(
       for (const agent of hosted.values())
         agent.lifecycle.resumeAfterFailedUpdate(() => agent.core.resumeServing());
     }
+    void sweepHostDisk();
   };
 
   let readyResolve: (() => void) | undefined;
@@ -490,8 +499,6 @@ export async function runMachineHelper(
   };
   signals.on('SIGHUP', onHangup);
   const stopWatchdog = startLocalWatchdog(notifier, statusLine);
-  const diskSweepTimer = setInterval(() => { void sweepHostDisk(); }, 60 * 60_000);
-  diskSweepTimer.unref();
 
   try {
     console.log(`[helper] hosting ${initial.length} agent(s) on one machine socket per server`);
@@ -513,7 +520,6 @@ export async function runMachineHelper(
   } finally {
     signals.off('SIGHUP', onHangup);
     stopWatchdog();
-    clearInterval(diskSweepTimer);
     for (const link of links.values()) link.stop();
     await statusWrite;
   }

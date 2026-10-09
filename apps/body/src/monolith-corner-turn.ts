@@ -1844,22 +1844,8 @@ export class MonolithCornerTurnLoop {
                 trace.promptSent();
                 const scratchRoot = this.repositoryWork ? undefined : this.options.worktreePath;
                 const scratchAtStart = scratchRoot ? await allocatedDirectoryBytes(scratchRoot) : 0;
-                let overBudget: string | undefined;
-                let checking = false;
-                const budgetTimer = scratchRoot ? setInterval(() => {
-                  if (checking || overBudget) return;
-                  checking = true;
-                  void allocatedDirectoryBytes(scratchRoot).then((usage) => {
-                    if (!scratchGrowthExceedsBudget(usage, scratchAtStart)) return;
-                    overBudget = scratchBudgetMessage(usage);
-                    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
-                  }).catch((error) => {
-                    console.warn(`[thin-core] corner ${cornerId} scratch measure failed:`, error);
-                  }).finally(() => { checking = false; });
-                }, 5_000) : undefined;
-                budgetTimer?.unref();
                 try {
-                  const result = await this.turnUsage.measure(
+                  return await this.turnUsage.measure(
                   { agentEnv: this.agentEnv, sessionId: this.sessionId! },
                   () =>
                     this.client!.sessionPrompt(
@@ -1898,18 +1884,12 @@ export class MonolithCornerTurnLoop {
                       },
                     ),
                   );
+                } finally {
                   if (scratchRoot) {
                     const usage = await allocatedDirectoryBytes(scratchRoot);
                     if (scratchGrowthExceedsBudget(usage, scratchAtStart))
-                      overBudget ??= scratchBudgetMessage(usage);
+                      throw new Error(`Scratch budget exceeded. ${scratchBudgetMessage(usage)}`);
                   }
-                  if (overBudget) throw new Error(`Scratch budget exceeded. ${overBudget}`);
-                  return result;
-                } catch (error) {
-                  if (overBudget) throw new Error(`Scratch budget exceeded. ${overBudget}`);
-                  throw error;
-                } finally {
-                  if (budgetTimer) clearInterval(budgetTimer);
                 }
               };
               let loginRetryUsed = false;

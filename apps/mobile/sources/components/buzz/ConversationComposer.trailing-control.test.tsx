@@ -237,15 +237,16 @@ describe('composer trailing control is mic XOR send', () => {
     expect(hosts(root, 'chat-send')).toHaveLength(1);
   });
 
-  it('keeps send for a staged attachment with the keyboard lowered, as a take cannot carry it', () => {
+  it('shows the mic over a staged attachment once the keyboard is lowered', () => {
     keyboard.visible = false;
     const root = render({
       value: '',
       canSend: true,
+      focused: true,
       attachments: [{ uri: 'file:///tmp/a.png', name: 'a.png', mimeType: 'image/png', sizeLabel: '1 KB' }],
     });
-    expect(hosts(root, 'chat-mic')).toHaveLength(0);
-    expect(hosts(root, 'chat-send')).toHaveLength(1);
+    expect(hosts(root, 'chat-send')).toHaveLength(0);
+    expect(hosts(root, 'chat-mic')).toHaveLength(1);
   });
 
   it('a reply banner alone does not make something sendable: mic stays', () => {

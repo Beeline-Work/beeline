@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { validateCornerWorkflow } from '@beeline/api-contract/daemon';
@@ -1943,6 +1943,36 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
         await expect(wiredDaemon.execute(operation, input as never, outsider)).rejects.toThrow(/access denied/);
     } finally {
       await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [R, A]);
+    }
+  });
+
+  it('Reproduction R4-TARGET-READ: an unrelated roomId never opens a corner read', async () => {
+    const cornerId = await inReview();
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input) => github.prChecksStatus(input));
+    const unrelated = randomUUID();
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Unrelated')`, [unrelated, W]);
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+      [W, unrelated, A, B],
+    );
+    // B leaves the corner and its parent Room but stays in the unrelated Room.
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IN ($1,$2) AND identity_id=$3`, [cornerId, R, B]);
+    try {
+      const reads = [
+        ['getCornerRestoreState', { roomId: unrelated, cornerId }],
+        ['getPrChecksStatus', { roomId: unrelated, cornerId, pullRequest: 7 }],
+        ['listCornerBriefRevisions', { roomId: unrelated, cornerId }],
+      ] as const;
+      for (const [operation, input] of reads)
+        await expect(wiredDaemon.execute(operation, input as never, B), operation).rejects.toThrow(/access denied/);
+      // A, who reaches the corner, still reads it with the same unrelated roomId.
+      for (const [operation, input] of reads)
+        await expect(wiredDaemon.execute(operation, input as never, A), operation).resolves.toBeDefined();
+    } finally {
+      await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id IN ($1,$2) AND identity_id=$3`, [cornerId, R, B]);
+      await db.query(`DELETE FROM memberships WHERE room_id=$1`, [unrelated]);
+      await db.query(`DELETE FROM rooms WHERE id=$1`, [unrelated]);
     }
   });
 

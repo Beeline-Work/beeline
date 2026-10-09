@@ -390,12 +390,16 @@ export class DaemonService {
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.agentId === 'string' && candidate.agentId !== authenticatedAgentId)
       throw new Error('daemon token does not own requested agent');
+    // A read of one corner is authorized on that corner, never on a roomId the
+    // caller also sends; otherwise any Room the caller belongs to would open it.
     const scopedRoom =
-      typeof candidate.roomId === 'string'
-        ? candidate.roomId
-        : typeof candidate.cornerId === 'string'
-          ? candidate.cornerId
-          : undefined;
+      CORNER_REACH_READS.has(name) && typeof candidate.cornerId === 'string'
+        ? candidate.cornerId
+        : typeof candidate.roomId === 'string'
+          ? candidate.roomId
+          : typeof candidate.cornerId === 'string'
+            ? candidate.cornerId
+            : undefined;
     const walletCall = [
       'getWalletToolState',
       'getWalletToolBalance',

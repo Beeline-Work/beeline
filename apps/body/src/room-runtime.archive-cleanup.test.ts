@@ -137,4 +137,76 @@ describe('archived corner branch cleanup', () => {
       await coordinator.shutdown();
     }
   });
+
+  it('reports untracked working-tree work once, then stops retrying and keeps it', async () => {
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-abandon-worktree-'));
+    roots.push(supervisorRoot);
+    const cornerId = 'corner-abandoned-worktree';
+    const worktree = await materializeCornerWorktree({
+      cornerId,
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    // No commit at all — just an uncommitted file nothing will ever push.
+    await writeFile(resolve(worktree.path, 'never-committed.txt'), 'local only\n');
+
+    let now = 0;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getRoomGitHubToken') return { token: 'unused', expiresAt: now + 60_000 };
+      if (name === 'getCornerRestoreState')
+        return { cornerId, lifecycle: { lifecycle: 'working', checks: 'unknown' } };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(supervisorRoot),
+      resolve(supervisorRoot, 'agent.json'),
+      { workspaceRoot: supervisorRoot } as never,
+      { now: () => now, daemonApi: { execute } as unknown as DaemonApiClient },
+    );
+    const internal = coordinator as unknown as {
+      pendingCornerReaps: Map<string, typeof worktree & { cornerId: string; branch: string }>;
+      retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void>;
+    };
+    internal.pendingCornerReaps.set(cornerId, {
+      ...worktree,
+      cornerId,
+      branch: FEATURE,
+      parentRoomId: 'room-1',
+      token: '',
+    });
+
+    try {
+      await internal.retryPendingCornerReaps(new Set());
+      expect(errors).toHaveBeenCalledWith(
+        expect.stringContaining('branch cleanup abandoned'),
+        expect.anything(),
+      );
+      expect(execute).not.toHaveBeenCalledWith('postCornerRemoteState', expect.anything());
+      errors.mockClear();
+      execute.mockClear();
+
+      // Well past any transient backoff window, and still desired by nobody.
+      now += 10 * 60_000;
+      await internal.retryPendingCornerReaps(new Set());
+      expect(execute).not.toHaveBeenCalled();
+      expect(errors).not.toHaveBeenCalled();
+
+      // The checkout and its untracked file were never touched or discarded.
+      await expect(
+        git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+      ).resolves.toBeTruthy();
+      await expect(git(worktree.path, 'status', '--porcelain')).resolves.toContain(
+        'never-committed.txt',
+      );
+    } finally {
+      errors.mockRestore();
+      await coordinator.shutdown();
+    }
+  });
 });

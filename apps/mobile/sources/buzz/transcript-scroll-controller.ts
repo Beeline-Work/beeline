@@ -142,6 +142,9 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   const schedule = options.schedule ?? defaultSchedule;
   let active: Active | null = null;
   let visibleRows: readonly Row[] = [];
+  // The rows the last visibility report described. A report about other rows
+  // (a window opened since) cannot settle a request.
+  let visibleRowsOf: readonly Row[] | null = null;
   let pinned = true;
   let dragging = false;
   let momentum = false;
@@ -169,6 +172,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     const destination = current.destination;
     if (!isRowDestination(destination)) return null;
     if (destination.kind === 'message' && !current.scrolled) return null;
+    if (visibleRowsOf !== options.rows()) return null;
     const index = options.rowIndex(destination, visibleRows);
     return index >= 0 ? visibleRows[index]! : null;
   };
@@ -211,7 +215,10 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     const rowId = rows[index]!.id;
     const align = destination.kind === 'message' ? destination.align : 'center';
     if (!list.toRow(index, rowId, align)) {
-      if (destination.kind === 'firstUnread') list.toEstimatedRow(index);
+      // Scroll near the row so the list draws and measures it. A list that
+      // has nothing left to draw sends no later pass by itself, and a row
+      // request waiting for one never lands.
+      list.toEstimatedRow(index);
       return;
     }
     if (!current.scrolled) {
@@ -271,12 +278,14 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       active = null;
       held = false;
       visibleRows = [];
+      visibleRowsOf = null;
     },
     observeLayout() {
       if (active) attempt(active);
     },
     observeVisibleRows(rows) {
       visibleRows = rows;
+      visibleRowsOf = options.rows();
       if (active) attempt(active);
     },
     observeTailPinned(next) {

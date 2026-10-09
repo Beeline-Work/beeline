@@ -13,8 +13,15 @@ import { createRoot } from 'react-dom/client';
  *   missing — rejects with a 404 once the room is on screen
  *   landed-then-missing — answers, then a second tap names a message the
  *     server answers with a 404
+ *   warm — the Room is open with no notification (`?warm=1`); then a tap
+ *     names `?target=`, and any read around it answers at once
+ *   warm-retap — `warm`, then the reader returns to the newest rows and a
+ *     second tap with a new response id names the same target
+ *   cold — the tap opens the Room on `?target=`; reads answer at once
  *   first   — the target is the Room's first message: answers with it and
  *     fewer newer rows than one screen, and `historyAfter` serves the rest
+ * `?cache=1` paints a saved Room response first; `?roomDelay=` delays the
+ * Room read by that many ms.
  */
 type Around = {
   calls: number;
@@ -73,9 +80,11 @@ async function typeIntoComposer(text: string) {
   return { present: true, typed: composer()?.value ?? null };
 }
 
+const targetText = new URLSearchParams(location.search).get('targetText') ?? 'TARGET MESSAGE';
+
 function target() {
   const viewport = list()?.getBoundingClientRect();
-  const node = leaves(list()).find((leaf) => leaf.textContent!.trim() === 'TARGET MESSAGE');
+  const node = leaves(list()).find((leaf) => leaf.textContent!.trim() === targetText);
   if (!node || !viewport)
     return { present: Boolean(node), flashed: false, flashColor: null, top: null, textTop: null };
   // The row's ground is the nearest ancestor that holds the flash fill.
@@ -212,6 +221,10 @@ async function run() {
   const root = document.getElementById('root')!;
   root.style.cssText = 'height:100vh;display:flex;flex-direction:column;overflow:hidden';
   createRoot(root).render(<BuzzChat />);
+  if (mode === 'warm' || mode === 'warm-retap' || mode === 'cold') {
+    await warm(mode);
+    return;
+  }
   const shown = await waitFor(() => visibleRows().length > 0 && around().calls > 0, 4000);
   await pause(300);
   const pending = { ...observe(), shown };
@@ -263,6 +276,67 @@ async function run() {
       later,
     }),
   );
+}
+
+/** A tap that opens the Room (`cold`), or that reaches a Room screen already open. */
+async function warm(mode: string) {
+  const query = new URLSearchParams(location.search);
+  const setParams = (globalThis as unknown as { __setParams(next: unknown): void }).__setParams;
+  const answerReads = () =>
+    around()
+      .pending.splice(0)
+      .forEach(({ resolve }) => resolve(around().page));
+  /** The server answers each read around the target as soon as it is asked. */
+  const twoSecondsLater = async () => {
+    const until = Date.now() + 2000;
+    while (Date.now() < until) {
+      answerReads();
+      await pause(50);
+    }
+    return observe();
+  };
+  const tap = (responseId: string) => {
+    setParams({
+      channelId: query.get('room'),
+      notificationResponseId: responseId,
+      notificationMessageId: query.get('target'),
+    });
+    return twoSecondsLater();
+  };
+  if (mode === 'cold') {
+    const landed = await twoSecondsLater();
+    const roomCalls = (globalThis as unknown as { __roomCalls?: number }).__roomCalls ?? 0;
+    report(JSON.stringify({ mode, landed, roomCalls }));
+    return;
+  }
+  const opened = await waitFor(() => visibleRows().length > 0, 4000);
+  await pause(500);
+  const beforeTap = { ...observe(), opened };
+  const landed = await tap('push-1');
+  if (mode === 'warm') {
+    report(JSON.stringify({ mode, beforeTap, landed }));
+    return;
+  }
+  // The reader scrolls back down to the newest rows. The inverted list's
+  // newest end is its scroll offset 0.
+  const scrollNode = [list(), ...Array.from(list()?.querySelectorAll<HTMLElement>('*') ?? [])].find(
+    (node): node is HTMLElement =>
+      Boolean(
+        node &&
+        node.scrollHeight > node.clientHeight + 1 &&
+        /auto|scroll/.test(getComputedStyle(node).overflowY),
+      ),
+  );
+  for (let step = 0; step < 20 && !visibleRows().includes('Tail message 29'); step += 1) {
+    scrollNode?.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 400 }));
+    if (scrollNode) scrollNode.scrollTop = 0;
+    scrollNode?.dispatchEvent(new Event('scroll'));
+    await pause(150);
+  }
+  await pause(500);
+  const atNewest = observe();
+  const relanded = await tap('push-2');
+  report(JSON.stringify({ mode, beforeTap, landed, atNewest, relanded }));
 }
 
 run().catch((error: unknown) =>

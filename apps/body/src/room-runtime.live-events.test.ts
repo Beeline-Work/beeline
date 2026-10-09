@@ -539,6 +539,147 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     expect(coordinator.activeRoomIds()).toEqual([]);
   });
 
+  it('a repository-change for a known Room re-lists only that Room, not every Room', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-repo-change-'));
+    roots.push(root);
+    const opener = identityFromKey('11'.repeat(32), 'Bee').publicKey;
+    const execute = vi.fn(async (name: string, input?: { roomId?: string }) => {
+      if (name === 'listRoomCorners' && input?.roomId === 'room-1') {
+        return { corners: [{ cornerId: 'corner-1', archived: false, createdBy: opener }] };
+      }
+      if (name === 'getCornerRestoreState')
+        return { cornerId: 'corner-1', objective: 'Fix the widget', closeRequested: false };
+      if (name === 'getRoomRepositoryState') return { resolution: 'none' };
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    let roomsChanged: ((event?: RoomMembershipChange & { repositoryChanged?: boolean }) => void) | undefined;
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: (
+            listener: (event?: RoomMembershipChange & { repositoryChanged?: boolean }) => void,
+          ) => {
+            roomsChanged = listener;
+          },
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    const discovery = vi.fn();
+    coordinator.setDiscoveryWakeListener(discovery);
+    try {
+      roomsChanged?.({ roomId: 'room-1', repositoryChanged: true });
+      await vi.waitFor(() => expect(coordinator.activeRoomIds()).toContain('corner-1'));
+      expect(execute.mock.calls.filter(([name]) => name === 'listRoomCorners')).toHaveLength(1);
+      expect(execute).not.toHaveBeenCalledWith('getDaemonBootstrap', expect.anything());
+      expect(discovery).not.toHaveBeenCalled();
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+
+  it('falls back to the full reconcile when a scoped repository-change listing fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-repo-change-fail-'));
+    roots.push(root);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'listRoomCorners') throw new Error('corner listing unavailable');
+      return {};
+    });
+    let roomsChanged: ((event?: RoomMembershipChange & { repositoryChanged?: boolean }) => void) | undefined;
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: (
+            listener: (event?: RoomMembershipChange & { repositoryChanged?: boolean }) => void,
+          ) => {
+            roomsChanged = listener;
+          },
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    const discovery = vi.fn();
+    coordinator.setDiscoveryWakeListener(discovery);
+    try {
+      roomsChanged?.({ roomId: 'room-1', repositoryChanged: true });
+      await vi.waitFor(() => expect(discovery).toHaveBeenCalled());
+    } finally {
+      await coordinator.shutdown();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("defers a busy Room's repository-change restart until its turn ends", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-live-repo-change-busy-'));
+    roots.push(root);
+    let busy = true;
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'listRoomCorners') return { corners: [] };
+      return {};
+    });
+    let roomsChanged: ((event?: RoomMembershipChange & { repositoryChanged?: boolean }) => void) | undefined;
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root),
+      join(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      {
+        daemonApi: {
+          execute,
+          setRoomsChangedListener: (
+            listener: (event?: RoomMembershipChange & { repositoryChanged?: boolean }) => void,
+          ) => {
+            roomsChanged = listener;
+          },
+          setCornerCompleteListener: vi.fn(),
+          setConfigChangedListener: vi.fn(),
+        } as unknown as DaemonApiClient,
+      },
+    );
+    const internal = coordinator as unknown as {
+      running: Map<string, unknown>;
+      notePoll(roomId: string): void;
+      stopRunning(roomId: string, room: unknown): Promise<void>;
+      startRoom(roomId: string): Promise<void>;
+    };
+    internal.running.set('room-1', {
+      body: { isBusy: () => busy, requestReconciliation: vi.fn() },
+      controller: new AbortController(),
+      promise: Promise.resolve(),
+    });
+    const stop = vi.spyOn(internal, 'stopRunning').mockImplementation(async () => {
+      internal.running.delete('room-1');
+    });
+    const start = vi.spyOn(internal, 'startRoom').mockResolvedValue();
+    try {
+      roomsChanged?.({ roomId: 'room-1', repositoryChanged: true });
+      await vi.waitFor(() =>
+        expect(execute).toHaveBeenCalledWith('listRoomCorners', { roomId: 'room-1' }),
+      );
+      expect(stop).not.toHaveBeenCalled();
+      busy = false;
+      internal.notePoll('room-1');
+      await vi.waitFor(() => expect(start).toHaveBeenCalledWith('room-1'));
+      expect(stop).toHaveBeenCalledOnce();
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+
   it('an unscoped rooms-changed still arms the recovery reconcile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-live-unscoped-'));
     roots.push(root);

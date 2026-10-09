@@ -131,32 +131,42 @@ function lifecycleItem(message: SystemLineMessage): LifecycleEvent | undefined {
   const check = message.isSystemNotice ? message.systemEvent : undefined;
   const action = check?.verb.match(/^(started|passed|failed) a check$/)?.[1];
   const object = check?.object;
-  const repository = object?.url?.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\//i);
-  // Missing identity stays a readable system line; never join by a title or PR number.
-  if (
-    check?.subject.kind !== 'github' ||
-    !action ||
-    !repository ||
-    !object?.text ||
-    !/^[a-f0-9]{40}$/i.test(object.headSha ?? '')
-  )
-    return undefined;
-  const head = object.headSha!.toLowerCase();
+  if (check?.subject.kind !== 'github' || !action) return undefined;
+  const repository = object?.url?.match(
+    /^https:\/\/(?:github\.com\/|api\.github\.com\/repos\/)([^/]+)\/([^/]+)\//i,
+  );
+  const head = /^[a-f0-9]{40}$/i.test(object?.headSha ?? '')
+    ? object!.headSha!.toLowerCase()
+    : undefined;
+  const title =
+    object?.text?.trim() ||
+    message.text.match(/(?:started|passed|failed) a check (.+?)(?: ·|$)/)?.[1] ||
+    'Check';
+  // An incomplete older note still belongs to this run. Keep its own cell
+  // when repository or head is absent, since its exact check identity is unknown.
+  const keys =
+    repository && head
+      ? [JSON.stringify([`${repository[1]}/${repository[2]}`.toLowerCase(), head, title])]
+      : [`check:${message.id}`];
+  const url =
+    repository && head && object?.url?.startsWith('https://api.github.com/')
+      ? `https://github.com/${repository[1]}/${repository[2]}/commit/${head}/checks`
+      : object?.url;
   return {
-    keys: [JSON.stringify([`${repository[1]}/${repository[2]}`.toLowerCase(), head, object.text])],
+    keys,
     titleRank: 0,
     item: {
       id: message.id,
-      title: object.text,
+      title,
       state:
         action === 'started'
           ? 'Checks running'
           : action === 'passed'
             ? 'Checks passed'
             : 'Checks failed',
-      kindLine: `Check · ${head.slice(0, 7)}${check.consequence ? ` · ${check.consequence}` : ''}`,
+      kindLine: `Check${head ? ` · ${head.slice(0, 7)}` : ''}${check.consequence ? ` · ${check.consequence}` : ''}`,
       kind: 'check',
-      url: object.url!,
+      ...(url ? { url } : {}),
       actor: check.subject.name,
       updatedBy: message.id,
     },

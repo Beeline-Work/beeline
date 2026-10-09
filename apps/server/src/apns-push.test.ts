@@ -37,6 +37,27 @@ describe('APNs provider token and request', () => {
     expect(Buffer.from(token.split('.')[2]!, 'base64url')).toHaveLength(64);
   });
 
+  it('shows a Room push under its Room name', () => {
+    const request = apnsPushRequest(
+      'device-token',
+      {
+        messageId: 'message-1',
+        workspaceId: 'workspace-1',
+        roomId: 'room-1',
+        channelId: 'room-1',
+        target: 'message',
+        type: 'message',
+        text: 'Maya: hello',
+        title: 'beeline-dev',
+      },
+      'app.usebeeline.mobile',
+      'provider-token',
+    );
+    expect(request.payload).toMatchObject({
+      aps: { alert: { title: 'beeline-dev', body: 'Maya: hello' } },
+    });
+  });
+
   it('builds APNs headers and a routing payload matching Firebase custom data', () => {
     const request = apnsPushRequest(
       'device/token',

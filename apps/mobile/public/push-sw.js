@@ -44,7 +44,8 @@ self.addEventListener('push', (event) => {
       new Promise((resolve) => setTimeout(() => resolve(false), 200)),
     ]);
     if (alreadyOpen) return;
-    await self.registration.showNotification('Beeline', {
+    const title = typeof payload.title === 'string' && payload.title ? payload.title : 'Beeline';
+    await self.registration.showNotification(title, {
       body: payload.body.slice(0, 200),
       icon: '/favicon-active.ico',
       data: { path },

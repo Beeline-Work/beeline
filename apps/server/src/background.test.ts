@@ -827,12 +827,16 @@ describe('background advisory-lock ownership', () => {
       expect(send).toHaveBeenCalledTimes(2);
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: 'Bee: @owner Please review' }),
+        expect.objectContaining({ text: 'Bee: @owner Please review', title: 'Room' }),
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
         expect.objectContaining({ text: 'Bee: A direct message' }),
       );
+      // A DM keeps the app's title: its body already names the sender.
+      expect(
+        send.mock.calls.find(([, message]) => message.text === 'Bee: A direct message')![1],
+      ).not.toHaveProperty('title');
       expect(send).not.toHaveBeenCalledWith(
         'other-device-token-12345678901234567890',
         expect.objectContaining({ text: 'Untargeted' }),
@@ -863,6 +867,7 @@ describe('background advisory-lock ownership', () => {
           roomId: room,
           channelId: corner,
           cornerId: corner,
+          title: 'Room › Corner',
         }),
       );
     } finally {

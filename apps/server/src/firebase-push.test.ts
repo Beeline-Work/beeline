@@ -5,6 +5,7 @@ import {
   firebasePushMessage,
   requirePushDeliveryCredentials,
 } from './firebase-push.js';
+import { pushTitleFor } from './background.js';
 
 const fakeCredential = {} as Credential;
 
@@ -86,6 +87,23 @@ describe('Firebase push credentials', () => {
 });
 
 describe('Firebase push routing payload', () => {
+  it('titles a chat push with its Room or corner and keeps Beeline without one', () => {
+    const message = {
+      messageId: 'message-1',
+      workspaceId: 'workspace-1',
+      roomId: 'parent-1',
+      channelId: 'corner-1',
+      cornerId: 'corner-1',
+      target: 'message' as const,
+      type: 'message' as const,
+      text: 'Maya: hello',
+    };
+    expect(
+      firebasePushMessage('device-token', { ...message, title: 'beeline-dev › push-title' }).data,
+    ).toMatchObject({ title: 'beeline-dev › push-title', message: 'Maya: hello' });
+    expect(firebasePushMessage('device-token', message).data).toMatchObject({ title: 'Beeline' });
+  });
+
   it.each([
     ['Room mention', 'room-1', 'room-1', undefined, 'message'],
     ['corner mention', 'parent-1', 'corner-1', 'corner-1', 'message'],
@@ -247,5 +265,28 @@ it('replaces an activity slot without losing its unique message destination', ()
     collapseId: 'agent:corner',
     messageId: 'fresh-final',
     channelId: 'corner',
+  });
+});
+
+describe('push title', () => {
+  it('names the Room, or the Room and corner, and nothing for a DM', () => {
+    expect(pushTitleFor('beeline-dev', null)).toEqual({ title: 'beeline-dev' });
+    expect(pushTitleFor('beeline-dev', 'push-title-room-name')).toEqual({
+      title: 'beeline-dev › push-title-room-name',
+    });
+    expect(pushTitleFor(null, null)).toEqual({});
+    expect(pushTitleFor('  ', 'corner')).toEqual({});
+  });
+
+  it('cuts long names so the title stays on one line', () => {
+    const room = pushTitleFor('a'.repeat(60), null).title!;
+    expect(room).toBe(`${'a'.repeat(39)}…`);
+    const corner = pushTitleFor(
+      'workspace-operations-room',
+      'reviewer-wake-checks-and-merge-webhook',
+    ).title!;
+    expect(corner).toBe('workspace-opera… › reviewer-wake-checks…');
+    expect(Array.from(corner)).toHaveLength(40);
+    expect(pushTitleFor('🐝'.repeat(50), null).title).toBe(`${'🐝'.repeat(39)}…`);
   });
 });

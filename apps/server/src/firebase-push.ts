@@ -96,13 +96,14 @@ export function pushMessageData(message: PushDeliveryMessage): Record<string, st
 }
 
 /**
- * The words a notification shows. A chat line is cut to a preview under the
- * app's name. A permission ask is sent whole and without the "Beeline" title,
+ * The words a notification shows. A chat line is cut to a preview under its
+ * Room's name, or the app's name for a DM. A permission ask is sent whole and without the "Beeline" title,
  * so the ask itself takes the first line; the phone already names the app.
  */
 export function pushAlert(message: PushDeliveryMessage): { title?: string; body: string } {
   if (message.permission) return { body: message.text };
-  return { title: 'Beeline', body: message.text.slice(0, 200) };
+  const title = (message.type === 'message' && message.title) || 'Beeline';
+  return { title, body: message.text.slice(0, 200) };
 }
 
 /**

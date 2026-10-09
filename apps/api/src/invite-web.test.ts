@@ -117,6 +117,42 @@ describe('relay invite web front', () => {
     }
   });
 
+  it.each([
+    ['?code=abc%2Fdef&scopes=user.info.basic,video.list&state=s%2B1', '?code=abc%2Fdef&scopes=user.info.basic,video.list&state=s%2B1'],
+    ['?error=access_denied&redirect=https%3A%2F%2Fevil.test', '?error=access_denied&redirect=https%3A%2F%2Fevil.test'],
+    ['', ''],
+  ])('sends the Pages TikTok callback %j to the fixed Composio callback', (search, carried) => {
+    const page = repoFile('relay-stack/web/oauth/tiktok/callback/index.html');
+    expect(page).toContain('<meta name="referrer" content="no-referrer" />');
+    expect(page).toContain('<meta name="robots" content="noindex, nofollow" />');
+    const script = page.match(/<script>\n([\s\S]*?)\n    <\/script>/)?.[1];
+    expect(script).toBeDefined();
+    const replace = vi.fn();
+    const location = { search, href: `https://evil.test/oauth/tiktok/callback/${search}`,
+      origin: 'https://evil.test', pathname: '/oauth/tiktok/callback/', hash: '#https://evil.test', replace };
+    Function('location', script!)(location);
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledWith(`https://backend.composio.dev/api/v1/auth-apps/add${carried}`);
+  });
+
+  it('redirects the TikTok OAuth callback to the fixed Composio callback with the query unchanged', () => {
+    const nginx = repoFile('relay-stack/nginx.conf');
+    const product = nginx.slice(0, nginx.indexOf('server_name preview.usebeeline.app'));
+    const opening = '    location = /oauth/tiktok/callback {\n';
+    const start = product.indexOf(opening);
+    expect(start).toBeGreaterThan(-1);
+    expect(start).toBeLessThan(product.indexOf('    location / {\n'));
+    const block = product.slice(start + opening.length, product.indexOf('\n    }\n', start));
+    const directives = block.split('\n').map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'));
+    expect(directives).toEqual([
+      'add_header Cache-Control "no-store" always;',
+      'add_header Referrer-Policy "no-referrer" always;',
+      'add_header X-Content-Type-Options "nosniff" always;',
+      'return 302 https://backend.composio.dev/api/v1/auth-apps/add$is_args$args;',
+    ]);
+  });
+
   it('does not expose the retired public NIP-05 service in any stack', () => {
     for (const path of ['relay-stack/nginx.conf']) {
       const nginx = repoFile(path);

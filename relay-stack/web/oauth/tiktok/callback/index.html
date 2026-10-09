@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Connecting TikTok</title>
+    <script>
+      // TikTok Login Kit redirects here. Composio owns the token exchange, so the
+      // browser continues to the fixed Composio callback with the query unchanged.
+      location.replace('https://backend.composio.dev/api/v1/auth-apps/add' + location.search);
+    </script>
+  </head>
+  <body>
+    <p>Connecting TikTok…</p>
+    <noscript>Turn on JavaScript to finish connecting TikTok.</noscript>
+  </body>
+</html>

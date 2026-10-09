@@ -9,13 +9,21 @@ import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
  * message's action strip. The empty state used to name both at once, so
  * whichever reader was looking got one instruction that did not work.
  */
-function dataShims(mobile: string, withBookmark = false): Record<string, string> {
+function dataShims(
+  mobile: string,
+  withBookmark = false,
+  link: 'workspace' | 'active' | 'none' = 'workspace',
+): Record<string, string> {
   return {
     ...webProofShims(mobile),
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
-    export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });
-    export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
+    export const useLocalSearchParams = () => (${link === 'workspace' ? "{ communityId: 'workspace-1' }" : '{}'});
+    export const useRouter = () => ({
+      back: () => undefined,
+      push: () => undefined,
+      replace: (href) => { window.__replaced = href; },
+    });`,
     '@/sync/transport/monolith-operation': withBookmark
       ? `export const monolithPhoneOperation = async (name) => name === 'readNeedsYou' ? { items: [] } : ({ bookmarks: [{
           messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'corner-1',
@@ -26,9 +34,13 @@ function dataShims(mobile: string, withBookmark = false): Record<string, string>
         }] });`
       : `export const monolithPhoneOperation = async (name) =>
           name === 'readNeedsYou' ? { items: [] } : { bookmarks: [] };`,
-    '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
+    '@/sync/transport/room-view-client': `export class RoomViewClient {
+      async workspaces() { return { workspaces: ${link === 'active' ? "[{ id: 'workspace-0' }, { id: 'workspace-1' }]" : '[]'} }; }
+      async workspace() { return { workspace: { id: 'workspace-1', name: 'Clover Workspace' } }; }
+    }`,
+    '@/buzz/community-storage': `export const loadActiveCommunityId = async () => ${link === 'active' ? "'workspace-1'" : 'null'};`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
-    export const loadBuzzIdentity = async () => null;`,
+    export const loadBuzzIdentity = async () => ${link === 'workspace' ? 'null' : "({ publicKey: 'viewer' })"};`,
     '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
     'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
     '@expo/vector-icons': `import React from 'react';
@@ -77,6 +89,29 @@ describe.skipIf(!existsSync(CHROME))('bookmark rows in a browser', () => {
       expect(status, stderr).toBe(0);
       expect(result).toContain('PASS');
       expect(result).toContain('SAVED 2m');
+    },
+    90_000,
+  );
+});
+
+describe.skipIf(!existsSync(CHROME))('Tray link without a communityId in a browser', () => {
+  it.each([
+    { link: 'active' as const, reads: 'Tray of workspace-1' },
+    { link: 'none' as const, reads: 'No Workspace to show' },
+  ])(
+    'paints within 5 s: $reads',
+    async ({ link, reads }) => {
+      const mobile = process.cwd();
+      const { result, status, stderr } = await runBrowserProof({
+        entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'),
+        mobile,
+        shims: dataShims(mobile, true, link),
+        width: 390,
+        query: `?surface=phone&mode=no-link`,
+      });
+      expect(status, stderr).toBe(0);
+      expect(result).toContain('PASS');
+      expect(result).toContain(reads);
     },
     90_000,
   );

@@ -180,7 +180,8 @@ export function reviewerWakeFromFacts(input: {
   reviewerHandle: string | null;
   parentMember: boolean;
   cornerMember: boolean;
-  lifecycleChecks: string | undefined;
+  /** The live GitHub verdict reported beside this status, never the stored lifecycle. */
+  checks: string | undefined;
   /** The run sits in `review` after a green head woke the reviewer. */
   reviewWoken: boolean;
 }): { status: ReviewerWakeStatus; detail: string } {
@@ -209,10 +210,10 @@ export function reviewerWakeFromFacts(input: {
       detail: `The checks-passed transition woke ${label}.`,
     };
   }
-  if (input.lifecycleChecks === 'pending' || input.lifecycleChecks === 'unknown') {
+  if (input.checks === 'pending') {
     return {
       status: 'waiting',
-      detail: `Checks are still ${input.lifecycleChecks}, so ${label} has not been woken yet.`,
+      detail: `Checks are still pending, so ${label} has not been woken yet.`,
     };
   }
   return {
@@ -727,7 +728,7 @@ export class GitHubOperations {
           parentId: corner.parent_id,
           candidates: listed,
           listLabel,
-          lifecycleChecks: corner.lifecycle.checks,
+          checks,
           reviewWoken: corner.review_woken,
         })
       : reviewerWakeFromFacts({
@@ -739,7 +740,7 @@ export class GitHubOperations {
           cornerMember: Boolean(
             configuredReviewerId && corner.reviewer_identity_id && corner.corner_reviewer_id,
           ),
-          lifecycleChecks: corner.lifecycle.checks,
+          checks,
           reviewWoken: corner.review_woken,
         });
     const mergeAllowed = checks === 'passed' && gate.open;
@@ -789,7 +790,8 @@ export class GitHubOperations {
     parentId: string;
     candidates: readonly string[];
     listLabel: string;
-    lifecycleChecks: string | undefined;
+    /** The live GitHub verdict reported beside this status, never the stored lifecycle. */
+    checks: string | undefined;
     reviewWoken: boolean;
   }): Promise<{ status: ReviewerWakeStatus; detail: string }> {
     const health = await roomAgentHealth(this.database, input.parentId, input.candidates);
@@ -811,8 +813,8 @@ export class GitHubOperations {
     return {
       status: 'waiting',
       detail:
-        input.lifecycleChecks === 'pending' || input.lifecycleChecks === 'unknown'
-          ? `Checks are still ${input.lifecycleChecks}, so nobody on ${input.listLabel} has been woken yet.`
+        input.checks === 'pending'
+          ? `Checks are still pending, so nobody on ${input.listLabel} has been woken yet.`
           : `A review turn has not been dispatched to ${input.listLabel} yet.`,
     };
   }
@@ -1611,12 +1613,14 @@ export class GitHubOperations {
       feature_branch: string | null;
       lifecycle_branch: string | null;
       has_pr: boolean;
+      pr_number: string | null;
     }>(
       `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
          COALESCE(fact.owner_agent_id,first_agent.author_id,corner.created_by,parent.created_by) author_id,
          fact.objective summary,
          fact.feature_branch, fact.lifecycle->>'branch' lifecycle_branch,
          fact.lifecycle->'pr' IS NOT NULL has_pr,
+         fact.lifecycle->'pr'->>'number' pr_number,
          github.repository_id,github.installation_id
        FROM rooms corner
        JOIN rooms parent ON parent.id=corner.parent_id
@@ -1685,11 +1689,18 @@ export class GitHubOperations {
         const url = text(pullRequest?.html_url);
         const merged = body.action === 'closed' && pullRequest?.merged === true;
         const number = integer(pullRequest?.number);
+        // A branch can carry a second pull request once its first was closed:
+        // never let an event for a different number replace the pull
+        // association the corner recorded. A corner that never recorded a
+        // number (its opened webhook was lost) keeps the branch match.
+        const recordedPrNumber = target.pr_number ? Number(target.pr_number) : undefined;
+        if (recordedPrNumber && number && recordedPrNumber !== number) continue;
         const targetBranch = text(record(pullRequest?.base)?.ref);
         const webhookBaseSha = text(record(pullRequest?.base)?.sha);
         const headSha = text(record(pullRequest?.head)?.sha);
         const mergeabilityValue = text(pullRequest?.mergeable_state);
         let mergeability = githubMergeability(mergeabilityValue);
+        let differentPr = false;
         if (!merged && url && number && targetBranch && headSha && body.action !== 'closed') {
           await database.transaction(async (tx) => {
             const previous = (
@@ -1698,6 +1709,12 @@ export class GitHubOperations {
                 [target.corner_id],
               )
             ).rows[0]?.lifecycle;
+            // Re-check under the row lock: a concurrent event must not have
+            // recorded a different pull request since the branch match.
+            if (previous?.pr?.number !== undefined && previous?.pr?.number !== number) {
+              differentPr = true;
+              return;
+            }
             const sameHead = previous?.pr?.headSha === headSha;
             const staleBase = Boolean(
               sameHead && previous?.pr?.baseSha && previous.pr.baseSha !== webhookBaseSha,
@@ -1735,6 +1752,7 @@ export class GitHubOperations {
               tx,
             );
           });
+          if (differentPr) continue;
           if (mergeability === 'unknown' || mergeability === 'dirty')
             await this.refreshStaleMergeability(target.corner_id);
           if (body.action === 'opened' || body.action === 'synchronize')
@@ -2051,6 +2069,16 @@ export class GitHubOperations {
       if (unfinishedClaimHead && current?.feature_branch !== pullRequest.branch) return;
       const currentLifecycle = current?.lifecycle;
       if (expectedPrNumber && currentLifecycle?.pr?.number !== expectedPrNumber) return;
+      // The branch lookup runs outside this transaction, so a second pull
+      // request on the same branch can be recorded between the lookup and this
+      // lock. Never archive a corner for a number it has since replaced.
+      const recordedPrNumber = currentLifecycle?.pr?.number;
+      if (
+        pullRequest.number !== undefined &&
+        recordedPrNumber !== undefined &&
+        recordedPrNumber !== pullRequest.number
+      )
+        return;
       const currentPr = currentLifecycle?.pr;
       const mergedPr =
         currentPr ??

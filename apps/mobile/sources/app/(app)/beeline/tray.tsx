@@ -15,6 +15,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { MessageBookmarkView, NeedsYouItemView } from '@beeline/api-contract/phone';
 import type { RoomView } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { announceNeedsYouChanged } from '@/buzz/needs-you';
 import { compactRelativeTime } from '@/buzz/relative-time';
@@ -67,7 +68,12 @@ export default function TrayScreen() {
   const insets = useSafeAreaInsets();
   const desktop = useIsDesktop();
   const params = useLocalSearchParams<{ communityId?: string | string[] }>();
-  const workspaceId = first(params.communityId);
+  const routeWorkspaceId = first(params.communityId);
+  // A link without a Workspace id opens the Workspace the Rooms list treats
+  // as active. `undefined` while resolving; `null` when there is none.
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null | undefined>(undefined);
+  const workspaceId = routeWorkspaceId || activeWorkspaceId || '';
+  const noWorkspace = !routeWorkspaceId && activeWorkspaceId === null;
   const [needs, setNeeds] = useState<readonly NeedsYouItemView[]>([]);
   const [bookmarks, setBookmarks] = useState<readonly MessageBookmarkView[]>([]);
   const [selected, setSelected] = useState<Target | null>(null);
@@ -110,6 +116,34 @@ export default function TrayScreen() {
   );
 
   useEffect(() => {
+    if (routeWorkspaceId) return;
+    let cancelled = false;
+    void (async () => {
+      const identity = await loadBuzzIdentity();
+      if (!identity) {
+        if (!cancelled) setActiveWorkspaceId(null);
+        return;
+      }
+      const http = new RoomViewClient({ baseUrl: await getEffectiveRelayUrl(), identity });
+      const [list, stored] = await Promise.all([
+        http.workspaces(),
+        loadActiveCommunityId(identity.publicKey),
+      ]);
+      if (cancelled) return;
+      setActiveWorkspaceId(
+        list.workspaces.some((workspace) => workspace.id === stored)
+          ? stored
+          : (list.workspaces[0]?.id ?? null),
+      );
+    })().catch(() => {
+      if (!cancelled) setActiveWorkspaceId(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [routeWorkspaceId]);
+
+  useEffect(() => {
     if (!removed) return;
     const timer = setTimeout(() => setRemoved(null), 6_000);
     return () => clearTimeout(timer);
@@ -126,6 +160,7 @@ export default function TrayScreen() {
       });
       if (cancelled) return;
       if (desktop) setClient(http);
+      if (!workspaceId) return;
       try {
         const workspace = await http.workspace(workspaceId);
         if (!cancelled) setWorkspaceName(workspace.workspace.name);
@@ -394,7 +429,19 @@ export default function TrayScreen() {
       data={rows}
       keyExtractor={(row) => row.key}
       ListEmptyComponent={
-        loading ? (
+        noWorkspace ? (
+          <View style={styles.emptyBlock} testID="tray-no-workspace">
+            <Text style={styles.emptyTitle}>No Workspace to show</Text>
+            <Text style={styles.empty}>This link did not name a Workspace, and none is open.</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.replace('/beeline/channels')}
+              style={styles.remove}
+            >
+              <Text style={styles.removeText}>BACK TO ROOMS</Text>
+            </Pressable>
+          </View>
+        ) : loading ? (
           <View style={styles.loadingBlock} testID="tray-loader">
             <SurfaceGlyphLoader />
           </View>

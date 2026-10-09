@@ -65,9 +65,10 @@ export const CORE_BUDGET_BYTES = 2_300;
  * Ceiling for one surface's own rules, on top of the core. A code corner uses
  * ~4.2 KB, plus ~0.35 KB for corner.android on a host with an Android SDK and
  * ~0.15 KB for the no-host-gh pull-request path; the corner setup command
- * (`corner.contract`) added ~0.01 KB.
+ * (`corner.contract`) added ~0.01 KB; waiting for a human to approve the
+ * posted outline added ~0.17 KB.
  */
-export const SURFACE_BUDGET_BYTES = 4_730;
+export const SURFACE_BUDGET_BYTES = 4_870;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -169,6 +170,7 @@ export function cornerHasRepositoryWork(brief?: CornerBrief): boolean {
 export const CORNER_RUNTIME_AUTHOR_CONTRACT = `The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
 Meet every story; respect every non-goal and risk.
 Before any code or build action, the brief must hold this ask's outline; opening and prompting inside it is not that outline. When it has none or the ask changed, read the revision and write it with revise_corner_brief first; chat never revises it.
+Then post the brief's outline, with an HTML mock for any frontend change, and wait for a human reply that approves it. The request that opened the work is not approval.
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
 Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
 Fix only the spec and approval quote. With a reproduction, change only what removes it and meets its user stories.
@@ -178,6 +180,7 @@ No unrequested features, flags, compatibility shims or refactors.`;
 export const CORNER_AUTHOR_CONTRACT = `The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The human approval quote wins any conflict. The short objective is navigation-only, never scope.
 Meet every story; respect every non-goal and risk. Use its file manifest.
 Before any code or build action, the brief must hold this ask's outline; opening and prompting inside it is not that outline. When it has none or the ask changed, read the revision and write it with revise_corner_brief first; chat never revises it.
+Then post the brief's outline, with an HTML mock for any frontend change, and wait for a human reply that approves it. The request that opened the work is not approval.
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
 Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
 Fix only the spec and approval quote. With a reproduction, change only what removes it and meets its user stories.

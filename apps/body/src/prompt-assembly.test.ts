@@ -461,6 +461,14 @@ describe('prompt assembly guards', () => {
     expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain('opening and prompting inside it is not that outline');
   });
 
+  it('tells a corner author to wait for a human to approve the posted outline and mock', () => {
+    const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
+    const nudge = "Then post the brief's outline, with an HTML mock for any frontend change, and wait for a human reply that approves it. The request that opened the work is not approval.";
+    expect(author).toContain(nudge);
+    expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain(nudge);
+    expect(promptRules.CORNER_RUNTIME_AUTHOR_CONTRACT).toContain(nudge);
+  });
+
   it('R8a makes publication conditional on the brief, including dirty-work nudges', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
     expect(author).not.toMatch(/^Commit and push/m);

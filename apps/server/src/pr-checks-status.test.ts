@@ -461,6 +461,50 @@ describe('PR-scoped check gate', () => {
     });
   });
 
+  it('Reproduction REVIEWERWAKE-1: follows the live verdict when the stored lifecycle still reads unknown', async () => {
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      [
+        AUTHOR,
+        JSON.stringify({
+          lifecycle: 'working',
+          checks: 'unknown',
+          pr: { number: 614, url: URL, headSha: SHA, title: 'Work', targetBranch: 'main' },
+        }),
+      ],
+    );
+    const status = await gate(AUTHOR);
+    console.info(
+      `Reproduction REVIEWERWAKE-1: stored checks=unknown live checks=${status.checks} reviewerWake=${status.reviewerWake.status} "${status.reviewerWake.detail}"`,
+    );
+    expect(status).toMatchObject({
+      checks: 'passed',
+      reviewer: '@reviewer',
+      reviewerWake: {
+        status: 'waiting',
+        detail: 'A review turn has not been dispatched to @reviewer yet.',
+      },
+    });
+  });
+
+  it('Reproduction REVIEWERWAKE-2: never reports a live re-run as green just because the lifecycle was passing', async () => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    rollupState = 'PENDING';
+    const status = await gate(AUTHOR);
+    console.info(
+      `Reproduction REVIEWERWAKE-2: stored checks=passing live checks=${status.checks} reviewerWake=${status.reviewerWake.status} "${status.reviewerWake.detail}"`,
+    );
+    expect(status).toMatchObject({
+      checks: 'pending',
+      reviewerWake: {
+        status: 'waiting',
+        detail: 'Checks are still pending, so @reviewer has not been woken yet.',
+      },
+    });
+  });
+
   it('refuses other repositories and nonmembers before accessing PR data', async () => {
     await expect(gate(C, 'https://github.com/other/private/pull/614')).rejects.toThrow(
       'Room repository',

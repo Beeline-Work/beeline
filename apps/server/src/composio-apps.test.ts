@@ -172,51 +172,52 @@ describe('managed app provider boundary', () => {
     await expect(authFixture([config('ac_custom')]).provider.supportsOAuth('missing')).resolves.toBe(false);
   });
 
-  describe('YouTube signs in only through the custom OAuth2 config', () => {
-    const youtube = (id: string, overrides: Record<string, unknown> = {}) =>
-      config(id, { toolkit: { slug: 'youtube' }, ...overrides });
-    const managedToolkit = { slug: 'youtube', composio_managed_auth_schemes: ['OAUTH2'] };
+  describe.each([['youtube', 'YouTube'], ['tiktok', 'TikTok']])(
+    '%s signs in only through the custom OAuth2 config', (slug, name) => {
+    const app = (id: string, overrides: Record<string, unknown> = {}) =>
+      config(id, { toolkit: { slug }, ...overrides });
+    const managedToolkit = { slug, composio_managed_auth_schemes: ['OAUTH2'] };
     const created = (calls: { method: string; url: URL }[]) => calls.some((call) =>
       call.method === 'POST' && call.url.pathname === '/api/v3/auth_configs');
 
     it('links and reports support through the custom config', async () => {
-      const fixture = authFixture([youtube('ac_managed', { is_composio_managed: true }),
-        youtube('ac_custom')], managedToolkit);
-      await expect(fixture.provider.supportsOAuth('youtube')).resolves.toBe(true);
+      const fixture = authFixture([app('ac_managed', { is_composio_managed: true }),
+        app('ac_custom')], managedToolkit);
+      await expect(fixture.provider.supportsOAuth(slug)).resolves.toBe(true);
       await expect(fixture.linkedWith()).resolves.toBe('ac_custom');
       expect(created(fixture.calls)).toBe(false);
     });
 
     it('never uses an existing managed config', async () => {
-      const fixture = authFixture([youtube('ac_managed', { is_composio_managed: true })], managedToolkit);
-      await expect(fixture.provider.supportsOAuth('youtube')).resolves.toBe(false);
+      const fixture = authFixture([app('ac_managed', { is_composio_managed: true })], managedToolkit);
+      await expect(fixture.provider.supportsOAuth(slug)).resolves.toBe(false);
       await expect(fixture.linkedWith()).rejects.toThrow('App sign-in is not available for this app yet');
       expect(fixture.calls.some((call) => call.url.pathname.endsWith('/connected_accounts/link'))).toBe(false);
       expect(created(fixture.calls)).toBe(false);
     });
 
     it('never creates a managed config when none exists', async () => {
-      const fixture = authFixture([youtube('ac_disabled', { status: 'DISABLED' })], managedToolkit);
-      await expect(fixture.provider.supportsOAuth('youtube')).resolves.toBe(false);
+      const fixture = authFixture([app('ac_disabled', { status: 'DISABLED' })], managedToolkit);
+      await expect(fixture.provider.supportsOAuth(slug)).resolves.toBe(false);
       await expect(fixture.linkedWith()).rejects.toThrow('App sign-in is not available for this app yet');
       expect(created(fixture.calls)).toBe(false);
     });
 
-    it('leaves YouTube out of search until the custom config exists', async () => {
+    it('leaves the toolkit out of search until the custom config exists', async () => {
       const search = (items: unknown[]) => new ComposioApps('fixture-only', vi.fn(async (url: URL | string) => {
         const parsed = new URL(String(url));
         if (parsed.pathname === '/api/v3/toolkits') return json({ items: [
-          { slug: 'youtube', name: 'YouTube' }, { slug: 'notion', name: 'Notion' }] });
+          { slug, name }, { slug: 'notion', name: 'Notion' }] });
         if (parsed.pathname === '/api/v3/auth_configs') {
-          expect(parsed.searchParams.get('toolkit_slug')).toBe('youtube');
+          expect(parsed.searchParams.get('toolkit_slug')).toBe(slug);
           return json({ items });
         }
         throw new Error('unexpected request');
       }) as typeof fetch).searchToolkits('');
-      await expect(search([youtube('ac_managed', { is_composio_managed: true })])).resolves.toEqual([
+      await expect(search([app('ac_managed', { is_composio_managed: true })])).resolves.toEqual([
         { slug: 'notion', name: 'Notion' }]);
-      await expect(search([youtube('ac_custom')])).resolves.toEqual([
-        { slug: 'youtube', name: 'YouTube' }, { slug: 'notion', name: 'Notion' }]);
+      await expect(search([app('ac_custom')])).resolves.toEqual([
+        { slug, name }, { slug: 'notion', name: 'Notion' }]);
     });
   });
 

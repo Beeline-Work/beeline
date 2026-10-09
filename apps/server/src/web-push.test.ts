@@ -116,6 +116,7 @@ describe('web push transport', () => {
       channelId: 'room',
       target: 'message',
       text: 'hello',
+      title: 'beeline-dev › push-title',
       recipientIdentityId: 'person-1',
     });
     expect(query).toHaveBeenCalledWith(expect.stringContaining('identity_id=$2'), [
@@ -128,7 +129,11 @@ describe('web push transport', () => {
       expect.objectContaining({ TTL: 3600, agent: expect.anything() }),
     );
     const sent = JSON.parse((sendNotification.mock.calls[0] as unknown as [unknown, string])[1]);
-    expect(sent).toMatchObject({ channelId: 'room', roomId: 'room' });
+    expect(sent).toMatchObject({
+      channelId: 'room',
+      roomId: 'room',
+      title: 'beeline-dev › push-title',
+    });
   });
 
   it('refuses a subscription that moved to another person', async () => {

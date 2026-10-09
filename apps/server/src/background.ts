@@ -63,9 +63,39 @@ export interface PushSender {
           cornerId?: string;
           target: 'message' | 'corner';
           type: 'message';
+          /** The Room, or `Room › corner`; absent for a DM. */
+          title?: string;
         }
     ),
   ): Promise<void>;
+}
+
+const PUSH_TITLE_LENGTH = 40;
+const PUSH_TITLE_ROOM_LENGTH = 16;
+
+function cutPushTitle(name: string, length: number): string {
+  const characters = Array.from(name.trim());
+  return characters.length > length
+    ? `${characters
+        .slice(0, length - 1)
+        .join('')
+        .trimEnd()}…`
+    : characters.join('');
+}
+
+/** Name the Room a push came from, cut so the title stays on one line. */
+export function pushTitleFor(
+  roomName: string | null,
+  cornerName: string | null,
+): { title?: string } {
+  const room = roomName?.trim();
+  if (!room) return {};
+  const corner = cornerName?.trim();
+  if (!corner) return { title: cutPushTitle(room, PUSH_TITLE_LENGTH) };
+  const roomPart = cutPushTitle(room, PUSH_TITLE_ROOM_LENGTH);
+  return {
+    title: `${roomPart} › ${cutPushTitle(corner, PUSH_TITLE_LENGTH - Array.from(roomPart).length - 3)}`,
+  };
 }
 
 export function createPushTestSender(
@@ -188,6 +218,8 @@ export class PushDeliveryLoop {
       author_name: string | null;
       collapse_id: string | null;
       direct_attention: boolean;
+      room_name: string | null;
+      corner_name: string | null;
     }>(`
       -- Bound message/device pairs before the current-roster tag subquery.
       -- Without this barrier the planner can resolve tags across all history.
@@ -289,9 +321,14 @@ export class PushDeliveryLoop {
           -- Keep human prose visible when a subsequent agent summary replaces its slot.
           ELSE CASE WHEN author.kind='human' THEN room.id::text ELSE 'agent:'||room.id::text END
           END collapse_id,
-          COALESCE(attention.direct,false) direct_attention
+          COALESCE(attention.direct,false) direct_attention,
+          -- A DM has no title of its own: the body already names the sender.
+          CASE WHEN room.direct_participants IS NULL AND parent.direct_participants IS NULL
+            THEN COALESCE(parent.name,room.name) END room_name,
+          CASE WHEN parent.id IS NOT NULL THEN room.name END corner_name
         FROM recent_messages m
         JOIN rooms room ON room.id=m.room_id
+        LEFT JOIN rooms parent ON parent.id=room.parent_id
         LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=m.push_identity_id
           AND workspace_member.removed_at IS NULL
@@ -333,7 +370,7 @@ export class PushDeliveryLoop {
           false is_release_catchup,notification.created_at,
           NULL::text action,NULL::text grant_id,NULL::text grant_kind,NULL::text grant_target,
           NULL::text grant_agent_name,NULL::text author_name,NULL::text collapse_id,
-          false direct_attention
+          false direct_attention,NULL::text room_name,NULL::text corner_name
         FROM workspace_join_notifications notification
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
         JOIN push_devices push_device ON push_device.token=device.device_token
@@ -347,7 +384,13 @@ export class PushDeliveryLoop {
           AND notification.created_at>=floor.started_at
           AND btrim(notification.text)<>''
         UNION ALL
-        SELECT catchup.*,NULL::text collapse_id,false direct_attention FROM (${RELEASE_CATCHUP_CANDIDATES_SQL}) catchup
+        SELECT catchup.message_id,catchup.workspace_id,catchup.room_id,catchup.channel_id,
+          catchup.corner_id,catchup.target,catchup.notification_type,catchup.text,catchup.token,
+          catchup.identity_id,catchup.is_release_catchup,catchup.created_at,catchup.action,
+          catchup.grant_id,catchup.grant_kind,catchup.grant_target,catchup.grant_agent_name,
+          catchup.author_name,NULL::text collapse_id,false direct_attention,
+          catchup.room_name,catchup.corner_name
+        FROM (${RELEASE_CATCHUP_CANDIDATES_SQL}) catchup
       ), unclaimed AS (
         SELECT DISTINCT ON (candidate.message_id,candidate.token)
           candidate.message_id,candidate.workspace_id,candidate.room_id,candidate.channel_id,
@@ -356,7 +399,7 @@ export class PushDeliveryLoop {
           candidate.is_release_catchup,candidate.created_at,device.platform,
           candidate.action,candidate.grant_id,candidate.grant_kind,candidate.grant_target,
           candidate.grant_agent_name,candidate.author_name,candidate.collapse_id,
-          candidate.direct_attention
+          candidate.direct_attention,candidate.room_name,candidate.corner_name
         FROM candidates candidate
         JOIN push_devices device ON device.token=candidate.token
           AND device.platform IN (${[this.sender && "'android'", this.iosSender && "'ios'", this.webSender && "'web'"].filter(Boolean).join(',') || "'none'"})
@@ -369,7 +412,7 @@ export class PushDeliveryLoop {
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
         notification_type,text,token,identity_id,is_release_catchup,platform,
         action,grant_id,grant_kind,grant_target,grant_agent_name,author_name,collapse_id,
-        direct_attention
+        direct_attention,room_name,corner_name
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
     let delivered = 0;
@@ -395,6 +438,7 @@ export class PushDeliveryLoop {
             action?: PushAction;
             permission?: true;
             collapseId?: string;
+            title?: string;
           };
     };
     const claimedDeliveries: ClaimedDelivery[] = [];
@@ -511,6 +555,7 @@ export class PushDeliveryLoop {
                 type: 'message' as const,
                 text: candidate.text,
                 ...(candidate.collapse_id ? { collapseId: candidate.collapse_id } : {}),
+                ...pushTitleFor(candidate.room_name, candidate.corner_name),
                 ...pushActionFor(candidate),
                 // Only a grant-request card carries `grants`, so its first
                 // grant id marks a permission ask.

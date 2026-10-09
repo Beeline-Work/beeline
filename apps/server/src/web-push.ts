@@ -114,6 +114,7 @@ export function createWebPushSender(
           { endpoint: new URL(endpoint).href, keys },
           JSON.stringify({
             body: message.text.slice(0, 200),
+            ...(message.type === 'message' && message.title ? { title: message.title } : {}),
             url,
             messageId: message.messageId,
             tag: message.collapseId ?? message.messageId,

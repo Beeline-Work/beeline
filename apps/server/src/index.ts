@@ -309,6 +309,7 @@ async function main() {
     linkWallet,
     github ? (cornerId) => github!.refreshStaleMergeability(cornerId) : undefined,
     github ? (cornerId) => github!.landCorner(cornerId) : undefined,
+    github ? (cornerId) => github!.closeCornerPullRequest(cornerId) : undefined,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.

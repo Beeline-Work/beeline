@@ -20,13 +20,10 @@ export function beelineAgentMcpServer(
     turnContextPath?: string;
     workspaceId: string;
     cornerId?: string;
-    /** Repository-corner authors may close landed or abandoned work. Repo-less
-     *  corners stay open until a human uses the phone's structured close. */
-    agentMayCloseCorner?: boolean;
     /** This corner session belongs to the parent Room's configured reviewer. */
     reviewer?: boolean;
     /** The corner's parent Room has a repository, so this is a code corner.
-     *  A code corner mounts approve_merge and merge_corner on every turn; the
+     *  A code corner mounts approve_merge, merge_corner and close_pull_request on every turn; the
      *  server decides whether the caller is the configured reviewer. */
     repositoryBacked?: boolean;
     attachRoot?: string;
@@ -71,9 +68,6 @@ export function beelineAgentMcpServer(
       { name: 'BEELINE_DAEMON_ROOM_ID', value: context.roomId },
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },
       ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),
-      ...(context.agentMayCloseCorner
-        ? [{ name: 'BEELINE_CORNER_AGENT_CLOSE', value: '1' }]
-        : []),
       ...(context.reviewer ? [{ name: 'BEELINE_CORNER_REVIEWER', value: '1' }] : []),
       ...(context.cornerId && context.repositoryBacked
         ? [{ name: 'BEELINE_CORNER_REPOSITORY', value: '1' }]

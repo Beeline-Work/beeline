@@ -820,6 +820,36 @@ export class GitHubAppClient {
     }
   }
 
+  /** Close one PR without merging; its branch and commits stay on GitHub. */
+  async closePullRequest(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    pullRequestNumber: number,
+  ): Promise<void> {
+    const token = await this.installationToken(installationId, {
+      repositoryIds: [repositoryId],
+      permissions: { pull_requests: 'write' },
+    });
+    const response = await fetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/pulls/${pullRequestNumber}`,
+      {
+        method: 'PATCH',
+        headers: { ...githubHeaders(token.token), 'content-type': 'application/json' },
+        body: JSON.stringify({ state: 'closed' }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!response.ok) {
+      let reason = '';
+      try {
+        const body = (await response.json()) as { message?: unknown };
+        if (typeof body.message === 'string') reason = `: ${body.message}`;
+      } catch {}
+      throw new Error(`GitHub pull request close failed: HTTP ${response.status}${reason}`);
+    }
+  }
+
   /**
    * One Issues REST call on `fullName` (the feedback loop's filing path).
    * `path` is relative to the repository, e.g. `issues` or

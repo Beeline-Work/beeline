@@ -1396,7 +1396,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'close_corner',
     description:
-      'Close this corner after its task is complete. Only the agent that opened the corner may close it, because closing is terminal for every member: it archives the corner and stops everyone working in it. Attach every file you want to keep before closing - the local workspace is deleted as soon as this turn finishes. In a repository corner that workspace is the git worktree, and its feature branch is deleted locally and on GitHub only when it has no open pull request or that pull request already merged; an open pull request keeps its branch, because deleting it would close the pull request and make the commits recoverable only from GitHub. Close only work that has landed or is being abandoned. Already-attached files remain available from the Room.',
+      'Close this corner after its task is complete. Any agent member of the corner may close it. Closing is terminal for every member: it archives the corner and stops everyone working in it. Attach every file you want to keep before closing - the local workspace is deleted as soon as this turn finishes. In a repository corner that workspace is the git worktree, and its feature branch is deleted locally and on GitHub only when it has no open pull request or that pull request already merged; an open pull request keeps its branch, because deleting it would close the pull request and make the commits recoverable only from GitHub; call close_pull_request first to abandon it. Close only work that has landed or is being abandoned, or when a person asks. Already-attached files remain available from the Room.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -1435,6 +1435,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
     name: 'merge_corner',
     description:
       "Squash-merge this corner's own pull request at its current head. Only this corner's implementer may call it. Before calling, read the corner discussion: if a human's question or proposal has no answer, do not merge; reply naming it and end the turn. The server merges only when pr_checks_status reports mergeAllowed; otherwise it merges nothing and returns the blocker. No agent runs gh pr merge.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'close_pull_request',
+    description:
+      "Close this corner's own pull request without merging. Any agent member of the corner may call it. The branch and its commits stay on GitHub, and the corner stays open with no pull request; push and open a new one to continue. Use it to abandon or replace a pull request, or when a person asks.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -1757,7 +1763,6 @@ export function agentToolsFor(
   cornerTurn = false,
   repositoryCorner = false,
   commandRunnerAvailable = true,
-  agentMayCloseCorner = cornerTurn,
   institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
 ): ToolDefinition[] {
   if (!agentSurface) return READ_ONLY_TOOLS;
@@ -1790,14 +1795,15 @@ export function agentToolsFor(
     // agent is the configured reviewer.
     if (tool.name === 'approve_merge') return cornerTurn && repositoryCorner;
     if (tool.name === 'merge_corner') return cornerTurn && repositoryCorner;
+    if (tool.name === 'close_pull_request') return cornerTurn && repositoryCorner;
     // Connector installation stays in Rooms and DMs; app discovery and
     // connection are available wherever an app tool can be used.
     if (tool.name === 'offer_connector') return !cornerTurn;
     // From a corner, open_corner opens a sibling corner in the parent Room.
     if (tool.name === 'open_corner') return !directMessage;
     if (tool.name === 'revise_corner_brief') return !directMessage;
-    if (tool.name === 'close_corner') return cornerTurn && agentMayCloseCorner;
     if (
+      tool.name === 'close_corner' ||
       tool.name === 'publish_corner_app' ||
       tool.name === 'open_corner_app' ||
       tool.name === 'rename_corner'
@@ -1815,7 +1821,6 @@ const TOOLS = agentToolsFor(
   Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
   process.env.BEELINE_CORNER_REPOSITORY === '1',
   Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
-  process.env.BEELINE_CORNER_AGENT_CLOSE === '1',
   process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
 );
 
@@ -2520,17 +2525,12 @@ async function readCornerBrief(args: JsonObject): Promise<string> {
 /**
  * Close the corner this tool is running in, chat-only or repository-backed.
  *
- * There is no surface-side repository check: archiving is one operation with
- * one owner, and the server already reserves it for the agent that opened the
- * corner (`CORNER_OPENER_ONLY_OPERATIONS`). A repository corner that is done
- * — merged by someone else, or abandoned — could otherwise only be closed by a
- * human, which left finished corners running.
+ * There is no surface-side check: any agent member of the corner may archive
+ * it, and the server's membership check (`DaemonService.access`) is the one
+ * authority on who that is.
  */
 async function closeCorner(): Promise<string> {
   const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
-  if (process.env.BEELINE_CORNER_AGENT_CLOSE !== '1') {
-    throw new Error('this corner stays open until a human closes it');
-  }
   await daemonExecute('archiveCorner', { cornerId });
   return JSON.stringify({ cornerId, status: 'closed' });
 }
@@ -4521,6 +4521,12 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     case 'merge_corner':
       return JSON.stringify(
         await daemonExecute('mergeCorner', { cornerId: requiredEnv('BEELINE_DAEMON_CORNER_ID') }),
+      );
+    case 'close_pull_request':
+      return JSON.stringify(
+        await daemonExecute('closeCornerPullRequest', {
+          cornerId: requiredEnv('BEELINE_DAEMON_CORNER_ID'),
+        }),
       );
     case 'write_scratch_file':
       return writeScratchFile(args);

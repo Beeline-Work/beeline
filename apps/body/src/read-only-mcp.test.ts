@@ -59,7 +59,7 @@ describe('direct message helper surface', () => {
     expect(byDefault).toContain('handoff');
     expect(byDefault).toContain('archive_workflow');
     expect(byDefault).toContain('assign_workflow_role');
-    const disabled = agentToolsFor(true, false, false, false, true, false, false).map(
+    const disabled = agentToolsFor(true, false, false, false, true, false).map(
       (tool) => tool.name,
     );
     for (const name of ['save_memory', 'update_memory', 'delete_memory', 'report_memory_used']) expect(disabled).not.toContain(name);
@@ -73,7 +73,7 @@ describe('direct message helper surface', () => {
     expect(disabled).not.toContain('handoff');
     expect(disabled).not.toContain('archive_workflow');
     expect(disabled).not.toContain('assign_workflow_role');
-    const enabled = agentToolsFor(true, false, false, false, true, false, true).map(
+    const enabled = agentToolsFor(true, false, false, false, true, true).map(
       (tool) => tool.name,
     );
     for (const name of ['save_memory', 'update_memory', 'delete_memory', 'report_memory_used']) expect(enabled).toContain(name);
@@ -168,7 +168,7 @@ describe('open_corner repository', () => {
 
 describe('approve_merge surface', () => {
   const names = (cornerTurn: boolean, repositoryCorner: boolean, institutionalMemory: boolean) =>
-    agentToolsFor(true, false, cornerTurn, repositoryCorner, true, cornerTurn, institutionalMemory).map(
+    agentToolsFor(true, false, cornerTurn, repositoryCorner, true, institutionalMemory).map(
       (tool) => tool.name,
     );
 
@@ -245,8 +245,12 @@ describe('corner lifecycle tool surfaces', () => {
       expect(names).toContain('rename_corner');
       expect(names).toContain('open_corner');
     }
-    const repoLessCorner = agentToolsFor(true, false, true, false, true, false);
-    expect(repoLessCorner.map((tool) => tool.name)).not.toContain('close_corner');
+    const repoLessCorner = agentToolsFor(true, false, true, false, true);
+    expect(repoLessCorner.map((tool) => tool.name)).toContain('close_corner');
+    expect(repoLessCorner.map((tool) => tool.name)).not.toContain('close_pull_request');
+    expect(reviewerCorner.map((tool) => tool.name)).toContain('close_pull_request');
+    for (const tools of [room, directMessage])
+      expect(tools.map((tool) => tool.name)).not.toContain('close_pull_request');
     expect(repoLessCorner.map((tool) => tool.name)).toContain('post_artifact');
     for (const tools of [room, directMessage, corner, reviewerCorner, repoLessCorner]) {
       expect(tools.map((tool) => tool.name)).not.toContain('upgrade_corner_to_code');

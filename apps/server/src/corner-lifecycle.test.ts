@@ -74,6 +74,7 @@ let githubHead: string;
 let githubApp: {
   deleteBranch: ReturnType<typeof vi.fn>;
   mergePullRequest: ReturnType<typeof vi.fn>;
+  closePullRequest: ReturnType<typeof vi.fn>;
   readPullRequest: ReturnType<typeof vi.fn>;
   installationToken: ReturnType<typeof vi.fn>;
   readCommitCheckRollup: ReturnType<typeof vi.fn>;
@@ -118,6 +119,7 @@ beforeAll(async () => {
   githubApp = {
     deleteBranch: vi.fn(async () => undefined),
     mergePullRequest: vi.fn(async () => undefined),
+    closePullRequest: vi.fn(async () => undefined),
     readPullRequest: vi.fn(async (_token: string, _repository: string, number: number) => ({
       number,
       url: `https://github.com/owner/widgets/pull/${number}`,
@@ -181,6 +183,7 @@ beforeEach(async () => {
   githubApp.mergePullRequest.mockReset();
   githubApp.mergePullRequest.mockResolvedValue(undefined);
   githubApp.deleteBranch.mockClear();
+  githubApp.closePullRequest.mockClear();
   githubApp.readPullRequest.mockReset();
   githubApp.readPullRequest.mockImplementation(async (_token: string, _repository: string, number: number) => ({
     number, url: `https://github.com/owner/widgets/pull/${number}`, headSha: githubHead, mergeability: 'clean',
@@ -1809,6 +1812,37 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(
       (await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [cornerId])).rowCount,
     ).toBe(1);
+  });
+
+  it('lets any corner member close its pull request without merging; the corner stays open with no PR', async () => {
+    const cornerId = await inReview();
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, (id: string) => github.landCorner(id),
+      (id: string) => github.closeCornerPullRequest(id));
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [cornerId, B]);
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, B)).rejects.toThrow(/access denied/);
+    expect(githubApp.closePullRequest).not.toHaveBeenCalled();
+    await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [cornerId, B]);
+    // B is a member, not the opener or implementer.
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, B)).resolves.toEqual({
+      status: 'closed', pullRequestNumber: 7, url: expect.stringContaining('/pull/7'),
+    });
+    expect(githubApp.closePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7);
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+    const fact = (
+      await db.query<{ pr: unknown; archived: boolean }>(
+        `SELECT fact.lifecycle->'pr' pr,corner.archived_at IS NOT NULL archived
+         FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0];
+    expect(fact).toEqual({ pr: null, archived: false });
+    await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
+      .resolves.toEqual({ status: 'blocked', blocker: 'the corner has no pull request' });
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, B))
+      .resolves.toEqual({ status: 'blocked', blocker: 'the corner has no pull request' });
+    expect(githubApp.closePullRequest).toHaveBeenCalledTimes(1);
   });
 
   it('Reproduction R2199: a reviewer that opened its own corner is woken to review it, and its PASS merges it', async () => {

@@ -408,6 +408,15 @@ export type DaemonOperationMap = {
     | { readonly status: 'merge-started'; readonly headSha: string }
     | { readonly status: 'blocked'; readonly blocker: string }
   >;
+  /**
+   * Any corner member closes the corner's own pull request without merging.
+   * The branch stays on GitHub and the corner stays open with no PR.
+   */
+  closeCornerPullRequest: Operation<
+    CornerInput,
+    | { readonly status: 'closed'; readonly pullRequestNumber: number; readonly url: string }
+    | { readonly status: 'blocked'; readonly blocker: string }
+  >;
   getCornerCloseRequests: Operation<CornerCursorInput, RoomInboxResult>;
   /** Long-poll: resolves as soon as the corner has something new, or on a bounded timeout. */
   waitForCornerWake: Operation<CornerInput, CornerWakeResult>;

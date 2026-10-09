@@ -6150,7 +6150,7 @@ describe('monolith integration', () => {
     expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('video-bytes');
   });
 
-  it('archives a repository corner for its opener and still refuses another member', async () => {
+  it('archives a repository corner for any member agent, not only its opener', async () => {
     const helper = 'e'.repeat(64);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Helper','helper')`,
@@ -6176,19 +6176,8 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
 
-    // The helper was pulled in for one question; closing is still not its call.
-    expect((await daemonOperation('archiveCorner', { cornerId }, helperToken)).status).toBe(403);
-    expect(
-      (
-        await database.query<{ archived: boolean }>(
-          `SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`,
-          [cornerId],
-        )
-      ).rows[0]?.archived,
-    ).toBe(false);
-
-    // The opener closes its own repository corner, no merge required.
-    expect((await daemonOperation('archiveCorner', { cornerId })).status).toBe(200);
+    // A member that did not open the corner closes it, no merge required.
+    expect((await daemonOperation('archiveCorner', { cornerId }, helperToken)).status).toBe(200);
     expect(
       (
         await database.query<{ archived: boolean; close_requested: boolean }>(
@@ -7858,8 +7847,8 @@ describe('monolith integration', () => {
         )
       ).status,
     ).toBe(200);
-    // Archiving is terminal for everyone's work, so it stays with the opener.
-    expect((await daemonOperation('archiveCorner', { cornerId }, peerToken)).status).toBe(403);
+    // Any member may close the corner; an agent outside it may not.
+    expect((await daemonOperation('archiveCorner', { cornerId }, strangerToken)).status).toBe(403);
     expect(
       (
         await daemonOperation(

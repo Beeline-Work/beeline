@@ -276,14 +276,6 @@ async function settleTurnFailureLine(
       live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
   }
 }
-/**
- * Corner operations that stay with the opener. Membership authorizes every
- * other corner write (`DaemonService.assertCornerOpener` says why).
- */
-const CORNER_OPENER_ONLY_OPERATIONS = new Set<keyof DaemonOperationMap>(['archiveCorner']);
-function isCornerOpenerOnly(name: keyof DaemonOperationMap): boolean {
-  return CORNER_OPENER_ONLY_OPERATIONS.has(name);
-}
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 export { CORNER_WAKE_TIMEOUT_MS } from './corner-wake.js';
 
@@ -333,6 +325,13 @@ export class DaemonService {
     private readonly refreshMergeability?: (cornerId: string) => Promise<void>,
     /** The merge attempt behind `merge_corner` and `order_corner_merge`. */
     private readonly landCorner?: (cornerId: string) => Promise<boolean>,
+    /** The GitHub close behind `close_pull_request`. */
+    private readonly closePullRequest?: (
+      cornerId: string,
+    ) => Promise<
+      | { status: 'closed'; number: number; url: string; title: string }
+      | { status: 'blocked'; blocker: string }
+    >,
   ) {}
 
   /** A turn's memory query, embedded before its command transaction opened. */
@@ -373,8 +372,6 @@ export class DaemonService {
     let isCorner = false;
     if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
       ({ cornerReviewer, isCorner } = await this.access(scopedRoom, authenticatedAgentId));
-    if (scopedRoom && isCornerOpenerOnly(name))
-      await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
     const turnWrites = new Set([
       'postAgentAvatar',
       'postRoomMessage',
@@ -1106,6 +1103,11 @@ export class DaemonService {
       case 'approveCornerMerge':
         return (await this.approveCornerMerge(
           input as Input<'approveCornerMerge'>,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'closeCornerPullRequest':
+        return (await this.closeCornerPullRequest(
+          input as Input<'closeCornerPullRequest'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'mergeCorner':
@@ -3165,6 +3167,29 @@ export class DaemonService {
     if (!(await this.landCorner(input.cornerId)))
       return { status: 'blocked', blocker: 'a merge of this head was already attempted, or the head moved' };
     return { status: 'merge-started', headSha: corner.head_sha };
+  }
+
+  /**
+   * Any corner member closes the corner's own pull request without merging.
+   * Membership is checked by `access` before dispatch; the close itself and
+   * the lifecycle update live in `GitHubOperations.closeCornerPullRequest`.
+   */
+  private async closeCornerPullRequest(
+    input: Input<'closeCornerPullRequest'>,
+    agentId: string,
+  ): Promise<Output<'closeCornerPullRequest'>> {
+    if (!this.closePullRequest)
+      return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
+    const closed = await this.closePullRequest(input.cornerId);
+    if (closed.status === 'blocked') return closed;
+    await systemLine(this.database, {
+      roomId: input.cornerId,
+      subject: { kind: 'agent', id: agentId, name: (await this.identity(agentId)).name },
+      verb: 'closed',
+      object: { text: closed.title, url: closed.url },
+    });
+    this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });
+    return { status: 'closed', pullRequestNumber: closed.number, url: closed.url };
   }
 
   /**
@@ -7509,28 +7534,6 @@ export class DaemonService {
     });
     return this.writeResult();
   }
-  /**
-   * The one operation a corner still reserves for the agent that opened it.
-   *
-   * Every other corner write is membership-gated by `access` above, because a
-   * corner works like a Room: whoever is addressed carries the branch on, and
-   * the PR/checks lifecycle facts belong to the CORNER, not to one agent.
-   * Archiving is the exception because it is terminal for the shared artifact
-   * — it stops every member's loop and reaps their worktrees — so a helper
-   * pulled in for one question cannot close someone else's work. It is not a
-   * dead end when the opener is gone: the merge webhook archives on landing,
-   * and a human can still request the close.
-   */
-  private async assertCornerOpener(roomId: string, agentId: string) {
-    const corner = await this.database.query<{ owner_agent_id: string | null }>(
-      `SELECT fact.owner_agent_id
-       FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
-       WHERE room.id=$1 AND room.parent_id IS NOT NULL`,
-      [roomId],
-    );
-    const opener = corner.rows[0]?.owner_agent_id;
-    if (corner.rowCount && opener !== agentId) throw new Error('daemon corner access denied');
-  }
   private writeResult(extra?: {
     hiccupRestart?: boolean;
     hiccupAttempt?: number;
@@ -7698,6 +7701,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getPrChecksStatus: true,
   approveCornerMerge: true,
   mergeCorner: true,
+  closeCornerPullRequest: true,
   getCornerCloseRequests: true,
   waitForCornerWake: true,
   listUntrackedCorners: true,

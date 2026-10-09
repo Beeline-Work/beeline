@@ -320,6 +320,34 @@ describe('GitHub-only account and repository access', () => {
     ]);
   });
 
+  it('closes a pull request without merging, with only pull-request write', async () => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const privateKeyPem = await exportPKCS8(privateKey);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ token: 'close-token', expires_at: '2030-01-01T00:00:00Z' }), {
+          status: 201,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: 'closed' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
+
+    await expect(app.closePullRequest(77, 9, 'acme/beeline', 42)).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({
+      body: JSON.stringify({ repository_ids: [9], permissions: { pull_requests: 'write' } }),
+    });
+    expect(fetchMock.mock.calls[1]).toEqual([
+      'https://api.github.com/repos/acme/beeline/pulls/42',
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: expect.objectContaining({ authorization: 'Bearer close-token' }),
+        body: JSON.stringify({ state: 'closed' }),
+      }),
+    ]);
+  });
+
   it('lists only workflow-dispatch workflows with their latest run result', async () => {
     const fetchMock = vi
       .fn()

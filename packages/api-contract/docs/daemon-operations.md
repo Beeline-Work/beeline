@@ -78,6 +78,10 @@ hold is the only veto.
 
 Deploy the server before helpers that call this operation.
 
+`closeCornerPullRequest({ cornerId })` closes the corner's own pull request without merging. Any
+corner member may call it. The branch stays on GitHub; the corner stays open with `lifecycle.pr`
+cleared, so `mergeCorner` reports no pull request until a new one opens.
+
 `mergeCorner({ cornerId })` is the implementer's merge. Only the corner's implementer may call it.
 It goes through the one merge path, `landCorner`, which squash-merges the current head only when
 `getPrChecksStatus` reports `mergeAllowed`; otherwise it attempts nothing and returns

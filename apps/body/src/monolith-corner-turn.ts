@@ -1125,7 +1125,6 @@ export class MonolithCornerTurnLoop {
         roomId: this.options.parentRoomId,
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
-        agentMayCloseCorner: Boolean(repository),
         reviewer,
         repositoryBacked: Boolean(repository),
         attachRoot: this.options.worktreePath,

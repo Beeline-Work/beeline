@@ -609,7 +609,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: ['repo-less-corner'],
     render: ({ requesterHandle }) =>
-      `${requesterHandle ? `Tag @${handle(requesterHandle)} once, when the deliverable is posted or you need their input. ` : ''}When you posted files, name them in one line; never restate your answer. Only a human closes this corner.`,
+      `${requesterHandle ? `Tag @${handle(requesterHandle)} once, when the deliverable is posted or you need their input. ` : ''}When you posted files, name them in one line; never restate your answer. Call close_corner only when a person asks.`,
   },
 ];
 

@@ -31,19 +31,18 @@ const EAS_CLI_VERSION = '22.2.0';
 // page therefore stops resolving every target the moment the target list grows
 // past it: `--limit 10` against eleven targets can never show the newest group
 // for all eleven, so a promotion that fully succeeded still fails its own
-// read-back. Derive the page from the target count instead, with one
-// generation of headroom for the groups an earlier promotion left behind.
-// `eas update:list` refuses a limit outside 1..50, so that is the ceiling; a
-// target list too long for one page fails with that stated as the reason
-// rather than as a target mismatch.
-const PRODUCTION_LOOKUP_FLOOR = 10;
+// read-back. A page sized from THIS release's targets is not enough either:
+// the branch still carries groups from earlier, wider target sets, so a
+// runtime's newest group can sit far down the page (v0.1.20: android@33 was
+// 17th behind sixteen groups of a 17-target release while six targets asked
+// for 12, and the rollback-anchor check refused a runtime that has one).
+// Always read the full page `eas update:list` allows (1..50); a target list
+// too long for one page fails with that stated as the reason rather than as a
+// target mismatch.
 const PRODUCTION_LOOKUP_CEILING = 50;
 
-function productionLookupLimit(targets) {
-  const needed = Array.isArray(targets) ? targets.length : 0;
-  return String(
-    Math.min(PRODUCTION_LOOKUP_CEILING, Math.max(PRODUCTION_LOOKUP_FLOOR, needed * 2)),
-  );
+function productionLookupLimit() {
+  return String(PRODUCTION_LOOKUP_CEILING);
 }
 // Compatibility runtime targets: OTA updates published alongside the current
 // store pins under the owner's retention decision. Keep this list ordered

@@ -37,7 +37,8 @@
 # production-scale database because plan/timing evidence cannot come from
 # the tiny suite tables. SERVER INTEGRATION takes the verdict from hosted,
 # bounded shards of the large PGlite-backed integration file; SERVER SUITE
-# runs the rest.
+# takes the verdict from hosted shards of the remaining tests and the isolated
+# claim latency budget.
 #
 # `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
 # (default `all`); the targeted `(on demand)` lanes run a single test on the
@@ -524,16 +525,23 @@ jobs:
         working-directory: apps/push-gateway
         run: npx vitest run
 
-  server-suite:
-    name: SERVER SUITE
+  server-suite-shard:
+    name: SERVER SUITE SHARD ${{ matrix.shard }}
     needs: changes
     if: >-
       !cancelled() && (
         (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
+    # Vitest hashes file paths before slicing the sorted list. The latest
+    # 127-file run had 1,899s of summed test time; eight shards spread the
+    # 303s schedule proof and 210s workflow suite onto separate runners.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -545,13 +553,53 @@ jobs:
       # test has its own scaled-data gate below; Vitest discovers every other
       # server test except the large integration file, which runs below.
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
+      - name: Run the server suite shard
+        run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/integration.test.ts --exclude src/agent-command.scaling.test.ts --maxWorkers=2 --minWorkers=2 --shard=${{ matrix.shard }}/8
+
+  server-claim-latency:
+    name: SERVER CLAIM LATENCY
+    needs: changes
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/gate && npm run build -w @beeline/auth && npm run build -w @beeline/body && npm run build -w @beeline/push-gateway
       # This file subtracts the measured synthetic 206 ms timer wait before
-      # checking claim query overhead. Run it before the parallel PGlite suite
-      # so competing workers do not add scheduler latency to that signal.
+      # checking claim query overhead. It runs with one worker on its own host.
       - name: Run the claim latency budget alone
         run: npm test -w @beeline/server -- --run src/agent-command.scaling.test.ts --maxWorkers=1 --minWorkers=1
-      - name: Run the server suite
-        run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/integration.test.ts --exclude src/agent-command.scaling.test.ts --maxWorkers=2 --minWorkers=2
+
+  server-suite:
+    name: SERVER SUITE
+    needs: [changes, server-suite-shard, server-claim-latency]
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every hosted shard and the claim latency budget to pass
+        env:
+          SHARDS_RESULT: ${{ needs.server-suite-shard.result }}
+          CLAIM_RESULT: ${{ needs.server-claim-latency.result }}
+        run: |
+          set -euo pipefail
+          echo "SERVER SUITE SHARDS: $SHARDS_RESULT"
+          echo "SERVER CLAIM LATENCY: $CLAIM_RESULT"
+          test "$SHARDS_RESULT" = success
+          test "$CLAIM_RESULT" = success
 
   server-integration-shard:
     name: SERVER INTEGRATION SHARD ${{ matrix.shard }}

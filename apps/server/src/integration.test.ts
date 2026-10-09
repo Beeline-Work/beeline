@@ -360,7 +360,26 @@ describe('monolith integration', () => {
     expect(await lost.json()).toMatchObject({
       error: expect.stringContaining('membership'),
     });
-    expect([hop.status, closed.status, lost.status]).not.toContain(503);
+    await database.query(
+      `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
+      [steerCorner, AGENT],
+    );
+
+    const lostSourceTurn = await startTurn('lost-source-membership');
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [ROOM, AGENT],
+    );
+    const lostSource = await steer(lostSourceTurn);
+    await database.query(
+      `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
+      [ROOM, AGENT],
+    );
+    expect(lostSource.status).toBe(403);
+    expect(await lostSource.json()).toEqual({
+      error: 'relay requires current Room and corner membership',
+    });
+    expect([hop.status, closed.status, lost.status, lostSource.status]).not.toContain(503);
   });
   it('has no feedback triage setting or tools, refuses Fixed DMs from a non-sender, and opens fix corners beside the corner', async () => {
     const corner = (

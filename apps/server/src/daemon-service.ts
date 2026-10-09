@@ -384,7 +384,15 @@ export class DaemonService {
     let cornerReviewer = false;
     let isCorner = false;
     if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
-      ({ cornerReviewer, isCorner } = await this.access(scopedRoom, authenticatedAgentId));
+      ({ cornerReviewer, isCorner } = await this.access(scopedRoom, authenticatedAgentId).catch(
+        (error: unknown) => {
+          // A relay whose source Room membership is gone is the same lost
+          // membership postRelay names, not a generic access denial.
+          if (name === 'postRoomMessage' && candidate.relay !== undefined)
+            throw new RelayRefusalError('relay requires current Room and corner membership', 403);
+          throw error;
+        },
+      ));
     if (scopedRoom && isCornerOpenerOnly(name))
       await this.assertCornerOpener(scopedRoom, authenticatedAgentId);
     const turnWrites = new Set([

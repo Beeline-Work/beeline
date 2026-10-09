@@ -24,12 +24,18 @@ import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
+import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import brand from '@/buzz/brand.json';
 
 /** How often an open tray re-reads its sections. */
 const TRAY_REFRESH_MS = 60_000;
+
+/** The server's refusal once the person has left, or been removed from, the Workspace. */
+function lostWorkspace(reason: unknown): boolean {
+  return (reason as { code?: unknown } | null)?.code === 'workspace membership required';
+}
 
 function first(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
@@ -73,7 +79,10 @@ export default function TrayScreen() {
   // as active. `undefined` while resolving; `null` when there is none.
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null | undefined>(undefined);
   const workspaceId = routeWorkspaceId || activeWorkspaceId || '';
-  const noWorkspace = !routeWorkspaceId && activeWorkspaceId === null;
+  // A Workspace the person is no longer a member of: its items open nothing.
+  const [lostWorkspaceId, setLostWorkspaceId] = useState<string | null>(null);
+  const workspaceLost = Boolean(workspaceId) && lostWorkspaceId === workspaceId;
+  const noWorkspace = (!routeWorkspaceId && activeWorkspaceId === null) || workspaceLost;
   const [needs, setNeeds] = useState<readonly NeedsYouItemView[]>([]);
   const [bookmarks, setBookmarks] = useState<readonly MessageBookmarkView[]>([]);
   const [selected, setSelected] = useState<Target | null>(null);
@@ -97,6 +106,19 @@ export default function TrayScreen() {
       monolithPhoneOperation('readNeedsYou', { workspaceId }),
       monolithPhoneOperation('listMessageBookmarks', { workspaceId }),
     ]);
+    if (
+      [needsResult, savedResult].some(
+        (result) => result.status === 'rejected' && lostWorkspace(result.reason),
+      )
+    ) {
+      setLostWorkspaceId(workspaceId);
+      setNeeds([]);
+      setBookmarks([]);
+      setSelected(null);
+      setLoading(false);
+      return;
+    }
+    setLostWorkspaceId(null);
     if (needsResult.status === 'fulfilled') setNeeds(needsResult.value.items);
     if (savedResult.status === 'fulfilled') setBookmarks(savedResult.value.bookmarks);
     const failed = [needsResult, savedResult].find((result) => result.status === 'rejected');
@@ -210,7 +232,10 @@ export default function TrayScreen() {
 
   const open = useCallback(
     (target: Target, via: 'bookmark' | 'needs-you') => {
-      router.push(messageJumpHref(target.roomId, target.messageId, `${via}:${target.messageId}`, target.workspaceId));
+      const responseId = `${via}:${target.messageId}`;
+      // Start the Room read now, as a push tap does; the Room takes it by this id.
+      prefetchPushRoom(responseId, target.roomId);
+      router.push(messageJumpHref(target.roomId, target.messageId, responseId, target.workspaceId));
     },
     [router],
   );
@@ -306,7 +331,7 @@ export default function TrayScreen() {
   }, [removed]);
 
   const rows = useMemo((): Row[] => {
-    if (loading) return [];
+    if (loading || workspaceLost) return [];
     const cells = (items: NeedsYouItemView[]) =>
       items.map((item): Row => ({ key: `needs-${item.messageId}`, type: 'needs', item }));
     const approvals = needs.filter((item) => item.approval);
@@ -341,7 +366,7 @@ export default function TrayScreen() {
           }))
         : [{ key: 'saved-empty', type: 'saved-empty' } as const]),
     ];
-  }, [bookmarks, loading, needs]);
+  }, [bookmarks, loading, needs, workspaceLost]);
 
   const renderSaved = (bookmark: MessageBookmarkView) => (
     <Pressable
@@ -432,7 +457,11 @@ export default function TrayScreen() {
         noWorkspace ? (
           <View style={styles.emptyBlock} testID="tray-no-workspace">
             <Text style={styles.emptyTitle}>No Workspace to show</Text>
-            <Text style={styles.empty}>This link did not name a Workspace, and none is open.</Text>
+            <Text style={styles.empty}>
+              {workspaceLost
+                ? 'You are no longer a member of this Workspace.'
+                : 'This link did not name a Workspace, and none is open.'}
+            </Text>
             <Pressable
               accessibilityRole="button"
               onPress={() => router.replace('/beeline/channels')}

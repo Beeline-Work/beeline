@@ -61,6 +61,7 @@ import { reportRunningUpdateReceipt } from '@/push/update-receipt';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import {
   decideForegroundNotificationDisplay,
+  foregroundDataOnlyRepresentation,
   foregroundNotificationBehavior,
 } from '@/push/foreground-policy';
 import {
@@ -90,6 +91,22 @@ Notifications.setNotificationHandler({
       }),
     ),
 });
+
+// Expo skips the handler above for an Android data-only push in the
+// foreground and posts nothing; re-present it under the same policy.
+if (Platform.OS === 'android') {
+  Notifications.addNotificationReceivedListener((notification) => {
+    const representation = foregroundDataOnlyRepresentation(notification, {
+      platform: Platform.OS,
+      appState: AppState.currentState,
+      openChannelId: getOpenBuzzChannelId(),
+    });
+    if (!representation) return;
+    void Notifications.scheduleNotificationAsync(representation).catch((error) =>
+      console.warn('[PUSH] Could not present foreground push:', error),
+    );
+  });
+}
 
 // Setup Android notification channels (required for Android 8.0+)
 if (Platform.OS === 'android') {

@@ -114,3 +114,83 @@ export function foregroundNotificationBehavior(decision: ForegroundNotificationD
     shouldShowList: decision.shouldPresent,
   };
 }
+
+/** The fields of an Expo `Notification` the foreground re-presentation reads. */
+export type ReceivedNotification = {
+  request: {
+    identifier: string;
+    content: {
+      title?: string | null;
+      subtitle?: string | null;
+      body?: string | null;
+      data?: unknown;
+      categoryIdentifier?: string | null;
+    };
+    trigger?: unknown;
+  };
+};
+
+/** The `Notifications.scheduleNotificationAsync` request that re-presents a push. */
+export type ForegroundRepresentation = {
+  identifier: string;
+  content: {
+    title?: string;
+    subtitle?: string;
+    body: string;
+    data: Record<string, unknown>;
+    categoryIdentifier?: string;
+  };
+  trigger: null;
+};
+
+function isAndroidDataOnlyPush(trigger: unknown): boolean {
+  if (!trigger || typeof trigger !== 'object') return false;
+  const { type, remoteMessage } = trigger as { type?: unknown; remoteMessage?: unknown };
+  if (type !== 'push' || !remoteMessage || typeof remoteMessage !== 'object') return false;
+  return (remoteMessage as { notification?: unknown }).notification == null;
+}
+
+/**
+ * expo-notifications 55 does not call `handleNotification` for an Android
+ * data-only push received in the foreground (`NotificationsHandler` returns
+ * early), so nothing posts it. Beeline's Android pushes are data-only, so the
+ * received listener re-presents one as a local notification when this policy
+ * allows it. The local notification keeps the push's identifier (its tag), so
+ * it replaces, never duplicates, a post of the same push; it then passes
+ * through `handleNotification` like any local notification. Its data is the
+ * push's data, so a tap routes and dedupes as a background push does.
+ *
+ * Returns null for anything else: other platforms, a push Expo presents itself
+ * (it has a `notification` block), a local notification (including this
+ * re-presentation), a silent push with no text, or a push the policy hides.
+ */
+export function foregroundDataOnlyRepresentation(
+  notification: ReceivedNotification,
+  input: { platform: string; appState?: string | null; openChannelId?: string | null },
+): ForegroundRepresentation | null {
+  if (input.platform !== 'android') return null;
+  const { identifier, content, trigger } = notification.request;
+  if (!isAndroidDataOnlyPush(trigger)) return null;
+  if (!content.title && !content.body) return null;
+  const data =
+    content.data && typeof content.data === 'object'
+      ? (content.data as Record<string, unknown>)
+      : {};
+  const decision = decideForegroundNotificationDisplay({
+    appState: input.appState,
+    openChannelId: input.openChannelId,
+    data,
+  });
+  if (!decision.shouldPresent) return null;
+  return {
+    identifier,
+    content: {
+      ...(content.title ? { title: content.title } : {}),
+      ...(content.subtitle ? { subtitle: content.subtitle } : {}),
+      body: content.body ?? '',
+      data,
+      ...(content.categoryIdentifier ? { categoryIdentifier: content.categoryIdentifier } : {}),
+    },
+    trigger: null,
+  };
+}

@@ -8,6 +8,7 @@ import {
 } from '@/buzz/open-room-tracker';
 import {
   decideForegroundNotificationDisplay,
+  foregroundDataOnlyRepresentation,
   foregroundNotificationBehavior,
   foregroundNotificationChannelIds,
 } from './foreground-policy';
@@ -173,5 +174,106 @@ describe('open-room tracker', () => {
     expect(getOpenBuzzChannelId()).toBe('room-3');
     releaseOpenBuzzChannelId('room-3');
     expect(getOpenBuzzChannelId()).toBeNull();
+  });
+});
+
+describe('foreground Android data-only push re-presentation', () => {
+  // The server's firebasePushMessage data payload, as Expo hands it to the
+  // received listener for a foreground data-only push (Reproduction F3).
+  const pushData = {
+    type: 'channel-activity',
+    target: 'message',
+    workspaceId: 'ws-1',
+    roomId: 'room-general',
+    threadId: 'room-general',
+    channelId: 'room-general',
+    messageId: 'msg-9',
+    title: 'Beeline',
+    message: 'hello from general',
+    tag: 'msg-9',
+  };
+  function dataOnlyPush(overrides: { notification?: unknown; data?: unknown } = {}) {
+    return {
+      request: {
+        identifier: 'msg-9',
+        content: {
+          title: 'Beeline',
+          subtitle: null,
+          body: 'hello from general',
+          data: overrides.data ?? pushData,
+          categoryIdentifier: 'beeline-reply',
+        },
+        trigger: {
+          type: 'push',
+          remoteMessage: { data: pushData, notification: overrides.notification ?? null },
+        },
+      },
+    };
+  }
+
+  it('presents a push for another Room under the same identifier and data', () => {
+    expect(
+      foregroundDataOnlyRepresentation(dataOnlyPush(), {
+        platform: 'android',
+        appState: 'active',
+        openChannelId: 'room-proof',
+      }),
+    ).toEqual({
+      identifier: 'msg-9',
+      content: {
+        title: 'Beeline',
+        body: 'hello from general',
+        data: pushData,
+        categoryIdentifier: 'beeline-reply',
+      },
+      trigger: null,
+    });
+  });
+
+  it('presents a push while no Room is open', () => {
+    expect(
+      foregroundDataOnlyRepresentation(dataOnlyPush(), { platform: 'android', appState: 'active' }),
+    ).not.toBeNull();
+  });
+
+  it('does not present a push for the open Room', () => {
+    expect(
+      foregroundDataOnlyRepresentation(dataOnlyPush(), {
+        platform: 'android',
+        appState: 'active',
+        openChannelId: 'room-general',
+      }),
+    ).toBeNull();
+  });
+
+  it('leaves a push with a notification block to Expo', () => {
+    expect(
+      foregroundDataOnlyRepresentation(dataOnlyPush({ notification: { title: 'Beeline' } }), {
+        platform: 'android',
+        appState: 'active',
+      }),
+    ).toBeNull();
+  });
+
+  it('does not re-present a local notification, including its own re-presentation', () => {
+    const local = { request: { ...dataOnlyPush().request, trigger: null } };
+    expect(
+      foregroundDataOnlyRepresentation(local, { platform: 'android', appState: 'active' }),
+    ).toBeNull();
+  });
+
+  it('does not present a silent push with no text', () => {
+    const silent = dataOnlyPush();
+    silent.request.content.title = '';
+    silent.request.content.body = '';
+    expect(
+      foregroundDataOnlyRepresentation(silent, { platform: 'android', appState: 'active' }),
+    ).toBeNull();
+  });
+
+  it('changes nothing on iOS', () => {
+    expect(
+      foregroundDataOnlyRepresentation(dataOnlyPush(), { platform: 'ios', appState: 'active' }),
+    ).toBeNull();
   });
 });

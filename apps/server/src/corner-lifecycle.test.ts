@@ -1431,6 +1431,61 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
   });
 });
 
+describe('Reproduction CI-1: a red head wakes the implementer once its checks finish (#2251)', () => {
+  const running = {
+    state: 'failed',
+    total: 2,
+    failing: ['Body suite'],
+    checks: [{ name: 'Body suite', status: 'failed' }, { name: 'Server suite', status: 'pending' }],
+  };
+  const finished = {
+    ...running,
+    checks: [{ name: 'Body suite', status: 'failed' }, { name: 'Server suite', status: 'passed' }],
+  };
+  async function checkRun(cornerId: string, name: string, conclusion: string) {
+    await github.processWebhook('check_run', {
+      installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' }, action: 'completed',
+      check_run: { id: 9, name, status: 'completed', conclusion,
+        check_suite: { head_branch: branchOf(cornerId), head_sha: SHA } },
+    });
+  }
+  async function redWhileRunning(): Promise<string> {
+    const cornerId = await open('owner/widgets');
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({ checks: 'unknown', lifecycle: 'in-review',
+        pr: { number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA } }),
+    ]);
+    await pushToCorner(cornerId, SHA);
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(running);
+    await checkRun(cornerId, 'Body suite', 'failure');
+    return cornerId;
+  }
+  const checksOf = async (cornerId: string) =>
+    (await db.query<{ checks: string }>(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+      .rows[0]!.checks;
+
+  it('shows the head red at once but holds the wake while a check still runs', async () => {
+    const cornerId = await redWhileRunning();
+    expect(await checksOf(cornerId)).toBe('failing');
+    expect(await reasons(cornerId, A)).not.toContain('corner_check');
+    await reconcileCornerMergeBlockers(db, cornerId);
+    expect(await reasons(cornerId, A)).not.toContain('corner_check');
+  });
+
+  it('wakes the implementer once when the last check finishes, and a replay wakes nobody', async () => {
+    const cornerId = await redWhileRunning();
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
+    await checkRun(cornerId, 'Server suite', 'success');
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
+    await checkRun(cornerId, 'Server suite', 'success');
+    await reconcileCornerMergeBlockers(db, cornerId);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
+    expect(await currentState(cornerId)).toBe('implement');
+  });
+});
+
 describe('a person hands the corner to another agent (the implementer follows the tag)', () => {
   // A third agent, a member of the corner only: the reviewer stays B, so the
   // tagged implementer is never the reviewer. `beforeEach` drops the corner

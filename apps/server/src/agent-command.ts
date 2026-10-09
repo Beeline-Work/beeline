@@ -1372,6 +1372,7 @@ export async function reconcileCornerMergeBlockers(
     corner_id: string;
     owner_agent_id: string;
     checks: string;
+    checks_settled: boolean;
     mergeability: string;
     head_sha: string;
     number: number;
@@ -1380,6 +1381,12 @@ export async function reconcileCornerMergeBlockers(
   }>(
     `SELECT fact.corner_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id,
             fact.lifecycle->>'checks' checks,
+            NOT EXISTS (
+              SELECT 1 FROM jsonb_array_elements(
+                CASE WHEN jsonb_typeof(fact.lifecycle->'checksSummary'->'checks')='array'
+                     THEN fact.lifecycle->'checksSummary'->'checks' ELSE '[]'::jsonb END) running
+              WHERE running->>'status'='pending'
+            ) checks_settled,
             fact.lifecycle->'pr'->>'mergeability' mergeability,
             fact.lifecycle->'pr'->>'headSha' head_sha,
             (fact.lifecycle->'pr'->>'number')::integer number,
@@ -1399,7 +1406,9 @@ export async function reconcileCornerMergeBlockers(
     commands += await db.transaction(async (db) => {
       await lockCornerLifecycle(db, row.corner_id);
       let routedCommands = 0;
-      if (row.checks === 'failing') {
+      // A red head with a check still running is not yet a verdict: its logs
+      // cannot be read, so the implementer is woken once the run ends.
+      if (row.checks === 'failing' && row.checks_settled) {
         const existing = await db.query(
           `SELECT 1 FROM agent_commands command
            JOIN messages source ON source.id=command.source_message_id

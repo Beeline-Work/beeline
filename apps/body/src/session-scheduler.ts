@@ -155,6 +155,7 @@ export class SessionScheduler {
   private readonly queues = new Map<string, QueuedSessionRun[]>();
   private readonly drainingKeys = new Set<string>();
   private readonly physicalHistory = new Map<string, string[]>();
+  private static readonly MAX_GENERATIONS_PER_KEY = 4;
   /**
    * Sessions already removed from `live` whose process is still being torn
    * down. They keep occupying capacity until `suspend()` resolves, so an
@@ -309,6 +310,11 @@ export class SessionScheduler {
     return this.physicalHistory.get(key) ?? [];
   }
 
+  /** A Room/corner loop ended; its diagnostic IDs no longer have a reader. */
+  forget(key: string): void {
+    this.physicalHistory.delete(key);
+  }
+
   /**
    * Read-only capacity diagnostic, exported beside the turn trace
    * (`turn-trace.ts`) so a stalled turn can be attributed to a capacity wait
@@ -396,6 +402,7 @@ export class SessionScheduler {
     this.sweepTimer = undefined;
     const sessions = [...this.live.values()];
     this.live.clear();
+    this.physicalHistory.clear();
     await Promise.all(sessions.map((session) => this.retire(session)));
     this.wakeCapacityWaiters();
   }
@@ -541,6 +548,7 @@ export class SessionScheduler {
         await this.notifyState(lifecycle, 'live');
         const generations = this.physicalHistory.get(key) ?? [];
         generations.push(physicalSessionId);
+        if (generations.length > SessionScheduler.MAX_GENERATIONS_PER_KEY) generations.shift();
         this.physicalHistory.set(key, generations);
         return true;
       } catch (error) {

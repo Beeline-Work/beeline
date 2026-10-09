@@ -107,6 +107,13 @@ async function readClear() {
   await pause();
   const clear = document.querySelector<HTMLElement>(`[data-testid="tray-clear-${section}"]`);
   assert(clear != null, `the ${section} head has no CLEAR`);
+  const target = clear!.getBoundingClientRect();
+  const head = clear!.closest<HTMLElement>('[data-testid^="tray-section-"]')!.getBoundingClientRect();
+  assert(
+    target.width >= 44 && target.height >= 44 && head.height >= 44,
+    `CLEAR is ${target.width}×${target.height} in a ${head.height} px head; it needs 44×44`,
+  );
+  const size = `CLEAR ${Math.round(target.width)}×${Math.round(target.height)} in ${Math.round(head.height)} px head`;
   clear!.click();
   await pause();
   const undo = document.querySelector<HTMLElement>('[data-testid="tray-clear-undo"]');
@@ -144,7 +151,7 @@ async function readClear() {
       document.querySelector('[data-testid="needs-you-ask-1"]') != null,
       'bulk UNDO did not bring the question back',
     );
-    report(`PASS ${bars} | UNDO restored needs-you-ask-1`);
+    report(`PASS ${size} | ${bars} | UNDO restored needs-you-ask-1`);
     return;
   }
   if (desktop) {
@@ -154,10 +161,10 @@ async function readClear() {
       bar.left >= list.left && bar.right <= list.right,
       `the Undo bar spans x${Math.round(bar.left)}–${Math.round(bar.right)}, outside the list x${Math.round(list.left)}–${Math.round(list.right)}`,
     );
-    report(`PASS ${heads} | ${undo!.textContent} | Undo x${Math.round(bar.left)}–${Math.round(bar.right)} in list x${Math.round(list.left)}–${Math.round(list.right)}`);
+    report(`PASS ${size} | ${heads} | ${undo!.textContent} | Undo x${Math.round(bar.left)}–${Math.round(bar.right)} in list x${Math.round(list.left)}–${Math.round(list.right)}`);
     return;
   }
-  report(`PASS ${heads} | ${undo!.textContent}`);
+  report(`PASS ${size} | ${heads} | ${undo!.textContent}`);
 }
 
 const mode = new URLSearchParams(location.search).get('mode');

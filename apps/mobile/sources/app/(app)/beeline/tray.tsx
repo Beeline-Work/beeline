@@ -803,7 +803,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRightColor: theme.buzz.border,
   },
   sectionHead: {
-    minHeight: 30,
+    minHeight: 44,
     marginTop: theme.buzz.space.lg,
     paddingHorizontal: 16,
     flexDirection: 'row',
@@ -815,7 +815,7 @@ const styles = StyleSheet.create((theme) => ({
   sectionTitle: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
   sectionCount: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   sectionEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.md },
-  sectionClear: { minHeight: 30, justifyContent: 'center' },
+  sectionClear: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   cellDivider: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,

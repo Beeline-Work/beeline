@@ -116,7 +116,7 @@ import {
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { needsYouExpiresAt, needsYouItems } from './needs-you.js';
+import { clearNeedsYouQuestions, needsYouExpiresAt, needsYouItems } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyConnectorAssignment,
@@ -3666,6 +3666,9 @@ export class PhoneService {
           input as Input<'setMessageBookmark'>,
           viewerId,
         )) as Output<Name>;
+      case 'clearMessageBookmarks':
+        await this.clearMessageBookmarks(input as Input<'clearMessageBookmarks'>, viewerId);
+        return undefined as Output<Name>;
       case 'listMessageBookmarks':
         return (await this.listMessageBookmarks(
           input as Input<'listMessageBookmarks'>,
@@ -3680,6 +3683,9 @@ export class PhoneService {
         )) as Output<Name>;
       case 'clearNeedsYou':
         await this.clearNeedsYou(input as Input<'clearNeedsYou'>, viewerId);
+        return undefined as Output<Name>;
+      case 'clearNeedsYouSection':
+        await this.clearNeedsYouSection(input as Input<'clearNeedsYouSection'>, viewerId);
         return undefined as Output<Name>;
       case 'listRoomSchedules':
         return (await this.listRoomSchedules(
@@ -4583,6 +4589,17 @@ export class PhoneService {
     });
   }
 
+  private async clearMessageBookmarks(
+    input: Input<'clearMessageBookmarks'>,
+    viewerId: string,
+  ): Promise<void> {
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    await this.database.query(
+      `DELETE FROM message_bookmarks WHERE workspace_id=$1 AND identity_id=$2`,
+      [input.workspaceId, viewerId],
+    );
+  }
+
   /**
    * The viewer's Needs-you cells (`needs-you.ts` owns the rule). Showing a
    * cell starts its 24-hour clock once, for every device; a clock already
@@ -4644,6 +4661,14 @@ export class PhoneService {
       [viewerId, input.messageId, input.workspaceId],
     );
     if (!cleared.rowCount) throw new Error('message is not available');
+  }
+
+  private async clearNeedsYouSection(
+    input: Input<'clearNeedsYouSection'>,
+    viewerId: string,
+  ): Promise<void> {
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    await clearNeedsYouQuestions(this.database, input.workspaceId, viewerId);
   }
 
   private async listMessageBookmarks(
@@ -9460,10 +9485,12 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'reactToMessage',
   'deleteRoomMessage',
   'setMessageBookmark',
+  'clearMessageBookmarks',
   'listMessageBookmarks',
   'readNeedsYou',
   'countNeedsYou',
   'clearNeedsYou',
+  'clearNeedsYouSection',
   'listRoomSchedules',
   'deleteRoomSchedule',
   'listRoomWorkflowRuns',
@@ -9576,9 +9603,11 @@ const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'reopenChat',
   'listMessageBookmarks',
   'setMessageBookmark',
+  'clearMessageBookmarks',
   'readNeedsYou',
   'countNeedsYou',
   'clearNeedsYou',
+  'clearNeedsYouSection',
   'readWorkbench',
   'searchWorkbenchApps',
   'readConnectionDetail',

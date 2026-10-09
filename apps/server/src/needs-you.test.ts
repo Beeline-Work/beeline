@@ -250,6 +250,63 @@ describe('PhoneService Needs-you tray', () => {
     expect(await count()).toBe(0);
   });
 
+  it('CLEAR removes questions beyond the 500-row read limit in one operation', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT lpad(to_hex(1000000 + series),64,'0'),$1,$2,'@ada please review this',
+         now() - interval '30 minutes' + series * interval '1 millisecond'
+       FROM generate_series(1, 505) series`,
+      [ROOM, PEER],
+    );
+    expect((await read()).items).toHaveLength(500);
+
+    await phone.execute('clearNeedsYouSection', { workspaceId: WORKSPACE }, VIEWER);
+
+    expect((await read()).items).toEqual([]);
+    expect(
+      (await new PhoneService(database, 'https://server.example').execute(
+        'readNeedsYou', { workspaceId: WORKSPACE }, VIEWER,
+      )).items,
+    ).toEqual([]);
+    expect(await count()).toBe(0);
+    expect(
+      (await database.query<{ count: string }>(
+        `SELECT count(*)::text count FROM needs_you_marks WHERE identity_id=$1 AND cleared_at IS NOT NULL`,
+        [VIEWER],
+      )).rows[0]?.count,
+    ).toBe('505');
+  });
+
+  it('CLEAR removes every bookmark in this Workspace and leaves another viewer alone', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       SELECT lpad(to_hex(2000000 + series),64,'0'),$1,$2,'a saved message',now()
+       FROM generate_series(1, 55) series`,
+      [ROOM, PEER],
+    );
+    await database.query(
+      `INSERT INTO message_bookmarks(identity_id,workspace_id,room_id,message_id,source_room_name,source_room_kind,message_created_at)
+       SELECT $1,$2,$3,id,'Launch room','room',created_at FROM messages WHERE room_id=$3`,
+      [VIEWER, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO message_bookmarks(identity_id,workspace_id,room_id,message_id,source_room_name,source_room_kind,message_created_at)
+       SELECT $1,$2,$3,id,'Launch room','room',created_at FROM messages WHERE room_id=$3 LIMIT 1`,
+      [PEER, WORKSPACE, ROOM],
+    );
+    expect((await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, VIEWER)).bookmarks).toHaveLength(55);
+
+    await phone.execute('clearMessageBookmarks', { workspaceId: WORKSPACE }, VIEWER);
+
+    expect((await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, VIEWER)).bookmarks).toEqual([]);
+    expect(
+      (await new PhoneService(database, 'https://server.example').execute(
+        'listMessageBookmarks', { workspaceId: WORKSPACE }, VIEWER,
+      )).bookmarks,
+    ).toEqual([]);
+    expect((await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, PEER)).bookmarks).toHaveLength(1);
+  });
+
   it('never lets newer near-miss messages crowd out an older real ask', async () => {
     const ask = await post(ROOM, PEER, '@ada please review the release notes', 60);
     // More near-misses than the query's candidate limit, all newer than the ask:
@@ -319,6 +376,8 @@ describe('PhoneService Needs-you tray', () => {
 
     // Opening it (the tray's tap) does not clear an approval.
     await phone.execute('clearNeedsYou', { workspaceId: WORKSPACE, messageId: card }, VIEWER);
+    expect(await count()).toBe(1);
+    await phone.execute('clearNeedsYouSection', { workspaceId: WORKSPACE }, VIEWER);
     expect(await count()).toBe(1);
 
     // A person who cannot decide it never sees it.

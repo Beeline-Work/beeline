@@ -91,6 +91,8 @@ export type PhoneOperationMap = {
   reactToMessage: { input: ReactToMessageInput; output: void };
   deleteRoomMessage: { input: DeleteRoomMessageInput; output: void };
   setMessageBookmark: { input: SetMessageBookmarkInput; output: SetMessageBookmarkResult };
+  /** Clear every bookmark in one Workspace for this viewer. */
+  clearMessageBookmarks: { input: WorkspaceInput; output: void };
   /** Report issue: files this message with the Beeline feedback loop. One report per message. */
   reportMessageIssue: { input: ReportMessageIssueInput; output: ReportMessageIssueResult };
   listMessageBookmarks: { input: WorkspaceInput; output: MessageBookmarkListResult };
@@ -100,6 +102,8 @@ export type PhoneOperationMap = {
   countNeedsYou: { input: WorkspaceInput; output: NeedsYouCountResult };
   /** Tapped or dismissed: the cell leaves the viewer's tray on every device. */
   clearNeedsYou: { input: ClearNeedsYouInput; output: void };
+  /** Clear every question in one Workspace, including rows beyond the display limit; approvals remain. */
+  clearNeedsYouSection: { input: WorkspaceInput; output: void };
   listRoomSchedules: { input: RoomInput; output: RoomScheduleListResult };
   deleteRoomSchedule: { input: DeleteRoomScheduleInput; output: void };
   /** The newest run of each agent workflow in a Room and its corners, live runs first. */

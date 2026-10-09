@@ -69,7 +69,7 @@ type Target = {
 };
 
 /** A section clear held back until its own Undo window closes. */
-type PendingClear = { readonly id: number; readonly expiresAt: number } & (
+type PendingClear = { readonly id: number; readonly expiresAt: number; readonly workspaceId: string } & (
   | { readonly kind: 'needs'; readonly items: readonly NeedsYouItemView[] }
   | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[] }
 );
@@ -328,52 +328,34 @@ export default function TrayScreen() {
     [clear],
   );
 
-  /**
-   * Send a held section clear. Items the server refuses come back to the
-   * list, newest first, and the error row says why.
-   */
+  /** Send one Workspace-scoped operation after Undo expires, then reconcile the tray. */
   const commitClear = useCallback(async (clear: PendingClear) => {
     const ids = new Set(clear.items.map((item) => item.messageId));
     if (clear.kind === 'needs') {
       setNeeds((current) => current.filter((item) => !ids.has(item.messageId)));
-      const results = await Promise.allSettled(
-        clear.items.map((item) =>
-          monolithPhoneOperation('clearNeedsYou', {
-            workspaceId: item.workspaceId,
-            messageId: item.messageId,
-          }),
-        ),
-      );
-      const failed = clear.items.filter((_, index) => results[index].status === 'rejected');
-      if (failed.length < clear.items.length) announceNeedsYouChanged();
-      if (failed.length)
+      try {
+        await monolithPhoneOperation('clearNeedsYouSection', { workspaceId: clear.workspaceId });
+        announceNeedsYouChanged();
+        await load();
+      } catch (cause) {
         setNeeds((current) =>
-          [...failed, ...current].sort((left, right) => right.createdAt - left.createdAt),
+          [...clear.items, ...current].sort((left, right) => right.createdAt - left.createdAt),
         );
-      const refusal = results.find((result) => result.status === 'rejected');
-      if (refusal?.status === 'rejected')
-        setError(refusal.reason instanceof Error ? refusal.reason.message : String(refusal.reason));
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
       return;
     }
     setBookmarks((current) => current.filter((item) => !ids.has(item.messageId)));
-    const results = await Promise.allSettled(
-      clear.items.map((bookmark) =>
-        monolithPhoneOperation('setMessageBookmark', {
-          roomId: bookmark.roomId,
-          messageId: bookmark.messageId,
-          bookmarked: false,
-        }),
-      ),
-    );
-    const failed = clear.items.filter((_, index) => results[index].status === 'rejected');
-    if (failed.length)
+    try {
+      await monolithPhoneOperation('clearMessageBookmarks', { workspaceId: clear.workspaceId });
+      await load();
+    } catch (cause) {
       setBookmarks((current) =>
-        [...failed, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
+        [...clear.items, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
       );
-    const refusal = results.find((result) => result.status === 'rejected');
-    if (refusal?.status === 'rejected')
-      setError(refusal.reason instanceof Error ? refusal.reason.message : String(refusal.reason));
-  }, []);
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [load]);
 
   /** Send the held clears `which` picks, and stop holding them. */
   const flushClears = useCallback(
@@ -422,7 +404,7 @@ export default function TrayScreen() {
   const clearSection = useCallback(
     (kind: PendingClear['kind']) => {
       setRemoved(null);
-      const held = { id: nextClearId.current++, expiresAt: Date.now() + UNDO_MS };
+      const held = { id: nextClearId.current++, expiresAt: Date.now() + UNDO_MS, workspaceId };
       const clear: PendingClear =
         kind === 'needs'
           ? { ...held, kind, items: visibleNeeds.filter((item) => !item.approval) }
@@ -432,7 +414,7 @@ export default function TrayScreen() {
       setPending(pendingRef.current);
       AccessibilityInfo.announceForAccessibility(`${clearedLabel(clear)}. Undo available.`);
     },
-    [visibleBookmarks, visibleNeeds],
+    [visibleBookmarks, visibleNeeds, workspaceId],
   );
 
   /** Undo the newest held clear; an older one still in its window shows next. */

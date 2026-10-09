@@ -19,8 +19,33 @@ Fixture: Room `scroll-probe` with 60 messages. The Room read returns messages 31
 
 On the branch, these warm cases send no read around the target: message 38 is already loaded, so the store opens its window without a read.
 
+## Production (`server.usebeeline.app`)
+
+Signed in through the production `/review/<secret>` link as the reviewer, Chrome at 390x844, Room `scroll-probe-2232`, target message 38. `main` ran on `web.usebeeline.app`. This branch's web build was served locally against the production server (`--disable-web-security`, as in #2228 and #2234). Each build used one browser session for its four cases.
+
+| Case | `main` run 1 | `main` runs 2 and 3 | This branch |
+|---|---|---|---|
+| Cold open | -184 px at 2 s and 6 s (rows 41–52) | 0 px | 0 px |
+| Room opened earlier | 0 px | 0 px | 0 px |
+| Same Room open now | 0 px | 0 px | 0 px |
+| Same target, new response key | 0 px | 0 px | 0 px |
+
+On production, `main` missed 1 of 12 case runs: a cold open whose read around the target answered before the Room's own rows (cause 2 in the PR). The warm misses in the step 3 report did not come back in these three runs, so they depend on timing there. On the local server the same `main` code misses every warm case (table above). This branch landed every case on both servers, and it sent no read around the target, because message 38 is already in the Room's rows. Files: `production/main-*-2s.png` (run 1) and `production/branch-*-2s.png`.
+
+## Android (API 36 emulator, real tray notifications)
+
+The dev-client APK loaded this branch's JS from Metro, then `main`'s JS (the three changed files swapped back), against the local server, signed in through `beeline://review/<secret>`. A local server cannot send FCM. So each tray notification was posted from inside the app with `expo-notifications` and the push payload (`type: message`, `channelId`, `messageId`, `workspaceId`), with the app in the background. Each notification was then tapped in the shade with `adb`. The app's foreground policy hides a notification for the Room that is open in the foreground, so "open now" means the Room screen stayed mounted while the app was in the background. The offset is the target row's top minus the list top, read from UI bounds.
+
+| Case | `main` at 2 s / 6 s | This branch at 2 s / 6 s |
+|---|---|---|
+| Room opened earlier (another Room open when the tap arrives) | target off screen, rows 49–58 (2 of 2 runs) | 18 px / 18 px (3 of 3 runs) |
+| Same Room open, at its newest rows | 74 px / 74 px (3 of 3) | 74 px / 74 px (4 of 4) |
+| Second tap, same target, after a landing | 18 px / 18 px | 18 px / 18 px (2 of 2) |
+
+At 74 px the target is fully on screen and highlighted, with the last line of message 37 above it. Both builds do the same. Files: `android/*.png`.
+
 ## The "no Room request" run
 
-The step 3 driver started a new browser and a new review sign-in for each case. The review exchange is rate limited per client. Once it limits a run, that run is signed out (`signed-out-rate-limited.png`, the GitHub sign-in screen) and sends no Room request at all. The local server logged `[review-access] rate-limited client=127.0.0.1` during those runs. When all cases ran in one browser session, every run sent its Room read. That observation came from the test driver, not the app.
+The step 3 driver started a new browser and a new review sign-in for each case. The review exchange is rate limited per client: locally, 8 exchanges in a row succeeded and the rest got 429. A run whose sign-in gets 429 is signed out (`signed-out-rate-limited.png`, the GitHub sign-in screen) and sends no Room request; that run's network log shows only the page load. With one browser session for all cases, every run sends its Room read. That observation came from the test driver, not the app.
 
-Files: `main-*-2s.png` and `branch-*-2s.png`, taken 2 s after each tap.
+Files: `main-*-2s.png` and `branch-*-2s.png` (local server), taken 2 s after each tap.

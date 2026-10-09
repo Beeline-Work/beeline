@@ -369,6 +369,42 @@ describe('server readiness', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['listRoomWorkflowRuns', { workflows: [] }],
+    ['readWorkflowRun', { runId: 'run' }],
+    ['listRoomSchedules', { schedules: [] }],
+    ['updateRoomPushState', { muted: false }],
+  ])(
+    'publishes no Room invalidation after %s, which no other Room read sees',
+    async (operation, result) => {
+      const publish = vi.fn();
+      const execute = vi.fn().mockResolvedValue(result);
+      const server = createBeelineServer({
+        database: { query: vi.fn(), transaction: vi.fn() },
+        auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+        phone: { execute } as unknown as PhoneService,
+        daemon: {} as DaemonService,
+        live: { publish } as unknown as LiveHub,
+        mediaMaximumBytes: 1,
+      });
+      servers.push(server);
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as AddressInfo).port;
+
+      // An open corner rereads its workflow runs on every Room invalidation;
+      // a read that published one made that reread loop without end.
+      const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/${operation}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ roomId: 'room-open' }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
+
   it('serves daemon release readiness without a phone bearer', async () => {
     const releaseReadiness = vi.fn().mockResolvedValue({
       daemons: [{ agentPubkey: 'a'.repeat(64), state: 'ready' }],

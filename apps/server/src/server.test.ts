@@ -610,7 +610,7 @@ describe('daemon live command push', () => {
     expect(announce).toHaveBeenCalledOnce();
   });
 
-  it('refreshes commands only for a command invalidation addressed to this agent', async () => {
+  it('refreshes commands for a command addressed to this agent or one another agent released', async () => {
     const roomId = 'room-live';
     const agentId = 'agent-live';
     const live = new LiveHub();
@@ -678,6 +678,18 @@ describe('daemon live command push', () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(commandCalls()).toBe(1);
 
+    // The worker's command ending releases a review wake held for this agent.
+    const released = nextSocketMessage(socket, 'commands');
+    live.publish({
+      type: 'invalidate',
+      roomId,
+      reason: 'postgres:agent_commands',
+      targetAgentId: 'another-agent',
+      commandReleased: true,
+    });
+    await expect(released).resolves.toMatchObject({ type: 'commands', roomId });
+    expect(commandCalls()).toBe(2);
+
     const pushed = nextSocketMessage(socket, 'commands');
     const trace = { id: 'trace-command', databaseAt: 100, emittedAt: 125 };
     live.publish({
@@ -693,7 +705,33 @@ describe('daemon live command push', () => {
         trigger: { reason: 'postgres:agent_commands', trace },
       }),
     );
-    expect(commandCalls()).toBe(2);
+    expect(commandCalls()).toBe(3);
+  });
+
+  it('answers a phone ping with a pong without touching the database', async () => {
+    const query = vi.fn();
+    const server = createBeelineServer({
+      database: { query, transaction: vi.fn() },
+      auth: { authenticatePhone: vi.fn().mockResolvedValue('reader') } as unknown as TokenAuth,
+      phone: { canReadRooms: canReadRoomsFrom(async () => true) } as unknown as PhoneService,
+      daemon: { execute: vi.fn() } as unknown as DaemonService,
+      live: new LiveHub(),
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone-token']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    query.mockClear();
+    const pong = nextSocketMessage(socket, 'pong');
+    socket.send(JSON.stringify({ type: 'ping' }));
+    await expect(pong).resolves.toEqual({ type: 'pong' });
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('sends read-mark reconciliation to reader devices without replaying a daemon inbox', async () => {

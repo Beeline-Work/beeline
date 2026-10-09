@@ -101,8 +101,14 @@ BEGIN
       -- its own parent Room and opener, exactly as a membership push does, so
       -- the agent-wide wake can start that corner's intake directly instead
       -- of waiting for the next discovery reconciliation.
+      -- A claimed command that ends releases the corner: a review wake held
+      -- while this agent worked becomes deliverable with no write of its own.
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
-        'roomId', COALESCE(NEW.room_id, OLD.room_id), 'agentId', COALESCE(NEW.agent_id, OLD.agent_id))
+        'roomId', COALESCE(NEW.room_id, OLD.room_id), 'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
+        'released', CASE
+          WHEN TG_OP = 'UPDATE' THEN OLD.state = 'claimed' AND NEW.state <> 'claimed'
+          WHEN TG_OP = 'DELETE' THEN OLD.state = 'claimed'
+          ELSE false END)
         || COALESCE((
           SELECT jsonb_build_object(
             'parentRoomId', room.parent_id,
@@ -287,6 +293,8 @@ interface LiveNotificationPayload {
   /** Parent Room of a corner whose list status inputs (turn status, lifecycle, close) changed. */
   cornerParentId?: string;
   pending?: boolean;
+  /** An agent_commands row left `claimed`. */
+  released?: boolean;
   repositoryChanged?: boolean;
   installationId?: string;
   repositoryId?: string;
@@ -336,6 +344,7 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
         ? { cornerParentId: parsed.cornerParentId }
         : {}),
       ...(typeof parsed.pending === 'boolean' ? { pending: parsed.pending } : {}),
+      ...(parsed.released === true ? { released: true } : {}),
       ...(typeof parsed.repositoryChanged === 'boolean'
         ? { repositoryChanged: parsed.repositoryChanged } : {}),
       ...(parsed.installationId !== undefined ? { installationId: String(parsed.installationId) } : {}),
@@ -701,6 +710,7 @@ export class PostgresLiveListener {
       ...(payload.messageId ? { messageId: payload.messageId } : {}),
       ...(payload.requestId ? { requestId: payload.requestId } : {}),
       ...(payload.table === 'agent_commands' ? { targetAgentId: payload.agentId } : {}),
+      ...(payload.table === 'agent_commands' && payload.released ? { commandReleased: true } : {}),
       ...(payload.table === 'memberships' && payload.identityId
         ? { targetAgentId: payload.identityId }
         : {}),

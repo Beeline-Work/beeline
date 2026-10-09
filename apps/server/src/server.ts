@@ -70,6 +70,9 @@ const MAX_LIVE_SOCKET_TASKS = 8_192;
 const MAX_LIVE_SOCKET_QUEUED_BYTES = 2 * 1024 * 1024;
 const MAX_LIVE_ROOMS_PER_SOCKET = 8_192;
 const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
+/** A phone pings its open socket while foreground; any answer proves the path is alive. */
+const LIVE_PING_FRAME = JSON.stringify({ type: 'ping' });
+const LIVE_PONG_FRAME = JSON.stringify({ type: 'pong' });
 /** Machine sockets authenticate per agent after upgrade; cap them per client address. */
 const MAX_MACHINE_SOCKETS_PER_CLIENT = 8;
 /**
@@ -694,6 +697,12 @@ export function createBeelineServer(options: ServerOptions): Server {
         const frameBytes = Array.isArray(raw)
           ? raw.reduce((total, part) => total + part.length, 0)
           : raw.byteLength;
+        // The phone's liveness ping needs no database work, so it never
+        // waits behind the admission queue.
+        if (frameBytes <= 32 && raw.toString() === LIVE_PING_FRAME) {
+          sendLive(LIVE_PONG_FRAME);
+          return;
+        }
         if (
           socketTasks >= MAX_LIVE_SOCKET_TASKS ||
           socketQueuedBytes + frameBytes > MAX_LIVE_SOCKET_QUEUED_BYTES

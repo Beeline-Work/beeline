@@ -1444,11 +1444,11 @@ describe('Reproduction CI-1: a red head wakes the implementer once its checks fi
     ...running,
     checks: [{ name: 'Body suite', status: 'failed' }, { name: 'Server suite', status: 'passed' }],
   };
-  async function checkRun(cornerId: string, name: string, conclusion: string) {
+  async function checkRun(cornerId: string, name: string, conclusion: string, headSha = SHA) {
     await github.processWebhook('check_run', {
       installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' }, action: 'completed',
       check_run: { id: 9, name, status: 'completed', conclusion,
-        check_suite: { head_branch: branchOf(cornerId), head_sha: SHA } },
+        check_suite: { head_branch: branchOf(cornerId), head_sha: headSha } },
     });
   }
   async function redWhileRunning(): Promise<string> {
@@ -1485,6 +1485,32 @@ describe('Reproduction CI-1: a red head wakes the implementer once its checks fi
     await reconcileCornerMergeBlockers(db, cornerId);
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
     expect(await currentState(cornerId)).toBe('implement');
+  });
+
+  it('the implementer takes the fix turn and its push reaches review with no person in the loop', async () => {
+    const cornerId = await redWhileRunning();
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
+    await checkRun(cornerId, 'Server suite', 'success');
+    const [fix] = (await commands(A, cornerId)).filter((command) => command.reason === 'corner_check');
+    // The turn names the failing job of a finished run, whose log GitHub now serves.
+    const source = await db.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [fix!.sourceMessageId]);
+    expect(source.rows[0]!.text).toContain('failing Body suite');
+    await claim(fix!);
+    await result(fix!, 'Fixed the Body suite failure and pushed.');
+    const repaired = '9'.repeat(40);
+    await pushToCorner(cornerId, repaired);
+    expect(await currentState(cornerId)).toBe('checks');
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce({
+      state: 'passed', total: 2, failing: [],
+      checks: [{ name: 'Body suite', status: 'passed' }, { name: 'Server suite', status: 'passed' }],
+    });
+    await checkRun(cornerId, 'Body suite', 'success', repaired);
+    expect(await currentState(cornerId)).toBe('review');
+    expect(await reasons(cornerId, B)).toEqual(['subscribed_event']);
+    const people = await db.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation<>'system'`, [cornerId, H]);
+    expect(people.rowCount).toBe(0);
   });
 
   it('tells the requester once when a check stays pending for an hour', async () => {

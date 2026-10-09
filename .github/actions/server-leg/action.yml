@@ -96,6 +96,7 @@ runs:
         image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
         image_ref="registry.fly.io/beeline-server:$image_label"
         flyctl deploy . \
+          --local-only \
           --config fly.beeline-server.toml \
           --dockerfile apps/server/Dockerfile \
           --app beeline-server \

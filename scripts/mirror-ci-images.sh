@@ -8,9 +8,15 @@ sudo apt-get install -y -qq skopeo
 
 mirror() {
   local source=$1 destination=$2 digest=$3
-  skopeo copy --all --preserve-digests \
+  # Google's Docker Hub cache serves the same digest when Hub rate limits
+  # anonymous CI runners. The digest check below keeps this fallback exact.
+  if ! skopeo copy --all --preserve-digests \
     "docker://docker.io/$source@$digest" \
-    "docker://ghcr.io/beeline-work/$destination"
+    "docker://ghcr.io/beeline-work/$destination"; then
+    skopeo copy --all --preserve-digests \
+      "docker://mirror.gcr.io/$source@$digest" \
+      "docker://ghcr.io/beeline-work/$destination"
+  fi
   local mirrored_digest
   mirrored_digest="sha256:$(skopeo inspect --raw "docker://ghcr.io/beeline-work/$destination" | sha256sum | cut -d' ' -f1)"
   test "$mirrored_digest" = "$digest" || {

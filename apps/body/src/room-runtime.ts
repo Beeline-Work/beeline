@@ -407,6 +407,7 @@ export async function removeCornerWorktreeAndBranches(
     if (head === localRef) {
       throw new Error(`refusing to delete repository HEAD ${localRef}`);
     }
+    await assertLocalBranchPublished(worktree);
   }
 
   // An open pull request's head branch is recoverable work, not debris. Its
@@ -447,22 +448,7 @@ async function assertCornerWorktreePublished(worktree: CornerWorktree): Promise<
   ).stdout.trim();
   if (await status()) throw new Error(`corner ${worktree.cornerId} has unpushed working-tree work`);
 
-  let published = await originContains(worktree.gitCommonDir, originalHead);
-  if (!published) {
-    await execFileAsync(
-      'git',
-      [
-        `--git-dir=${worktree.gitCommonDir}`,
-        'fetch',
-        '--prune',
-        'origin',
-        '+refs/heads/*:refs/remotes/origin/*',
-      ],
-      { env: githubGitEnv(worktree.token), maxBuffer: 4 * 1024 * 1024 },
-    );
-    published = await originContains(worktree.gitCommonDir, originalHead);
-  }
-  if (!published) throw new Error(`corner ${worktree.cornerId} has unpushed commits`);
+  await assertPublishedOnOrigin(worktree.gitCommonDir, originalHead, worktree.cornerId, worktree.token);
 
   const settledHead = (
     await execFileAsync('git', ['-C', worktree.path, 'rev-parse', '--verify', 'HEAD'])
@@ -472,9 +458,50 @@ async function assertCornerWorktreePublished(worktree: CornerWorktree): Promise<
   }
 }
 
-/** The exact, permanent fault `assertCornerWorktreePublished` throws for an unpublished HEAD. */
-function hasUnpushedCommits(error: unknown): boolean {
-  return error instanceof Error && / has unpushed commits$/.test(error.message);
+/**
+ * Same publish proof as `assertCornerWorktreePublished`, for the folder-gone
+ * path where only the local branch ref remains to prove ownership: nothing
+ * checks its commits against origin before this is called.
+ */
+async function assertLocalBranchPublished(worktree: CornerWorktree): Promise<void> {
+  const head = (
+    await execFileAsync('git', [
+      `--git-dir=${worktree.gitCommonDir}`,
+      'rev-parse',
+      '--verify',
+      `refs/heads/${worktree.branch}`,
+    ])
+  ).stdout.trim();
+  await assertPublishedOnOrigin(worktree.gitCommonDir, head, worktree.cornerId, worktree.token);
+}
+
+async function assertPublishedOnOrigin(
+  gitCommonDir: string,
+  head: string,
+  cornerId: string,
+  token: string,
+): Promise<void> {
+  let published = await originContains(gitCommonDir, head);
+  if (!published) {
+    await execFileAsync(
+      'git',
+      [
+        `--git-dir=${gitCommonDir}`,
+        'fetch',
+        '--prune',
+        'origin',
+        '+refs/heads/*:refs/remotes/origin/*',
+      ],
+      { env: githubGitEnv(token), maxBuffer: 4 * 1024 * 1024 },
+    );
+    published = await originContains(gitCommonDir, head);
+  }
+  if (!published) throw new Error(`corner ${cornerId} has unpushed commits`);
+}
+
+/** The exact, permanent faults cleanup throws for work nothing will ever push. */
+function hasUnpublishedWork(error: unknown): boolean {
+  return error instanceof Error && / has unpushed (?:commits|working-tree work)$/.test(error.message);
 }
 
 async function originContains(gitCommonDir: string, head: string): Promise<boolean> {
@@ -607,7 +634,11 @@ export class RoomRuntimeCoordinator {
     // Optional on purpose: test stubs of the API surface predate the wake.
     this.options.daemonApi.setRoomsChangedListener?.((event) => {
       if (event?.repositoryChanged) {
-        if (event.roomId) this.invalidateParentRepository(event.roomId);
+        if (event.roomId) {
+          this.invalidateParentRepository(event.roomId);
+          void this.refreshRoomCorners(event.roomId);
+          return;
+        }
         this.wakeDiscovery();
         return;
       }
@@ -1421,6 +1452,35 @@ export class RoomRuntimeCoordinator {
     this.tokenFlights.delete(roomId);
   }
 
+  /**
+   * A repository-change event names its own Room, so only that Room's
+   * corners need a fresh listing; re-listing every Room's corners for one
+   * Room's push would repeat that read for every other Room on each push.
+   * Only new or newly-unarchived corners are started here - removals and
+   * archived-corner cleanup stay on the regular reconcile pass.
+   */
+  private async refreshRoomCorners(roomId: string): Promise<void> {
+    if (this.stopped) return;
+    try {
+      const result = await this.options.daemonApi.execute('listRoomCorners', { roomId });
+      for (const corner of result.corners) {
+        this.monolithCornerParents.set(corner.cornerId, roomId);
+        if (corner.archived) continue;
+        this.surfaceHealth.discover(corner.cornerId, 'corner');
+        this.roomRemovalConfirmations.delete(corner.cornerId);
+        if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) continue;
+        await this.watchCorner({
+          cornerId: corner.cornerId,
+          parentRoomId: roomId,
+          ...(corner.createdBy ? { openedBy: corner.createdBy } : {}),
+        });
+      }
+    } catch (error) {
+      console.error(`[thin-core] scoped corner refresh failed for Room ${roomId}:`, error);
+      this.wakeDiscovery();
+    }
+  }
+
   private async parentRepositoryState(roomId: string): Promise<RoomRepositoryStateResult> {
     const cached = this.repositoryStateCache.get(roomId);
     if (cached && cached.until > this.now()) return cached.value;
@@ -1545,12 +1605,13 @@ export class RoomRuntimeCoordinator {
       try {
         await this.reapCornerWorktree(worktree);
       } catch (error) {
-        if (hasUnpushedCommits(error)) {
-          // Nothing will ever push these commits for an abandoned corner, so
-          // retrying is pure waste. Keep the checkout and its commits, report
-          // the fault once, and stop spending reconciliation time on it.
+        if (hasUnpublishedWork(error)) {
+          // Nothing will ever push this work for an abandoned corner, so
+          // retrying is pure waste. Keep the checkout and its commits or
+          // working-tree changes, report the fault once, and stop spending
+          // reconciliation time on it.
           this.archiveCleanupAbandoned.add(cornerId);
-          console.error(`[thin-core] corner ${cornerId} branch cleanup abandoned; unpushed commits kept:`, error);
+          console.error(`[thin-core] corner ${cornerId} branch cleanup abandoned; unpublished work kept:`, error);
           continue;
         }
         this.deferArchiveCleanup(cornerId);

@@ -1475,6 +1475,11 @@ ALTER TABLE workspace_skill_versions
 -- A workflow save is synchronous, inside one tool call, never a queued
 -- institutional_memory_jobs row: save_workflow writes NULL here.
 ALTER TABLE workspace_skill_versions ALTER COLUMN source_job_id DROP NOT NULL;
+-- delete_skill archives the row and records who deleted it and the messages
+-- that justified it; the versions stay. A later save of the slug restores it.
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS deleted_by text;
+ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS deleted_source_message_ids text[];
 
 CREATE TABLE IF NOT EXISTS institutional_review_findings (
   id uuid PRIMARY KEY,

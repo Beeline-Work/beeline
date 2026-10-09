@@ -1,6 +1,7 @@
 import { activeWorkflowRunIds } from './workflow-admin.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  INSTITUTIONAL_MEMORY_SOURCE_MESSAGE_MAX,
   WORKSPACE_SKILL_DESCRIPTION_MAX_LENGTH,
   WORKSPACE_SKILL_MARKDOWN_MAX_BYTES,
   WORKSPACE_SKILL_SLUG_MAX_LENGTH,
@@ -135,10 +136,11 @@ export async function applySkillRevision(
       await db.query<{
         id: string;
         kind: 'procedure' | 'workflow';
+        state: 'active' | 'stale' | 'archived';
         current_version: number;
         current_bytes: number;
       }>(
-        `SELECT skill.id,skill.kind,skill.current_version,
+        `SELECT skill.id,skill.kind,skill.state,skill.current_version,
                 octet_length(convert_to(version.markdown,'UTF8')) current_bytes
          FROM workspace_skills skill
          JOIN workspace_skill_versions version
@@ -161,12 +163,13 @@ export async function applySkillRevision(
         [input.workspaceId],
       )
     ).rows[0];
-    const counted = Boolean(current);
+    // A deleted (archived) or stale slug saved again adds to both totals.
+    const counted = current?.state === 'active';
     if (!counted && Number(totals?.active_count ?? 0) >= WORKSPACE_SKILL_ACTIVE_MAX) {
       throw new Error('workspace skill active-count cap exceeded');
     }
     const nextBytes =
-      Number(totals?.active_bytes ?? 0) - (counted ? current!.current_bytes : 0) + markdownBytes;
+      Number(totals?.active_bytes ?? 0) - (counted ? current.current_bytes : 0) + markdownBytes;
     if (nextBytes > WORKSPACE_SKILL_ACTIVE_BYTES_MAX) {
       throw new Error('workspace skill active-byte cap exceeded');
     }
@@ -263,6 +266,81 @@ export async function saveSkill(
   if (afterCommit) afterCommit(findSimilar);
   else await findSimilar(database);
   return result;
+}
+
+/**
+ * Soft-delete one procedure or workflow by slug, with the same authority as
+ * save_skill: any agent turn in a Room of the skill's Workspace. The caller
+ * must name the current version and cite current messages in this Room, the
+ * turn's root request among them. The row and every version stay for history;
+ * saving the same slug again restores it. A run already in progress keeps its
+ * pinned contract version.
+ */
+export async function deleteSkill(
+  database: SqlDatabase,
+  command: CommandRow,
+  input: { slug: unknown; version: unknown; sourceMessageIds: unknown },
+): Promise<{ slug: string; kind: 'procedure' | 'workflow'; version: number; deleted: true }> {
+  const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
+  if (!WORKSPACE_SKILL_SLUG_PATTERN.test(slug) || slug.length > WORKSPACE_SKILL_SLUG_MAX_LENGTH) {
+    throw new Error('skill slug is invalid');
+  }
+  const version = input.version;
+  if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
+    throw new Error('skill version is invalid');
+  }
+  const sources = input.sourceMessageIds;
+  if (
+    !Array.isArray(sources) ||
+    sources.length === 0 ||
+    sources.length > INSTITUTIONAL_MEMORY_SOURCE_MESSAGE_MAX ||
+    !sources.every((id): id is string => typeof id === 'string' && id.length > 0)
+  ) {
+    throw new Error('skill delete source messages are invalid');
+  }
+  if (!sources.includes(command.root_source_message_id)) {
+    throw new Error('skill delete must cite its root request message');
+  }
+  return database.transaction(async (db) => {
+    const room = (
+      await db.query<{ workspace_id: string }>(`SELECT workspace_id FROM rooms WHERE id=$1`, [
+        command.room_id,
+      ])
+    ).rows[0];
+    if (!room) throw new Error('skill room not found');
+    const validSources = await db.query(
+      `SELECT id FROM messages WHERE room_id=$1 AND id=ANY($2::text[])
+         AND deleted_at IS NULL AND presentation='message'`,
+      [command.room_id, sources],
+    );
+    if (validSources.rowCount !== new Set(sources).size) {
+      throw new Error('skill delete cites an unavailable source');
+    }
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      `workspace-skill:${room.workspace_id}:${slug}`,
+    ]);
+    const current = (
+      await db.query<{ id: string; kind: 'procedure' | 'workflow'; current_version: number }>(
+        `SELECT id,kind,current_version FROM workspace_skills
+         WHERE workspace_id=$1 AND slug=$2 AND state='active' FOR UPDATE`,
+        [room.workspace_id, slug],
+      )
+    ).rows[0];
+    if (!current) throw new Error(`no active procedure or workflow is named ${slug}`);
+    if (current.current_version !== version) {
+      throw new Error(
+        `${slug} is at version ${current.current_version}, not ${version}; load it again before deleting`,
+      );
+    }
+    await db.query(
+      `UPDATE workspace_skills
+       SET state='archived',revision=revision+1,updated_at=now(),
+           deleted_at=now(),deleted_by=$2,deleted_source_message_ids=$3
+       WHERE id=$1`,
+      [current.id, command.agent_id, sources],
+    );
+    return { slug, kind: current.kind, version, deleted: true };
+  });
 }
 
 async function similarWorkspaceSkills(

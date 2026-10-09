@@ -10,12 +10,17 @@ import {
 import {
   WORKSPACE_SKILL_ACTIVE_MAX,
   applyWorkspaceSkillProposal,
+  deleteSkill,
   loadWorkspaceSkill,
   saveSkill,
 } from './institutional-skills.js';
 import { PgliteDatabase } from './test-support.js';
 import { saveWorkflow, startWorkflow } from './workflow-runs.js';
 import { pgvectorLiteral } from './institutional-memory-embeddings.js';
+import {
+  INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES,
+  INSTITUTIONAL_SKILL_INDEX_MAX_BYTES,
+} from '@beeline/api-contract/daemon';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000201';
 const ROOM = '20000000-0000-4000-8000-000000000201';
@@ -567,5 +572,198 @@ describe('save_skill', () => {
       slug: 'cartoon-short-video',
     });
     expect(loaded.markdown).toContain('Keep every shot under four seconds.');
+  });
+});
+
+const SHIP_RELEASE = {
+  version: 1,
+  name: 'ship-release',
+  description: 'Ship a release safely',
+  roles: ['implementer'],
+  start: 'implement',
+  handoffs: {
+    implement: { role: 'implementer', requires: [], on: { done: 'land' } },
+    land: { kind: 'terminal', status: 'done' },
+  },
+};
+
+describe('snapshot skill index budget', () => {
+  const turn = (requestId: string): CommandRow => ({ ...command, turn_request_id: requestId });
+  const serve = async (requestId: string) =>
+    (
+      await database.query<{
+        item_ids: string[];
+        workspace_fact_bytes: number;
+        skill_index_bytes: number;
+        total_bytes: number;
+        estimated_tokens: number;
+      }>(
+        `SELECT item_ids,workspace_fact_bytes,skill_index_bytes,total_bytes,estimated_tokens
+         FROM institutional_context_serves WHERE request_id=$1`,
+        [requestId],
+      )
+    ).rows[0]!;
+
+  it('lists unrelated procedures and workflows beside a full fact budget, workspace-core first', async () => {
+    // Twenty matching facts: more than the fact budget holds.
+    await database.query(
+      `INSERT INTO institutional_memory_items
+       (id,workspace_id,kind,canonical_key,body,source_room_id,source_message_id,
+        audience_kind,confidence,version,created_by_command_id,keywords)
+       SELECT md5('release-fact-'||i::text)::uuid,$1,'workspace_fact','release.'||i::text,
+         'Release migration fact '||i::text||': keep concurrent indexes outside transactions.',
+         $2,$3,'workspace',0.9,1,'fixture',ARRAY['release','migrations']
+       FROM generate_series(1,20) AS i`,
+      [WORKSPACE, ROOM, ROOT],
+    );
+    const before = await getInstitutionalContext(database, turn('budget-before'));
+    const beforeServe = await serve('budget-before');
+    expect(beforeServe.skill_index_bytes).toBe(0);
+
+    await saveSkill(database, command, {
+      slug: 'cartoon-short-video',
+      description: 'Storyboard render cartoon clip',
+      markdown: 'Keep every shot under four seconds.',
+    });
+    await saveWorkflow(database, command, { contract: describedWorkflow(SHIP_RELEASE) });
+    await saveSkill(database, command, {
+      slug: 'workspace-core',
+      description: 'Load at task start: machines and checklists',
+      markdown: 'Niglet reaches Fly; Ruby does not.',
+    });
+    const after = await getInstitutionalContext(database, turn('budget-after'));
+    const afterServe = await serve('budget-after');
+
+    // The request is about release migrations; only ship-release shares a word.
+    const lines = after.text.split('\n');
+    const skillLines = lines.filter((line) => /^- (Procedure|Workflow) /.test(line));
+    expect(skillLines[0]).toBe(
+      '- Procedure workspace-core (load_workspace_skill): Load at task start: machines and checklists',
+    );
+    expect(skillLines).toContain(
+      '- Procedure cartoon-short-video (load_workspace_skill): Storyboard render cartoon clip',
+    );
+    expect(skillLines).toContain('- Workflow ship-release (start_workflow): Ship a release safely');
+
+    // Facts keep exactly what they had: same items, same bytes, inside their cap.
+    expect(after.itemIds).toEqual(before.itemIds);
+    expect(afterServe.workspace_fact_bytes).toBe(beforeServe.workspace_fact_bytes);
+    expect(afterServe.workspace_fact_bytes).toBeLessThanOrEqual(INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES);
+    expect(afterServe.skill_index_bytes).toBeGreaterThan(0);
+    expect(afterServe.skill_index_bytes).toBeLessThanOrEqual(INSTITUTIONAL_SKILL_INDEX_MAX_BYTES);
+    expect(afterServe.estimated_tokens).toBeLessThanOrEqual(500);
+    console.log(
+      `snapshot bytes before: facts=${beforeServe.workspace_fact_bytes} skills=${beforeServe.skill_index_bytes} total=${beforeServe.total_bytes}; ` +
+        `after: facts=${afterServe.workspace_fact_bytes} skills=${afterServe.skill_index_bytes} total=${afterServe.total_bytes} tokens=${afterServe.estimated_tokens}`,
+    );
+  });
+
+  it('keeps the skill index inside its own budget when the Workspace has many skills', async () => {
+    for (let index = 0; index < 30; index++) {
+      await saveSkill(database, command, {
+        slug: `procedure-number-${index}`,
+        description: `Unrelated procedure number ${index} for testing`,
+        markdown: 'body',
+      });
+    }
+    await getInstitutionalContext(database, turn('many-skills'));
+    const row = await serve('many-skills');
+    expect(row.skill_index_bytes).toBeGreaterThan(INSTITUTIONAL_SKILL_INDEX_MAX_BYTES - 120);
+    expect(row.skill_index_bytes).toBeLessThanOrEqual(INSTITUTIONAL_SKILL_INDEX_MAX_BYTES);
+  });
+});
+
+describe('delete_skill', () => {
+  const save = () =>
+    saveSkill(database, command, {
+      slug: 'cartoon-short-video',
+      description: 'Storyboard render cartoon clip',
+      markdown: 'Keep every shot under four seconds.',
+    });
+  const load = () =>
+    loadWorkspaceSkill(database, command, {
+      agentId: OTHER_AGENT,
+      roomId: ROOM,
+      slug: 'cartoon-short-video',
+    });
+
+  it('soft-deletes a procedure at its current version, keeps its history, and drops it from the index', async () => {
+    await save();
+    await save();
+    expect((await load()).version).toBe(2);
+    const deleted = await deleteSkill(database, command, {
+      slug: 'cartoon-short-video',
+      version: 2,
+      sourceMessageIds: [ROOT],
+    });
+    expect(deleted).toEqual({ slug: 'cartoon-short-video', kind: 'procedure', version: 2, deleted: true });
+    await expect(load()).rejects.toThrow('workspace skill is unavailable');
+    const context = await getInstitutionalContext(database, { ...command, turn_request_id: 'after-delete' });
+    expect(context.text).not.toContain('cartoon-short-video');
+    const row = (
+      await database.query<{ state: string; deleted_by: string; deleted_source_message_ids: string[] }>(
+        `SELECT state,deleted_by,deleted_source_message_ids FROM workspace_skills WHERE slug='cartoon-short-video'`,
+      )
+    ).rows[0];
+    expect(row).toEqual({ state: 'archived', deleted_by: OTHER_AGENT, deleted_source_message_ids: [ROOT] });
+    expect(
+      (await database.query(`SELECT version FROM workspace_skill_versions version
+         JOIN workspace_skills skill ON skill.id=version.skill_id WHERE skill.slug='cartoon-short-video'`)).rowCount,
+    ).toBe(2);
+
+    // Saving the slug again restores it as the next version.
+    expect((await save()).version).toBe(3);
+    expect((await load()).version).toBe(3);
+  });
+
+  it('deletes a workflow the same way', async () => {
+    await saveWorkflow(database, command, { contract: describedWorkflow(SHIP_RELEASE) });
+    const deleted = await deleteSkill(database, command, {
+      slug: 'ship-release',
+      version: 1,
+      sourceMessageIds: [ROOT],
+    });
+    expect(deleted.kind).toBe('workflow');
+    await expect(
+      startWorkflow(database, command, { name: 'ship-release', roleBindings: { implementer: OTHER_AGENT } }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses a stale version, a missing root citation, an unavailable source, and an unknown slug', async () => {
+    await save();
+    await save();
+    await expect(
+      deleteSkill(database, command, { slug: 'cartoon-short-video', version: 1, sourceMessageIds: [ROOT] }),
+    ).rejects.toThrow('cartoon-short-video is at version 2, not 1');
+    await expect(
+      deleteSkill(database, command, { slug: 'cartoon-short-video', version: 2, sourceMessageIds: ['review-finding'] }),
+    ).rejects.toThrow('skill delete must cite its root request message');
+    await expect(
+      deleteSkill(database, command, {
+        slug: 'cartoon-short-video',
+        version: 2,
+        sourceMessageIds: [ROOT, 'review-finding'],
+      }),
+    ).rejects.toThrow('skill delete cites an unavailable source');
+    await expect(
+      deleteSkill(database, command, { slug: 'never-saved', version: 1, sourceMessageIds: [ROOT] }),
+    ).rejects.toThrow('no active procedure or workflow is named never-saved');
+    await expect(
+      deleteSkill(database, command, { slug: 'cartoon-short-video', version: 2, sourceMessageIds: [] }),
+    ).rejects.toThrow('skill delete source messages are invalid');
+    expect((await load()).version).toBe(2);
+  });
+
+  it('counts a deleted slug saved again against the active cap', async () => {
+    await save();
+    await deleteSkill(database, command, { slug: 'cartoon-short-video', version: 1, sourceMessageIds: [ROOT] });
+    for (let index = 0; index < WORKSPACE_SKILL_ACTIVE_MAX; index++) {
+      await saveSkill(database, command, {
+        slug: `filler-${index}`,
+        description: 'Filler',
+        markdown: 'body',
+      });
+    }
+    await expect(save()).rejects.toThrow(/active-count cap exceeded/);
   });
 });

@@ -143,12 +143,13 @@ The retired private per-agent `MEMORY.md` and `write_memory` tool are not part o
 Room/corner runtime. Institutional memory is ON by default on server and Body. No background
 review exists: the answering agent keeps memory current with `search_memory`, `save_memory`,
 `update_memory`, `delete_memory`, and an end-of-turn `report_memory_used`. Each turn receives one
-relevance-selected, command-bound snapshot capped at 1,000 UTF-8 bytes; failures omit the optional
-block. `BEELINE_INSTITUTIONAL_MEMORY_ENABLED=false` turns live memory off and
+relevance-selected, command-bound snapshot: facts capped at 1,000 UTF-8 bytes, and the procedure
+and workflow index on its own 1,000-byte budget; failures omit the optional block. `BEELINE_INSTITUTIONAL_MEMORY_ENABLED=false` turns live memory off and
 `BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED=false` turns the measurement-only mode off (set both
 to stop the feature entirely). `search_history` intersects every result with the requester,
 answering agent, and complete output audience. `save_skill` and `save_workflow` record Workspace
-procedures; turns see only their relevance-ranked catalog entry, and `load_workspace_skill` returns
+procedures; turns see only their catalog entry (`workspace-core` first, then by relevance),
+`delete_skill` soft-deletes one at its current version, and `load_workspace_skill` returns
 the procedure as quoted, non-authoritative guidance with measured use. Generated procedures are
 never installed as native harness skills. Every Workspace is enrolled at the `live` stage by
 default; the release migration advances existing `shadow`/`pilot` rows to `live` and enrolls

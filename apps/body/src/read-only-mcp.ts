@@ -404,6 +404,21 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'delete_skill',
+    description:
+      'Delete one obsolete procedure or workflow by slug. Pass the version load_workspace_skill returned; a different version is refused. Cite current Room message ids, the root request among them. History stays: saving the same slug again restores it, and a workflow run in progress keeps its pinned version.',
+    inputSchema: {
+      type: 'object',
+      required: ['slug', 'version', 'source_message_ids'],
+      properties: {
+        slug: { type: 'string', minLength: 1, maxLength: 64 },
+        version: { type: 'integer', minimum: 1 },
+        source_message_ids: MEMORY_SOURCES_SCHEMA,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'save_workflow',
     description:
       `Save a versioned Workspace workflow from the whole JSON "contract"; runs keep their pinned version. Require a nonempty summary and a does sentence for every state, each one line and at most 140 characters; hint is agent-facing. A rejection returns the rule that failed and where. Procedure: ${WORKFLOW_GUIDE_URL}`,
@@ -1756,6 +1771,7 @@ export function agentToolsFor(
       tool.name === 'search_history' ||
       tool.name === 'load_workspace_skill' ||
       tool.name === 'save_skill' ||
+      tool.name === 'delete_skill' ||
       tool.name === 'save_workflow' ||
       tool.name === 'start_workflow' ||
       tool.name === 'get_workflow_run' ||
@@ -4098,6 +4114,16 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           slug: args.slug,
           description: args.description,
           markdown: args.markdown,
+        }),
+      );
+    case 'delete_skill':
+      return JSON.stringify(
+        await daemonExecute('deleteSkill', {
+          agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          slug: args.slug,
+          version: args.version,
+          sourceMessageIds: memorySources(args),
         }),
       );
     case 'save_workflow':

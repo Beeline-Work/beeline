@@ -113,8 +113,18 @@ export const INSTITUTIONAL_RETIRED_STANDING_KEY = 'standing';
 export const INSTITUTIONAL_MEMORY_CANONICAL_KEY_MAX_LENGTH = 160;
 export const INSTITUTIONAL_MEMORY_RATIONALE_MAX_LENGTH = 500;
 export const INSTITUTIONAL_MEMORY_SOURCE_MESSAGE_MAX = 16;
-/** Everything memory adds to one turn, header included. */
+/** The saved facts memory adds to one turn, header included. */
 export const INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES = 1_000;
+/**
+ * The procedure and workflow index lines, on their own budget beside the facts
+ * above, so a turn full of matching facts still lists the Workspace's skills.
+ * A typical line is 90-110 bytes, so this holds about ten. Both budgets
+ * together are at most 2,000 bytes (about 500 tokens), a quarter of the
+ * 2,000-token p95 target (`INSTITUTIONAL_CONTEXT_TOKEN_TARGET`).
+ */
+export const INSTITUTIONAL_SKILL_INDEX_MAX_BYTES = 1_000;
+/** The always-first index line: the Workspace's own start-of-task procedure. */
+export const WORKSPACE_CORE_SKILL_SLUG = 'workspace-core';
 export const INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES = 500;
 export const INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX = 10;

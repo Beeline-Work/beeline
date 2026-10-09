@@ -59,6 +59,34 @@ describe('using-beeline Room guidance', () => {
     expect(room).toContain('Consult the using-beeline skill for Room mechanics');
   });
 
+  it('routes memory to one store each and states how each store ages out', () => {
+    const markdown = usingBeelineSkillMarkdown('test-release');
+    const memory = markdown.slice(markdown.indexOf('## Memory'), markdown.indexOf('## Connect an app'));
+    for (const tool of [
+      'save_memory',
+      'save_skill',
+      'save_workflow',
+      'start_workflow',
+      'search_history',
+      'report_memory_used',
+      'load_workspace_skill',
+      'search_memory',
+      'list_credentials',
+      'workbench_status',
+      'delete_skill',
+    ]) {
+      expect(memory, tool).toContain(tool);
+    }
+    expect(memory).toContain('No background reviewer exists');
+    expect(memory).toContain('call load_workspace_skill for `workspace-core`');
+    expect(memory).toContain('Never save "X is impossible".');
+    expect(memory).toContain('at most 2,200 characters');
+    // The upkeep and search-first rules stay in their tool descriptions.
+    expect(memory).not.toContain('Before saving, call search_memory');
+    expect(memory).not.toContain('Meaning-based matching');
+    expect(markdown.match(/X is impossible/g)).toHaveLength(1);
+  });
+
   it('tells a model it can subscribe itself, which is the point of the tool', () => {
     // A tool a model never hears about is a tool nobody calls: the welcome
     // agent could not subscribe, and someone edited a database row for it.

@@ -3079,6 +3079,32 @@ function isArtifactMime(value: unknown): value is ArtifactMimeType {
   return typeof value === 'string' && (ARTIFACT_MIME_TYPES as readonly string[]).includes(value);
 }
 
+/** The viewer cannot open `application/octet-stream`, so content that falls
+ *  through to it (inline `html`/`bytes`, or an unknown or missing extension)
+ *  is sniffed for a format the viewer renders. Unrecognized content keeps
+ *  the octet-stream type. */
+function sniffArtifactMime(bytes: Buffer, fromHtml: boolean): ArtifactMimeType {
+  const startsWith = (signature: number[], offset = 0) =>
+    signature.every((byte, index) => bytes[offset + index] === byte);
+  if (startsWith([0x25, 0x50, 0x44, 0x46, 0x2d])) return 'application/pdf';
+  if (startsWith([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png';
+  if (startsWith([0xff, 0xd8, 0xff])) return 'image/jpeg';
+  if (startsWith([0x47, 0x49, 0x46, 0x38])) return 'image/gif';
+  if (startsWith([0x52, 0x49, 0x46, 0x46]) && startsWith([0x57, 0x45, 0x42, 0x50], 8)) {
+    return 'image/webp';
+  }
+  const head = bytes
+    .subarray(0, 1024)
+    .toString('utf8')
+    .replace(/^\uFEFF/, '')
+    .trimStart()
+    .toLowerCase();
+  const prolog = head.replace(/^<\?xml[^>]*\?>\s*/, '').replace(/^(<!--[\s\S]*?-->\s*)+/, '');
+  if (prolog.startsWith('<svg')) return 'image/svg+xml';
+  if (fromHtml || /^<(!doctype html|html)[\s>]/.test(prolog)) return 'text/html';
+  return 'application/octet-stream';
+}
+
 export function postArtifactDepsFromEnv(): PostArtifactDeps {
   const scratchRoot = process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim();
   return {
@@ -3145,6 +3171,7 @@ export async function postArtifact(
       : '';
     mime = ARTIFACT_MIME_BY_EXTENSION[extension] ?? 'application/octet-stream';
   }
+  if (mime === 'application/octet-stream') mime = sniffArtifactMime(bytes, html !== undefined);
   if (!isArtifactMime(mime)) {
     throw new Error(`mime must be one of ${ARTIFACT_MIME_TYPES.join(', ')}`);
   }

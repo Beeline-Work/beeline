@@ -384,6 +384,9 @@ describe('RoomCornersList', () => {
         .join(' | ')}`,
     ).toBeTruthy();
     expect(title.props.numberOfLines).toBeUndefined();
+    // Android measures with highQuality by default and can reserve a second
+    // line it never draws; simple keeps the measured lines equal to the drawn.
+    expect(title.props.textBreakStrategy).toBe('simple');
     expect(resolvedStyle(row.props.style).minHeight).toBe(beelineThemes.obsidian.layout.row);
     expect(resolvedStyle(row.props.style).height).toBeUndefined();
   });

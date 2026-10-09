@@ -39,8 +39,10 @@ export type ArtifactMimeType = (typeof ARTIFACT_MIME_TYPES)[number];
 
 /**
  * Extensions for which `post_artifact({ path })` can infer a specific MIME.
- * An extension not listed here is still accepted, but is uploaded as
- * `application/octet-stream`. MIME remains authoritative when supplied.
+ * An extension not listed here is still accepted; its content is sniffed for
+ * a format the viewer renders, else it is uploaded as
+ * `application/octet-stream`. A supplied MIME other than octet-stream is
+ * authoritative.
  */
 export const ARTIFACT_EXTENSIONS_BY_MIME = {
   'text/html': ['.html', '.htm'],

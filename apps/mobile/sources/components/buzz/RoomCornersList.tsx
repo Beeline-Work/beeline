@@ -265,8 +265,12 @@ export function RoomCornersList({
           {/* Captain 2026-09-20: a corner's name is never truncated. It
             wraps to as many lines as it needs and the row grows with it;
             uneven row heights are the accepted cost of printing the name
-            in full. */}
-          <Text style={styles.rowTitle}>{label}</Text>
+            in full. Android's default highQuality break strategy can
+            measure a title at the wrap point as two lines yet draw one,
+            leaving an empty line; simple keeps measure and draw equal. */}
+          <Text style={styles.rowTitle} textBreakStrategy="simple">
+            {label}
+          </Text>
           <Text numberOfLines={1} style={styles.agent}>
             {line}
           </Text>

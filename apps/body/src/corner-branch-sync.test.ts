@@ -644,6 +644,98 @@ describe('a helper joining a corner it did not open', () => {
     await expect(cleanup()).resolves.toBeUndefined();
   });
 
+  it('refuses to delete a local branch with unpushed commits when its worktree folder is already gone', async () => {
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-folder-gone-unpushed-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-folder-gone-unpushed',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    // A prior reap already removed the worktree folder (through git's own
+    // `worktree remove`, so no stale administrative entry blocks a branch
+    // delete) and then crashed or lost its remote before deleting the local
+    // branch. A later, independent commit then landed on that local branch
+    // outside any worktree — exactly what plumbing a new tip onto the ref
+    // simulates — leaving it the only proof of unpublished work.
+    await execFileAsync('git', [
+      `--git-dir=${worktree.gitCommonDir}`,
+      'worktree',
+      'remove',
+      '--force',
+      worktree.path,
+    ]);
+    const parent = await git(worktree.gitCommonDir, 'rev-parse', `refs/heads/${FEATURE}`);
+    const tree = await git(worktree.gitCommonDir, 'rev-parse', `${parent}^{tree}`);
+    const unpublished = await git(
+      worktree.gitCommonDir,
+      'commit-tree',
+      tree,
+      '-p',
+      parent,
+      '-m',
+      'not pushed',
+    );
+    await git(worktree.gitCommonDir, 'update-ref', `refs/heads/${FEATURE}`, unpublished);
+
+    await expect(
+      removeCornerWorktreeAndBranches({
+        ...worktree,
+        cornerId: 'corner-folder-gone-unpushed',
+        branch: FEATURE,
+        token: 'fresh',
+      }),
+    ).rejects.toThrow(/has unpushed commits/);
+
+    expect(
+      await git(worktree.gitCommonDir, 'rev-parse', `refs/heads/${FEATURE}`),
+    ).toBe(unpublished);
+    await expect(
+      git(remote.slice('file://'.length), 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+    ).resolves.toBeTruthy();
+  });
+
+  it('deletes a published local branch whose worktree folder is already gone', async () => {
+    const { remote } = await remoteWithCornerBranch();
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-folder-gone-published-'));
+    roots.push(supervisorRoot);
+    const worktree = await materializeCornerWorktree({
+      cornerId: 'corner-folder-gone-published',
+      remote,
+      targetBranch: 'main',
+      featureBranch: FEATURE,
+      token: 'unused',
+      supervisorRoot,
+      committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
+    });
+    await execFileAsync('git', [
+      `--git-dir=${worktree.gitCommonDir}`,
+      'worktree',
+      'remove',
+      '--force',
+      worktree.path,
+    ]);
+
+    await removeCornerWorktreeAndBranches({
+      ...worktree,
+      cornerId: 'corner-folder-gone-published',
+      branch: FEATURE,
+      token: 'fresh',
+    });
+
+    await expect(
+      git(worktree.gitCommonDir, 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+    ).rejects.toThrow();
+    await expect(
+      git(remote.slice('file://'.length), 'show-ref', '--verify', `refs/heads/${FEATURE}`),
+    ).rejects.toThrow();
+  });
+
   it('cuts its first worktree from the corner branch, not from the target branch', async () => {
     const { remote } = await remoteWithCornerBranch();
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-helper-'));

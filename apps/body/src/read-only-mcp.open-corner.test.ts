@@ -511,12 +511,11 @@ describe('relay tools', () => {
       merge: { mergeability: 'clean' },
     });
     expect(door.calls.map((call) => call.operation)).toEqual([
-      'listReachableCorners',
       'getCornerRestoreState',
       'getPrChecksStatus',
     ]);
   });
-  it('passes a transcript cursor only after listing the member corner', async () => {
+  it('passes a transcript cursor straight to the target corner read', async () => {
     const door = await daemonDoor();
     const response = await callTool(
       door.origin,

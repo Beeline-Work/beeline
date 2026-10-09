@@ -1918,6 +1918,34 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       .toEqual({ archived: true });
   });
 
+  it('Reproduction R1: a corner member outside the parent Room inspects the corner; an outsider cannot', async () => {
+    const cornerId = await inReview();
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input) => github.prChecksStatus(input));
+    // A stays in the corner but leaves the parent Room.
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, A]);
+    try {
+      await expect(wiredDaemon.execute('listReachableCorners', { roomId: R }, A)).rejects.toThrow(/access denied/);
+      await expect(wiredDaemon.execute('getCornerRestoreState', { cornerId }, A))
+        .resolves.toMatchObject({ lifecycle: expect.objectContaining({ pr: expect.objectContaining({ number: 7 }) }) });
+      await expect(wiredDaemon.execute('getPrChecksStatus', { cornerId, pullRequest: 7 }, A)).resolves.toBeDefined();
+      await expect(wiredDaemon.execute('getRoomConversation', { roomId: cornerId, limit: 9, window: 'earliest' }, A))
+        .resolves.toMatchObject({ items: expect.any(Array) });
+
+      const outsider = '3'.repeat(64);
+      await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Outsider','outsider') ON CONFLICT DO NOTHING`, [outsider]);
+      await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [outsider, H]);
+      for (const [operation, input] of [
+        ['getCornerRestoreState', { cornerId }],
+        ['getPrChecksStatus', { cornerId, pullRequest: 7 }],
+        ['getRoomConversation', { roomId: cornerId, limit: 9, window: 'earliest' }],
+      ] as const)
+        await expect(wiredDaemon.execute(operation, input as never, outsider)).rejects.toThrow(/access denied/);
+    } finally {
+      await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [R, A]);
+    }
+  });
+
   it('Reproduction REACH-2: a Room and its corner read each other even when their human members differ', async () => {
     const cornerId = await open();
     const cornerOnly = '5'.repeat(64);

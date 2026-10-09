@@ -875,7 +875,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'inspect_corner',
     description:
-      'Read compact status of any corner under your Room (or, from a corner, under its parent Room) by default. Set mode to transcript for bounded oldest-first pages; pass the returned next.after and next.offset to continue, including long messages.',
+      'Read compact status of a corner you are a member of, or of any corner under a Room you are a member of, by default. Set mode to transcript for bounded oldest-first pages; pass the returned next.after and next.offset to continue, including long messages.',
     inputSchema: {
       type: 'object',
       required: ['cornerId'],
@@ -4443,7 +4443,6 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     case 'inspect_corner': {
       if (process.env.BEELINE_AGENT_DM === '1')
         throw new Error('inspect_corner requires a Room or corner turn');
-      const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
       if (typeof args.cornerId !== 'string' || !args.cornerId)
         throw new Error('cornerId is required');
       if (args.after !== undefined && (typeof args.after !== 'string' || !args.after))
@@ -4459,17 +4458,8 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
           args.mode !== 'transcript')
       )
         throw new Error('offset requires transcript mode and a nonnegative safe integer');
-      const corners = await daemonExecute('listReachableCorners', { roomId });
-      if (
-        !Array.isArray(corners.corners) ||
-        !corners.corners.some(
-          (corner) =>
-            corner &&
-            typeof corner === 'object' &&
-            (corner as Record<string, unknown>).cornerId === args.cornerId,
-        )
-      )
-        throw new Error('corner is not available in this Room');
+      // The server authorizes each read against the target corner: a member of
+      // the corner or of its parent Room reaches it; anyone else is refused.
       if (args.mode === 'transcript') {
         const page = (await daemonExecute('getRoomConversation', {
           roomId: args.cornerId,

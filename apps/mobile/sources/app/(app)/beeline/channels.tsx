@@ -1,6 +1,10 @@
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
-import { useNeedsYouCount } from '@/buzz/needs-you';
+import {
+  announceNeedsYouActivity,
+  messageCanNeedViewer,
+  useNeedsYouCount,
+} from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
@@ -97,8 +101,15 @@ import {
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
 
 const AGE_TICK_MS = 60_000;
+/**
+ * How long the first Room-list read waits for its live watch to be confirmed.
+ * Reading after the confirmation misses nothing, so no second read follows;
+ * the cached list paints meanwhile.
+ */
+const CHAT_SUBSCRIBE_WAIT_MS = 1_500;
 const COMPOSE_FAB_CLEARANCE = 80;
 const LOBBY_LIST_BOTTOM_SPACING = 24;
 const ROW_HEIGHT = 64;
@@ -191,7 +202,13 @@ export default function BuzzChannels() {
   const [workspacesConfirmed, setWorkspacesConfirmed] = useState(false);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
   const [welcomeDue, setWelcomeDue] = useState(false);
-  const needsYouCount = useNeedsYouCount(chatList?.workspace.id, chatList);
+  // Bumped by a full Room-list read and by a message that can need the
+  // viewer; prose elsewhere and tool rows never re-count the badge.
+  const [needsYouSignal, setNeedsYouSignal] = useState(0);
+  const needsYouCount = useNeedsYouCount(
+    chatList?.workspace.id,
+    needsYouSignal === 0 ? undefined : needsYouSignal,
+  );
   const cornerDropdowns = useCornerDropdowns(chatList?.chats);
   const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -226,6 +243,8 @@ export default function BuzzChannels() {
     () => deckFocusedRef.current && AppState.currentState !== 'background',
     [],
   );
+  /** Reads the hidden deck skipped; returning to it makes exactly those. */
+  const deckMissedRef = useRef({ chats: false, workspaces: false });
 
   const communities = useMemo(
     () => workspaceList?.workspaces.map(workspaceRailItem) ?? [],
@@ -329,18 +348,16 @@ export default function BuzzChannels() {
     chatScheduler.current?.force();
   }, []);
 
-  // Frames that arrived while the app was in the background were not acted
-  // on. One read on return covers them; it is never repeated on a timer.
-  useEffect(() => {
-    let backgrounded = AppState.currentState === 'background';
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'background') backgrounded = true;
-      else if (state === 'active' && backgrounded) {
-        backgrounded = false;
-        if (deckFocusedRef.current) chatScheduler.current?.signal();
-      }
-    });
-    return () => subscription.remove();
+  /**
+   * Returning to the deck reads only what it skipped while hidden: a change
+   * its socket heard but did not read. Coming back to the foreground needs
+   * nothing here, because the replaced socket's resubscribe is that read.
+   */
+  const refreshMissed = useCallback(() => {
+    const missed = deckMissedRef.current;
+    if (missed.workspaces) workspaceScheduler.current?.force();
+    if (missed.chats) chatScheduler.current?.force();
+    deckMissedRef.current = { chats: false, workspaces: false };
   }, []);
 
   const swipeableRefs = useRef<Map<string, Swipeable | null>>(new Map());
@@ -454,6 +471,7 @@ export default function BuzzChannels() {
       workspaceRefresh = new SurfaceRefreshScheduler({
         fetch: () => http.workspaces(),
         apply: (value) => {
+          deckMissedRef.current.workspaces = false;
           setWorkspaceList(value);
           setWorkspacesConfirmed(true);
           void mobileSurfaceCache.write(workspaceCacheAddress, value, isWorkspaceListView);
@@ -493,6 +511,9 @@ export default function BuzzChannels() {
         // Deltas that landed while a chats read was in flight: the read may
         // predate them, and no later read comes to correct it.
         let readInFlight = false;
+        // The first read waits for the watch's confirmation, so the
+        // confirmations themselves need no covering read of their own.
+        let firstReadStarted = false;
         let deltasDuringRead: ChatListDelta[] = [];
         // Rooms the socket delivered any frame for since the last applied read.
         const heardRooms = new Set<string>();
@@ -516,9 +537,19 @@ export default function BuzzChannels() {
             if (live && 'roomId' in live) heardRooms.add(live.roomId);
             if (live?.type === 'message-delta' || live?.type === 'turn-delta') {
               if (readInFlight) deltasDuringRead.push(live);
+              if (
+                live.type === 'message-delta' &&
+                messageCanNeedViewer(live.message, nextIdentity.publicKey)
+              ) {
+                setNeedsYouSignal((value) => value + 1);
+                announceNeedsYouActivity();
+              }
               const needsRead = !heldChats || chatListDeltaNeedsRead(heldChats, live);
               if (heldChats) paintChats(applyChatListDelta(heldChats, live));
-              if (needsRead && deckVisible()) chatsRefresh?.signal();
+              if (needsRead) {
+                if (deckVisible()) chatsRefresh?.signal();
+                else deckMissedRef.current.chats = true;
+              }
               return;
             }
             // A corner-status hint is a child corner's working/waiting change,
@@ -526,7 +557,9 @@ export default function BuzzChannels() {
             if (isDraftFrame(event)) return;
             // A committed-row invalidation announces the delta that follows it.
             if (live?.type === 'invalidate' && live.deliveryId) return;
+            if (live?.type === 'subscribed' && !firstReadStarted) return;
             if (deckVisible()) chatsRefresh?.signal();
+            else deckMissedRef.current.chats = true;
           });
           previous?.();
           if (cancelled || selectedWorkspaceRemoved || generation !== chatWatchGeneration) {
@@ -537,6 +570,7 @@ export default function BuzzChannels() {
         };
         chatsRefresh = new SurfaceRefreshScheduler({
           fetch: async () => {
+            firstReadStarted = true;
             deltasDuringRead = [];
             readInFlight = true;
             try {
@@ -546,6 +580,7 @@ export default function BuzzChannels() {
             }
           },
           apply: (read) => {
+            deckMissedRef.current.chats = false;
             const missedLive =
               liveReadApplied &&
               heldChats !== null &&
@@ -557,6 +592,7 @@ export default function BuzzChannels() {
               keepUnavailableChatFacts(heldChats, read),
             );
             paintChats(value);
+            setNeedsYouSignal((signal) => signal + 1);
             if (missedLive) nextTransport.reconnectLive();
             setRefreshing(false);
             setError(null);
@@ -577,7 +613,10 @@ export default function BuzzChannels() {
         chatScheduler.current = chatsRefresh;
         // Seed from cache when present; otherwise the first chats GET apply
         // reinstalls so the deck never watches a Workspace id.
-        chatListenReady = installChatWatch(cachedChats?.watchFilters ?? []);
+        const cachedFilters = cachedChats?.watchFilters ?? [];
+        chatListenReady = installChatWatch(cachedFilters).then(() =>
+          sharedLiveConnection().whenSubscribed(cachedFilters, CHAT_SUBSCRIBE_WAIT_MS),
+        );
       }
 
       const workspaceListenReady = relay
@@ -587,6 +626,7 @@ export default function BuzzChannels() {
           ],
           () => {
             if (deckVisible()) workspaceRefresh?.signal();
+            else deckMissedRef.current.workspaces = true;
           },
         )
         .then((stop) => {
@@ -614,14 +654,14 @@ export default function BuzzChannels() {
   useFocusEffect(
     useCallback(() => {
       deckFocusedRef.current = true;
-      refreshNow();
+      refreshMissed();
       setAgeNow(Date.now());
       const timer = setInterval(() => setAgeNow(Date.now()), AGE_TICK_MS);
       return () => {
         deckFocusedRef.current = false;
         clearInterval(timer);
       };
-    }, [activeCommunityId, refreshNow]),
+    }, [activeCommunityId, refreshMissed]),
   );
 
   useEffect(() => {

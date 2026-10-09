@@ -9,7 +9,7 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 const wire = vi.hoisted(() => ({ listener: undefined as any }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { wire.listener = listener; return () => undefined; } }) }));
 afterEach(() => { read.mockReset(); read.mockResolvedValue({ workflows: [] }); });
-import { liveRoomRuns, pickRoomWorkflowRun, useRoomWorkflowRun } from './use-room-workflow-run';
+import { liveRoomRuns, pickRoomWorkflowRun, useRoomWorkflowRun, useRoomWorkflowRuns } from './use-room-workflow-run';
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 
 it('CWM1: the latest handoff stays primary, including a live state named stuck', () => {
@@ -41,6 +41,25 @@ it('Reproduction R9a: focused corner opens with exactly one workflow read', asyn
   } finally { await act(async () => tree.unmount()); }
 });
 
+
+it('a corner and its run page share one workflow read, and prose never repeats it', async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  function Corner() { useRoomWorkflowRun('corner-shared'); return null; }
+  function RunPage() { useRoomWorkflowRuns('corner-shared'); return null; }
+  let tree: any;
+  try {
+    await act(async () => { tree = create(<><Corner /><RunPage /></>); });
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      wire.listener({ monolithLive: { type: 'subscribed', roomId: 'corner-shared' } });
+      for (let n = 0; n < 20; n++)
+        wire.listener({ monolithLive: { type: 'message-delta', roomId: 'corner-shared', message: { presentation: 'message' } } });
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => wire.listener({ monolithLive: { type: 'message-delta', roomId: 'corner-shared', message: { presentation: 'card' } } }));
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally { await act(async () => tree.unmount()); }
+});
 
 it('R12k: exposes an inline error and Retry recovers the workflow read', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

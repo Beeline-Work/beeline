@@ -8,16 +8,60 @@ export function announceNeedsYouChanged(): void {
   for (const listener of listeners) listener();
 }
 
+const activityListeners = new Set<() => void>();
+
+/** The Room list heard a message that can need the viewer: an open tray reads again. */
+export function announceNeedsYouActivity(): void {
+  for (const listener of activityListeners) listener();
+}
+
+export function subscribeNeedsYouActivity(listener: () => void): () => void {
+  activityListeners.add(listener);
+  return () => {
+    activityListeners.delete(listener);
+  };
+}
+
 /** `9+` past nine, so the badge never widens its 44px slot. */
 export function compactNeedsYouCount(count: number): string {
   return count > 9 ? '9+' : String(count);
 }
 
+/** One count per Workspace in flight, shared by every badge that asks at once. */
+const countsInFlight = new Map<string, Promise<number>>();
+
+function countNeedsYou(workspaceId: string): Promise<number> {
+  const pending = countsInFlight.get(workspaceId);
+  if (pending) return pending;
+  const request = monolithPhoneOperation('countNeedsYou', { workspaceId })
+    .then((result) => result.count)
+    .finally(() => countsInFlight.delete(workspaceId));
+  countsInFlight.set(workspaceId, request);
+  return request;
+}
+
+/**
+ * Whether a committed message can change anybody's Needs-you count: one that
+ * tags the viewer, or a card or system line (approvals, questions, a corner
+ * handing back). Plain prose to someone else and tool rows cannot.
+ */
+export function messageCanNeedViewer(
+  message: { readonly presentation: string; readonly mentionPubkeys?: readonly string[] },
+  viewerPubkey: string,
+): boolean {
+  return (
+    message.presentation === 'card' ||
+    message.presentation === 'system' ||
+    Boolean(message.mentionPubkeys?.includes(viewerPubkey))
+  );
+}
+
 /**
  * The tray badge: the server's Needs-you count for this Workspace. It is
- * re-read whenever `refreshKey` changes — callers pass their Room-list
- * payload, which already follows live traffic — and after a clear. Reading
- * the count never starts a cell's 24-hour clock; only opening the tray does.
+ * re-read whenever `refreshKey` changes — callers bump it when their Room list
+ * is read in full or a message that can need the viewer lands, and pass
+ * `undefined` until then — and after a clear. Reading the count never starts a cell's 24-hour clock; only opening
+ * the tray does.
  */
 export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown) {
   const [count, setCount] = useState(0);
@@ -34,11 +78,13 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
       setCount(0);
       return;
     }
+    // A caller with nothing read yet has nothing to count against.
+    if (refreshKey === undefined) return;
     let cancelled = false;
     void (async () => {
       try {
-        const result = await monolithPhoneOperation('countNeedsYou', { workspaceId });
-        if (!cancelled) setCount(result.count);
+        const next = await countNeedsYou(workspaceId);
+        if (!cancelled) setCount(next);
       } catch {
         // A failed count keeps the last one: the tray itself is the truth.
       }

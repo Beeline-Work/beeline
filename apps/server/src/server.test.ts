@@ -369,6 +369,83 @@ describe('server readiness', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['listRoomWorkflowRuns', { workflows: [] }],
+    ['readWorkflowRun', { runId: 'run' }],
+    ['listRoomSchedules', { schedules: [] }],
+    ['updateRoomPushState', { muted: false }],
+  ])(
+    'publishes no Room invalidation after %s, which no other Room read sees',
+    async (operation, result) => {
+      const publish = vi.fn();
+      const execute = vi.fn().mockResolvedValue(result);
+      const server = createBeelineServer({
+        database: { query: vi.fn(), transaction: vi.fn() },
+        auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+        phone: { execute } as unknown as PhoneService,
+        daemon: {} as DaemonService,
+        live: { publish } as unknown as LiveHub,
+        mediaMaximumBytes: 1,
+      });
+      servers.push(server);
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as AddressInfo).port;
+
+      // An open corner rereads its workflow runs on every Room invalidation;
+      // a read that published one made that reread loop without end.
+      const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/${operation}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ roomId: 'room-open' }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it('lets the web app ask for a compact Room read and keeps CORS varying by origin when it compresses', async () => {
+    const readRoom = vi.fn().mockResolvedValue({
+      room: { id: '22222222-2222-4222-8222-222222222222' },
+      messages: Array.from({ length: 20 }, (_, index) => ({ id: String(index), text: 'x'.repeat(80) })),
+      watchFilters: [],
+    });
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+      phone: { readRoom } as unknown as PhoneService,
+      daemon: {} as DaemonService,
+      live: {} as LiveHub,
+      mediaMaximumBytes: 1,
+      webAppOrigins: ['https://web.beeline.test'],
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const path = `http://127.0.0.1:${port}/v1/phone/rooms/22222222-2222-4222-8222-222222222222`;
+
+    const preflight = await fetch(path, {
+      method: 'OPTIONS',
+      headers: { origin: 'https://web.beeline.test', 'access-control-request-headers': 'x-beeline-view' },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-headers')).toContain('x-beeline-view');
+
+    const read = await fetch(path, {
+      headers: {
+        origin: 'https://web.beeline.test',
+        authorization: `Bearer ${'p'.repeat(20)}`,
+        'accept-encoding': 'gzip',
+        'x-beeline-view': 'compact',
+      },
+    });
+    expect(read.status).toBe(200);
+    expect(read.headers.get('content-encoding')).toBe('gzip');
+    expect(read.headers.get('vary')).toBe('Origin, accept-encoding');
+    expect(await read.json()).not.toHaveProperty('watchFilters');
+  });
+
   it('serves daemon release readiness without a phone bearer', async () => {
     const releaseReadiness = vi.fn().mockResolvedValue({
       daemons: [{ agentPubkey: 'a'.repeat(64), state: 'ready' }],

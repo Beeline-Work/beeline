@@ -53,6 +53,7 @@ import {
 } from 'expo-router';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import { Modal } from '@/modal';
@@ -72,6 +73,7 @@ import {
   cornerDisplayName,
   type AgentComposerCommand,
   type WorkflowRunSummaryView,
+  type WorkspaceView,
 } from '@beeline/api-contract/phone';
 import {
   createRoomMessageProjector,
@@ -441,6 +443,12 @@ import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 type RoomMemberOption = RoomRosterParticipant;
 type MessageShortcut = { text: string; replyTarget: MessageReplyTarget };
 const NO_SELECTED_MENTIONS: ReadonlyMap<string, string> = new Map();
+/**
+ * The Workspace roster each Room reads on entry so agent bylines can name
+ * their model: read once per app session, and again whenever the roster sheet
+ * or the member picker opens.
+ */
+const workspaceRosterThisSession = new Map<string, WorkspaceView>();
 
 /**
  * The reserved `@channel` autocomplete row: tags every human in the Room (the
@@ -758,27 +766,19 @@ export function BuzzChatSurface({
   useFocusEffect(
     useCallback(() => {
       pushOpenBuzzChannelId(decodedId || null);
-      const viewingSessionId = `${Date.now()}-${Math.random()}`;
-      let active = true;
-      let presenceUpdate = Promise.resolve();
+      // The live socket tells the server this Room is on screen, once on
+      // arrival and once on leaving; the server ends the view when the
+      // socket closes, so nothing repeats while the reader stays here.
+      let releaseView: (() => void) | undefined;
       const updateViewing = (viewing: boolean) => {
-        if (!getBuzzRuntimeConfig().monolithEnabled || !decodedId) return;
-        // Serialize enter/leave so a late enter cannot extend a closed view.
-        presenceUpdate = presenceUpdate
-          .then(async () => {
-            const result = await monolithPhoneOperation('updateRoomPushState', {
-              roomId: decodedId,
-              viewing,
-              sessionId: viewingSessionId,
-            });
-            if (active) setPushMuted(result.muted);
-          })
-          .catch((error) => console.log('Could not update Room push presence:', error));
+        if (!decodedId) return;
+        if (viewing) releaseView ??= sharedLiveConnection().view(decodedId);
+        else {
+          releaseView?.();
+          releaseView = undefined;
+        }
       };
       updateViewing(AppState.currentState === 'active');
-      const heartbeat = setInterval(() => {
-        if (AppState.currentState === 'active') updateViewing(true);
-      }, 20_000);
       const viewingState = AppState.addEventListener('change', (state) =>
         updateViewing(state === 'active'),
       );
@@ -794,8 +794,6 @@ export function BuzzChatSurface({
       const appState = AppState.addEventListener('change', dismiss);
       const received = Notifications.addNotificationReceivedListener(dismiss);
       return () => {
-        active = false;
-        clearInterval(heartbeat);
         viewingState.remove();
         updateViewing(false);
         releaseOpenBuzzChannelId(decodedId || null);
@@ -813,6 +811,7 @@ export function BuzzChatSurface({
     firstUnreadMessageId,
     openingUnreadCounts,
     advanceReadCursor,
+    acknowledgeReadMark,
     liveOverlays,
     liveDraftStore,
     userPubkey,
@@ -835,6 +834,12 @@ export function BuzzChatSurface({
     if (!roomSurface) return;
     markRoomOpen('layout-chrome', roomSurface.messages.at(-1)?.id);
   }, [roomSurface]);
+  // The Room read carries the viewer's mute; a toggle answers with its own.
+  const hasRoomSurface = roomSurface !== null;
+  const viewerPushMuted = roomSurface?.viewer.pushMuted === true;
+  useEffect(() => {
+    if (hasRoomSurface) setPushMuted(viewerPushMuted);
+  }, [hasRoomSurface, viewerPushMuted]);
   const [inputText, setInputText, composerDraft] = useTextDraft(
     `composer:${decodedId}`,
     '',
@@ -1818,7 +1823,11 @@ export function BuzzChatSurface({
   // refreshes keep the last roster visible until the fresh response lands.
   useEffect(() => {
     workspaceRosterScopeRef.current = null;
-    setWorkspaceRoster(null);
+    setWorkspaceRoster(
+      activeCommunityId ? (workspaceRosterThisSession.get(activeCommunityId) ?? null) : null,
+    );
+    if (activeCommunityId && workspaceRosterThisSession.has(activeCommunityId))
+      workspaceRosterScopeRef.current = activeCommunityId;
   }, [activeCommunityId]);
   useEffect(() => {
     const rosterSurfaceVisible = participantPickerVisible || rosterVisible;
@@ -1835,6 +1844,7 @@ export function BuzzChatSurface({
     roomClient
       .workspace(activeCommunityId)
       .then((view) => {
+        workspaceRosterThisSession.set(activeCommunityId, view);
         if (!cancelled) {
           workspaceRosterScopeRef.current = activeCommunityId;
           setWorkspaceRoster(view);
@@ -2111,8 +2121,13 @@ export function BuzzChatSurface({
         painted = true;
         setWorkspaceChats(view.chats);
       };
+      // The Room list keeps this response current; it is read here only when
+      // no Room list has run yet (a push or link opened this Room directly).
       const cached = await mobileSurfaceCache.read(address, isChatListView);
-      if (cached) apply(cached);
+      if (cached) {
+        apply(cached);
+        return;
+      }
       const fresh = await roomClient.chats(activeCommunityId);
       apply(fresh);
       void mobileSurfaceCache.write(address, fresh, isChatListView);
@@ -2138,13 +2153,21 @@ export function BuzzChatSurface({
   // false there and only there for a direct message, since a DM can never be
   // archived).
   const isReadOnlyDirectMessage = isDirectMessage && roomSurface?.viewer.permissions.send === false;
-  // A win (a new reply, or the viewer's own 👍) can make the GitHub star card due.
+  // Only a win can make the GitHub star card due (the server counts the
+  // milestone): an agent reply carrying files, or the viewer's own 👍. The
+  // card is asked for once per visit and again only after such a win.
   const starPromptKey = useMemo(() => {
     const messages = roomSurface?.messages ?? [];
+    const artifacts = messages.filter(
+      (message) =>
+        message.author.kind === 'agent' &&
+        message.presentation === 'message' &&
+        (message.attachments?.length ?? 0) > 0,
+    ).length;
     const thumbs = messages.filter((message) =>
       message.reactions?.some((reaction) => reaction.emoji === '👍' && reaction.reacted),
     ).length;
-    return `${messages.at(-1)?.id ?? ''}:${thumbs}`;
+    return `${artifacts}:${thumbs}`;
   }, [roomSurface?.messages]);
   const starPrompt = useStarPrompt(starPromptKey, Boolean(roomSurface) && !isReadOnlyDirectMessage);
   useEffect(() => {
@@ -4053,11 +4076,11 @@ export function BuzzChatSurface({
             ? null
             : current,
         );
-        // Advance the read mark to our own message immediately: a message we
-        // wrote must never gold the Room list while the deck's working
-        // indicator carries the live turn (room-list-row.ts: a working agent never lights the attention square).
-        void roomClient?.markRead(decodedId, preparedEvent.id).catch(() => undefined);
-        refreshSignal.signal();
+        // The server moved our read mark with the send itself, so a message we
+        // wrote never golds the Room list (room-list-row.ts) and the viewport
+        // has no mark left to write for it. Its own delta paints it; a
+        // confirmation reads the Room only if that delta never comes.
+        acknowledgeReadMark(preparedEvent.id);
         scheduleOutboxConfirmation(preparedEvent.id);
       } catch (err) {
         console.warn('Send failed:', err);

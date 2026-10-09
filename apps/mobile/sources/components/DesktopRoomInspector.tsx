@@ -149,7 +149,8 @@ export function DesktopRoomInspector({
     client && selectedCornerId ? `inspector:${selectedCornerId}` : undefined,
     {
       load: () => client!.room(selectedCornerId!),
-      subscribe: selectedCornerId ? observeRoomResource(selectedCornerId) : undefined,
+      // The inspector paints the whole corner, so every committed message reads it.
+      subscribe: selectedCornerId ? observeRoomResource(selectedCornerId, () => true) : undefined,
     },
   );
   const detail = observed.data?.room.id === selectedCornerId ? observed.data : null;

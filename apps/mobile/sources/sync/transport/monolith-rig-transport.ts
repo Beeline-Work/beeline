@@ -16,7 +16,7 @@ import type { MessageSubmitInput } from './rig-transport';
 import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
-import { MonolithPhoneOperationError } from './monolith-operation';
+import { MonolithPhoneOperationError, phoneOperationRequestOptions } from './monolith-operation';
 import { sharedLiveConnection } from './live-connection';
 
 export type LiveWireTrace = {
@@ -250,6 +250,7 @@ export class MonolithRigTransport {
     input: unknown,
     options?: { timeoutMs?: number },
   ): Promise<unknown> {
+    const request = phoneOperationRequestOptions(name, input, options);
     const response = await monolithSession.fetch(
       `${this.baseUrl}/v1/phone/operations/${name}`,
       {
@@ -257,7 +258,7 @@ export class MonolithRigTransport {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(input),
       },
-      ...(options ? [options] : []),
+      ...(request ? [request] : []),
     );
     if (!response.ok) {
       let code = 'request_failed';

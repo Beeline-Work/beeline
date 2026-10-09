@@ -1,6 +1,66 @@
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
-import { monolithSession } from '@/auth/monolith-session';
+import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+
+/**
+ * Reads Beeline answers from its own database in well under a second. They
+ * get the phone's read deadline and may be repeated on a fresh connection
+ * when the first attempt stalls. Reads that wait on GitHub or a connector
+ * are slow by nature and keep their callers' own bounds.
+ */
+const DATABASE_READS: ReadonlySet<string> = new Set<keyof PhoneOperationMap>([
+  'countNeedsYou',
+  'readNeedsYou',
+  'listMessageBookmarks',
+  'readStarPrompt',
+  'readWelcomeCards',
+  'listRoomWorkflowRuns',
+  'readWorkflowRun',
+  'listRoomSchedules',
+  'readRoomWebhooks',
+  'listWorkflowDefinitions',
+  'readWorkflowDefinition',
+  'getManagedIdentity',
+  'resolveInvite',
+  'getAuthCapabilities',
+  'getIdentityRecovery',
+  'readWebPushKey',
+]);
+
+/**
+ * Writes the server answers the same however often they arrive: one keyed by
+ * the id the phone chose (a corner, a message), or one that sets a state.
+ * A stalled one is repeated on a fresh connection before anyone sees an error.
+ */
+function repeatableWrite(name: string, input: unknown): boolean {
+  const fields = (input ?? {}) as Record<string, unknown>;
+  switch (name) {
+    case 'createHumanCorner':
+      return typeof fields.cornerId === 'string';
+    case 'sendRoomMessage':
+    case 'sendRoomReply':
+      return typeof fields.messageId === 'string';
+    case 'reopenChat':
+    case 'closeChat':
+    case 'updateRoomPushState':
+    case 'clearNeedsYou':
+    case 'setMessageBookmark':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** How one phone operation is sent: its deadline, and whether a stall may repeat it. */
+export function phoneOperationRequestOptions(
+  name: string,
+  input: unknown,
+  options?: { timeoutMs?: number },
+): { timeoutMs?: number; idempotent?: boolean } | undefined {
+  const idempotent = DATABASE_READS.has(name) || repeatableWrite(name, input);
+  if (!idempotent) return options;
+  return { timeoutMs: options?.timeoutMs ?? MONOLITH_REQUEST_TIMEOUT_MS, idempotent: true };
+}
 
 export class MonolithPhoneOperationError extends Error {
   constructor(
@@ -29,6 +89,7 @@ export async function monolithPhoneOperation<Name extends keyof PhoneOperationMa
   input: PhoneOperationMap[Name]['input'],
   options?: { timeoutMs?: number },
 ): Promise<PhoneOperationMap[Name]['output']> {
+  const request = phoneOperationRequestOptions(name, input, options);
   const response = await monolithSession.fetch(
     `${getBuzzRuntimeConfig().monolithUrl}/v1/phone/operations/${name}`,
     {
@@ -36,10 +97,9 @@ export async function monolithPhoneOperation<Name extends keyof PhoneOperationMa
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
     },
-    // Forwarded only when given: every other call site relies on
-    // monolithSession.fetch's own no-timeout default, and existing tests
-    // assert the exact (url, init) call shape against that default.
-    ...(options ? [options] : []),
+    // Forwarded only when set: any other write keeps monolithSession.fetch's
+    // own no-timeout default.
+    ...(request ? [request] : []),
   );
   if (!response.ok) {
     let code = 'request_failed';

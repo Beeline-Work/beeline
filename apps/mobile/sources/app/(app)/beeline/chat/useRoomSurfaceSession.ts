@@ -6,6 +6,7 @@ import {
   KIND_AGENT_DRAFT,
   LiveOverlayDecoder,
   SurfaceRefreshScheduler,
+  isChatListView,
   isRoomView,
   type LiveOverlay,
   type RoomView,
@@ -53,15 +54,29 @@ import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
 import { takePrefetchedPushRoom } from '@/push/push-room-prefetch';
 
-const OUTBOX_CONFIRMATION_TIMEOUT_MS = 15_000;
+/**
+ * A sent message is confirmed by its own delta on the live socket. One that
+ * has not arrived by then gets one Room read, which also proves whether the
+ * socket missed it (and replaces the socket if so).
+ */
+const OUTBOX_DELTA_GRACE_MS = 4_000;
 /** A socket that never answers must not hold the open's one Room read. */
 const SUBSCRIBE_HANDSHAKE_TIMEOUT_MS = 2_000;
 /**
- * A phone socket can stop delivering without closing, and a frame the server
- * fails to send is never resent. Without a periodic read, an open Room would
- * miss that message until it is opened again.
+ * Invalidations that change nothing this Room read shows, so they read
+ * nothing: a child corner's list status; a stored draft, thought or presence
+ * row (each arrives as its own live frame); an agent's command queue and
+ * schedules; and the viewer's own read mark, which the open visit captured.
  */
-const OPEN_ROOM_COVERING_READ_MS = 30_000;
+const ROOM_READ_UNCHANGED_REASONS: ReadonlySet<string> = new Set([
+  'corner-status',
+  'read-mark',
+  'postgres:live_outputs',
+  'postgres:agent_commands',
+  'postgres:agent_schedules',
+  'postgres:room_read_marks',
+  'postgres:registry_mcp_oauth_attempts',
+]);
 
 type ReceivedLiveTrace = LiveWireTrace & {
   reason: string;
@@ -178,6 +193,25 @@ function readFoundUnheardMessage(previous: RoomView | null, next: RoomView): boo
 
 type RoomOutbox = ReturnType<typeof createRoomOutbox>;
 
+/** Clear the reader's dismissal of this Room, unless the Room list shows none. */
+async function reopenIfDismissed(
+  transport: BuzzRigTransport,
+  view: RoomView,
+  relayUrl: string,
+  viewerPubkey: string,
+): Promise<void> {
+  const workspaceId = view.room.workspaceId;
+  if (workspaceId) {
+    const list = await mobileSurfaceCache.read(
+      surfaceAddress(relayUrl, viewerPubkey, '/workspace/:id/chats', { workspaceId }),
+      isChatListView,
+    );
+    const row = list?.chats.find((item) => item.room.id === view.room.id);
+    if (row && !row.closed) return;
+  }
+  await transport.reopenChat(view.room.id);
+}
+
 export interface RoomSurfaceSessionBindings {
   resetTranscript(): void;
   restoreOutboxMessages(messages: readonly ChatDisplayMessage[]): void;
@@ -229,6 +263,8 @@ export interface UseRoomSurfaceSessionResult {
   ): void;
   /** Move the boundary back so this message, and everything after it, is unread. */
   markUnreadFrom(messageId: string): Promise<void>;
+  /** The viewer's own send moved the server's read mark to this message. */
+  acknowledgeReadMark(messageId: string): void;
   liveOverlays: readonly LiveOverlay[];
   liveDraftStore: LiveDraftDrainStore;
   userPubkey: string;
@@ -360,6 +396,10 @@ export function useRoomSurfaceSession({
     setOpeningUnreadCounts(null);
   }, []);
 
+  const acknowledgeReadMark = useCallback((messageId: string) => {
+    if (!isCornerRef.current) readCursorRef.current?.acknowledge(messageId);
+  }, []);
+
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
     if (!presence) return;
     setAgentPresences((current) => {
@@ -383,10 +423,12 @@ export function useRoomSurfaceSession({
   }, []);
 
   const scheduleConfirmation = useCallback((eventId: string) => {
-    schedulerRef.current?.signalUntil(
-      (view) => view.messages.some((message) => message.id === eventId),
-      OUTBOX_CONFIRMATION_TIMEOUT_MS,
-    );
+    const scheduler = schedulerRef.current;
+    setTimeout(() => {
+      if (schedulerRef.current !== scheduler) return;
+      const painted = reconciledViewRef.current?.messages.some((message) => message.id === eventId);
+      if (!painted) scheduler?.signal();
+    }, OUTBOX_DELTA_GRACE_MS);
   }, []);
 
   const retryOutbox = useCallback(
@@ -404,7 +446,6 @@ export function useRoomSurfaceSession({
         });
         try {
           await activeTransport.publishPreparedMessage(record.event);
-          schedulerRef.current?.signal();
           scheduleConfirmation(eventId);
         } catch {
           await markFailed(eventId);
@@ -446,7 +487,6 @@ export function useRoomSurfaceSession({
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<RoomView> | undefined;
-    let coveringReadTimer: ReturnType<typeof setInterval> | undefined;
     // A backgrounded app reads nothing: returning to the foreground replaces
     // the socket, and that resubscribe's `subscribed` frame is the covering read.
     const visibleScheduler = () =>
@@ -528,6 +568,11 @@ export function useRoomSurfaceSession({
       reconciledViewRef.current = stableView;
       hasPainted = true;
       bindingsRef.current.observeRoomSurface();
+      if (fresh && !isCornerRef.current) {
+        // The server's own mark: a viewport that sees nothing past it writes nothing.
+        const mark = view.viewer.readCursor?.messageId;
+        if (mark) readCursorRef.current?.seed(mark);
+      }
       if (fresh && !capturedUnreadBoundary && !isCornerRef.current) {
         // This is the last server answer before markRead advances to the tail.
         // Keep the exact id for the whole focused visit; later refreshes may
@@ -740,10 +785,12 @@ export function useRoomSurfaceSession({
               return;
             }
             if (live.type === 'invalidate') {
-              // A child corner's list status: this Room's own read does not change.
-              if (live.reason === 'corner-status') return;
-              // Its invalidation's deliveryId already reread this Room.
-              if (live.reconcilesDelivery) return;
+              if (ROOM_READ_UNCHANGED_REASONS.has(live.reason)) return;
+              // A committed row's own delta follows this hint and paints it.
+              // Only a row the server could not read (its fallback, which
+              // `reconcilesDelivery` names) or a change no row describes
+              // falls through to one Room read.
+              if (live.deliveryId) return;
               if (live.trace) {
                 const received = {
                   ...live.trace,
@@ -756,10 +803,6 @@ export function useRoomSurfaceSession({
                 pendingReadTraces = [...pendingReadTraces.slice(-15), received];
                 logLiveTrace('socket-receipt', [received], received.receivedAt);
               }
-              if (live.deliveryId) {
-                visibleScheduler()?.refreshNow();
-                return;
-              }
               // A claim has already committed its WORKING receipt before the
               // server emits this invalidation. Give that receipt an immediate
               // authoritative read instead of placing it behind ordinary
@@ -768,7 +811,7 @@ export function useRoomSurfaceSession({
                 // A same-process committed-row delta follows only when the
                 // invalidation names its row. A targetless phone-write is the
                 // whole hint — swallowing it leaves the newest message
-                // unpainted until remount or the 30s poll.
+                // unpainted until remount.
                 const namedRow =
                   typeof live.messageId === 'string' ||
                   (typeof live.agentId === 'string' && typeof live.requestId === 'string');
@@ -989,10 +1032,7 @@ export function useRoomSurfaceSession({
         for (const record of outbox.list().filter((record) => record.status === 'pending')) {
           await outbox.attempted(record.event.id);
           void nextTransport.publishPreparedMessage(record.event).then(
-            () => {
-              schedulerRef.current?.signal();
-              scheduleConfirmation(record.event.id);
-            },
+            () => scheduleConfirmation(record.event.id),
             () => void markFailed(record.event.id),
           );
         }
@@ -1061,9 +1101,13 @@ export function useRoomSurfaceSession({
             if (missedLive) nextTransport.reconnectLive();
             if (!view.parent && !reopenedChat) {
               reopenedChat = true;
-              void nextTransport.reopenChat(channelId).catch(() => {
-                reopenedChat = false;
-              });
+              // Only a Room the reader dismissed from the list needs reopening;
+              // the list's own last response says which.
+              void reopenIfDismissed(nextTransport, view, relayUrl, identity.publicKey).catch(
+                () => {
+                  reopenedChat = false;
+                },
+              );
             }
             // The read mark is no longer advanced from here. A fetched view
             // says what EXISTS, not what was seen, and marking its tail read
@@ -1115,12 +1159,6 @@ export function useRoomSurfaceSession({
           },
         });
         schedulerRef.current = scheduler;
-        // A read that finds a message the socket never delivered also
-        // replaces the socket (`missedLive` above).
-        coveringReadTimer = setInterval(
-          () => visibleScheduler()?.signal(),
-          OPEN_ROOM_COVERING_READ_MS,
-        );
         if (notificationResponseId) {
           scheduler.refreshNow();
           await scheduler.startAfter(Promise.resolve());
@@ -1147,7 +1185,6 @@ export function useRoomSurfaceSession({
       cancelled = true;
       watchGeneration += 1;
       abandonHandshakeWait?.();
-      if (coveringReadTimer) clearInterval(coveringReadTimer);
       scheduler?.dispose();
       unsubscribe?.();
       outboxRef.current = null;
@@ -1192,6 +1229,7 @@ export function useRoomSurfaceSession({
     openingUnreadCounts,
     advanceReadCursor,
     markUnreadFrom,
+    acknowledgeReadMark,
     liveOverlays,
     liveDraftStore: liveDraftDrainStore,
     userPubkey,

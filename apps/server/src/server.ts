@@ -8,6 +8,14 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
 import { isAppSignInLink } from './composio-apps.js';
+import { acceptedJsonEncoding, encodeJsonBody, type JsonEncoding } from './json-response.js';
+import { PhoneViewing } from './phone-viewing.js';
+import {
+  COMPACT_VIEW_HEADER,
+  compactRoomHistoryView,
+  compactRoomView,
+  wantsCompactView,
+} from './compact-room-view.js';
 import { bearer, type TokenAuth } from './auth.js';
 import {
   AGENT_OWNER_AUTHORITY_MESSAGE,
@@ -23,7 +31,12 @@ import {
 import { DAEMON_OPERATION_NAMES, RelayRefusalError, type DaemonService } from './daemon-service.js';
 import { institutionalMemoryErrorStatus } from './institutional-memory-shadow.js';
 import { ARTIFACT_MAXIMUM_BYTES, decodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
-import { MESSAGE_SEARCH_QUERY_MAX_BYTES, messageSearchTerms } from '@beeline/api-contract/phone';
+import {
+  MESSAGE_SEARCH_QUERY_MAX_BYTES,
+  PHONE_READ_OPERATIONS,
+  messageSearchTerms,
+  type RoomHistoryView,
+} from '@beeline/api-contract/phone';
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
@@ -73,16 +86,24 @@ const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
 /** A phone pings its open socket while foreground; any answer proves the path is alive. */
 const LIVE_PING_FRAME = JSON.stringify({ type: 'ping' });
 const LIVE_PONG_FRAME = JSON.stringify({ type: 'pong' });
+const ROOM_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Machine sockets authenticate per agent after upgrade; cap them per client address. */
 const MAX_MACHINE_SOCKETS_PER_CLIENT = 8;
 /**
- * Clearing a chat-list dismissal is per-viewer state that no Room read
- * projects, so it invalidates no Room for anybody. Its writer is the Room that
- * was just opened, and a Room-wide invalidation there bounces that write
- * straight back to the opener's own socket as a second identical full Room
- * read.
+ * Operations after which no Room read changes for anybody, so they publish no
+ * Room invalidation. A read changes nothing, and a phone rereads on that
+ * signal: a read that announced itself (listRoomWorkflowRuns in an open
+ * corner) made every phone in the Room read again, its own included, in a
+ * loop that never ended. Clearing a chat-list dismissal and a Room's push
+ * state are per-viewer state that no Room read projects; their writer is the
+ * Room that was just opened, and a Room-wide invalidation bounced the write
+ * straight back to the opener's own socket as a full Room read.
  */
-const VIEWER_LOCAL_PHONE_OPERATION = 'reopenChat';
+const QUIET_PHONE_OPERATIONS: ReadonlySet<string> = new Set([
+  ...PHONE_READ_OPERATIONS,
+  'reopenChat',
+  'updateRoomPushState',
+]);
 export interface GitHubServerHooks {
   webhookSecret?: string;
   roomToken?: (identityId: string, roomId: string) => Promise<{ token: string; expiresAt: number }>;
@@ -167,7 +188,7 @@ function applyWebAppCors(
 
   response.writeHead(204, {
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': 'authorization, content-type, x-file-name',
+    'access-control-allow-headers': 'authorization, content-type, x-file-name, x-beeline-view',
     'access-control-max-age': '600',
     'cache-control': 'private, no-store',
   });
@@ -185,12 +206,29 @@ function isWebAppCorsPath(pathname: string): boolean {
   );
 }
 
+function historyRead(result: RoomHistoryView | null, compact: boolean): unknown {
+  if (!result) return { error: 'not_found' };
+  return compact ? compactRoomHistoryView(result) : result;
+}
+
+/** What each request accepts for a JSON answer, read once where it arrives. */
+const jsonEncodings = new WeakMap<ServerResponse, JsonEncoding>();
+
 function json(response: ServerResponse, status: number, body: unknown): void {
+  const { bytes, encoding } = encodeJsonBody(body, jsonEncodings.get(response));
+  // writeHead replaces a header set earlier, and CORS already set `vary: Origin`.
+  const vary = response.getHeader('vary');
   response.writeHead(status, {
     'content-type': 'application/json',
     'cache-control': 'private, no-store',
+    ...(encoding
+      ? {
+          'content-encoding': encoding,
+          vary: vary ? `${String(vary)}, accept-encoding` : 'accept-encoding',
+        }
+      : {}),
   });
-  response.end(`${JSON.stringify(body)}\n`);
+  response.end(bytes);
 }
 
 function publicJson(response: ServerResponse, status: number, body: unknown): void {
@@ -382,10 +420,13 @@ export function createBeelineServer(options: ServerOptions): Server {
   }, heartbeatMs);
   heartbeat.unref?.();
   const invitePreview = new InvitePreviewAccess(options.database);
+  const phoneViewing = new PhoneViewing(options.database);
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
   const server = createServer((request, response) => {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
+    const encoding = acceptedJsonEncoding(request.headers['accept-encoding']);
+    if (encoding) jsonEncodings.set(response, encoding);
     const observedFunction =
       method === 'POST' &&
       (url.pathname === '/v1/phone/media' || url.pathname === '/v1/daemon/uploads')
@@ -499,6 +540,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     // instance, and this instance's lease releases whatever never returns.
     shuttingDown = true;
     clearInterval(heartbeat);
+    phoneViewing.dispose();
     releaseConnectionEpochs?.();
     for (const client of webSockets.clients) client.terminate();
     webSockets.close();
@@ -660,6 +702,8 @@ export function createBeelineServer(options: ServerOptions): Server {
         return;
       }
       options.live.humanConnected(principal.identityId);
+      // Rooms this socket views hold pushes until it says otherwise or closes.
+      const viewingSession = randomUUID();
       // Workspace membership notifications survive the deletion cascade and
       // reach the affected identity without requiring a readable Room.
       const releaseWorkspaces = options.live.subscribeAll((event) => {
@@ -944,6 +988,15 @@ export function createBeelineServer(options: ServerOptions): Server {
               }
             }
           }
+          if (
+            item.type === 'viewing' &&
+            typeof item.roomId === 'string' &&
+            ROOM_ID_PATTERN.test(item.roomId) &&
+            typeof item.viewing === 'boolean'
+          ) {
+            await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
+            return;
+          }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
@@ -983,6 +1036,9 @@ export function createBeelineServer(options: ServerOptions): Server {
       client.on('close', () => {
         socketSubscriptions.delete(client);
         options.live.humanDisconnected(principal.identityId);
+        void phoneViewing.end(viewingSession).catch((error) =>
+          console.error('[live] viewing release failed', error),
+        );
         releaseWorkspaces();
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
@@ -1714,10 +1770,16 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }
+  // A phone that rebuilds derivable fields asks for Room reads without them.
+  const compact = wantsCompactView(request.headers[COMPACT_VIEW_HEADER]);
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)$/);
   if (method === 'GET' && match) {
     const result = await options.phone.readRoom(match[1]!, identityId!);
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+    json(
+      response,
+      result ? 200 : 404,
+      result ? (compact ? compactRoomView(result) : result) : { error: 'not_found' },
+    );
     return;
   }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/history$/);
@@ -1733,7 +1795,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
         return;
       }
       const result = await options.phone.readHistoryAfter(match[1]!, identityId!, after);
-      json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+      json(response, result ? 200 : 404, historyRead(result, compact));
       return;
     }
     const around = url.searchParams.get('around');
@@ -1743,7 +1805,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
         return;
       }
       const result = await options.phone.readHistoryAround(match[1]!, identityId!, around);
-      json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+      json(response, result ? 200 : 404, historyRead(result, compact));
       return;
     }
     const beforeRaw = url.searchParams.get('before');
@@ -1753,7 +1815,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       identityId!,
       parsed ? { createdAt: Number(parsed[1]), id: parsed[2]! } : undefined,
     );
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+    json(response, result ? 200 : 404, historyRead(result, compact));
     return;
   }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/outline$/);
@@ -1932,7 +1994,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
         : result && typeof (result as { roomId?: unknown }).roomId === 'string'
           ? (result as { roomId: string }).roomId
           : undefined;
-    if (invalidatedRoom && name !== VIEWER_LOCAL_PHONE_OPERATION) {
+    if (invalidatedRoom && !QUIET_PHONE_OPERATIONS.has(name)) {
       const messageId =
         result && typeof (result as { messageId?: unknown }).messageId === 'string'
           ? (result as { messageId: string }).messageId

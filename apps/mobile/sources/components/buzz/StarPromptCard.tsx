@@ -12,19 +12,23 @@ function starPromptBody(milestone: number): string {
   return `Your agents have answered you ${milestone} times. If Beeline is useful to you, a star helps other people find it.`;
 }
 
+/** Starred or closed in this app session: the server never shows the card again. */
+let stoppedThisSession = false;
+
 /**
  * The server decides when the card is due (`apps/server/src/github-star-prompt.ts`);
- * this asks again whenever the newest message changes, because a win (an
- * artifact, a 👍, a landed corner) arrives as a new message or reaction.
+ * this asks once when a Room opens and again only when `winKey` changes (a
+ * win: an artifact reply or the viewer's 👍), never per message. After Not
+ * now a later win asks again, so the next milestone can show in this chat.
  */
-export function useStarPrompt(newestMessageKey: string | undefined, enabled: boolean) {
+export function useStarPrompt(winKey: string | undefined, enabled: boolean) {
   const [prompt, setPrompt] = useState<StarPrompt | null>(null);
   const [busy, setBusy] = useState<StarPromptAction | null>(null);
   // An answer outdates every read started before it; later reads still ask,
   // so the next milestone shows in the same open chat after Not now.
   const answers = useRef(0);
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || stoppedThisSession) return;
     let current = true;
     const asked = answers.current;
     monolithPhoneOperation('readStarPrompt', {})
@@ -35,7 +39,7 @@ export function useStarPrompt(newestMessageKey: string | undefined, enabled: boo
     return () => {
       current = false;
     };
-  }, [enabled, newestMessageKey]);
+  }, [enabled, winKey]);
   const answer = useCallback(
     async (action: StarPromptAction) => {
       if (!prompt || busy) return;
@@ -46,6 +50,7 @@ export function useStarPrompt(newestMessageKey: string | undefined, enabled: boo
           milestone: prompt.milestone,
         });
         answers.current += 1;
+        if (action !== 'later') stoppedThisSession = true;
         setPrompt(null);
         if (result.outcome === 'open' && result.url)
           await openExternalUrl(result.url).catch(() => undefined);

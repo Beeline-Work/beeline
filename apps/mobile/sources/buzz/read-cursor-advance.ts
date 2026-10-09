@@ -107,6 +107,25 @@ export class ReadCursorAdvancer {
     this.publish(target);
   }
 
+  /**
+   * The mark the server already holds. A viewport that reaches it, and no
+   * further, has nothing to write; one that moves past it writes as usual.
+   * Never moves a boundary this visit already published.
+   */
+  seed(messageId: string): void {
+    if (this.#published === null) this.#published = messageId;
+  }
+
+  /**
+   * The server moved the mark here itself (the viewer's own send): the
+   * viewport reaching this row has nothing left to write.
+   */
+  acknowledge(messageId: string): void {
+    this.#published = messageId;
+    // A queued write for the same row, or an older one, has nothing left to say.
+    this.cancel();
+  }
+
   /** Stop advancing until `resume()`. Mark-unread's protection. */
   suspend(): void {
     this.#suspended = true;

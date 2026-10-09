@@ -200,3 +200,31 @@ describe('ReadCursorAdvancer', () => {
     expect(published).toEqual(['b', 'd']);
   });
 });
+
+describe('ReadCursorAdvancer and the mark the server already holds', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('writes nothing when the viewport reaches no further than the server’s own mark', () => {
+    const publish = vi.fn();
+    const advancer = new ReadCursorAdvancer(publish);
+    advancer.seed('c');
+    advancer.observe(TRANSCRIPT, [TRANSCRIPT[1]!, TRANSCRIPT[2]!]);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    expect(publish).not.toHaveBeenCalled();
+    advancer.observe(TRANSCRIPT, [TRANSCRIPT[3]!]);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    expect(publish).toHaveBeenCalledWith('d');
+  });
+
+  it('drops the queued write for a message the send already marked on the server', () => {
+    const publish = vi.fn();
+    const advancer = new ReadCursorAdvancer(publish);
+    advancer.observe(TRANSCRIPT, [TRANSCRIPT[3]!]);
+    advancer.acknowledge('d');
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    advancer.observe(TRANSCRIPT, [TRANSCRIPT[3]!]);
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    expect(publish).not.toHaveBeenCalled();
+  });
+});

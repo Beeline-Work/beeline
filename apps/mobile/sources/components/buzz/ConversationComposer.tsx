@@ -4,8 +4,8 @@ import {
   TextInput,
   TouchableOpacity,
   Pressable,
-  ScrollView,
   View,
+  Keyboard,
   Linking,
   Platform,
   type NativeSyntheticEvent,
@@ -87,7 +87,7 @@ type Props = {
    * instead of typed text; the text itself, and so the send, is unchanged.
    */
   tagHandles?: ReadonlySet<string>;
-  /** Opens the tag menu from a chip, or from the empty chip while dictating. */
+  /** Opens the tag menu from a tag. */
   onEditTags?(): void;
   attachments?: readonly {
     uri: string;
@@ -105,6 +105,36 @@ type Props = {
 export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26;
 export const COMPOSER_MAX_INPUT_HEIGHT = 5 * groknight.type.body.lineHeight;
 const NO_TAG_HANDLES: ReadonlySet<string> = new Set();
+/**
+ * A native input draws its leading tags as styled spans of its own text, so
+ * typed text wraps under them. react-native-web's input takes no spans, so on
+ * the web the tags sit over the field's first line, which is indented past
+ * them. Decided once at load: the browser proofs report Android afterwards.
+ */
+const TAGS_AS_SPANS = Platform.OS !== 'web';
+
+/** The leading tags as `@handle` and space runs, in text order. */
+function tagSegments(prefix: string) {
+  return prefix.match(/@\S+| +/g) ?? [];
+}
+
+/**
+ * Whether the soft keyboard is up for this field. The web and desktop have
+ * none, so there the field's focus stands in for it.
+ */
+function useKeyboardUp(focused: boolean) {
+  const [visible, setVisible] = React.useState(() => Keyboard.isVisible());
+  React.useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const shown = Keyboard.addListener('keyboardDidShow', () => setVisible(true));
+    const hidden = Keyboard.addListener('keyboardDidHide', () => setVisible(false));
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, []);
+  return focused && (Platform.OS === 'web' || visible);
+}
 
 /** The one text-entry row used by both desktop Room and embedded Corner conversations. */
 export function ConversationComposer({
@@ -143,16 +173,73 @@ export function ConversationComposer({
   const { theme } = useUnistyles();
   const multiline = height > COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
   const containerRef = React.useRef<HTMLElement | null>(null);
+  const ownInputRef = React.useRef<TextInput | null>(null);
+  const setInputRef = React.useCallback(
+    (node: TextInput | null) => {
+      ownInputRef.current = node;
+      if (typeof inputRef === 'function') inputRef(node);
+      else if (inputRef) (inputRef as React.MutableRefObject<TextInput | null>).current = node;
+    },
+    [inputRef],
+  );
   const commitInputChange = (nextValue: string) => {
     if (isInputRevisionCurrent?.(inputRevision) === false) return;
     onChangeText(nextValue);
   };
 
-  // Leading agent tags show as chips; the input holds only the typed rest.
-  // Every edit is written back with the chips' text in front of it.
+  // Leading agent tags show as tinted words at the start of the text. On the
+  // web the input holds only the typed rest, and every edit is written back
+  // with the tags' text in front of it; a native input holds the whole text.
   const tagSplit = splitComposerTags(value, tagHandles);
   const restSelectionRef = React.useRef({ start: 0, end: 0 });
   const commitRestChange = (nextRest: string) => commitInputChange(tagSplit.prefix + nextRest);
+  const commitSpanChange = (nextText: string) => {
+    const { prefix } = tagSplit;
+    if (prefix && nextText.length < value.length && !nextText.startsWith(prefix)) {
+      // A deletion inside the tags removes the whole tag it reaches into.
+      let at = 0;
+      while (at < nextText.length && nextText[at] === value[at]) at += 1;
+      const deletedEnd = at + value.length - nextText.length;
+      let start = 0;
+      for (const handle of tagSplit.tags) {
+        const end = prefix.indexOf('@', start + 1);
+        if (deletedEnd <= prefix.length && at < (end < 0 ? prefix.length : end)) {
+          commitInputChange(removeComposerTag(value, tagHandles, handle));
+          return;
+        }
+        start = end;
+      }
+    }
+    commitInputChange(nextText);
+  };
+  // When the field was last touched: a tap that lands the caret inside a
+  // native tag edits the tags instead.
+  const touchedAtRef = React.useRef(0);
+  // The web tags over the field, measured before paint so its first line
+  // starts after the last of them.
+  const tagOverlayRef = React.useRef<View | null>(null);
+  const [tagIndent, setTagIndent] = React.useState<{ paddingTop: number; textIndent: number }>();
+  const measureTags = React.useCallback(() => {
+    const overlay = tagOverlayRef.current as unknown as HTMLElement | null;
+    if (!overlay) return;
+    // Each tag's face, not its larger touch target.
+    const origin = overlay.getBoundingClientRect();
+    const faces = [...overlay.children]
+      .map((target) => target.firstElementChild?.getBoundingClientRect())
+      .filter((face) => face !== undefined);
+    if (faces.length === 0) return;
+    const top = Math.round(Math.max(...faces.map((face) => face.top - origin.top)));
+    const right = Math.max(
+      ...faces
+        .filter((face) => Math.round(face.top - origin.top) === top)
+        .map((face) => face.right - origin.left),
+    );
+    setTagIndent((current) =>
+      current?.paddingTop === top && current.textIndent === right + INLINE_TAG_GAP
+        ? current
+        : { paddingTop: top, textIndent: right + INLINE_TAG_GAP },
+    );
+  }, []);
 
   // Speech recognition — internal hook, scoped to the composer.
   // What the current take added to the text, so ■ can take exactly that out.
@@ -170,18 +257,25 @@ export function ConversationComposer({
   // The parent replaces the input once it has taken the message into the Room.
   React.useEffect(() => setSendingTake(null), [inputRevision]);
   const dictationBusy = isCapturingSpeech || sendingTake !== null;
-  const messageOnItsWay = sendingTake !== null && !isCapturingSpeech;
+  React.useLayoutEffect(() => {
+    if (!TAGS_AS_SPANS) measureTags();
+  }, [measureTags, tagSplit.prefix, dictationBusy]);
   const speechAvailable = speech.capability === 'available' && speechEnabled !== false;
-  // Chips alone are not a message: the field reads as empty and keeps the mic.
+  // Tags alone are not a message: the field reads as empty and keeps the mic.
   const hasSomethingToSend = canSend ?? Boolean(tagSplit.rest.trim());
   const listeningWillSend = Boolean(tagSplit.rest.trim() || speech.partialText.trim());
   const sendDisabled = disabled || !hasSomethingToSend || isCapturingSpeech;
+  const keyboardUp = useKeyboardUp(focused);
   // The trailing control is mic XOR send, in one slot: while dictation is live
-  // the control stays the listening/stop control; without speech, or once
-  // there is something to send, the send control shows (disabled when nothing
-  // is sendable), so the corner is never empty — including while an agent is
-  // working, when a tap queues the next instruction.
-  const showMic = speechAvailable && (dictationBusy || !hasSomethingToSend);
+  // the control stays the listening/stop control. Otherwise the keyboard picks:
+  // lowered, it is the mic, and a take adds to any typed text; raised, it is
+  // send once there is typed text. Tags and staged files alone keep the mic:
+  // they go out with the next take or typed text. Without speech the send
+  // control always shows (disabled when nothing is sendable), so the corner is
+  // never empty — including while an agent is working, when a tap queues the
+  // next instruction.
+  const showMic =
+    speechAvailable && (dictationBusy || !keyboardUp || !tagSplit.rest.trim());
   const showSend = !showMic;
 
   // Dictation shows a waveform, never live words. Only a failure that needs
@@ -339,76 +433,10 @@ export function ConversationComposer({
             <Text style={styles.attachButtonText}>＋</Text>
           </TouchableOpacity>
         )}
-        {tagSplit.tags.length > 0 || (isCapturingSpeech && onEditTags) ? (
-          // Chips scroll sideways inside a capped strip, so any number of tags
-          // leaves the field and the mic their room.
-          <ScrollView
-            horizontal
-            keyboardShouldPersistTaps="handled"
-            showsHorizontalScrollIndicator={false}
-            style={styles.tagStrip}
-            contentContainerStyle={styles.tagStripContent}
-            testID={`${testIDPrefix}-tags`}
-          >
-            {/* The handle and × targets are siblings in the strip, so the ×
-            target can overlap the pill and the gap on Android, where a target
-            never reaches outside its parent. */}
-            {tagSplit.tags.map((handle, index) => (
-              <React.Fragment key={`${handle}:${index}`}>
-                <TouchableOpacity
-                  accessibilityLabel={`Edit tags, @${handle}`}
-                  accessibilityRole="button"
-                  // The message is already on its way; its tags are final.
-                  disabled={!onEditTags || messageOnItsWay}
-                  hitSlop={TAG_TARGET_SLOP}
-                  onPress={onEditTags}
-                  style={styles.tagChipBody}
-                  testID={`${testIDPrefix}-tag-${handle}-edit`}
-                >
-                  <View
-                    style={[styles.tagChipFace, styles.tagChipFaceStart]}
-                    testID={`${testIDPrefix}-tag-${handle}`}
-                  >
-                    <Text numberOfLines={1} style={styles.tagChipText}>
-                      @{handle}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  accessibilityLabel={`Remove @${handle}`}
-                  accessibilityRole="button"
-                  disabled={messageOnItsWay}
-                  hitSlop={TAG_TARGET_SLOP}
-                  onPress={() => commitInputChange(removeComposerTag(value, tagHandles, handle))}
-                  style={styles.tagChipRemove}
-                  testID={`${testIDPrefix}-tag-${handle}-remove`}
-                >
-                  <View style={[styles.tagChipFace, styles.tagChipFaceEnd]}>
-                    <Text style={styles.tagChipRemoveText}>×</Text>
-                  </View>
-                </TouchableOpacity>
-              </React.Fragment>
-            ))}
-            {isCapturingSpeech && tagSplit.tags.length === 0 && onEditTags ? (
-              <TouchableOpacity
-                accessibilityLabel="Tag an agent"
-                accessibilityRole="button"
-                hitSlop={TAG_TARGET_SLOP}
-                onPress={onEditTags}
-                style={styles.tagChipEmpty}
-                testID={`${testIDPrefix}-tag-empty`}
-              >
-                <View style={styles.tagChipEmptyFace}>
-                  <Text style={styles.tagChipEmptyText}>@</Text>
-                </View>
-              </TouchableOpacity>
-            ) : null}
-          </ScrollView>
-        ) : null}
         <View style={styles.inputWrapper}>
           <TextInput
             key={inputRevision}
-            ref={inputRef}
+            ref={setInputRef}
             // A successful send replaces this native input to fence off stale
             // text events. If the consumed input was focused, transfer focus
             // to its empty replacement so consecutive messages need no tap.
@@ -417,20 +445,25 @@ export function ConversationComposer({
               styles.input,
               Platform.OS === 'ios' ? undefined : { height, maxHeight },
               Platform.OS === 'android' && styles.inputAndroid,
-              // The input stays mounted, and focused for the keyboard, under
-              // the waveform; its typed text returns when dictation ends.
+              // The input stays mounted under the waveform; its typed text
+              // returns when dictation ends.
               dictationBusy ? styles.inputHidden : undefined,
+              !TAGS_AS_SPANS && tagSplit.tags.length > 0 ? (tagIndent as object) : undefined,
             ]}
-            value={tagSplit.rest}
-            onChangeText={commitRestChange}
+            // A native input holds the whole text, its tags as spans.
+            value={TAGS_AS_SPANS ? undefined : tagSplit.rest}
+            onChangeText={TAGS_AS_SPANS ? commitSpanChange : commitRestChange}
             onContentSizeChange={onContentSizeChange}
             onFocus={onFocus}
             onBlur={onBlur}
+            onPressIn={() => {
+              touchedAtRef.current = Date.now();
+            }}
             onKeyPress={
-              tagSplit.tags.length === 0
+              TAGS_AS_SPANS || tagSplit.tags.length === 0
                 ? onKeyPress
                 : (event) => {
-                    // One backspace at the start of the field removes the last chip.
+                    // One backspace at the start of the field removes the last tag.
                     const selection = restSelectionRef.current;
                     if (
                       event.nativeEvent.key === 'Backspace' &&
@@ -445,8 +478,27 @@ export function ConversationComposer({
             }
             onSelectionChange={(event) => {
               const selection = event.nativeEvent.selection;
+              if (TAGS_AS_SPANS) {
+                const prefixEnd = tagSplit.prefix.length;
+                if (selection.start < prefixEnd) {
+                  // The caret never rests inside the tags: typing there would
+                  // break them into text. A tap on one opens the tag menu.
+                  ownInputRef.current?.setSelection(
+                    Math.max(selection.end, prefixEnd),
+                    Math.max(selection.end, prefixEnd),
+                  );
+                  const tapped = Date.now() - touchedAtRef.current < TAG_TAP_MS;
+                  if (tapped && selection.start === selection.end && onEditTags) {
+                    touchedAtRef.current = 0;
+                    ownInputRef.current?.blur();
+                    onEditTags();
+                  }
+                }
+                onSelectionChange?.(event);
+                return;
+              }
               restSelectionRef.current = selection;
-              // The parent reads offsets into the whole text, chips included.
+              // The parent reads offsets into the whole text, tags included.
               const offset = tagSplit.prefix.length;
               onSelectionChange?.({
                 ...event,
@@ -468,9 +520,68 @@ export function ConversationComposer({
             submitBehavior="newline"
             testID={`${testIDPrefix}-input`}
             accessibilityLabel="Message"
-          />
+          >
+            {TAGS_AS_SPANS ? (
+              <>
+                {tagSegments(tagSplit.prefix).map((segment, index) =>
+                  segment.startsWith('@') ? (
+                    <Text
+                      key={index}
+                      style={styles.inlineTag}
+                      testID={`${testIDPrefix}-tag-${segment.slice(1)}`}
+                    >
+                      {segment}
+                    </Text>
+                  ) : (
+                    <Text key={index}>{segment}</Text>
+                  ),
+                )}
+                <Text>{tagSplit.rest}</Text>
+              </>
+            ) : null}
+          </TextInput>
+          {!TAGS_AS_SPANS && !dictationBusy && tagSplit.tags.length > 0 ? (
+            // Over the field's first line, which is indented past them.
+            <View
+              ref={tagOverlayRef}
+              // A narrower field can wrap the tags onto another line.
+              onLayout={measureTags}
+              pointerEvents="box-none"
+              style={styles.tagOverlay}
+              testID={`${testIDPrefix}-tags`}
+            >
+              {tagSplit.tags.map((handle, index) => (
+                <TouchableOpacity
+                  key={`${handle}:${index}`}
+                  accessibilityLabel={`Edit tags, @${handle}`}
+                  accessibilityRole="button"
+                  disabled={!onEditTags}
+                  onPress={onEditTags}
+                  style={styles.overlayTag}
+                  testID={`${testIDPrefix}-tag-${handle}-edit`}
+                >
+                  <Text
+                    style={[styles.inlineTag, styles.overlayTagFace]}
+                    testID={`${testIDPrefix}-tag-${handle}`}
+                  >
+                    @{handle}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
           {dictationBusy ? (
             <View style={styles.waveformOverlay}>
+              {/* The tags stay in view, read-only, while the take is recorded. */}
+              {tagSplit.tags.map((handle, index) => (
+                <Text
+                  key={`${handle}:${index}`}
+                  style={[styles.inlineTag, styles.dictationTag]}
+                  testID={`${testIDPrefix}-tag-${handle}`}
+                >
+                  @{handle}
+                </Text>
+              ))}
               <DictationWaveform
                 level={speech.volumeLevel}
                 live={isListening}
@@ -531,6 +642,8 @@ export function ConversationComposer({
                 });
               } else {
                 takeTextRef.current = [];
+                // A take needs no keyboard; lowering it shows the whole Room.
+                Keyboard.dismiss();
                 speech.start();
               }
             }}
@@ -612,8 +725,9 @@ export function ConversationComposer({
 }
 
 const MIC_SIZE = 26;
-// Like ＋ and the mic: a 26-tall target reaches 44 with 9 above and below.
-const TAG_TARGET_SLOP = { top: 9, bottom: 9 };
+const INLINE_TAG_GAP = 4;
+/** How long after a touch a caret move counts as that touch's tap. */
+const TAG_TAP_MS = 500;
 
 const styles = StyleSheet.create((theme) => ({
   // Speech recognition styles
@@ -641,7 +755,11 @@ const styles = StyleSheet.create((theme) => ({
     top: 0,
     opacity: 0,
   },
-  waveformOverlay: { minHeight: COMPOSER_SINGLE_LINE_INPUT_HEIGHT, justifyContent: 'center' },
+  waveformOverlay: {
+    minHeight: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   statusLine: {
     paddingHorizontal: theme.buzz.space.md,
     paddingTop: theme.buzz.space.xs,
@@ -745,74 +863,33 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.buzz.radius,
     backgroundColor: theme.buzz.textPrimary,
   },
-  // The strip spans the row's full height, so the chip targets' slop fits in it.
-  tagStrip: {
-    flexGrow: 0,
-    flexShrink: 1,
-    maxWidth: '50%',
-    marginVertical: -8,
-  },
-  tagStripContent: { alignItems: 'center' },
-  // The v6 pill, drawn in two halves: the handle half in the handle target,
-  // the × half in the middle of the 44-wide × target.
-  tagChipFace: {
-    height: 22,
-    justifyContent: 'center',
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: theme.buzz.border,
+  // A tag reads as a word of the text: the accent on a soft tint.
+  inlineTag: {
+    ...theme.buzz.type.machine,
+    // Unset, so a tag takes the input's line height and never changes its line.
+    lineHeight: undefined,
+    color: theme.buzz.accent,
     backgroundColor: theme.buzz.bgHighlight,
+  } as any,
+  tagOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: INLINE_TAG_GAP,
   },
-  tagChipFaceStart: {
-    paddingLeft: theme.buzz.space.sm,
-    borderLeftWidth: 1,
-    borderTopLeftRadius: theme.buzz.radius,
-    borderBottomLeftRadius: theme.buzz.radius,
+  // Like ＋ and the mic, a tag's target is at least 44 by 44: it reaches 16
+  // past the tag on every side, and the negative margin keeps the tag's own
+  // place in the line.
+  // Every tag opens the same menu, so overlapping targets are harmless.
+  overlayTag: {
+    padding: theme.buzz.space.md,
+    margin: -theme.buzz.space.md,
   },
-  tagChipFaceEnd: {
-    width: 20,
-    borderRightWidth: 1,
-    borderTopRightRadius: theme.buzz.radius,
-    borderBottomRightRadius: theme.buzz.radius,
-  },
-  // With the × target's own 8, the 4 here pulls it 12 back over the handle.
-  tagChipBody: { height: 26, justifyContent: 'center', marginRight: -theme.buzz.space.xs },
-  tagChipText: { ...theme.buzz.type.machine, color: theme.buzz.accent },
-  // 12 + the 20 px × + 12 = 44, centred on the ×: the target reaches 12
-  // back over the handle and 12 past the pill, 8 of them over the next
-  // pill, which keeps the v6 4 px gap. Drawn above its neighbours so the
-  // × always wins.
-  tagChipRemove: {
-    width: 44,
-    height: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: -theme.buzz.space.sm,
-    marginRight: -theme.buzz.space.sm,
-    zIndex: 1,
-  },
-  tagChipRemoveText: {
-    ...theme.buzz.type.meta,
-    width: 20,
-    textAlign: 'center',
-    color: theme.buzz.ledgerQuiet,
-  },
-  tagChipEmpty: {
-    height: 26,
-    minWidth: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tagChipEmptyFace: {
-    height: 22,
-    justifyContent: 'center',
-    paddingHorizontal: theme.buzz.space.sm,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: theme.buzz.border,
-    borderRadius: theme.buzz.radius,
-  },
-  tagChipEmptyText: { ...theme.buzz.type.machine, color: theme.buzz.textMuted },
+  overlayTagFace: { borderRadius: theme.buzz.radius, overflow: 'hidden' },
+  dictationTag: { marginRight: INLINE_TAG_GAP, borderRadius: theme.buzz.radius },
   input: {
     ...theme.buzz.type.body,
     // The wrapper owns the row's flexible width. Its children sit in Yoga's

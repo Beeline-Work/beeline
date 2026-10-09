@@ -26,6 +26,7 @@ export const TURN_SILENCE_KINDS = [
   'update-interrupted',
   'offline',
   'context-overflow',
+  'resource-limit',
 ] as const;
 export type TurnSilenceKind = (typeof TURN_SILENCE_KINDS)[number];
 
@@ -40,6 +41,7 @@ export const TURN_RECEIPT_REASON_KINDS = [
   'update-interrupted',
   'offline',
   'context-overflow',
+  'resource-limit',
   'model-selection-unavailable',
 ] as const;
 export type TurnReceiptReasonKind = (typeof TURN_RECEIPT_REASON_KINDS)[number];
@@ -160,6 +162,10 @@ export function classifyTurnSilence(
 
   if (isContextOverflowFault(text)) {
     return { kind: 'context-overflow' };
+  }
+
+  if (/\bresource_limit: ACP session exceeded its \d+ MiB memory limit\b/i.test(text)) {
+    return { kind: 'resource-limit' };
   }
 
   if (
@@ -345,6 +351,12 @@ export function phraseTurnSilence(
         agent,
         'could not answer',
         "the request no longer fits the model's context window. Start a new corner, or pick a model with a larger window.",
+      );
+    case 'resource-limit':
+      return capLine(
+        agent,
+        'could not answer',
+        'the session exceeded its memory limit. Run fewer tools at once or split the task.',
       );
     case 'hiccup': {
       const fault = (classified.fault ?? 'the turn stalled').replace(/\s+/g, ' ').trim();

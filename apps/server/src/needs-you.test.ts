@@ -508,7 +508,7 @@ describe('PhoneService Needs-you tray', () => {
         actor: 'Hoots',
         ask: 'needs your passkey for',
         subject: 'Reveal GROQ_API_KEY',
-        literal: false,
+        literal: true,
         detail: 'Write it into the push gateway secret.',
       },
     ]);
@@ -517,6 +517,35 @@ describe('PhoneService Needs-you tray', () => {
       status: 'approved',
     });
     expect(await approvals()).toEqual([]);
+  });
+
+  it('keeps an undecided sign-in and Trusty Squire approval in the tray past a week', async () => {
+    const week = 8 * 24 * 60;
+    await card(
+      ROOM,
+      'app-sign-in',
+      { agentId: AGENT, ownerId: VIEWER, appId: 'gmail', name: 'Gmail', status: 'pending' },
+      week,
+      VIEWER,
+    );
+    await card(
+      ROOM,
+      'squire-approval',
+      {
+        agent: hoots,
+        tool: 'fetch_credential',
+        title: 'Reveal GROQ_API_KEY',
+        approvalUrl: 'https://squire.example/approve/2',
+        approvalId: 'approval-2',
+        linkKind: 'passkey',
+        sourceRoomId: CORNER,
+      },
+      week,
+    );
+    expect((await approvals()).map((approval) => approval.kind).sort()).toEqual([
+      'sign-in',
+      'squire',
+    ]);
   });
 
   it('lists approvals before questions', async () => {

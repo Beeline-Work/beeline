@@ -224,7 +224,8 @@ const APPROVAL_JOINS = `
  * One query per approval kind, each driven from that kind's pending rows and
  * filtered by the rule the decide operation itself enforces, so the tray
  * never offers a card the viewer cannot decide. Cards with no Beeline-side
- * state (sign-in, Trusty Squire) are read from the lookback window.
+ * state (sign-in, Trusty Squire) are read at any age through
+ * `messages_needs_you_approval_idx`, so an undecided one never ages out.
  */
 const APPROVAL_QUERIES: readonly string[] = [
   // Driven from the few pending grants rather than from the transcript, so
@@ -305,7 +306,6 @@ const APPROVAL_QUERIES: readonly string[] = [
    )}
    JOIN messages m ON m.room_id=room.id
      AND m.card_type IN ('agent-sign-in','app-sign-in')
-     AND m.created_at>now()-interval '${NEEDS_YOU_LOOKBACK_DAYS} days'
    ${APPROVAL_JOINS}
    WHERE m.deleted_at IS NULL AND m.card->>'ownerId'=$2
      AND CASE m.card_type
@@ -319,7 +319,6 @@ const APPROVAL_QUERIES: readonly string[] = [
   `WITH ${VIEWER_ROOMS}
    ${APPROVAL_FROM('squire')}
    JOIN messages m ON m.room_id=room.id AND m.card_type='squire-approval'
-     AND m.created_at>now()-interval '${NEEDS_YOU_LOOKBACK_DAYS} days'
    ${APPROVAL_JOINS}
    WHERE m.deleted_at IS NULL AND m.card->>'approvalId' IS NOT NULL
      AND m.card->>'sourceRoomId' ~ '^[0-9a-f-]{36}$'
@@ -574,7 +573,8 @@ function approvalView(
         'squire',
         SQUIRE_ASKS[card.linkKind ?? 'approval'] ?? SQUIRE_ASKS.approval,
         text(card.title),
-        false,
+        // A passkey guards a secret, which the mock sets in mono.
+        card.linkKind === 'passkey',
         text(card.detail),
       );
     default:

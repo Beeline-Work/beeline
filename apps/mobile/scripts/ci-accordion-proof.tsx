@@ -91,6 +91,28 @@ async function main() {
       'IBMPlexMono-Regular',
     ].map((font) => document.fonts.load(`16px ${font}`)),
   );
+  if (location.search.includes('mixed')) {
+    const suite = check('suite', 'GitHub Actions check suite', 'passed a check', 3);
+    suite.systemEvent = {
+      ...suite.systemEvent!,
+      object: {
+        ...suite.systemEvent!.object!,
+        url: 'https://api.github.com/repos/acme/repo/check-suites/3',
+      },
+    };
+    messages.splice(1, 0, suite);
+    messages.push(check('typecheck', 'TYPECHECK', 'passed a check', 4));
+    const rows = render();
+    await pause(250);
+    assert(rows.length === 1, 'mixed check notes split the stack');
+    assert(
+      document.querySelectorAll('[data-testid^="system-line-text-"]').length === 0,
+      'orphaned check note remained a separate line',
+    );
+    document.getElementById('result')!.textContent =
+      `Mixed CI checks: ${rows.length} visible rows; ${document.querySelectorAll('[data-testid^="system-line-text-"]').length} separate system lines; ${document.querySelectorAll('[data-testid^="notification-run-head-"]').length} shared cards`;
+    return;
+  }
   if (location.search.includes('reproduce')) {
     messages.push(
       check('server-pass', 'SERVER SUITE', 'passed a check', 1),

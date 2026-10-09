@@ -124,6 +124,17 @@ function checkFact(event: string, body: GitHubRecord) {
     const completed = body.action === 'completed' || suite?.status === 'completed';
     const conclusion = text(suite?.conclusion);
     const appName = text(record(suite?.app)?.name);
+    const headSha = text(suite?.head_sha);
+    const repository = repositoryName(body);
+    // check_suite.url is a GitHub API endpoint, not a page a person can use.
+    const browserUrl =
+      githubUrl(suite?.html_url) ??
+      (repository &&
+      /^[^/]+\/[^/]+$/.test(repository) &&
+      headSha &&
+      /^[a-f0-9]{40}$/i.test(headSha)
+        ? `https://github.com/${repository}/commit/${headSha}/checks`
+        : undefined);
     return {
       name: appName ? `${appName} check suite` : `Check suite ${integer(suite?.id) ?? ''}`.trim(),
       status: completed
@@ -132,8 +143,8 @@ function checkFact(event: string, body: GitHubRecord) {
           : 'failed'
         : 'pending',
       ...(conclusion ? { conclusion } : {}),
-      ...(text(suite?.url) ? { url: text(suite?.url)! } : {}),
-      ...(text(suite?.head_sha) ? { headSha: text(suite?.head_sha)! } : {}),
+      ...(browserUrl ? { url: browserUrl } : {}),
+      ...(headSha ? { headSha } : {}),
     } as const;
   }
   if (event === 'status') {

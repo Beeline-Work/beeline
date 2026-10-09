@@ -27,6 +27,7 @@ function fakeList(unmeasured = new Set<string>()) {
     toEstimatedRow: (index) => moves.push(`estimate:${index}`),
     toOffset: (offset) => moves.push(`offset:${offset}`),
     shiftBy: (delta) => moves.push(`shift:${delta}`),
+    shiftFromNewest: (delta) => moves.push(`hold:${delta}`),
   };
   return { list, moves, unmeasured };
 }
@@ -315,6 +316,50 @@ describe('transcript scroll controller', () => {
     expect(moves).toEqual(['shift:30']);
   });
 
+  it('holds a landed jump the feature holds while newer rows grow the list, until the reader drags', () => {
+    const { controller, moves, flush } = setup({
+      holdsLanding: (destination) => destination.kind === 'message' && destination.jump,
+    });
+    controller.request(message('m1'));
+    flush();
+    controller.observeVisibleRows([{ id: 'm1' }]);
+    expect(controller.active()).toBeNull();
+    // The reader sits at the window's newest end; newer rows still keep the target in place.
+    controller.observeTailPinned(true);
+    controller.holdLanding(600);
+    expect(moves).toEqual(['row:m1@0:top', 'hold:600']);
+    // Nothing follows the newest end meanwhile.
+    controller.follow();
+    controller.followNow();
+    flush();
+    expect(moves).toEqual(['row:m1@0:top', 'hold:600']);
+    controller.dragStarted();
+    controller.holdLanding(600);
+    controller.dragEnded(false);
+    controller.follow();
+    flush();
+    expect(moves).toEqual(['row:m1@0:top', 'hold:600', 'newest']);
+  });
+
+  it('ends a held landing with the next request, and holds nothing it was not asked to', () => {
+    const { controller, moves, flush } = setup({
+      holdsLanding: (destination) => destination.kind === 'message' && destination.jump,
+    });
+    controller.request(message('m1'));
+    flush();
+    controller.observeVisibleRows([{ id: 'm1' }]);
+    controller.request({ kind: 'newest' });
+    flush();
+    controller.holdLanding(600);
+    expect(moves).toEqual(['row:m1@0:top', 'newest']);
+
+    controller.request({ kind: 'message', messageId: 'm2', align: 'center', jump: false });
+    flush();
+    controller.observeVisibleRows([{ id: 'm2' }]);
+    controller.holdLanding(600);
+    expect(moves).toEqual(['row:m1@0:top', 'newest', 'row:m2@1:center']);
+  });
+
   it('drops the request without callbacks when the room changes', () => {
     const { controller, moves, events, flush } = setup();
     controller.observeVisibleRows([{ id: 'm2' }]);
@@ -351,6 +396,26 @@ describe('phone transcript list', () => {
     });
     adapter.toEstimatedRow(9);
     expect(scrollToOffset).toHaveBeenLastCalledWith({ offset: 720, animated: false });
+  });
+
+  it('moves the web scroll node toward the oldest end for a held landing, and leaves native to the list', () => {
+    const node = { scrollTop: 40 };
+    const web = phoneTranscriptList(() => ({
+      scrollToIndex: vi.fn(),
+      scrollToOffset: vi.fn(),
+      getScrollableNode: () => node,
+    }));
+    web.shiftFromNewest(600);
+    expect(node.scrollTop).toBe(640);
+
+    const scrollToOffset = vi.fn();
+    const native = phoneTranscriptList(() => ({
+      scrollToIndex: vi.fn(),
+      scrollToOffset,
+      getScrollableNode: () => 12,
+    }));
+    native.shiftFromNewest(600);
+    expect(scrollToOffset).not.toHaveBeenCalled();
   });
 });
 

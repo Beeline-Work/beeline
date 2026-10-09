@@ -643,6 +643,11 @@ export function BuzzChatSurface({
         raiseArrivalFlash(destination.messageId);
       }
     },
+    // A detached window grows newer rows below a landed jump target (the
+    // short-list fill, a later page). The target stays where it landed until
+    // the reader moves the list.
+    holdsLanding: (destination) =>
+      destination.kind === 'message' && destination.jump && anchoredSegmentActive,
     // A jump the reader left (a drag, the newest disc, a send, another jump)
     // drops its own read so it cannot move them later. Only its own: a read
     // for another message belongs to the request that replaced this one.
@@ -2519,11 +2524,26 @@ export function BuzzChatSurface({
   const transcriptMessagesRef = useRef(transcriptMessages);
   transcriptMessagesRef.current = transcriptMessages;
   // A detached window fills with newer rows only once a pending landing has
-  // landed, so the rows it measured stay where they are.
+  // landed, so the rows it measured stay where they are. It fills one page
+  // per content size the list reports: the window turns idle before the list
+  // measures the page it added, and a check in between reads the old short
+  // height and would walk the window to the tail.
+  const detachedFillMeasuredRef = useRef(true);
   const fillShortTranscript = useCallback(() => {
-    if (anchoredSegmentActive && scrollController.isLanding()) return;
+    if (anchoredSegmentActive) {
+      if (scrollController.isLanding() || !detachedFillMeasuredRef.current) return;
+      detachedFillMeasuredRef.current = false;
+    }
     fillTranscript(visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length);
   }, [anchoredSegmentActive, fillTranscript, foldedMessages, scrollController]);
+  // A held jump landing keeps its place as the phone content grows at its
+  // newest end (`holdLanding`).
+  const phoneContentHeightRef = useRef<number | null>(null);
+  const holdPhoneLanding = (height: number) => {
+    const previous = phoneContentHeightRef.current;
+    phoneContentHeightRef.current = height;
+    if (previous !== null) scrollController.holdLanding(height - previous);
+  };
   const phoneUnderfill = usePhoneUnderfillHistory({
     enabled: !desktopTranscript && transcriptMessages.length > 0,
     status: transcriptFillStatus,
@@ -6229,8 +6249,11 @@ export function BuzzChatSurface({
                     // excluded because optimistic settlement and streams can
                     // replace it in place.
                     minIndexForVisible: 1,
-                    // Native offset 0 is the visual bottom.
-                    autoscrollToTopThreshold: 50,
+                    // Native offset 0 is the visual bottom. A detached window's
+                    // newest row is not the live tail: newer rows load below a
+                    // jump target there, and following them would carry the
+                    // reader away from it.
+                    ...(anchoredSegmentActive ? {} : { autoscrollToTopThreshold: 50 }),
                   }}
                   keyboardShouldPersistTaps="handled"
                   keyboardDismissMode={transcriptKeyboardDismissMode(Platform.OS)}
@@ -6291,7 +6314,9 @@ export function BuzzChatSurface({
                   }
                   onContentSizeChange={(_width, height) => {
                     transcriptPositions.observeContentSize(height);
+                    detachedFillMeasuredRef.current = true;
                     phoneUnderfill.observeContentHeight(height);
+                    holdPhoneLanding(height);
                     scrollController.observeLayout();
                   }}
                   renderItem={renderItem}

@@ -24,6 +24,11 @@ import { scheduleAnimationFrame } from './host-scheduler';
  * - `offset`: a raw list offset (the scrubber). Runs at once. During
  *   momentum the list may coast past it, so it stays active and runs again
  *   when momentum ends. A drag on the list cancels it.
+ *
+ * A landed row request the feature holds (`holdsLanding`) keeps its row in
+ * place while newer rows grow the list below it (`holdLanding`), and nothing
+ * follows the newest end meanwhile. The hold ends with the next request, a
+ * drag, a cancel or a reset.
  */
 export type TranscriptScrollDestination =
   | { kind: 'newest'; untilRowId?: string }
@@ -50,6 +55,11 @@ export type TranscriptScrollList = {
   toOffset(offset: number): void;
   /** Move by `delta` px to keep a reading row in place. */
   shiftBy(delta: number): void;
+  /**
+   * Move by `delta` px toward the oldest end, to keep a held landing in place
+   * where the list does not do so itself.
+   */
+  shiftFromNewest(delta: number): void;
 };
 
 export type TranscriptScrollRow = { readonly id: string };
@@ -71,6 +81,8 @@ export type TranscriptScrollControllerOptions<Row extends TranscriptScrollRow> =
   onScrolled?(destination: TranscriptRowDestination, rowId: string): void;
   /** A visibility report shows the row; the request is done. */
   onLanded?(destination: TranscriptRowDestination, rowId: string): void;
+  /** Whether a row that lands now stays held in place. */
+  holdsLanding?(destination: TranscriptRowDestination): boolean;
   /** The request ended before it landed. */
   onCancelled?(
     destination: TranscriptScrollDestination,
@@ -81,12 +93,14 @@ export type TranscriptScrollControllerOptions<Row extends TranscriptScrollRow> =
 
 export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   request(destination: TranscriptScrollDestination): void;
-  /** Follow new content to the newest end, unless a drag or a row request owns the list. */
+  /** Follow new content to the newest end, unless a drag, a row request or a held landing owns the list. */
   follow(): void;
   /** Same as `follow`, without waiting a frame (a measured desktop resize). */
   followNow(): void;
   /** Keep a reading row in place while nothing else owns the list. */
   holdReadingPosition(delta: number): void;
+  /** The content changed by `delta` px at the newest end: keep a held landing in place. */
+  holdLanding(delta: number): void;
   cancel(): void;
   /** The room changed: drop the request and the visible rows, no callbacks. */
   reset(): void;
@@ -135,8 +149,10 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   let dragging = false;
   let momentum = false;
   let dragSequence = 0;
+  let held = false;
 
   const end = (reason: TranscriptScrollCancelReason) => {
+    held = false;
     const ended = active;
     if (!ended) return;
     active = null;
@@ -146,7 +162,9 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   const land = (current: Active, rowId: string) => {
     if (active !== current) return;
     active = null;
-    options.onLanded?.(current.destination as TranscriptRowDestination, rowId);
+    const destination = current.destination as TranscriptRowDestination;
+    held = options.holdsLanding?.(destination) ?? false;
+    options.onLanded?.(destination, rowId);
   };
 
   /** The visible row that settles a row request, or null. */
@@ -227,7 +245,8 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     schedule(() => attempt(current));
   };
 
-  const followAllowed = () => !dragging && !(active && isRowDestination(active.destination));
+  const followAllowed = () =>
+    !dragging && !held && !(active && isRowDestination(active.destination));
 
   return {
     request,
@@ -244,11 +263,16 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       if (active || pinned || delta === 0) return;
       options.list()?.shiftBy(delta);
     },
+    holdLanding(delta) {
+      if (!held || active || delta === 0) return;
+      options.list()?.shiftFromNewest(delta);
+    },
     cancel() {
       end('cancelled');
     },
     reset() {
       active = null;
+      held = false;
       visibleRows = [];
     },
     observeLayout() {
@@ -331,6 +355,7 @@ export function useTranscriptScrollController<Row extends TranscriptScrollRow>(
       onUnreachable: (destination) => optionsRef.current.onUnreachable?.(destination),
       onScrolled: (destination, rowId) => optionsRef.current.onScrolled?.(destination, rowId),
       onLanded: (destination, rowId) => optionsRef.current.onLanded?.(destination, rowId),
+      holdsLanding: (destination) => optionsRef.current.holdsLanding?.(destination) ?? false,
       onCancelled: (destination, reason) => optionsRef.current.onCancelled?.(destination, reason),
       schedule: (callback) => (optionsRef.current.schedule ?? defaultSchedule)(callback),
     }),
@@ -341,6 +366,8 @@ export function useTranscriptScrollController<Row extends TranscriptScrollRow>(
 type PhoneList = {
   scrollToIndex(params: { index: number; viewPosition: number; animated: boolean }): void;
   scrollToOffset(params: { offset: number; animated: boolean }): void;
+  /** React Native Web: the scrolling DOM node. Native: a node handle. */
+  getScrollableNode?(): unknown;
 };
 
 /**
@@ -348,6 +375,9 @@ type PhoneList = {
  * puts a row's start at the top of the viewport. Pass `scrollToIndexFailed`
  * as the list's `onScrollToIndexFailed`: the list calls it synchronously from
  * `scrollToIndex` when the row is not measured yet.
+ *
+ * Native keeps rows in place across inserts (`maintainVisibleContentPosition`).
+ * React Native Web has no such prop, so a held landing moves the DOM node.
  */
 export function phoneTranscriptList(getList: () => PhoneList | null): TranscriptScrollList & {
   scrollToIndexFailed(info: { averageItemLength: number }): void;
@@ -375,6 +405,11 @@ export function phoneTranscriptList(getList: () => PhoneList | null): Transcript
       getList()?.scrollToOffset({ offset, animated: false });
     },
     shiftBy() {},
+    shiftFromNewest(delta) {
+      const node = getList()?.getScrollableNode?.();
+      if (node && typeof node === 'object' && 'scrollTop' in node)
+        (node as { scrollTop: number }).scrollTop += delta;
+    },
     scrollToIndexFailed(info) {
       failed = true;
       averageItemLength = info.averageItemLength;
@@ -414,5 +449,7 @@ export function desktopTranscriptList(
       const node = getScrollNode();
       if (node) node.scrollTop += delta;
     },
+    // Chronological: newer rows grow below the reader and move nothing.
+    shiftFromNewest() {},
   };
 }

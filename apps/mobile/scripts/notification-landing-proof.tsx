@@ -13,11 +13,16 @@ import { createRoot } from 'react-dom/client';
  *   missing — rejects with a 404 once the room is on screen
  *   landed-then-missing — answers, then a second tap names a message the
  *     server answers with a 404
+ *   first   — the target is the Room's first message: answers with it and
+ *     fewer newer rows than one screen, and `historyAfter` serves the rest
  */
 type Around = {
   calls: number;
   pending: { resolve(value: unknown): void; reject(error: unknown): void }[];
   page: unknown;
+  firstPage: unknown;
+  serveNewer: boolean;
+  afterCalls: number;
   makeMissing(): unknown;
 };
 const around = () => (globalThis as unknown as { __around: Around }).__around;
@@ -72,7 +77,7 @@ function target() {
   const viewport = list()?.getBoundingClientRect();
   const node = leaves(list()).find((leaf) => leaf.textContent!.trim() === 'TARGET MESSAGE');
   if (!node || !viewport)
-    return { present: Boolean(node), flashed: false, flashColor: null, top: null };
+    return { present: Boolean(node), flashed: false, flashColor: null, top: null, textTop: null };
   // The row's ground is the nearest ancestor that holds the flash fill.
   let row: HTMLElement | null = node;
   let flash: HTMLElement | null = null;
@@ -87,6 +92,7 @@ function target() {
     flashed: Boolean(flash),
     flashColor: flash ? getComputedStyle(flash).backgroundColor : null,
     top: Math.round(box.top - viewport.top),
+    textTop: Math.round(node.getBoundingClientRect().top - viewport.top),
   };
 }
 
@@ -119,6 +125,7 @@ function observe() {
     composer: Boolean(composer()),
     target: target(),
     historyAroundCalls: around().calls,
+    historyAfterCalls: around().afterCalls,
     scroll: scrollState(),
     listTop: Math.round(list()?.getBoundingClientRect().top ?? 0),
     listHeight: Math.round(list()?.getBoundingClientRect().height ?? 0),
@@ -229,6 +236,15 @@ async function run() {
     await waitFor(() => pageHasText('That message is no longer available'), 2000);
     await pause(500);
     report(JSON.stringify({ mode, pending, typing, landed, settled: observe() }));
+    return;
+  }
+  if (mode === 'first') {
+    around().serveNewer = true;
+    around().pending.splice(0).forEach(({ resolve }) => resolve(around().firstPage));
+    await waitFor(() => target().flashed, 2000);
+    const settled = observe();
+    await pause(3000);
+    report(JSON.stringify({ mode, pending, typing, settled, later: observe() }));
     return;
   }
   if (mode === 'answer') around().pending.forEach(({ resolve }) => resolve(around().page));

@@ -68,6 +68,7 @@ function controllerOver(toOffset: (offset: number) => void, cancelled: string[] 
     toEstimatedRow: () => {},
     toOffset,
     shiftBy: () => {},
+    shiftFromNewest: () => {},
   };
   return createTranscriptScrollController<{ id: string }>({
     list: () => list,

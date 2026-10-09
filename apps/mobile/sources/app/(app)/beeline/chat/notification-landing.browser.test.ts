@@ -39,6 +39,25 @@ const aroundPage = {
   nextBefore: { createdAt: BASE, id: id('d', 0) },
 };
 
+/**
+ * The Room's first message: the read around it has nothing older, so it
+ * returns the target and 14 newer rows, fewer than one screen. 300 more rows
+ * lie between them and the tail; `historyAfter` serves them a page at a time.
+ */
+const firstPage = {
+  roomId: ROOM,
+  messages: [
+    row(TARGET, 'TARGET MESSAGE', BASE),
+    ...Array.from({ length: 14 }, (_, n) =>
+      row(id('d', n), `Around message ${n}`, BASE + (1 + n) * 60),
+    ),
+  ],
+  nextBefore: null,
+};
+const newerRows = Array.from({ length: 300 }, (_, n) =>
+  row(id('d', 14 + n), `Around message ${14 + n}`, BASE + (15 + n) * 60),
+);
+
 const roomView = {
   room: {
     id: ROOM,
@@ -131,6 +150,8 @@ function shims(mobile: string): Record<string, string> {
     export { RoomViewHttpError };
     const view = ${JSON.stringify(roomView)};
     globalThis.__around = { calls: 0, pending: [], page: ${JSON.stringify(aroundPage)},
+      firstPage: ${JSON.stringify(firstPage)}, newerRows: ${JSON.stringify(newerRows)},
+      serveNewer: false, afterCalls: 0,
       makeMissing: () => new RoomViewHttpError(404, 'not_found') };
     export const isRoomViewTimeoutError = () => false;
     export const readPushedMonolithRoom = async () => view;
@@ -139,7 +160,14 @@ function shims(mobile: string): Record<string, string> {
       async markRead() {}
       async markUnread() {}
       async history(roomId) { return { roomId, messages: [] }; }
-      async historyAfter(roomId) { return { roomId, messages: [] }; }
+      async historyAfter(roomId, messageId) {
+        const around = globalThis.__around;
+        if (!around.serveNewer) return { roomId, messages: [] };
+        around.afterCalls += 1;
+        const rows = [...around.firstPage.messages, ...around.newerRows];
+        const at = rows.findIndex((row) => row.id === messageId);
+        return { roomId, messages: rows.slice(at + 1, at + 31) };
+      }
       historyAround() {
         globalThis.__around.calls += 1;
         return new Promise((resolve, reject) => globalThis.__around.pending.push({ resolve, reject }));
@@ -160,8 +188,16 @@ type Observation = {
   noLongerAvailable: boolean;
   rows: string[];
   composer: boolean;
-  target: { present: boolean; flashed: boolean; flashColor: string | null; top: number | null };
+  target: {
+    present: boolean;
+    flashed: boolean;
+    flashColor: string | null;
+    top: number | null;
+    /** The target's text, whether or not its row still flashes. */
+    textTop: number | null;
+  };
   historyAroundCalls: number;
+  historyAfterCalls: number;
   listHeight: number;
 };
 type Proof = {
@@ -172,14 +208,17 @@ type Proof = {
   console: string[];
 };
 
-async function proof(mode: 'stall' | 'answer' | 'missing' | 'landed-then-missing'): Promise<Proof> {
+async function proof(
+  mode: 'stall' | 'answer' | 'missing' | 'landed-then-missing' | 'first',
+  { width, height } = { width: 390, height: 844 },
+): Promise<Proof> {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/notification-landing-proof.tsx'),
     mobile,
     shims: shims(mobile),
-    width: 390,
-    height: 844,
+    width,
+    height,
     query: `?mode=${mode}&room=${ROOM}&gone=${GONE}`,
     budgetMs: 15_000,
   });
@@ -227,6 +266,27 @@ describe.skipIf(!existsSync(CHROME))(
       expect(settled.target.top!).toBeGreaterThanOrEqual(-10);
       expect(settled.target.top!).toBeLessThan(120);
       expect(settled.rows).toContain('TARGET MESSAGE');
+    }, 120_000);
+
+    it("holds a landing on the Room's first message while newer rows fill a 430x932 screen", async () => {
+      // A taller phone: the target and its 14 newer rows do not fill the list.
+      const page = await proof('first', { width: 430, height: 932 });
+      const { settled, later } = page as Proof & { later: Observation };
+      console.log(
+        `first message: landed target present=${settled!.target.present}, flashed=${settled!.target.flashed}, text top=${settled!.target.textTop}px; ` +
+          `3 s later historyAfter calls=${later.historyAfterCalls}, target present=${later.target.present}, text top=${later.target.textTop}px of ${later.listHeight}px; ` +
+          `visible rows=${later.rows.length} (${later.rows[0]} … ${later.rows.at(-1)})`,
+      );
+      expect(settled!.target.present).toBe(true);
+      expect(settled!.target.flashed).toBe(true);
+      // The short window filled with newer rows, and stopped once the
+      // screen was full instead of walking the 300 rows to the tail.
+      expect(later.historyAfterCalls).toBeGreaterThanOrEqual(1);
+      expect(later.historyAfterCalls).toBeLessThanOrEqual(2);
+      // The target did not move.
+      expect(later.rows[0]).toBe('TARGET MESSAGE');
+      expect(later.target.present).toBe(true);
+      expect(Math.abs(later.target.textTop! - settled!.target.textTop!)).toBeLessThanOrEqual(4);
     }, 120_000);
 
     it('shows a short note and keeps the tail when the target is gone (404)', async () => {

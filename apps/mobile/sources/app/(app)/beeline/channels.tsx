@@ -31,6 +31,7 @@ import {
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
+import { cornerOpenTappedAgain } from '@/buzz/corner-open-status';
 import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { useRoomListGestures } from '@/buzz/use-room-list-gestures';
@@ -664,7 +665,7 @@ export default function BuzzChannels() {
   const openingCornerRef = useRef(false);
   const openNewCorner = useCallback(
     async (roomId: string, attempt?: CornerOpenAttempt) => {
-      if (openingCornerRef.current) return;
+      if (openingCornerRef.current) return cornerOpenTappedAgain();
       openingCornerRef.current = true;
       try {
         await openRoomListCorner({

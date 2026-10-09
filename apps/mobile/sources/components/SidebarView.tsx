@@ -18,6 +18,7 @@ import {
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
+import { cornerOpenTappedAgain } from '@/buzz/corner-open-status';
 import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
 import { roomListSections } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
@@ -363,7 +364,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const openingCornerRef = React.useRef(false);
   const openNewCorner = React.useCallback(
     async (roomId: string, attempt?: CornerOpenAttempt) => {
-      if (openingCornerRef.current) return;
+      if (openingCornerRef.current) return cornerOpenTappedAgain();
       openingCornerRef.current = true;
       try {
         const identity = await loadBuzzIdentity();

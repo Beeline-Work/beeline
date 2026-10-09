@@ -12,6 +12,8 @@ const decorativeAccentFills = new Set([
   'app/(app)/join/[token].tsx:badgeDot',
   'app/(app)/beeline/workflow-run.tsx:liveDot',
   'components/buzz/ConversationRow.tsx:dot',
+  // A pending corner create's status square (corner-open mock).
+  'components/buzz/CornerOpenToast.tsx:glyphPending',
   'components/buzz/DesktopWorkspaceRail.tsx:pill',
   // The live dictation waveform's level bars.
   'components/buzz/DictationWaveform.tsx:barLive',
@@ -25,6 +27,8 @@ const decorativeAccentFills = new Set([
   'components/buzz/NeedsYouCell.tsx:rail',
   'components/buzz/RoomCatchUpControls.tsx:badge',
   'components/buzz/RoomListToolbar.tsx:selectedRule',
+  // The offline band under a Room header; its Retry is text, not a plate.
+  'components/buzz/RoomSavedCopyNotice.tsx:band',
   'components/buzz/RoomListToolbar.tsx:needsCount',
   'components/buzz/StateDot.tsx:pulse',
   'components/buzz/TranscriptCard.tsx:initialValues',

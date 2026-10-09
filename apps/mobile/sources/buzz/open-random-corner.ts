@@ -1,4 +1,5 @@
 import { v4 as randomUUID } from 'uuid';
+import { cornerOpenEnded, cornerOpenStarted } from './corner-open-status';
 import { randomCornerName } from './random-corner-name';
 
 /**
@@ -23,13 +24,20 @@ export type OpenRandomNamedCornerInput = {
 
 /**
  * Create a human corner whose name is three words ending in `corner`, then open
- * it. Each entry point owns its own trigger description.
+ * it. Each entry point owns its own trigger description. The create shows as
+ * pending (`corner-open-status`) while it is in flight.
  */
 export async function openRandomNamedCorner(
   input: OpenRandomNamedCornerInput,
 ): Promise<{ id: string; title: string }> {
   const { title, cornerId } = input.attempt ?? newCornerOpenAttempt(input.random);
-  const id = await input.createCorner(input.roomId, title, cornerId);
+  cornerOpenStarted(input.roomId);
+  let id: string;
+  try {
+    id = await input.createCorner(input.roomId, title, cornerId);
+  } finally {
+    cornerOpenEnded();
+  }
   input.openCorner(id, title);
   return { id, title };
 }

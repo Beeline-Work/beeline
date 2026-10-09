@@ -18,9 +18,9 @@ describe('Room open occupancy', () => {
     // The early return covers only the no-surface case; the painted surface
     // carries the notice and its Retry.
     const painted = surface.slice(surface.indexOf('if (!roomSurface) {'));
-    const notice = painted.slice(painted.indexOf('testID="room-saved-copy-notice"') - 400);
-    expect(notice).toContain('{transcriptHydrationError && (');
-    expect(notice).toContain('onPress={retryHydration}');
+    expect(painted).toContain(
+      '<RoomSavedCopyNotice message={transcriptHydrationError} onRetry={retryHydration} />',
+    );
   });
 
   it('marks navigation dispatch, route mount, and cache-read separately from auth', () => {

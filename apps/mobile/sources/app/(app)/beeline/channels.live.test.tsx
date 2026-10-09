@@ -23,7 +23,7 @@ const deck = vi.hoisted(() => ({
       defaultBranch: 'main',
     }),
   ),
-  createCorner: vi.fn(async (_roomId: string, _title: string) => 'corner-new'),
+  createCorner: vi.fn(async (_roomId: string, _title: string, _cornerId?: string) => 'corner-new'),
   subscriptions: [] as Array<{
     filters: readonly { readonly '#h'?: readonly string[] }[];
     emit(event: MonolithSurfaceEvent): void;
@@ -169,8 +169,8 @@ vi.mock('@/sync/transport', () => ({
     githubRepositoryCreate(input: { installationId: number; name: string; private?: boolean }) {
       return deck.createRepository(input);
     }
-    createHumanCorner(roomId: string, title: string) {
-      return deck.createCorner(roomId, title);
+    createHumanCorner(roomId: string, title: string, ...rest: unknown[]) {
+      return deck.createCorner(roomId, title, rest[3] as string | undefined);
     }
   },
 }));
@@ -197,6 +197,8 @@ import { router } from 'expo-router';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
+import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
+import { cornerOpenEnded } from '@/buzz/corner-open-status';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 
 (
@@ -300,6 +302,7 @@ beforeEach(() => {
   vi.mocked(dispatchRoomOpenTap).mockClear();
   deck.createRepository.mockClear();
   deck.createCorner.mockClear();
+  cornerOpenEnded();
   deck.subscriptions.length = 0;
   deck.chatsResponse = chatList({ id: 'm1', text: 'earlier', createdAt: 10 });
 });
@@ -671,6 +674,65 @@ describe('Room deck live path', () => {
       params: { channelId: 'corner-new', parent: 'room-a', title, returnTo: 'room-list' },
     });
     act(() => {
+      row!.unmount();
+      renderer.unmount();
+    });
+  });
+
+  it('shows a long-press corner open as pending, then unreachable with Retry for the same corner', async () => {
+    const renderer = await mountDeck();
+    let toast!: ReactTestRenderer;
+    act(() => {
+      toast = create(React.createElement(CornerOpenToast));
+    });
+    const list = renderer.root.find((node: any) => node.type === 'SectionList');
+    let row: ReactTestRenderer;
+    await act(async () => {
+      row = create(
+        list.props.renderItem({
+          item: { ...paintedRows(renderer)[0], cornerCount: 1 },
+          index: 0,
+          section: { data: [paintedRows(renderer)[0]] },
+        }),
+      );
+    });
+    const conversation = row!.root.findByType(ConversationRow);
+    let fail!: (error: Error) => void;
+    deck.createCorner.mockImplementationOnce(
+      () => new Promise<string>((_, reject) => (fail = reject)),
+    );
+    vi.mocked(router.push).mockClear();
+    const text = (node: any): string =>
+      node.children.map((child: any) => (typeof child === 'string' ? child : text(child))).join('');
+
+    await act(async () => {
+      void conversation.props.onLongPressCorners();
+    });
+    expect(text(toast.root.findByProps({ testID: 'corner-open-pending' }))).toBe(
+      'Opening corner…Waiting for server · 0s',
+    );
+    // A second press while the first waits says so instead of doing nothing.
+    await act(async () => {
+      void conversation.props.onLongPressCorners();
+    });
+    expect(deck.createCorner).toHaveBeenCalledOnce();
+    expect(text(toast.root.findByProps({ testID: 'corner-open-pending' }))).toBe(
+      'Opening corner…Still opening…',
+    );
+
+    await act(async () => fail(new TypeError('Network request failed')));
+    expect(text(toast.root.findByProps({ testID: 'corner-open-failed' }))).toBe(
+      "Couldn't reach BeelineCheck your connection, then retry.Retry",
+    );
+    expect(router.push).not.toHaveBeenCalled();
+    await act(async () => toast.root.findByProps({ testID: 'corner-open-retry' }).props.onPress());
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledOnce());
+    const [first, retried] = deck.createCorner.mock.calls;
+    expect(retried).toEqual(first);
+    expect(first![2]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(toast.toJSON()).toBeNull();
+    act(() => {
+      toast.unmount();
       row!.unmount();
       renderer.unmount();
     });

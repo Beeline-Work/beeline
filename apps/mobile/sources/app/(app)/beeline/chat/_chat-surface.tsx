@@ -395,6 +395,7 @@ import {
   HeaderMetaRow,
 } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
+import { RoomSavedCopyNotice } from '@/components/buzz/RoomSavedCopyNotice';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
 import {
@@ -403,6 +404,7 @@ import {
   type CornerOpenAttempt,
 } from '@/buzz/open-random-corner';
 import { alertCornerOpenFailure } from '@/buzz/room-list-new-corner';
+import { cornerOpenTappedAgain } from '@/buzz/corner-open-status';
 import { forwardMessageToNewCorner, takeCornerComposerDraft } from '@/buzz/message-corner-forward';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
 import { connectorOfferCeremonyRoute } from '@/buzz/connector-offer-ceremony';
@@ -4626,7 +4628,8 @@ export function BuzzChatSurface({
   }, [canRenameTitle, isCorner, storedRoomName, renameTextDraft]);
 
   const handleOpenRandomCorner = useCallback(async (attempt?: CornerOpenAttempt) => {
-    if (openingRandomCorner || isArchived || viewerIsAgent) return;
+    if (openingRandomCorner) return cornerOpenTappedAgain();
+    if (isArchived || viewerIsAgent) return;
     if (!transport) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert(
@@ -4651,7 +4654,7 @@ export function BuzzChatSurface({
         },
       });
     } catch (err) {
-      alertCornerOpenFailure(err, () => void handleOpenRandomCorner(current));
+      alertCornerOpenFailure(err, parentChannelId ?? decodedId, () => void handleOpenRandomCorner(current));
     } finally {
       setOpeningRandomCorner(false);
     }
@@ -4723,7 +4726,11 @@ export function BuzzChatSurface({
         },
       });
     } catch (err) {
-      alertCornerOpenFailure(err, () => void confirmForwardToNewCorner({ target, attempt }));
+      alertCornerOpenFailure(
+        err,
+        parentChannelId ?? decodedId,
+        () => void confirmForwardToNewCorner({ target, attempt }),
+      );
     } finally {
       setOpeningRandomCorner(false);
     }
@@ -6114,6 +6121,12 @@ export function BuzzChatSurface({
             )}
           </View>
 
+          {/* The saved copy painted, but the server read failed: say so
+            instead of passing the copy off as current. */}
+          {transcriptHydrationError && (
+            <RoomSavedCopyNotice message={transcriptHydrationError} onRetry={retryHydration} />
+          )}
+
           <RoomReviewerSurfaceNotice
             allowAutoMerge={roomRepository?.allowAutoMerge}
             canManage={canManageWorkspace}
@@ -6429,25 +6442,6 @@ export function BuzzChatSurface({
                   </View>
                 ) : (
                   <Animated.View style={[styles.inputBar, composerBottomInsetStyle]}>
-                    {transcriptHydrationError && (
-                      // The saved copy painted, but the server read failed:
-                      // say so instead of passing the copy off as current.
-                      <View
-                        accessibilityRole="alert"
-                        style={styles.repoPromptBanner}
-                        testID="room-saved-copy-notice"
-                      >
-                        <Text style={styles.repoPromptHint}>{transcriptHydrationError}</Text>
-                        <TouchableOpacity
-                          accessibilityRole="button"
-                          onPress={retryHydration}
-                          style={styles.repoPromptConnect}
-                          testID="room-saved-copy-retry"
-                        >
-                          <Text style={styles.repoPromptConnectText}>Retry</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
                     {slashMenuVisible &&
                       (() => {
                         const mentionAgent = mentionSlashAgentPubkey

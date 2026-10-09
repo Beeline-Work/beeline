@@ -18,6 +18,7 @@ import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { RoomCornersHeader } from '@/components/buzz/RoomCornersHeader';
 import { RoomCornersList } from '@/components/buzz/RoomCornersList';
+import { CornerOpenRow } from '@/components/buzz/CornerOpenToast';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { Typography } from '@/constants/Typography';
@@ -275,6 +276,7 @@ export default function BuzzCorners() {
             <Text style={styles.error}>! {error}</Text>
           </TouchableOpacity>
         )}
+        <CornerOpenRow roomId={decodedId} />
         <RoomCornersList
           corners={surface.corners}
           parentRoomId={decodedId}

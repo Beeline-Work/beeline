@@ -6,25 +6,20 @@ import {
   openRandomNamedCorner,
   type CornerOpenAttempt,
 } from './open-random-corner';
+import { cornerOpenUnreachable, isCornerOpenUnreachable } from './corner-open-status';
 import { CORNER_LABEL } from './vocabulary';
 
 /**
  * A failed corner open, said out loud. When the server never answered (the
- * request timed out or the network refused it) the alert offers Retry, which
- * repeats the same attempt; a server refusal is named as it was given.
+ * request timed out or the network refused it) `CornerOpenToast` says so and
+ * offers Retry, which repeats the same attempt; a server refusal is named as
+ * it was given.
  */
-export function alertCornerOpenFailure(error: unknown, retry: () => void): void {
+export function alertCornerOpenFailure(error: unknown, roomId: string, retry: () => void): void {
   void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-  // `MonolithRequestTimeoutError` by name, so this module stays free of the
-  // session and its native storage (the browser proof bundles it).
-  if (
-    error instanceof TypeError ||
-    (error instanceof Error && error.name === 'MonolithRequestTimeoutError')
-  ) {
-    Modal.alert("Couldn't reach Beeline", `Check your connection, then try again.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Retry', onPress: retry },
-    ]);
+  const unreachable = isCornerOpenUnreachable(error);
+  if (unreachable) {
+    cornerOpenUnreachable(roomId, unreachable.timedOut, retry);
     return;
   }
   Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(error));
@@ -65,6 +60,6 @@ export async function openRoomListCorner(input: {
       },
     });
   } catch (err) {
-    alertCornerOpenFailure(err, () => input.retry(attempt));
+    alertCornerOpenFailure(err, input.roomId, () => input.retry(attempt));
   }
 }

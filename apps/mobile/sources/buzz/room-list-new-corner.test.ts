@@ -10,11 +10,19 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
   phoneOperationFailureReason: (err: unknown) => (err as Error).message,
 }));
 
-import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
+import { MONOLITH_REQUEST_TIMEOUT_MS, MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import { openRoomListCorner } from './room-list-new-corner';
+import {
+  CORNER_OPEN_DEADLINE_SECONDS,
+  cornerOpenEnded,
+  cornerOpenStatus,
+} from './corner-open-status';
 
 describe('openRoomListCorner', () => {
-  beforeEach(() => alert.mockClear());
+  beforeEach(() => {
+    alert.mockClear();
+    cornerOpenEnded();
+  });
 
   it('creates a named human corner in the Room and opens it', async () => {
     const createCorner = vi.fn(async () => 'corner-new');
@@ -66,14 +74,15 @@ describe('openRoomListCorner', () => {
     await openRoomListCorner({ roomId: 'room-a', createCorner, openCorner, retry });
 
     expect(openCorner).not.toHaveBeenCalled();
-    const [heading, , buttons] = alert.mock.calls[0] as [
-      string,
-      string,
-      { text: string; onPress?: () => void }[],
-    ];
-    expect(heading).toBe("Couldn't reach Beeline");
-    expect(buttons.map((button) => button.text)).toEqual(['Cancel', 'Retry']);
-    buttons[1]!.onPress!();
+    expect(alert).not.toHaveBeenCalled();
+    const status = cornerOpenStatus();
+    expect(status).toMatchObject({
+      status: 'failed',
+      roomId: 'room-a',
+      timedOut: failure instanceof MonolithRequestTimeoutError,
+    });
+    if (status.status !== 'failed') throw new Error('unreachable');
+    status.retry();
     const [, title, cornerId] = createCorner.mock.calls[0] as unknown as [string, string, string];
     expect(retry).toHaveBeenCalledWith({ title, cornerId });
 
@@ -88,5 +97,24 @@ describe('openRoomListCorner', () => {
     });
     expect(createCorner).toHaveBeenLastCalledWith('room-a', title, cornerId);
     expect(openCorner).toHaveBeenCalledWith('corner-new', title);
+    expect(cornerOpenStatus()).toEqual({ status: 'idle' });
+  });
+
+  it('names the same deadline the create request runs under', () => {
+    expect(CORNER_OPEN_DEADLINE_SECONDS * 1000).toBe(MONOLITH_REQUEST_TIMEOUT_MS);
+  });
+
+  it('shows the create as pending while the request is in flight', async () => {
+    let answer!: (id: string) => void;
+    const pending = openRoomListCorner({
+      roomId: 'room-a',
+      createCorner: () => new Promise<string>((resolve) => (answer = resolve)),
+      openCorner: vi.fn(),
+      retry: vi.fn(),
+    });
+    expect(cornerOpenStatus()).toMatchObject({ status: 'pending', roomId: 'room-a', again: false });
+    answer('corner-new');
+    await pending;
+    expect(cornerOpenStatus()).toEqual({ status: 'idle' });
   });
 });

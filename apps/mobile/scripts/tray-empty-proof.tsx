@@ -72,6 +72,34 @@ async function readRow() {
   report(`PASS ${rowText}`);
 }
 
-(new URLSearchParams(location.search).get('mode') === 'row' ? readRow() : read()).catch((error) =>
+/** A link with no communityId paints the Tray or a way back, never only the loader. */
+async function readNoLink() {
+  const started = performance.now();
+  createRoot(document.getElementById('root')!).render(<TrayScreen />);
+  let row: HTMLElement | null = null;
+  let fallback: HTMLElement | null = null;
+  while (!row && !fallback && performance.now() - started < 5_000) {
+    await pause();
+    row = document.querySelector<HTMLElement>('[data-testid="bookmark-msg-1"]');
+    fallback = document.querySelector<HTMLElement>('[data-testid="tray-no-workspace"]');
+  }
+  const elapsed = Math.round(performance.now() - started);
+  assert(row != null || fallback != null, `only the loader after ${elapsed} ms`);
+  if (row) {
+    report(`PASS Tray of workspace-1 in ${elapsed} ms: ${row.textContent}`);
+    return;
+  }
+  const back = Array.from(fallback!.querySelectorAll<HTMLElement>('[role="button"]')).find(
+    (element) => element.textContent === 'BACK TO ROOMS',
+  );
+  assert(back != null, `the fallback has no way back: ${fallback!.textContent}`);
+  back!.click();
+  const replaced = (window as typeof window & { __replaced?: string }).__replaced;
+  assert(replaced === '/beeline/channels', `BACK TO ROOMS went to ${replaced}`);
+  report(`PASS ${fallback!.textContent} in ${elapsed} ms; back to ${replaced}`);
+}
+
+const mode = new URLSearchParams(location.search).get('mode');
+(mode === 'row' ? readRow() : mode === 'no-link' ? readNoLink() : read()).catch((error) =>
   report(String(error)),
 );

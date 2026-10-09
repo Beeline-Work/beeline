@@ -17,6 +17,15 @@ vi.mock('react-native', async () => {
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
+    Keyboard: { isVisible: () => true, addListener: () => ({ remove() {} }), dismiss() {} },
+    Animated: {
+      View: host('View'),
+      Value: class {
+        constructor(readonly value: number) {}
+      },
+      timing: () => ({ start() {}, stop() {} }),
+    },
+    Easing: { linear: (t: number) => t },
     Platform: { OS: 'ios', select: (choices: any) => choices.ios ?? choices.default },
   };
 });

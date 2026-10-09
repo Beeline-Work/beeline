@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS build
+FROM ghcr.io/beeline-work/ci-node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS build
 WORKDIR /app
 
 COPY package.json package-lock.json tsconfig.base.json ./
@@ -31,7 +31,7 @@ RUN npm run build -w @beeline/nostr \
   && npm run build -w @beeline/push-gateway \
   && npm run build -w @beeline/server
 
-FROM node:22-bookworm-slim AS runtime
+FROM ghcr.io/beeline-work/ci-node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
 ARG BEELINE_RELEASE_VERSION=development

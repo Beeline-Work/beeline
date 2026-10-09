@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -69,6 +69,20 @@ function fakeRuntimes(script: (agentId: string, run: number) => Promise<HelperEx
 }
 
 describe('one helper process hosts every agent on the machine', () => {
+  it('expires old deleted runtimes on helper start without a recurring timer', async () => {
+    const { root, env, signals } = await machine(1);
+    const old = resolve(root, 'beeline', 'deleted-runtimes',
+      `${'a'.repeat(64)}-${Date.now() - 31 * 86400_000}`);
+    await mkdir(old, { recursive: true });
+    const fake = fakeRuntimes();
+    const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
+    await vi.waitFor(async () => {
+      await expect(access(old)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+    signals.emit('SIGTERM');
+    expect((await running).reason).toBe('stopped');
+  });
+
   it('runs every paired agent in this one process and reports each of them', async () => {
     const { root, configPaths, env, signals } = await machine(3);
     const fake = fakeRuntimes();

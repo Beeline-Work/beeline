@@ -1,6 +1,6 @@
 import type { EventEmitter } from 'node:events';
 import { mkdir, rename, stat, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import {
   interruptHostedAgent,
   runAgentRuntime,
@@ -54,6 +54,8 @@ import {
   SystemdNotifier,
 } from './systemd.js';
 import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
+import { pruneDeletedRuntimes, pruneRepositoryCaches } from './host-disk-retention.js';
+import { pruneSharedModelCache } from './scratch-lifecycle.js';
 
 /** A failed agent restarts inside the helper after this, doubling to the cap. */
 const AGENT_RESTART_BASE_MS = 5_000;
@@ -110,6 +112,37 @@ export async function runMachineHelper(
   const slots = new Map<string, AgentSlot>();
   const hosted = new Map<string, HostedAgent>();
   const links = new Map<string, MachineLink>();
+  let diskSweepRunning = false;
+  let lastModelSweepAt = 0;
+  let lastRetentionSweepAt = 0;
+  const sweepHostDisk = async () => {
+    const now = Date.now();
+    if (
+      controller.signal.aborted ||
+      diskSweepRunning ||
+      [...slots.values()].some((slot) => slot.state === 'starting' || slot.state === 'restarting') ||
+      [...hosted.values()].some((agent) => !agent.core.isWorkspaceIdle()) ||
+      (now - lastModelSweepAt < 60 * 60_000 && now - lastRetentionSweepAt < 24 * 60 * 60_000)
+    ) return;
+    diskSweepRunning = true;
+    try {
+      const modelDue = now - lastModelSweepAt >= 60 * 60_000;
+      const removed = modelDue
+        ? await pruneSharedModelCache(resolve(supervisorRoot, 'beeline', 'model-cache'))
+        : [];
+      if (modelDue) lastModelSweepAt = now;
+      if (now - lastRetentionSweepAt >= 24 * 60 * 60_000) {
+        removed.push(...await pruneDeletedRuntimes(supervisorRoot));
+        removed.push(...await pruneRepositoryCaches(supervisorRoot));
+        lastRetentionSweepAt = now;
+      }
+      if (removed.length) console.log(`[helper] idle disk sweep removed ${removed.length} expired cache/runtime directories`);
+    } catch (error) {
+      console.warn('[helper] idle disk sweep failed:', error);
+    } finally {
+      diskSweepRunning = false;
+    }
+  };
   if (!options.configPaths) await writeHelperPidRecord(supervisorRoot, process.pid);
 
   const layout = beelineInstallLayout(env);
@@ -317,6 +350,7 @@ export async function runMachineHelper(
       for (const agent of hosted.values())
         agent.lifecycle.resumeAfterFailedUpdate(() => agent.core.resumeServing());
     }
+    void sweepHostDisk();
   };
 
   let readyResolve: (() => void) | undefined;
@@ -474,6 +508,7 @@ export async function runMachineHelper(
       allEstablished,
       new Promise<void>((resolveAbort) => controller.signal.addEventListener('abort', () => resolveAbort(), { once: true })),
     ]);
+    if (!controller.signal.aborted) void sweepHostDisk();
     if (!controller.signal.aborted)
       await notifier.ready(`ready; ${statusLine()}`).catch((error) =>
         console.error('[helper] ready notification failed:', error));

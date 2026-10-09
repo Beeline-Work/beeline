@@ -712,6 +712,40 @@ export function createBeelineServer(options: ServerOptions): Server {
           sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: event.reason }));
       });
       const releases = new Map<string, () => void>();
+      // The socket is an ordered stream. Keep the last text handed to this
+      // reader so duplicate local/PG publications cost no wire bytes, and a
+      // growing draft carries only its new suffix. A new subscription starts
+      // with a full snapshot below.
+      const draftWire = new Map<string, { text: string; revision: number }>();
+      // A writer also receives its own PostgreSQL NOTIFY. Compare the
+      // projected public row, rather than the NOTIFY origin, so a changed row
+      // still reaches this socket and identical local/PG copies do not.
+      const sentDeltas = new Map<string, string>();
+      const sentCornerStatus = new Map<string, { fingerprint: string; sequence: number }>();
+      const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>,
+        sequence?: number) => {
+        const key = `${event.roomId}:${event.agentId}:${event.turnId}:${event.type}`;
+        const previous = draftWire.get(key);
+        if (previous?.text === event.text) return;
+        if (previous && event.text.startsWith(previous.text)) {
+          const revision = previous.revision + 1;
+          const chunk = event.text.slice(previous.text.length);
+          draftWire.set(key, { text: event.text, revision });
+          sendLive(JSON.stringify({
+            type: `${event.type}-append`, roomId: event.roomId,
+            agentId: event.agentId, turnId: event.turnId,
+            revision, offset: previous.text.length,
+            chunk,
+            ...(sequence !== undefined ? { sequence } : {}),
+            ...(event.latestChunk !== undefined && event.latestChunk !== chunk
+              ? { latestChunk: event.latestChunk } : {}),
+          }));
+          return;
+        }
+        draftWire.set(key, { text: event.text, revision: 0 });
+        sendLive(JSON.stringify({ ...event, revision: 0,
+          ...(sequence !== undefined ? { sequence } : {}) }));
+      };
       socketSubscriptions.set(client, () => releases.size);
       let socketTasks = 0;
       let socketQueuedBytes = 0;
@@ -747,6 +781,10 @@ export function createBeelineServer(options: ServerOptions): Server {
         // waits behind the admission queue.
         if (frameBytes <= 32 && raw.toString() === LIVE_PING_FRAME) {
           sendLive(LIVE_PONG_FRAME);
+          return;
+        }
+        if (frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
+          sendLive('{"type":"sync-ok"}');
           return;
         }
         if (
@@ -852,9 +890,20 @@ export function createBeelineServer(options: ServerOptions): Server {
               // first; replacing it with the older row would show the reader the
               // answer going backwards.
               const streamed = new Set<string>();
-              releases.set(
-                roomId,
-                options.live.subscribe(roomId, (event) => {
+              const candidateCursor = (item.cursors && typeof item.cursors === 'object' &&
+                !Array.isArray(item.cursors)
+                ? (item.cursors as Record<string, unknown>)[roomId] : undefined);
+              const cursor = candidateCursor && typeof candidateCursor === 'object' &&
+                !Array.isArray(candidateCursor) ? candidateCursor as Record<string, unknown> : undefined;
+              const resume = cursor && typeof cursor.epoch === 'string' &&
+                typeof cursor.base === 'number' && Array.isArray(cursor.seen)
+                ? { epoch: cursor.epoch, base: cursor.base,
+                    seen: cursor.seen.filter((value): value is number => typeof value === 'number') }
+                : undefined;
+              const forwardEvent = (event: LiveEvent, sequence?: number) => {
+                  const sendFrame = (payload: Record<string, unknown>) => sendLive(JSON.stringify({
+                    ...payload, ...(sequence !== undefined ? { sequence } : {}),
+                  }));
                   if (
                     event.type === 'invalidate' &&
                     event.readerId &&
@@ -863,13 +912,19 @@ export function createBeelineServer(options: ServerOptions): Server {
                     return;
                   if (event.type === 'draft') streamed.add(event.agentId);
                   if (event.type !== 'invalidate') {
-                    if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
+                    if (client.readyState !== client.OPEN) return;
+                    if (event.type === 'draft' || event.type === 'thought') sendDraft(event, sequence);
+                    else {
+                      if (event.type === 'retract')
+                        draftWire.delete(`${event.roomId}:${event.agentId}:${event.turnId}:${event.kind}`);
+                      sendFrame(event);
+                    }
                     return;
                   }
                   // committedRow is process-local authority input. Strip it
                   // before every wire branch, including malformed/no-target
                   // invalidations, so only a projected public delta can leave.
-                  const { committedRow, ...wireEvent } = event;
+                  const { committedRow, trace: eventTrace, ...wireEvent } = event;
                   const target = event.messageId
                     ? ({ type: 'message' as const, messageId: event.messageId } as const)
                     : event.agentId && event.requestId
@@ -880,36 +935,39 @@ export function createBeelineServer(options: ServerOptions): Server {
                         } as const)
                       : undefined;
                   if (!target) {
-                    if (client.readyState === client.OPEN) sendLive(JSON.stringify(wireEvent));
+                    if (event.reason === 'corner-status' &&
+                        typeof options.phone.liveChatCornerStatus === 'function') {
+                      void options.phone.liveChatCornerStatus(roomId, principal.identityId)
+                        .then((status) => {
+                          if (client.readyState !== client.OPEN) return;
+                          if (!status) { sendFrame(wireEvent); return; }
+                          const fingerprint = JSON.stringify(status);
+                          const previous = sentCornerStatus.get(roomId);
+                          if (previous && ((sequence !== undefined && sequence <= previous.sequence) ||
+                              previous.fingerprint === fingerprint)) return;
+                          sentCornerStatus.set(roomId, { fingerprint, sequence: sequence ?? 0 });
+                          sendFrame({ type: 'corner-status', roomId, ...status });
+                        })
+                        .catch(() => {
+                          if (client.readyState === client.OPEN) sendFrame(wireEvent);
+                        });
+                      return;
+                    }
+                    if (client.readyState === client.OPEN)
+                      sendFrame({ ...wireEvent,
+                        ...(options.livePaintDiagnostics && eventTrace ? { trace: eventTrace } : {}) });
                     return;
                   }
-                  const trace = event.trace;
+                  const trace = options.livePaintDiagnostics ? eventTrace : undefined;
                   const wireTrace =
                     trace && options.livePaintDiagnostics && typeof trace.startedAt !== 'number'
                       ? ({ ...trace, paintAck: 'database-clock' as const } satisfies LiveTrace)
                       : trace;
-                  const deliveryId = wireTrace?.id ?? randomUUID();
-                  const invalidationSent = !committedRow;
-                  // A deleted row or a failed read has no delta to follow the
-                  // invalidation. Lists that wait for that delta still need a
-                  // read; a Room already reread on the invalidation's deliveryId.
-                  // A row that exists but projects no delta changes no list.
                   const fallback = {
                     ...wireEvent,
                     ...(wireTrace ? { trace: wireTrace } : {}),
                     reason: `delta-fallback:${event.reason}`,
-                    ...(invalidationSent ? { reconcilesDelivery: deliveryId } : {}),
                   };
-                  if (invalidationSent && client.readyState === client.OPEN) {
-                    rememberPaintTrace(wireTrace, target.type);
-                    sendLive(
-                      JSON.stringify({
-                        ...wireEvent,
-                        ...(wireTrace ? { trace: wireTrace } : {}),
-                        deliveryId,
-                      }),
-                    );
-                  }
                   // Cross-process notifications carry only the committed row
                   // identity. Resolve every row independently: the result stays
                   // on the direct socket-delta path even when the app pool takes
@@ -941,22 +999,39 @@ export function createBeelineServer(options: ServerOptions): Server {
                     (error: unknown) => ({ error }) as const,
                   );
                   void pendingDelta
-                    .then((result) => {
+                    .then(async (result) => {
                       if (client.readyState !== client.OPEN) return;
                       if ('error' in result) throw result.error;
+                      if (!result.delta) {
+                        sendFrame(fallback);
+                        return;
+                      }
+                      let workflowRuns;
+                      if (result.delta.type === 'message-delta' &&
+                          result.delta.message.systemEvent?.kind === 'workflow-handoff' &&
+                          typeof options.phone.liveWorkflowRuns === 'function') {
+                        try {
+                          workflowRuns = (await options.phone.liveWorkflowRuns(
+                            roomId, principal.identityId)).workflows;
+                        } catch {
+                          // A workflow read failure leaves the ordinary HTTP
+                          // resource path as the covering read.
+                        }
+                      }
+                      const publicDelta = { ...result.delta,
+                        ...(workflowRuns ? { workflowRuns } : {}) };
+                      const rowKey = target.type === 'message'
+                        ? `${roomId}:message:${target.messageId}`
+                        : `${roomId}:turn:${target.agentId}:${target.requestId}`;
+                      const fingerprint = createHash('sha256')
+                        .update(JSON.stringify(publicDelta)).digest('hex');
+                      if (sentDeltas.get(rowKey) === fingerprint) return;
+                      sentDeltas.delete(rowKey);
+                      sentDeltas.set(rowKey, fingerprint);
+                      if (sentDeltas.size > 256) sentDeltas.delete(sentDeltas.keys().next().value!);
                       rememberPaintTrace(wireTrace, target.type);
-                      if (!result.delta && invalidationSent && event.operation !== 'DELETE') return;
-                      sendLive(
-                        JSON.stringify(
-                          result.delta
-                            ? {
-                                ...result.delta,
-                                ...(wireTrace ? { trace: wireTrace } : {}),
-                                ...(invalidationSent ? { reconcilesDelivery: deliveryId } : {}),
-                              }
-                            : fallback,
-                        ),
-                      );
+                      sendFrame({ ...publicDelta,
+                        ...(wireTrace ? { trace: wireTrace } : {}) });
                     })
                     .catch((error) => {
                       console.error(
@@ -965,12 +1040,20 @@ export function createBeelineServer(options: ServerOptions): Server {
                       );
                       if (client.readyState === client.OPEN) {
                         rememberPaintTrace(wireTrace, target.type);
-                        sendLive(JSON.stringify(fallback));
+                        sendFrame(fallback);
                       }
                     });
-                }),
-              );
-              sendLive(JSON.stringify({ type: 'subscribed', roomId: roomId }));
+              };
+              const subscription = options.live.subscribeReplay(roomId, resume, forwardEvent);
+              releases.set(roomId, subscription.release);
+              sendLive(JSON.stringify({ type: 'subscribed', roomId,
+                epoch: subscription.epoch,
+                cursor: subscription.resumed ? resume!.base : subscription.sequence,
+                resumed: subscription.resumed }));
+              if (subscription.resumed) {
+                for (const { event, sequence } of subscription.replay) forwardEvent(event, sequence);
+                continue;
+              }
               // A live lane carries only what is written after this point, so a
               // reader who joins a turn already in progress has missed the draft
               // it is writing. Hand over the running one now; every later delta
@@ -981,7 +1064,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                 .catch(() => [] as LiveEvent[]);
               for (const event of snapshot) {
                 if (event.type === 'draft' && streamed.has(event.agentId)) continue;
-                if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
+                if (client.readyState === client.OPEN &&
+                    (event.type === 'draft' || event.type === 'thought')) sendDraft(event);
               }
               for (const event of options.live.presenceSnapshot(roomId)) {
                 if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
@@ -1000,6 +1084,9 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
+            sentCornerStatus.delete(item.roomId);
+            for (const key of draftWire.keys())
+              if (key.startsWith(`${item.roomId}:`)) draftWire.delete(key);
           }
         };
         socketTaskTail = socketTaskTail
@@ -1043,6 +1130,8 @@ export function createBeelineServer(options: ServerOptions): Server {
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();
+        draftWire.clear();
+        sentDeltas.clear();
       });
     },
   );

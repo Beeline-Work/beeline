@@ -42,6 +42,22 @@ function message(id: string, createdAt: number, extra: Partial<RoomViewMessage> 
 }
 
 describe('chat list deltas', () => {
+  it('applies a parent corner status without a deck read', () => {
+    const view = deck(item('a', 20), item('b', 10, {
+      cornerCount: 0, waitingCornerCount: 0, agentState: 'working',
+    }));
+    const delta = { type: 'corner-status' as const, roomId: 'b',
+      cornerCount: 1, waitingCornerCount: 1,
+      openCorners: [{ id: 'corner', name: 'Fix', state: 'waiting' as const,
+        mine: true as const, waitingSince: 30 }],
+      agentState: 'needs-you' as const };
+    expect(chatListDeltaNeedsRead(view, delta)).toBe(false);
+    const next = applyChatListDelta(view, delta);
+    expect(next.chats.map((chat) => chat.room.id)).toEqual(['b', 'a']);
+    expect(next.chats[0]).toMatchObject({ cornerCount: 1, waitingCornerCount: 1,
+      agentState: 'needs-you', openCorners: [{ id: 'corner', state: 'waiting' }] });
+  });
+
   it('moves an incoming message to the top as the unread preview', () => {
     const view = deck(item('a', 20), item('b', 10));
     const next = applyChatListDelta(view, {

@@ -33,6 +33,7 @@ type Registration = {
   sawOpen: boolean;
   closed: boolean;
 };
+type RoomCursor = { epoch: string; base: number; seen: Set<number> };
 
 type LiveConnectionDeps = {
   authorization: () => Promise<string>;
@@ -91,6 +92,7 @@ export class LiveConnection {
   private readonly seenSubscribed = new Set<string>();
   private readonly pendingSubscribe = new Set<string>();
   private readonly overlays = new Map<string, RoomOverlayCache>();
+  private readonly roomCursors = new Map<string, RoomCursor>();
   private readonly traceOwners = new Map<string, Registration>();
   private readonly connectedListeners = new Set<() => void>();
   private socket: WebSocket | undefined;
@@ -100,6 +102,7 @@ export class LiveConnection {
   private readonly viewing = new Map<string, number>();
   private readonly heardMessages = new Set<string>();
   private readonly subscribeWaiters = new Set<() => void>();
+  private foregroundSyncTimer: ReturnType<typeof setTimeout> | undefined;
   private reconnectDelayMs = 1_000;
   private nextRegistrationId = 1;
   private generation = 0;
@@ -246,6 +249,18 @@ export class LiveConnection {
   }
 
   private handleForeground(): void {
+    // A one-shot ordered socket echo proves the background connection still
+    // carries its subscriptions. Replace it only when that path is silent.
+    if (this.socket && isSocketOpen(this.socket)) {
+      if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
+      const current = this.socket;
+      current.send(JSON.stringify({ type: 'sync' }));
+      this.foregroundSyncTimer = setTimeout(() => {
+        this.foregroundSyncTimer = undefined;
+        if (this.socket === current) this.reconnect();
+      }, 3_000);
+      return;
+    }
     this.reconnect();
   }
 
@@ -257,12 +272,15 @@ export class LiveConnection {
     const current = this.socket;
     this.socket = undefined;
     current?.close();
+    if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
+    this.foregroundSyncTimer = undefined;
     for (const registration of this.registrations.values()) registration.closed = true;
     this.registrations.clear();
     this.refcount.clear();
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     this.overlays.clear();
+    this.roomCursors.clear();
     this.traceOwners.clear();
     this.viewing.clear();
     this.heardMessages.clear();
@@ -284,6 +302,7 @@ export class LiveConnection {
         this.refcount.delete(roomId);
         const acknowledged = this.seenSubscribed.delete(roomId);
         this.overlays.delete(roomId);
+        this.roomCursors.delete(roomId);
         if (acknowledged && this.socket && isSocketOpen(this.socket))
           this.socket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
       }
@@ -331,6 +350,11 @@ export class LiveConnection {
         } catch {
           return;
         }
+        if (live.type === 'sync-ok') {
+          if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
+          this.foregroundSyncTimer = undefined;
+          return;
+        }
         this.dispatch(live, next);
       };
       next.onclose = () => {
@@ -347,9 +371,12 @@ export class LiveConnection {
   }
 
   private dropSocketState(): void {
+    if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
+    this.foregroundSyncTimer = undefined;
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
-    this.overlays.clear();
+    // Keep the last painted overlays and Room cursors across a transport
+    // reconnect. A resumed server lane only replays what changed.
     this.traceOwners.clear();
   }
 
@@ -396,8 +423,18 @@ export class LiveConnection {
 
   private sendSubscribe(roomIds: readonly string[]): void {
     if (!this.socket || !isSocketOpen(this.socket) || roomIds.length === 0) return;
-    for (const roomId of roomIds) this.pendingSubscribe.add(roomId);
-    this.socket.send(JSON.stringify({ type: 'subscribe', roomIds: [...roomIds] }));
+    // The phone server accepts at most 32 Rooms in one subscribe frame.
+    for (let offset = 0; offset < roomIds.length; offset += 32) {
+      const batch = roomIds.slice(offset, offset + 32);
+      for (const roomId of batch) this.pendingSubscribe.add(roomId);
+      const cursors = Object.fromEntries(batch.flatMap((roomId) => {
+        const cursor = this.roomCursors.get(roomId);
+        return cursor ? [[roomId, { epoch: cursor.epoch, base: cursor.base,
+          seen: [...cursor.seen].sort((a, b) => a - b) }]] : [];
+      }));
+      this.socket.send(JSON.stringify({ type: 'subscribe', roomIds: batch,
+        ...(Object.keys(cursors).length ? { cursors } : {}) }));
+    }
   }
 
   private replayLateJoin(registration: Registration, roomId: string): void {
@@ -421,6 +458,28 @@ export class LiveConnection {
       if (owner && !owner.closed) owner.listener({ monolithLive: live });
       return;
     }
+    if (live.type === 'draft-append' || live.type === 'thought-append') {
+      const kind = live.type === 'draft-append' ? 'draft' : 'thought';
+      const cache = this.overlays.get(live.roomId);
+      const previous = (kind === 'draft' ? cache?.drafts : cache?.thoughts)
+        ?.get(overlayKey(live.agentId, live.turnId))?.event;
+      if (!previous || previous.text.length !== live.offset ||
+          (previous.revision ?? 0) + 1 !== live.revision) {
+        // An out-of-sequence append cannot paint. The reconnect's full
+        // subscribe snapshot restores this lane and covers other missed rows.
+        this.roomCursors.delete(live.roomId);
+        this.overlays.delete(live.roomId);
+        this.reconnect();
+        return;
+      }
+      live = {
+        type: kind, roomId: live.roomId, agentId: live.agentId,
+        turnId: live.turnId, revision: live.revision,
+        text: previous.text + live.chunk,
+        ...(live.sequence !== undefined ? { sequence: live.sequence } : {}),
+        latestChunk: live.latestChunk ?? live.chunk,
+      };
+    }
     if (!('roomId' in live)) return;
     if (live.type === 'invalidate' && live.roomId === '' && live.reason === 'postgres:memberships') {
       for (const registration of this.registrations.values()) {
@@ -439,7 +498,25 @@ export class LiveConnection {
     if (live.type === 'subscribed') {
       this.pendingSubscribe.delete(live.roomId);
       this.seenSubscribed.add(live.roomId);
+      if (typeof live.epoch === 'string' && Number.isSafeInteger(live.cursor)) {
+        const previous = this.roomCursors.get(live.roomId);
+        if (!live.resumed || previous?.epoch !== live.epoch) {
+          this.roomCursors.set(live.roomId, { epoch: live.epoch, base: live.cursor!, seen: new Set() });
+          this.overlays.delete(live.roomId);
+        }
+      }
       for (const waiter of [...this.subscribeWaiters]) waiter();
+    } else if (typeof live.sequence === 'number') {
+      const cursor = this.roomCursors.get(live.roomId);
+      if (cursor && live.sequence > cursor.base) {
+        if (live.sequence > cursor.base + 256) {
+          this.roomCursors.delete(live.roomId);
+          this.reconnect();
+          return;
+        }
+        cursor.seen.add(live.sequence);
+        while (cursor.seen.delete(cursor.base + 1)) cursor.base += 1;
+      }
     }
     this.rememberOverlay(live);
     for (const registration of this.registrations.values()) {

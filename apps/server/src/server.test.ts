@@ -808,12 +808,16 @@ describe('daemon live command push', () => {
     const pong = nextSocketMessage(socket, 'pong');
     socket.send(JSON.stringify({ type: 'ping' }));
     await expect(pong).resolves.toEqual({ type: 'pong' });
+    const synced = nextSocketMessage(socket, 'sync-ok');
+    socket.send(JSON.stringify({ type: 'sync' }));
+    await expect(synced).resolves.toEqual({ type: 'sync-ok' });
     expect(query).not.toHaveBeenCalled();
   });
 
   it('sends read-mark reconciliation to reader devices without replaying a daemon inbox', async () => {
     const roomId = 'room-live';
     const live = new LiveHub();
+    const liveDraftSnapshot = vi.fn().mockResolvedValue([]);
     const execute = vi.fn(async (name: string) => {
       if (name === 'getRoomInbox') return { items: [], cursor: undefined };
       if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
@@ -827,7 +831,7 @@ describe('daemon live command push', () => {
       } as unknown as TokenAuth,
       phone: {
         canReadRooms: canReadRoomsFrom(async () => true),
-        liveDraftSnapshot: vi.fn().mockResolvedValue([]),
+        liveDraftSnapshot,
       } as unknown as PhoneService,
       daemon: { execute } as unknown as DaemonService,
       live,
@@ -1171,18 +1175,21 @@ describe('phone committed-row live delivery', () => {
     canReadRoom = vi.fn().mockResolvedValue(true),
     livePaintDiagnostics = false,
     databaseQuery = vi.fn(),
+    liveChatCornerStatus?: PhoneService['liveChatCornerStatus'],
   ) {
     const roomId = 'room-live';
     const live = new LiveHub();
+    const liveDraftSnapshot = vi.fn().mockResolvedValue([]);
     const server = createBeelineServer({
       database: { query: databaseQuery, transaction: vi.fn() },
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
       phone: {
         canReadRoom,
         canReadRooms: canReadRoomsFrom(canReadRoom),
-        liveDraftSnapshot: vi.fn().mockResolvedValue([]),
+        liveDraftSnapshot,
         readLiveDelta,
         projectCommittedLiveDelta,
+        liveChatCornerStatus,
       } as unknown as PhoneService,
       daemon: {} as DaemonService,
       live,
@@ -1201,10 +1208,88 @@ describe('phone committed-row live delivery', () => {
     const subscribed = nextSocketMessage(socket, 'subscribed');
     socket.send(JSON.stringify({ type: 'subscribe', roomId }));
     await subscribed;
-    return { live, roomId, socket, port };
+    return { live, roomId, socket, port, liveDraftSnapshot };
   }
 
-  it('sends only the immediate invalidation for a row that projects no delta', async () => {
+  it('projects a parent corner status into one compact frame', async () => {
+    const status = { cornerCount: 1, waitingCornerCount: 1,
+      openCorners: [{ id: 'corner', name: 'Fix', state: 'waiting' as const }],
+      agentState: 'needs-you' as const };
+    const project = vi.fn().mockResolvedValue(status);
+    const { live, roomId, socket } = await connect(
+      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false, undefined,
+      project as PhoneService['liveChatCornerStatus']);
+    const frame = nextSocketMessage(socket, 'corner-status');
+    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
+    await expect(frame).resolves.toEqual({ type: 'corner-status', roomId, ...status, sequence: 1 });
+    expect(project).toHaveBeenCalledWith(roomId, 'viewer');
+    const noDuplicate = expectNoSocketMessage(socket);
+    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
+    await noDuplicate;
+    expect(project).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends append frames and suppresses a duplicate Postgres draft', async () => {
+    const { live, roomId, socket } = await connect(vi.fn() as PhoneService['readLiveDelta']);
+    const frames = nextSocketMessages(socket, 3);
+    for (const text of ['a'.repeat(1_000), 'a'.repeat(2_000), 'a'.repeat(3_000)]) {
+      live.publish({ type: 'draft', roomId, agentId: 'agent', turnId: 'turn',
+        text, latestChunk: 'a'.repeat(1_000), localOrigin: true });
+      live.publish({ type: 'draft', roomId, agentId: 'agent', turnId: 'turn', text,
+        latestChunk: 'a'.repeat(1_000) });
+    }
+    const [snapshot, first, second] = await frames;
+    expect(snapshot).toMatchObject({ type: 'draft', revision: 0, text: 'a'.repeat(1_000), sequence: 1 });
+    expect(first).toMatchObject({ type: 'draft-append', revision: 1, offset: 1_000,
+      chunk: 'a'.repeat(1_000), sequence: 2 });
+    expect(second).toMatchObject({ type: 'draft-append', revision: 2, offset: 2_000,
+      chunk: 'a'.repeat(1_000), sequence: 3 });
+    expect(first).not.toHaveProperty('latestChunk');
+    expect(second).not.toHaveProperty('latestChunk');
+    const actual = [snapshot, first, second].reduce((sum, frame) =>
+      sum + Buffer.byteLength(JSON.stringify(frame)), 0);
+    const old = [1_000, 2_000, 3_000].reduce((sum, size) => sum +
+      Buffer.byteLength(JSON.stringify({ type: 'draft', roomId, agentId: 'agent',
+        turnId: 'turn', text: 'a'.repeat(size) })), 0);
+    expect(actual).toBeLessThan(old);
+    await expectNoSocketMessage(socket, 100);
+  });
+
+  it('resumes one Room with only missed deltas and no repeated snapshots', async () => {
+    const delta = { type: 'message-delta' as const, roomId: 'room-live',
+      message: { id: 'missed', text: 'after disconnect', createdAt: 1,
+        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Agent' },
+        presentation: 'message' as const } };
+    const read = vi.fn().mockResolvedValue(delta);
+    const { live, roomId, socket, port, liveDraftSnapshot } = await connect(read as PhoneService['readLiveDelta']);
+    const first = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+    sockets.push(first);
+    await new Promise<void>((resolve, reject) => { first.once('open', resolve); first.once('error', reject); });
+    const initial = nextSocketMessage(first, 'subscribed');
+    first.send(JSON.stringify({ type: 'subscribe', roomId }));
+    const acknowledged = await initial;
+    expect(acknowledged).toMatchObject({ resumed: false, cursor: 0, epoch: expect.any(String) });
+    expect(liveDraftSnapshot).toHaveBeenCalledTimes(2);
+    const originalClosed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+    const firstClosed = new Promise<void>((resolve) => first.once('close', () => resolve()));
+    socket.terminate();
+    first.terminate();
+    await Promise.all([originalClosed, firstClosed]);
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages', messageId: 'missed' });
+    const resumed = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+    sockets.push(resumed);
+    await new Promise<void>((resolve, reject) => { resumed.once('open', resolve); resumed.once('error', reject); });
+    const frames = nextSocketMessages(resumed, 2);
+    resumed.send(JSON.stringify({ type: 'subscribe', roomId,
+      cursors: { [roomId]: { epoch: acknowledged.epoch, base: 0, seen: [] } } }));
+    const [ack, replayed] = await frames;
+    expect(ack).toMatchObject({ type: 'subscribed', resumed: true, cursor: 0 });
+    expect(replayed).toMatchObject({ ...delta, sequence: 1 });
+    expect(liveDraftSnapshot).toHaveBeenCalledTimes(2);
+    await expectNoSocketMessage(resumed, 100);
+  });
+
+  it('sends one fallback for a row that projects no delta', async () => {
     const { live, roomId, socket } = await connect(
       vi.fn().mockResolvedValue(null) as PhoneService['readLiveDelta'],
     );
@@ -1218,7 +1303,9 @@ describe('phone committed-row live delivery', () => {
       messageId: 'message-hidden',
     });
 
-    await expect(invalidated).resolves.toMatchObject({ deliveryId: expect.any(String) });
+    await expect(invalidated).resolves.toMatchObject({
+      reason: 'delta-fallback:postgres:messages', messageId: 'message-hidden',
+    });
     await expectNoSocketMessage(socket, 100);
   });
 
@@ -1226,10 +1313,10 @@ describe('phone committed-row live delivery', () => {
     ['deleted', vi.fn().mockResolvedValue(null)],
     ['failed', vi.fn().mockRejectedValue(new Error('row read failed'))],
   ])(
-    'follows the immediate invalidation with a fallback when the delta read is %s',
+    'sends one fallback when the delta read is %s',
     async (_case, read) => {
       const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
-      const frames = nextSocketMessages(socket, 2);
+      const fallbackFrame = nextSocketMessage(socket, 'invalidate');
 
       live.publish({
         type: 'invalidate',
@@ -1239,22 +1326,15 @@ describe('phone committed-row live delivery', () => {
         messageId: 'message-fallback',
       });
 
-      const [invalidation, fallback] = await frames;
-      expect(invalidation).toMatchObject({
-        type: 'invalidate',
-        roomId,
-        messageId: 'message-fallback',
-        reason: 'postgres:messages',
-        deliveryId: expect.any(String),
-      });
-      // A deleted row or failed read still reaches a list waiting on the delta.
+      const fallback = await fallbackFrame;
+      // A deleted row or failed read still reaches a list waiting on the row.
       expect(fallback).toMatchObject({
         type: 'invalidate',
         roomId,
         messageId: 'message-fallback',
         reason: 'delta-fallback:postgres:messages',
-        reconcilesDelivery: invalidation!.deliveryId,
       });
+      await expectNoSocketMessage(socket, 100);
     },
   );
 
@@ -1278,7 +1358,6 @@ describe('phone committed-row live delivery', () => {
     };
     const read = vi.fn().mockResolvedValue(delta);
     const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
-    const invalidated = nextSocketMessage(socket, 'invalidate');
     const painted = nextSocketMessage(socket, 'message-delta');
 
     live.publish({
@@ -1288,11 +1367,8 @@ describe('phone committed-row live delivery', () => {
       messageId: 'posted-message',
     });
 
-    const invalidation = await invalidated;
-    await expect(painted).resolves.toEqual({
-      ...delta,
-      reconcilesDelivery: invalidation.deliveryId,
-    });
+    await expect(painted).resolves.toEqual({ ...delta, sequence: 1 });
+    await expectNoSocketMessage(socket, 100);
     expect(read).toHaveBeenCalledWith(roomId, 'viewer', {
       type: 'message',
       messageId: 'posted-message',
@@ -1348,7 +1424,7 @@ describe('phone committed-row live delivery', () => {
       },
     );
     const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
-    const received = nextSocketMessages(socket, 5);
+    const received = nextSocketMessages(socket, 2);
     const startedAt = Date.now();
 
     for (const messageId of ['message-1', 'message-2', 'message-3']) {
@@ -1357,24 +1433,9 @@ describe('phone committed-row live delivery', () => {
 
     const messages = await received;
     expect(Date.now() - startedAt).toBeLessThan(150);
+    expect(messages.map((message) => message.type)).toEqual(['message-delta', 'message-delta']);
     expect(
-      messages.slice(0, 3).map((message) =>
-        message.type === 'message-delta'
-          ? (message.message as { id: string }).id
-          : message.messageId,
-      ),
-    ).toEqual(['message-1', 'message-2', 'message-3']);
-    expect(messages.map((message) => message.type)).toEqual([
-      'invalidate',
-      'invalidate',
-      'invalidate',
-      'message-delta',
-      'message-delta',
-    ]);
-    expect(
-      messages
-        .slice(3)
-        .map((message) => (message.message as { id: string }).id),
+      messages.map((message) => (message.message as { id: string }).id),
     ).toEqual(['message-2', 'message-3']);
     expect(read).toHaveBeenCalledTimes(3);
   });
@@ -1395,18 +1456,17 @@ describe('phone committed-row live delivery', () => {
         requestId: 'request-stopped',
       },
     ],
-  ])('delivers %s invalidation while its delta projection remains stalled', async (_id, row) => {
-    const read = vi.fn(() => new Promise<never>(() => undefined));
+  ])('keeps %s to one frame while its delta projection remains stalled', async (_id, row) => {
+    let resolveRead!: (value: unknown) => void;
+    const read = vi.fn(() => new Promise((resolve) => { resolveRead = resolve; }));
     const { live, roomId, socket } = await connect(read as PhoneService['readLiveDelta']);
-    const delivered = nextSocketMessage(socket, 'invalidate');
 
     live.publish({ type: 'invalidate', roomId, ...row });
-
-    await expect(delivered).resolves.toMatchObject({
-      type: 'invalidate',
-      roomId,
-      ...row,
-    });
+    await expectNoSocketMessage(socket, 100);
+    const delivered = nextSocketMessage(socket, 'invalidate');
+    resolveRead(null);
+    await expect(delivered).resolves.toMatchObject({ type: 'invalidate', roomId,
+      reason: `delta-fallback:${row.reason}` });
   });
 
   it('preserves the direct delta after the immediate invalidation for a slow projection', async () => {
@@ -1437,82 +1497,30 @@ describe('phone committed-row live delivery', () => {
 
     await expect(received).resolves.toMatchObject({
       ...delta,
-      reconcilesDelivery: expect.any(String),
     });
   });
 
-  it('diagnoses the same-process committed-row delivery boundary', async () => {
+  it('suppresses the duplicate direct/PG projection of one committed row', async () => {
     const delta = {
       type: 'message-delta' as const,
       roomId: 'room-live',
-      message: {
-        id: 'message-diagnostic',
-        text: 'diagnostic',
-        createdAt: 1,
+      message: { id: 'message-duplicate', text: 'once', createdAt: 1,
         author: { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' },
-        presentation: 'message' as const,
-      },
+        presentation: 'message' as const },
     };
-    const read = vi.fn(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      return delta;
-    });
+    const read = vi.fn().mockResolvedValue(delta);
     const project = vi.fn().mockReturnValue(delta);
     const { live, roomId, socket } = await connect(
-      read as PhoneService['readLiveDelta'],
-      project as PhoneService['projectCommittedLiveDelta'],
-    );
-    const committedRow = {
-      type: 'message' as const,
-      row: { room_id: roomId, id: delta.message.id },
-    } as never;
-
-    const queriedDurations: number[] = [];
-    const directDurations: number[] = [];
-    for (let index = 0; index < 20; index += 1) {
-      const queriedMessage = nextSocketMessage(socket, 'message-delta');
-      const queriedStartedAt = performance.now();
-      live.publish({
-        type: 'invalidate',
-        roomId,
-        reason: 'postgres:messages',
-        messageId: delta.message.id,
-      });
-      await queriedMessage;
-      queriedDurations.push(performance.now() - queriedStartedAt);
-
-      const directMessage = nextSocketMessage(socket, 'message-delta');
-      const directStartedAt = performance.now();
-      live.publish({
-        type: 'invalidate',
-        roomId,
-        reason: 'message',
-        messageId: delta.message.id,
-        committedRow,
-      });
-      await directMessage;
-      directDurations.push(performance.now() - directStartedAt);
-    }
-    const percentile = (values: readonly number[], fraction: number) =>
-      values.toSorted((left, right) => left - right)[Math.ceil(values.length * fraction) - 1]!;
-
-    console.info(
-      JSON.stringify({
-        operation: 'same-process committed-row diagnostic',
-        trials: queriedDurations.length,
-        queriedP50Ms: Math.round(percentile(queriedDurations, 0.5)),
-        queriedP95Ms: Math.round(percentile(queriedDurations, 0.95)),
-        queriedMaxMs: Math.round(Math.max(...queriedDurations)),
-        directP50Ms: Math.round(percentile(directDurations, 0.5)),
-        directP95Ms: Math.round(percentile(directDurations, 0.95)),
-        directMaxMs: Math.round(Math.max(...directDurations)),
-        queryCount: read.mock.calls.length,
-      }),
-    );
-    expect(Math.min(...queriedDurations)).toBeGreaterThanOrEqual(25);
-    expect(Math.max(...directDurations)).toBeLessThan(25);
-    expect(read).toHaveBeenCalledTimes(20);
-    expect(project).toHaveBeenCalledTimes(20);
+      read as PhoneService['readLiveDelta'], project as PhoneService['projectCommittedLiveDelta']);
+    const first = nextSocketMessage(socket, 'message-delta');
+    live.publish({ type: 'invalidate', roomId, reason: 'message', messageId: delta.message.id,
+      committedRow: { type: 'message', row: { room_id: roomId, id: delta.message.id } as never } });
+    await expect(first).resolves.toEqual({ ...delta, sequence: 1 });
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages',
+      operation: 'INSERT', messageId: delta.message.id });
+    await expectNoSocketMessage(socket, 100);
+    expect(read).not.toHaveBeenCalled();
+    expect(project).toHaveBeenCalledTimes(1);
   });
 
   it('serializes only a public delta and drops a cross-Room committed row', async () => {
@@ -1536,7 +1544,7 @@ describe('phone committed-row live delivery', () => {
       read as PhoneService['readLiveDelta'],
       project as PhoneService['projectCommittedLiveDelta'],
       vi.fn().mockResolvedValue(true),
-      false,
+      true,
       recordedEvents,
     );
     const rawMarker = 'raw-committed-row-must-not-cross-wire';
@@ -1562,7 +1570,7 @@ describe('phone committed-row live delivery', () => {
       },
     });
     const delivered = await publicMessage;
-    expect(delivered).toEqual({ ...delta, trace });
+    expect(delivered).toEqual({ ...delta, trace, sequence: 1 });
     expect(JSON.stringify(delivered)).not.toContain(rawMarker);
     expect(delivered).not.toHaveProperty('committedRow');
     const otherSocket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
@@ -1764,7 +1772,7 @@ describe('phone committed-row live delivery', () => {
     });
 
     const delivered = await invalidation;
-    expect(delivered).toEqual({ type: 'invalidate', roomId, reason: 'message' });
+    expect(delivered).toEqual({ type: 'invalidate', roomId, reason: 'message', sequence: 1 });
     expect(JSON.stringify(delivered)).not.toContain('raw-secret');
     expect(project).not.toHaveBeenCalled();
     expect(read).not.toHaveBeenCalled();

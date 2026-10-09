@@ -4264,6 +4264,7 @@ export class DaemonService {
       turnId: input.turnId,
       text: input.text,
       ...(input.latestChunk !== undefined ? { latestChunk: input.latestChunk } : {}),
+      localOrigin: true,
     });
     return this.writeResult();
   }

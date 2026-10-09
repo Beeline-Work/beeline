@@ -165,6 +165,19 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('batches a large Room watch under the server frame limit', async () => {
+    const { connection } = createConnection();
+    const roomIds = Array.from({ length: 65 }, (_, index) => `room-${index}`);
+    await connection.register([{ '#h': roomIds }], () => undefined);
+    sockets[0]!.open();
+    const frames = sockets[0]!.sent.map((frame) => JSON.parse(frame) as {
+      type: string; roomIds: string[];
+    });
+    expect(frames.map((frame) => frame.roomIds.length)).toEqual([32, 32, 1]);
+    expect(frames.flatMap((frame) => frame.roomIds)).toEqual(roomIds);
+    connection.dispose();
+  });
+
   it('hands a room whose subscribe is still in flight exactly one subscribed frame', async () => {
     const { connection } = createConnection();
     const deck: unknown[] = [];
@@ -280,6 +293,48 @@ describe('LiveConnection', () => {
       },
     ]);
 
+    connection.dispose();
+  });
+
+  it('rebuilds an append-only draft and replays the accumulated text to a late join', async () => {
+    const { connection } = createConnection();
+    const first: unknown[] = [];
+    const late: unknown[] = [];
+    await connection.register([{ '#h': [ROOM_A] }], (event) => first.push(event));
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    sockets[0]!.emit({ type: 'draft', roomId: ROOM_A, agentId: 'agent',
+      turnId: 'turn', text: 'Hello', revision: 0 });
+    sockets[0]!.emit({ type: 'draft-append', roomId: ROOM_A, agentId: 'agent',
+      turnId: 'turn', offset: 5, revision: 1, chunk: ' world' });
+    expect(first.at(-1)).toEqual({ monolithLive: { type: 'draft', roomId: ROOM_A,
+      agentId: 'agent', turnId: 'turn', text: 'Hello world', revision: 1,
+      latestChunk: ' world' } });
+    await connection.register([{ '#h': [ROOM_A] }], (event) => late.push(event));
+    expect(late.at(-1)).toEqual(first.at(-1));
+    connection.dispose();
+  });
+
+  it('resubscribes with a contiguous Room cursor and preserves overlays on resume', async () => {
+    const { connection } = createConnection();
+    const received: unknown[] = [];
+    await connection.register([{ '#h': [ROOM_A] }], (event) => received.push(event));
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A, epoch: 'server-1', cursor: 0,
+      resumed: false });
+    sockets[0]!.emit({ type: 'draft', roomId: ROOM_A, agentId: 'agent', turnId: 'turn',
+      text: 'Hello', revision: 0, sequence: 1 });
+    connection.reconnect();
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    sockets[1]!.open();
+    expect(JSON.parse(sockets[1]!.sent[0]!)).toEqual({ type: 'subscribe', roomIds: [ROOM_A],
+      cursors: { [ROOM_A]: { epoch: 'server-1', base: 1, seen: [] } } });
+    sockets[1]!.emit({ type: 'subscribed', roomId: ROOM_A, epoch: 'server-1', cursor: 1,
+      resumed: true });
+    const late: unknown[] = [];
+    await connection.register([{ '#h': [ROOM_A] }], (event) => late.push(event));
+    expect(late.at(-1)).toEqual({ monolithLive: { type: 'draft', roomId: ROOM_A,
+      agentId: 'agent', turnId: 'turn', text: 'Hello', revision: 0, sequence: 1 } });
     connection.dispose();
   });
 
@@ -536,7 +591,8 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('replaces an open socket on foreground and resubscribes every held room', async () => {
+  it('keeps an open socket after the foreground sync echo', async () => {
+    vi.useFakeTimers();
     const { connection, foreground } = createConnection();
     const received: unknown[] = [];
     await connection.register([{ '#h': [ROOM_A] }], (event) => received.push(event));
@@ -544,21 +600,28 @@ describe('LiveConnection', () => {
     sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
 
     foreground();
-    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    expect(sockets[0]!.sent.at(-1)).toBe(JSON.stringify({ type: 'sync' }));
+    sockets[0]!.emit({ type: 'sync-ok' });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(sockets).toHaveLength(1);
+    expect(received).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
+
+    connection.dispose();
+  });
+
+  it('reconnects when the foreground sync receives no echo', async () => {
+    vi.useFakeTimers();
+    const { connection, foreground } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    foreground();
+    await vi.advanceTimersByTimeAsync(3_000);
     expect(sockets[0]!.closed).toBe(true);
+    expect(sockets).toHaveLength(2);
     sockets[1]!.open();
     expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
-    sockets[1]!.emit({ type: 'subscribed', roomId: ROOM_A });
-    expect(received).toEqual([
-      { monolithLive: { type: 'subscribed', roomId: ROOM_A } },
-      { monolithLive: { type: 'subscribed', roomId: ROOM_A } },
-    ]);
-
-    // The replaced socket's late frames and close no longer reach anyone.
-    sockets[0]!.emit({ type: 'invalidate', roomId: ROOM_A, reason: 'message' });
-    sockets[0]!.drop();
-    expect(received).toHaveLength(2);
-    expect(sockets).toHaveLength(2);
 
     connection.dispose();
   });

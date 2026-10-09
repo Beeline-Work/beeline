@@ -41,6 +41,30 @@ it('Reproduction R9a: focused corner opens with exactly one workflow read', asyn
   } finally { await act(async () => tree.unmount()); }
 });
 
+it('uses the workflow card\'s typed run projection without another HTTP read', async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  let current: ReturnType<typeof useRoomWorkflowRun>;
+  function Corner() { current = useRoomWorkflowRun('corner-wire'); return null; }
+  let tree: any;
+  try {
+    await act(async () => { tree = create(<Corner />); });
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => wire.listener({ monolithLive: {
+      type: 'message-delta', roomId: 'corner-wire',
+      message: { systemEvent: { kind: 'workflow-handoff' } },
+      workflowRuns: [{ runId: 'wire-run', workflowSlug: 'review',
+        roomId: 'corner-wire', roomName: 'Corner', description: '', state: 'review',
+        status: 'live', startedAt: 1, updatedAt: 2, viewerHolds: false }],
+    } }));
+    expect(current!.workflow?.runId).toBe('wire-run');
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => wire.listener({ monolithLive: {
+      type: 'message-delta', roomId: 'corner-wire', message: { systemEvent: undefined },
+    } }));
+    expect(read).toHaveBeenCalledTimes(1);
+  } finally { await act(async () => tree.unmount()); }
+});
+
 
 it('a corner and its run page share one workflow read, and prose never repeats it', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

@@ -707,6 +707,7 @@ export function useRoomSurfaceSession({
               logLivePaintAck(live);
               return;
             }
+            if (live.type === 'sync-ok') return;
             if (live.type === 'subscribed') {
               markRoomOpen('subscribed', live.roomId);
               // This watch's first frame is listen-ready. A later frame on
@@ -715,7 +716,7 @@ export function useRoomSurfaceSession({
               // this lane: one follow-up read covers that gap without
               // discarding the opening read still in flight.
               if (handshakeSeen) {
-                if (hasPainted) visibleScheduler()?.force();
+                if (hasPainted && !live.resumed) visibleScheduler()?.force();
                 return;
               }
               handshakeSeen = true;

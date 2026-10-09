@@ -515,6 +515,7 @@ export default function BuzzChannels() {
         // confirmations themselves need no covering read of their own.
         let firstReadStarted = false;
         let deltasDuringRead: ChatListDelta[] = [];
+        const cornerStatusSequence = new Map<string, number>();
         // Rooms the socket delivered any frame for since the last applied read.
         const heardRooms = new Set<string>();
         let liveReadApplied = false;
@@ -535,7 +536,14 @@ export default function BuzzChannels() {
             const live =
               'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
             if (live && 'roomId' in live) heardRooms.add(live.roomId);
-            if (live?.type === 'message-delta' || live?.type === 'turn-delta') {
+            if (live?.type === 'subscribed' && !live.resumed)
+              cornerStatusSequence.delete(live.roomId);
+            if (live?.type === 'corner-status' && live.sequence !== undefined) {
+              if (live.sequence <= (cornerStatusSequence.get(live.roomId) ?? -1)) return;
+              cornerStatusSequence.set(live.roomId, live.sequence);
+            }
+            if (live?.type === 'message-delta' || live?.type === 'turn-delta' ||
+                live?.type === 'corner-status') {
               if (readInFlight) deltasDuringRead.push(live);
               if (
                 live.type === 'message-delta' &&
@@ -555,6 +563,7 @@ export default function BuzzChannels() {
             // A corner-status hint is a child corner's working/waiting change,
             // which this deck's rows roll up; it falls through to a read.
             if (isDraftFrame(event)) return;
+            if (live?.type === 'subscribed' && live.resumed) return;
             // A committed-row invalidation announces the delta that follows it.
             if (live?.type === 'invalidate' && live.deliveryId) return;
             if (live?.type === 'subscribed' && !firstReadStarted) return;

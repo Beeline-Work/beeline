@@ -1,7 +1,8 @@
 import { useMemo, useRef } from 'react';
-import { observeRoomResource, useObservedResource } from './use-observed-resource';
+import { isSystemOrCardMessage, useObservedResource } from './use-observed-resource';
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
 
 const NO_RUNS: readonly WorkflowRunSummaryView[] = [];
 
@@ -23,17 +24,40 @@ export function pickRoomWorkflowRun(
   return liveRoomRuns(roomId, runs)[0];
 }
 
-/**
- * The one read of a Room's workflow runs, shared by every screen that shows
- * them. It reads again only when a workflow line or card lands, on a change
- * no delta describes, or after the socket reconnects; prose never moves a run.
- */
+/** Use a typed workflow projection when the socket has one, and one shared
+ * covering read when a relevant system/card change has no projection. */
+function observeWorkflowRuns(roomId: string) {
+  return (invalidate: () => void, reconnect: () => void,
+    replace: (runs: readonly WorkflowRunSummaryView[]) => void) => {
+    let subscribed = false;
+    return sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
+      if (!('monolithLive' in event)) return;
+      const live = event.monolithLive;
+      if (!('roomId' in live) || live.roomId !== roomId) return;
+      if (live.type === 'subscribed') {
+        if (subscribed && !live.resumed) reconnect();
+        subscribed = true;
+      } else if (live.type === 'message-delta' && live.workflowRuns) {
+        replace(live.workflowRuns);
+      } else if (live.type === 'message-delta' && isSystemOrCardMessage(live.message)) {
+        invalidate();
+      } else if (live.type === 'invalidate' && !live.deliveryId) {
+        invalidate();
+      }
+    });
+  };
+}
+
+/** The one read of a Room's workflow runs, shared by every screen that shows them. */
 function useRoomWorkflowList(roomId: string | undefined) {
-  return useObservedResource(roomId ? `room-workflows:${roomId}` : undefined, {
-    load: async () =>
-      (await monolithPhoneOperation('listRoomWorkflowRuns', { roomId: roomId! })).workflows,
-    subscribe: roomId ? observeRoomResource(roomId) : undefined,
-  });
+  return useObservedResource<readonly WorkflowRunSummaryView[]>(
+    roomId ? `room-workflows:${roomId}` : undefined,
+    {
+      load: async () =>
+        (await monolithPhoneOperation('listRoomWorkflowRuns', { roomId: roomId! })).workflows,
+      subscribe: roomId ? observeWorkflowRuns(roomId) : undefined,
+    },
+  );
 }
 
 /** Every saved-workflow run in a Room and its corners, for a list that names each corner's live run. */
@@ -47,8 +71,6 @@ export function useRoomWorkflowRun(roomId: string | undefined) {
   const { run, otherLiveRuns } = useMemo(() => {
     if (!roomId || !observed.data) return { run: undefined, otherLiveRuns: NO_RUNS };
     const named = pickRoomWorkflowRun(roomId, observed.data);
-    // Every other live saved-workflow run in the Room, any workflow,
-    // beside the one named above — newest activity first.
     return {
       run: named,
       otherLiveRuns: liveRoomRuns(roomId, observed.data).filter(

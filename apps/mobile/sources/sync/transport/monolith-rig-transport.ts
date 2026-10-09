@@ -11,7 +11,7 @@ import type {
   RoomViewMessage,
   WritePermissionDecision,
 } from '@beeline/buzz-client';
-import type { AgentMessageWriteResult } from '@beeline/api-contract/phone';
+import type { AgentMessageWriteResult, ChatListCorner, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import type { MessageSubmitInput } from './rig-transport';
 import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -27,7 +27,7 @@ export type LiveWireTrace = {
   paintAck?: 'database-clock';
 };
 
-export type LiveWireEvent =
+export type LiveWireEvent = (
   | {
       type: 'invalidate';
       roomId: string;
@@ -40,11 +40,16 @@ export type LiveWireEvent =
       /** A fallback for an earlier invalidation's delta that could not be read. */
       reconcilesDelivery?: string;
     }
-  | { type: 'subscribed'; roomId: string }
+  | { type: 'subscribed'; roomId: string; epoch?: string; cursor?: number; resumed?: boolean }
+  | { type: 'sync-ok' }
+  | { type: 'corner-status'; roomId: string; cornerCount: number;
+      waitingCornerCount: number; openCorners: readonly ChatListCorner[];
+      agentState: 'needs-you' | 'working' | null }
   | {
       type: 'message-delta';
       roomId: string;
       message: RoomViewMessage;
+      workflowRuns?: readonly WorkflowRunSummaryView[];
       trace?: LiveWireTrace;
       reconcilesDelivery?: string;
     }
@@ -64,7 +69,8 @@ export type LiveWireEvent =
       databaseClockAt?: number;
       upperBoundMs: number;
     }
-  | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string; latestChunk?: string }
+  | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string; revision?: number; latestChunk?: string }
+  | { type: 'draft-append' | 'thought-append'; roomId: string; agentId: string; turnId: string; revision: number; offset: number; chunk: string; latestChunk?: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {
       type: 'presence';
@@ -74,7 +80,8 @@ export type LiveWireEvent =
       observedAt: number;
       /** A live helper connection holds this presence; it does not age out. */
       held?: boolean;
-    };
+    }
+) & { sequence?: number };
 
 export type MonolithSurfaceEvent = {
   readonly monolithLive: LiveWireEvent;

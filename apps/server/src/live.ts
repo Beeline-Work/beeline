@@ -1,5 +1,6 @@
 import type { AgentSignInLink } from '@beeline/api-contract/daemon';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 
 export type CommittedMessageLiveRow = {
@@ -97,7 +98,8 @@ export type LiveEvent =
         | { type: 'message'; row: CommittedMessageLiveRow; startedAt?: number }
         | { type: 'turn'; row: CommittedTurnLiveRow; startedAt?: number };
     }
-  | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string; latestChunk?: string }
+  | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string; latestChunk?: string;
+      /** Process-only marker for suppressing the same write echoed by LISTEN. */ localOrigin?: true }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {
       type: 'presence';
@@ -126,6 +128,15 @@ export type LiveEvent =
 
 export class LiveHub {
   readonly #events = new EventEmitter();
+  readonly #history = new Map<string, {
+    epoch: string;
+    sequence: number;
+    bytes: number;
+    entries: Array<{ sequence: number; event: LiveEvent; bytes: number }>;
+  }>();
+  readonly #recentOutputs = new Map<string, { text: string; latestChunk?: string;
+    source: 'local' | 'postgres'; at: number }>();
+  readonly #localMessageInserts = new Map<string, number>();
   readonly #presence = new Map<string, Map<string, Extract<LiveEvent, { type: 'presence' }>>>();
   /** Oldest observed Room/agent pair first; one cap across all Rooms. */
   readonly #presenceOrder = new Map<string, { roomId: string; agentId: string }>();
@@ -186,7 +197,34 @@ export class LiveHub {
       : undefined;
   }
 
-  publish(event: LiveEvent): void {
+  publish(input: LiveEvent): void {
+    let event = input;
+    if (input.type === 'invalidate' && input.messageId) {
+      const key = `${input.roomId}:${input.messageId}`;
+      const now = Date.now();
+      if (input.committedRow?.type === 'message') {
+        this.#localMessageInserts.delete(key);
+        this.#localMessageInserts.set(key, now);
+        if (this.#localMessageInserts.size > 512)
+          this.#localMessageInserts.delete(this.#localMessageInserts.keys().next().value!);
+      } else if (input.reason === 'postgres:messages' && input.operation === 'INSERT' &&
+          now - (this.#localMessageInserts.get(key) ?? 0) < 10_000) return;
+    }
+    if (input.type === 'draft' || input.type === 'thought') {
+      const key = `${input.roomId}:${input.agentId}:${input.turnId}:${input.type}`;
+      const source = input.localOrigin ? 'local' : 'postgres';
+      const previous = this.#recentOutputs.get(key);
+      const now = Date.now();
+      if (previous && previous.source !== source && now - previous.at < 10_000 &&
+          previous.text === input.text && previous.latestChunk === input.latestChunk) return;
+      this.#recentOutputs.delete(key);
+      this.#recentOutputs.set(key, { text: input.text, latestChunk: input.latestChunk,
+        source, at: now });
+      if (this.#recentOutputs.size > 512)
+        this.#recentOutputs.delete(this.#recentOutputs.keys().next().value!);
+      const { localOrigin: _localOrigin, ...publicEvent } = input;
+      event = publicEvent;
+    }
     if (event.type === 'presence') {
       let room = this.#presence.get(event.roomId);
       if (!room) {
@@ -219,6 +257,25 @@ export class LiveHub {
         for (const agentId of room.keys()) this.#presenceOrder.delete(`${event.roomId}\u0000${agentId}`);
         this.#presence.delete(event.roomId);
       }
+    }
+    if (event.roomId) {
+      const history = this.#history.get(event.roomId) ?? {
+        epoch: randomUUID(), sequence: 0, bytes: 0, entries: [],
+      };
+      const replayEvent = event.type === 'invalidate'
+        ? (({ committedRow: _private, ...wire }) => wire)(event)
+        : event;
+      const bytes = Buffer.byteLength(JSON.stringify(replayEvent));
+      history.sequence += 1;
+      history.entries.push({ sequence: history.sequence, event: replayEvent, bytes });
+      history.bytes += bytes;
+      while (history.entries.length > 256 || history.bytes > 128 * 1024) {
+        const removed = history.entries.shift();
+        if (removed) history.bytes -= removed.bytes;
+      }
+      this.#history.delete(event.roomId);
+      this.#history.set(event.roomId, history);
+      if (this.#history.size > 256) this.#history.delete(this.#history.keys().next().value!);
     }
     this.#events.emit(event.roomId, event);
     this.#events.emit('*', event);
@@ -273,6 +330,37 @@ export class LiveHub {
       this.#events.off(roomId, listener);
       this.#events.off('resync', resync);
     };
+  }
+
+  /** Best-effort, bounded socket resume. A different process or an evicted
+   * history asks for the ordinary covering snapshot instead of guessing. */
+  subscribeReplay(
+    roomId: string,
+    cursor: { epoch: string; base: number; seen: readonly number[] } | undefined,
+    listener: (event: LiveEvent, sequence?: number) => void,
+  ): { release: () => void; epoch: string; sequence: number; resumed: boolean;
+       replay: readonly { event: LiveEvent; sequence: number }[] } {
+    const history = this.#history.get(roomId) ?? {
+      epoch: randomUUID(), sequence: 0, bytes: 0, entries: [],
+    };
+    this.#history.delete(roomId);
+    this.#history.set(roomId, history);
+    if (this.#history.size > 256) this.#history.delete(this.#history.keys().next().value!);
+    const sequence = history.sequence;
+    const minimum = history.entries[0]?.sequence ?? sequence + 1;
+    const resumed = Boolean(cursor && cursor.epoch === history.epoch &&
+      Number.isSafeInteger(cursor.base) && cursor.base >= minimum - 1 &&
+      cursor.base <= sequence && cursor.seen.length <= 256 &&
+      cursor.seen.every((item) => Number.isSafeInteger(item) && item > cursor.base && item <= sequence));
+    const seen = new Set(resumed ? cursor!.seen : []);
+    const replay = resumed
+      ? history.entries.filter((entry) => entry.sequence > cursor!.base && !seen.has(entry.sequence))
+        .map(({ event, sequence: itemSequence }) => ({ event, sequence: itemSequence }))
+      : [];
+    const release = this.subscribe(roomId, (event) => listener(
+      event, event.type === 'invalidate' && event.reason === 'resync'
+        ? undefined : this.#history.get(roomId)?.sequence));
+    return { release, epoch: history.epoch, sequence, resumed, replay };
   }
 
   subscribeResync(listener: () => void): () => void {

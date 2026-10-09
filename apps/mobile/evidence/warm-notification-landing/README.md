@@ -21,7 +21,7 @@ On the branch, these warm cases send no read around the target: message 38 is al
 
 ## Production (`server.usebeeline.app`)
 
-Signed in through the production `/review/<secret>` link as the reviewer, Chrome at 390x844, Room `scroll-probe-2232`, target message 38. `main` ran on `web.usebeeline.app`. This branch's web build was served locally against the production server (`--disable-web-security`, as in #2228 and #2234). Each build used one browser session for its four cases.
+Signed in through the production `/review/<secret>` link as the reviewer, Chrome at 390x844, Room `scroll-probe-2232`, target message 38. `main` ran on `web.usebeeline.app`. This branch's web build (final head) was served locally against the production server (`--disable-web-security`, as in #2228 and #2234). Each build used one browser session for its four cases.
 
 | Case | `main` run 1 | `main` runs 2 and 3 | This branch |
 |---|---|---|---|
@@ -41,8 +41,11 @@ The dev-client APK loaded this branch's JS from Metro, then `main`'s JS (the thr
 | Room opened earlier (another Room open when the tap arrives) | target off screen, rows 49–58 (2 of 2 runs) | 18 px / 18 px (3 of 3 runs) |
 | Same Room open, at its newest rows | 74 px / 74 px (3 of 3) | 74 px / 74 px (4 of 4) |
 | Second tap, same target, after a landing | 18 px / 18 px | 18 px / 18 px (2 of 2) |
+| After a landing, the Room opened again without a notification, then a tap on the same target | target off screen, rows 39–49, no flash (2 of 4 runs; 2 of 3 on the branch before its last commit) | 74 px / 74 px (4 of 4) |
 
-At 74 px the target is fully on screen and highlighted, with the last line of message 37 above it. Both builds do the same. Files: `android/*.png`.
+At 74 px the target is fully on screen and highlighted, with the last line of message 37 above it. Both builds do the same.
+
+The last row is a separate miss, which the Android run found. Opening the Room again resets its window. The tap then opens a new store window in the same commit, but the list's last visibility report still showed message 38 from the old window. The controller settled the landing on that old report right after its first scroll, and that scroll used stale row positions. The controller now settles only on a report taken against the rows it is landing in. Files: `android/*.png` (`*-open-again-2s.png` for the last row).
 
 ## The "no Room request" run
 

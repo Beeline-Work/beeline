@@ -131,6 +131,9 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   const schedule = options.schedule ?? defaultSchedule;
   let active: Active | null = null;
   let visibleRows: readonly Row[] = [];
+  // The rows the last visibility report described. A report about other rows
+  // (a window opened since) cannot settle a request.
+  let visibleRowsOf: readonly Row[] | null = null;
   let pinned = true;
   let dragging = false;
   let momentum = false;
@@ -154,6 +157,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     const destination = current.destination;
     if (!isRowDestination(destination)) return null;
     if (destination.kind === 'message' && !current.scrolled) return null;
+    if (visibleRowsOf !== options.rows()) return null;
     const index = options.rowIndex(destination, visibleRows);
     return index >= 0 ? visibleRows[index]! : null;
   };
@@ -253,12 +257,14 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     reset() {
       active = null;
       visibleRows = [];
+      visibleRowsOf = null;
     },
     observeLayout() {
       if (active) attempt(active);
     },
     observeVisibleRows(rows) {
       visibleRows = rows;
+      visibleRowsOf = options.rows();
       if (active) attempt(active);
     },
     observeTailPinned(next) {

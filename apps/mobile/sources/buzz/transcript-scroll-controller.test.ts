@@ -122,6 +122,26 @@ describe('transcript scroll controller', () => {
     expect(events).toEqual(['scrolled:message:m4', 'landed:message:m4']);
   });
 
+  it('does not land on a visibility report taken before the rows changed', () => {
+    const { controller, moves, events, flush, setRows } = setup();
+    // The target is on screen in the old window.
+    controller.observeVisibleRows([{ id: 'm2' }, { id: 'm3' }]);
+    // A tap opens a new window in the same commit, so the old report and the
+    // old row positions no longer describe the list.
+    setRows(['m1', 'm2', 'm3', 'm4'].map((id) => ({ id })));
+    controller.request(message('m3'));
+    flush();
+    expect(moves).toEqual(['row:m3@2:top']);
+    expect(events).toEqual(['scrolled:message:m3']);
+    expect(controller.isLanding()).toBe(true);
+    // The list reports the new window: the first scroll left the target off
+    // screen, so the request scrolls again, then lands when it is shown.
+    controller.observeVisibleRows([{ id: 'm4' }]);
+    expect(moves).toEqual(['row:m3@2:top', 'row:m3@2:top']);
+    controller.observeVisibleRows([{ id: 'm3' }]);
+    expect(events).toEqual(['scrolled:message:m3', 'landed:message:m3']);
+  });
+
   it('asks the feature for a row that is not drawn, and lands it when it arrives', () => {
     const { controller, moves, events, flush, setRows } = setup();
     controller.request(message('m9'));

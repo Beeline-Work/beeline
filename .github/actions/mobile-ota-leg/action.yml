@@ -176,16 +176,17 @@ runs:
         validation_pid=$!
         OTA_TMPDIR="$(mktemp -d)"
         set +e
+        # Publish output goes straight to the job log so a slow or stuck
+        # target is visible while the job runs; validation runs beside it
+        # and is printed once it finishes.
         TMPDIR="$OTA_TMPDIR" node scripts/ota-release.mjs publish \
           --sha "$RELEASE_SHA" --release-version "$RELEASE_VERSION" --ref main \
-          --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX" \
-          > "$RUNNER_TEMP/mobile-ota-publish.log" 2>&1
+          --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX" 2>&1
         publish_status=$?
         wait "$validation_pid"
         validation_status=$?
         set -e
         cat "$RUNNER_TEMP/mobile-ota-validation.log"
-        cat "$RUNNER_TEMP/mobile-ota-publish.log"
         printf 'parallel_candidate_wall\t%s\n' "$(( $(date +%s) - validation_started ))" > "$TIMINGS_FILE"
         test "$validation_status" -eq 0
         test "$publish_status" -eq 0

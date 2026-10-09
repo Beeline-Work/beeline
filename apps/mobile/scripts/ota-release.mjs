@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { readPinnedRuntimeVersion } from './native-fingerprint.mjs';
 import {
   RELEASE_PLATFORMS,
@@ -45,23 +46,13 @@ function productionLookupLimit(targets) {
   );
 }
 // Compatibility runtime targets: OTA updates published alongside the current
-// store pins for as long as live installs still run those older store
-// binaries. Keep this list ordered so the release log is deterministic, and
-// remove an entry once no live install carries that runtime.
+// store pins under the owner's retention decision. Keep this list ordered
+// so the release log is deterministic. Each platform
+// keeps its pin plus the two latest shipped runtimes below it; older runtimes
+// are recorded in RETIRED_COMPAT_RUNTIMES.
 export const COMPAT_RUNTIMES = [
-  { platform: 'android', runtimeVersion: '23' },
-  { platform: 'android', runtimeVersion: '24' },
-  { platform: 'android', runtimeVersion: '25' },
-  { platform: 'android', runtimeVersion: '26' },
-  { platform: 'android', runtimeVersion: '28' },
-  { platform: 'android', runtimeVersion: '29' },
   { platform: 'android', runtimeVersion: '31' },
   { platform: 'android', runtimeVersion: '32' },
-  { platform: 'ios', runtimeVersion: '23' },
-  { platform: 'ios', runtimeVersion: '24' },
-  { platform: 'ios', runtimeVersion: '25' },
-  { platform: 'ios', runtimeVersion: '26' },
-  { platform: 'ios', runtimeVersion: '27' },
   { platform: 'ios', runtimeVersion: '29' },
   { platform: 'ios', runtimeVersion: '31' },
 ];
@@ -170,9 +161,21 @@ export const SHIPPED_NATIVE_RUNTIMES = [
 // leave COMPAT_RUNTIMES: the coverage governor (planCoverageErrors) refuses
 // release planning while a shipped runtime is neither planned nor retired,
 // so this list cannot silently shrink.
+const RETIRED_BY_PIN_PLUS_TWO =
+  'retired by owner decision (lunchboxfortwo, Room message 49d2569e): publish OTA only to the current pin plus the latest two shipped runtimes per platform; per-target publishes of 17 runtimes pushed mobile_ota past its 15-minute cap in unified release runs 37891485721 and 37944067762. EAS GraphQL production-branch update insights totalUniqueUsers, 2026-09-25 to 2026-10-09, project 58f1e94e-5ce5-475e-9dde-3eaa9e36699c, latest production group 2026-10-08 06:27: android@33=6, android@32=1, android@31=1, android@24=1, every other Android runtime=0; ios@31=2, every other iOS runtime (32, 29, 27, 26, 25, 24, 23)=0. The approved plan covers every observed install except the one android@24 install, which stops receiving OTA updates; update insights do not establish public store runtime versions';
+
 export const RETIRED_COMPAT_RUNTIMES = [
-  // Shape (uncomment a real entry to retire a runtime deliberately):
-  // { platform: 'android', runtimeVersion: '23', evidence: 'retired by <PR>: EAS adoption + store data show no live install' },
+  { platform: 'android', runtimeVersion: '23', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  { platform: 'android', runtimeVersion: '24', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  { platform: 'android', runtimeVersion: '25', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  { platform: 'android', runtimeVersion: '26', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  { platform: 'android', runtimeVersion: '28', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  { platform: 'android', runtimeVersion: '29', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  { platform: 'ios', runtimeVersion: '23', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  { platform: 'ios', runtimeVersion: '24', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  { platform: 'ios', runtimeVersion: '25', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  { platform: 'ios', runtimeVersion: '26', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  { platform: 'ios', runtimeVersion: '27', evidence: RETIRED_BY_PIN_PLUS_TWO },
 ];
 
 function targetKey(target) {
@@ -602,14 +605,18 @@ function publish(options) {
   const previousTargetKeys = new Set(previousProductionTargets.map(targetKey));
   // Strand guard: every runtime that already has a production update (i.e. a
   // runtime live installs may carry) must remain in the target set. Publishing
-  // a target list that drops a shipped runtime strands those installs forever.
+  // a target list that drops a shipped runtime strands those installs forever,
+  // unless RETIRED_COMPAT_RUNTIMES records that decision with its evidence.
   {
+    const retiredKeys = new Set(RETIRED_COMPAT_RUNTIMES.map(targetKey));
     const shippedKeys = new Set(
       collectUpdates(previous)
         .updates.filter((u) => u.platform && u.runtimeVersion)
         .map(targetKey),
     );
-    const stranded = [...shippedKeys].filter((k) => !targets.some((t) => targetKey(t) === k));
+    const stranded = [...shippedKeys].filter(
+      (k) => !retiredKeys.has(k) && !targets.some((t) => targetKey(t) === k),
+    );
     if (stranded.length > 0) {
       fail(
         'OTA target set does not cover previously shipped runtime(s): ' +
@@ -666,8 +673,22 @@ function publish(options) {
         '; refusing to publish rollout candidates.',
     );
   }
+  // The JS bundle does not depend on the runtime: EXPO_RUNTIME_OVERRIDE only
+  // changes the runtimeVersion that eas-cli reads from the app config when it
+  // builds each update's manifest, and it reads that config even with
+  // --skip-bundler. So the first target of each platform exports into its own
+  // directory and every later target of that platform uploads the same export
+  // under its own runtimeVersion. requireTargetUpdate still checks the runtime
+  // EAS reports for every target.
+  const exportRoot = mkdtempSync(join(tmpdir(), 'beeline-ota-export-'));
+  const exportedPlatforms = new Set();
   const publishedTargets = targets.map((target) => {
     const message = `ota candidate: ${options.sha.slice(0, 12)} ${options.ref} ${targetKey(target)}`;
+    const reuseExport = exportedPlatforms.has(target.platform);
+    exportedPlatforms.add(target.platform);
+    console.log(
+      `${targetKey(target)}: ${reuseExport ? 'uploading the existing' : 'bundling the'} ${target.platform} export`,
+    );
     const candidate = runEas(
       [
         'update',
@@ -679,6 +700,9 @@ function publish(options) {
         target.platform,
         '--message',
         message,
+        '--input-dir',
+        join(exportRoot, target.platform),
+        ...(reuseExport ? ['--skip-bundler'] : []),
         '--json',
         '--non-interactive',
       ],

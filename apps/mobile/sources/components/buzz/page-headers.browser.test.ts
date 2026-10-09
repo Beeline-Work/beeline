@@ -30,6 +30,7 @@ function shims(mobile: string): Record<string, string> {
         return { room: { name: 'alpha' }, viewer: { permissions: { manage: true } }, members: [] };
       }
     }`,
+    '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
     '@/sync/transport': `export class BuzzRigTransport {
       async ensureClient() { return { surfaceSubscribe: async () => () => undefined }; }
     }`,

@@ -15,6 +15,7 @@ const workspaceSet = vi.hoisted(() => ({
 }));
 const phoneOperation = vi.hoisted(() => vi.fn());
 const roomRead = vi.hoisted(() => vi.fn());
+const prefetchRoom = vi.hoisted(() => vi.fn());
 const auth = vi.hoisted(() => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'viewer' })),
@@ -91,6 +92,7 @@ vi.mock('@expo/vector-icons', async () => {
 });
 vi.mock('@/auth/buzz-identity-storage', () => auth);
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/push/push-room-prefetch', () => ({ prefetchPushRoom: prefetchRoom }));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     room = roomRead;
@@ -245,6 +247,7 @@ beforeEach(() => {
   workspaceSet.workspaces = [];
   phoneOperation.mockReset();
   roomRead.mockReset();
+  prefetchRoom.mockReset();
   serve({ bookmarks: [bookmark()] });
   roomRead.mockImplementation(async (id: string) => (id === 'room-1' ? parentRoom : cornerRoom));
 });
@@ -469,7 +472,95 @@ describe('Bookmarks mobile open', () => {
         notificationMessageId: 'msg-1',
       },
     });
+    expect(prefetchRoom).toHaveBeenCalledWith('bookmark:msg-1', 'corner-1');
+    expect(prefetchRoom.mock.invocationCallOrder[0]).toBeLessThan(
+      navigation.push.mock.invocationCallOrder[0],
+    );
     expect(tree.root.findAllByType('DesktopRoomInspector' as any)).toHaveLength(0);
+  });
+
+  it('shows No Workspace instead of stale items once the person leaves the Workspace', async () => {
+    layout.os = 'ios';
+    layout.width = 390;
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const tree = await renderTray();
+      expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
+      phoneOperation.mockImplementation(async () => {
+        throw Object.assign(new Error('Monolith readNeedsYou failed (400): workspace membership required'), {
+          code: 'workspace membership required',
+        });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await act(async () => undefined);
+      expect(tree.root.findAllByProps({ testID: 'bookmark-msg-1' })).toHaveLength(0);
+      expect(tree.root.findByProps({ testID: 'tray-no-workspace' })).toBeTruthy();
+      expect(textOf(tree)).toContain('You are no longer a member of this Workspace.');
+      expect(textOf(tree)).not.toContain('Retry');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps No Workspace when a refresh after membership loss fails for another reason', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const tree = await renderTray();
+      phoneOperation.mockImplementation(async () => {
+        throw Object.assign(new Error('Monolith readNeedsYou failed (400): workspace membership required'), {
+          code: 'workspace membership required',
+        });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await act(async () => undefined);
+      expect(tree.root.findByProps({ testID: 'tray-no-workspace' })).toBeTruthy();
+      phoneOperation.mockImplementation(async () => {
+        throw Object.assign(new Error('Monolith readNeedsYou failed (503): unavailable'), {
+          code: 'unavailable',
+        });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await act(async () => undefined);
+      expect(tree.root.findByProps({ testID: 'tray-no-workspace' })).toBeTruthy();
+      expect(textOf(tree)).toContain('You are no longer a member of this Workspace.');
+      expect(textOf(tree)).not.toContain('Retry');
+      serve({ bookmarks: [bookmark()] });
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await act(async () => undefined);
+      expect(tree.root.findAllByProps({ testID: 'tray-no-workspace' })).toHaveLength(0);
+      expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the items and offers Retry when a refresh fails for another reason', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const tree = await renderTray();
+      phoneOperation.mockImplementation(async () => {
+        throw Object.assign(new Error('Monolith readNeedsYou failed (503): unavailable'), {
+          code: 'unavailable',
+        });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await act(async () => undefined);
+      expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
+      expect(tree.root.findAllByProps({ testID: 'tray-no-workspace' })).toHaveLength(0);
+      expect(textOf(tree)).toContain('Retry');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -874,6 +965,7 @@ it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN â
         available: true, author: { name: 'Avery' }, text: 'Bookmarked line'
       }] };`,
       '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
+      '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
       '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
       '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
       'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
@@ -913,6 +1005,7 @@ it.skipIf(!existsSync(CHROME)).each([
             messageCreatedAt: now - 7200, bookmarkedAt: now - 120, available: true, author: { name: 'Avery' }, text: 'Bookmarked line'
           }] } : undefined;`,
         '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
+        '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
         '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
         '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
         'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',

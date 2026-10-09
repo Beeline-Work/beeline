@@ -30,6 +30,14 @@ vi.mock('@/auth/monolith-session', () => ({
       fetch(url, { ...init, headers: { ...init.headers, authorization: `Bearer ${PHONE_TOKEN}` } }),
   },
 }));
+// The mobile suite does not build the auth or push-gateway packages; the
+// transcription route uses neither.
+vi.mock('@beeline/auth/environment', () => ({}));
+vi.mock('@beeline/auth/github', () => ({}));
+vi.mock('@beeline/auth/phone-github-ticket', () => ({}));
+vi.mock('@beeline/auth/server', () => ({}));
+vi.mock('@beeline/auth/store', () => ({}));
+vi.mock('@beeline/push-gateway/projection', () => ({}));
 vi.mock('expo-file-system', () => ({
   File: class {
     delete() {}

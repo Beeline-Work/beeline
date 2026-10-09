@@ -219,7 +219,8 @@ export default function TrayScreen() {
 
   const openNeed = useCallback(
     (item: NeedsYouItemView) => {
-      void clear(item);
+      // An approval stays until it is decided on its card.
+      if (!item.approval) void clear(item);
       if (desktop) setSelected(item);
       else open(item, 'needs-you');
     },
@@ -271,11 +272,31 @@ export default function TrayScreen() {
 
   const rows = useMemo((): Row[] => {
     if (loading) return [];
+    const cells = (items: NeedsYouItemView[]) =>
+      items.map((item): Row => ({ key: `needs-${item.messageId}`, type: 'needs', item }));
+    const approvals = needs.filter((item) => item.approval);
+    const questions = needs.filter((item) => !item.approval);
     return [
-      { key: 'head-needs', type: 'head', title: 'Needs you', count: needs.length },
+      // Approvals before questions, each in the server's order.
       ...(needs.length
-        ? needs.map((item): Row => ({ key: `needs-${item.messageId}`, type: 'needs', item }))
-        : [{ key: 'needs-empty', type: 'needs-empty' } as const]),
+        ? [
+            ...(approvals.length
+              ? [
+                  { key: 'head-approvals', type: 'head', title: 'Approvals', count: approvals.length } as const,
+                  ...cells(approvals),
+                ]
+              : []),
+            ...(questions.length
+              ? [
+                  { key: 'head-questions', type: 'head', title: 'Questions', count: questions.length } as const,
+                  ...cells(questions),
+                ]
+              : []),
+          ]
+        : [
+            { key: 'head-needs', type: 'head', title: 'Needs you', count: 0 } as const,
+            { key: 'needs-empty', type: 'needs-empty' } as const,
+          ]),
       { key: 'head-saved', type: 'head', title: 'Saved', count: bookmarks.length },
       ...(bookmarks.length
         ? bookmarks.map((bookmark): Row => ({

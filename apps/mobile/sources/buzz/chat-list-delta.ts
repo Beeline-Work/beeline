@@ -1,4 +1,4 @@
-import { chatActivityAt } from '@beeline/api-contract/phone';
+import { chatActivityAt, type ChatListCorner } from '@beeline/api-contract/phone';
 import type {
   ChatListItem,
   ChatListView,
@@ -8,7 +8,10 @@ import type {
 
 export type ChatListDelta =
   | { readonly type: 'message-delta'; readonly roomId: string; readonly message: RoomViewMessage }
-  | { readonly type: 'turn-delta'; readonly roomId: string; readonly turn: RoomViewAgentTurn };
+  | { readonly type: 'turn-delta'; readonly roomId: string; readonly turn: RoomViewAgentTurn }
+  | { readonly type: 'corner-status'; readonly roomId: string; readonly cornerCount: number;
+      readonly waitingCornerCount: number; readonly openCorners: readonly ChatListCorner[];
+      readonly agentState: 'needs-you' | 'working' | null };
 
 /** The presentations the server's deck preview reads its latest message from. */
 const PREVIEW_PRESENTATIONS: ReadonlySet<RoomViewMessage['presentation']> = new Set([
@@ -59,6 +62,20 @@ export function applyChatListDelta(view: ChatListView, delta: ChatListDelta): Ch
   if (index < 0) return view;
   if (delta.type === 'message-delta') return applyMessage(view, index, delta.message);
   const item = view.chats[index]!;
+  if (delta.type === 'corner-status') {
+    const { agentState: _oldState, attentionReason: _oldReason, ...rest } = item;
+    const next: ChatListItem = { ...rest,
+      cornerCount: delta.cornerCount,
+      waitingCornerCount: delta.waitingCornerCount,
+      openCorners: delta.openCorners,
+      ...(delta.agentState ? { agentState: delta.agentState } : {}),
+      ...(delta.agentState === 'needs-you' ? { attentionReason: { kind: 'approval' } } : {}),
+    };
+    const chats = view.chats.filter((_, position) => position !== index);
+    const at = chats.findIndex((candidate) => chatActivityAt(candidate) <= chatActivityAt(next));
+    chats.splice(at < 0 ? chats.length : at, 0, next);
+    return { ...view, chats };
+  }
   if (delta.turn.status !== 'working' || item.agentState) return view;
   const chats = [...view.chats];
   chats[index] = { ...item, agentState: 'working' };
@@ -67,6 +84,7 @@ export function applyChatListDelta(view: ChatListView, delta: ChatListDelta): Ch
 
 /** A deleted preview or settled turn needs the server's full Room-list projection. */
 export function chatListDeltaNeedsRead(view: ChatListView, delta: ChatListDelta): boolean {
+  if (delta.type === 'corner-status') return false;
   if (delta.type === 'message-delta') {
     return delta.message.deleted === true && view.chats.some((item) =>
       item.room.id === delta.roomId && item.latestMessage?.id === delta.message.id);

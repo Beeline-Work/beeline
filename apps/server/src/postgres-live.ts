@@ -637,6 +637,8 @@ export class PostgresLiveListener {
           agentId: payload.agentId,
           turnId: payload.turnId,
           text: row.body.text,
+          ...(typeof row.body.latestChunk === 'string'
+            ? { latestChunk: row.body.latestChunk } : {}),
         });
         return;
       }

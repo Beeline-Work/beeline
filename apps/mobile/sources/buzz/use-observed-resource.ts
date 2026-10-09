@@ -7,7 +7,8 @@ import type { ConnectorInstallState } from './workbench';
 type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null; installMissing?: boolean; successVersion: number };
 type Options<T> = {
   load(): Promise<T>;
-  subscribe?: (invalidate: () => void, reconnect: () => void) => Promise<() => void>;
+  subscribe?: (invalidate: () => void, reconnect: () => void,
+    replace: (data: T) => void) => Promise<() => void>;
   /** Only resources without a live signal use completion-paced refresh. */
   refreshAfter?: (data: T | undefined) => number | false;
   missLimit?: number;
@@ -24,6 +25,7 @@ class Resource<T> {
   dirty = false;
   waiters: Array<() => void> = [];
   misses = 0;
+  version = 0;
   timer?: ReturnType<typeof setTimeout>;
   stop?: () => void;
   constructor(
@@ -34,6 +36,14 @@ class Resource<T> {
     this.snapshot = next;
     this.listeners.forEach((listener) => listener());
   }
+  replace = (data: T) => {
+    if (!this.listeners.size) return;
+    this.version += 1;
+    this.dirty = false;
+    clearTimeout(this.timer);
+    this.publish({ data, loading: false, error: null,
+      successVersion: this.snapshot.successVersion + 1 });
+  };
   invalidate = () => {
     if (this.snapshot.error || !this.listeners.size) return Promise.resolve();
     this.dirty = true;
@@ -51,16 +61,17 @@ class Resource<T> {
     if (this.flight || !this.listeners.size) return;
     clearTimeout(this.timer);
     this.flight = true;
+    const version = this.version;
     this.dirty = false;
     this.publish({ ...this.snapshot, loading: this.snapshot.data === undefined });
     try {
       const data = await this.options.load();
-      if (this.listeners.size) {
+      if (this.listeners.size && version === this.version) {
         this.misses = 0;
         this.publish({ data, loading: false, error: null, successVersion: this.snapshot.successVersion + 1 });
       }
     } catch (cause) {
-      if (this.listeners.size) {
+      if (this.listeners.size && version === this.version) {
         this.misses += 1;
         this.publish({
           ...this.snapshot,
@@ -96,7 +107,7 @@ class Resource<T> {
       subscriptionStop?.();
     };
     void Promise.resolve()
-      .then(() => (active ? this.options.subscribe?.(this.retry, this.retry) : undefined))
+      .then(() => (active ? this.options.subscribe?.(this.retry, this.retry, this.replace) : undefined))
       .then((stop) => {
         if (active) subscriptionStop = stop;
         else stop?.();
@@ -171,7 +182,7 @@ export function observeRoomResource(
       const live = event.monolithLive;
       if (!('roomId' in live) || live.roomId !== roomId) return;
       if (live.type === 'subscribed') {
-        if (subscribed) reconnect();
+        if (subscribed && !live.resumed) reconnect();
         subscribed = true;
       } else if (live.type === 'message-delta') {
         if (changes(live.message)) invalidate();

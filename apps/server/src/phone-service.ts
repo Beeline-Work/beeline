@@ -46,6 +46,7 @@ import type {
   AgentDetailView,
   AgentPairingClaimView,
   ChatListView,
+  ChatListCorner,
   CornerAppView,
   CornerListView,
   CornerLifecycleView,
@@ -1318,6 +1319,58 @@ export class PhoneService {
       };
     }
     return this.workspaceRoster(workspaceId, query);
+  }
+
+  /** Project only the parent deck fields a child-corner status changes. */
+  async liveChatCornerStatus(parentRoomId: string, viewerId: string): Promise<{
+    cornerCount: number;
+    waitingCornerCount: number;
+    openCorners: ChatListCorner[];
+    agentState: 'needs-you' | 'working' | null;
+  } | null> {
+    const parent = await this.database.query<{
+      needs_you: boolean;
+      working: boolean;
+    }>(`SELECT
+         EXISTS(SELECT 1 FROM permission_authority p
+           WHERE (p.room_id=r.id OR p.room_id IN
+             (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you,
+         EXISTS(SELECT 1 FROM agent_turns t
+           WHERE (t.room_id=r.id OR t.room_id IN
+             (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL))
+             AND t.status='working') working
+       FROM rooms r JOIN memberships member ON member.room_id=r.id
+         AND member.identity_id=$2 AND member.removed_at IS NULL
+       WHERE r.id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL`,
+    [parentRoomId, viewerId]);
+    if (!parent.rows[0]) return null;
+    const corners = await this.database.query<{
+      id: string; name: string; parent_id: string; archived_at: Date | null;
+      lifecycle: CornerLifecycleView | null; workflow_state: string | null;
+      workflow_outcome: string | null; latest_turn_status: string | null;
+      follows_viewer: boolean | null; latest_created_at: Date | null;
+      owed: boolean; owed_viewer: boolean; attention: boolean;
+    }>(`SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
+         turn.status latest_turn_status,
+         ${followsCornerSql('c', '$2')} follows_viewer,
+         lm.created_at latest_created_at,
+         owed.owed,owed.owed_viewer,owed.attention
+       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id
+         AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+       LEFT JOIN LATERAL (SELECT status FROM agent_turns WHERE room_id=c.id
+         ORDER BY created_at DESC LIMIT 1) turn ON true
+       ${cornerOwedLookupSql('c', '$2')}
+       WHERE c.parent_id=$1 AND c.archived_at IS NULL AND EXISTS (
+         SELECT 1 FROM memberships member WHERE member.room_id=c.id
+           AND member.identity_id=$2 AND member.removed_at IS NULL)
+       ORDER BY c.created_at DESC,c.id`, [parentRoomId, viewerId]);
+    const counts = chatCornerCounts(corners.rows).get(parentRoomId) ?? {
+      cornerCount: 0, waitingCornerCount: 0, openCorners: [],
+    };
+    return { ...counts,
+      agentState: parent.rows[0].needs_you ? 'needs-you'
+        : parent.rows[0].working ? 'working' : null };
   }
 
   async readChats(workspaceId: string, viewerId: string): Promise<ChatListView | null> {
@@ -4377,6 +4430,11 @@ export class PhoneService {
   private async listRoomWorkflowRuns(roomId: string, viewerId: string) {
     if (!(await this.hasRoomAccess(roomId, viewerId))) throw new Error('room access denied');
     return listRoomWorkflowRuns(this.database, roomId, viewerId, undefined, this.publicOrigin);
+  }
+
+  /** The workflow card's compact, authorized companion for a live delta. */
+  async liveWorkflowRuns(roomId: string, viewerId: string) {
+    return this.listRoomWorkflowRuns(roomId, viewerId);
   }
   private async readWorkflowRun(input: Input<'readWorkflowRun'>, viewerId: string) {
     if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');

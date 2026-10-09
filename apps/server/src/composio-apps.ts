@@ -40,7 +40,7 @@ export function composioToolkitForApp(key: string): string {
  * Toolkits that sign in only through an operator-created custom OAuth2 config. Composio's
  * shared app for these is blocked by the provider, so they never fall back to it.
  */
-const CUSTOM_AUTH_ONLY: ReadonlySet<string> = new Set(['youtube']);
+const CUSTOM_AUTH_ONLY: ReadonlySet<string> = new Set(['youtube', 'tiktok']);
 
 export function requiresCustomAuth(toolkit: string): boolean {
   return CUSTOM_AUTH_ONLY.has(toolkit);

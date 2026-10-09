@@ -267,6 +267,7 @@ const AGENT_SURFACE_TOOL_NAMES = [
   'pr_checks_status',
   'post_artifact',
   'write_scratch_file',
+  'scratch_status',
   'fetch_image',
   'connect_app',
 ] as const;

@@ -96,6 +96,7 @@ import {
 } from '@beeline/api-contract/phone';
 import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
+import { allocatedDirectoryBytes, assertScratchWriteBudget, scratchBudgetMessage } from './scratch-lifecycle.js';
 import { validateArtifact } from './artifact-validation.js';
 import {
   BoundedSizeError,
@@ -1482,6 +1483,11 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'scratch_status',
+    description: 'Show usage, the 5 GiB budget, and 14-day file expiry for this chat-only corner scratch. Use your shell to remove unneeded files.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'write_scratch_file',
     description:
       'Write a file into your writable session area (the same root post_artifact reads paths from, beyond your checkout) and return its path so post_artifact can post it. This is how you create a file at all in a Room, whose filesystem is otherwise read-only. Content is plain text by default; pass encoding "base64" to write bytes you computed yourself. Capped at the same size post_artifact allows. Path must be relative and stay inside your session area - no absolute paths, no .. traversal, no symlink escapes; in a corner this still writes only to your session area, never the worktree. This produces the file, not a picture: turning text, markdown, JSON or SVG into a raster image needs a converter, which needs shell, which a Room does not have.',
@@ -1858,6 +1864,7 @@ export function agentToolsFor(
     // From a corner, open_corner opens a sibling corner in the parent Room.
     if (tool.name === 'open_corner') return !directMessage;
     if (tool.name === 'revise_corner_brief') return !directMessage;
+    if (tool.name === 'scratch_status') return cornerTurn && !repositoryCorner;
     if (tool.name === 'publish_corner_app' || tool.name === 'open_corner_app') return cornerTurn;
     if (tool.name === 'open_poll') return !directMessage;
     if (tool.name === 'run_granted_command') return commandRunnerAvailable;
@@ -2792,6 +2799,8 @@ export async function writeScratchFile(
     throw new Error(`content exceeds the ${MAX_ATTACH_BYTES}-byte attachment limit`);
   }
   const resolved = resolveWriteScratchPath(deps.root, path);
+  if (process.env.BEELINE_CORNER_SCRATCH_ROOT)
+    await assertScratchWriteBudget(process.env.BEELINE_CORNER_SCRATCH_ROOT, bytes.length);
   writeFileSync(resolved, bytes);
   return `Wrote ${bytes.length} bytes to ${resolved}; post_artifact with this path sends it.`;
 }
@@ -2918,6 +2927,8 @@ export async function fetchImage(
     deps.root,
     join('fetched-images', fetchedImageFileName(parsed, mime)),
   );
+  if (process.env.BEELINE_CORNER_SCRATCH_ROOT)
+    await assertScratchWriteBudget(process.env.BEELINE_CORNER_SCRATCH_ROOT, fetched.bytes.length);
   writeFileSync(resolved, fetched.bytes);
   return JSON.stringify({ path: resolved, mime, size: fetched.bytes.length });
 }
@@ -4614,6 +4625,10 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     }
     case 'write_scratch_file':
       return writeScratchFile(args);
+    case 'scratch_status': {
+      const root = requiredEnv('BEELINE_CORNER_SCRATCH_ROOT');
+      return scratchBudgetMessage(await allocatedDirectoryBytes(root));
+    }
     case 'get_avatar':
       return JSON.stringify(
         await daemonExecute('getAgentAvatar', { roomId: agentScheduleRoomId() }),

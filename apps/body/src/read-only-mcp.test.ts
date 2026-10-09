@@ -43,6 +43,8 @@ describe('direct message helper surface', () => {
     expect(agentToolsFor(true, false, false, true).map((tool) => tool.name)).not.toContain(
       'approve_merge',
     );
+    expect(agentToolsFor(true, false, true, false).map((tool) => tool.name)).toContain('scratch_status');
+    expect(agentToolsFor(true, false, true, true).map((tool) => tool.name)).not.toContain('scratch_status');
   });
 
   it('advertises the memory tools by default and hides them only when explicitly disabled', () => {

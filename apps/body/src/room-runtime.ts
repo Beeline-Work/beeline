@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdir, readdir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
@@ -24,6 +24,9 @@ import type { InterruptedTurn } from './force-update-journal.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
 import { turnTraceDirectory } from './turn-trace.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
+import { preserveUnpublishedCornerWorktree } from './corner-disk-recovery.js';
+import { writePrivateFileAtomically } from './atomic-private-file.js';
+import { CORNER_SCRATCH_TTL_MS, sweepStaleCornerScratch } from './scratch-lifecycle.js';
 import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
 import { RoomSupervisor } from './room-supervisor.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
@@ -561,6 +564,7 @@ export class RoomRuntimeCoordinator {
    * then left alone; the checkout and its commits are kept, never deleted.
    */
   private readonly archiveCleanupAbandoned = new Set<string>();
+  private lastCornerScratchSweepAt = 0;
   private readonly startingCorners = new Set<string>();
   /**
    * Rooms whose start is in flight. `running` is not set until the checkout
@@ -882,6 +886,8 @@ export class RoomRuntimeCoordinator {
     if (this.stopped) return 'member';
     await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
     if (this.stopped) return 'member';
+    await this.sweepCornerLocalState(archivedCorners, desired);
+    if (this.stopped) return 'member';
     for (const cornerId of this.idleCornerSubscriptions.keys()) {
       if (desired.has(cornerId)) continue;
       this.unwatchCorner(cornerId);
@@ -1025,6 +1031,7 @@ export class RoomRuntimeCoordinator {
     } catch (error) {
       console.error(`[thin-core] corner ${channelId} cleanup failed; will retry:`, error);
     }
+    if (running.worktree || running.scratch) await this.cleanupArchivedCornerLocalState(channelId);
   }
 
   private roomRecord(roomId: string): RoomRuntimeRecord | undefined {
@@ -1279,6 +1286,10 @@ export class RoomRuntimeCoordinator {
         : undefined;
       const workspacePath = worktree?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
       if (!worktree) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
+      await writePrivateFileAtomically(
+        resolve(this.roomRoot(corner.cornerId), '.beeline-corner.json'),
+        `${JSON.stringify({ cornerId: corner.cornerId, parentRoomId: corner.parentRoomId })}\n`,
+      );
       if (worktree && shouldPostInitialCornerWorkingState(restore)) {
         await this.options.daemonApi.execute('postCornerRemoteState', {
           cornerId: corner.cornerId,
@@ -1340,10 +1351,13 @@ export class RoomRuntimeCoordinator {
             console.error(`[thin-core] corner ${corner.cornerId} failed:`, error);
           }
         })
-        .finally(() => {
+        .finally(async () => {
           if (this.running.get(corner.cornerId)?.body === loop) {
             this.running.delete(corner.cornerId);
           }
+          await this.cleanupArchivedCornerLocalState(corner.cornerId).catch((error) =>
+            console.error(`[thin-core] corner ${corner.cornerId} local cleanup deferred:`, error),
+          );
         });
       if (this.stopped) {
         controller.abort();
@@ -1641,6 +1655,12 @@ export class RoomRuntimeCoordinator {
           // working-tree changes, report the fault once, and stop spending
           // reconciliation time on it.
           this.archiveCleanupAbandoned.add(cornerId);
+          try {
+            const saved = await preserveUnpublishedCornerWorktree(worktree, 'archived with unpublished local work');
+            console.warn(`[thin-core] corner ${cornerId} recoverable at ${saved.pointer}; pruned ${saved.pruned.join(', ') || 'no generated directories'}`);
+          } catch (preserveError) {
+            console.error(`[thin-core] corner ${cornerId} recovery preservation failed:`, preserveError);
+          }
           console.error(`[thin-core] corner ${cornerId} branch cleanup abandoned; unpublished work kept:`, error);
           continue;
         }
@@ -1670,10 +1690,12 @@ export class RoomRuntimeCoordinator {
       )
         continue;
       if (!this.archiveCleanupDue(cornerId)) continue;
+      if (this.archiveCleanupAbandoned.has(cornerId)) continue;
       if (this.archiveCleanupAccessDenied.has(cornerId) && !corners.has(cornerId)) continue;
       this.archiveCleanupAccessDenied.delete(cornerId);
       let corner = corners.get(cornerId);
       let discovered: DiscoveredCornerWorktree | undefined;
+      let candidate: CornerWorktree | undefined;
       try {
         discovered = await discoverCornerWorktree(this.runtime.supervisorRoot, cornerId);
         if (!discovered) {
@@ -1709,16 +1731,27 @@ export class RoomRuntimeCoordinator {
         if (!restore.featureBranch) {
           throw new Error(`archived corner ${corner.cornerId} has no authoritative feature branch`);
         }
-        await this.reapCornerWorktree({
+        candidate = {
           ...discovered,
           cornerId: corner.cornerId,
           branch: restore.featureBranch,
           parentRoomId: corner.parentRoomId,
           token: '',
           recovered: true,
-        });
+        };
+        await this.reapCornerWorktree(candidate);
         console.log(`[thin-core] swept archived corner worktree ${cornerId}`);
       } catch (error) {
+        if (candidate && hasUnpublishedWork(error)) {
+          this.archiveCleanupAbandoned.add(cornerId);
+          try {
+            const saved = await preserveUnpublishedCornerWorktree(candidate, 'archived with unpublished local work');
+            console.warn(`[thin-core] archived corner ${cornerId} recoverable at ${saved.pointer}; pruned ${saved.pruned.join(', ') || 'no generated directories'}`);
+          } catch (preserveError) {
+            console.error(`[thin-core] archived corner ${cornerId} recovery preservation failed:`, preserveError);
+          }
+          continue;
+        }
         if (error instanceof DaemonApiError && error.status === 403)
           this.archiveCleanupAccessDenied.add(cornerId);
         else this.deferArchiveCleanup(cornerId);
@@ -1790,6 +1823,68 @@ export class RoomRuntimeCoordinator {
       roomRoot: this.roomRoot(scratch.cornerId),
       scratchPath: scratch.path,
     });
+  }
+
+  /** Reap a corner's private state only after the server confirms archive and
+   * its ACP session has suspended. A missing/failed read is never authority. */
+  private async cleanupArchivedCornerLocalState(
+    cornerId: string,
+    knownArchive?: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+  ): Promise<boolean> {
+    if (this.running.has(cornerId) || this.startingCorners.has(cornerId)) return false;
+    const root = resolve(dirname(this.configPath), 'rooms', cornerId);
+    if (this.roomRoot(cornerId) !== root || !/^[a-zA-Z0-9-]{1,80}$/.test(cornerId)) return false;
+    const info = await lstat(root).catch(() => undefined);
+    if (!info?.isDirectory() || (await realpath(root)) !== root) return false;
+    let archived = knownArchive?.has(cornerId) ?? false;
+    if (!archived) {
+      try {
+        const restore = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId }) as CornerRestoreResult & { archived?: boolean };
+        archived = restore.archived === true;
+      } catch {
+        return false;
+      }
+    }
+    if (!archived) return false;
+    await this.scheduler.suspend(cornerId);
+    await rm(resolve(root, 'scratch'), { recursive: true, force: true });
+    await rm(resolve(root, 'agent-home'), { recursive: true, force: true });
+    await rm(resolve(root, '.beeline-corner.json'), { force: true });
+    return true;
+  }
+
+  /** Recover chat-only scratch and per-member homes after missed close events
+   * or a helper restart. A marker identifies new code corners after their
+   * checkout has already gone; a scratch directory identifies legacy chat
+   * corners. Active scratch gets a 14-day file TTL, never a wholesale reap. */
+  private async sweepCornerLocalState(
+    archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
+    desired: ReadonlySet<string>,
+  ): Promise<void> {
+    const root = resolve(dirname(this.configPath), 'rooms');
+    const due = this.now() - this.lastCornerScratchSweepAt >= 6 * 60 * 60_000;
+    if (due) this.lastCornerScratchSweepAt = this.now();
+    for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+      if (!entry.isDirectory() || !/^[a-zA-Z0-9-]{1,80}$/.test(entry.name)) continue;
+      const roomRoot = resolve(root, entry.name);
+      const scratch = resolve(roomRoot, 'scratch');
+      const marker = resolve(roomRoot, '.beeline-corner.json');
+      const hasScratch = (await lstat(scratch).catch(() => undefined))?.isDirectory() ?? false;
+      const hasMarker = (await lstat(marker).catch(() => undefined))?.isFile() ?? false;
+      if (!hasScratch && !hasMarker) continue;
+      if (desired.has(entry.name)) {
+        if (due && hasScratch && !this.startingCorners.has(entry.name) && !this.running.get(entry.name)?.body.isBusy()) {
+          await sweepStaleCornerScratch(scratch, this.now(), CORNER_SCRATCH_TTL_MS).catch((error) =>
+            console.error(`[thin-core] corner ${entry.name} scratch TTL sweep failed:`, error),
+          );
+        }
+        continue;
+      }
+      if (this.running.has(entry.name) || this.startingCorners.has(entry.name)) continue;
+      await this.cleanupArchivedCornerLocalState(entry.name, archived).catch((error) =>
+        console.error(`[thin-core] corner ${entry.name} local cleanup deferred:`, error),
+      );
+    }
   }
 
   private notePoll(roomId: string): void {

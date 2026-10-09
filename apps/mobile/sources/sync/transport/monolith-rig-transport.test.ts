@@ -594,6 +594,7 @@ describe('monolith Room send path', () => {
         method: 'POST',
         body: JSON.stringify({ roomId: ROOM, title: 'Release notes' }),
       }),
+      { timeoutMs: 15_000 },
     );
   });
 
@@ -610,6 +611,7 @@ describe('monolith Room send path', () => {
       expect.objectContaining({
         body: JSON.stringify({ roomId: ROOM, title: 'Release board', appInstallationId }),
       }),
+      { timeoutMs: 15_000 },
     );
   });
 
@@ -620,7 +622,15 @@ describe('monolith Room send path', () => {
     const transport = new MonolithRigTransport(identity);
     const sourceMessageId = 'f'.repeat(64);
 
-    await transport.createHumanCorner(ROOM, 'quiet amber corner', undefined, sourceMessageId, true);
+    const cornerId = '6f1d8c2a-4b3e-4f5a-9c7d-2e8b1a0f3c4d';
+    await transport.createHumanCorner(
+      ROOM,
+      'quiet amber corner',
+      undefined,
+      sourceMessageId,
+      true,
+      cornerId,
+    );
     expect(controls.fetch).toHaveBeenCalledWith(
       'https://server.example/v1/phone/operations/createHumanCorner',
       expect.objectContaining({
@@ -629,8 +639,10 @@ describe('monolith Room send path', () => {
           title: 'quiet amber corner',
           sourceMessageId,
           titleGenerated: true,
+          cornerId,
         }),
       }),
+      { timeoutMs: 15_000 },
     );
   });
 

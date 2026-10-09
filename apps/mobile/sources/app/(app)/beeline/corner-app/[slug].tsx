@@ -5,26 +5,33 @@ import { CornerAppScreen } from '@/components/buzz/CornerAppScreen';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { MonolithRigTransport } from '@/sync/transport/monolith-rig-transport';
+import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
+import { Modal } from '@/modal';
 
 export default function CornerAppRoute() {
   const { roomId, slug } = useLocalSearchParams<{ roomId?: string; slug?: string }>();
   const [app, setApp] = React.useState<CornerAppView>();
   const [busyAction, setBusyAction] = React.useState<string>();
   const [manifest, setManifest] = React.useState<CornerAppManifest>();
+  const [loadError, setLoadError] = React.useState<string>();
 
   React.useEffect(() => {
     let live = true;
     void (async () => {
       if (!roomId || !slug) return;
-      const identity = await loadBuzzIdentity();
-      if (!identity) return;
-      const view = await new RoomViewClient({
-        baseUrl: await getEffectiveRelayUrl(),
-        identity,
-      }).room(roomId);
-      if (live) {
-        setApp(view.cornerApps?.find((candidate) => candidate.slug === slug));
-        setManifest(view.boundApp?.manifest.slug === slug ? view.boundApp.manifest : undefined);
+      try {
+        const identity = await loadBuzzIdentity();
+        if (!identity) throw new Error('not signed in');
+        const view = await new RoomViewClient({
+          baseUrl: await getEffectiveRelayUrl(),
+          identity,
+        }).room(roomId);
+        if (live) {
+          setApp(view.cornerApps?.find((candidate) => candidate.slug === slug));
+          setManifest(view.boundApp?.manifest.slug === slug ? view.boundApp.manifest : undefined);
+        }
+      } catch (error) {
+        if (live) setLoadError(`Could not load this app. ${phoneOperationFailureReason(error)}`);
       }
     })();
     return () => {
@@ -46,6 +53,8 @@ export default function CornerAppRoute() {
         );
         await transport.publishPreparedMessage(event);
         router.back();
+      } catch (error) {
+        Modal.alert('Could not send', phoneOperationFailureReason(error));
       } finally {
         setBusyAction(undefined);
       }
@@ -61,9 +70,10 @@ export default function CornerAppRoute() {
       onBack={() => router.back()}
       unavailableTitle={manifest?.title}
       unavailableMessage={
-        manifest?.humanUi?.kind === 'broker'
+        loadError ??
+        (manifest?.humanUi?.kind === 'broker'
           ? 'This app requires its permissioned UI broker, which is not connected on this device.'
-          : undefined
+          : undefined)
       }
     />
   );

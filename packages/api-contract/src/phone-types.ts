@@ -402,6 +402,8 @@ export type NeedsYouItemView = {
   /** Room or corner name; for a DM, the other participant's name. */
   readonly roomName: string;
   readonly roomKind: 'room' | 'corner' | 'direct';
+  /** For a corner, its parent Room's name. */
+  readonly parentRoomName?: string;
   /**
    * The asking sentence, the viewer's own tag removed, already shortened by
    * the server (a long sentence keeps its END behind a leading `…`).
@@ -411,11 +413,43 @@ export type NeedsYouItemView = {
   readonly createdAt: number;
   /**
    * When the cell leaves the tray on its own (Unix seconds): 24 hours after
-   * the viewer first saw it on any device. Absent for a pending approval,
-   * which never expires.
+   * the viewer first saw it on any device. For an approval, when the request
+   * expires or closes; absent when it never does.
    */
   readonly expiresAt?: number;
   readonly author?: RoomViewIdentity;
+  /** Present when the cell is a pending approval card the viewer can decide. */
+  readonly approval?: NeedsYouApprovalView;
+};
+
+export type NeedsYouApprovalKind =
+  | 'grant'
+  | 'write-access'
+  | 'squire'
+  | 'choice'
+  | 'connector'
+  | 'webhook'
+  | 'sign-in';
+
+/**
+ * An approval card as text: `<actor> <ask>` over the whole `subject`, then the
+ * request's own `detail`. The ask's verb names the kind, so the row needs no
+ * type label. Decisions stay on the card in its Room.
+ */
+export type NeedsYouApprovalView = {
+  readonly kind: NeedsYouApprovalKind;
+  /** Who asks, usually the agent's name. */
+  readonly actor: string;
+  /** The verb phrase after the actor, e.g. `asks to run`. */
+  readonly ask: string;
+  /** The exact thing asked for, never shortened. */
+  readonly subject: string;
+  /** True when `subject` is a command, repository, secret or similar literal. */
+  readonly literal: boolean;
+  /** The request's reason, or a choice's options joined by ` · `. */
+  readonly detail?: string;
+  /** The person the request is for, when that is not the viewer. */
+  readonly forName?: string;
 };
 
 export const MESSAGE_REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '👀', '✅'] as const;

@@ -21,7 +21,12 @@ export type ForwardMessageToNewCornerInput = Omit<OpenRandomNamedCornerInput, 'c
   forwardText: string;
   /** The swiped message's server id; the server marks it with the opened corner. */
   sourceMessageId: string;
-  createCorner: (roomId: string, title: string, sourceMessageId: string) => Promise<string>;
+  createCorner: (
+    roomId: string,
+    title: string,
+    sourceMessageId: string,
+    cornerId: string,
+  ) => Promise<string>;
 };
 
 /**
@@ -36,7 +41,8 @@ export async function forwardMessageToNewCorner(
   if (!(await input.confirm())) return null;
   return openRandomNamedCorner({
     ...input,
-    createCorner: (roomId, title) => input.createCorner(roomId, title, input.sourceMessageId),
+    createCorner: (roomId, title, cornerId) =>
+      input.createCorner(roomId, title, input.sourceMessageId, cornerId),
     openCorner: (cornerId, title) => {
       stageCornerComposerDraft(cornerId, input.forwardText);
       input.openCorner(cornerId, title);

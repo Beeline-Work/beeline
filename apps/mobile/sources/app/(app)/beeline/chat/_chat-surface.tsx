@@ -395,9 +395,16 @@ import {
   HeaderMetaRow,
 } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
+import { RoomSavedCopyNotice } from '@/components/buzz/RoomSavedCopyNotice';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
-import { openRandomNamedCorner } from '@/buzz/open-random-corner';
+import {
+  newCornerOpenAttempt,
+  openRandomNamedCorner,
+  type CornerOpenAttempt,
+} from '@/buzz/open-random-corner';
+import { alertCornerOpenFailure } from '@/buzz/room-list-new-corner';
+import { cornerOpenTappedAgain } from '@/buzz/corner-open-status';
 import { forwardMessageToNewCorner, takeCornerComposerDraft } from '@/buzz/message-corner-forward';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
 import { connectorOfferCeremonyRoute } from '@/buzz/connector-offer-ceremony';
@@ -4626,8 +4633,9 @@ export function BuzzChatSurface({
     if (!isCorner) setRoomActionsVisible(true);
   }, [canRenameTitle, isCorner, storedRoomName, renameTextDraft]);
 
-  const handleOpenRandomCorner = useCallback(async () => {
-    if (openingRandomCorner || isArchived || viewerIsAgent) return;
+  const handleOpenRandomCorner = useCallback(async (attempt?: CornerOpenAttempt) => {
+    if (openingRandomCorner) return cornerOpenTappedAgain();
+    if (isArchived || viewerIsAgent) return;
     if (!transport) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert(
@@ -4637,10 +4645,12 @@ export function BuzzChatSurface({
       return;
     }
     setOpeningRandomCorner(true);
+    const current = attempt ?? newCornerOpenAttempt();
     try {
       await openRandomNamedCorner({
-        createCorner: (roomId, title) =>
-          transport.createHumanCorner(roomId, title, undefined, undefined, true),
+        attempt: current,
+        createCorner: (roomId, title, cornerId) =>
+          transport.createHumanCorner(roomId, title, undefined, undefined, true, cornerId),
         // Inside a corner the new corner is a sibling under the parent Room.
         roomId: parentChannelId ?? decodedId,
         openCorner: (cornerId, title) => {
@@ -4650,8 +4660,7 @@ export function BuzzChatSurface({
         },
       });
     } catch (err) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(err));
+      alertCornerOpenFailure(err, parentChannelId ?? decodedId, () => void handleOpenRandomCorner(current));
     } finally {
       setOpeningRandomCorner(false);
     }
@@ -4688,15 +4697,19 @@ export function BuzzChatSurface({
     [desktopExperience, isArchived, openingRandomCorner, transport, viewerIsAgent],
   );
 
-  const confirmForwardToNewCorner = useCallback(async () => {
-    const target = forwardCornerPrompt;
+  const confirmForwardToNewCorner = useCallback(async (
+    retry?: { target: ChatDisplayMessage; attempt: CornerOpenAttempt },
+  ) => {
+    const target = retry?.target ?? forwardCornerPrompt;
     if (!target) return;
     if (openingRandomCorner || isArchived || viewerIsAgent || desktopExperience) return;
     if (!transport) return;
     setForwardCornerPrompt(null);
     setOpeningRandomCorner(true);
+    const attempt = retry?.attempt ?? newCornerOpenAttempt();
     try {
       await forwardMessageToNewCorner({
+        attempt,
         confirm: async () => true,
         forwardText: formatForwardedMessage(
           target.text,
@@ -4708,8 +4721,8 @@ export function BuzzChatSurface({
           { roomId: decodedId, messageId: target.relayId ?? target.id },
         ),
         sourceMessageId: target.relayId ?? target.id,
-        createCorner: (roomId, title, sourceMessageId) =>
-          transport.createHumanCorner(roomId, title, undefined, sourceMessageId, true),
+        createCorner: (roomId, title, sourceMessageId, cornerId) =>
+          transport.createHumanCorner(roomId, title, undefined, sourceMessageId, true, cornerId),
         // Inside a corner the new corner is a sibling under the parent Room.
         roomId: parentChannelId ?? decodedId,
         openCorner: (cornerId, title) => {
@@ -4719,8 +4732,11 @@ export function BuzzChatSurface({
         },
       });
     } catch (err) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(err));
+      alertCornerOpenFailure(
+        err,
+        parentChannelId ?? decodedId,
+        () => void confirmForwardToNewCorner({ target, attempt }),
+      );
     } finally {
       setOpeningRandomCorner(false);
     }
@@ -6110,6 +6126,12 @@ export function BuzzChatSurface({
               </View>
             )}
           </View>
+
+          {/* The saved copy painted, but the server read failed: say so
+            instead of passing the copy off as current. */}
+          {transcriptHydrationError && (
+            <RoomSavedCopyNotice message={transcriptHydrationError} onRetry={retryHydration} />
+          )}
 
           <RoomReviewerSurfaceNotice
             allowAutoMerge={roomRepository?.allowAutoMerge}

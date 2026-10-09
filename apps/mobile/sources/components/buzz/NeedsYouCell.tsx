@@ -5,12 +5,14 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { NeedsYouItemView } from '@beeline/api-contract/phone';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { needsYouExpiryLabel } from '@/buzz/needs-you';
-import { ChevronGlyph } from './ChevronGlyph';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 import brand from '@/buzz/brand.json';
 
 /** How far a phone swipe travels before the rail it reveals dismisses the cell. */
 const SWIPE_RAIL_WIDTH = 96;
+
+/** An age older than this reads in the warning tone. */
+const STALE_SECONDS = 24 * 60 * 60;
 
 function sourceLabel(item: NeedsYouItemView): string {
   const name = item.roomName.replace(/^#/, '');
@@ -21,11 +23,21 @@ function sourceLabel(item: NeedsYouItemView): string {
       : name;
 }
 
+/** Where the ask sits: a corner reads `parent / corner`, a DM its peer. */
+function sourcePath(item: NeedsYouItemView): string {
+  const name = item.roomName.replace(/^#/, '');
+  const parent = item.parentRoomName?.replace(/^#/, '');
+  return item.roomKind === 'corner' && parent ? `${parent} / ${name}` : name;
+}
+
 /**
- * One Needs-you cell: the asking sentence, then where and how long ago. Every
- * cell has the same weight — no type, no dot, no tag. Tapping opens the exact
- * message (and counts as handled); a phone swipes right to dismiss, a pointer
- * hovers to reveal DISMISS in place of the chevron.
+ * One Needs-you cell, as text only: who asks and what (`Hoots asks to run`)
+ * with the age at the right, the exact thing asked for (literals in mono),
+ * the request's reason or a choice's options, then where it sits, who it is
+ * for and when it expires. The verb names the kind, so there is no type
+ * label. Tapping opens the exact message; it clears a question, never an
+ * approval, which leaves only once decided. A phone swipes a question right
+ * to dismiss; a pointer hovers to reveal DISMISS.
  */
 export function NeedsYouCell({
   item,
@@ -43,13 +55,34 @@ export function NeedsYouCell({
   onDismiss: (item: NeedsYouItemView) => void;
 }) {
   const [hovered, setHovered] = useState(false);
+  const approval = item.approval;
   const age = compactRelativeTime(item.createdAt, now);
+  const stale = now / 1000 - item.createdAt > STALE_SECONDS;
   const expiry = needsYouExpiryLabel(item.expiresAt, now);
-  const name = item.roomName.replace(/^#/, '');
+  const actor = approval?.actor ?? item.author?.name;
+  const ask = approval?.ask ?? 'asks you';
+  const subject = approval?.subject ?? item.text;
+  const meta = [
+    ...(approval?.forName ? [`for ${approval.forName}`] : []),
+    sourcePath(item),
+    ...(expiry ? [approval?.kind === 'choice' ? expiry.replace('expires', 'closes') : expiry] : []),
+  ].join(' · ');
   const cell = (
     <Pressable
-      accessibilityHint="Opens the message and clears it from Needs you"
-      accessibilityLabel={`${item.text}, ${sourceLabel(item)}, ${age}`}
+      accessibilityHint={
+        approval
+          ? 'Opens the request in its Room'
+          : 'Opens the message and clears it from Needs you'
+      }
+      accessibilityLabel={[
+        actor ? `${actor} ${ask}` : null,
+        subject,
+        approval?.detail,
+        sourceLabel(item),
+        age,
+      ]
+        .filter(Boolean)
+        .join(', ')}
       accessibilityRole="button"
       accessibilityState={desktop ? { selected } : undefined}
       onHoverIn={desktop ? () => setHovered(true) : undefined}
@@ -62,22 +95,42 @@ export function NeedsYouCell({
       ]}
       testID={`needs-you-${item.messageId}`}
     >
-      <Text style={styles.text} testID={`needs-you-text-${item.messageId}`}>
-        {item.text}
+      <View style={styles.head}>
+        <Text style={styles.ask} testID={`needs-you-head-${item.messageId}`}>
+          {actor ? <Text style={styles.actor}>{actor}</Text> : null}
+          {actor ? ` ${ask}` : null}
+        </Text>
+        {age ? (
+          <Text
+            style={[styles.age, stale && styles.ageStale]}
+            testID={`needs-you-age-${item.messageId}`}
+          >
+            {age}
+          </Text>
+        ) : null}
+      </View>
+      <Text
+        style={[styles.text, approval ? approval.literal && styles.literal : styles.quote]}
+        testID={`needs-you-text-${item.messageId}`}
+      >
+        {subject}
       </Text>
-      <View style={[styles.meta, desktop && styles.metaDesktop]}>
+      {approval?.detail ? (
+        <Text style={styles.detail} testID={`needs-you-detail-${item.messageId}`}>
+          {approval.detail}
+        </Text>
+      ) : null}
+      <View style={[styles.meta, desktop && !approval && styles.metaDesktop]}>
         {item.roomKind === 'corner' ? (
           <CornerGlyph size={CORNER_META_SIZE} />
         ) : item.roomKind === 'room' ? (
           <Text style={styles.sigil}>#</Text>
         ) : null}
         <Text numberOfLines={1} style={styles.metaText}>
-          {name}
-          {age ? ` · ${age}` : ''}
-          {expiry ? ` · ${expiry}` : ''}
+          {meta}
         </Text>
       </View>
-      {desktop && hovered ? (
+      {desktop && hovered && !approval ? (
         <Pressable
           accessibilityLabel="Dismiss"
           accessibilityRole="button"
@@ -92,14 +145,11 @@ export function NeedsYouCell({
             DISMISS <Text style={styles.dismissMark}>✕</Text>
           </Text>
         </Pressable>
-      ) : (
-        <View pointerEvents="none" style={styles.chevron}>
-          <ChevronGlyph color={styles.chevronColor.color} size={14} />
-        </View>
-      )}
+      ) : null}
     </Pressable>
   );
-  if (desktop) return cell;
+  // An approval leaves when it is decided, never by a swipe.
+  if (desktop || approval) return cell;
   return (
     <Swipeable
       friction={1}
@@ -129,13 +179,33 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 78,
     justifyContent: 'center',
     paddingVertical: theme.buzz.space.md,
-    paddingLeft: theme.buzz.space.md,
-    paddingRight: theme.buzz.space.xl,
+    paddingHorizontal: theme.buzz.space.md,
     backgroundColor: theme.buzz.bgBase,
   },
   cellActive: { backgroundColor: theme.buzz.bgHighlight },
   cellSelected: { borderLeftWidth: 1, borderLeftColor: theme.buzz.accent },
-  text: { ...theme.buzz.type.body, color: theme.buzz.textSecondary },
+  head: { flexDirection: 'row', alignItems: 'baseline', gap: theme.buzz.space.sm },
+  ask: { ...theme.buzz.type.body, flex: 1, color: theme.buzz.textPrimary },
+  actor: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  age: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
+  ageStale: { color: brand.mark },
+  text: { ...theme.buzz.type.body, marginTop: theme.buzz.space.xs, color: theme.buzz.textPrimary },
+  literal: {
+    ...theme.buzz.type.machine,
+    marginTop: theme.buzz.space.xs,
+    color: theme.buzz.textPrimary,
+  },
+  // A question is quoted: it is the asker's own words, not a request summary.
+  quote: {
+    paddingLeft: theme.buzz.space.sm,
+    borderLeftWidth: 2,
+    borderLeftColor: theme.buzz.borderStrong,
+  },
+  detail: {
+    ...theme.buzz.type.meta,
+    marginTop: theme.buzz.space.xs,
+    color: theme.buzz.textSecondary,
+  },
   meta: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -144,14 +214,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   sigil: { ...theme.buzz.type.meta, color: brand.mark },
   metaText: { ...theme.buzz.type.meta, flexShrink: 1, color: theme.buzz.ledgerQuiet },
-  chevron: {
-    position: 'absolute',
-    right: 15,
-    top: 0,
-    bottom: 0,
-    justifyContent: 'center',
-  },
-  chevronColor: { color: theme.buzz.ledgerGhost },
   // A pointer's dismiss sits on the source line, which keeps room for it, so
   // revealing it never covers the sentence or reflows the cell.
   metaDesktop: { paddingRight: DISMISS_RIGHT + DISMISS_SIZE + theme.buzz.space.md },

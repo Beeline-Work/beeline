@@ -2834,6 +2834,19 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY messages_workflow_run_status_backfill_idx
      ON messages(id) WHERE card_type='workflow-handoff' AND ${workflowRunStatusUnsavedSql('card', 'id')}`,
   ));
+  // The Task Tray reads sign-in and Trusty Squire approval cards at any age
+  // (they leave only when decided or expired), so it reads them through these.
+  await retryMigrationStep('needs-you approval index', () => createIndexConcurrently(
+    database, 'messages_needs_you_approval_idx',
+    `CREATE INDEX CONCURRENTLY messages_needs_you_approval_idx
+     ON messages(room_id)
+     WHERE card_type IN ('agent-sign-in','app-sign-in','squire-approval') AND deleted_at IS NULL`,
+  ));
+  await retryMigrationStep('squire decision index', () => createIndexConcurrently(
+    database, 'messages_squire_decision_idx',
+    `CREATE INDEX CONCURRENTLY messages_squire_decision_idx
+     ON messages(room_id,(card->>'approvalId')) WHERE card_type='squire-approval-decision'`,
+  ));
   await ddlScript('corner merge holds', CORNER_MERGE_HOLDS_SCHEMA);
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());

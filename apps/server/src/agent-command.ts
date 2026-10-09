@@ -874,7 +874,8 @@ export async function claimAgentCommand(
            SELECT room_id,turn_request_id,agent_id,'working',$4 FROM eligible
            WHERE action<>'stop' AND action<>'restart'
            ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
-             status='working',generation_id=EXCLUDED.generation_id,failure_reason=NULL,created_at=now()
+             status='working',generation_id=EXCLUDED.generation_id,failure_reason=NULL,created_at=now(),
+             started_at=CASE WHEN agent_turns.status='working' THEN agent_turns.started_at ELSE now() END
            WHERE agent_turns.status<>'cancelled'
            RETURNING 1
          ), claimed AS (

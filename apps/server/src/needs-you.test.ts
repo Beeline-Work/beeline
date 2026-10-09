@@ -158,13 +158,18 @@ describe('PhoneService Needs-you tray', () => {
     phone = new PhoneService(database, 'https://server.example');
   });
 
-
   it('R12e: projects the switcher room count and unread/approval mark', async () => {
-    expect((await phone.readWorkspaces(VIEWER)).workspaces[0]).toMatchObject({ roomCount: 1, attention: false });
+    expect((await phone.readWorkspaces(VIEWER)).workspaces[0]).toMatchObject({
+      roomCount: 1,
+      attention: false,
+    });
     await post(ROOM, PEER, 'New message');
     const projected = readWorkspaceListView(await phone.readWorkspaces(VIEWER))!.workspaces[0];
     const deck = await phone.readChats(WORKSPACE, VIEWER);
-    expect(projected).toMatchObject({ roomCount: deck!.chats.length, attention: deck!.chats.some((room) => room.unread || room.agentState === 'needs-you') });
+    expect(projected).toMatchObject({
+      roomCount: deck!.chats.length,
+      attention: deck!.chats.some((room) => room.unread || room.agentState === 'needs-you'),
+    });
     await database.query(
       `INSERT INTO room_read_marks(room_id,identity_id,message_id,message_created_at)
        SELECT room_id,$1,id,created_at FROM messages WHERE room_id=$2 ORDER BY created_at DESC LIMIT 1`,
@@ -173,7 +178,8 @@ describe('PhoneService Needs-you tray', () => {
     expect((await phone.readWorkspaces(VIEWER)).workspaces[0]?.attention).toBe(false);
     await database.query(
       `INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
-       VALUES('approval',$1,$2,'request','{}','pending')`, [CORNER, AGENT],
+       VALUES('approval',$1,$2,'request','{}','pending')`,
+      [CORNER, AGENT],
     );
     expect((await phone.readWorkspaces(VIEWER)).workspaces[0]?.attention).toBe(true);
   });
@@ -192,19 +198,22 @@ describe('PhoneService Needs-you tray', () => {
     await post(OTHER_ROOM, PEER, '@ada are you in here?', 5);
 
     const { items } = await read();
-    expect(items.map((item) => item.messageId)).toEqual([please, question]);
-    expect(items[0]).toMatchObject({
+    // Oldest first: nothing has started a clock yet.
+    expect(items.map((item) => item.messageId)).toEqual([question, please]);
+    expect(items[1]).toMatchObject({
       roomId: CORNER,
       roomName: 'release-ios-signing',
       roomKind: 'corner',
+      parentRoomName: 'Launch room',
       text: 'The release check needs a grant — please approve it.',
       author: { name: 'Hoots' },
     });
-    expect(items[1]).toMatchObject({
+    expect(items[0]).toMatchObject({
       roomKind: 'room',
       roomName: 'Launch room',
       text: 'can you confirm the review note?',
     });
+    expect(items[0]!.approval).toBeUndefined();
   });
 
   it('starts the 24-hour clock on the first read, never on the badge count', async () => {
@@ -279,18 +288,284 @@ describe('PhoneService Needs-you tray', () => {
         AGENT,
         JSON.stringify({
           agent: { pubkey: AGENT, kind: 'agent', name: 'Hoots' },
-          grants: [{ grantId: GRANT, kind: 'command', target: 'gh pr checks', status: 'pending' }],
+          requester: { pubkey: PEER, kind: 'human', name: 'Juniper' },
+          grants: [
+            {
+              grantId: GRANT,
+              kind: 'command',
+              target: 'gh pr checks',
+              reason: 'watch CI',
+              status: 'pending',
+            },
+          ],
         }),
       ],
     );
     const [item] = (await read()).items;
-    expect(item).toMatchObject({ messageId: card, text: 'Allow Hoots to run gh pr checks' });
+    expect(item).toMatchObject({
+      messageId: card,
+      text: 'Hoots asks to run gh pr checks',
+      approval: {
+        kind: 'grant',
+        actor: 'Hoots',
+        ask: 'asks to run',
+        subject: 'gh pr checks',
+        literal: true,
+        detail: 'watch CI',
+        forName: 'Juniper',
+      },
+    });
     expect(item!.expiresAt).toBeUndefined();
+
+    // Opening it (the tray's tap) does not clear an approval.
+    await phone.execute('clearNeedsYou', { workspaceId: WORKSPACE, messageId: card }, VIEWER);
+    expect(await count()).toBe(1);
 
     // A person who cannot decide it never sees it.
     expect((await phone.execute('countNeedsYou', { workspaceId: WORKSPACE }, PEER)).count).toBe(0);
 
     await phone.execute('decideAgentGrant', { grantId: GRANT, decision: 'once' }, VIEWER);
     expect(await count()).toBe(0);
+  });
+  async function card(
+    roomId: string,
+    cardType: string,
+    body: Record<string, unknown>,
+    ageMinutes = 10,
+    authorId = AGENT,
+  ): Promise<string> {
+    sequence += 1;
+    const id = `card-${sequence}`.padEnd(64, '0');
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES($1,$2,$3,'card','card',$4,$5::jsonb,now() - $6 * interval '1 minute')`,
+      [id, roomId, authorId, cardType, JSON.stringify(body), ageMinutes],
+    );
+    return id;
+  }
+  const hoots = { pubkey: AGENT, kind: 'agent', name: 'Hoots' };
+  const approvals = async (viewer = VIEWER) =>
+    (await phone.execute('readNeedsYou', { workspaceId: WORKSPACE }, viewer)).items
+      .filter((item) => item.approval)
+      .map((item) => item.approval);
+
+  it('shows a pending write-access request to the person asked, until it is decided', async () => {
+    await database.query(
+      `INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
+       VALUES('write-1',$1,$2,'request-1','{}','pending')`,
+      [CORNER, VIEWER],
+    );
+    await card(CORNER, 'permission', {
+      permissionId: 'write-1',
+      requestId: 'request-1',
+      agent: hoots,
+      requester: { pubkey: VIEWER, kind: 'human', name: 'Ada' },
+      tool: 'git',
+      repository: 'owner/beeline',
+      status: 'pending',
+    });
+    expect(await approvals()).toEqual([
+      {
+        kind: 'write-access',
+        actor: 'Hoots',
+        ask: 'asks for write access to',
+        subject: 'owner/beeline',
+        literal: true,
+      },
+    ]);
+    expect(await approvals(PEER)).toEqual([]);
+    await database.query(`UPDATE permission_authority SET status='authorized'`);
+    expect(await approvals()).toEqual([]);
+  });
+
+  it('shows an open question addressed to the reader with its options and close time', async () => {
+    const closesAt = Math.floor(Date.now() / 1000) + 6 * 3600;
+    const id = await card(ROOM, 'choice', {
+      choiceId: '66666666-6666-4666-8666-666666666666',
+      mode: 'question',
+      status: 'open',
+      agent: hoots,
+      prompt: 'Ship the OTA tonight?',
+      options: [{ label: 'Ship now' }, { label: 'Wait for the voice fix' }],
+      mentionIds: [VIEWER],
+    });
+    await database.query(
+      `INSERT INTO room_choices(id,room_id,workspace_id,agent_id,message_id,mode,prompt,options,electorate,closes_at,status)
+       VALUES('66666666-6666-4666-8666-666666666666',$1,$2,$3,$4,'question','Ship the OTA tonight?','[]',
+         ARRAY[$5,$6],to_timestamp($7),'open')`,
+      [ROOM, WORKSPACE, AGENT, id, VIEWER, PEER, closesAt],
+    );
+    const [item] = (await read()).items;
+    expect(item).toMatchObject({
+      messageId: id,
+      expiresAt: closesAt,
+      approval: {
+        kind: 'choice',
+        ask: 'asks you to choose',
+        subject: 'Ship the OTA tonight?',
+        detail: 'Ship now · Wait for the voice fix',
+      },
+    });
+    // Addressed to the reader only.
+    expect(await approvals(PEER)).toEqual([]);
+    await database.query(`UPDATE room_choices SET status='answered'`);
+    expect(await approvals()).toEqual([]);
+  });
+
+  it('shows a pending connector offer, webhook request and sign-in to the person who decides each', async () => {
+    const offerMessage = await card(
+      ROOM,
+      'connector-offer',
+      {
+        agent: hoots,
+        connectorName: 'Gmail',
+        reason: 'Read the release thread.',
+        status: 'pending',
+      },
+      30,
+    );
+    await database.query(
+      `INSERT INTO connector_offers(id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,message_id)
+       VALUES('77777777-7777-4777-8777-777777777777',$1,$2,$3,$4,'gmail','Read the release thread.','machine',$5)`,
+      [AGENT, WORKSPACE, ROOM, VIEWER, offerMessage],
+    );
+    const webhookMessage = await card(
+      ROOM,
+      'webhook-request',
+      {
+        agentName: 'Hoots',
+        source: 'github',
+        reason: 'Watch release tags.',
+        status: 'pending',
+      },
+      20,
+    );
+    await database.query(
+      `INSERT INTO room_webhook_requests(id,room_id,agent_id,source,reason,request_id,message_id)
+       VALUES('88888888-8888-4888-8888-888888888888',$1,$2,'github','Watch release tags.','request',$3)`,
+      [ROOM, AGENT, webhookMessage],
+    );
+    await card(
+      ROOM,
+      'agent-sign-in',
+      {
+        agentId: AGENT,
+        ownerId: VIEWER,
+        harness: 'claude',
+        status: 'pending',
+      },
+      10,
+      VIEWER,
+    );
+
+    const items = (await read()).items;
+    // The webhook request expires, so it leads; then the oldest.
+    expect(items.map((item) => item.approval?.kind)).toEqual(['webhook', 'connector', 'sign-in']);
+    expect(items.map((item) => item.approval)).toEqual([
+      {
+        kind: 'webhook',
+        actor: 'Hoots',
+        ask: 'asks for a webhook from',
+        subject: 'github',
+        literal: true,
+        detail: 'Watch release tags.',
+      },
+      {
+        kind: 'connector',
+        actor: 'Hoots',
+        ask: 'asks to connect',
+        subject: 'Gmail',
+        literal: false,
+        detail: 'Read the release thread.',
+      },
+      {
+        kind: 'sign-in',
+        actor: 'Hoots',
+        ask: 'needs you to sign in to',
+        subject: 'Claude',
+        literal: false,
+      },
+    ]);
+    expect(items[0]!.expiresAt).toBeGreaterThan(Date.now() / 1000 + 6 * 24 * 3600);
+    // A plain member decides none of them.
+    expect(await approvals(PEER)).toEqual([]);
+  });
+
+  it('holds a Trusty Squire approval until its decision lands in the source Room', async () => {
+    await card(ROOM, 'squire-approval', {
+      agent: hoots,
+      tool: 'fetch_credential',
+      title: 'Reveal GROQ_API_KEY',
+      detail: 'Write it into the push gateway secret.',
+      approvalUrl: 'https://squire.example/approve/1',
+      approvalId: 'approval-1',
+      linkKind: 'passkey',
+      sourceRoomId: CORNER,
+    });
+    expect(await approvals()).toEqual([
+      {
+        kind: 'squire',
+        actor: 'Hoots',
+        ask: 'needs your passkey for',
+        subject: 'Reveal GROQ_API_KEY',
+        literal: true,
+        detail: 'Write it into the push gateway secret.',
+      },
+    ]);
+    await card(CORNER, 'squire-approval-decision', {
+      approvalId: 'approval-1',
+      status: 'approved',
+    });
+    expect(await approvals()).toEqual([]);
+  });
+
+  it('keeps an undecided sign-in and Trusty Squire approval in the tray past a week', async () => {
+    const week = 8 * 24 * 60;
+    await card(
+      ROOM,
+      'app-sign-in',
+      { agentId: AGENT, ownerId: VIEWER, appId: 'gmail', name: 'Gmail', status: 'pending' },
+      week,
+      VIEWER,
+    );
+    await card(
+      ROOM,
+      'squire-approval',
+      {
+        agent: hoots,
+        tool: 'fetch_credential',
+        title: 'Reveal GROQ_API_KEY',
+        approvalUrl: 'https://squire.example/approve/2',
+        approvalId: 'approval-2',
+        linkKind: 'passkey',
+        sourceRoomId: CORNER,
+      },
+      week,
+    );
+    expect((await approvals()).map((approval) => approval.kind).sort()).toEqual([
+      'sign-in',
+      'squire',
+    ]);
+  });
+
+  it('lists approvals before questions', async () => {
+    const question = await post(ROOM, PEER, '@ada can you look?', 60);
+    await database.query(
+      `INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
+       VALUES('write-2',$1,$2,'request-2','{}','pending')`,
+      [CORNER, VIEWER],
+    );
+    const approval = await card(
+      CORNER,
+      'permission',
+      {
+        permissionId: 'write-2',
+        agent: hoots,
+        repository: 'owner/beeline',
+        status: 'pending',
+      },
+      5,
+    );
+    expect((await read()).items.map((item) => item.messageId)).toEqual([approval, question]);
   });
 });

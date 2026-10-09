@@ -18,6 +18,8 @@ import {
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
+import { cornerOpenTappedAgain } from '@/buzz/corner-open-status';
+import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
 import { roomListSections } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
@@ -361,16 +363,21 @@ export const SidebarView = React.memo(function SidebarView() {
   // builds the monolith transport on demand, as the Room composer does.
   const openingCornerRef = React.useRef(false);
   const openNewCorner = React.useCallback(
-    async (roomId: string) => {
-      if (openingCornerRef.current) return;
+    async (roomId: string, attempt?: CornerOpenAttempt) => {
+      if (openingCornerRef.current) return cornerOpenTappedAgain();
       openingCornerRef.current = true;
       try {
         const identity = await loadBuzzIdentity();
         const transport = identity ? new BuzzRigTransport(identity) : null;
         await openRoomListCorner({
           roomId,
-          createCorner: transport ? (id, title) => transport.createHumanCorner(id, title, undefined, undefined, true) : null,
+          attempt,
+          createCorner: transport
+            ? (id, title, cornerId) =>
+                transport.createHumanCorner(id, title, undefined, undefined, true, cornerId)
+            : null,
           openCorner: (cornerId, title) => router.push(cornerHref(cornerId, roomId, title)),
+          retry: (failed) => void openNewCorner(roomId, failed),
         });
       } finally {
         openingCornerRef.current = false;

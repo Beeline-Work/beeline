@@ -4,6 +4,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { statusBarStyleForTheme } from '@/components/StatusBarProvider';
+import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { useIsDesktop } from '@/utils/responsive';
 
 export const unstable_settings = {
@@ -192,6 +193,8 @@ export default function RootLayout() {
         <Stack.Screen name="beeline/corner-app/[slug]" options={{ headerShown: false }} />
         <Stack.Screen name="text-selection" options={{ headerShown: false }} />
       </Stack>
+      {/* One corner-open notice over every screen: pending, or unreachable with Retry. */}
+      <CornerOpenToast />
     </View>
   );
 }

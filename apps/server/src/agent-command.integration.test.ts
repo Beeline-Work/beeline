@@ -1289,6 +1289,72 @@ it('atomically establishes the working receipt when an input command is claimed'
     }),
   );
 });
+it('restarts the turn clock when a parked turn resumes after a long approval wait', async () => {
+  await send('@hoots');
+  const [c] = await commands();
+  await claim(c!, 'before-approval');
+  await result(c!, 'Waiting for your approval.', 'before-approval');
+  const turn = () =>
+    db
+      .query<{ status: string; age_hours: number }>(
+        `SELECT status,(extract(epoch FROM now()-started_at)/3600)::float8 age_hours FROM agent_turns
+         WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+        [R, c!.turnRequestId, A],
+      )
+      .then((r) => r.rows[0]!);
+  const parkFor57Hours = () =>
+    db.query(
+      `UPDATE agent_turns SET started_at=now()-interval '57 hours'
+       WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [R, c!.turnRequestId, A],
+    );
+  await parkFor57Hours();
+  expect((await turn()).status).not.toBe('working');
+
+  // The approval resumes the same turn: a resume command on its request id.
+  const decision = id();
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'approved')`, [
+    decision,
+    R,
+    H,
+  ]);
+  const resume = (await createAgentCommand(db, {
+    roomId: R,
+    agentId: A,
+    sourceMessageId: decision,
+    action: 'resume',
+    reason: 'resume',
+    turnRequestId: c!.turnRequestId,
+  }))!;
+  await daemon.execute(
+    'claimAgentCommand',
+    { roomId: R, commandId: resume.id, generationId: 'after-approval' },
+    A,
+  );
+  expect(await turn()).toMatchObject({ status: 'working' });
+  expect((await turn()).age_hours).toBeLessThan(1);
+
+  // A working receipt on a turn that had settled restarts the clock too,
+  await db.query(
+    `UPDATE agent_turns SET status='complete',started_at=now()-interval '57 hours'
+     WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+    [R, c!.turnRequestId, A],
+  );
+  await daemon.execute(
+    'postAgentTurnReceipt',
+    { roomId: R, agentId: A, requestId: c!.turnRequestId, generationId: 'after-approval', status: 'working' },
+    A,
+  );
+  expect((await turn()).age_hours).toBeLessThan(1);
+  // and a receipt on a turn that is still working keeps its start.
+  await parkFor57Hours();
+  await daemon.execute(
+    'postAgentTurnReceipt',
+    { roomId: R, agentId: A, requestId: c!.turnRequestId, generationId: 'after-approval', status: 'working' },
+    A,
+  );
+  expect((await turn()).age_hours).toBeGreaterThan(56);
+});
 it('rolls the command claim back when a cancelled turn cannot become working', async () => {
   await send('@hoots');
   const [c] = await commands();

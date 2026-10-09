@@ -10,6 +10,8 @@ const list = vi.hoisted(() => ({
   state: 'waiting' as string,
   cached: null as unknown,
   createCalls: [] as unknown[][],
+  createGate: null as Promise<void> | null,
+  createFailure: null as Error | null,
   subscriptions: [] as Array<{
     filters: readonly { readonly '#h'?: readonly string[] }[];
     emit(event: MonolithSurfaceEvent): void;
@@ -78,6 +80,8 @@ vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     async createHumanCorner(...args: unknown[]) {
       list.createCalls.push(args);
+      await list.createGate;
+      if (list.createFailure) throw list.createFailure;
       return 'corner-created';
     }
     async ensureClient() {
@@ -103,6 +107,8 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 }));
 
 import BuzzCorners from './[roomId]';
+import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
+import { cornerOpenEnded } from '@/buzz/corner-open-status';
 import { router } from 'expo-router';
 
 const viewer = { pubkey: 'viewer', kind: 'human' as const, name: 'Captain' };
@@ -148,6 +154,12 @@ function paintedStates(renderer: ReactTestRenderer): string[] {
   return (rows.props.corners as CornerListItem[]).map((item) => item.state);
 }
 
+function textOf(node: { children: unknown[] }): string {
+  return node.children
+    .map((child) => (typeof child === 'string' ? child : textOf(child as { children: unknown[] })))
+    .join('');
+}
+
 function parentWatch() {
   const watch = list.subscriptions.find((entry) =>
     entry.filters.some((filter) => filter['#h']?.includes('room-a')),
@@ -162,7 +174,12 @@ const quiet = () => act(() => new Promise((resolve) => setTimeout(resolve, 1_100
 async function mountList(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
-    renderer = create(React.createElement(BuzzCorners));
+    // The app layout mounts the toast over every screen.
+    renderer = create(
+      React.createElement(React.Fragment, null,
+        React.createElement(BuzzCorners),
+        React.createElement(CornerOpenToast)),
+    );
   });
   await vi.waitFor(() => expect(() => parentWatch()).not.toThrow());
   await quiet();
@@ -176,6 +193,9 @@ beforeEach(() => {
   list.state = 'waiting';
   list.cached = null;
   list.createCalls.length = 0;
+  list.createGate = null;
+  list.createFailure = null;
+  cornerOpenEnded();
   vi.mocked(router.push).mockClear();
   list.subscriptions.length = 0;
 });
@@ -195,6 +215,70 @@ describe('Corner list live path', () => {
         params: expect.objectContaining({ channelId: 'corner-created', title }),
       }),
     );
+  });
+
+  it('shows the plus as busy while the create is in flight and ignores a second tap', async () => {
+    const renderer = await mountList();
+    let release!: () => void;
+    list.createGate = new Promise((resolve) => (release = resolve));
+    const header = () => renderer.root.findByType('RoomCornersHeader');
+    expect(header().props.busy).toBe(false);
+    await act(async () => {
+      void header().props.onAdd();
+    });
+    expect(header().props.busy).toBe(true);
+    await act(async () => {
+      void header().props.onAdd();
+    });
+    expect(list.createCalls).toHaveLength(1);
+    // The phone names the corner, so a retry can ask for the same one.
+    expect(list.createCalls[0]![5]).toMatch(/^[0-9a-f-]{36}$/);
+    await act(async () => release());
+    await vi.waitFor(() => expect(header().props.busy).toBe(false));
+    expect(router.push).toHaveBeenCalledOnce();
+  });
+
+  it('shows a placeholder row while the create waits, with no toast over its own list', async () => {
+    const renderer = await mountList();
+    let release!: () => void;
+    list.createGate = new Promise((resolve) => (release = resolve));
+    await act(async () => {
+      void renderer.root.findByType('RoomCornersHeader').props.onAdd();
+    });
+    const row = renderer.root.findByProps({ testID: 'corner-open-row-pending' });
+    expect(textOf(row)).toBe('Opening corner…Waiting for server · 0s');
+    expect(renderer.root.findAllByProps({ testID: 'corner-open-pending' })).toHaveLength(0);
+    await act(async () => release());
+    await vi.waitFor(() =>
+      expect(renderer.root.findAllByProps({ testID: 'corner-open-row-pending' })).toHaveLength(0),
+    );
+  });
+
+  it.each([
+    ['loses the network', new TypeError('Network request failed'), 'No connection to the server'],
+    [
+      'times out',
+      Object.assign(new Error('timed out'), { name: 'MonolithRequestTimeoutError' }),
+      'No response from server after 15s',
+    ],
+  ])('says so with Retry when the create %s, and Retry asks for the same corner', async (_, failure, why) => {
+    const renderer = await mountList();
+    list.createFailure = failure;
+    await act(async () => renderer.root.findByType('RoomCornersHeader').props.onAdd());
+    expect(router.push).not.toHaveBeenCalled();
+    expect(textOf(renderer.root.findByProps({ testID: 'corner-open-row-failed' }))).toBe(
+      `Corner not opened${why}`,
+    );
+    const toast = renderer.root.findByProps({ testID: 'corner-open-failed' });
+    expect(textOf(toast)).toBe("Couldn't reach BeelineCheck your connection, then retry.Retry");
+
+    list.createFailure = null;
+    await act(async () => renderer.root.findByProps({ testID: 'corner-open-retry' }).props.onPress());
+    expect(list.createCalls).toHaveLength(2);
+    expect(list.createCalls[1]![1]).toBe(list.createCalls[0]![1]);
+    expect(list.createCalls[1]![5]).toBe(list.createCalls[0]![5]);
+    expect(router.push).toHaveBeenCalledOnce();
+    expect(renderer.root.findAllByProps({ testID: 'corner-open-failed' })).toHaveLength(0);
   });
 
   it('repaints a corner status from the parent Room nudge, without re-entering', async () => {

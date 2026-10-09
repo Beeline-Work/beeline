@@ -449,16 +449,22 @@ export class MonolithRigTransport {
     appInstallationId?: string,
     sourceMessageId?: string,
     titleGenerated?: boolean,
+    cornerId?: string,
   ) {
-    return this.operation('createHumanCorner', {
-      roomId,
-      title,
-      appInstallationId,
-      sourceMessageId,
-      titleGenerated,
-    }).then(
-      (value) => (value as { id: string }).id,
-    );
+    // Bounded so a dead link reports a failure instead of hanging; the server
+    // returns the same corner when a retry repeats `cornerId`.
+    return this.operation(
+      'createHumanCorner',
+      {
+        roomId,
+        title,
+        appInstallationId,
+        sourceMessageId,
+        titleGenerated,
+        cornerId,
+      },
+      { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS },
+    ).then((value) => (value as { id: string }).id);
   }
   roomRepositorySet(roomId: string, input: RoomRepositoryInput): Promise<RoomRepository> {
     return this.operation('setRoomRepository', {

@@ -118,6 +118,7 @@ function Probe({ roomId, desktop, wired }: { roomId: string; desktop: boolean; w
                     calls.create.push([id, title]);
                     return `corner-${id}`;
                   },
+                  retry: () => undefined,
                   openCorner: (cornerId, title) => {
                     calls.opened.push([cornerId, title]);
                     calls.navigations.push(
@@ -196,7 +197,12 @@ async function run() {
   const openedBefore = calls.opened.length;
   const alerts = ((window as any).__alerts ||= []) as Array<[string, string]>;
   alerts.length = 0;
-  await openRoomListCorner({ roomId: 'room-a', createCorner: null, openCorner: () => undefined });
+  await openRoomListCorner({
+    roomId: 'room-a',
+    createCorner: null,
+    openCorner: () => undefined,
+    retry: () => undefined,
+  });
   expectLine('no transport explains itself', alerts[0]?.[0], 'Not connected yet');
   expectLine('no transport opens nothing', calls.opened.length, openedBefore);
 
@@ -208,6 +214,7 @@ async function run() {
       throw new Error('forbidden');
     },
     openCorner: () => undefined,
+    retry: () => undefined,
   });
   expectLine('a refused create is named', alerts[0], ['Could not open corner', 'forbidden']);
   expectLine('a refused create opens nothing', calls.opened.length, openedBefore);

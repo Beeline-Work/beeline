@@ -224,6 +224,7 @@ const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 const SLOW_ROOM_READ_MS = 500;
 /** Archived corners come ten at a time, newest closure first. */
 const ARCHIVED_CORNER_PAGE = 10;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Agents a Room may list after its reviewer, tried in order (`agent-health.ts`). */
 const REVIEWER_FALLBACKS_MAX = 15;
 
@@ -5656,8 +5657,11 @@ export class PhoneService {
   }
   private async createHumanCorner(input: Input<'createHumanCorner'>, viewerId: string) {
     const title = normalizeHumanCornerTitle(input.title);
-    const id = randomUUID();
-    await this.database.transaction(async (database) => {
+    if (input.cornerId !== undefined && !UUID_PATTERN.test(input.cornerId)) {
+      throw new Error('corner id must be a UUID');
+    }
+    const id = input.cornerId ?? randomUUID();
+    const created = await this.database.transaction(async (database) => {
       const parent = (
         await database.query<{ workspace_id: string; viewer_name: string }>(
           `SELECT room.workspace_id,viewer.name viewer_name FROM rooms room
@@ -5681,11 +5685,21 @@ export class PhoneService {
         );
         if (!installed.rowCount) throw new Error('Corner App is not installed in this Workspace');
       }
-      await database.query(
+      // A retried open names the same id: the first attempt's corner is the
+      // answer, and nothing below runs twice.
+      const inserted = await database.query(
         `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
-         VALUES($1,$2,$3,$4,$5)`,
+         VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO NOTHING`,
         [id, parent.workspace_id, input.roomId, viewerId, title],
       );
+      if (!inserted.rowCount) {
+        const replay = await database.query(
+          `SELECT 1 FROM rooms WHERE id=$1 AND parent_id=$2 AND created_by=$3`,
+          [id, input.roomId, viewerId],
+        );
+        if (!replay.rowCount) throw new Error('corner id is already in use');
+        return false;
+      }
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
          SELECT workspace_id,$2,identity_id,role,
@@ -5749,8 +5763,9 @@ export class PhoneService {
           },
         });
       }
+      return true;
     });
-    this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
+    if (created) this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
     return { id };
   }
   private async renameCorner(roomId: string, name: string | undefined, viewerId: string) {

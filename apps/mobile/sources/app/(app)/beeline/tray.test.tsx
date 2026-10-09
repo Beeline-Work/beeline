@@ -440,7 +440,7 @@ describe('Tray Needs you', () => {
     return phoneOperation.mock.calls.filter(([name]) => name === 'clearNeedsYou');
   }
 
-  it('shows exactly two sections, Needs you then Saved, each cell only its sentence and source', async () => {
+  it('shows Questions then Saved, each question cell its asker, sentence and source', async () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_300_000);
     serve({
       needs: [need(), need({ messageId: 'ask-2', roomKind: 'corner', roomName: 'signing' })],
@@ -454,9 +454,9 @@ describe('Tray Needs you', () => {
         )
         .map((node: any) => node.props.testID)
         .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index)
-        .filter((id: string) => !id.startsWith('needs-you-text'));
+        .filter((id: string) => !/^needs-you-(text|head|age)-/.test(id));
       expect(order).toEqual([
-        'tray-section-needs',
+        'tray-section-questions',
         'needs-you-ask-1',
         'needs-you-ask-2',
         'tray-section-saved',
@@ -465,7 +465,75 @@ describe('Tray Needs you', () => {
       const cell = tree.root.findByProps({ testID: 'needs-you-text-ask-1' });
       expect(cell.props.children).toBe('can you confirm the review note?');
       expect(textOf(tree)).not.toContain('@');
-      expect(textOf(tree)).toContain('Launch room · 5m');
+      expect(textOf(tree)).toContain('Launch room');
+      expect(tree.root.findByProps({ testID: 'needs-you-age-ask-1' }).props.children).toBe('5m');
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('lists approvals as text rows before questions, and opening one leaves it in the tray', async () => {
+    layout.os = 'ios';
+    layout.width = 390;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000 + 2 * 86_400_000);
+    serve({
+      needs: [
+        need({
+          messageId: 'grant-1',
+          roomKind: 'corner',
+          roomName: 'sec-filing-desk',
+          parentRoomName: 'experiments',
+          text: 'BBC asks to run git push --force-with-lease',
+          expiresAt: undefined,
+          approval: {
+            kind: 'grant',
+            actor: 'BBC',
+            ask: 'asks to run',
+            subject: 'git push --force-with-lease',
+            literal: true,
+            detail: 'Push ledger fixes to feat/ledger.',
+            forName: 'Johnny',
+          },
+        }),
+        need({ createdAt: 1_700_000_000 + 2 * 86_400 - 300 }),
+      ],
+    });
+    try {
+      const tree = await renderTray();
+      const sections = tree.root
+        .findAll((node: any) => /^tray-section-/.test(String(node.props.testID ?? '')))
+        .map((node: any) => node.props.testID)
+        .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index);
+      expect(sections).toEqual([
+        'tray-section-approvals',
+        'tray-section-questions',
+        'tray-section-saved',
+      ]);
+      const head = tree.root.findByProps({ testID: 'needs-you-head-grant-1' });
+      const [actor, ask] = head.props.children;
+      expect(actor.props.children).toBe('BBC');
+      expect(ask).toBe(' asks to run');
+      expect(tree.root.findByProps({ testID: 'needs-you-text-grant-1' }).props.children).toBe(
+        'git push --force-with-lease',
+      );
+      expect(tree.root.findByProps({ testID: 'needs-you-detail-grant-1' }).props.children).toBe(
+        'Push ledger fixes to feat/ledger.',
+      );
+      expect(textOf(tree)).toContain('for Johnny · experiments / sec-filing-desk');
+      // Older than a day: the age takes the warning tone.
+      expect(textOf(tree)).toContain('2d');
+      // An approval has no swipe; a decision is what clears it.
+      expect(tree.root.findAllByProps({ testID: 'needs-you-swipe-grant-1' })).toHaveLength(0);
+      await act(async () => {
+        tree.root.findByProps({ testID: 'needs-you-grant-1' }).props.onPress();
+      });
+      expect(cleared()).toEqual([]);
+      expect(navigation.push).toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: expect.objectContaining({ notificationMessageId: 'grant-1' }),
+        }),
+      );
+      expect(tree.root.findAllByProps({ testID: 'needs-you-grant-1' }).length).toBeGreaterThan(0);
     } finally {
       clock.mockRestore();
     }

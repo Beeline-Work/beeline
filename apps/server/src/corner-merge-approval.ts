@@ -81,7 +81,6 @@ export async function recordPersonMergeYes(
  */
 export type CornerVerdictRejection =
   | 'NOT_CONFIGURED_REVIEWER'
-  | 'AUTHOR'
   | 'NO_PULL_REQUEST'
   | 'STALE_HEAD';
 

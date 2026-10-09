@@ -93,7 +93,6 @@ async function daemonDoor(
                     mergeAllowed: false,
                     reviewer: '@reviewer',
                     reviewerExists: true,
-                    reviewerIsAuthor: false,
                     reviewerWake: { status: 'waiting', detail: 'checks pending' },
                   }
                 : operation === 'getRoomConversation'
@@ -469,7 +468,6 @@ describe('relay tools', () => {
         mergeAllowed: false,
         reviewer: '@reviewer',
         reviewerExists: true,
-        reviewerIsAuthor: false,
         reviewerWake: { status: 'waiting', detail: 'checks pending' },
       },
       merge: { mergeability: 'clean' },

@@ -5298,8 +5298,8 @@ export class PhoneService {
       );
       if (!access.rowCount) throw new Error('room access denied');
       const room = (
-        await database.query<{ archived: boolean; created_by: string | null; kind: string }>(
-          `SELECT room.archived_at IS NOT NULL archived,room.created_by,fact.kind
+        await database.query<{ created_by: string | null; kind: string }>(
+          `SELECT room.created_by,fact.kind
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
            WHERE room.id=$1 AND room.parent_id IS NOT NULL FOR UPDATE OF room,fact`,
           [roomId],
@@ -5312,40 +5312,6 @@ export class PhoneService {
           'corner close access denied: only the creator or a workspace owner or admin can close this corner',
         );
 
-      if (!room.archived) {
-        const active = await database.query<CommandRow>(
-          `SELECT * FROM agent_commands
-           WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')
-           ORDER BY created_at DESC,id DESC FOR UPDATE`,
-          [roomId],
-        );
-        const assignments = new Map<string, CommandRow>();
-        for (const command of active.rows) {
-          const key = `${command.agent_id}:${command.turn_request_id}`;
-          if (!assignments.has(key)) assignments.set(key, command);
-        }
-        for (const command of assignments.values())
-          await createAgentCommand(database, {
-            roomId,
-            agentId: command.agent_id,
-            sourceMessageId: command.source_message_id,
-            turnRequestId: command.turn_request_id,
-            action: 'stop',
-            reason: 'corner_close',
-            parent: command,
-            retainDepth: true,
-          });
-        await database.query(
-          `UPDATE agent_commands SET state='cancelled',completed_at=now()
-           WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')`,
-          [roomId],
-        );
-        await database.query(
-          `UPDATE agent_turns SET status='cancelled',created_at=now()
-           WHERE room_id=$1 AND status='working'`,
-          [roomId],
-        );
-      }
       return (await closeCornerState(database, roomId)).parentId;
     });
     this.live?.publish({ type: 'invalidate', roomId: parentId, reason: 'corner' });

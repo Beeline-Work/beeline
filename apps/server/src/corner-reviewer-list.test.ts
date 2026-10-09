@@ -185,13 +185,17 @@ describe('check-passed dispatch with a reviewer list', () => {
     expect(await reviews(REVIEWER_B)).toHaveLength(0);
   });
 
-  it('skips an unhealthy agent and the corner\'s own author', async () => {
+  it('skips an unhealthy agent, but includes the corner\'s own opener when it is healthy', async () => {
     await reportPresence(REVIEWER_A, 'offline');
+    // The server does not exclude the corner's opener from its own parent
+    // Room's reviewer list; a healthy opener first on the list is dispatched
+    // like any other agent.
+    await reportPresence(OWNER_AGENT, 'online');
     await setReviewers(OWNER_AGENT, REVIEWER_A, REVIEWER_B);
     await greenCheck();
-    expect(await reviews(OWNER_AGENT)).toHaveLength(0);
+    expect(await reviews(OWNER_AGENT)).toHaveLength(1);
     expect(await reviews(REVIEWER_A)).toHaveLength(0);
-    expect(await reviews(REVIEWER_B)).toHaveLength(1);
+    expect(await reviews(REVIEWER_B)).toHaveLength(0);
   });
 
   it('names the gap in the corner when nobody on the list is healthy, once per episode', async () => {
@@ -305,7 +309,6 @@ describe('approve_merge with a reviewer list', () => {
     );
     expect(await cornerMergeGate(db, C, { number: 7, headSha: '1'.repeat(40) })).toMatchObject({
       reviewerExists: true,
-      reviewerIsAuthor: false,
       approved: true,
       open: true,
     });
@@ -343,14 +346,16 @@ describe('approve_merge with a reviewer list', () => {
     ).rejects.toThrow('NOT_CONFIGURED_REVIEWER');
   });
 
-  it('never counts the corner author\'s own approval, even when it is on the list', async () => {
+  it('counts the corner opener\'s own approval when it is on the reviewer list', async () => {
     await setReviewers(REVIEWER_A, OWNER_AGENT);
-    await daemon
-      .execute('approveCornerMerge', { cornerId: C, headSha: '1'.repeat(40) }, OWNER_AGENT)
-      .catch(() => undefined);
+    await daemon.execute(
+      'approveCornerMerge',
+      { cornerId: C, headSha: '1'.repeat(40) },
+      OWNER_AGENT,
+    );
     expect(
       (await cornerMergeGate(db, C, { number: 7, headSha: '1'.repeat(40) })).approved,
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

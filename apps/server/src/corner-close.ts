@@ -1,20 +1,62 @@
 import type { SqlDatabase } from './database.js';
 import { randomBytes } from 'node:crypto';
-import { createAgentCommand } from './agent-command.js';
+import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
+
+/**
+ * Cancels every pending or claimed input/resume command for a corner, and any
+ * turn still marked `working`, so a corner that just landed never leaves a
+ * stale assignment behind. Shared by every path that archives a corner:
+ * `closeCornerState` and the GitHub merge webhook.
+ */
+export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId: string): Promise<void> {
+  const active = await database.query<CommandRow>(
+    `SELECT * FROM agent_commands
+     WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')
+     ORDER BY created_at DESC,id DESC FOR UPDATE`,
+    [cornerId],
+  );
+  const assignments = new Map<string, CommandRow>();
+  for (const command of active.rows) {
+    const key = `${command.agent_id}:${command.turn_request_id}`;
+    if (!assignments.has(key)) assignments.set(key, command);
+  }
+  for (const command of assignments.values())
+    await createAgentCommand(database, {
+      roomId: cornerId,
+      agentId: command.agent_id,
+      sourceMessageId: command.source_message_id,
+      turnRequestId: command.turn_request_id,
+      action: 'stop',
+      reason: 'corner_close',
+      parent: command,
+      retainDepth: true,
+    });
+  await database.query(
+    `UPDATE agent_commands SET state='cancelled',completed_at=now()
+     WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')`,
+    [cornerId],
+  );
+  await database.query(
+    `UPDATE agent_turns SET status='cancelled',created_at=now()
+     WHERE room_id=$1 AND status='working'`,
+    [cornerId],
+  );
+}
 
 /** The terminal corner state shared by helper completion and a human close request. */
 export async function closeCornerState(database: SqlDatabase, cornerId: string) {
   const corner = (
-    await database.query<{ parent_id: string; name: string }>(
-      `SELECT parent_id,name FROM rooms
+    await database.query<{ parent_id: string; name: string; archived: boolean }>(
+      `SELECT parent_id,name,archived_at IS NOT NULL archived FROM rooms
        WHERE id=$1 AND parent_id IS NOT NULL
        FOR UPDATE`,
       [cornerId],
     )
   ).rows[0];
   if (!corner) throw new Error('corner not found');
+  if (!corner.archived) await cancelCornerAgentCommands(database, cornerId);
   await database.query(
     `UPDATE rooms SET archived_at=COALESCE(archived_at,now()),updated_at=now() WHERE id=$1`,
     [cornerId],

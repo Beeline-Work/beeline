@@ -819,6 +819,35 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     );
   });
 
+  it('the merge webhook cancels the reviewer\'s still-pending review command, not just the implementer\'s', async () => {
+    const cornerId = await open('owner/widgets');
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(cornerId, 9, '9'.repeat(40));
+    const [review] = await commands(B, cornerId);
+    expect(review).toBeDefined();
+    await github.processWebhook('pull_request', {
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+      action: 'closed',
+      pull_request: {
+        number: 9,
+        title: 'Ship the widget',
+        html_url: 'https://github.com/owner/widgets/pull/9',
+        head: { ref: `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`, sha: '9'.repeat(40) },
+        base: { ref: 'main' },
+        merged: true,
+        merged_at: '2026-01-01T00:00:00Z',
+        commits: 1,
+        changed_files: 1,
+      },
+      sender: { login: 'octocat' },
+    });
+    expect(
+      (await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [review!.id])).rows[0]!
+        .state,
+    ).toBe('cancelled');
+  });
+
   it('closing an untouched corner lands it on closed from implement', async () => {
     const cornerId = await open();
     await daemon.execute('archiveCorner', { cornerId }, A);
@@ -826,6 +855,17 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     expect(await cards(cornerId)).toContainEqual(
       expect.objectContaining({ fromState: 'implement', outcome: 'closed', toState: 'closed', status: 'abandoned' }),
     );
+  });
+
+  it('an agent archiving its corner cancels a reviewer\'s still-pending review command', async () => {
+    const cornerId = await inReview();
+    const [review] = await commands(B, cornerId);
+    expect(review).toBeDefined();
+    await daemon.execute('archiveCorner', { cornerId }, A);
+    expect(
+      (await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [review!.id])).rows[0]!
+        .state,
+    ).toBe('cancelled');
   });
 
   it('a human close request lands whatever state the corner is in', async () => {
@@ -1672,7 +1712,7 @@ describe("the configured reviewer's verdict (AC-4)", () => {
 });
 
 describe('the implementer merges when the gate opens (AC-5)', () => {
-  it('opens the gate only for a non-author yes on the current head with no hold', async () => {
+  it('opens the gate only for a yes from the configured reviewer or a Workspace admin, on the current head with no hold', async () => {
     const peer = 'f'.repeat(64);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human',$1) ON CONFLICT DO NOTHING`, [peer]);
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`, [W, peer]);
@@ -1715,12 +1755,15 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await greenHead(cornerId, 7, SHA);
     githubHead = SHA;
     githubRollupState = 'passed';
+    // A reviewer is configured, so reviewerExists is true even though it has
+    // left the parent Room; its departure is reported through reviewerWake,
+    // not by hiding the configuration.
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA }))
-      .toMatchObject({ reviewerExists: false, approved: false, open: false });
+      .toMatchObject({ reviewerExists: true, approved: false, open: false });
     expect(await currentState(cornerId)).toBe('checks');
     expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%could not be reached%'`, [cornerId])).rows)
       .toHaveLength(1);
-    expect(await github.prChecksStatus({ cornerId })).toMatchObject({ reviewerExists: false, mergeAllowed: false });
+    expect(await github.prChecksStatus({ cornerId })).toMatchObject({ reviewerExists: true, mergeAllowed: false });
     expect(await implementersMerge()).toBe(0);
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
   });
@@ -1755,55 +1798,41 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     ).toBe(1);
   });
 
-  it('Reproduction R2199: never merges a self-reviewed corner without a Workspace owner or admin\'s yes', async () => {
+  it('Reproduction R2199: a reviewer that opened its own corner is woken to review it, and its PASS merges it', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
     const cornerId = await open('owner/widgets');
-    const implementerBefore = await reasons(cornerId, A);
     await greenHead(cornerId, 7, SHA);
-    // Wrong before: green checks skipped review straight to merging. Now the
-    // corner waits in review for a person, says so, and wakes nobody.
+    // The server does not referee whether the configured reviewer is also
+    // this corner's opener; with nobody else configured, green checks wake
+    // that same agent to review its own head (prompt discipline, not a
+    // server gate, is what would stop it approving its own code).
     expect(await currentState(cornerId)).toBe('review');
     expect(await projected(cornerId)).toBe('review');
     expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'checks', outcome: 'no_reviewer', toState: 'review' }),
+      expect.objectContaining({ fromState: 'checks', outcome: 'passing', toState: 'review' }),
     );
-    expect(await reasons(cornerId, A)).toEqual(implementerBefore);
-    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
-      AND text LIKE '%@human needs to approve this pull request%checks passed and no other agent can review it%'`,
-    [cornerId])).rowCount).toBe(1);
+    const [review] = await commands(A, cornerId);
+    expect(review).toBeDefined();
+    await claim(review!);
     githubHead = SHA;
     githubRollupState = 'passed';
     expect(await github.prChecksStatus({ cornerId })).toMatchObject({
-      stage: 'waiting_for_yes', reviewerIsAuthor: true, approved: false, mergeAllowed: false,
-      reviewerWake: { status: 'not_required' },
+      stage: 'waiting_for_yes', approved: false, mergeAllowed: false,
     });
-    // The reviewer is the author: its own approve_merge is refused and never opens the gate.
-    await expect(approve(cornerId, SHA, A)).rejects.toThrow('AUTHOR');
-    expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [cornerId])).rowCount).toBe(0);
-    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: false, open: false });
+    await approve(cornerId, SHA, A);
+    await result(review!, `approved ${SHA}`);
+    expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [cornerId])).rowCount).toBe(1);
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, (id: string) => github.landCorner(id));
-    const refused = await wiredDaemon.execute('mergeCorner', { cornerId }, A);
-    expect(refused).toMatchObject({ status: 'blocked', blocker: expect.stringContaining('no non-author yes on this head') });
-    expect(await github.landCorner(cornerId)).toBe(false);
-    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-    // A Workspace owner's yes merges it at once, waking nobody.
-    await say(cornerId, '@hoots merge this now');
-    const direct = (await commands(A, cornerId)).at(-1)!;
-    await claim(direct);
-    const before = await reasons(cornerId, A);
-    await wiredDaemon.execute('orderCornerMerge',
-      { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A);
+    await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
+      .resolves.toEqual({ status: 'merge-started', headSha: SHA });
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
     expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
-    expect((await cards(cornerId)).at(-1)).toEqual(
-      expect.objectContaining({ fromState: 'review', outcome: 'approved', toState: 'review' }),
-    );
-    expect(await reasons(cornerId, A)).toEqual(before);
     await mergedWebhook(cornerId, 7, SHA);
     expect(await currentState(cornerId)).toBe('landed');
-    console.info('Reproduction R2199: self-reviewer green head → review/no_reviewer, waiting line, mergeAllowed=false, merge_corner blocked; owner yes → merged once.');
+    console.info('Reproduction R2199: self-reviewer green head wakes the same agent to review; its PASS opens the gate and merge_corner lands it.');
   });
 });
 
@@ -2399,7 +2428,7 @@ describe('the gate stays shut (AC-8)', () => {
       expect(await implementersMerge(builtGitHub)).toBe(0);
       // Reproduction R2199 over HTTP: the implementer's merge_corner is refused and names the missing yes.
       const refusedMerge = await post('daemon', 'mergeCorner', { cornerId });
-      expect(refusedMerge).toMatchObject({ status: 'blocked', blocker: expect.stringContaining('no non-author yes on this head') });
+      expect(refusedMerge).toMatchObject({ status: 'blocked', blocker: expect.stringContaining('no yes on this head') });
       expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
       console.log(`Demonstrated R2199: authenticated HTTP mergeCorner by self-reviewing implementer => ${JSON.stringify(refusedMerge)}, merges=0.`);
       console.log('Demonstrated R4/R5d: authenticated HTTP objective release => 400, held=true, mergeAllowed=false, merges=0; authorized direct human instruction + daemon release => 200, held=false, holds=[] (fixture GitHub).');

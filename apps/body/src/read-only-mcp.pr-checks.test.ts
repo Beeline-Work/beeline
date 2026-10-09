@@ -4,7 +4,7 @@ import { approveMerge, prChecksStatus } from './read-only-mcp.js';
 const url = 'https://github.com/owner/widgets/pull/614';
 let restore: Record<string, unknown>, items: Record<string, unknown>[];
 let checks: string, approved: boolean;
-let reviewer: string | null, reviewerExists: boolean, reviewerIsAuthor: boolean;
+let reviewer: string | null, reviewerExists: boolean;
 let held: boolean, mergeAllowed: boolean;
 let reviewerWake: { status: string; detail: string } | undefined;
 let calls: { name: string; input: Record<string, unknown> }[];
@@ -24,7 +24,6 @@ beforeEach(() => {
   approved = true;
   reviewer = '@reviewer';
   reviewerExists = true;
-  reviewerIsAuthor = false;
   held = false;
   mergeAllowed = true;
   reviewerWake = {
@@ -53,7 +52,6 @@ beforeEach(() => {
                   approved,
                   reviewer,
                   reviewerExists,
-                  reviewerIsAuthor,
                   ...(reviewerWake ? { reviewerWake } : {}),
                   held,
                   holds: held ? [{ id: 'hold-1', actorId: 'human', standing: 'owner', setAt: '2026-10-02' }] : [],
@@ -247,7 +245,6 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     expect(result).toMatchObject({
       stage: 'waiting_for_yes',
       reviewer: '@reviewer',
-      reviewerIsAuthor: false,
       reviewerWake: {
         status: 'dispatched',
         detail: 'The checks-passed transition woke @reviewer.',
@@ -255,17 +252,7 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     });
     expect(result).not.toHaveProperty('rule');
     expect(result).not.toHaveProperty('isWorkerYolo');
-  });
-  it('reports a self-reviewed corner as waiting for a person\'s yes', async () => {
-    reviewerIsAuthor = true;
-    approved = false;
-    mergeAllowed = false;
-    expect(JSON.parse(await prChecksStatus({ pullRequest: 614 }))).toMatchObject({
-      reviewer: '@reviewer',
-      reviewerIsAuthor: true,
-      approved: false,
-      mergeAllowed: false,
-    });
+    expect(result).not.toHaveProperty('reviewerIsAuthor');
   });
   it('fails closed on a server error instead of using green chat prose', async () => {
     items = [{ body: 'all checks passed' }];

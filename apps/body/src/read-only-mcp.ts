@@ -1387,7 +1387,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'pr_checks_status',
     description:
-      'Read live GitHub checks and the merge gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; defaults to this corner’s own PR. Facts only: stage, checks, approved (a non-author yes on this head: a reviewer agent’s PASS or a Workspace owner or admin), held, and mergeAllowed = checks passed AND approved AND not held. reviewerWake says whether the configured reviewer was woken. No agent runs gh pr merge. Never infer passing checks from local git, gh output, or chat prose.',
+      'Read live GitHub checks and the merge gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; defaults to this corner’s own PR. Facts only: stage, checks, approved (a yes said on this head: a reviewer agent’s PASS or a Workspace owner or admin), held, and mergeAllowed = checks passed AND approved AND not held. reviewerWake says whether the configured reviewer was woken. No agent runs gh pr merge. Never infer passing checks from local git, gh output, or chat prose.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2627,7 +2627,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
       ? verdict.reviewerWake
       : undefined;
   // The merge gate is the server's: mergeAllowed = checks passed, approved
-  // (a non-author yes on this head), and not held.
+  // (a yes said on this head), and not held.
   return JSON.stringify({
     ...(typeof verdict?.stage === 'string' ? { stage: verdict.stage } : {}),
     checks,
@@ -2641,7 +2641,6 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     mergeAllowed: verdict?.mergeAllowed === true,
     reviewer,
     reviewerExists: verdict?.reviewerExists === true,
-    reviewerIsAuthor: verdict?.reviewerIsAuthor === true,
     ...(reviewerWake ? { reviewerWake } : {}),
     archived: authority.archived === true,
     ...(pullRequest ? { pullRequest } : {}),
@@ -4476,7 +4475,6 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
               mergeAllowed: verdict.mergeAllowed,
               reviewer: verdict.reviewer,
               reviewerExists: verdict.reviewerExists,
-              reviewerIsAuthor: verdict.reviewerIsAuthor,
               reviewerWake: verdict.reviewerWake,
             }
           : { mergeAllowed: false, status: 'unavailable' },

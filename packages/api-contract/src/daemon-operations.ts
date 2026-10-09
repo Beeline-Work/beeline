@@ -353,21 +353,19 @@ export type DaemonOperationMap = {
       };
       pullRequest: string;
       headSha: string;
-      /** A non-author said yes on this exact head: a configured reviewer agent's PASS, or a Workspace owner or admin. */
+      /** A yes said on this exact head: a configured reviewer agent's PASS, or a Workspace owner or admin. */
       approved: boolean;
       /** The parent Room's currently-configured reviewer, as `@handle`, or null when none is configured. */
       reviewer: string | null;
       /** True when the parent Room has a configured reviewer, even if that identity has no handle. */
       reviewerExists: boolean;
-      /** True when `reviewer` is also this corner's implementer — self-review is not required. */
-      reviewerIsAuthor: boolean;
       /**
        * Whether the configured reviewer was or can be woken for this corner's
        * current check state. Distinguishes "no reviewer" from "configured but
        * not a current parent-Room member", and pending checks from a dispatch.
        */
       reviewerWake: {
-        status: 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched' | 'not_required';
+        status: 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched';
         detail: string;
       };
       /** True when a person in the corner asked to hold the merge. The only veto. */

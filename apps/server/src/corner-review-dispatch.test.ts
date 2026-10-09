@@ -157,7 +157,6 @@ describe('corner message attribution', () => {
       approvalPending: true,
       reviewer: '@goosy',
       reviewerExists: true,
-      reviewerIsAuthor: false,
       reviewerWake: { status: 'waiting' as const, detail: 'No checks have reported.' },
       rule: 'Only the configured reviewer records PASS.',
     }));
@@ -874,7 +873,6 @@ describe('the corner implementer the workflow wakes follows a person hand-over',
       approvalPending: true,
       reviewer: '@hoots',
       reviewerExists: true,
-      reviewerIsAuthor: true,
       reviewerWake: { status: 'waiting' as const, detail: 'No checks have reported.' },
       rule: 'Only the configured reviewer records PASS.',
     }));

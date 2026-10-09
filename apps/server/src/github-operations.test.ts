@@ -99,15 +99,18 @@ describe('GitHub phone operations', () => {
     } finally { clock.mockRestore(); }
   });
 
-  it('Reproduction F1-6: live verdict and dispatch remain separate, with no self-review wait', async () => {
+  it('Reproduction F1-6: live verdict and dispatch remain separate, with no self-review special case', async () => {
     const { corners, app } = await checksFixture();
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES('11111111-1111-4111-8111-111111111111',$1,$2,'member')`, [corners[0], REVIEWER]);
     const self = await operations.prChecksStatus({ cornerId: corners[0]! });
-    console.info(`Reproduction F1-6: wrong=waiting/opener; right=not_required/implementer; observed=${self.reviewerWake.status}`);
-    expect(self.reviewerWake.status).toBe('not_required');
-    expect(self.reviewerWake.detail).toContain("this corner's implementer");
+    // The server no longer treats a reviewer that is also this corner's
+    // opener as a special case: it waits for dispatch exactly like any
+    // other configured reviewer, with no replacement gate.
+    console.info(`Reproduction F1-6: wrong=not_required self-review special case; right=waiting; observed=${self.reviewerWake.status}`);
+    expect(self.reviewerWake.status).toBe('waiting');
     expect(self).not.toHaveProperty('rule');
+    expect(self).not.toHaveProperty('reviewerIsAuthor');
     await database.query(`UPDATE corner_facts SET owner_agent_id=NULL,lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
     const result = await operations.prChecksStatus({ cornerId: corners[0]! });
     // The live verdict leads; the wake reports only what was dispatched.

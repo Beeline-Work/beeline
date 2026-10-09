@@ -80,4 +80,29 @@ describe('message-source landing', () => {
     expect(controller).toContain('list.toEstimatedRow(index);');
     expect(surface).toContain('onScrollToIndexFailed={phoneScrollList.scrollToIndexFailed}');
   });
+
+  // Reproduction W1: the flash started at the first scroll and ran out while
+  // the list was still measuring, before the row reached the screen.
+  it('flashes the target when it lands, not when the list first scrolls', () => {
+    const scrolled = surface.slice(
+      surface.indexOf('onScrolled: ('),
+      surface.indexOf('onLanded: ('),
+    );
+    const landed = surface.slice(surface.indexOf('onLanded: ('), surface.indexOf('onCancelled: ('));
+    expect(scrolled).not.toContain('raiseSourceLandingFlash');
+    expect(landed).toContain(
+      "if (destination.kind === 'message' && destination.jump) raiseSourceLandingFlash(rowId);",
+    );
+  });
+
+  it('measures a new window from scratch and lands again when the list measures a row', () => {
+    expect(surface).toContain(
+      'const phoneRowKey = (rowId: string) => `${transcriptWindowIdRef.current}:${rowId}`;',
+    );
+    expect(surface).toContain('keyExtractor={(item: ChatDisplayMessage) => phoneRowKey(item.id)}');
+    expect(surface).toContain('CellRendererComponent={PhoneTranscriptCell}');
+    expect(surface).toContain(
+      'if (scrollController.isLanding()) scrollController.observeLayout();',
+    );
+  });
 });

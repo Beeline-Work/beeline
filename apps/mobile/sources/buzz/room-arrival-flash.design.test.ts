@@ -18,7 +18,7 @@ const groknight = readFileSync(path.join(__dirname, 'groknight.ts'), 'utf8');
 describe('the arrival flash', () => {
   it('CHEV-19: fires on landing completion, never on row mount', () => {
     const completion = surface.slice(
-      surface.indexOf('    onLanded: (destination) => {'),
+      surface.indexOf('    onLanded: (destination, rowId) => {'),
       surface.indexOf('    onCancelled: (destination) => {'),
     );
     // The same success signal the badge settles on: the scroll controller

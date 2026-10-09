@@ -379,9 +379,14 @@ type PhoneList = {
  * The inverted phone FlatList. Offset 0 is the newest end, and view position 1
  * puts a row's start at the top of the viewport. Pass `scrollToIndexFailed`
  * as the list's `onScrollToIndexFailed`: the list calls it synchronously from
- * `scrollToIndex` when the row is not measured yet.
+ * `scrollToIndex` when the row is beyond every row it measured. `isMeasured`
+ * says whether the list has laid out a row's cell; the list places a row it
+ * has not measured by an estimate, so that row is not reached yet.
  */
-export function phoneTranscriptList(getList: () => PhoneList | null): TranscriptScrollList & {
+export function phoneTranscriptList(
+  getList: () => PhoneList | null,
+  isMeasured: (rowId: string) => boolean,
+): TranscriptScrollList & {
   scrollToIndexFailed(info: { averageItemLength: number }): void;
 } {
   let failed = false;
@@ -390,17 +395,18 @@ export function phoneTranscriptList(getList: () => PhoneList | null): Transcript
     toNewest() {
       getList()?.scrollToOffset({ offset: 0, animated: false });
     },
-    toRow(index, _rowId, align) {
+    toRow(index, rowId, align) {
       const list = getList();
       if (!list) return false;
       failed = false;
       list.scrollToIndex({ index, viewPosition: align === 'top' ? 1 : 0.5, animated: false });
-      return !failed;
+      return !failed && isMeasured(rowId);
     },
     toEstimatedRow(index) {
       // Variable-height rows cannot provide getItemLayout. Scroll near the
       // row, let that window measure, then the next pass resolves it again.
-      if (averageItemLength > 0)
+      // A row below the measured ones was already scrolled near by its estimate.
+      if (failed && averageItemLength > 0)
         getList()?.scrollToOffset({ offset: averageItemLength * index, animated: false });
     },
     toOffset(offset) {

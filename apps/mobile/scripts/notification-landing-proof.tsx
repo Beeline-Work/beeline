@@ -21,7 +21,8 @@ import { createRoot } from 'react-dom/client';
  *   first   — the target is the Room's first message: answers with it and
  *     fewer newer rows than one screen, and `historyAfter` serves the rest
  * `?cache=1` paints a saved Room response first; `?roomDelay=` delays the
- * Room read by that many ms.
+ * Room read by that many ms. `?deep=1` serves a Room whose target is 40
+ * messages back (see the test's fixture).
  */
 type Around = {
   calls: number;
@@ -52,7 +53,11 @@ function visibleRows() {
   const top = Math.max(viewport.top, 0);
   const bottom = Math.min(viewport.bottom, innerHeight);
   return leaves(list())
-    .filter((node) => /^(Tail|Around) message \d+$|^TARGET MESSAGE$/.test(node.textContent!.trim()))
+    .filter((node) =>
+      /^(Tail|Around) message \d+$|^TARGET MESSAGE$|^Ann deleted a message$/.test(
+        node.textContent!.trim(),
+      ),
+    )
     .map((node) => ({ text: node.textContent!.trim(), box: node.getBoundingClientRect() }))
     .filter(({ box }) => box.bottom > top && box.top < bottom && box.height > 0)
     .sort((a, b) => a.box.top - b.box.top)
@@ -286,11 +291,15 @@ async function warm(mode: string) {
     around()
       .pending.splice(0)
       .forEach(({ resolve }) => resolve(around().page));
+  // The target's place and flash every 50 ms after the latest tap.
+  let timeline: ReturnType<typeof target>[] = [];
   /** The server answers each read around the target as soon as it is asked. */
   const twoSecondsLater = async () => {
+    timeline = [];
     const until = Date.now() + 2000;
     while (Date.now() < until) {
       answerReads();
+      timeline.push(target());
       await pause(50);
     }
     return observe();
@@ -314,7 +323,7 @@ async function warm(mode: string) {
   const beforeTap = { ...observe(), opened };
   const landed = await tap('push-1');
   if (mode === 'warm') {
-    report(JSON.stringify({ mode, beforeTap, landed }));
+    report(JSON.stringify({ mode, beforeTap, landed, timeline }));
     return;
   }
   // The reader scrolls back down to the newest rows. The inverted list's

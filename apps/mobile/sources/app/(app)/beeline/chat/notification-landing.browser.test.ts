@@ -58,6 +58,30 @@ const newerRows = Array.from({ length: 300 }, (_, n) =>
   row(id('d', 14 + n), `Around message ${14 + n}`, BASE + (15 + n) * 60),
 );
 
+/**
+ * `?deep=1` (Reproduction W1): a Room of 71 messages. The target is 40 back
+ * from the newest, the Room read holds the newest 30, and the read around the
+ * target answers 15 older rows, the target and 14 newer rows, the last 4 of
+ * them in the Room's rows. `&deleted=1`: the target is a deleted message's line.
+ */
+const DEEP_TARGET = id('9', 30);
+const deepSeries = (deleted: boolean) =>
+  Array.from({ length: 71 }, (_, n) =>
+    n !== 30
+      ? row(id('9', n), `Tail message ${100 + n}`, BASE + n * 60)
+      : deleted
+        ? {
+            ...row(DEEP_TARGET, 'Ann deleted a message', BASE + n * 60),
+            presentation: 'system',
+            deleted: true,
+          }
+        : row(DEEP_TARGET, 'TARGET MESSAGE', BASE + n * 60),
+  );
+/** Shim source: the Room's messages for this page's query. */
+const deepRoom = `const deepQuery = new URLSearchParams(location.search);
+    const deepSeries = deepQuery.get('deleted') ? ${JSON.stringify(deepSeries(true))} : ${JSON.stringify(deepSeries(false))};
+    const deep = Boolean(deepQuery.get('deep'));`;
+
 const roomView = {
   room: {
     id: ROOM,
@@ -138,7 +162,11 @@ function shims(mobile: string): Record<string, string> {
     export const loadBuzzViewerPubkey = async () => '${VIEWER}';
     export const loadBuzzIdentity = async () => ({ publicKey: '${VIEWER}', secretKey: new Uint8Array(32) });`,
     // \`?cache=1\`: the Room was opened earlier, so its last response is saved.
-    '@/buzz/surface-storage': `const cached = new URLSearchParams(location.search).get('cache') ? ${JSON.stringify(roomView)} : null;
+    '@/buzz/surface-storage': `${deepRoom}
+    const saved = ${JSON.stringify(roomView)};
+    const cached = new URLSearchParams(location.search).get('cache')
+      ? (deep ? { ...saved, messages: deepSeries.slice(41) } : saved)
+      : null;
     export const mobileSurfaceCache = { read: async (address) => (address === '/room/${ROOM}' ? cached : null), write: async () => undefined, remove: async () => undefined };
     export const surfaceAddress = (_relay, _viewer, path) => path;
     export const createRoomOutbox = () => ({ restore: async () => undefined, list: () => [], reconcile: async () => undefined,
@@ -154,7 +182,9 @@ function shims(mobile: string): Record<string, string> {
     // The network boundary. historyAround parks its promise on globalThis.__around for the entry to settle.
     '@/sync/transport/room-view-client': `import { RoomViewHttpError } from '@beeline/buzz-client';
     export { RoomViewHttpError };
-    const view = ${JSON.stringify(roomView)};
+    ${deepRoom}
+    const saved = ${JSON.stringify(roomView)};
+    const view = deep ? { ...saved, messages: deepSeries.slice(41) } : saved;
     // A read around a row of the tail answers with the tail rows around it, as the server does.
     const aroundTail = (messageId) => {
       const at = view.messages.findIndex((row) => row.id === messageId);
@@ -187,7 +217,9 @@ function shims(mobile: string): Record<string, string> {
       historyAround(_roomId, messageId) {
         globalThis.__around.calls += 1;
         return new Promise((resolve, reject) => globalThis.__around.pending.push({
-          resolve: (page) => resolve(aroundTail(messageId) ?? page), reject }));
+          resolve: (page) => resolve(deep
+            ? { roomId: '${ROOM}', messages: deepSeries.slice(15, 45), nextBefore: null }
+            : (aroundTail(messageId) ?? page)), reject }));
       }
     }
     // Any other read the Room screen makes stays unanswered rather than inventing data.
@@ -386,6 +418,52 @@ describe.skipIf(!existsSync(CHROME))(
         expect(page.landed.target.top!).toBeGreaterThanOrEqual(-10);
         expect(page.landed.target.top!).toBeLessThan(120);
       }, 120_000);
+    });
+
+    // Reproduction W1: the Room is open, and its rows are the newest 30. The
+    // tap names a message 40 back, so the window opened around it shows 20
+    // newer rows and keeps some rows the list already measured. The target
+    // stopped just above the top edge, never counted as on screen, and its
+    // flash had run out before it got there.
+    describe.each([
+      ['open now', '&warm=1&deep=1'],
+      ['opened earlier', '&warm=1&cache=1&deep=1'],
+    ])('Reproduction W1: a tap on a Room %s', (_name, room) => {
+      it.each([
+        ['a message', '', 'TARGET MESSAGE'],
+        ['a deleted message', '&deleted=1', 'Ann deleted a message'],
+      ])(
+        'lands %s 20 rows back at the top, flashed',
+        async (_target, deleted, text) => {
+          const page = (await proof(
+            'warm',
+            `${room}${deleted}&target=${DEEP_TARGET}&targetText=${encodeURIComponent(text)}`,
+          )) as Proof & {
+            beforeTap: Observation;
+            landed: Observation;
+            timeline: Observation['target'][];
+          };
+          // The target at the top of the list with its flash on.
+          const arrival = page.timeline.find(
+            (sample) =>
+              sample.top !== null && sample.top >= -10 && sample.top < 120 && sample.flashed,
+          );
+          console.log(
+            `W1 (${_name}, ${_target}): before tap rows=${page.beforeTap.rows.length} (${page.beforeTap.rows[0]} … ${page.beforeTap.rows.at(-1)}); ` +
+              `on arrival top=${arrival?.top ?? null}px flashed=${arrival?.flashed ?? null}; ` +
+              `2 s after tap top=${page.landed.target.top}px, historyAround calls=${page.landed.historyAroundCalls}, rows=${JSON.stringify(page.landed.rows.slice(0, 2))}`,
+          );
+          expect(page.beforeTap.rows).toContain('Tail message 170');
+          expect(page.landed.historyAroundCalls).toBe(1);
+          expect(page.landed.rows).toContain(text);
+          expect(page.landed.target.top).not.toBeNull();
+          expect(page.landed.target.top!).toBeGreaterThanOrEqual(-10);
+          expect(page.landed.target.top!).toBeLessThan(120);
+          // The flash runs from the landing, so the reader sees it there.
+          expect(arrival?.flashed).toBe(true);
+        },
+        120_000,
+      );
     });
 
     it('lands again on a second tap with a new response id for the same target', async () => {

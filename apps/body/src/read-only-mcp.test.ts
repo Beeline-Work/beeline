@@ -53,6 +53,7 @@ describe('direct message helper surface', () => {
     expect(byDefault).toContain('search_memory');
     expect(byDefault).toContain('load_workspace_skill');
     expect(byDefault).toContain('save_skill');
+    expect(byDefault).toContain('delete_skill');
     expect(byDefault).toContain('save_workflow');
     expect(byDefault).toContain('start_workflow');
     expect(byDefault).toContain('handoff');
@@ -66,6 +67,7 @@ describe('direct message helper surface', () => {
     expect(disabled).not.toContain('search_memory');
     expect(disabled).not.toContain('load_workspace_skill');
     expect(disabled).not.toContain('save_skill');
+    expect(disabled).not.toContain('delete_skill');
     expect(disabled).not.toContain('save_workflow');
     expect(disabled).not.toContain('start_workflow');
     expect(disabled).not.toContain('handoff');
@@ -79,6 +81,7 @@ describe('direct message helper surface', () => {
     expect(enabled).toContain('search_memory');
     expect(enabled).toContain('load_workspace_skill');
     expect(enabled).toContain('save_skill');
+    expect(enabled).toContain('delete_skill');
     expect(enabled).toContain('save_workflow');
     expect(enabled).toContain('start_workflow');
     expect(enabled).toContain('handoff');
@@ -89,6 +92,11 @@ describe('direct message helper surface', () => {
     expect(save?.inputSchema.required).toContain('subject_is_requester');
     expect(save?.inputSchema.required).toContain('person_asked');
     expect(save?.inputSchema.properties).not.toHaveProperty('memory_kind');
+    expect(tools.find((tool) => tool.name === 'delete_skill')?.inputSchema.required).toEqual([
+      'slug',
+      'version',
+      'source_message_ids',
+    ]);
     for (const name of ['update_memory', 'delete_memory']) {
       expect(tools.find((tool) => tool.name === name)?.inputSchema.required).toEqual(
         expect.arrayContaining(['item_id', 'version', 'source_message_ids', 'person_asked']),

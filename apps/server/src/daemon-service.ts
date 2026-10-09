@@ -189,7 +189,7 @@ import {
   type FeedbackLoop,
 } from './feedback.js';
 import type { AfterCommit, EmbedFn } from './institutional-memory-embeddings.js';
-import { loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
+import { deleteSkill, loadWorkspaceSkill, saveSkill } from './institutional-skills.js';
 import {
   activeRunIdsForSchedule,
   archiveWorkflow,
@@ -428,6 +428,7 @@ export class DaemonService {
       'getRoomMessage',
       'loadWorkspaceSkill',
       'saveSkill',
+      'deleteSkill',
       'saveWorkflow',
       'startWorkflow',
       'cancelWorkflowRun',
@@ -889,6 +890,15 @@ export class DaemonService {
           input as Input<'saveSkill'>,
           undefined,
           this.afterCommit,
+        )) as Output<Name>;
+      case 'deleteSkill':
+        if (!this.commandTransaction || !this.authorizedCommand) {
+          throw new Error('skill delete requires an active command');
+        }
+        return (await deleteSkill(
+          this.database,
+          this.authorizedCommand,
+          input as Input<'deleteSkill'>,
         )) as Output<Name>;
       case 'saveWorkflow':
         if (!this.commandTransaction || !this.authorizedCommand) {
@@ -7649,6 +7659,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getInstitutionalMemoryTurnStats: true,
   loadWorkspaceSkill: true,
   saveSkill: true,
+  deleteSkill: true,
   saveWorkflow: true,
   startWorkflow: true,
   getWorkflowRun: true,

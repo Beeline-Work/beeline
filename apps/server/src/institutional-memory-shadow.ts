@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {
   INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES,
+  INSTITUTIONAL_SKILL_INDEX_MAX_BYTES,
+  WORKSPACE_CORE_SKILL_SLUG,
   institutionalMemoryRequestWords,
   INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES,
   INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX,
@@ -296,8 +298,8 @@ export async function getInstitutionalContext(
     if (!rolloutAllowsLive(rolloutStage)) {
       return { snapshotRevision: 0, text: '', itemIds: [], totalBytes: 0, omitted: {} };
     }
-    // Only items whose saved keywords appear in the request load. Nothing
-    // fills leftover space, so a request that matches nothing loads nothing.
+    // Only facts whose saved keywords appear in the request load. Nothing
+    // fills leftover fact space, so a request that matches no fact loads none.
     const words = institutionalMemoryRequestWords(requestText);
     // Kicked off alongside the DB queries below, not after: the embedding
     // call is a separate network round trip, so it costs nothing extra as
@@ -329,13 +331,13 @@ export async function getInstitutionalContext(
         ],
       )
     ).rows;
-    const keywordSkillCandidates = (
-      await authorizedWorkspaceSkillCandidates(db, {
-        workspaceId: authority.workspace_id,
-        requesterIdentityId: authority.requester_identity_id,
-        agentId: command.agent_id,
-      })
-    ).filter((skill) => skillMatches(skill, words) > 0);
+    // Every authorized skill is a candidate, matched or not: the index has its
+    // own budget, and an agent focused on another topic still sees it.
+    const authorizedSkills = await authorizedWorkspaceSkillCandidates(db, {
+      workspaceId: authority.workspace_id,
+      requesterIdentityId: authority.requester_identity_id,
+      agentId: command.agent_id,
+    });
     const embeddingMs = queryEmbedding.ms;
     const embeddingOutcome = queryEmbedding.outcome;
     let vectorItemCandidates: ContextItemRow[] = [];
@@ -405,9 +407,15 @@ export async function getInstitutionalContext(
       return recency || left.id.localeCompare(right.id);
     });
     const mergedSkills = new Map<string, WorkspaceSkillIndexCandidate & { distance?: number }>();
-    for (const skill of keywordSkillCandidates) mergedSkills.set(skill.id, skill);
-    for (const skill of vectorSkillCandidates) if (!mergedSkills.has(skill.id)) mergedSkills.set(skill.id, skill);
+    for (const skill of authorizedSkills) mergedSkills.set(skill.id, skill);
+    // A vector row is the same authorized row plus its distance, so it replaces
+    // the catalog row: a semantic match keeps its rank when the index is full.
+    for (const skill of vectorSkillCandidates) mergedSkills.set(skill.id, skill);
     const skillCandidates = [...mergedSkills.values()].sort((left, right) => {
+      const core =
+        Number(right.slug === WORKSPACE_CORE_SKILL_SLUG) -
+        Number(left.slug === WORKSPACE_CORE_SKILL_SLUG);
+      if (core) return core;
       const relevance = skillMatches(right, words) - skillMatches(left, words);
       if (relevance) return relevance;
       const leftDistance = left.distance ?? Number.POSITIVE_INFINITY;
@@ -417,8 +425,9 @@ export async function getInstitutionalContext(
         right.updated_at.getTime() - left.updated_at.getTime() || left.id.localeCompare(right.id)
       );
     });
-    // One list under one header, filled greedily inside the hard cap: an item
-    // that does not fit is skipped whole, never cut mid-sentence.
+    // One list under one header, filled greedily: facts inside the hard cap,
+    // then skill lines inside their own budget, so neither crowds out the
+    // other. An item that does not fit is skipped whole, never cut mid-sentence.
     const lines = [INSTITUTIONAL_CONTEXT_HEADER];
     const fits = (line: string): boolean =>
       Buffer.byteLength([...lines, line].join('\n'), 'utf8') <=
@@ -440,10 +449,11 @@ export async function getInstitutionalContext(
         skill.kind === 'workflow'
           ? `- Workflow ${skill.slug} (start_workflow): ${skill.description}`
           : `- Procedure ${skill.slug} (load_workspace_skill): ${skill.description}`;
-      if (!fits(line)) continue;
+      const lineBytes = Buffer.byteLength(line, 'utf8') + 1;
+      if (bytesByKind.skills + lineBytes > INSTITUTIONAL_SKILL_INDEX_MAX_BYTES) continue;
       lines.push(line);
       selectedSkills.push(skill);
-      bytesByKind.skills += Buffer.byteLength(line, 'utf8') + 1;
+      bytesByKind.skills += lineBytes;
     }
     const text = lines.length > 1 ? lines.join('\n') : '';
     const wrapperBytes = text ? Buffer.byteLength(INSTITUTIONAL_CONTEXT_HEADER, 'utf8') : 0;

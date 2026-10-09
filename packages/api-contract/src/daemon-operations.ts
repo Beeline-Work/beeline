@@ -188,6 +188,21 @@ export type DaemonOperationMap = {
     { readonly slug: string; readonly version: number;
       readonly similarSkills: readonly { readonly slug: string; readonly description: string }[] }
   >;
+  /** Soft-delete one procedure or workflow by slug at its current version. */
+  deleteSkill: Operation<
+    RoomInput &
+      TurnOutputAuthority & {
+        readonly slug: string;
+        readonly version: number;
+        readonly sourceMessageIds: readonly string[];
+      },
+    {
+      readonly slug: string;
+      readonly kind: 'procedure' | 'workflow';
+      readonly version: number;
+      readonly deleted: true;
+    }
+  >;
   /** Validate and save a workflow contract as a `workspace_skills` row of `kind='workflow'`. */
   saveWorkflow: Operation<
     RoomInput & TurnOutputAuthority & { readonly contract: unknown },

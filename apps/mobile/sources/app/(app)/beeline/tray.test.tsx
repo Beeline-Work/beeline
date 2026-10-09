@@ -7,7 +7,12 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const layout = vi.hoisted(() => ({ os: 'web', width: 1200 }));
-const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn() }));
+const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
+const route = vi.hoisted(() => ({ params: { communityId: 'ws' } as { communityId?: string } }));
+const workspaceSet = vi.hoisted(() => ({
+  active: null as string | null,
+  workspaces: [] as { id: string }[],
+}));
 const phoneOperation = vi.hoisted(() => vi.fn());
 const roomRead = vi.hoisted(() => vi.fn());
 const auth = vi.hoisted(() => ({
@@ -73,7 +78,7 @@ vi.mock('react-native-unistyles', () => ({
 }));
 vi.mock('expo-router', () => ({
   useFocusEffect: (effect: () => void | (() => void)) => React.useEffect(effect, [effect]),
-  useLocalSearchParams: () => ({ communityId: 'ws' }),
+  useLocalSearchParams: () => route.params,
   useRouter: () => navigation,
 }));
 const safeArea = vi.hoisted(() => ({ bottom: 0 }));
@@ -90,7 +95,11 @@ vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     room = roomRead;
     workspace = vi.fn(async () => ({ workspace: { id: 'ws', name: 'Clover Workspace' } }));
+    workspaces = vi.fn(async () => ({ workspaces: workspaceSet.workspaces }));
   },
+}));
+vi.mock('@/buzz/community-storage', () => ({
+  loadActiveCommunityId: vi.fn(async () => workspaceSet.active),
 }));
 vi.mock('@/components/DesktopRoomInspector', async () => {
   const ReactModule = await import('react');
@@ -230,6 +239,10 @@ beforeEach(() => {
   layout.width = 1200;
   navigation.back.mockReset();
   navigation.push.mockReset();
+  navigation.replace.mockReset();
+  route.params = { communityId: 'ws' };
+  workspaceSet.active = null;
+  workspaceSet.workspaces = [];
   phoneOperation.mockReset();
   roomRead.mockReset();
   serve({ bookmarks: [bookmark()] });
@@ -290,6 +303,31 @@ describe.each([
     } finally {
       clock.mockRestore();
     }
+  });
+});
+
+describe('Tray opened without a communityId', () => {
+  it('reads the Tray of the active Workspace', async () => {
+    route.params = {};
+    workspaceSet.active = 'ws';
+    workspaceSet.workspaces = [{ id: 'other' }, { id: 'ws' }];
+    const tree = await renderTray();
+    expect(phoneOperation).toHaveBeenCalledWith('readNeedsYou', { workspaceId: 'ws' });
+    expect(phoneOperation).toHaveBeenCalledWith('listMessageBookmarks', { workspaceId: 'ws' });
+    expect(tree.root.findAllByProps({ testID: 'tray-loader' })).toHaveLength(0);
+    expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
+  });
+
+  it('shows a way back to Rooms when no Workspace resolves', async () => {
+    route.params = {};
+    const tree = await renderTray();
+    expect(phoneOperation).not.toHaveBeenCalled();
+    expect(tree.root.findAllByProps({ testID: 'tray-loader' })).toHaveLength(0);
+    const fallback = tree.root.findByProps({ testID: 'tray-no-workspace' });
+    await act(async () => {
+      fallback.findByProps({ accessibilityRole: 'button' }).props.onPress();
+    });
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 });
 

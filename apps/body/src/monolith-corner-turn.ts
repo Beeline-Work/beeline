@@ -59,6 +59,7 @@ import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registr
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
 import { beelineAgentMcpServer } from './room-session.js';
+import { allocatedDirectoryBytes, scratchBudgetMessage, scratchGrowthExceedsBudget } from './scratch-lifecycle.js';
 import { awaitInstitutionalContext, startInstitutionalContextFetch } from './institutional-context.js';
 import {
   codegraphFingerprintServers,
@@ -964,8 +965,9 @@ export class MonolithCornerTurnLoop {
     // directory; in a linked corner worktree that is the read-only
     // `repositories/.turbo/cache`, so every `turbo run` fails before it starts.
     const turboCacheDir = sharedTurboCacheDir(this.options.runtime.supervisorRoot);
+    const modelCacheDir = resolve(this.options.runtime.supervisorRoot, 'beeline', 'model-cache');
     await Promise.all(
-      [npmCacheDir, pnpmStoreDir, cargoTargetDir, turboCacheDir].map((path) =>
+      [npmCacheDir, pnpmStoreDir, cargoTargetDir, turboCacheDir, modelCacheDir].map((path) =>
         mkdir(path, { recursive: true, mode: 0o700 }),
       ),
     );
@@ -979,6 +981,8 @@ export class MonolithCornerTurnLoop {
       PNPM_CONFIG_STORE_DIR: pnpmStoreDir,
       CARGO_TARGET_DIR: cargoTargetDir,
       TURBO_CACHE_DIR: turboCacheDir,
+      HF_HOME: modelCacheDir,
+      HUGGINGFACE_HUB_CACHE: join(modelCacheDir, 'hub'),
     };
     this.agentEnv = agentEnv;
     this.modelContextTokens = await modelContextWindowTokens(
@@ -1023,6 +1027,7 @@ export class MonolithCornerTurnLoop {
           pnpmStoreDir,
           cargoTargetDir,
           turboCacheDir,
+          modelCacheDir,
           ...registryMcpHostBindPaths(
             configuration.registryMcpRoutes,
             this.options.config.registryMcpBrokerSocket,
@@ -1117,6 +1122,8 @@ export class MonolithCornerTurnLoop {
                 { name: 'npm_config_cache', value: npmCacheDir },
                 { name: 'PNPM_CONFIG_STORE_DIR', value: pnpmStoreDir },
                 { name: 'CARGO_TARGET_DIR', value: cargoTargetDir },
+                { name: 'HF_HOME', value: modelCacheDir },
+                { name: 'HUGGINGFACE_HUB_CACHE', value: join(modelCacheDir, 'hub') },
               ],
             },
           ]
@@ -1132,6 +1139,7 @@ export class MonolithCornerTurnLoop {
         // The whole per-session overlay, not an enumerated subset: see
         // `monolith-room-turn.ts`'s matching comment.
         attachScratchRoot,
+        ...(!repository ? { cornerScratchRoot: this.options.worktreePath } : {}),
         turnContextPath: this.commandContext.path,
         squireRelay: squireScope.relay,
         ...(this.options.grantRunnerEndpoint
@@ -1656,11 +1664,17 @@ export class MonolithCornerTurnLoop {
                   },
                 });
                 trace.notePromptSections(assembled.report);
-                trace.notePromptWindow(assembled.text, this.modelContextTokens);
                 this.commandContext.notePromptSections([
                   ...this.sessionPromptSectionIds,
                   ...assembled.report.map((section) => section.id),
                 ]);
+                if (!repositoryWork) {
+                  const usage = await allocatedDirectoryBytes(this.options.worktreePath);
+                  const text = `${assembled.text}\n\n${scratchBudgetMessage(usage)}`;
+                  trace.notePromptWindow(text, this.modelContextTokens);
+                  return text;
+                }
+                trace.notePromptWindow(assembled.text, this.modelContextTokens);
                 return assembled.text;
               };
               // Rooms and corners share the provisional draft lane, request-id
@@ -1828,7 +1842,24 @@ export class MonolithCornerTurnLoop {
                 narrationRunBoundary = 0;
                 currentNarrationRun = '';
                 trace.promptSent();
-                return this.turnUsage.measure(
+                const scratchRoot = this.repositoryWork ? undefined : this.options.worktreePath;
+                const scratchAtStart = scratchRoot ? await allocatedDirectoryBytes(scratchRoot) : 0;
+                let overBudget: string | undefined;
+                let checking = false;
+                const budgetTimer = scratchRoot ? setInterval(() => {
+                  if (checking || overBudget) return;
+                  checking = true;
+                  void allocatedDirectoryBytes(scratchRoot).then((usage) => {
+                    if (!scratchGrowthExceedsBudget(usage, scratchAtStart)) return;
+                    overBudget = scratchBudgetMessage(usage);
+                    if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
+                  }).catch((error) => {
+                    console.warn(`[thin-core] corner ${cornerId} scratch measure failed:`, error);
+                  }).finally(() => { checking = false; });
+                }, 5_000) : undefined;
+                budgetTimer?.unref();
+                try {
+                  const result = await this.turnUsage.measure(
                   { agentEnv: this.agentEnv, sessionId: this.sessionId! },
                   () =>
                     this.client!.sessionPrompt(
@@ -1866,7 +1897,20 @@ export class MonolithCornerTurnLoop {
                         publishToolCalls(calls, false, lastNarratedToolCall);
                       },
                     ),
-                );
+                  );
+                  if (scratchRoot) {
+                    const usage = await allocatedDirectoryBytes(scratchRoot);
+                    if (scratchGrowthExceedsBudget(usage, scratchAtStart))
+                      overBudget ??= scratchBudgetMessage(usage);
+                  }
+                  if (overBudget) throw new Error(`Scratch budget exceeded. ${overBudget}`);
+                  return result;
+                } catch (error) {
+                  if (overBudget) throw new Error(`Scratch budget exceeded. ${overBudget}`);
+                  throw error;
+                } finally {
+                  if (budgetTimer) clearInterval(budgetTimer);
+                }
               };
               let loginRetryUsed = false;
               const runPrompt = async (prompt?: string, continuation?: string): Promise<PromptResult> => {

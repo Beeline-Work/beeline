@@ -34,6 +34,8 @@ export function beelineAgentMcpServer(
      *  TMPDIR): a second legal post_artifact root covering anywhere the
      *  harness itself could have put a file it generated. */
     attachScratchRoot?: string;
+    /** Chat-only corner's bounded workspace, including the agent home. */
+    cornerScratchRoot?: string;
     directMessage?: boolean;
     /** The daemon's loopback grant runner, for run_granted_command. */
     grantRunner?: GrantRunnerEndpoint;
@@ -81,6 +83,9 @@ export function beelineAgentMcpServer(
       ...(context.attachRoot ? [{ name: 'BEELINE_ATTACH_ROOT', value: context.attachRoot }] : []),
       ...(context.attachScratchRoot
         ? [{ name: 'BEELINE_ATTACH_SCRATCH_ROOT', value: context.attachScratchRoot }]
+        : []),
+      ...(context.cornerScratchRoot
+        ? [{ name: 'BEELINE_CORNER_SCRATCH_ROOT', value: context.cornerScratchRoot }]
         : []),
       ...(context.grantRunner
         ? [

@@ -3289,6 +3289,8 @@ describe('thin monolith corner turn', () => {
               { name: 'npm_config_cache', value: sharedNpmCacheDir(root) },
               { name: 'PNPM_CONFIG_STORE_DIR', value: sharedPnpmStoreDir(root) },
               { name: 'CARGO_TARGET_DIR', value: sharedCargoTargetDir(root) },
+              { name: 'HF_HOME', value: join(root, 'beeline', 'model-cache') },
+              { name: 'HUGGINGFACE_HUB_CACHE', value: join(root, 'beeline', 'model-cache', 'hub') },
             ],
           }),
           expect.objectContaining({ name: 'beeline-agent' }),

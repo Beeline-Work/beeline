@@ -1,12 +1,16 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { totalmem } from 'node:os';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
-// The observed emulator and Metro together used over 6 GiB RSS. Leave room
-// for ordinary tooling while containing a runaway 49 GiB test worker.
-export const ACP_SESSION_MEMORY_MAX_BYTES = 8 * 1024 * 1024 * 1024;
+// Leave at least 8 GiB for emulator and Metro while scaling with host RAM.
+export function acpSessionMemoryMaxBytes(hostMemoryBytes = totalmem()): number {
+  return Math.max(8 * 1024 ** 3, Math.floor(hostMemoryBytes / 4));
+}
+
+export const ACP_SESSION_MEMORY_MAX_BYTES = acpSessionMemoryMaxBytes();
 
 /** A scope is a cgroup subtree, so tools that call setsid still belong to it. */
 export class AcpResourceScope {

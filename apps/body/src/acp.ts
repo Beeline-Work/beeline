@@ -734,6 +734,7 @@ export class AcpClient extends EventEmitter {
   private readonly useResourceScope: boolean;
   private readonly resourceScopeMemoryMaxBytes?: number;
   private resourceScope?: AcpResourceScope;
+  private resourceScopeUnavailable = false;
   /** A deliberate stop owns its SIGKILL; that exit is never labelled OOM. */
   private stopping = false;
 
@@ -817,7 +818,7 @@ export class AcpClient extends EventEmitter {
     await this.oomKills.prime().catch(() => undefined);
     this.stopping = false;
     const childEnv = this.inheritProcessEnv ? { ...process.env, ...this.agentEnv } : this.agentEnv;
-    this.resourceScope = this.useResourceScope
+    this.resourceScope = this.useResourceScope && !this.resourceScopeUnavailable
       ? new AcpResourceScope(this.resourceScopeMemoryMaxBytes) : undefined;
     const launch = this.resourceScope?.launch(this.agentCommand, this.agentArgs, childEnv);
     this.child = await withAdapterInstallLock(() =>
@@ -890,7 +891,25 @@ export class AcpClient extends EventEmitter {
         timeoutMs,
       )) as Record<string, unknown>;
     } catch (error) {
+      // A failed launcher can close stdin before its bus error reaches stderr.
+      if (launch && /EPIPE/.test(String(error)) && this.child?.exitCode === null) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 250);
+          this.child?.once('close', () => { clearTimeout(timer); resolve(); });
+        });
+      }
+      const scopeUnavailable = launch && !this.resourceScopeUnavailable &&
+        /(?:Failed to connect to bus|Failed to create bus connection|spawn systemd-run ENOENT)/i
+          .test(`${this.stderrTail}\n${String(error)}`);
       await this.stop().catch(() => undefined);
+      if (scopeUnavailable) {
+        this.resourceScopeUnavailable = true;
+        this.resourceScope = undefined;
+        this.child = null;
+        this.alive = false;
+        console.warn('[acp] systemd user scope unavailable; starting ACP session in a process group');
+        return this.start(timeoutMs);
+      }
       throw error;
     }
     const initMeta = initResult._meta as Record<string, unknown> | undefined;

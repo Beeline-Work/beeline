@@ -141,8 +141,31 @@ describe('startDictationUpload', () => {
     expect(uploadedSamples(1)).toBe(16000);
   });
 
-  it('answers null when any piece fails, and sends no later piece', async () => {
-    sessionFetch.mockResolvedValueOnce(new Response('', { status: 502 }));
+  it('keeps sending after a failed piece and retries it once at stop', async () => {
+    // Reproduction R2: piece a fails while the user still talks; piece b follows.
+    sessionFetch
+      .mockResolvedValueOnce(new Response('', { status: 502 }))
+      .mockResolvedValueOnce(Response.json({ text: 'second part.' }))
+      .mockResolvedValueOnce(Response.json({ text: 'First part.' }));
+    const { startDictationUpload } = await load();
+
+    const upload = startDictationUpload([], 'en-US');
+    upload.add('file:///a.wav');
+    upload.add('file:///b.wav');
+    await settle();
+    await settle();
+    expect(sessionFetch).toHaveBeenCalledTimes(2);
+
+    expect(await upload.finish()).toBe('First part. second part.');
+    expect(sessionFetch).toHaveBeenCalledTimes(3);
+    expect(deleted).toEqual(['file:///a.wav', 'file:///b.wav']);
+  });
+
+  it('answers null when a failed piece fails again at stop', async () => {
+    sessionFetch
+      .mockResolvedValueOnce(new Response('', { status: 502 }))
+      .mockResolvedValueOnce(Response.json({ text: 'second part.' }))
+      .mockResolvedValueOnce(new Response('', { status: 502 }));
     const { startDictationUpload } = await load();
 
     const upload = startDictationUpload([], 'en-US');
@@ -150,8 +173,20 @@ describe('startDictationUpload', () => {
     upload.add('file:///b.wav');
 
     expect(await upload.finish()).toBeNull();
-    expect(sessionFetch).toHaveBeenCalledTimes(1);
-    expect(deleted).toEqual(['file:///a.wav', 'file:///b.wav']);
+    expect(sessionFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps transcription on after a 503 that is not the no-key answer', async () => {
+    // Reproduction R3: a proxy 503 during a deploy.
+    sessionFetch
+      .mockResolvedValueOnce(new Response('', { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ text: 'Retried.' }));
+    const { dictationTranscriptionAvailable, startDictationUpload } = await load();
+
+    const upload = startDictationUpload([], 'en-US');
+    upload.add('file:///a.wav');
+    expect(await upload.finish()).toBe('Retried.');
+    expect(dictationTranscriptionAvailable()).toBe(true);
   });
 
   it('answers null when the last piece is still out at the stop deadline', async () => {

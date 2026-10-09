@@ -75,7 +75,11 @@ async function transcribeOne(
     },
     { timeoutMs: PIECE_TIMEOUT_MS },
   );
-  if (response.status === 503) serverTranscriptionUnavailable = true;
+  if (response.status === 503) {
+    // Only the server's own answer means no Groq key; a proxy 503 is passing.
+    const value = (await response.json().catch(() => null)) as { error?: unknown } | null;
+    if (value?.error === 'transcription_unavailable') serverTranscriptionUnavailable = true;
+  }
   if (!response.ok) {
     console.warn(`[dictation] server transcription failed (${response.status})`);
     return null;
@@ -108,8 +112,9 @@ export type DictationUpload = {
   /** Queues one closed recording; it uploads after the pieces before it. */
   add(uri: string): void;
   /**
-   * Answers the joined text once every piece is back, or null when any piece
-   * failed or the wait passed `timeoutMs`. The recordings are deleted.
+   * Retries each failed piece once, then answers the joined text once every
+   * piece is back, or null when a piece failed twice or the wait passed
+   * `timeoutMs`. The recordings are deleted.
    */
   finish(timeoutMs?: number): Promise<string | null>;
   /** Ends the take without a result and deletes its recordings. */
@@ -119,13 +124,19 @@ export type DictationUpload = {
 /**
  * Uploads one dictation piece by piece while the user still talks, so stop
  * waits only for the last piece. Pieces go in order, each prompted with the
- * text before it; a piece under MERGE_BELOW_SECONDS joins the next one.
+ * text before it; a piece under MERGE_BELOW_SECONDS joins the next one. A
+ * failed piece keeps its place and its audio, later pieces still upload, and
+ * stop retries it once.
  */
 export function startDictationUpload(lexicon: readonly string[], locale: string): DictationUpload {
   const language = locale.split(/[-_]/)[0]!.toLowerCase();
   const uris: string[] = [];
-  const texts: string[] = [];
+  // Each piece's chunk texts, in order; null until Groq answers it.
+  const slots: (string[] | null)[] = [];
+  // Audio of the pieces whose upload failed, by slot.
+  const failedPieces = new Map<number, Uint8Array>();
   let held: Uint8Array | null = null;
+  // A recording that could not be read cannot be retried.
   let failed = false;
   let closed = false;
   let queue: Promise<void> = Promise.resolve();
@@ -133,8 +144,9 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
   let outSeconds = 0;
   let onOut: (() => void) | null = null;
 
-  const send = async (wav: Uint8Array) => {
-    const previous = joinSpeechPieces(texts, lexicon, locale);
+  const texts = (before = slots.length) => slots.slice(0, before).flatMap((slot) => slot ?? []);
+  const send = async (wav: Uint8Array, slot = slots.push(null) - 1) => {
+    const previous = joinSpeechPieces(texts(slot), lexicon, locale);
     const prompt = dictationPrompt(lexicon, previous);
     const seconds = dictationWavSeconds(wav) ?? 0;
     outSeconds += seconds;
@@ -144,8 +156,18 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
       const results = await Promise.all(
         chunks.map((chunk) => transcribeOne(chunk, prompt, language)),
       );
-      if (results.some((text) => text === null)) failed = true;
-      else texts.push(...(results as string[]));
+      if (results.some((text) => text === null)) {
+        failedPieces.set(slot, wav);
+      } else {
+        slots[slot] = results as string[];
+        failedPieces.delete(slot);
+      }
+    } catch (error) {
+      console.warn(
+        '[dictation] server transcription failed:',
+        error instanceof Error ? error.message : 'unknown',
+      );
+      failedPieces.set(slot, wav);
     } finally {
       outSeconds -= seconds;
     }
@@ -155,11 +177,7 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
       if (failed || closed) return;
       try {
         await work();
-      } catch (error) {
-        console.warn(
-          '[dictation] server transcription failed:',
-          error instanceof Error ? error.message : 'unknown',
-        );
+      } catch {
         failed = true;
       }
     });
@@ -184,7 +202,6 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
           if (!merged) await send(held);
           else wav = merged;
           held = null;
-          if (failed) return;
         }
         const seconds = dictationWavSeconds(wav);
         if (seconds !== null && seconds < MERGE_BELOW_SECONDS) {
@@ -200,6 +217,10 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
         const wav = held;
         held = null;
         await send(wav);
+      });
+      step(async () => {
+        if (serverTranscriptionUnavailable) return;
+        await Promise.all([...failedPieces].map(([slot, wav]) => send(wav, slot)));
       });
       let timer: ReturnType<typeof setTimeout> | undefined;
       const stoppedAt = Date.now();
@@ -222,8 +243,10 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
       try {
         const done = await Promise.race([queue.then(() => true as const), late]);
         if (!done) console.warn('[dictation] server transcription missed the stop deadline');
-        if (!done || failed) return null;
-        return joinSpeechPieces(texts, lexicon, locale) || null;
+        else if (failed) console.warn('[dictation] a recording could not be read');
+        else if (failedPieces.size) console.warn('[dictation] a piece failed again on retry');
+        if (!done || failed || failedPieces.size) return null;
+        return joinSpeechPieces(texts(), lexicon, locale) || null;
       } finally {
         clearTimeout(timer);
         onOut = null;

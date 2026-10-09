@@ -10,6 +10,7 @@ const list = vi.hoisted(() => ({
   state: 'waiting' as string,
   cached: null as unknown,
   createCalls: [] as unknown[][],
+  createGate: null as Promise<void> | null,
   subscriptions: [] as Array<{
     filters: readonly { readonly '#h'?: readonly string[] }[];
     emit(event: MonolithSurfaceEvent): void;
@@ -78,6 +79,7 @@ vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     async createHumanCorner(...args: unknown[]) {
       list.createCalls.push(args);
+      await list.createGate;
       return 'corner-created';
     }
     async ensureClient() {
@@ -176,6 +178,7 @@ beforeEach(() => {
   list.state = 'waiting';
   list.cached = null;
   list.createCalls.length = 0;
+  list.createGate = null;
   vi.mocked(router.push).mockClear();
   list.subscriptions.length = 0;
 });
@@ -195,6 +198,27 @@ describe('Corner list live path', () => {
         params: expect.objectContaining({ channelId: 'corner-created', title }),
       }),
     );
+  });
+
+  it('shows the plus as busy while the create is in flight and ignores a second tap', async () => {
+    const renderer = await mountList();
+    let release!: () => void;
+    list.createGate = new Promise((resolve) => (release = resolve));
+    const header = () => renderer.root.findByType('RoomCornersHeader');
+    expect(header().props.busy).toBe(false);
+    await act(async () => {
+      void header().props.onAdd();
+    });
+    expect(header().props.busy).toBe(true);
+    await act(async () => {
+      void header().props.onAdd();
+    });
+    expect(list.createCalls).toHaveLength(1);
+    // The phone names the corner, so a retry can ask for the same one.
+    expect(list.createCalls[0]![5]).toMatch(/^[0-9a-f-]{36}$/);
+    await act(async () => release());
+    await vi.waitFor(() => expect(header().props.busy).toBe(false));
+    expect(router.push).toHaveBeenCalledOnce();
   });
 
   it('repaints a corner status from the parent Room nudge, without re-entering', async () => {

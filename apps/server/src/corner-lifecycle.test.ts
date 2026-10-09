@@ -531,6 +531,19 @@ describe('a corner opens onto implement (row 1-3)', () => {
 });
 
 describe('a person-opened corner in a repository Room', () => {
+  it('returns the first corner when a timed-out open retries with the same phone id', async () => {
+    const cornerId = '6f1d8c2a-4b3e-4f5a-9c7d-2e8b1a0f3c4d';
+    const open = () =>
+      phone.execute('createHumanCorner', { roomId: R, title: 'Retry-safe', cornerId }, H);
+    expect(await open()).toEqual({ id: cornerId });
+    expect(await open()).toEqual({ id: cornerId });
+    expect((await db.query(`SELECT count(*)::int n FROM rooms WHERE parent_id=$1 AND name='Retry-safe'`, [R]))
+      .rows[0]).toEqual({ n: 1 });
+    expect(await cards(cornerId)).toHaveLength(2);
+    await expect(
+      phone.execute('createHumanCorner', { roomId: R, title: 'Bad-id', cornerId: 'not-a-uuid' }, H),
+    ).rejects.toThrow('corner id must be a UUID');
+  });
   it('opens on implement with no lane, and the first tagged agent owns it and drives it to checks', async () => {
     const { id: cornerId } = await phone.execute('createHumanCorner', { roomId: R, title: 'Fix-widget' }, H);
     expect(await cards(cornerId)).toEqual([

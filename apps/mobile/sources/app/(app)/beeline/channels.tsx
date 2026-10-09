@@ -31,6 +31,7 @@ import {
   useRoomListFilter,
 } from '@/buzz/room-list-preferences';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
+import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { useRoomListGestures } from '@/buzz/use-room-list-gestures';
 import { readWelcomeCards } from '@/buzz/welcome-cards';
@@ -662,15 +663,20 @@ export default function BuzzChannels() {
 
   const openingCornerRef = useRef(false);
   const openNewCorner = useCallback(
-    async (roomId: string) => {
+    async (roomId: string, attempt?: CornerOpenAttempt) => {
       if (openingCornerRef.current) return;
       openingCornerRef.current = true;
       try {
         await openRoomListCorner({
           roomId,
-          createCorner: transport ? (id, title) => transport.createHumanCorner(id, title, undefined, undefined, true) : null,
+          attempt,
+          createCorner: transport
+            ? (id, title, cornerId) =>
+                transport.createHumanCorner(id, title, undefined, undefined, true, cornerId)
+            : null,
           openCorner: (cornerId, title) =>
             router.push(cornerHref(cornerId, roomId, title, 'room-list')),
+          retry: (failed) => void openNewCorner(roomId, failed),
         });
       } finally {
         openingCornerRef.current = false;

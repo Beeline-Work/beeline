@@ -24,6 +24,7 @@ import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { openRoomListCorner } from '@/buzz/room-list-new-corner';
+import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 import { Modal } from '@/modal';
 import { archivedCornersByClosure, type ArchivedCornersState } from '@/buzz/archived-corners';
@@ -45,6 +46,7 @@ export default function BuzzCorners() {
   const [refreshing, setRefreshing] = useState(false);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const creatingRef = useRef(false);
+  const [creating, setCreating] = useState(false);
   const [archived, setArchived] = useState<ArchivedCornersState>({ status: 'idle' });
   const schedulerRef = useRef<SurfaceRefreshScheduler<CornerListView> | null>(null);
   const desktop = useIsDesktop();
@@ -186,22 +188,34 @@ export default function BuzzCorners() {
     }
   };
 
-  const createCorner = async () => {
+  const createCorner = async (attempt?: CornerOpenAttempt) => {
     if (creatingRef.current) return;
     creatingRef.current = true;
+    setCreating(true);
     try {
       const identity = await loadBuzzIdentity();
       if (!identity) throw new Error('Beeline identity is unavailable');
       await openRoomListCorner({
         roomId: decodedId,
-        createCorner: (roomId, title) => new BuzzRigTransport(identity).createHumanCorner(roomId, title, undefined, undefined, true),
+        attempt,
+        createCorner: (roomId, title, cornerId) =>
+          new BuzzRigTransport(identity).createHumanCorner(
+            roomId,
+            title,
+            undefined,
+            undefined,
+            true,
+            cornerId,
+          ),
         openCorner: (cornerId, title) =>
           router.push(cornerHref(cornerId, decodedId, title, 'corners')),
+        retry: (failed) => void createCorner(failed),
       });
     } catch (reason) {
       Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(reason));
     } finally {
       creatingRef.current = false;
+      setCreating(false);
     }
   };
 
@@ -246,6 +260,7 @@ export default function BuzzCorners() {
         <RoomCornersHeader
           title={title}
           onBack={() => router.back()}
+          busy={creating}
           onAdd={() => void createCorner()}
         />
         {!!error && (

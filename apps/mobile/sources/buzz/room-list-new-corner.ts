@@ -1,19 +1,48 @@
 import * as Haptics from 'expo-haptics';
 import { Modal } from '@/modal';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
-import { openRandomNamedCorner } from './open-random-corner';
+import {
+  newCornerOpenAttempt,
+  openRandomNamedCorner,
+  type CornerOpenAttempt,
+} from './open-random-corner';
 import { CORNER_LABEL } from './vocabulary';
+
+/**
+ * A failed corner open, said out loud. When the server never answered (the
+ * request timed out or the network refused it) the alert offers Retry, which
+ * repeats the same attempt; a server refusal is named as it was given.
+ */
+export function alertCornerOpenFailure(error: unknown, retry: () => void): void {
+  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+  // `MonolithRequestTimeoutError` by name, so this module stays free of the
+  // session and its native storage (the browser proof bundles it).
+  if (
+    error instanceof TypeError ||
+    (error instanceof Error && error.name === 'MonolithRequestTimeoutError')
+  ) {
+    Modal.alert("Couldn't reach Beeline", `Check your connection, then try again.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Retry', onPress: retry },
+    ]);
+    return;
+  }
+  Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(error));
+}
 
 /**
  * Long-press of a Room-list row's corner glyph: the same action as long-pressing
  * the Room's own corners door — a randomly named human corner, created through
  * `createHumanCorner`, then opened. `createCorner` is null while the list has
  * no transport yet; the press then explains itself instead of doing nothing.
+ * `retry` re-enters the caller with the failed attempt.
  */
 export async function openRoomListCorner(input: {
   roomId: string;
-  createCorner: ((roomId: string, title: string) => Promise<string>) | null;
+  createCorner: ((roomId: string, title: string, cornerId: string) => Promise<string>) | null;
   openCorner: (cornerId: string, title: string) => void;
+  attempt?: CornerOpenAttempt;
+  retry: (attempt: CornerOpenAttempt) => void;
 }): Promise<void> {
   const { createCorner } = input;
   if (!createCorner) {
@@ -24,17 +53,18 @@ export async function openRoomListCorner(input: {
     );
     return;
   }
+  const attempt = input.attempt ?? newCornerOpenAttempt();
   try {
     await openRandomNamedCorner({
       createCorner,
       roomId: input.roomId,
+      attempt,
       openCorner: (cornerId, title) => {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         input.openCorner(cornerId, title);
       },
     });
   } catch (err) {
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    Modal.alert(`Could not open ${CORNER_LABEL}`, phoneOperationFailureReason(err));
+    alertCornerOpenFailure(err, () => input.retry(attempt));
   }
 }

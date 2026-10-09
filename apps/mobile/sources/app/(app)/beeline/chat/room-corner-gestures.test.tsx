@@ -108,7 +108,7 @@ describe('Room header corner long-press gestures', () => {
     });
 
     expect(onOpenCorners).not.toHaveBeenCalled();
-    expect(createCorner).toHaveBeenCalledWith('room-id', 'quiet-amber-corner');
+    expect(createCorner).toHaveBeenCalledWith('room-id', 'quiet-amber-corner', expect.any(String));
     expect(openCorner).toHaveBeenCalledWith('corner-id', 'quiet-amber-corner');
     process.stdout.write(
       'long-press room-corners-menu → created "quiet-amber-corner" → opened corner-id\n',

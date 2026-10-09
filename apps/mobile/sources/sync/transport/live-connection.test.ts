@@ -5,6 +5,7 @@ vi.mock('react-native', () => ({
 }));
 
 import { LiveConnection } from './live-connection';
+import { liveFrameEpoch } from './live-frame-epoch';
 
 const ROOM_A = 'room-a';
 const ROOM_B = 'room-b';
@@ -601,7 +602,9 @@ describe('LiveConnection', () => {
 
     foreground();
     expect(sockets[0]!.sent.at(-1)).toBe(JSON.stringify({ type: 'sync' }));
+    const epoch = liveFrameEpoch();
     sockets[0]!.emit({ type: 'sync-ok' });
+    expect(liveFrameEpoch()).toBe(epoch);
     await vi.advanceTimersByTimeAsync(3_000);
     expect(sockets).toHaveLength(1);
     expect(received).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
@@ -774,7 +777,7 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('covers a no-room registration when the foreground replaces the socket', async () => {
+  it('covers a no-room registration after the foreground sync times out', async () => {
     vi.useFakeTimers();
     const { connection, foreground } = createConnection();
     const received: unknown[] = [];
@@ -785,7 +788,8 @@ describe('LiveConnection', () => {
     expect(received).toEqual([]);
 
     foreground();
-    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets[0]!.sent.at(-1)).toBe(JSON.stringify({ type: 'sync' }));
+    await vi.advanceTimersByTimeAsync(3_000);
     expect(received).toEqual([]);
     sockets[1]!.open();
     expect(received).toEqual([

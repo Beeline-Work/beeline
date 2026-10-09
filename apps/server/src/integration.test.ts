@@ -3224,6 +3224,7 @@ describe('monolith integration', () => {
       agentId: AGENT,
       turnId,
       text: "I'll trace the Room-join push producer and its existing coverage",
+      revision: 0,
     });
     socket.close();
   });

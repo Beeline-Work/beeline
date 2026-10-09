@@ -343,7 +343,6 @@ export class LiveConnection {
       };
       next.onmessage = (message) => {
         if (this.socket !== next) return;
-        noteLiveFrame();
         let live: LiveWireEvent;
         try {
           live = JSON.parse(String(message.data)) as LiveWireEvent;
@@ -355,6 +354,7 @@ export class LiveConnection {
           this.foregroundSyncTimer = undefined;
           return;
         }
+        noteLiveFrame();
         this.dispatch(live, next);
       };
       next.onclose = () => {

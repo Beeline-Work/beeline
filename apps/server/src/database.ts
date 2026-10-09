@@ -2477,11 +2477,13 @@ CREATE INDEX IF NOT EXISTS connector_offers_room_idx
 -- Workspace gain tool X?", decided by a tap. 'reconnect' (squire-login-wall
 -- handoff) is written straight to 'connecting' with no decision to make: an
 -- already-connected connector's own live session went stale mid-task, and
--- provider names which one (e.g. 'google').
+-- provider names which one (e.g. 'google'). 'switch' asks to replace the
+-- account an already-connected Trusty Squire is bound to; accepting re-arms
+-- that connector with force_relogin_provider=provider.
 ALTER TABLE connector_offers ADD COLUMN IF NOT EXISTS intent text NOT NULL DEFAULT 'add';
 ALTER TABLE connector_offers DROP CONSTRAINT IF EXISTS connector_offers_intent_check;
 ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_intent_check
-  CHECK (intent IN ('add','reconnect'));
+  CHECK (intent IN ('add','reconnect','switch'));
 ALTER TABLE connector_offers ADD COLUMN IF NOT EXISTS provider text;
 ALTER TABLE connector_offers DROP CONSTRAINT IF EXISTS connector_offers_status_check;
 ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_status_check

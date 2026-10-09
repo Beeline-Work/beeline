@@ -58,7 +58,11 @@ import {
   type WorkspaceView,
 } from './phone-types.js';
 import { isAgentGrantKind, isAgentGrantStatus, isCommandGrantScript } from './agent-grants.js';
-import { isConnectorOfferStatus, type ConnectorOfferCardView } from './connector-offers.js';
+import {
+  isConnectorOfferIntent,
+  isConnectorOfferStatus,
+  type ConnectorOfferCardView,
+} from './connector-offers.js';
 import { isConnectorKind } from './workbench.js';
 import { CHOICE_LETTERS, isChoiceMode, isChoiceStatus } from './room-choices.js';
 import {
@@ -626,12 +630,7 @@ export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardVi
     ...field('acceptedBy', readIdentityOnly(item.acceptedBy)),
     ...field('acceptedAt', integer(item.acceptedAt) ? item.acceptedAt : undefined),
     ...field('connectorId', typeof item.connectorId === 'string' ? item.connectorId : undefined),
-    ...field(
-      'intent',
-      item.intent === 'add' || item.intent === 'reconnect'
-        ? (item.intent as 'add' | 'reconnect')
-        : undefined,
-    ),
+    ...field('intent', isConnectorOfferIntent(item.intent) ? item.intent : undefined),
     ...field('provider', typeof item.provider === 'string' ? item.provider : undefined),
   };
 }

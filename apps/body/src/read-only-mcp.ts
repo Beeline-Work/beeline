@@ -1616,7 +1616,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'offer_connector',
     description:
-      'Offer to add ONE Workbench tool (connector) you need for the work in front of you, at the moment you need it. A card goes into this Room, spoken by you and addressed to the person you are answering; it carries your reason, a fixed line naming the consequence and the safety boundary, and ONE affirmative action. Only that person or a Workspace admin can accept; accepting pairs the tool on YOUR machine, and the sign-in or keys are theirs, never in chat. The wallet is the exception: only that person can accept, and accepting is their own grant letting agents sign from their wallet. Your turn pauses on the card: say in prose what you found out about the tool and what you are waiting for, then end the turn — you are woken when someone accepts. Never offer a tool you have not looked into: if you do not already know what it is, research it first and say so in your reply BEFORE calling this. This is setup, not authority: it never replaces a grant, write permission, target-branch confirmation or the merge gate.',
+      'Offer to add ONE Workbench tool (connector) you need for the work in front of you, at the moment you need it. A card goes into this Room, spoken by you and addressed to the person you are answering; it carries your reason, a fixed line naming the consequence and the safety boundary, and ONE affirmative action. Only that person or a Workspace admin can accept; accepting pairs the tool on YOUR machine, and the sign-in or keys are theirs, never in chat. The wallet is the exception: only that person can accept, and accepting is their own grant letting agents sign from their wallet. Your turn pauses on the card: say in prose what you found out about the tool and what you are waiting for, then end the turn — you are woken when someone accepts. Never offer a tool you have not looked into: if you do not already know what it is, research it first and say so in your reply BEFORE calling this. This is setup, not authority: it never replaces a grant, write permission, target-branch confirmation or the merge gate. With intent "switch" (trusty-squire only, already connected) the card instead asks the person to sign in to Google again with a different account, replacing the one Trusty Squire uses now.',
     inputSchema: {
       type: 'object',
       required: ['connectorType', 'reason'],
@@ -1632,6 +1632,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
           maxLength: CONNECTOR_OFFER_REASON_MAX_LENGTH,
           description:
             'One short clause: what you will do once it is added, e.g. "provision the 1inch API key into its vault".',
+        },
+        intent: {
+          type: 'string',
+          enum: ['switch'],
+          description:
+            'Only when the person wants Trusty Squire to use a different Google account (or its current one is wrong): asks them to sign in again; the current account is replaced.',
         },
       },
       additionalProperties: false,
@@ -3880,13 +3886,22 @@ export async function offerConnector(
   const reason = stringArg(args, 'reason')?.trim().replace(/\s+/g, ' ');
   if (!reason) throw new Error('reason must be a non-empty string');
   if (reason.length > CONNECTOR_OFFER_REASON_MAX_LENGTH) throw new Error('reason is too long');
+  const intent = stringArg(args, 'intent');
+  if (intent !== undefined && intent !== 'switch') throw new Error('intent must be "switch" when given');
   const result = await deps.execute('offerConnector', {
     roomId: deps.roomId,
     connectorType,
     reason,
+    ...(intent ? { intent } : {}),
   });
   const offerId = typeof result.offerId === 'string' ? result.offerId : 'unknown';
   const joined = result.joined === true;
+  if (intent === 'switch')
+    return (
+      `${joined ? 'already offered, card still open' : 'pending, card posted'}: switch ${connectorType} account [offer ${offerId}]. ` +
+      'Tapping it opens a fresh Google sign-in that replaces the account it uses now; your turn is paused on this card. ' +
+      'In prose, say that you are waiting for them to sign in with the account they want, then end your turn now; you will be woken once the new sign-in is connected.'
+    );
   return (
     `${joined ? 'already offered, card still open' : 'pending, card posted'}: add ${connectorType} [offer ${offerId}]. ` +
     'The person you addressed, or a Workspace admin, can accept it with the one action on the card; ' +

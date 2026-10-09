@@ -1504,6 +1504,9 @@ export type OfferConnectorInput = TurnOutputAuthority &
   RoomInput & {
     readonly connectorType: string;
     readonly reason: string;
+    /** `'switch'`: ask to replace the Google account an already-connected
+     *  Trusty Squire is bound to (accepting forces Squire's re-sign-in). */
+    readonly intent?: 'switch';
   };
 export type OfferConnectorResult = {
   readonly offerId: string;

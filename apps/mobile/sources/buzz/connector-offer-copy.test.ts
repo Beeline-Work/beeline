@@ -4,8 +4,10 @@ import {
   connectorOfferConnectingLine,
   connectorOfferOutcomeLine,
   connectorOfferReconnectTitle,
+  connectorOfferSwitchTitle,
   connectorOfferTitle,
   connectorOfferWaitingLine,
+  CONNECTOR_OFFER_SWITCH_ACTION,
 } from './connector-offer-copy';
 
 describe('connector-offer copy (R5)', () => {
@@ -49,6 +51,24 @@ describe('connector-offer copy (R5)', () => {
     );
     expect(connectorOfferConnectingLine({ status: 'pending' })).toBeNull();
     expect(connectorOfferConnectingLine({ status: 'accepted', acceptedBy: zeke })).toBeNull();
+  });
+
+  it('asks to switch the bound account, and records the switch, for a switch offer', () => {
+    expect(connectorOfferSwitchTitle('Trusty Squire', 'google')).toBe(
+      "Switch Trusty Squire's Google account?",
+    );
+    expect(CONNECTOR_OFFER_SWITCH_ACTION).toBe('✓ Switch account');
+    expect(
+      connectorOfferConnectingLine({ status: 'connecting', acceptedBy: zeke, intent: 'switch' }),
+    ).toBe('switching for @zeke');
+    expect(
+      connectorOfferOutcomeLine({
+        status: 'accepted',
+        acceptedBy: zeke,
+        acceptedAt: 1_756_900_060,
+        intent: 'switch',
+      }),
+    ).toMatch(/^switched by @zeke · \d{1,2}:\d{2}/);
   });
 
   it('tells a reader who cannot act whom the card waits for', () => {

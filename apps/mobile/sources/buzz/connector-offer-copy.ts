@@ -21,6 +21,15 @@ export function connectorOfferReconnectTitle(provider?: string): string {
   return `Sign in to ${provider[0]!.toUpperCase()}${provider.slice(1)} again`;
 }
 
+/** `Switch Trusty Squire's Google account?` — a `'switch'` offer asks to
+ *  replace the account an already-connected tool is signed in with. */
+export function connectorOfferSwitchTitle(connectorName: string, provider = 'google'): string {
+  return `Switch ${connectorName}'s ${provider[0]!.toUpperCase()}${provider.slice(1)} account?`;
+}
+
+/** `✓ Switch account` — the one action on a `'switch'` offer. */
+export const CONNECTOR_OFFER_SWITCH_ACTION = '✓ Switch account';
+
 /** `✓ Add Trusty Squire` — the one action, with the check glyph the captain photographed. */
 export function connectorOfferActionLabel(connectorName: string): string {
   return `✓ Add ${connectorName}`;
@@ -33,27 +42,29 @@ function clock(seconds: number): string {
   });
 }
 
-/** `added by @zeke · 12:04` — the settled record; null while the offer is open. */
+/** `added by @zeke · 12:04` (`switched by` for a `'switch'` offer) — the
+ *  settled record; null while the offer is open. */
 export function connectorOfferOutcomeLine(
-  offer: Pick<ConnectorOfferCardView, 'status' | 'acceptedBy' | 'acceptedAt'>,
+  offer: Pick<ConnectorOfferCardView, 'status' | 'acceptedBy' | 'acceptedAt' | 'intent'>,
 ): string | null {
   if (offer.status !== 'accepted') return null;
   const who = offer.acceptedBy?.handle
     ? `@${offer.acceptedBy.handle.replace(/^@/, '')}`
     : (offer.acceptedBy?.name ?? 'someone');
   const stamp = offer.acceptedAt !== undefined ? ` · ${clock(offer.acceptedAt)}` : '';
-  return `added by ${who}${stamp}`;
+  return `${offer.intent === 'switch' ? 'switched' : 'added'} by ${who}${stamp}`;
 }
 
-/** `connecting for @zeke` — the accepted offer whose sign-in is not complete yet. */
+/** `connecting for @zeke` (`switching for` for a `'switch'` offer) — the
+ *  accepted offer whose sign-in is not complete yet. */
 export function connectorOfferConnectingLine(
-  offer: Pick<ConnectorOfferCardView, 'status' | 'acceptedBy'>,
+  offer: Pick<ConnectorOfferCardView, 'status' | 'acceptedBy' | 'intent'>,
 ): string | null {
   if (offer.status !== 'connecting') return null;
   const who = offer.acceptedBy?.handle
     ? `@${offer.acceptedBy.handle.replace(/^@/, '')}`
     : (offer.acceptedBy?.name ?? 'someone');
-  return `connecting for ${who}`;
+  return `${offer.intent === 'switch' ? 'switching' : 'connecting'} for ${who}`;
 }
 
 /** `waiting for @zeke` — what a reader who cannot act sees under an open offer. */

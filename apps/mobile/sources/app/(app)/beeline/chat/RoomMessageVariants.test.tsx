@@ -2876,6 +2876,36 @@ describe('Room message variant components', () => {
       expect(onContinue).toHaveBeenCalledWith('offer-1', 'trusty-squire', 'connector-row-1');
     });
 
+    it('asks the addressee to switch the bound account with one Switch action', () => {
+      const onAccept = vi.fn();
+      const switching = render(
+        <ConnectorOfferCard
+          message={message({
+            connectorOffer: {
+              ...pending.connectorOffer!,
+              intent: 'switch',
+              provider: 'google',
+              consequence:
+                "You'll sign in to Google again, with the account Trusty Squire should use. The account signed in now is replaced for every task on this machine.",
+            },
+          })}
+          viewerIsAgent={false}
+          viewerPubkey="zeke"
+          viewerRole="member"
+          actionId={null}
+          onAccept={onAccept}
+          onOpenWorkbench={vi.fn()}
+        />,
+      );
+      const json = JSON.stringify(switching.toJSON());
+      expect(json).toContain("Switch Trusty Squire's Google account?");
+      expect(json).not.toContain('Add Trusty Squire as a tool?');
+      const accept = switching.root.findByProps({ testID: 'connector-offer-offer-1-accept' });
+      expect(accept.props.accessibilityLabel).toBe('✓ Switch account');
+      act(() => accept.props.onPress());
+      expect(onAccept).toHaveBeenCalledWith('offer-1', 'trusty-squire');
+    });
+
     it('lets a Workspace manager who is not the addressee accept (Q4)', () => {
       const card = render(
         <ConnectorOfferCard

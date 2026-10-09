@@ -31,8 +31,10 @@ import {
   connectorOfferConnectingLine,
   connectorOfferOutcomeLine,
   connectorOfferReconnectTitle,
+  connectorOfferSwitchTitle,
   connectorOfferTitle,
   connectorOfferWaitingLine,
+  CONNECTOR_OFFER_SWITCH_ACTION,
 } from '@/buzz/connector-offer-copy';
 import { AppMark } from '@/components/buzz/AppMark';
 import { appDomain } from '@/buzz/app-catalog';
@@ -525,7 +527,10 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     pending && canAccept
       ? [
           {
-            label: connectorOfferActionLabel(offer.connectorName),
+            label:
+              offer.intent === 'switch'
+                ? CONNECTOR_OFFER_SWITCH_ACTION
+                : connectorOfferActionLabel(offer.connectorName),
             primary: true,
             disabled: actionId !== null,
             loading: busy,
@@ -559,7 +564,13 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
       wrapTitle
 
       identity={<IdentityMark kind="agent" seed={display.avatarSeed ?? offer.agent.pubkey} avatarUrl={display.avatarUrl} face={display.face} name={agentName} size={26} />}
-      title={offer.intent === 'reconnect' ? connectorOfferReconnectTitle(offer.provider) : connectorOfferTitle(offer.connectorName)}
+      title={
+        offer.intent === 'reconnect'
+          ? connectorOfferReconnectTitle(offer.provider)
+          : offer.intent === 'switch'
+            ? connectorOfferSwitchTitle(offer.connectorName, offer.provider)
+            : connectorOfferTitle(offer.connectorName)
+      }
       subline={offer.consequence}
       sublineTestID={`connector-offer-${offer.offerId}-line`}
       stamp={ledgerStamp(message.timestamp)}

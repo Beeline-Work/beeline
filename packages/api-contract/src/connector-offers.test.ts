@@ -10,8 +10,9 @@ import {
   formatConnectorOfferDecisionLine,
   isOfferableConnectorKind,
   parseConnectorOfferDecisionLine,
+  squireAccountSwitchConsequence,
 } from './connector-offers.js';
-import { isConnectorOfferCardView } from './phone-guards.js';
+import { isConnectorOfferCardView, readConnectorOfferCardView } from './phone-guards.js';
 import { CONNECTABLE_CONNECTOR_KINDS } from './workbench.js';
 import { formatGrantDecisionLine } from './agent-grants.js';
 
@@ -113,5 +114,15 @@ describe('connector offers (R5)', () => {
     expect(isConnectorOfferCardView({ ...card, addressee: agent })).toBe(false);
     expect(isConnectorOfferCardView({ ...card, consequence: '' })).toBe(false);
     expect(isConnectorOfferCardView({ ...card, helper: undefined })).toBe(false);
+    expect(readConnectorOfferCardView({ ...card, intent: 'switch', provider: 'google' })).toEqual(
+      expect.objectContaining({ intent: 'switch', provider: 'google' }),
+    );
+    expect(readConnectorOfferCardView({ ...card, intent: 'upgrade' })?.intent).toBeUndefined();
+  });
+
+  it('words a switch offer as a fresh Google sign-in that replaces the bound account', () => {
+    expect(squireAccountSwitchConsequence('sign up for Vercel.')).toBe(
+      "You'll sign in to Google again, with the account Trusty Squire should use. The account signed in now is replaced for every task on this machine. Then I can sign up for Vercel",
+    );
   });
 });

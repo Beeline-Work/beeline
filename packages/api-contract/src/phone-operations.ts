@@ -233,6 +233,41 @@ export type PhoneOperationMap = {
   readWalletHistory: { input: ReadWalletHistoryInput; output: WalletHistoryResult };
 };
 
+/**
+ * Operations that only read. The server publishes no Room invalidation after
+ * one: a phone rereads on that signal, so a read that announced itself would
+ * make every open phone read again, its own included, without end. A phone
+ * may also repeat one on a fresh connection when the first attempt stalls.
+ */
+export const PHONE_READ_OPERATIONS = [
+  'readRoomWebhooks',
+  'readWelcomeCards',
+  'readStarPrompt',
+  'listMessageBookmarks',
+  'readNeedsYou',
+  'countNeedsYou',
+  'listRoomSchedules',
+  'listRoomWorkflowRuns',
+  'listWorkflowDefinitions',
+  'readWorkflowDefinition',
+  'readWorkflowRun',
+  'listRoomWorkflows',
+  'resolveInvite',
+  'getAuthCapabilities',
+  'getIdentityRecovery',
+  'getManagedIdentity',
+  'listGitHubRepositories',
+  'getGitHubRepositoryAccess',
+  'readWebPushKey',
+  'readWorkbench',
+  'searchWorkbenchApps',
+  'readGoogleSignIn',
+  'readConnectorInstall',
+  'readConnectionDetail',
+  'readWallet',
+  'readWalletHistory',
+] as const satisfies readonly (keyof PhoneOperationMap)[];
+
 export type WelcomeCardsView = { readonly due: boolean };
 
 export type StarPrompt = {

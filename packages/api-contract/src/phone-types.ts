@@ -566,6 +566,8 @@ export type RoomViewer = {
     readonly send: boolean;
     readonly manage: boolean;
   };
+  /** The viewer silenced this Room's pushes; absent when not, and on older servers. */
+  readonly pushMuted?: true;
 };
 
 export type RoomDirectMessageView = {

@@ -22,14 +22,15 @@ it('shares a read, coalesces pushes during a flight, and detaches after the last
   await act(async () => {
     wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } });
     wire.listener({ monolithLive: { type: 'invalidate', roomId: 'other', reason: 'message' } });
-    wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'poll' } });
+    // Its delta follows; the delta, not this hint, decides.
+    wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message', messageId: 'm', deliveryId: 'd' } });
   });
   await act(async () => releases.shift()!('initial'));
   expect(load).toHaveBeenCalledTimes(1);
   await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } }));
   expect(load).toHaveBeenCalledTimes(2);
   await act(async () => {
-    for (let n = 0; n < 5; n++) wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', message: { cardType: 'corner-workflow-handoff' } } });
+    for (let n = 0; n < 5; n++) wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', message: { presentation: 'card' } } });
   });
   expect(load).toHaveBeenCalledTimes(2);
   await act(async () => releases.shift()!('updated'));
@@ -115,12 +116,13 @@ it('selection switches hide old values and late reads cannot overwrite the new s
   expect(current.data).toBe('new detail');
 });
 
-it('R12i: one delivery reads once, its reconciliation does not read again', async () => {
+it('R12i: one delivery reads at most once, on its delta rather than its hint', async () => {
   const load = vi.fn(async () => 'current');
   function Reader() { useObservedResource('delivery', { load, subscribe: observeRoomResource('room') }); return null; }
   await act(async () => { mount(<Reader />); });
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message', deliveryId: 'd1' } }));
-  await act(async () => wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', reconcilesDelivery: 'd1' } }));
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', reconcilesDelivery: 'd1', message: { presentation: 'card' } } }));
   expect(load).toHaveBeenCalledTimes(2);
 });
 it('R12j: Retry attaches a subscription that failed, then receives pushes', async () => {
@@ -134,4 +136,25 @@ it('R12j: Retry attaches a subscription that failed, then receives pushes', asyn
   const calls = load.mock.calls.length;
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
   expect(load).toHaveBeenCalledTimes(calls + 1);
+});
+
+it('reads again for a workflow line or a change no delta describes, never for prose or tool rows', async () => {
+  const load = vi.fn().mockResolvedValue('runs');
+  function Reader() { useObservedResource<string>('relevance', { load, subscribe: observeRoomResource('room') }); return null; }
+  await act(async () => { mount(<Reader />); });
+  await act(async () => wire.listener({ monolithLive: { type: 'subscribed', roomId: 'room' } }));
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', message: { presentation: 'message' } } });
+    wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', message: { presentation: 'activity' } } });
+    wire.listener({ monolithLive: { type: 'turn-delta', roomId: 'room', turn: { status: 'working' } } });
+    wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message', messageId: 'm', deliveryId: 'd' } });
+  });
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => wire.listener({ monolithLive: { type: 'message-delta', roomId: 'room', message: { presentation: 'system' } } }));
+  expect(load).toHaveBeenCalledTimes(2);
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'delta-fallback:message', reconcilesDelivery: 'd' } }));
+  expect(load).toHaveBeenCalledTimes(3);
+  await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'corner-status' } }));
+  expect(load).toHaveBeenCalledTimes(4);
 });

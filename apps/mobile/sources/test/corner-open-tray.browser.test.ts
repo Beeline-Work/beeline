@@ -140,7 +140,8 @@ it('renders corner-open notices, the offline band, a Corner App failure and tray
           `beelineThemes.${theme}`,
         );
         // The tray cell's count hook reaches the session through its operation.
-        shims['@/auth/monolith-session'] = 'export const monolithSession = {};';
+        shims['@/auth/monolith-session'] =
+          'export const monolithSession = {}; export const MONOLITH_REQUEST_TIMEOUT_MS = 15000;';
         shims['react-native-gesture-handler'] = `import React from 'react';
           export const Swipeable = props => props.children;`;
         shims['@expo/vector-icons'] = 'export const Ionicons = () => null;';

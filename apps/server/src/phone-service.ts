@@ -409,6 +409,7 @@ interface CornerRow extends RoomRow {
 interface TopLevelRoomReadRow {
   room: RoomRow & {
     viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
+    viewer_push_muted: boolean;
     workspace_role: 'owner' | 'admin' | 'member' | 'spectator';
     read_cursor: RoomView['viewer']['readCursor'] | null;
   };
@@ -862,6 +863,31 @@ function roomSchedule(row: RoomScheduleRow): RoomScheduleView {
       ? { corner: { id: row.room_id, name: row.surface_name } }
       : {}),
   };
+}
+
+/**
+ * The author has read everything up to their own message, so their read mark
+ * moves with the write (forward only, as `PhoneService.markRead` moves it):
+ * the phone never spends a second request after every send. `updated_at`
+ * stays where it was (the epoch on a new mark): it means "read here just now",
+ * and the push gate holds pushes for 30 s after it. A reply sent from a
+ * notification is not someone reading the Room, and a sender still in the
+ * Room is already held by its view.
+ */
+async function advanceAuthorReadMark(
+  database: Pick<SqlDatabase, 'query'>,
+  roomId: string,
+  authorId: string,
+  messageIdValue: string,
+): Promise<void> {
+  await database.query(
+    `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
+    SELECT $1,$2,message.created_at,$3,'epoch'::timestamptz FROM messages message
+    WHERE message.id=$3 AND message.room_id=$1
+    ON CONFLICT(room_id,identity_id) DO UPDATE SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id
+    WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>(room_read_marks.message_created_at,room_read_marks.message_id)`,
+    [roomId, authorId, messageIdValue],
+  );
 }
 
 export class PhoneService {
@@ -1932,6 +1958,7 @@ export class PhoneService {
             !room.direct_participants?.includes(SYSTEM_IDENTITY_ID),
           manage: room.workspace_role === 'owner' || room.workspace_role === 'admin',
         },
+        ...(room.viewer_push_muted ? { pushMuted: true } : {}),
       },
       ...(room.direct_participants?.length === 2
         ? { directMessage: { participants: room.direct_participants as [string, string] } }
@@ -2431,11 +2458,13 @@ export class PhoneService {
       await this.database.query<
         RoomRow & {
           viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
+          viewer_push_muted: boolean;
           workspace_role: 'owner' | 'admin' | 'member' | 'spectator';
           read_cursor: RoomView['viewer']['readCursor'] | null;
         }
       >(
-        `SELECT room.*,membership.role viewer_role,workspace_member.role workspace_role,
+        `SELECT room.*,membership.role viewer_role,membership.push_muted viewer_push_muted,
+           workspace_member.role workspace_role,
            NULL::jsonb read_cursor
          FROM rooms room
          JOIN memberships membership ON membership.room_id=room.id
@@ -2467,7 +2496,7 @@ export class PhoneService {
     const row = (
       await this.database.query<TopLevelRoomReadRow>(
         `WITH authorized_room AS (
-           SELECT room.*,membership.role viewer_role,
+           SELECT room.*,membership.role viewer_role,membership.push_muted viewer_push_muted,
              workspace_member.role workspace_role,
              (workspace_member.role IN ('owner','admin') AND NOT EXISTS (
                SELECT 1 FROM memberships other_room
@@ -4313,6 +4342,7 @@ export class PhoneService {
           activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
         };
       }
+      await advanceAuthorReadMark(database, input.roomId, author, id);
       const lifecycleCommand = await routeHumanMessage(database, id);
       if (!lifecycleCommand)
         await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
@@ -4436,6 +4466,7 @@ export class PhoneService {
           activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
         };
       }
+      await advanceAuthorReadMark(database, input.roomId, author, id);
       const lifecycleCommand = await routeHumanMessage(database, id);
       if (!lifecycleCommand)
         await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);

@@ -19,6 +19,15 @@ const NEVER_EXPIRES = [
   .map((type) => `'${type}'`)
   .join(',');
 
+/** `uuid::text` spells a uuid this way, so a card id matching it compares as the original text did. */
+const CANONICAL_UUID = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+
+/** The person commissioned corner `finished`, or opened it. */
+function commissionedBySql(finished: string, personIdExpr: string): string {
+  return `(${finished}.commissioned_by=${personIdExpr} OR EXISTS (
+    SELECT 1 FROM rooms opened WHERE opened.id=${finished}.corner_id AND opened.created_by=${personIdExpr}))`;
+}
+
 /**
  * Whether message `m` is addressed to one known person: it replies to them,
  * tags them, is an open question card meant for them, or is the final state
@@ -60,32 +69,36 @@ export function addressedToPersonSql(
     -- its worker posted a deliverable (files on a reply in a corner
     -- with no pull request), its checks are failing with nobody left
     -- to fix them, or it stopped at the review handback limit.
-    OR (${includeCommissioned} AND EXISTS (
-      SELECT 1 FROM corner_facts finished
-      WHERE finished.corner_id IN (${m}.room_id,
-          CASE WHEN ${m}.card->>'cornerId' ~
-            '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-            THEN (${m}.card->>'cornerId')::uuid END)
-        AND (finished.commissioned_by=${personIdExpr} OR EXISTS (
-        SELECT 1 FROM rooms opened WHERE opened.id=finished.corner_id AND opened.created_by=${personIdExpr}))
-        AND (
-          (${m}.card_type='daemon-fact' AND ${m}.card->>'type'='corner-complete'
-            AND finished.corner_id::text=${m}.card->>'cornerId')
-          OR (${m}.presentation='message' AND finished.corner_id=${m}.room_id
-            AND ${m}.author_id=finished.owner_agent_id
-            -- A corner without a pull request path: its parent Room has no repository.
-            AND NOT EXISTS (
-              SELECT 1 FROM rooms finished_corner
-              JOIN rooms finished_parent ON finished_parent.id=finished_corner.parent_id
-              WHERE finished_corner.id=finished.corner_id
-                AND (finished_parent.repository_resolution='repository'
-                  OR finished_parent.repository_key IS NOT NULL))
-            AND jsonb_typeof(${m}.attachments)='array'
-            AND jsonb_array_length(${m}.attachments)>0)
-          OR (${m}.card_type IN ('${CORNER_CHECKS_BLOCKED_CARD_TYPE}',
+    -- Each probe reaches corner_facts by its primary key. One OR across
+    -- both keys hid corner_id from the index, and the push loop then
+    -- scanned the whole table once per candidate message.
+    OR (${includeCommissioned} AND (
+      (${m}.card_type='daemon-fact' AND ${m}.card->>'type'='corner-complete' AND EXISTS (
+        SELECT 1 FROM corner_facts finished
+        WHERE finished.corner_id=CASE WHEN ${m}.card->>'cornerId' ~ '${CANONICAL_UUID}'
+            THEN (${m}.card->>'cornerId')::uuid END
+          AND ${commissionedBySql('finished', personIdExpr)}
+      ))
+      OR ((${m}.presentation='message' OR ${m}.card_type IN ('${CORNER_CHECKS_BLOCKED_CARD_TYPE}',
+          '${CORNER_REVIEW_DEADLOCK_CARD_TYPE}')) AND EXISTS (
+        SELECT 1 FROM corner_facts finished
+        WHERE finished.corner_id=${m}.room_id
+          AND ${commissionedBySql('finished', personIdExpr)}
+          AND (
+            (${m}.presentation='message' AND ${m}.author_id=finished.owner_agent_id
+              -- A corner without a pull request path: its parent Room has no repository.
+              AND NOT EXISTS (
+                SELECT 1 FROM rooms finished_corner
+                JOIN rooms finished_parent ON finished_parent.id=finished_corner.parent_id
+                WHERE finished_corner.id=finished.corner_id
+                  AND (finished_parent.repository_resolution='repository'
+                    OR finished_parent.repository_key IS NOT NULL))
+              AND jsonb_typeof(${m}.attachments)='array'
+              AND jsonb_array_length(${m}.attachments)>0)
+            OR ${m}.card_type IN ('${CORNER_CHECKS_BLOCKED_CARD_TYPE}',
               '${CORNER_REVIEW_DEADLOCK_CARD_TYPE}')
-            AND finished.corner_id=${m}.room_id)
-        )
+          )
+      ))
     ))
   )`;
 }

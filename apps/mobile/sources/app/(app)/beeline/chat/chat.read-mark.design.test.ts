@@ -7,10 +7,11 @@ import { describe, expect, it } from 'vitest';
  * sitting in must never report its own messages back as unread, and must
  * never report as READ what the viewer has not actually seen:
  *
- * - sending a message advances the read mark to that message immediately
- *   (optimistically, before the next scheduled fetch) — otherwise leaving
- *   the Room right after sending leaves a stale mark that golds the deck row
- *   for a message the viewer wrote (captain report 2026-09-02);
+ * - sending a message advances the read mark to that message in the same
+ *   server write (`advanceAuthorReadMark`, apps/server/src/phone-service.ts;
+ *   read-cursor.test.ts) — otherwise leaving the Room right after sending
+ *   leaves a stale mark that golds the deck row for a message the viewer
+ *   wrote (captain report 2026-09-02). The phone spends no second request;
  * - every OTHER advance comes from the viewport. A fetched Room view says
  *   what exists, not what was seen; marking its tail read cleared the badge
  *   for messages sitting far below the fold, so the session no longer does
@@ -22,14 +23,16 @@ const chatSource = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8
 const sessionSource = readFileSync(path.join(__dirname, 'useRoomSurfaceSession.ts'), 'utf8');
 
 describe('the chat surface read-mark contract', () => {
-  it('advances the read mark to the sent message immediately after publish', () => {
-    // The send path marks read BEFORE the refresh signal, so the mark can
-    // never lag behind a message the viewer just wrote.
+  it('leaves the sent message’s read mark to the send itself, and rereads no Room for it', () => {
+    // The server moves the author's mark in the send's own write, so the
+    // phone neither posts a second mark nor reads the whole Room back.
     const sendBlock = chatSource.slice(
       chatSource.indexOf('await sendTransport.publishPreparedMessage(preparedEvent);'),
-      chatSource.indexOf('refreshSignal.signal();'),
+      chatSource.indexOf('scheduleOutboxConfirmation(preparedEvent.id);'),
     );
-    expect(sendBlock).toContain('markRead(decodedId, preparedEvent.id)');
+    expect(sendBlock.length).toBeGreaterThan(0);
+    expect(sendBlock).not.toContain('markRead(');
+    expect(sendBlock).not.toContain('refreshSignal.signal()');
   });
 
   it('advances the read mark from the viewport, not from the applied view', () => {

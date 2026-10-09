@@ -62,7 +62,6 @@ function stubSockets(): TestSocket[] {
 function createConnection(authorization = vi.fn().mockResolvedValue('phone-session')) {
   const identityListeners = new Set<() => void>();
   const foregroundListeners = new Set<() => void>();
-  const app = { background: false };
   const connection = new LiveConnection({
     authorization,
     liveUrl: () => 'wss://server.example/v1/phone/live',
@@ -74,17 +73,14 @@ function createConnection(authorization = vi.fn().mockResolvedValue('phone-sessi
       foregroundListeners.add(listener);
       return () => foregroundListeners.delete(listener);
     },
-    isBackground: () => app.background,
   });
   return {
     connection,
     authorization,
-    app,
     changeIdentity: () => {
       for (const listener of identityListeners) listener();
     },
     foreground: () => {
-      app.background = false;
       for (const listener of foregroundListeners) listener();
     },
   };
@@ -401,7 +397,7 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('keeps a no-room registration and ticks it with an empty room id', async () => {
+  it('covers a no-room registration once per reopened socket and never on a timer', async () => {
     vi.useFakeTimers();
     const { connection } = createConnection();
     const received: unknown[] = [];
@@ -410,16 +406,20 @@ describe('LiveConnection', () => {
     expect(sockets).toHaveLength(1);
     sockets[0]!.open();
     expect(sockets[0]!.sent).toEqual([]);
+    // Its own first read covers the first socket.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(received).toEqual([]);
 
-    await vi.advanceTimersByTimeAsync(30_000);
+    sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    sockets[1]!.open();
     expect(received).toEqual([
-      { monolithLive: { type: 'invalidate', roomId: '', reason: 'poll' } },
+      { monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' } },
     ]);
 
     connection.dispose();
   });
-
-  it('does not poll Room-bearing registrations', async () => {
+  it('sends and delivers nothing while an open Room sits idle', async () => {
     vi.useFakeTimers();
     const { connection } = createConnection();
     const first: unknown[] = [];
@@ -428,36 +428,16 @@ describe('LiveConnection', () => {
     await connection.register([{ '#h': [ROOM_A] }], (event) => first.push(event));
     await connection.register([{ '#h': [ROOM_B] }], (event) => second.push(event));
     sockets[0]!.open();
+    const sent = [...sockets[0]!.sent];
 
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
     expect(first).toEqual([]);
     expect(second).toEqual([]);
+    expect(sockets[0]!.sent).toEqual(sent);
+    expect(sockets).toHaveLength(1);
 
     connection.dispose();
   });
-
-  it('keeps Room-bearing registrations poll-free across multiple intervals', async () => {
-    vi.useFakeTimers();
-    const { connection } = createConnection();
-    const early: unknown[] = [];
-    const late: unknown[] = [];
-
-    await connection.register([{ '#h': [ROOM_A] }], (event) => early.push(event));
-    sockets[0]!.open();
-    await vi.advanceTimersByTimeAsync(20_000);
-    await connection.register([{ '#h': [ROOM_B] }], (event) => late.push(event));
-
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(early).toHaveLength(0);
-    expect(late).toEqual([]);
-
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(early).toEqual([]);
-    expect(late).toEqual([]);
-
-    connection.dispose();
-  });
-
   it('unsubscribes when the last holder leaves and keeps the socket open', async () => {
     const { connection } = createConnection();
     const stopFirst = await connection.register([{ '#h': [ROOM_A] }], () => undefined);
@@ -604,7 +584,7 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('Reproduction R1: replaces a foreground socket that went silent without a close', async () => {
+  it('Reproduction R1: replaces a socket that never delivered a message a push named', async () => {
     vi.useFakeTimers();
     const { connection } = createConnection();
     const room = vi.fn();
@@ -613,14 +593,12 @@ describe('LiveConnection', () => {
     sockets[0]!.open();
     sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
 
-    await vi.advanceTimersByTimeAsync(20_000);
-    expect(sockets[0]!.sent).toContain(JSON.stringify({ type: 'ping' }));
-    sockets[0]!.emit({ type: 'pong' });
-
-    // The network path dies: no frame and no close event reach the app.
-    await vi.advanceTimersByTimeAsync(20_000);
+    // The network path dies: no frame and no close event reach the app, and
+    // the next message arrives only as a push.
+    connection.notePushedMessage(ROOM_A, 'm'.repeat(64));
+    await vi.advanceTimersByTimeAsync(4_999);
     expect(sockets).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(1);
     expect(sockets[0]!.closed).toBe(true);
     expect(sockets).toHaveLength(2);
 
@@ -633,38 +611,69 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('keeps a socket whose server never answers a ping', async () => {
+  it('keeps a socket that delivered the message a push named, before or after the push', async () => {
     vi.useFakeTimers();
     const { connection } = createConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
     await vi.advanceTimersByTimeAsync(0);
     sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    const delta = (id: string) => ({
+      type: 'message-delta',
+      roomId: ROOM_A,
+      message: { id, text: 'hi', createdAt: 1, author: { pubkey: 'a'.repeat(64), kind: 'agent' } },
+    });
 
-    await vi.advanceTimersByTimeAsync(120_000);
+    sockets[0]!.emit(delta('1'.repeat(64)));
+    connection.notePushedMessage(ROOM_A, '1'.repeat(64));
+    connection.notePushedMessage(ROOM_A, '2'.repeat(64));
+    await vi.advanceTimersByTimeAsync(1_000);
+    sockets[0]!.emit({ type: 'invalidate', roomId: ROOM_A, reason: 'message', messageId: '2'.repeat(64) });
+    // A push for a Room this socket does not carry judges nothing.
+    connection.notePushedMessage(ROOM_B, '3'.repeat(64));
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(sockets).toHaveLength(1);
     expect(sockets[0]!.closed).toBe(false);
 
     connection.dispose();
   });
-
-  it('pings nothing while the app is in the background', async () => {
+  it('tells the server which Rooms are on screen, once each way, and again on a new socket', async () => {
     vi.useFakeTimers();
-    const { connection, app } = createConnection();
+    const { connection } = createConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
     await vi.advanceTimersByTimeAsync(0);
+    // A Room comes on screen before the socket opens: the open carries it.
+    const releaseA = connection.view(ROOM_A);
     sockets[0]!.open();
-    await vi.advanceTimersByTimeAsync(20_000);
-    sockets[0]!.emit({ type: 'pong' });
+    const viewing = (roomId: string, on: boolean) =>
+      JSON.stringify({ type: 'viewing', roomId, viewing: on });
+    expect(sockets[0]!.sent).toContain(viewing(ROOM_A, true));
 
-    app.background = true;
-    const sent = sockets[0]!.sent.length;
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(sockets[0]!.sent).toHaveLength(sent);
-    expect(sockets).toHaveLength(1);
+    // A second holder of the same Room says nothing new; the last one leaving does.
+    const releaseAgain = connection.view(ROOM_A);
+    const releaseB = connection.view(ROOM_B);
+    releaseAgain();
+    releaseB();
+    releaseB();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(sockets[0]!.sent.filter((frame) => frame.includes('"viewing"'))).toEqual([
+      viewing(ROOM_A, true),
+      viewing(ROOM_B, true),
+      viewing(ROOM_B, false),
+    ]);
+
+    // The server ended the old socket's views when it closed.
+    sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    sockets[1]!.open();
+    expect(sockets[1]!.sent.filter((frame) => frame.includes('"viewing"'))).toEqual([
+      viewing(ROOM_A, true),
+    ]);
+    releaseA();
+    expect(sockets[1]!.sent).toContain(viewing(ROOM_A, false));
 
     connection.dispose();
   });
-
   it('skips the reconnect backoff on foreground', async () => {
     vi.useFakeTimers();
     const { connection, foreground } = createConnection();
@@ -702,25 +711,26 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('polls nothing while backgrounded and runs the overdue poll on foreground', async () => {
+  it('covers a no-room registration when the foreground replaces the socket', async () => {
     vi.useFakeTimers();
-    const { connection, app, foreground } = createConnection();
+    const { connection, foreground } = createConnection();
     const received: unknown[] = [];
     await connection.register([], (event) => received.push(event));
     sockets[0]!.open();
 
-    app.background = true;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(received).toEqual([]);
 
     foreground();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(received).toEqual([]);
+    sockets[1]!.open();
     expect(received).toEqual([
-      { monolithLive: { type: 'invalidate', roomId: '', reason: 'poll' } },
+      { monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' } },
     ]);
 
     connection.dispose();
   });
-
   it('resets reconnect backoff after a successful open', async () => {
     vi.useFakeTimers();
     const authorization = vi.fn();

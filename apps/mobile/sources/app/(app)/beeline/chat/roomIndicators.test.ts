@@ -119,10 +119,7 @@ describe('the turn indicator is the Room’s only line above the composer', () =
     // turn's WORKING receipt lights `thinking` on its own.
     const at = chatSource.indexOf('await sendTransport.publishPreparedMessage(preparedEvent);');
     expect(at).toBeGreaterThan(0);
-    const settled = chatSource.indexOf(
-      'void roomClient?.markRead(decodedId, preparedEvent.id)',
-      at,
-    );
+    const settled = chatSource.indexOf('scheduleOutboxConfirmation(preparedEvent.id);', at);
     expect(settled).toBeGreaterThan(at);
     const bridge = chatSource.slice(at, settled);
     expect(bridge).toContain('setPendingAck((current) =>');

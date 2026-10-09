@@ -896,6 +896,13 @@ describe('Room deck live path', () => {
       for (const listener of deck.appStateListeners) listener('active');
     });
     await quiet();
+    // Coming back reads nothing by itself: the replaced socket's resubscribe
+    // is the one covering read.
+    expect(deck.chatsReads).toBe(readsAtRest);
+    await act(async () =>
+      roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } }),
+    );
+    await quiet();
     expect(deck.chatsReads).toBe(readsAtRest + 1);
 
     await quiet();
@@ -926,37 +933,44 @@ describe('Room deck live path', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('reconnects the socket when a read finds a message the socket never announced', async () => {
+  it('reads nothing when the deck comes back with nothing it skipped', async () => {
     const renderer = await mountDeck();
-    expect(deck.reconnects).toBe(0);
-
-    deck.chatsResponse = chatList({ id: 'm3', text: 'sent while we were deaf', createdAt: 30 });
+    const readsAtRest = deck.chatsReads;
     await act(async () => deck.blur?.());
     await act(async () => {
       deck.blur = (deck.focusEffect?.() as (() => void) | undefined) ?? null;
     });
     await quiet();
-
-    expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('sent while we were deaf');
-    expect(deck.reconnects).toBe(1);
+    expect(deck.chatsReads).toBe(readsAtRest);
     await act(async () => renderer.unmount());
   });
 
-  it('reconnects the socket when an unannounced message landed in the same second', async () => {
+  it.each([
+    ['a message the socket never announced', 30],
+    ['an unannounced message that landed in the same second', 10],
+  ])('reconnects the socket when a read finds %s', async (_case, createdAt) => {
+    deck.chatsResponse = listOf([room('room-a', 10), room('room-b', 10)]);
     const renderer = await mountDeck();
+    expect(deck.reconnects).toBe(0);
 
-    deck.chatsResponse = chatList({
-      id: 'm2',
-      text: 'same second, never announced',
-      createdAt: 10,
-    });
-    await act(async () => deck.blur?.());
-    await act(async () => {
-      deck.blur = (deck.focusEffect?.() as (() => void) | undefined) ?? null;
-    });
+    // room-a gets a message the socket never mentions; a change it does
+    // announce in room-b is what reads the list next.
+    deck.chatsResponse = listOf([
+      room('room-a', 10, {
+        latestMessage: { id: 'm3', text: 'sent while we were deaf', createdAt, author: agent },
+      }),
+      room('room-b', 10),
+    ]);
+    await act(async () =>
+      roomWatch().emit({
+        monolithLive: { type: 'invalidate', roomId: 'room-b', reason: 'phone-write' },
+      }),
+    );
     await quiet();
 
-    expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('same second, never announced');
+    expect(
+      paintedRows(renderer).find((row) => row.room.id === 'room-a')!.latestMessage?.text,
+    ).toBe('sent while we were deaf');
     expect(deck.reconnects).toBe(1);
     await act(async () => renderer.unmount());
   });

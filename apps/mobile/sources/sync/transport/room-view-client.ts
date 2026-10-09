@@ -37,8 +37,31 @@ import {
   MONOLITH_REQUEST_TIMEOUT_MS,
 } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { liveFrameEpoch } from './live-frame-epoch';
 
 export { RoomViewHttpError };
+
+/**
+ * Identical GETs in flight at once share one request: every screen mounting
+ * on the same open asks for the same Workspace, Room list or Room. A caller
+ * that asks after the live socket delivered anything new starts its own read,
+ * because the shared one may predate the change that frame announced.
+ */
+const readsInFlight = new Map<string, { promise: Promise<unknown>; epoch: number }>();
+
+function shareRead<T>(key: string, start: () => Promise<T>): Promise<T> {
+  const epoch = liveFrameEpoch();
+  const shared = readsInFlight.get(key);
+  if (shared && shared.epoch === epoch) return shared.promise as Promise<T>;
+  const promise = start();
+  const entry = { promise, epoch };
+  readsInFlight.set(key, entry);
+  const release = () => {
+    if (readsInFlight.get(key) === entry) readsInFlight.delete(key);
+  };
+  promise.then(release, release);
+  return promise;
+}
 
 /** A bounded deadline fired before the server answered the phone's read. */
 export function isRoomViewTimeoutError(error: unknown): boolean {
@@ -50,6 +73,16 @@ export function isRoomViewTimeoutError(error: unknown): boolean {
 }
 
 type Guard<T> = SurfaceReader<T>;
+
+/**
+ * Room and history reads ask the server to leave out what the reader
+ * rebuilds (`readScopedMessage`, packages/api-contract/src/phone-guards.ts);
+ * an older server ignores the header and answers in full. Only the native
+ * phone asks: in a browser the header costs a CORS preflight, and a server
+ * rolled back past its allow-list would refuse the read outright.
+ */
+const COMPACT_ROOM_READ: Record<string, string> | undefined =
+  typeof document === 'undefined' ? { 'x-beeline-view': 'compact' } : undefined;
 
 class MonolithRoomViewClient {
   private readonly baseUrl = getBuzzRuntimeConfig().monolithUrl;
@@ -86,7 +119,7 @@ class MonolithRoomViewClient {
     return this.get(`/v1/phone/workspaces/${encodeURIComponent(id)}/chats`, readChatListView);
   }
   room(id: string): Promise<RoomView> {
-    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}`, readRoomView);
+    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}`, readRoomView, undefined, COMPACT_ROOM_READ);
   }
   corners(
     id: string,
@@ -105,18 +138,24 @@ class MonolithRoomViewClient {
     return this.get(
       `/v1/phone/rooms/${encodeURIComponent(id)}/history${query}`,
       readRoomHistoryView,
+      undefined,
+      COMPACT_ROOM_READ,
     );
   }
   historyAfter(id: string, messageId: string): Promise<RoomHistoryView> {
     return this.get(
       `/v1/phone/rooms/${encodeURIComponent(id)}/history?after=${encodeURIComponent(messageId)}`,
       readRoomHistoryView,
+      undefined,
+      COMPACT_ROOM_READ,
     );
   }
   historyAround(id: string, messageId: string): Promise<RoomHistoryView> {
     return this.get(
       `/v1/phone/rooms/${encodeURIComponent(id)}/history?around=${encodeURIComponent(messageId)}`,
       readRoomHistoryView,
+      undefined,
+      COMPACT_ROOM_READ,
     );
   }
   outline(id: string, timeZone: string): Promise<RoomHistoryOutline> {
@@ -159,8 +198,15 @@ class MonolithRoomViewClient {
     }).then(() => undefined);
   }
 
-  private get<T>(path: string, guard: Guard<T>, signal?: AbortSignal): Promise<T> {
-    return this.checked(path, 'GET', guard, undefined, signal);
+  private get<T>(
+    path: string,
+    guard: Guard<T>,
+    signal?: AbortSignal,
+    headers?: Record<string, string>,
+  ): Promise<T> {
+    // A read its caller can cancel (search) is never shared.
+    if (signal) return this.checked(path, 'GET', guard, undefined, signal);
+    return shareRead(path, () => this.checked(path, 'GET', guard, undefined, undefined, headers));
   }
   private operation<T>(name: string, input: unknown, guard: Guard<T>): Promise<T> {
     return this.checked(`/v1/phone/operations/${name}`, 'POST', guard, input);
@@ -171,6 +217,7 @@ class MonolithRoomViewClient {
     guard: Guard<T>,
     body?: unknown,
     signal?: AbortSignal,
+    headers?: Record<string, string>,
   ): Promise<T> {
     // The session's deadline ends at the response headers. A body that
     // stalls after them would leave the read pending forever, so one deadline
@@ -185,13 +232,18 @@ class MonolithRoomViewClient {
     signal?.addEventListener('abort', forwardAbort);
     if (signal?.aborted) controller.abort();
     try {
-      const response = await this.request(path, method, body, controller.signal);
+      const response = await this.request(path, method, body, controller.signal, headers);
       const value = await untilAborted(response.json() as Promise<unknown>, controller.signal);
       const projected = guard(value);
       if (projected === null) throw new RoomViewHttpError(502, 'invalid_surface_response');
       return projected;
     } catch (error) {
-      if (timedOut) throw new RoomViewHttpError(0, 'timeout');
+      if (timedOut) {
+        // The answer stalled after its headers: the connection under it is
+        // presumed dead, so the next request goes elsewhere.
+        monolithSession.noteStalled(`${this.baseUrl}${path}`);
+        throw new RoomViewHttpError(0, 'timeout');
+      }
       throw error;
     } finally {
       clearTimeout(timer);
@@ -203,6 +255,7 @@ class MonolithRoomViewClient {
     method: 'GET' | 'POST',
     body?: unknown,
     signal?: AbortSignal,
+    headers?: Record<string, string>,
   ): Promise<Response> {
     // The phone API carries room/workspace reads and small writes only; media
     // uploads go straight through the session and stay unbounded.
@@ -213,10 +266,17 @@ class MonolithRoomViewClient {
           method,
           ...(signal ? { signal } : {}),
           ...(body === undefined
-            ? {}
+            ? headers
+              ? { headers }
+              : {}
             : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
         },
-        { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS },
+        // Reads, read marks and invite lookups repeat safely on a fresh
+        // connection; claiming a pairing code does not.
+        {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+          idempotent: !path.endsWith('/operations/claimAgentPairing'),
+        },
       )
       .catch((error: unknown) => {
         if (error instanceof MonolithRequestTimeoutError) throw new RoomViewHttpError(0, 'timeout');

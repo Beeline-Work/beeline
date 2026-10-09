@@ -1,6 +1,7 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import type { RoomViewMessage } from '@beeline/buzz-client';
 import type { ConnectorInstallState } from './workbench';
 
 type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null; installMissing?: boolean; successVersion: number };
@@ -148,22 +149,35 @@ export function useObservedResource<T>(key: string | undefined, options: Options
   return { ...snapshot, retry: resource?.retry ?? (() => Promise.resolve()) };
 }
 
-/** Room pushes include hidden workflow/lifecycle cards; poll fallbacks do not invalidate reads. */
-export function observeRoomResource(roomId: string) {
+/** Workflow runs, gates and their lifecycle move only through system lines and cards. */
+export function isSystemOrCardMessage(message: RoomViewMessage): boolean {
+  return message.presentation === 'system' || message.presentation === 'card';
+}
+
+/**
+ * Re-read a Room-derived resource when the Room changes in a way it reads:
+ * a committed message `changes` accepts, a change no delta describes, or a
+ * socket that reconnected and may have missed either. Prose, tool rows,
+ * turn progress and an invalidation whose delta follows read nothing.
+ */
+export function observeRoomResource(
+  roomId: string,
+  changes: (message: RoomViewMessage) => boolean = isSystemOrCardMessage,
+) {
   return (invalidate: () => void, reconnect: () => void) => {
     let subscribed = false;
     return sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
       if (!('monolithLive' in event)) return;
       const live = event.monolithLive;
-      if (!('roomId' in live) || live.roomId !== roomId || ('reconcilesDelivery' in live && live.reconcilesDelivery)) return;
+      if (!('roomId' in live) || live.roomId !== roomId) return;
       if (live.type === 'subscribed') {
         if (subscribed) reconnect();
         subscribed = true;
-      } else if (
-        live.type === 'message-delta' ||
-        (live.type === 'invalidate' && live.reason !== 'poll')
-      )
+      } else if (live.type === 'message-delta') {
+        if (changes(live.message)) invalidate();
+      } else if (live.type === 'invalidate' && !live.deliveryId) {
         invalidate();
+      }
     });
   };
 }

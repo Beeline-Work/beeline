@@ -16,9 +16,11 @@ vi.mock('@/buzz/runtime-config', () => ({
 
 import {
   MONOLITH_REQUEST_TIMEOUT_MS,
+  MONOLITH_STALL_PROBE_MS,
   MonolithRequestTimeoutError,
   MonolithSession,
   MonolithSessionRequiredError,
+  monolithOrigins,
 } from './monolith-session';
 
 const tokens = (generation: number) => ({
@@ -339,5 +341,138 @@ describe('monolith phone session', () => {
     expect(secure.has('buzzy.monolith.refresh.v1')).toBe(false);
     await expect(session.authorization()).rejects.toBeInstanceOf(MonolithSessionRequiredError);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  describe('a connection that goes silent', () => {
+    const PRIMARY = 'https://server.example';
+    const ALTERNATE = 'https://alternate.example';
+    /** The primary's pooled connection is dead: nothing on it ever answers. */
+    function deadPrimary() {
+      const seen: string[] = [];
+      const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const url = String(input);
+        seen.push(url);
+        if (url.endsWith('/v1/auth/github/exchange'))
+          return Promise.resolve(new Response(JSON.stringify(tokens(1)), { status: 200 }));
+        if (url.startsWith(PRIMARY))
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            );
+          });
+        return Promise.resolve(new Response(JSON.stringify({ ok: url }), { status: 200 }));
+      });
+      const session = new MonolithSession(PRIMARY, fetcher as typeof fetch, undefined, [
+        PRIMARY,
+        ALTERNATE,
+      ]);
+      return { session, seen };
+    }
+
+    it('names a fresh-connection origin only for the production server', () => {
+      expect(monolithOrigins('https://server.usebeeline.app')).toEqual([
+        'https://server.usebeeline.app',
+        'https://beeline-server.fly.dev',
+      ]);
+      expect(monolithOrigins('http://127.0.0.1:8080')).toEqual(['http://127.0.0.1:8080']);
+    });
+
+    it('answers a stalled read from the alternate origin, and sends later reads there first', async () => {
+      const { session, seen } = deadPrimary();
+      await session.exchangeGitHubTicket('ticket');
+      vi.useFakeTimers();
+      try {
+        const read = session.fetch(`${PRIMARY}/v1/phone/rooms/r`, {}, {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+          idempotent: true,
+        });
+        await vi.advanceTimersByTimeAsync(MONOLITH_STALL_PROBE_MS - 1);
+        expect(seen.filter((url) => url.startsWith(ALTERNATE))).toEqual([]);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect((await read).json()).resolves.toEqual({ ok: `${ALTERNATE}/v1/phone/rooms/r` });
+
+        // The dead connection dooms nothing after it: the next read starts
+        // on the fresh origin and answers at once.
+        seen.length = 0;
+        const next = await session.fetch(`${PRIMARY}/v1/phone/rooms/r/corners`, {}, {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+          idempotent: true,
+        });
+        expect(next.status).toBe(200);
+        expect(seen).toEqual([`${ALTERNATE}/v1/phone/rooms/r/corners`]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('never repeats a write that is not keyed, but moves the next request off the dead origin', async () => {
+      const { session, seen } = deadPrimary();
+      await session.exchangeGitHubTicket('ticket');
+      vi.useFakeTimers();
+      try {
+        const write = session.fetch(`${PRIMARY}/v1/phone/operations/updateRoom`, { method: 'POST' }, {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+        });
+        const failed = expect(write).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
+        await vi.advanceTimersByTimeAsync(MONOLITH_REQUEST_TIMEOUT_MS);
+        await failed;
+        expect(seen.filter((url) => url.startsWith(ALTERNATE))).toEqual([]);
+
+        const next = await session.fetch(`${PRIMARY}/v1/phone/operations/updateRoom`, { method: 'POST' }, {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+        });
+        expect(next.status).toBe(200);
+        expect(seen.at(-1)).toBe(`${ALTERNATE}/v1/phone/operations/updateRoom`);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('repeats nothing when the first answer comes before the probe', async () => {
+      const seen: string[] = [];
+      const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+        seen.push(String(input));
+        return new Response(JSON.stringify(tokens(1)), { status: 200 });
+      });
+      const session = new MonolithSession(PRIMARY, fetcher as typeof fetch, undefined, [
+        PRIMARY,
+        ALTERNATE,
+      ]);
+      await session.exchangeGitHubTicket('ticket');
+      vi.useFakeTimers();
+      try {
+        await session.fetch(`${PRIMARY}/v1/phone/rooms/r`, {}, {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+          idempotent: true,
+        });
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(seen.filter((url) => url.startsWith(ALTERNATE))).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('tries the alternate at once when the first origin fails outright', async () => {
+      const seen: string[] = [];
+      const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        seen.push(url);
+        if (url.endsWith('/v1/auth/github/exchange'))
+          return new Response(JSON.stringify(tokens(1)), { status: 200 });
+        if (url.startsWith(PRIMARY)) throw new TypeError('Network request failed');
+        return new Response('{}', { status: 200 });
+      });
+      const session = new MonolithSession(PRIMARY, fetcher as typeof fetch, undefined, [
+        PRIMARY,
+        ALTERNATE,
+      ]);
+      await session.exchangeGitHubTicket('ticket');
+      const response = await session.fetch(`${PRIMARY}/v1/phone/rooms/r`, {}, {
+        timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+        idempotent: true,
+      });
+      expect(response.status).toBe(200);
+      expect(seen.slice(-2)).toEqual([`${PRIMARY}/v1/phone/rooms/r`, `${ALTERNATE}/v1/phone/rooms/r`]);
+    });
   });
 });

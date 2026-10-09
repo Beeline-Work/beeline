@@ -161,6 +161,23 @@ describe('the read cursor over the live phone surface', () => {
     expect((await cursor())?.unreadCount).toBe(0);
   });
 
+  it('moves the author’s own read mark with their send, with no second request', async () => {
+    expect((await cursor())?.unreadCount).toBe(4);
+    const sent = '5e'.padEnd(64, 'e');
+    const response = await request('/v1/phone/operations/sendRoomMessage', 'POST', {
+      roomId: ROOM,
+      messageId: sent,
+      text: 'on it',
+      mentions: [],
+      attachments: [],
+    });
+    expect(response.status).toBe(200);
+    expect(await cursor()).toMatchObject({ messageId: sent, unreadCount: 0 });
+    expect((await deckRow()).unread).toBe(false);
+    // Another person's read state is untouched by it.
+    expect((await cursor(otherToken))?.messageId).toBeNull();
+  });
+
   it('serves the count beside the boundary, and takes it back on mark-unread', async () => {
     expect(await cursor()).toEqual({
       messageId: null,

@@ -132,7 +132,7 @@ describe('relay invite web front', () => {
       origin: 'https://evil.test', pathname: '/oauth/tiktok/callback/', hash: '#https://evil.test', replace };
     Function('location', script!)(location);
     expect(replace).toHaveBeenCalledTimes(1);
-    expect(replace).toHaveBeenCalledWith(`https://backend.composio.dev/api/v3/toolkits/auth/callback${carried}`);
+    expect(replace).toHaveBeenCalledWith(`https://backend.composio.dev/api/v1/auth-apps/add${carried}`);
   });
 
   it('redirects the TikTok OAuth callback to the fixed Composio callback with the query unchanged', () => {
@@ -149,7 +149,7 @@ describe('relay invite web front', () => {
       'add_header Cache-Control "no-store" always;',
       'add_header Referrer-Policy "no-referrer" always;',
       'add_header X-Content-Type-Options "nosniff" always;',
-      'return 302 https://backend.composio.dev/api/v3/toolkits/auth/callback$is_args$args;',
+      'return 302 https://backend.composio.dev/api/v1/auth-apps/add$is_args$args;',
     ]);
   });
 

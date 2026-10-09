@@ -811,6 +811,7 @@ export function BuzzChatSurface({
     firstUnreadMessageId,
     openingUnreadCounts,
     advanceReadCursor,
+    acknowledgeReadMark,
     liveOverlays,
     liveDraftStore,
     userPubkey,
@@ -4076,9 +4077,10 @@ export function BuzzChatSurface({
             : current,
         );
         // The server moved our read mark with the send itself, so a message we
-        // wrote never golds the Room list (room-list-row.ts), and its own
-        // delta paints it; a confirmation reads the Room only if that delta
-        // never comes.
+        // wrote never golds the Room list (room-list-row.ts) and the viewport
+        // has no mark left to write for it. Its own delta paints it; a
+        // confirmation reads the Room only if that delta never comes.
+        acknowledgeReadMark(preparedEvent.id);
         scheduleOutboxConfirmation(preparedEvent.id);
       } catch (err) {
         console.warn('Send failed:', err);

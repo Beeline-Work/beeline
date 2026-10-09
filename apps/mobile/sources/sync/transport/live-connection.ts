@@ -99,6 +99,7 @@ export class LiveConnection {
   /** Rooms on screen, counted per holder; the server holds their pushes. */
   private readonly viewing = new Map<string, number>();
   private readonly heardMessages = new Set<string>();
+  private readonly subscribeWaiters = new Set<() => void>();
   private reconnectDelayMs = 1_000;
   private nextRegistrationId = 1;
   private generation = 0;
@@ -166,6 +167,30 @@ export class LiveConnection {
       this.viewing.delete(roomId);
       this.sendViewing(roomId, false);
     };
+  }
+
+  /**
+   * Settles once the server confirmed every Room these filters name, or after
+   * `timeoutMs`. A read started after that misses nothing the subscription
+   * would carry, so its surface needs no second, covering read.
+   */
+  whenSubscribed(filters: SurfaceFilters, timeoutMs: number): Promise<void> {
+    const roomIds = [...roomIdsFromFilters(filters)];
+    const confirmed = () => roomIds.every((roomId) => this.seenSubscribed.has(roomId));
+    if (confirmed()) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const waiter = () => {
+        if (!confirmed()) return;
+        settle();
+      };
+      const timer = setTimeout(() => settle(), timeoutMs);
+      const settle = () => {
+        clearTimeout(timer);
+        this.subscribeWaiters.delete(waiter);
+        resolve();
+      };
+      this.subscribeWaiters.add(waiter);
+    });
   }
 
   /**
@@ -414,6 +439,7 @@ export class LiveConnection {
     if (live.type === 'subscribed') {
       this.pendingSubscribe.delete(live.roomId);
       this.seenSubscribed.add(live.roomId);
+      for (const waiter of [...this.subscribeWaiters]) waiter();
     }
     this.rememberOverlay(live);
     for (const registration of this.registrations.values()) {

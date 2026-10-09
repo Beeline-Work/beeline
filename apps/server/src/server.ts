@@ -10,6 +10,12 @@ import { isTransientDatabaseConnectionError, type SqlDatabase } from './database
 import { isAppSignInLink } from './composio-apps.js';
 import { acceptedJsonEncoding, encodeJsonBody, type JsonEncoding } from './json-response.js';
 import { PhoneViewing } from './phone-viewing.js';
+import {
+  COMPACT_VIEW_HEADER,
+  compactRoomHistoryView,
+  compactRoomView,
+  wantsCompactView,
+} from './compact-room-view.js';
 import { bearer, type TokenAuth } from './auth.js';
 import {
   AGENT_OWNER_AUTHORITY_MESSAGE,
@@ -29,6 +35,7 @@ import {
   MESSAGE_SEARCH_QUERY_MAX_BYTES,
   PHONE_READ_OPERATIONS,
   messageSearchTerms,
+  type RoomHistoryView,
 } from '@beeline/api-contract/phone';
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
 import type { ReviewAccess } from './review-access.js';
@@ -197,6 +204,11 @@ function isWebAppCorsPath(pathname: string): boolean {
     pathname === '/auth/github/completion' ||
     pathname === '/auth/github/completion/cancel'
   );
+}
+
+function historyRead(result: RoomHistoryView | null, compact: boolean): unknown {
+  if (!result) return { error: 'not_found' };
+  return compact ? compactRoomHistoryView(result) : result;
 }
 
 /** What each request accepts for a JSON answer, read once where it arrives. */
@@ -1751,10 +1763,16 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }
+  // A phone that rebuilds derivable fields asks for Room reads without them.
+  const compact = wantsCompactView(request.headers[COMPACT_VIEW_HEADER]);
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)$/);
   if (method === 'GET' && match) {
     const result = await options.phone.readRoom(match[1]!, identityId!);
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+    json(
+      response,
+      result ? 200 : 404,
+      result ? (compact ? compactRoomView(result) : result) : { error: 'not_found' },
+    );
     return;
   }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/history$/);
@@ -1770,7 +1788,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
         return;
       }
       const result = await options.phone.readHistoryAfter(match[1]!, identityId!, after);
-      json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+      json(response, result ? 200 : 404, historyRead(result, compact));
       return;
     }
     const around = url.searchParams.get('around');
@@ -1780,7 +1798,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
         return;
       }
       const result = await options.phone.readHistoryAround(match[1]!, identityId!, around);
-      json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+      json(response, result ? 200 : 404, historyRead(result, compact));
       return;
     }
     const beforeRaw = url.searchParams.get('before');
@@ -1790,7 +1808,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       identityId!,
       parsed ? { createdAt: Number(parsed[1]), id: parsed[2]! } : undefined,
     );
-    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+    json(response, result ? 200 : 404, historyRead(result, compact));
     return;
   }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/outline$/);

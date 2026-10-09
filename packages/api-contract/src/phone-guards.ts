@@ -1124,8 +1124,33 @@ export function isRoomViewMessage(value: unknown): value is RoomViewMessage {
   return readRoomViewMessage(value) !== null;
 }
 
+/**
+ * A compact Room read (`x-beeline-view: compact`, apps/server/src/
+ * compact-room-view.ts) leaves out what the reader derives here: the
+ * whole-second `createdAt` beside `createdAtMs`, and a top-level message's own
+ * reference to itself in this Room. A full read passes through unchanged.
+ */
+function expandCompactMessage(value: unknown, roomId: string): unknown {
+  const item = record(value);
+  if (!item) return value;
+  const createdAt =
+    item.createdAt === undefined && integer(item.createdAtMs)
+      ? Math.floor(item.createdAtMs / 1000)
+      : undefined;
+  const reference =
+    item.reference === undefined && item.presentation === 'message' && hex64(item.id)
+      ? { channelId: roomId, eventId: item.id, rootId: item.id }
+      : undefined;
+  if (createdAt === undefined && reference === undefined) return value;
+  return {
+    ...item,
+    ...(createdAt === undefined ? {} : { createdAt }),
+    ...(reference === undefined ? {} : { reference }),
+  };
+}
+
 function readScopedMessage(value: unknown, roomId: string): RoomViewMessage | null {
-  const message = readRoomViewMessage(value);
+  const message = readRoomViewMessage(expandCompactMessage(value, roomId));
   if (!message) return null;
   const reference =
     message.reference && message.reference.channelId === roomId ? message.reference : undefined;

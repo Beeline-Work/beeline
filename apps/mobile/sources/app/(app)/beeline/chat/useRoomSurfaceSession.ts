@@ -263,6 +263,8 @@ export interface UseRoomSurfaceSessionResult {
   ): void;
   /** Move the boundary back so this message, and everything after it, is unread. */
   markUnreadFrom(messageId: string): Promise<void>;
+  /** The viewer's own send moved the server's read mark to this message. */
+  acknowledgeReadMark(messageId: string): void;
   liveOverlays: readonly LiveOverlay[];
   liveDraftStore: LiveDraftDrainStore;
   userPubkey: string;
@@ -392,6 +394,10 @@ export function useRoomSurfaceSession({
     issueUnreadLine(channelIdRef.current);
     setFirstUnreadMessageId(messageId);
     setOpeningUnreadCounts(null);
+  }, []);
+
+  const acknowledgeReadMark = useCallback((messageId: string) => {
+    if (!isCornerRef.current) readCursorRef.current?.acknowledge(messageId);
   }, []);
 
   const applyAgentPresence = useCallback((presence: RoomAgentPresence | undefined) => {
@@ -1223,6 +1229,7 @@ export function useRoomSurfaceSession({
     openingUnreadCounts,
     advanceReadCursor,
     markUnreadFrom,
+    acknowledgeReadMark,
     liveOverlays,
     liveDraftStore: liveDraftDrainStore,
     userPubkey,

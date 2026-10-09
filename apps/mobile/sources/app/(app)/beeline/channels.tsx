@@ -101,8 +101,15 @@ import {
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
 
 const AGE_TICK_MS = 60_000;
+/**
+ * How long the first Room-list read waits for its live watch to be confirmed.
+ * Reading after the confirmation misses nothing, so no second read follows;
+ * the cached list paints meanwhile.
+ */
+const CHAT_SUBSCRIBE_WAIT_MS = 1_500;
 const COMPOSE_FAB_CLEARANCE = 80;
 const LOBBY_LIST_BOTTOM_SPACING = 24;
 const ROW_HEIGHT = 64;
@@ -504,6 +511,9 @@ export default function BuzzChannels() {
         // Deltas that landed while a chats read was in flight: the read may
         // predate them, and no later read comes to correct it.
         let readInFlight = false;
+        // The first read waits for the watch's confirmation, so the
+        // confirmations themselves need no covering read of their own.
+        let firstReadStarted = false;
         let deltasDuringRead: ChatListDelta[] = [];
         // Rooms the socket delivered any frame for since the last applied read.
         const heardRooms = new Set<string>();
@@ -547,6 +557,7 @@ export default function BuzzChannels() {
             if (isDraftFrame(event)) return;
             // A committed-row invalidation announces the delta that follows it.
             if (live?.type === 'invalidate' && live.deliveryId) return;
+            if (live?.type === 'subscribed' && !firstReadStarted) return;
             if (deckVisible()) chatsRefresh?.signal();
             else deckMissedRef.current.chats = true;
           });
@@ -559,6 +570,7 @@ export default function BuzzChannels() {
         };
         chatsRefresh = new SurfaceRefreshScheduler({
           fetch: async () => {
+            firstReadStarted = true;
             deltasDuringRead = [];
             readInFlight = true;
             try {
@@ -601,7 +613,10 @@ export default function BuzzChannels() {
         chatScheduler.current = chatsRefresh;
         // Seed from cache when present; otherwise the first chats GET apply
         // reinstalls so the deck never watches a Workspace id.
-        chatListenReady = installChatWatch(cachedChats?.watchFilters ?? []);
+        const cachedFilters = cachedChats?.watchFilters ?? [];
+        chatListenReady = installChatWatch(cachedFilters).then(() =>
+          sharedLiveConnection().whenSubscribed(cachedFilters, CHAT_SUBSCRIBE_WAIT_MS),
+        );
       }
 
       const workspaceListenReady = relay

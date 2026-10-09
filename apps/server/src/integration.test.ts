@@ -7217,12 +7217,12 @@ describe('monolith integration', () => {
     expect(processWebhook).toHaveBeenCalledTimes(2);
     expect(
       (
-        await database.query<{ processed: boolean }>(
-          `SELECT processed_at IS NOT NULL processed FROM github_webhook_deliveries WHERE delivery_id=$1`,
+        await database.query<{ received: boolean; payload: unknown }>(
+          `SELECT received_at IS NOT NULL received,payload FROM github_webhook_deliveries WHERE delivery_id=$1`,
           ['delivery-1'],
         )
       ).rows,
-    ).toEqual([{ processed: true }]);
+    ).toEqual([{ received: true, payload: null }]);
   });
 
   it('credits the branch agent, not a copied parent owner, on a phone-opened corner merge', async () => {

@@ -91,6 +91,30 @@ describe('Postgres live fanout', () => {
     vi.restoreAllMocks();
   });
 
+  it('wakes push only after message and device writes commit', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const wake = vi.fn();
+    listener.setPushWake(wake);
+    void listener.run();
+    await eventually(() => listener.projectionHealth().connected);
+    await eventually(() => wake.mock.calls.length === 1);
+    wake.mockClear();
+    await database.transaction(async (db) => {
+      await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment)
+        VALUES('push-wake-device',$1,'ios','physical')`, [AUTHOR]);
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text)
+        VALUES('push-wake-message',$1,$2,'hello')`, [ROOM, AUTHOR]);
+      expect(wake).not.toHaveBeenCalled();
+    });
+    await eventually(() => wake.mock.calls.length === 2);
+    await database.query(`INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+      VALUES($1,$2,now(),'push-wake-message')`, [ROOM, AUTHOR]);
+    expect(wake).toHaveBeenCalledTimes(2);
+  });
+
   it('delivers read-mark changes to the listener with the reader identity', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);

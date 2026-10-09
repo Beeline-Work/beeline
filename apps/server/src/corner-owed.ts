@@ -62,7 +62,11 @@ export function addressedToPersonSql(
     -- to fix them, or it stopped at the review handback limit.
     OR (${includeCommissioned} AND EXISTS (
       SELECT 1 FROM corner_facts finished
-      WHERE (finished.commissioned_by=${personIdExpr} OR EXISTS (
+      WHERE finished.corner_id IN (${m}.room_id,
+          CASE WHEN ${m}.card->>'cornerId' ~
+            '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            THEN (${m}.card->>'cornerId')::uuid END)
+        AND (finished.commissioned_by=${personIdExpr} OR EXISTS (
         SELECT 1 FROM rooms opened WHERE opened.id=finished.corner_id AND opened.created_by=${personIdExpr}))
         AND (
           (${m}.card_type='daemon-fact' AND ${m}.card->>'type'='corner-complete'

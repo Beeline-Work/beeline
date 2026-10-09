@@ -278,28 +278,6 @@ describe('background advisory-lock ownership', () => {
     }
   });
 
-  it('holds a cadence floor even when wakeups ask for back-to-back push scans', async () => {
-    const db = new PgliteDatabase();
-    let now = 1_000;
-    try {
-      await migrate(db);
-      const query = vi.spyOn(db, 'query');
-      const loop = new PushDeliveryLoop(db, { send: async () => {} }, undefined, 5_000, () => now);
-
-      await loop.runIfDue();
-      const afterFirst = query.mock.calls.length;
-      await loop.runIfDue();
-      expect(query).toHaveBeenCalledTimes(afterFirst);
-      expect(loop.millisecondsUntilNextRun()).toBe(5_000);
-
-      now += 5_000;
-      await loop.runIfDue();
-      expect(query.mock.calls.length).toBeGreaterThan(afterFirst);
-    } finally {
-      await db.close();
-    }
-  });
-
   it('dispatches a direct message to a Chrome subscription without Firebase configured', async () => {
     const db = new PgliteDatabase();
     try {
@@ -327,7 +305,7 @@ describe('background advisory-lock ownership', () => {
         [endpoint, recipient, JSON.stringify({ p256dh: 'a'.repeat(87), auth: 'b'.repeat(22) })],
       );
       const send = vi.fn(async () => undefined);
-      const loop = new PushDeliveryLoop(db, undefined, undefined, 0, Date.now, { send });
+      const loop = new PushDeliveryLoop(db, undefined, undefined, { send });
       expect(await loop.runOnce()).toBe(0);
       await db.query(
         `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Chrome proof message')`,

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { backfillCornerOwed, migrate, type SqlDatabase } from './database.js';
-import { cornerOwedBackfillSql } from './corner-owed.js';
+import { addressedToPersonSql, cornerOwedBackfillSql } from './corner-owed.js';
 import { PhoneService } from './phone-service.js';
 import { PgliteDatabase } from './test-support.js';
 
@@ -270,6 +270,38 @@ describe('corner_owed', () => {
       at: `now()-interval '25 hours'`,
     });
     await step(idle);
+  });
+
+  it('matches commissioner completion only to its named corner', async () => {
+    const otherCorner = '44444444-4444-4444-8444-444444444444';
+    await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name)
+      VALUES($1,$2,$3,'Other corner')`, [otherCorner, WORKSPACE, ROOM]);
+    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by)
+      VALUES($1,$2,$3)`, [otherCorner, AGENT, OTHER]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+      VALUES
+      ('own-complete',$1,$2,'Done','card','daemon-fact',$3::jsonb),
+      ('other-complete',$1,$2,'Done','card','daemon-fact',$4::jsonb),
+      ('invalid-complete',$1,$2,'Done','card','daemon-fact',$5::jsonb)`, [
+      ROOM, AGENT,
+      JSON.stringify({ type: 'corner-complete', cornerId: CORNER }),
+      JSON.stringify({ type: 'corner-complete', cornerId: otherCorner }),
+      JSON.stringify({ type: 'corner-complete', cornerId: 'invalid' }),
+    ]);
+    await post('own-deliverable', AGENT, 'File', { attachments: [{ name: 'file' }] });
+    await post('plain', AGENT, 'No file');
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,attachments)
+      VALUES('other-deliverable',$1,$2,'File','[{"name":"file"}]'::jsonb)`, [otherCorner, AGENT]);
+    const ids = ['own-complete', 'other-complete', 'invalid-complete',
+      'own-deliverable', 'plain', 'other-deliverable'];
+    const rows = await database.query<{ id: string; addressed: boolean; direct: boolean }>(
+      `SELECT m.id,${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind')} addressed,
+        ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind', false)} direct
+       FROM messages m CROSS JOIN identities person
+       WHERE person.id=$1 AND m.id=ANY($2) ORDER BY m.id`, [OWNER, ids]);
+    expect(rows.rows.filter((row) => row.addressed).map((row) => row.id))
+      .toEqual(['own-complete', 'own-deliverable']);
+    expect(rows.rows.every((row) => !row.direct)).toBe(true);
   });
 
   it.each(['corner-checks-blocked', 'corner-review-deadlock'])(

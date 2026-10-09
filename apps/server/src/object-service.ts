@@ -109,6 +109,30 @@ export class ObjectService {
     return this.storage;
   }
 
+  /** Delete bytes while the account's object rows are still durable. A failed
+   * delete aborts account deletion, so its next attempt can retry the key. */
+  async deleteOwnedBytes(ownerIds: string[], database: SqlDatabase): Promise<void> {
+    const keys = await database.query<{ key: string }>(
+      `SELECT key FROM objects WHERE owner_id=ANY($1) ORDER BY key FOR UPDATE`,
+      [ownerIds],
+    );
+    if (!keys.rows.length) return;
+    const storage = this.#requireStorage();
+    const remove = async (key: string) => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try { await storage.deleteObject(key); return; }
+        catch (error) { if (attempt === 2) throw error; }
+      }
+    };
+    for (let offset = 0; offset < keys.rows.length; offset += 8) {
+      const results = await Promise.allSettled(
+        keys.rows.slice(offset, offset + 8).map((row) => remove(row.key)),
+      );
+      const failed = results.find((result) => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+    }
+  }
+
   /**
    * Pass-through artifact upload: validate, stream to storage, write the row
    * as `ready` in one step. Identical bytes from the same owner restart the

@@ -230,7 +230,7 @@ async function main() {
   const apnsPushSender = createApnsPushSender(process.env);
   const webPushSender = createWebPushSender(jobsDatabase, process.env);
   const push = pushSender || webPushSender
-    ? new PushDeliveryLoop(jobsDatabase, pushSender, apnsPushSender, undefined, undefined, webPushSender)
+    ? new PushDeliveryLoop(jobsDatabase, pushSender, apnsPushSender, webPushSender)
     : undefined;
   const schedules = new AgentScheduleLoop(jobsDatabase, (roomId) =>
     live.publish({ type: 'invalidate', roomId, reason: 'schedule' }),
@@ -367,6 +367,7 @@ async function main() {
     },
   });
   let lastReconciliationAt = Number.NEGATIVE_INFINITY;
+  let pushPending = Boolean(push); // one leader-start reconciliation
   let repairedPromotedCorners = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const leader = new BackgroundLeader(
@@ -377,7 +378,10 @@ async function main() {
           githubJobs.repairPromotedCornerBranches());
         repairedPromotedCorners = repair.ok;
       }
-      if (push) await backgroundJobs.run('push', () => push.runIfDue());
+      if (push && pushPending) {
+        pushPending = false;
+        await backgroundJobs.run('push', () => push.runOnce());
+      }
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       await backgroundJobs.run('webhook-expiry', () => new RoomWebhooks(jobsDatabase).expireRequests());
@@ -410,11 +414,11 @@ async function main() {
         reconciliationMs,
         ...(nextDue.ok && nextDue.value
           ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
-        ...(push ? [push.millisecondsUntilNextRun()] : []),
       );
     },
     reconciliationMs,
   );
+  if (push) liveListener.setPushWake(() => { pushPending = true; leader.wake(); });
   const stopBackgroundWake = live.subscribeAll((event) => {
     if (
       event.type === 'invalidate' &&

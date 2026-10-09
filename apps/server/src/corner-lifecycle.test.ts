@@ -891,12 +891,21 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
       (await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [review!.id])).rows[0]!
         .state,
     ).toBe('cancelled');
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND action IN ('input','resume') AND state IN ('pending','claimed')`, [cornerId])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1
+      AND status='working'`, [cornerId])).rowCount).toBe(0);
   });
 
   it('a human close request lands whatever state the corner is in', async () => {
     const cornerId = await open('owner/widgets');
+    expect((await commands(A, cornerId)).length).toBeGreaterThan(0);
     await phone.execute('requestCornerClose', { roomId: cornerId }, H);
     expect(await currentState(cornerId)).toBe('closed');
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND action IN ('input','resume') AND state IN ('pending','claimed')`, [cornerId])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1
+      AND status='working'`, [cornerId])).rowCount).toBe(0);
   });
 
   it('a human close request abandons a live saved workflow run inside the corner', async () => {
@@ -1922,6 +1931,10 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(
       (await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [cornerId])).rowCount,
     ).toBe(1);
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
+      AND action IN ('input','resume') AND state IN ('pending','claimed')`, [cornerId])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1
+      AND status='working'`, [cornerId])).rowCount).toBe(0);
   });
 
   it('lets any corner member close its pull request without merging; the corner stays open with no PR', async () => {

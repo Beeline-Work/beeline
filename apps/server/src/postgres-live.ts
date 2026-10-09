@@ -212,6 +212,12 @@ BEGIN
         'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
         'scheduleId', COALESCE(NEW.id, OLD.id)
       );
+    WHEN 'push_devices' THEN
+      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '');
+    WHEN 'workspace_join_notifications' THEN
+      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '');
+    WHEN 'push_release_catchups' THEN
+      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '');
   END CASE;
   payload = payload || jsonb_build_object(
     'traceId', md5(random()::text || clock_timestamp()::text || txid_current()::text),
@@ -236,7 +242,8 @@ BEGIN
     'corner_facts', 'permission_authority', 'room_read_marks',
     'agent_grants', 'agent_schedules', 'agent_commands',
     'github_installations', 'github_repositories',
-    'registry_mcp_oauth_attempts'
+    'registry_mcp_oauth_attempts', 'push_devices',
+    'workspace_join_notifications', 'push_release_catchups'
   ] LOOP
     IF NOT EXISTS (
       SELECT 1 FROM pg_trigger
@@ -368,6 +375,9 @@ const wait = (milliseconds: number) =>
 
 /** One session-persistent LISTEN connection for one server machine. */
 export class PostgresLiveListener {
+  private pushWake?: () => void;
+
+  setPushWake(wake: () => void): void { this.pushWake = wake; }
   private stopped = false;
   private active?: LivePgClient;
   private connected = false;
@@ -456,6 +466,14 @@ export class PostgresLiveListener {
     this.lastNotificationAt = Date.now();
     const payload = decodePayload(raw);
     if (!payload) return;
+    const pushOnly = payload.table === 'push_devices' ||
+      payload.table === 'workspace_join_notifications' ||
+      payload.table === 'push_release_catchups';
+    if ((payload.table === 'messages' && payload.operation !== 'DELETE') ||
+        pushOnly ||
+        (payload.table === 'agent_turns' && payload.operation === 'UPDATE'))
+      this.pushWake?.();
+    if (pushOnly) return;
     if (payload.table === AGENT_SIGN_IN_TABLE) {
       // No database work: publish now, and never queue or log the payload.
       const event = decodeAgentSignInNotification(raw);
@@ -548,6 +566,8 @@ export class PostgresLiveListener {
         await client.query(`LISTEN ${POSTGRES_LIVE_CHANNEL}`);
         this.connected = true;
         console.log('[live-listener] connected');
+        // A reconnect may have missed committed writes while LISTEN was down.
+        this.pushWake?.();
         await this.restoreRegistryDue();
         this.live.resync();
         await disconnected;

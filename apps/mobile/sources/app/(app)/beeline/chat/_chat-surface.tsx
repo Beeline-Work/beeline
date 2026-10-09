@@ -629,6 +629,9 @@ export function BuzzChatSurface({
       raiseSourceLandingFlash(rowId);
     },
     onLanded: (destination) => {
+      if (scrollController.isHoldingLanding())
+        heldLandingFromOldestRef.current =
+          phoneContentHeightRef.current - phoneScrollOffsetRef.current;
       // The landing is COMPLETE here — the row is on screen, which is the same
       // rule the badge runs on. A flash fired at row mount would burn off
       // behind the fold while backward paging was still measuring, and the
@@ -2536,13 +2539,18 @@ export function BuzzChatSurface({
     }
     fillTranscript(visibleTranscriptWindow(foldedMessages, Number.MAX_SAFE_INTEGER).length);
   }, [anchoredSegmentActive, fillTranscript, foldedMessages, scrollController]);
-  // A held jump landing keeps its place as the phone content grows at its
-  // newest end (`holdLanding`).
-  const phoneContentHeightRef = useRef<number | null>(null);
+  // A held jump landing keeps its distance from the oldest end of the phone
+  // content while newer rows grow it at the newest end (native offset 0).
+  // Native lists keep a visible row in place, but not while the content is
+  // shorter than the list; React Native Web never does.
+  const phoneContentHeightRef = useRef(0);
+  const phoneScrollOffsetRef = useRef(0);
+  const heldLandingFromOldestRef = useRef(0);
   const holdPhoneLanding = (height: number) => {
-    const previous = phoneContentHeightRef.current;
     phoneContentHeightRef.current = height;
-    if (previous !== null) scrollController.holdLanding(height - previous);
+    if (!scrollController.isHoldingLanding()) return;
+    const offset = Math.max(0, height - heldLandingFromOldestRef.current);
+    if (Math.abs(offset - phoneScrollOffsetRef.current) > 1) scrollController.holdLanding(offset);
   };
   const phoneUnderfill = usePhoneUnderfillHistory({
     enabled: !desktopTranscript && transcriptMessages.length > 0,
@@ -6260,6 +6268,7 @@ export function BuzzChatSurface({
                   // The transcript scrubber below is this list's scroll bar.
                   showsVerticalScrollIndicator={false}
                   onScroll={(event) => {
+                    phoneScrollOffsetRef.current = event.nativeEvent.contentOffset.y;
                     observePhoneTailOffset(event.nativeEvent.contentOffset.y);
                     transcriptPositions.observeScroll(event.nativeEvent);
                     if (

@@ -36,7 +36,6 @@ function recordingList(moves: string[]): TranscriptScrollList {
     toEstimatedRow: (index) => moves.push(`estimate:${index}`),
     toOffset: (offset) => moves.push(`offset:${offset}`),
     shiftBy: (delta) => moves.push(`shift:${delta}`),
-    shiftFromNewest: (delta) => moves.push(`hold:${delta}`),
   };
 }
 

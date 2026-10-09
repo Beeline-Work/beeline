@@ -55,11 +55,6 @@ export type TranscriptScrollList = {
   toOffset(offset: number): void;
   /** Move by `delta` px to keep a reading row in place. */
   shiftBy(delta: number): void;
-  /**
-   * Move by `delta` px toward the oldest end, to keep a held landing in place
-   * where the list does not do so itself.
-   */
-  shiftFromNewest(delta: number): void;
 };
 
 export type TranscriptScrollRow = { readonly id: string };
@@ -99,8 +94,8 @@ export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   followNow(): void;
   /** Keep a reading row in place while nothing else owns the list. */
   holdReadingPosition(delta: number): void;
-  /** The content changed by `delta` px at the newest end: keep a held landing in place. */
-  holdLanding(delta: number): void;
+  /** The content changed: move a held landing to `offset`, where it keeps its place. */
+  holdLanding(offset: number): void;
   cancel(): void;
   /** The room changed: drop the request and the visible rows, no callbacks. */
   reset(): void;
@@ -120,6 +115,8 @@ export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   active(): TranscriptScrollDestination | null;
   /** A row request owns the list. */
   isLanding(): boolean;
+  /** A landed row is held in place (`holdsLanding`). */
+  isHoldingLanding(): boolean;
   isPinnedToTail(): boolean;
   isUserDragging(): boolean;
 };
@@ -263,9 +260,9 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       if (active || pinned || delta === 0) return;
       options.list()?.shiftBy(delta);
     },
-    holdLanding(delta) {
-      if (!held || active || delta === 0) return;
-      options.list()?.shiftFromNewest(delta);
+    holdLanding(offset) {
+      if (!held || active) return;
+      options.list()?.toOffset(offset);
     },
     cancel() {
       end('cancelled');
@@ -318,6 +315,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     },
     active: () => active?.destination ?? null,
     isLanding: () => Boolean(active && isRowDestination(active.destination)),
+    isHoldingLanding: () => held && !active,
     isPinnedToTail: () => pinned,
     isUserDragging: () => dragging,
   };
@@ -366,8 +364,6 @@ export function useTranscriptScrollController<Row extends TranscriptScrollRow>(
 type PhoneList = {
   scrollToIndex(params: { index: number; viewPosition: number; animated: boolean }): void;
   scrollToOffset(params: { offset: number; animated: boolean }): void;
-  /** React Native Web: the scrolling DOM node. Native: a node handle. */
-  getScrollableNode?(): unknown;
 };
 
 /**
@@ -375,9 +371,6 @@ type PhoneList = {
  * puts a row's start at the top of the viewport. Pass `scrollToIndexFailed`
  * as the list's `onScrollToIndexFailed`: the list calls it synchronously from
  * `scrollToIndex` when the row is not measured yet.
- *
- * Native keeps rows in place across inserts (`maintainVisibleContentPosition`).
- * React Native Web has no such prop, so a held landing moves the DOM node.
  */
 export function phoneTranscriptList(getList: () => PhoneList | null): TranscriptScrollList & {
   scrollToIndexFailed(info: { averageItemLength: number }): void;
@@ -405,11 +398,6 @@ export function phoneTranscriptList(getList: () => PhoneList | null): Transcript
       getList()?.scrollToOffset({ offset, animated: false });
     },
     shiftBy() {},
-    shiftFromNewest(delta) {
-      const node = getList()?.getScrollableNode?.();
-      if (node && typeof node === 'object' && 'scrollTop' in node)
-        (node as { scrollTop: number }).scrollTop += delta;
-    },
     scrollToIndexFailed(info) {
       failed = true;
       averageItemLength = info.averageItemLength;
@@ -449,7 +437,5 @@ export function desktopTranscriptList(
       const node = getScrollNode();
       if (node) node.scrollTop += delta;
     },
-    // Chronological: newer rows grow below the reader and move nothing.
-    shiftFromNewest() {},
   };
 }

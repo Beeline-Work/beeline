@@ -337,7 +337,10 @@ export function useRoomMessageStore({
           }
           const tailNow = tailRef.current ?? [];
           const tailIds = new Set(tailNow.map((row) => row.id));
-          const reachesTail = page.messages.some((row) => tailIds.has(row.id));
+          // The page joins the tail only when its newest row is in the tail.
+          // A tail older than the page overlaps only the page's older rows,
+          // and appending it would put those older rows after the page.
+          const reachesTail = tailIds.has(page.messages.at(-1)!.id);
           const all = reachesTail
             ? [...page.messages.filter((row) => !tailIds.has(row.id)), ...tailNow]
             : page.messages;

@@ -586,7 +586,15 @@ export function BuzzChatSurface({
       : { paddingBottom: Math.max(insets.bottom, 8) };
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
-  const [phoneScrollList] = useState(() => phoneTranscriptList(() => flatListRef.current));
+  const [phoneScrollList] = useState(() =>
+    phoneTranscriptList(
+      () => flatListRef.current,
+      () =>
+        transcriptMessagesRef.current.length > 0
+          ? phoneContentHeightRef.current / transcriptMessagesRef.current.length
+          : 0,
+    ),
+  );
   const [desktopScrollList] = useState(() =>
     desktopTranscriptList(
       () => desktopScrollNodeRef.current,
@@ -630,12 +638,11 @@ export function BuzzChatSurface({
         scrollController.cancel();
       }
     },
-    onScrolled: (destination, rowId) => {
+    onScrolled: (destination) => {
       if (destination.kind !== 'message' || !destination.jump) return;
       endTranscriptJump();
-      raiseSourceLandingFlash(rowId);
     },
-    onLanded: (destination) => {
+    onLanded: (destination, rowId) => {
       if (scrollController.isHoldingLanding())
         heldLandingFromOldestRef.current =
           phoneContentHeightRef.current - phoneScrollOffsetRef.current;
@@ -643,6 +650,7 @@ export function BuzzChatSurface({
       // rule the badge runs on. A flash fired at row mount would burn off
       // behind the fold while backward paging was still measuring, and the
       // reader who followed the notification would arrive to nothing.
+      if (destination.kind === 'message' && destination.jump) raiseSourceLandingFlash(rowId);
       if (
         destination.kind === 'firstUnread' &&
         landingFlashesArrival({

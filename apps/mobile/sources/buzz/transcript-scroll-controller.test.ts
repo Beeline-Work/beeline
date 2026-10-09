@@ -122,6 +122,43 @@ describe('transcript scroll controller', () => {
     expect(events).toEqual(['scrolled:message:m4', 'landed:message:m4']);
   });
 
+  it('scrolls near a row the list accepts but never shows, then lands it on a later report', () => {
+    const { controller, moves, events, flush } = setup();
+    controller.request(message('m4'));
+    flush();
+    // The list takes each scroll from a frame kept from an older window and
+    // stays put: the row is never reported.
+    controller.observeVisibleRows([{ id: 'm1' }, { id: 'm2' }]);
+    controller.observeLayout();
+    controller.observeLayout();
+    expect(moves).toEqual(Array(4).fill('row:m4@3:top'));
+    controller.observeLayout();
+    expect(moves.at(-1)).toBe('estimate:3');
+    expect(events).toEqual(['scrolled:message:m4']);
+
+    // The row is drawn near the bottom. A report taken there does not land
+    // it; the scroll that follows puts it at the top, and the next report does.
+    controller.observeVisibleRows([{ id: 'm3' }, { id: 'm4' }]);
+    expect(moves.at(-1)).toBe('row:m4@3:top');
+    expect(events).toEqual(['scrolled:message:m4']);
+    controller.observeVisibleRows([{ id: 'm4' }]);
+    expect(events).toEqual(['scrolled:message:m4', 'landed:message:m4']);
+  });
+
+  it('does not count passes that bring a new report toward scrolling near the row', () => {
+    const { controller, moves, events, flush } = setup();
+    controller.request(message('m4'));
+    flush();
+    // A list that draws its rows in batches reports a growing set each pass.
+    controller.observeVisibleRows([{ id: 'm1' }]);
+    controller.observeVisibleRows([{ id: 'm1' }, { id: 'm2' }]);
+    controller.observeVisibleRows([{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }]);
+    controller.observeVisibleRows([{ id: 'm2' }, { id: 'm3' }, { id: 'm5' }]);
+    expect(moves).toEqual(Array(5).fill('row:m4@3:top'));
+    controller.observeVisibleRows([{ id: 'm4' }]);
+    expect(events).toEqual(['scrolled:message:m4', 'landed:message:m4']);
+  });
+
   it('does not land on a visibility report taken before the rows changed', () => {
     const { controller, moves, events, flush, setRows } = setup();
     // The target is on screen in the old window.
@@ -274,6 +311,31 @@ describe('transcript scroll controller', () => {
     expect(controller.isUserDragging()).toBe(false);
   });
 
+  it('keeps a landing when momentum begins with no drag before it', () => {
+    const { controller, events, flush } = setup();
+    controller.request(message('m3'));
+    flush();
+    // Android can start momentum after a layout change, with no gesture.
+    controller.momentumStarted();
+    expect(controller.isLanding()).toBe(true);
+    expect(controller.isUserDragging()).toBe(false);
+    controller.momentumEnded();
+    controller.observeVisibleRows([{ id: 'm3' }]);
+    expect(events).toEqual(['scrolled:message:m3', 'landed:message:m3']);
+  });
+
+  it('cancels a landing on momentum after a drag, even past the held frame', () => {
+    const { controller, events, flush } = setup();
+    controller.dragStarted();
+    controller.dragEnded(true);
+    flush();
+    controller.request(message('m3'));
+    flush();
+    controller.momentumStarted();
+    expect(events).toEqual(['scrolled:message:m3', 'cancelled:message:drag']);
+    expect(controller.isUserDragging()).toBe(true);
+  });
+
   it('lands a send once more when its own row is drawn', () => {
     const { controller, moves, flush, setRows } = setup();
     controller.observeTailPinned(false);
@@ -422,6 +484,16 @@ describe('phone transcript list', () => {
     });
     adapter.toEstimatedRow(9);
     expect(scrollToOffset).toHaveBeenLastCalledWith({ offset: 720, animated: false });
+  });
+
+  it('estimates from the mean drawn row when the list never failed a scroll', () => {
+    const scrollToOffset = vi.fn();
+    const adapter = phoneTranscriptList(
+      () => ({ scrollToIndex: vi.fn(), scrollToOffset }),
+      () => 60,
+    );
+    adapter.toEstimatedRow(20);
+    expect(scrollToOffset).toHaveBeenLastCalledWith({ offset: 1200, animated: false });
   });
 });
 

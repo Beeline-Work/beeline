@@ -160,6 +160,25 @@ describe('jumpTo', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('keeps a page newer than a stale tail apart from that tail', async () => {
+    // A warm Room: the tail the phone holds stopped at message 50 while newer
+    // messages arrived. The page around message 56 overlaps only the tail's
+    // newest rows with its own oldest ones.
+    const all = room(100);
+    const tail = all.slice(20, 50);
+    const target = all[55]!;
+    const { state, renderer } = await mountStore(tail, serverOver(all));
+
+    await act(async () => state.current.jumpTo(target.id));
+
+    expect(state.current.jump).toEqual({ messageId: target.id, status: 'ready' });
+    expect(state.current.attached).toBe(false);
+    const ids = shownIds(state.current, tail);
+    expect(ids).toEqual(all.slice(40, 70).map((message) => message.id));
+    expect(ids.length - 1 - ids.indexOf(target.id)).toBe(14);
+    await act(async () => renderer.unmount());
+  });
+
   it('keeps a target near the newest rows attached to the live tail', async () => {
     const tail = room(30);
     const { state, renderer } = await mountStore(tail, serverOver(tail));

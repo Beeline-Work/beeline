@@ -10,7 +10,12 @@ import { scheduleAnimationFrame } from './host-scheduler';
  * One request runs at a time. A new request replaces the active one, and a
  * user drag cancels it. A row request stays active across layout and
  * visibility passes until a visibility report shows its row, so a scroll made
- * with stale row measurements is made again on the next pass.
+ * with stale row measurements is made again on the next pass. A list can
+ * accept that scroll and never move, from a frame it kept for rows drawn
+ * before the window changed. When a few passes repeat the scroll with no new
+ * visibility report and the row still unshown, the request scrolls near the
+ * row's estimated position so the list measures it, scrolls to it again, and
+ * lands only on a report taken after that scroll.
  *
  * - `newest`: the newest end. Runs on the next frame. `untilRowId` keeps it
  *   armed until that row is drawn, then lands once more (a desktop send).
@@ -50,7 +55,7 @@ export type TranscriptScrollList = {
   toNewest(): void;
   /** False when the list cannot reach the row yet (not measured or not drawn). */
   toRow(index: number, rowId: string, align: TranscriptRowAlign): boolean;
-  /** Scroll near a row the list could not reach, so its neighbours measure. */
+  /** Scroll near a row the list could not reach or did not show, so its neighbours measure. */
   toEstimatedRow(index: number): void;
   toOffset(offset: number): void;
   /** Move by `delta` px to keep a reading row in place. */
@@ -105,7 +110,11 @@ export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   observeTailPinned(pinned: boolean): void;
   /** A touch drag began. Cancels the active request. */
   dragStarted(): void;
-  /** Momentum began. Cancels the active request; a later offset waits for its end. */
+  /**
+   * Momentum began. After a drag it cancels the active request; a later
+   * offset waits for its end. Without one (Android can start momentum after a
+   * layout change) it is not the reader, and the request stays.
+   */
   momentumStarted(): void;
   /** The finger lifted. With `momentumMayFollow`, wait a frame for momentum to claim it. */
   dragEnded(momentumMayFollow: boolean): void;
@@ -124,7 +133,17 @@ export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
 type Active = {
   readonly destination: TranscriptScrollDestination;
   scrolled: boolean;
+  /** Scrolls to the row since the last visibility report, which omits it. */
+  unmoved: number;
+  /**
+   * `near`: scrolled near the row's estimated position. `again`: scrolled to
+   * the row after that. Neither settles on a report taken before the scroll.
+   */
+  estimate: 'none' | 'near' | 'again';
 };
+
+/** Scrolls with no new report that omits the row, before scrolling near it. */
+const UNMOVED_BEFORE_ESTIMATE = 3;
 
 function isRowDestination(
   destination: TranscriptScrollDestination,
@@ -149,6 +168,8 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   let dragging = false;
   let momentum = false;
   let dragSequence = 0;
+  // A drag ended with momentum still to come.
+  let momentumOwed = false;
   let held = false;
 
   const end = (reason: TranscriptScrollCancelReason) => {
@@ -172,6 +193,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     const destination = current.destination;
     if (!isRowDestination(destination)) return null;
     if (destination.kind === 'message' && !current.scrolled) return null;
+    if (current.estimate !== 'none') return null;
     if (visibleRowsOf !== options.rows()) return null;
     const index = options.rowIndex(destination, visibleRows);
     return index >= 0 ? visibleRows[index]! : null;
@@ -214,6 +236,12 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     }
     const rowId = rows[index]!.id;
     const align = destination.kind === 'message' ? destination.align : 'center';
+    if (current.unmoved >= UNMOVED_BEFORE_ESTIMATE) {
+      current.unmoved = 0;
+      current.estimate = 'near';
+      list.toEstimatedRow(index);
+      return;
+    }
     if (!list.toRow(index, rowId, align)) {
       // Scroll near the row so the list draws and measures it. A list that
       // has nothing left to draw sends no later pass by itself, and a row
@@ -221,6 +249,13 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       list.toEstimatedRow(index);
       return;
     }
+    if (current.scrolled) current.unmoved += 1;
+    if (current.estimate === 'near') {
+      current.estimate = 'again';
+      return;
+    }
+    // A list that shows the same rows after that scroll sends no new report.
+    if (current.estimate === 'again' && current.unmoved > 1) current.estimate = 'none';
     if (!current.scrolled) {
       current.scrolled = true;
       options.onScrolled?.(destination, rowId);
@@ -232,7 +267,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
 
   const request = (destination: TranscriptScrollDestination) => {
     end('replaced');
-    const current: Active = { destination, scrolled: false };
+    const current: Active = { destination, scrolled: false, unmoved: 0, estimate: 'none' };
     active = current;
     if (destination.kind === 'offset') {
       attempt(current);
@@ -277,6 +312,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     reset() {
       active = null;
       held = false;
+      momentumOwed = false;
       visibleRows = [];
       visibleRowsOf = null;
     },
@@ -286,7 +322,10 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     observeVisibleRows(rows) {
       visibleRows = rows;
       visibleRowsOf = options.rows();
-      if (active) attempt(active);
+      if (!active) return;
+      active.unmoved = 0;
+      if (active.estimate === 'again') active.estimate = 'none';
+      attempt(active);
     },
     observeTailPinned(next) {
       pinned = next;
@@ -295,12 +334,16 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       dragSequence += 1;
       dragging = true;
       momentum = false;
+      momentumOwed = false;
       end('drag');
     },
     momentumStarted() {
       dragSequence += 1;
-      dragging = true;
       momentum = true;
+      const fromDrag = dragging || momentumOwed;
+      momentumOwed = false;
+      if (!fromDrag) return;
+      dragging = true;
       end('drag');
     },
     dragEnded(momentumMayFollow) {
@@ -309,6 +352,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
         dragging = false;
         return;
       }
+      momentumOwed = true;
       schedule(() => {
         if (dragSequence === current) dragging = false;
       });
@@ -317,6 +361,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       dragSequence += 1;
       dragging = false;
       momentum = false;
+      momentumOwed = false;
       if (active?.destination.kind === 'offset') attempt(active);
     },
     userScrolled() {
@@ -381,7 +426,11 @@ type PhoneList = {
  * as the list's `onScrollToIndexFailed`: the list calls it synchronously from
  * `scrollToIndex` when the row is not measured yet.
  */
-export function phoneTranscriptList(getList: () => PhoneList | null): TranscriptScrollList & {
+export function phoneTranscriptList(
+  getList: () => PhoneList | null,
+  /** Mean row height from the drawn content, for a row the list never failed on. */
+  meanRowLength: () => number = () => 0,
+): TranscriptScrollList & {
   scrollToIndexFailed(info: { averageItemLength: number }): void;
 } {
   let failed = false;
@@ -400,8 +449,8 @@ export function phoneTranscriptList(getList: () => PhoneList | null): Transcript
     toEstimatedRow(index) {
       // Variable-height rows cannot provide getItemLayout. Scroll near the
       // row, let that window measure, then the next pass resolves it again.
-      if (averageItemLength > 0)
-        getList()?.scrollToOffset({ offset: averageItemLength * index, animated: false });
+      const length = averageItemLength > 0 ? averageItemLength : meanRowLength();
+      if (length > 0) getList()?.scrollToOffset({ offset: length * index, animated: false });
     },
     toOffset(offset) {
       getList()?.scrollToOffset({ offset, animated: false });

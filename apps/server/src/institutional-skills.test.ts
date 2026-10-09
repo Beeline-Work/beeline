@@ -658,6 +658,38 @@ describe('snapshot skill index budget', () => {
     );
   });
 
+  it('keeps a meaning-only match in a full index ahead of newer unmatched skills', async () => {
+    await saveSkill(database, command, {
+      slug: 'schema-ordering',
+      description: 'Order schema changes safely',
+      markdown: 'body',
+    });
+    const near = [1, ...new Array(1023).fill(0)];
+    await database.query(
+      `UPDATE workspace_skills SET embedding=$2::vector,updated_at=now()-interval '1 day'
+       WHERE workspace_id=$1 AND slug='schema-ordering'`,
+      [WORKSPACE, pgvectorLiteral(near)],
+    );
+    for (let index = 0; index < 30; index++) {
+      await saveSkill(database, command, {
+        slug: `procedure-number-${index}`,
+        description: `Unrelated procedure number ${index} for testing`,
+        markdown: 'body',
+      });
+    }
+    const context = await getInstitutionalContext(
+      database,
+      turn('meaning-full-index'),
+      async () => ({ outcome: 'served', vector: near, ms: 1 }),
+    );
+    expect(context.text).toContain(
+      '- Procedure schema-ordering (load_workspace_skill): Order schema changes safely',
+    );
+    expect((await serve('meaning-full-index')).skill_index_bytes).toBeLessThanOrEqual(
+      INSTITUTIONAL_SKILL_INDEX_MAX_BYTES,
+    );
+  });
+
   it('keeps the skill index inside its own budget when the Workspace has many skills', async () => {
     for (let index = 0; index < 30; index++) {
       await saveSkill(database, command, {
@@ -747,11 +779,29 @@ describe('delete_skill', () => {
     ).rejects.toThrow('skill delete cites an unavailable source');
     await expect(
       deleteSkill(database, command, { slug: 'never-saved', version: 1, sourceMessageIds: [ROOT] }),
-    ).rejects.toThrow('no active procedure or workflow is named never-saved');
+    ).rejects.toThrow('no procedure or workflow is named never-saved');
     await expect(
       deleteSkill(database, command, { slug: 'cartoon-short-video', version: 2, sourceMessageIds: [] }),
     ).rejects.toThrow('skill delete source messages are invalid');
     expect((await load()).version).toBe(2);
+  });
+
+  it('deletes a stale procedure with the same version check', async () => {
+    await save();
+    await database.query(`UPDATE workspace_skills SET state='stale' WHERE slug='cartoon-short-video'`);
+    await expect(
+      deleteSkill(database, command, { slug: 'cartoon-short-video', version: 2, sourceMessageIds: [ROOT] }),
+    ).rejects.toThrow('cartoon-short-video is at version 1, not 2');
+    const deleted = await deleteSkill(database, command, {
+      slug: 'cartoon-short-video',
+      version: 1,
+      sourceMessageIds: [ROOT],
+    });
+    expect(deleted.deleted).toBe(true);
+    expect(
+      (await database.query<{ state: string }>(`SELECT state FROM workspace_skills WHERE slug='cartoon-short-video'`))
+        .rows[0]?.state,
+    ).toBe('archived');
   });
 
   it('counts a deleted slug saved again against the active cap', async () => {

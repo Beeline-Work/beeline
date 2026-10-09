@@ -269,7 +269,7 @@ export async function saveSkill(
 }
 
 /**
- * Soft-delete one procedure or workflow by slug, with the same authority as
+ * Soft-delete one active or stale procedure or workflow by slug, with the same authority as
  * save_skill: any agent turn in a Room of the skill's Workspace. The caller
  * must name the current version and cite current messages in this Room, the
  * turn's root request among them. The row and every version stay for history;
@@ -322,11 +322,11 @@ export async function deleteSkill(
     const current = (
       await db.query<{ id: string; kind: 'procedure' | 'workflow'; current_version: number }>(
         `SELECT id,kind,current_version FROM workspace_skills
-         WHERE workspace_id=$1 AND slug=$2 AND state='active' FOR UPDATE`,
+         WHERE workspace_id=$1 AND slug=$2 AND state IN ('active','stale') FOR UPDATE`,
         [room.workspace_id, slug],
       )
     ).rows[0];
-    if (!current) throw new Error(`no active procedure or workflow is named ${slug}`);
+    if (!current) throw new Error(`no procedure or workflow is named ${slug}`);
     if (current.current_version !== version) {
       throw new Error(
         `${slug} is at version ${current.current_version}, not ${version}; load it again before deleting`,

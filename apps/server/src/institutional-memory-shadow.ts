@@ -408,7 +408,9 @@ export async function getInstitutionalContext(
     });
     const mergedSkills = new Map<string, WorkspaceSkillIndexCandidate & { distance?: number }>();
     for (const skill of authorizedSkills) mergedSkills.set(skill.id, skill);
-    for (const skill of vectorSkillCandidates) if (!mergedSkills.has(skill.id)) mergedSkills.set(skill.id, skill);
+    // A vector row is the same authorized row plus its distance, so it replaces
+    // the catalog row: a semantic match keeps its rank when the index is full.
+    for (const skill of vectorSkillCandidates) mergedSkills.set(skill.id, skill);
     const skillCandidates = [...mergedSkills.values()].sort((left, right) => {
       const core =
         Number(right.slug === WORKSPACE_CORE_SKILL_SLUG) -

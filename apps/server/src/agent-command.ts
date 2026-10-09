@@ -800,6 +800,13 @@ export const CORNER_MERGE_YES_CARD_TYPE = 'corner-merge-yes';
 export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
 
 /**
+ * How long a failing head may keep a check pending, with no new check result,
+ * before the corner counts as blocked. The implementer's wake waits for every
+ * check to finish, so a check that never finishes would hold it forever.
+ */
+export const CORNER_CHECK_STUCK_AFTER = '1 hour';
+
+/**
  * Reports a review turn ending to the corner lifecycle (`advanceCorner`).
  *
  * "The review" is read structurally, never from the verdict's wording: this
@@ -1305,7 +1312,9 @@ export async function queueCornerMergeConflict(
  * when that one turn ends and the same head is still failing with no other
  * turn pending, the corner is stuck until a person steps in. This writes one
  * line per stuck head, naming the requester, and push delivery sends it to
- * them (`background.ts`). Runs on the background reconciliation cycle.
+ * them (`background.ts`). A failing head whose wake is still held by a check
+ * that has not finished for `CORNER_CHECK_STUCK_AFTER` is stuck the same way.
+ * Runs on the background reconciliation cycle.
  */
 export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> {
   const blocked = await db.query<{
@@ -1315,24 +1324,36 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
     number: string | null;
     url: string | null;
     commissioned_by: string | null;
+    check_stuck: boolean;
   }>(
     `SELECT fact.corner_id,fact.commissioned_by,
             fact.lifecycle->'pr'->>'headSha' head_sha,
             fact.lifecycle->'pr'->>'title' title,
             fact.lifecycle->'pr'->>'number' number,
-            fact.lifecycle->'pr'->>'url' url
+            fact.lifecycle->'pr'->>'url' url,
+            stuck.held check_stuck
      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+     CROSS JOIN LATERAL (
+       SELECT (fact.lifecycle->'checksSummary'->>'updatedAt')::double precision
+                <= extract(epoch FROM now()-interval '${CORNER_CHECK_STUCK_AFTER}')
+              AND EXISTS (
+                SELECT 1 FROM jsonb_array_elements(
+                  CASE WHEN jsonb_typeof(fact.lifecycle->'checksSummary'->'checks')='array'
+                       THEN fact.lifecycle->'checksSummary'->'checks' ELSE '[]'::jsonb END) running
+                WHERE running->>'status'='pending'
+              ) held
+     ) stuck
      WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
        AND fact.lifecycle->>'checks'='failing'
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND EXISTS (
+       AND (stuck.held OR EXISTS (
          SELECT 1 FROM agent_commands command
          JOIN messages source ON source.id=command.source_message_id
          WHERE command.room_id=fact.corner_id AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
            AND command.reason='corner_check' AND command.state IN ('complete','cancelled')
            AND command.completed_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
            AND source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
-       )
+       ))
        AND NOT EXISTS (
          SELECT 1 FROM agent_commands working
          WHERE working.room_id=fact.corner_id AND working.agent_id=${cornerImplementerSql('fact', 'corner')}
@@ -1354,7 +1375,9 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
         ? { kind: 'person', id: row.commissioned_by, name: 'the requester' }
         : { kind: 'system', name: 'Somebody' },
       verb: 'may need to step in',
-      consequence: `checks still fail on ${pullRequest} and the fix turn ended with nothing new pushed`,
+      consequence: row.check_stuck
+        ? `checks fail on ${pullRequest} and a check has not finished for ${CORNER_CHECK_STUCK_AFTER}`
+        : `checks still fail on ${pullRequest} and the fix turn ended with nothing new pushed`,
       cardType: CORNER_CHECKS_BLOCKED_CARD_TYPE,
       card: { cornerId: row.corner_id, headSha: row.head_sha, ...(row.url ? { url: row.url } : {}) },
     });

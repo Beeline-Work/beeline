@@ -28,6 +28,8 @@ import {
   repairReviewerCornerMembership,
   queueCornerMergeConflict,
   reconcileCornerMergeBlockers,
+  noteBlockedCornerChecks,
+  CORNER_CHECKS_BLOCKED_CARD_TYPE,
   type CommandRow,
 } from './agent-command.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
@@ -1483,6 +1485,26 @@ describe('Reproduction CI-1: a red head wakes the implementer once its checks fi
     await reconcileCornerMergeBlockers(db, cornerId);
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
     expect(await currentState(cornerId)).toBe('implement');
+  });
+
+  it('tells the requester once when a check stays pending for an hour', async () => {
+    const cornerId = await redWhileRunning();
+    const blocked = () => db.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND card_type=$2`, [cornerId, CORNER_CHECKS_BLOCKED_CARD_TYPE]);
+    // The implementer's own turn has ended; nothing else will wake it.
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1`, [cornerId]);
+    expect(await noteBlockedCornerChecks(db)).toBe(0);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',
+         to_jsonb(extract(epoch FROM now()-interval '61 minutes')::bigint)) WHERE corner_id=$1`,
+      [cornerId],
+    );
+    expect(await noteBlockedCornerChecks(db)).toBe(1);
+    expect(await noteBlockedCornerChecks(db)).toBe(0);
+    expect((await blocked()).rows.map((row) => row.text)).toEqual([
+      expect.stringContaining('a check has not finished for 1 hour'),
+    ]);
+    expect(await reasons(cornerId, A)).not.toContain('corner_check');
   });
 });
 

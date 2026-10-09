@@ -124,6 +124,29 @@ async function readClear() {
   const heads = Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="tray-section-"]'))
     .map((head) => head.textContent)
     .join(' | ');
+  if (new URLSearchParams(location.search).get('remove') === '1') {
+    const remove = document.querySelector<HTMLElement>('[aria-label="Remove unavailable bookmark"]');
+    assert(remove != null, 'no REMOVE on the unavailable bookmark');
+    remove!.click();
+    await pause();
+    const removal = document.querySelector<HTMLElement>('[data-testid="bookmark-undo"]');
+    const bulk = document.querySelector<HTMLElement>('[data-testid="tray-clear-undo"]');
+    assert(removal != null, 'no Bookmark removed bar after REMOVE');
+    assert(bulk != null, `bulk Undo disappeared after REMOVE: ${removal!.textContent}`);
+    assert(
+      bulk!.getBoundingClientRect().bottom <= removal!.getBoundingClientRect().top,
+      'the bulk Undo bar overlaps the Bookmark removed bar',
+    );
+    const bars = `${bulk!.textContent} above ${removal!.textContent}`;
+    bulk!.querySelector<HTMLElement>('[role="button"]')!.click();
+    await pause();
+    assert(
+      document.querySelector('[data-testid="needs-you-ask-1"]') != null,
+      'bulk UNDO did not bring the question back',
+    );
+    report(`PASS ${bars} | UNDO restored needs-you-ask-1`);
+    return;
+  }
   if (desktop) {
     const list = document.querySelector<HTMLElement>('[data-testid="tray-list"]')!.getBoundingClientRect();
     const bar = undo!.getBoundingClientRect();

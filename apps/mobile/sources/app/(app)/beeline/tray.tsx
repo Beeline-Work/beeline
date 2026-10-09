@@ -35,6 +35,9 @@ const TRAY_REFRESH_MS = 60_000;
 /** How long a removal or a section clear can be undone. */
 const UNDO_MS = 6_000;
 
+/** How far a section clear's Undo bar sits above a bookmark removal's bar. */
+const UNDO_STACK = 56;
+
 /** The server's refusal once the person has left, or been removed from, the Workspace. */
 function lostWorkspace(reason: unknown): boolean {
   return (reason as { code?: unknown } | null)?.code === 'workspace membership required';
@@ -751,7 +754,6 @@ export default function TrayScreen() {
         {list}
         {pane}
       </View>
-      {/* The newest action owns the bar. */}
       {removed ? (
         <View
           accessibilityLiveRegion="polite"
@@ -769,10 +771,16 @@ export default function TrayScreen() {
             </Pressable>
           ) : null}
         </View>
-      ) : newestClear ? (
+      ) : null}
+      {/* A held clear keeps its UNDO in reach above a bookmark removal's bar. */}
+      {newestClear ? (
         <View
           accessibilityLiveRegion="polite"
-          style={[styles.undo, desktop && styles.desktopUndo, { bottom: 16 + insets.bottom }]}
+          style={[
+            styles.undo,
+            desktop && styles.desktopUndo,
+            { bottom: 16 + insets.bottom + (removed ? UNDO_STACK : 0) },
+          ]}
           testID="tray-clear-undo"
         >
           <Text style={styles.undoText}>{clearedLabel(newestClear)}</Text>

@@ -14,7 +14,6 @@ import {
 } from './release-push-catchup.js';
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
-export const PUSH_DELIVERY_MIN_INTERVAL_MS = 5_000;
 /** Bound concurrent device sends after serial claim/suppress. APNS can take
  * up to APNS_REQUEST_TIMEOUT_MS per token; serializing 100 candidates on the
  * sole background leader otherwise stalls attention delivery. */
@@ -162,32 +161,19 @@ function earlierTurnPushSql(message: string, deviceToken: string): string {
 }
 
 export class PushDeliveryLoop {
-  #lastCompletedAt = Number.NEGATIVE_INFINITY;
+  #repeatBatch = false;
 
   constructor(
     private readonly database: SqlDatabase,
     private readonly sender: PushSender | undefined,
     private readonly iosSender?: PushSender,
-    private readonly minimumIntervalMs = PUSH_DELIVERY_MIN_INTERVAL_MS,
-    private readonly now: () => number = Date.now,
     private readonly webSender?: PushSender,
   ) {}
 
   async runOnce(): Promise<number> {
-    return this.runUnthrottled();
-  }
-
-  async runIfDue(): Promise<number> {
-    if (this.millisecondsUntilNextRun() > 0) return 0;
-    try {
-      return await this.runUnthrottled();
-    } finally {
-      this.#lastCompletedAt = this.now();
-    }
-  }
-
-  millisecondsUntilNextRun(): number {
-    return Math.max(0, this.#lastCompletedAt + this.minimumIntervalMs - this.now());
+    let delivered = 0;
+    do { delivered += await this.runUnthrottled(); } while (this.#repeatBatch);
+    return delivered;
   }
 
   private async runUnthrottled(): Promise<number> {
@@ -196,6 +182,16 @@ export class PushDeliveryLoop {
     await this.database.query(
       `INSERT INTO push_delivery_floors(id) VALUES('message-delivery') ON CONFLICT(id) DO NOTHING`,
     );
+    // Candidate messages expire after an hour. A terminal claim outside that
+    // window cannot suppress a future push, except an explicit release catchup.
+    await this.database.query(`DELETE FROM push_delivery_claims claim
+      WHERE (claim.message_id,claim.device_token) IN (
+        SELECT old.message_id,old.device_token FROM push_delivery_claims old
+        WHERE old.status IN ('delivered','suppressed','failed')
+          AND old.completed_at<now()-interval '1 hour'
+          AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
+            WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
+        ORDER BY old.completed_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
     await retireTerminalReleaseCatchups(this.database);
     const candidates = await this.database.query<{
       message_id: string;
@@ -382,6 +378,7 @@ export class PushDeliveryLoop {
         JOIN push_delivery_floors floor ON floor.id='message-delivery'
         WHERE notification.created_at>=push_device.registered_at
           AND notification.created_at>=floor.started_at
+          AND notification.created_at>=now()-interval '1 hour'
           AND btrim(notification.text)<>''
         UNION ALL
         SELECT catchup.message_id,catchup.workspace_id,catchup.room_id,catchup.channel_id,
@@ -442,6 +439,7 @@ export class PushDeliveryLoop {
           };
     };
     const claimedDeliveries: ClaimedDelivery[] = [];
+    let claimedRows = 0;
     for (const candidate of candidates.rows) {
       const claimed = candidate.is_release_catchup
         ? await claimReleaseCatchup(
@@ -499,6 +497,7 @@ export class PushDeliveryLoop {
             ).rowCount,
           );
       if (!claimed) continue;
+      claimedRows++;
       // Consume suppressed candidates permanently, so leaving a Room does not replay them.
       // A Room's mute covers its corners and lets direct attention through.
       const suppressed =
@@ -628,6 +627,7 @@ export class PushDeliveryLoop {
       ),
     );
     delivered = workerResults.reduce((sum, count) => sum + count, 0);
+    this.#repeatBatch = candidates.rows.length === 100 && claimedRows > 0;
     return delivered;
   }
 }

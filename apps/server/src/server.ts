@@ -68,6 +68,7 @@ import {
 export const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
 
 const MAX_JSON_BYTES = 1024 * 1024;
+let webhookWritesSincePrune = 0;
 // A reconnecting helper may send all of its Room subscriptions at once. Keep
 // those reads outside pg-pool's queue, where they would otherwise time out and
 // amplify the reconnect. Older helpers need no new protocol to use this gate.
@@ -1628,11 +1629,30 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     }
     if (options.github?.onWebhook) await options.github.onWebhook(event, parsed);
     const inserted = await options.database.query(
-      `INSERT INTO github_webhook_deliveries(delivery_id,event_type,payload,processed_at)
-       VALUES($1,$2,$3::jsonb,now()) ON CONFLICT DO NOTHING`,
-      [delivery, event, JSON.stringify(parsed)],
+      `INSERT INTO github_webhook_deliveries(delivery_id) VALUES($1) ON CONFLICT DO NOTHING`,
+      [delivery],
     );
     const accepted = Boolean(inserted.rowCount);
+    if (accepted && ++webhookWritesSincePrune % 64 === 1) {
+      try {
+        await options.database.query(
+          `DELETE FROM github_webhook_deliveries delivery
+           WHERE delivery.delivery_id IN (
+             SELECT delivery_id FROM github_webhook_deliveries
+             WHERE received_at<now()-interval '30 days'
+             ORDER BY received_at,delivery_id LIMIT 1024 FOR UPDATE SKIP LOCKED)`,
+        );
+        await options.database.query(
+          `UPDATE github_webhook_deliveries delivery SET payload=NULL,event_type=NULL,processed_at=NULL
+           WHERE delivery.delivery_id IN (
+             SELECT delivery_id FROM github_webhook_deliveries
+             WHERE payload IS NOT NULL
+             ORDER BY received_at,delivery_id LIMIT 1024 FOR UPDATE SKIP LOCKED)`,
+        );
+      } catch (error) {
+        console.warn('[github-webhook] retention prune failed', error);
+      }
+    }
     json(response, accepted ? 202 : 200, {
       accepted,
       duplicate: !accepted,

@@ -3,7 +3,8 @@ import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
+import { ObjectService } from './object-service.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -34,6 +35,8 @@ describe('deleteAccount', () => {
   let database: PgliteDatabase;
   let auth: TokenAuth;
   let phone: PhoneService;
+  let storage: MemoryObjectStorage;
+  let objects: ObjectService;
   let origin: string | undefined;
   let server: ReturnType<typeof createBeelineServer> | undefined;
   let ownerToken: string;
@@ -162,11 +165,17 @@ describe('deleteAccount', () => {
     await migrate(database);
     await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     await seed();
+    storage = new MemoryObjectStorage();
+    storage.blobs.set(`media/${OWNER}/${'n'.repeat(64)}`, {
+      bytes: Buffer.from('notes'), type: 'text/plain',
+    });
+    objects = new ObjectService(database, storage.asStorage(), 'http://placeholder');
     auth = new TokenAuth(database, async (proof) => {
       const login = proof === 'proof' ? 'owner' : proof === 'partner-proof' ? 'partner' : proof;
       return { subject: login, login, name: login[0]!.toUpperCase() + login.slice(1) };
     });
-    phone = new PhoneService(database, 'http://placeholder', undefined, async () => undefined);
+    phone = new PhoneService(database, 'http://placeholder', undefined, async () => undefined,
+      undefined, false, database, objects);
   });
 
   afterEach(async () => {
@@ -211,6 +220,7 @@ describe('deleteAccount', () => {
       body: '{}',
     });
     expect(response.status).toBe(204);
+    expect(storage.blobs.size).toBe(0);
 
     // The person and their agent are gone; the tombstone author is in.
     await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[OWNER, AGENT]], 0);
@@ -334,6 +344,45 @@ describe('deleteAccount', () => {
     await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 0);
   });
 
+  it('keeps owned object rows and the account retryable when storage deletion fails', async () => {
+    const key = `media/${OWNER}/${'n'.repeat(64)}`;
+    const original = storage.deleteObject.bind(storage);
+    const deleting = vi.spyOn(storage, 'deleteObject')
+      .mockRejectedValueOnce(new Error('storage unavailable'))
+      .mockRejectedValueOnce(new Error('storage unavailable'))
+      .mockRejectedValueOnce(new Error('storage unavailable'));
+    await expect(phone.execute('deleteAccount', {}, OWNER)).rejects.toThrow('storage unavailable');
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 1);
+    await expectRowCount(`SELECT 1 FROM objects WHERE key=$1`, [key], 1);
+    expect(storage.blobs.has(key)).toBe(true);
+    deleting.mockImplementation(original);
+    await phone.execute('deleteAccount', {}, OWNER);
+    expect(storage.blobs.has(key)).toBe(false);
+    await expectRowCount(`SELECT 1 FROM objects WHERE key=$1`, [key], 0);
+  });
+
+  it('cancels a surviving helper assignment when its owner account archives the corner', async () => {
+    const helper = 'd'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')`, [helper]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, CORNER, helper]);
+    await database.query(
+      `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,
+        action,reason,root_command_id,root_source_message_id,agent_depth)
+       VALUES('helper-input',$1,$2,'m1','helper-turn','input','mention','helper-input','m1',0)`,
+      [CORNER, helper]);
+    await database.query(
+      `INSERT INTO agent_turns(room_id,request_id,agent_id,status)
+       VALUES($1,'helper-turn',$2,'working')`, [CORNER, helper]);
+    await phone.execute('deleteAccount', {}, OWNER);
+    await expectRowCount(
+      `SELECT 1 FROM agent_commands WHERE room_id=$1 AND action IN ('input','resume')
+         AND state IN ('pending','claimed')`, [CORNER], 0);
+    await expectRowCount(
+      `SELECT 1 FROM agent_turns WHERE room_id=$1 AND status='working'`, [CORNER], 0);
+  });
+
   const seedAppConnections = async () => {
     await database.query(
       `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,
@@ -356,8 +405,8 @@ describe('deleteAccount', () => {
       async () => undefined,
       undefined,
       false,
-      undefined,
-      undefined,
+      database,
+      objects,
       undefined,
       undefined,
       composio,

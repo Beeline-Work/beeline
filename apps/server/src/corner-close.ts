@@ -5,7 +5,7 @@ import { advanceCorner } from './corner-lifecycle.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 
 /**
- * Cancels every pending or claimed input/resume command for a corner, and any
+ * Cancels every pending or claimed input/resume/restart command for a corner, and any
  * turn still marked `working`, so a corner that just landed never leaves a
  * stale assignment behind. Shared by every path that archives a corner:
  * `closeCornerState` and the GitHub merge webhook.
@@ -35,7 +35,7 @@ export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId:
     });
   await database.query(
     `UPDATE agent_commands SET state='cancelled',completed_at=now()
-     WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')`,
+     WHERE room_id=$1 AND action IN ('input','resume','restart') AND state IN ('pending','claimed')`,
     [cornerId],
   );
   await database.query(
@@ -45,18 +45,34 @@ export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId:
   );
 }
 
+/** Release migration: old archived corners cannot have an active assignment. */
+export async function cancelArchivedCornerAssignments(database: SqlDatabase): Promise<void> {
+  await database.query(
+    `UPDATE agent_commands command SET state='cancelled',completed_at=now()
+     FROM rooms corner WHERE corner.id=command.room_id
+       AND corner.parent_id IS NOT NULL AND corner.archived_at IS NOT NULL
+       AND command.state IN ('pending','claimed')`,
+  );
+  await database.query(
+    `UPDATE agent_turns turn SET status='cancelled'
+     FROM rooms corner WHERE corner.id=turn.room_id
+       AND corner.parent_id IS NOT NULL AND corner.archived_at IS NOT NULL
+       AND turn.status='working'`,
+  );
+}
+
 /** The terminal corner state shared by helper completion and a human close request. */
 export async function closeCornerState(database: SqlDatabase, cornerId: string) {
   const corner = (
-    await database.query<{ parent_id: string; name: string; archived: boolean }>(
-      `SELECT parent_id,name,archived_at IS NOT NULL archived FROM rooms
+    await database.query<{ parent_id: string; name: string }>(
+      `SELECT parent_id,name FROM rooms
        WHERE id=$1 AND parent_id IS NOT NULL
        FOR UPDATE`,
       [cornerId],
     )
   ).rows[0];
   if (!corner) throw new Error('corner not found');
-  if (!corner.archived) await cancelCornerAgentCommands(database, cornerId);
+  await cancelCornerAgentCommands(database, cornerId);
   await database.query(
     `UPDATE rooms SET archived_at=COALESCE(archived_at,now()),updated_at=now() WHERE id=$1`,
     [cornerId],

@@ -203,7 +203,7 @@ import {
 } from './wallet.js';
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
-import { closeCornerState } from './corner-close.js';
+import { cancelCornerAgentCommands, closeCornerState } from './corner-close.js';
 import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -7302,12 +7302,15 @@ export class PhoneService {
       await database.query(`UPDATE agent_grants SET decided_by=NULL WHERE decided_by=ANY($1)`, [
         gone,
       ]);
+      const closingCorners = await database.query<{ id: string }>(
+        `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
+           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1))
+         ORDER BY id FOR UPDATE`, [gone]);
+      for (const corner of closingCorners.rows)
+        await cancelCornerAgentCommands(database, corner.id);
       await database.query(
         `UPDATE rooms SET archived_at=now(),updated_at=now()
-         WHERE parent_id IS NOT NULL AND archived_at IS NULL
-           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1))`,
-        [gone],
-      );
+         WHERE id=ANY($1::uuid[])`, [closingCorners.rows.map((corner) => corner.id)]);
       await database.query(
         `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,
            lifecycle=lifecycle||$2::jsonb,updated_at=now()
@@ -7421,6 +7424,7 @@ export class PhoneService {
 
       // Receipts, output streams and authority rows that point at the gone ids.
       await database.query(`DELETE FROM live_outputs WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(`DELETE FROM agent_commands WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_turns WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM work_schedules WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM schedule_receipts WHERE agent_id=ANY($1)`, [gone]);
@@ -7441,6 +7445,9 @@ export class PhoneService {
 
       // Object bytes are personal data: the rows go, and a tombstone keeps the
       // readers' story the one media-ttl.ts already tells (expired, not lost).
+      if (this.objects) await this.objects.deleteOwnedBytes(gone, database);
+      else if ((await database.query(`SELECT 1 FROM objects WHERE owner_id=ANY($1) LIMIT 1`, [gone])).rowCount)
+        throw new Error('object storage is not configured');
       await database.query(
         `WITH swept AS (DELETE FROM objects WHERE owner_id=ANY($1) RETURNING id,kind)
          INSERT INTO object_expirations(id,retention_hours)

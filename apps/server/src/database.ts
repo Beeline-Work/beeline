@@ -37,6 +37,7 @@ import {
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
+import { cancelArchivedCornerAssignments } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
 import { retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
@@ -2048,6 +2049,10 @@ CREATE TABLE IF NOT EXISTS github_webhook_deliveries (
   received_at timestamptz NOT NULL DEFAULT now(),
   processed_at timestamptz
 );
+-- Keep these nullable during the rolling deploy so the previous server image
+-- can still write its old shape. New writes use only delivery_id/received_at.
+ALTER TABLE github_webhook_deliveries ALTER COLUMN event_type DROP NOT NULL;
+ALTER TABLE github_webhook_deliveries ALTER COLUMN payload DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS push_devices (
   token text PRIMARY KEY,
@@ -2732,6 +2737,22 @@ export async function migrate(
       await ddl(`${name} ${index + 1}/${statements.length}`, statement);
   };
   await ddlScript('server schema', SCHEMA);
+  await retryMigrationStep('webhook retention index', () => createIndexConcurrently(
+    database, 'github_webhook_deliveries_received_idx',
+    `CREATE INDEX CONCURRENTLY github_webhook_deliveries_received_idx
+     ON github_webhook_deliveries(received_at)`,
+  ));
+  await retryMigrationStep('webhook payload drain index', () => createIndexConcurrently(
+    database, 'github_webhook_deliveries_payload_idx',
+    `CREATE INDEX CONCURRENTLY github_webhook_deliveries_payload_idx
+     ON github_webhook_deliveries(received_at) WHERE payload IS NOT NULL`,
+  ));
+  await retryMigrationStep('terminal push claim expiry index', () => createIndexConcurrently(
+    database, 'push_delivery_claims_terminal_idx',
+    `CREATE INDEX CONCURRENTLY push_delivery_claims_terminal_idx
+     ON push_delivery_claims(completed_at)
+     WHERE status IN ('delivered','suppressed','failed')`,
+  ));
   await ddl('wallet delegation',
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
@@ -2872,6 +2893,12 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     return result;
   };
   const searchDocuments = await backfillMessageSearchDocuments(database, 200, true);
+  await dataStep('webhook payload and retention', () =>
+    workflowBackfillOnce(database, 'webhook-retention-v1', compactWebhookDeliveries));
+  await dataStep('archived corner assignments', () =>
+    workflowBackfillOnce(database, 'archived-corner-assignments-v1', cancelArchivedCornerAssignments));
+  await dataStep('terminal push claims', () =>
+    workflowBackfillOnce(database, 'terminal-push-claims-v1', compactPushClaims));
   if (searchDocuments)
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
   await dataStep('corner owner backfill', () => backfillCornerOwners(database));
@@ -3170,6 +3197,39 @@ async function boundedMigrationUpdate(
     changed += count;
     if (count < batchSize) return changed;
   }
+}
+
+/** Clear legacy JSON without one long row lock or table rewrite. The old
+ * payload column remains nullable until every server runs the new image. */
+export async function compactWebhookDeliveries(database: SqlDatabase): Promise<void> {
+  const expired = await boundedMigrationUpdate(database, 'expired webhook deliveries',
+    `DELETE FROM github_webhook_deliveries delivery
+     WHERE delivery.delivery_id IN (
+       SELECT delivery_id FROM github_webhook_deliveries
+       WHERE received_at<now()-interval '30 days'
+       ORDER BY received_at,delivery_id LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);
+  const cleared = await boundedMigrationUpdate(database, 'webhook payloads',
+    `UPDATE github_webhook_deliveries delivery
+     SET payload=NULL,event_type=NULL,processed_at=NULL
+     WHERE delivery.delivery_id IN (
+       SELECT delivery_id FROM github_webhook_deliveries
+       WHERE payload IS NOT NULL
+       ORDER BY received_at,delivery_id LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);
+  if (expired || cleared)
+    console.log(`compactWebhookDeliveries: expired ${expired}, cleared ${cleared} payload(s)`);
+}
+
+export async function compactPushClaims(database: SqlDatabase): Promise<void> {
+  const cleared = await boundedMigrationUpdate(database, 'terminal push claims',
+    `DELETE FROM push_delivery_claims claim
+     WHERE (claim.message_id,claim.device_token) IN (
+       SELECT old.message_id,old.device_token FROM push_delivery_claims old
+       WHERE old.status IN ('delivered','suppressed','failed')
+         AND old.completed_at<now()-interval '1 hour'
+         AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
+           WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
+       ORDER BY old.completed_at LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);
+  if (cleared) console.log(`compactPushClaims: expired ${cleared} claim(s)`);
 }
 
 /**

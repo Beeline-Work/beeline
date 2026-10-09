@@ -264,6 +264,39 @@ describe('startDictationUpload', () => {
     }
   });
 
+  it('keeps the stop wait granted to a long piece when a short piece follows it', async () => {
+    // Review F1: a 60 s piece answers after 6 s, then a 3 s piece after 1 s.
+    vi.useFakeTimers();
+    try {
+      recordings.set('file:///long.wav', pcmWav(60));
+      recordings.set('file:///short.wav', pcmWav(3));
+      sessionFetch
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) =>
+              setTimeout(() => resolve(Response.json({ text: 'Long part.' })), 6000),
+            ),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) =>
+              setTimeout(() => resolve(Response.json({ text: 'short part.' })), 1000),
+            ),
+        );
+      const { startDictationUpload } = await load();
+
+      const upload = startDictationUpload([], 'en-US');
+      upload.add('file:///long.wav');
+      upload.add('file:///short.wav');
+      const result = upload.finish();
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(await result).toBe('Long part. short part.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('uploads a PCM recording as IMA ADPCM, a quarter of the bytes', async () => {
     const wav = pcmWav(3);
     recordings.set('file:///take.wav', wav);

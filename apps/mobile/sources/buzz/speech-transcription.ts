@@ -142,7 +142,8 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
   let queue: Promise<void> = Promise.resolve();
   // Seconds of audio sent but not yet answered; stop waits longer for them.
   let outSeconds = 0;
-  let onOut: (() => void) | null = null;
+  // Called with the seconds of each piece, or retry, sent after stop.
+  let onOut: ((seconds: number) => void) | null = null;
 
   const texts = (before = slots.length) => slots.slice(0, before).flatMap((slot) => slot ?? []);
   const send = async (wav: Uint8Array, slot = slots.push(null) - 1) => {
@@ -150,7 +151,7 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
     const prompt = dictationPrompt(lexicon, previous);
     const seconds = dictationWavSeconds(wav) ?? 0;
     outSeconds += seconds;
-    onOut?.();
+    onOut?.(seconds);
     try {
       const chunks = splitDictationWav(wav, CHUNK_SECONDS);
       const results = await Promise.all(
@@ -224,11 +225,13 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
       });
       let timer: ReturnType<typeof setTimeout> | undefined;
       const stoppedAt = Date.now();
+      // Audio out at stop, plus every piece and retry sent after it. The wait
+      // only grows, never past MAXIMUM_STOP_WAIT_MS.
+      let waitSeconds = outSeconds;
       const late = new Promise<false>((resolve) => {
-        // The wait grows with audio still out, never past MAXIMUM_STOP_WAIT_MS.
         const arm = () => {
           const extra = Math.min(
-            outSeconds * STOP_WAIT_PER_AUDIO_SECOND_MS,
+            waitSeconds * STOP_WAIT_PER_AUDIO_SECOND_MS,
             MAXIMUM_STOP_WAIT_MS - timeoutMs,
           );
           clearTimeout(timer);
@@ -237,7 +240,10 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
             stoppedAt + timeoutMs + Math.max(0, extra) - Date.now(),
           );
         };
-        onOut = arm;
+        onOut = (seconds) => {
+          waitSeconds += seconds;
+          arm();
+        };
         arm();
       });
       try {

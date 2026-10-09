@@ -59,10 +59,11 @@ type Target = {
   readonly workspaceId: string;
 };
 
-/** A section clear held back until its Undo window closes. */
-type PendingClear =
+/** A section clear held back until its own Undo window closes. */
+type PendingClear = { readonly id: number; readonly expiresAt: number } & (
   | { readonly kind: 'needs'; readonly items: readonly NeedsYouItemView[] }
-  | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[] };
+  | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[] }
+);
 
 type Row =
   | {
@@ -100,8 +101,10 @@ export default function TrayScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<MessageBookmarkView | null>(null);
-  const [pending, setPending] = useState<PendingClear | null>(null);
-  const pendingRef = useRef<PendingClear | null>(null);
+  // Oldest first; the Undo bar offers the newest.
+  const [pending, setPending] = useState<readonly PendingClear[]>([]);
+  const pendingRef = useRef<readonly PendingClear[]>([]);
+  const nextClearId = useRef(0);
   const [client, setClient] = useState<RoomViewClient | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [inspectRoom, setInspectRoom] = useState<RoomView | null>(null);
@@ -339,64 +342,74 @@ export default function TrayScreen() {
       setError(refusal.reason instanceof Error ? refusal.reason.message : String(refusal.reason));
   }, []);
 
-  const flushClear = useCallback(() => {
-    const clear = pendingRef.current;
-    if (!clear) return;
-    pendingRef.current = null;
-    setPending(null);
-    void commitClear(clear);
-  }, [commitClear]);
+  /** Send the held clears `which` picks, and stop holding them. */
+  const flushClears = useCallback(
+    (which: (clear: PendingClear) => boolean) => {
+      const due = pendingRef.current.filter(which);
+      if (!due.length) return;
+      pendingRef.current = pendingRef.current.filter((clear) => !which(clear));
+      setPending(pendingRef.current);
+      for (const clear of due) void commitClear(clear);
+    },
+    [commitClear],
+  );
 
-  // A held clear goes out when its Undo window closes or the Tray loses focus.
+  // Each held clear goes out when its own Undo window closes; all of them go
+  // out when the Tray loses focus.
   useEffect(() => {
-    if (!pending) return;
-    const timer = setTimeout(flushClear, UNDO_MS);
-    return () => clearTimeout(timer);
-  }, [flushClear, pending]);
-  useFocusEffect(useCallback(() => flushClear, [flushClear]));
+    const timers = pending.map((clear) =>
+      setTimeout(
+        () => flushClears((held) => held.id === clear.id),
+        Math.max(0, clear.expiresAt - Date.now()),
+      ),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [flushClears, pending]);
+  useFocusEffect(useCallback(() => () => flushClears(() => true), [flushClears]));
 
-  const visibleNeeds = useMemo(
-    () =>
-      pending?.kind === 'needs'
-        ? needs.filter((item) => !pending.items.some((held) => held.messageId === item.messageId))
-        : needs,
-    [needs, pending],
-  );
-  const visibleBookmarks = useMemo(
-    () =>
-      pending?.kind === 'saved'
-        ? bookmarks.filter(
-            (item) => !pending.items.some((held) => held.messageId === item.messageId),
-          )
-        : bookmarks,
-    [bookmarks, pending],
-  );
+  const visibleNeeds = useMemo(() => {
+    const held = new Set(
+      pending.flatMap((clear) =>
+        clear.kind === 'needs' ? clear.items.map((item) => item.messageId) : [],
+      ),
+    );
+    return held.size ? needs.filter((item) => !held.has(item.messageId)) : needs;
+  }, [needs, pending]);
+  const visibleBookmarks = useMemo(() => {
+    const held = new Set(
+      pending.flatMap((clear) =>
+        clear.kind === 'saved' ? clear.items.map((item) => item.messageId) : [],
+      ),
+    );
+    return held.size ? bookmarks.filter((item) => !held.has(item.messageId)) : bookmarks;
+  }, [bookmarks, pending]);
+  const newestClear = pending.at(-1);
 
   /** Clear a section now, with Undo. Approvals stay: a decision clears those. */
   const clearSection = useCallback(
     (kind: PendingClear['kind']) => {
-      flushClear();
       setRemoved(null);
+      const held = { id: nextClearId.current++, expiresAt: Date.now() + UNDO_MS };
       const clear: PendingClear =
         kind === 'needs'
-          ? { kind, items: visibleNeeds.filter((item) => !item.approval) }
-          : { kind, items: visibleBookmarks };
+          ? { ...held, kind, items: visibleNeeds.filter((item) => !item.approval) }
+          : { ...held, kind, items: visibleBookmarks };
       if (!clear.items.length) return;
-      pendingRef.current = clear;
-      setPending(clear);
+      pendingRef.current = [...pendingRef.current, clear];
+      setPending(pendingRef.current);
       AccessibilityInfo.announceForAccessibility(`${clearedLabel(clear)}. Undo available.`);
     },
-    [flushClear, visibleBookmarks, visibleNeeds],
+    [visibleBookmarks, visibleNeeds],
   );
 
+  /** Undo the newest held clear; an older one still in its window shows next. */
   const undoClear = useCallback(() => {
-    pendingRef.current = null;
-    setPending(null);
+    pendingRef.current = pendingRef.current.slice(0, -1);
+    setPending(pendingRef.current);
     AccessibilityInfo.announceForAccessibility('Restored');
   }, []);
 
   const remove = useCallback(async (bookmark: MessageBookmarkView) => {
-    flushClear();
     setBookmarks((current) => current.filter((item) => item.messageId !== bookmark.messageId));
     setRemoved(bookmark);
     AccessibilityInfo.announceForAccessibility('Bookmark removed. Undo available.');
@@ -411,7 +424,7 @@ export default function TrayScreen() {
       setBookmarks((current) => [bookmark, ...current]);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [flushClear]);
+  }, []);
 
   const undo = useCallback(async () => {
     if (!removed?.available) return;
@@ -704,18 +717,8 @@ export default function TrayScreen() {
         {list}
         {pane}
       </View>
-      {pending ? (
-        <View
-          accessibilityLiveRegion="polite"
-          style={[styles.undo, { bottom: 16 + insets.bottom }]}
-          testID="tray-clear-undo"
-        >
-          <Text style={styles.undoText}>{clearedLabel(pending)}</Text>
-          <Pressable accessibilityRole="button" onPress={undoClear} style={styles.undoAction}>
-            <Text style={styles.undoActionText}>UNDO</Text>
-          </Pressable>
-        </View>
-      ) : removed ? (
+      {/* The newest action owns the bar. */}
+      {removed ? (
         <View
           accessibilityLiveRegion="polite"
           style={[styles.undo, { bottom: 16 + insets.bottom }]}
@@ -731,6 +734,17 @@ export default function TrayScreen() {
               <Text style={styles.undoActionText}>UNDO</Text>
             </Pressable>
           ) : null}
+        </View>
+      ) : newestClear ? (
+        <View
+          accessibilityLiveRegion="polite"
+          style={[styles.undo, desktop && styles.desktopUndo, { bottom: 16 + insets.bottom }]}
+          testID="tray-clear-undo"
+        >
+          <Text style={styles.undoText}>{clearedLabel(newestClear)}</Text>
+          <Pressable accessibilityRole="button" onPress={undoClear} style={styles.undoAction}>
+            <Text style={styles.undoActionText}>UNDO</Text>
+          </Pressable>
         </View>
       ) : null}
     </View>
@@ -837,6 +851,8 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.borderStrong,
     borderRadius: theme.buzz.radius,
   },
+  // The bulk Undo bar sits at the foot of the desktop list column.
+  desktopUndo: { maxWidth: 390 - 32 },
   undoText: {
     ...theme.buzz.type.meta,
     flex: 1,

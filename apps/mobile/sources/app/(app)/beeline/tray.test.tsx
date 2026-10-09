@@ -708,7 +708,7 @@ describe('Tray section CLEAR', () => {
       .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index);
 
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   });
   afterEach(() => vi.useRealTimers());
 
@@ -767,6 +767,88 @@ describe('Tray section CLEAR', () => {
     expect(textOf(tree)).toContain('bookmark is locked');
   });
 
+  it('Reproduction TRAY-UNDO-1: a second CLEAR keeps the first clear undoable for its full window', async () => {
+    serve({ needs: [need()], bookmarks: [bookmark()] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
+    expect(calls('clearNeedsYou')).toEqual([]);
+    expect(textOf(tree)).toContain('Cleared 1 bookmark');
+    // UNDO takes back the newest clear; the older one, still in its window, shows next.
+    await act(async () =>
+      tree.root
+        .findByProps({ testID: 'tray-clear-undo' })
+        .findByProps({ accessibilityRole: 'button' })
+        .props.onPress(),
+    );
+    expect(textOf(tree)).toContain('Cleared 1 item');
+    await act(async () =>
+      tree.root
+        .findByProps({ testID: 'tray-clear-undo' })
+        .findByProps({ accessibilityRole: 'button' })
+        .props.onPress(),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(ids(tree, /^(needs-you-ask|bookmark-msg)-\d$/)).toEqual(['needs-you-ask-1', 'bookmark-msg-1']);
+    expect(calls('clearNeedsYou')).toEqual([]);
+    expect(calls('setMessageBookmark')).toEqual([]);
+  });
+
+  it('sends each held clear when its own six seconds end', async () => {
+    serve({ needs: [need()], bookmarks: [bookmark()] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
+    await act(async () => {
+      vi.advanceTimersByTime(4_999);
+    });
+    expect(calls('clearNeedsYou')).toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(calls('clearNeedsYou')).toHaveLength(1);
+    expect(calls('setMessageBookmark')).toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(calls('setMessageBookmark')).toHaveLength(1);
+  });
+
+  it('REMOVE during the Undo window does not send the held clear', async () => {
+    layout.os = 'android';
+    layout.width = 390;
+    serve({ needs: [need()], bookmarks: [bookmark({ messageId: 'gone', available: false, text: undefined })] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    await act(async () => {
+      await tree.root.findByProps({ accessibilityLabel: 'Remove unavailable bookmark' }).props.onPress();
+    });
+    expect(calls('clearNeedsYou')).toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(calls('clearNeedsYou')).toHaveLength(1);
+  });
+
+  it('keeps the desktop Undo bar inside the list column', async () => {
+    layout.os = 'web';
+    layout.width = 1200;
+    serve({ bookmarks: [bookmark()] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
+    const undo = tree.root.findByProps({ testID: 'tray-clear-undo' });
+    const style = Object.assign({}, ...[undo.props.style].flat(Infinity as 1));
+    expect(style.left + style.maxWidth).toBeLessThanOrEqual(390 - 16);
+  });
+
   it('sends a held clear when the Tray closes', async () => {
     serve({ needs: [need()] });
     const tree = await renderTray();
@@ -804,13 +886,17 @@ it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN â
   console.log('R12a Demonstrated, Chrome 760px:', result);
 }, 90_000);
 
-it.skipIf(!existsSync(CHROME)).each(['needs', 'saved'])(
-  'Demonstrated: Chrome CLEAR on %s empties the section, keeps approvals, and offers Undo',
-  async (section) => {
+it.skipIf(!existsSync(CHROME)).each([
+  { section: 'needs', surface: 'phone', width: 390 },
+  { section: 'saved', surface: 'phone', width: 390 },
+  { section: 'saved', surface: 'desktop', width: 1200 },
+])(
+  'Demonstrated: Chrome $surface CLEAR on $section empties the section, keeps approvals, and offers Undo',
+  async ({ section, surface, width }) => {
     const mobile = process.cwd();
     const { result, status, stderr } = await runBrowserProof({
-      entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'), mobile, width: 390, budgetMs: 3000,
-      query: `?surface=phone&mode=clear&clear=${section}`,
+      entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'), mobile, width, budgetMs: 3000,
+      query: `?surface=${surface}&mode=clear&clear=${section}`,
       shims: {
         ...webProofShims(mobile),
         'expo-router': `import React from 'react';
@@ -836,7 +922,7 @@ it.skipIf(!existsSync(CHROME)).each(['needs', 'saved'])(
     expect(status, stderr).toBe(0);
     expect(result).toContain('PASS');
     expect(result).toContain(section === 'needs' ? 'Cleared 1 item' : 'Cleared 1 bookmark');
-    console.log(`Demonstrated, Chrome 390px, CLEAR ${section}:`, result);
+    console.log(`Demonstrated, Chrome ${width}px, CLEAR ${section}:`, result);
   },
   90_000,
 );

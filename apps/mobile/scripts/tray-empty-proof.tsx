@@ -124,6 +124,16 @@ async function readClear() {
   const heads = Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="tray-section-"]'))
     .map((head) => head.textContent)
     .join(' | ');
+  if (desktop) {
+    const list = document.querySelector<HTMLElement>('[data-testid="tray-list"]')!.getBoundingClientRect();
+    const bar = undo!.getBoundingClientRect();
+    assert(
+      bar.left >= list.left && bar.right <= list.right,
+      `the Undo bar spans x${Math.round(bar.left)}–${Math.round(bar.right)}, outside the list x${Math.round(list.left)}–${Math.round(list.right)}`,
+    );
+    report(`PASS ${heads} | ${undo!.textContent} | Undo x${Math.round(bar.left)}–${Math.round(bar.right)} in list x${Math.round(list.left)}–${Math.round(list.right)}`);
+    return;
+  }
   report(`PASS ${heads} | ${undo!.textContent}`);
 }
 

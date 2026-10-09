@@ -20,7 +20,7 @@ import {
   parseArchivedCornerCursor,
   type PhoneService,
 } from './phone-service.js';
-import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
+import { DAEMON_OPERATION_NAMES, RelayRefusalError, type DaemonService } from './daemon-service.js';
 import { institutionalMemoryErrorStatus } from './institutional-memory-shadow.js';
 import { ARTIFACT_MAXIMUM_BYTES, decodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
 import { MESSAGE_SEARCH_QUERY_MAX_BYTES, messageSearchTerms } from '@beeline/api-contract/phone';
@@ -444,7 +444,9 @@ export function createBeelineServer(options: ServerOptions): Server {
     ).catch((error) => {
       const message = error instanceof Error ? error.message : 'request failed';
       let status =
-        error instanceof WorkflowAuthorizationError || error instanceof WebhookError
+        error instanceof WorkflowAuthorizationError ||
+        error instanceof WebhookError ||
+        error instanceof RelayRefusalError
           ? error.status
           : institutionalMemoryErrorStatus(message) ??
             ((message.startsWith('corner brief attachment ') &&

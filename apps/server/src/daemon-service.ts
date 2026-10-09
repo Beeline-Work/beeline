@@ -1141,6 +1141,7 @@ export class DaemonService {
         return (await this.corners(
           (input as Input<'listRoomCorners'>).roomId,
           authenticatedAgentId,
+          (input as Input<'listRoomCorners'>).activeOnly === true,
         )) as Output<Name>;
       case 'getPrChecksStatus':
         if (!this.prChecksStatus) throw new Error('GitHub PR checks service unavailable');
@@ -3052,7 +3053,7 @@ export class DaemonService {
    * exactly the old heads where that record is thinnest, so the two
    * derivations must agree.
    */
-  private async corners(roomId: string, agentId: string) {
+  private async corners(roomId: string, agentId: string, activeOnly = false) {
     const rows = await this.database.query<{
       id: string;
       parent_id: string;
@@ -3068,7 +3069,7 @@ export class DaemonService {
               r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
        JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
-       WHERE r.parent_id=$1`,
+       WHERE r.parent_id=$1 ${activeOnly ? 'AND r.archived_at IS NULL' : ''}`,
       [roomId, agentId],
     );
     return {

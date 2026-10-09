@@ -127,7 +127,14 @@ export type LiveEvent =
 export class LiveHub {
   readonly #events = new EventEmitter();
   readonly #presence = new Map<string, Map<string, Extract<LiveEvent, { type: 'presence' }>>>();
+  /** Oldest observed Room/agent pair first; one cap across all Rooms. */
+  readonly #presenceOrder = new Map<string, { roomId: string; agentId: string }>();
   readonly #humanConnections = new Map<string, { count: number; observedAt: number }>();
+  #offlineHumans = 0;
+  #humanPruneAt = 0;
+  static readonly MAX_PRESENCE_ENTRIES = 20_000;
+  static readonly MAX_OFFLINE_HUMANS = 10_000;
+  static readonly OFFLINE_HUMAN_TTL_SECONDS = 60 * 60;
   /** When true, writers skip local membership fanout — the PostgreSQL LISTEN
    * path is the sole presence authority (production). Unit tests keep the
    * default so a LiveHub without a listener still receives presence. */
@@ -151,10 +158,12 @@ export class LiveHub {
 
   humanConnected(identityId: string, now = Date.now()): boolean {
     const previous = this.#humanConnections.get(identityId);
+    if (previous?.count === 0) this.#offlineHumans--;
     this.#humanConnections.set(identityId, {
       count: (previous?.count ?? 0) + 1,
       observedAt: Math.floor(now / 1_000),
     });
+    this.#pruneHumanConnections(Math.floor(now / 1_000));
     return !previous?.count;
   }
 
@@ -162,7 +171,9 @@ export class LiveHub {
     const previous = this.#humanConnections.get(identityId);
     if (!previous) return false;
     const count = Math.max(0, previous.count - 1);
+    if (previous.count > 0 && count === 0) this.#offlineHumans++;
     this.#humanConnections.set(identityId, { count, observedAt: Math.floor(now / 1_000) });
+    this.#pruneHumanConnections(Math.floor(now / 1_000));
     return previous.count > 0 && count === 0;
   }
 
@@ -191,9 +202,45 @@ export class LiveHub {
       )
         return;
       room.set(event.agentId, event);
+      const key = `${event.roomId}\u0000${event.agentId}`;
+      this.#presenceOrder.delete(key);
+      this.#presenceOrder.set(key, { roomId: event.roomId, agentId: event.agentId });
+      while (this.#presenceOrder.size > LiveHub.MAX_PRESENCE_ENTRIES) {
+        const oldest = this.#presenceOrder.keys().next().value!;
+        const entry = this.#presenceOrder.get(oldest)!;
+        this.#presenceOrder.delete(oldest);
+        const oldRoom = this.#presence.get(entry.roomId);
+        oldRoom?.delete(entry.agentId);
+        if (oldRoom?.size === 0) this.#presence.delete(entry.roomId);
+      }
+    } else if (event.type === 'invalidate' && event.archived) {
+      const room = this.#presence.get(event.roomId);
+      if (room) {
+        for (const agentId of room.keys()) this.#presenceOrder.delete(`${event.roomId}\u0000${agentId}`);
+        this.#presence.delete(event.roomId);
+      }
     }
     this.#events.emit(event.roomId, event);
     this.#events.emit('*', event);
+  }
+
+  #pruneHumanConnections(nowSeconds: number): void {
+    if (nowSeconds < this.#humanPruneAt &&
+        this.#offlineHumans <= LiveHub.MAX_OFFLINE_HUMANS) return;
+    this.#humanPruneAt = nowSeconds + 60;
+    for (const [id, item] of this.#humanConnections) {
+      if (item.count > 0) continue;
+      if (item.observedAt + LiveHub.OFFLINE_HUMAN_TTL_SECONDS <= nowSeconds) {
+        this.#humanConnections.delete(id);
+        this.#offlineHumans--;
+      }
+    }
+    if (this.#offlineHumans <= LiveHub.MAX_OFFLINE_HUMANS) return;
+    for (const [id, item] of this.#humanConnections) {
+      if (item.count > 0) continue;
+      this.#humanConnections.delete(id);
+      if (--this.#offlineHumans <= LiveHub.MAX_OFFLINE_HUMANS) break;
+    }
   }
 
   subscribeAll(listener: (event: LiveEvent) => void): () => void {

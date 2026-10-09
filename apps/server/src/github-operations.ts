@@ -170,6 +170,11 @@ interface CornerWebhookTarget {
   installation_id: string;
 }
 
+/** No check on the head is still running. */
+function checksSettled(checks: readonly { status: string }[] | undefined): boolean {
+  return !checks?.some((check) => check.status === 'pending');
+}
+
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -1865,7 +1870,13 @@ export class GitHubOperations {
             await advanceCorner(database, target.corner_id, { kind: 'checks-pending' });
           const label = check.status === 'pending' ? 'started' : check.status;
           const becamePassing = summary.status === 'passing' && current.checks !== 'passing';
-          const becameFailing = summary.status === 'failing' && current.checks !== 'failing';
+          // GitHub turns a head red as soon as one check fails, while the rest
+          // of its run still goes and its logs cannot be read yet. A red head
+          // is a verdict that wakes the implementer only once no check runs.
+          const becameFailing =
+            summary.status === 'failing' &&
+            checksSettled(summary.checks) &&
+            !(current.checks === 'failing' && checksSettled(current.checksSummary?.checks));
           // A green/red rollup is a property of the whole head, not of the one
           // check that happened to arrive last. Name the actual failing jobs
           // on a failure, so the implementer knows what to fix and a passing

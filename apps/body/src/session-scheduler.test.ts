@@ -19,6 +19,27 @@ function deferred(): { promise: Promise<void>; resolve(): void } {
 }
 
 describe('Workspace session scheduler', () => {
+  it('keeps only recent diagnostic generations and forgets a finished Room', async () => {
+    const scheduler = new SessionScheduler({ maxLiveSessions: 1 });
+    let generation = 0;
+    const lifecycle: SessionLifecycle = {
+      activate: async () => `generation-${++generation}`,
+      suspend: async () => undefined,
+    };
+    for (let index = 0; index < 6; index++) {
+      await scheduler.run('corner', lifecycle, async () => undefined);
+      await scheduler.suspend('corner');
+    }
+    expect(scheduler.generations('corner')).toEqual([
+      'generation-3', 'generation-4', 'generation-5', 'generation-6',
+    ]);
+    scheduler.forget('corner');
+    expect(scheduler.generations('corner')).toEqual([]);
+    await scheduler.run('room', lifecycle, async () => undefined);
+    await scheduler.dispose();
+    expect(scheduler.generations('room')).toEqual([]);
+  });
+
   it('Reproduction H-10: ten logical corners share one Room ceiling and retain corner suspend keys', async () => {
     const scheduler = new SessionScheduler({ perRoomLiveSessions: 2, workspaceFloor: 1, idleMs: 60_000 });
     const suspended: string[] = [];

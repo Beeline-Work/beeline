@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { validateCornerWorkflow } from '@beeline/api-contract/daemon';
@@ -76,7 +76,9 @@ let githubHead: string;
 let githubApp: {
   deleteBranch: ReturnType<typeof vi.fn>;
   mergePullRequest: ReturnType<typeof vi.fn>;
+  closePullRequest: ReturnType<typeof vi.fn>;
   readPullRequest: ReturnType<typeof vi.fn>;
+  readPullRequestDiscussion: ReturnType<typeof vi.fn>;
   installationToken: ReturnType<typeof vi.fn>;
   readCommitCheckRollup: ReturnType<typeof vi.fn>;
 };
@@ -120,6 +122,13 @@ beforeAll(async () => {
   githubApp = {
     deleteBranch: vi.fn(async () => undefined),
     mergePullRequest: vi.fn(async () => undefined),
+    closePullRequest: vi.fn(async () => undefined),
+    readPullRequestDiscussion: vi.fn(async () => ({
+      files: [{ filename: 'widget.ts', status: 'modified', additions: 3, deletions: 1 }],
+      reviews: [{ author: 'speedy', state: 'COMMENTED', body: 'Looks close' }],
+      reviewComments: [],
+      comments: [],
+    })),
     readPullRequest: vi.fn(async (_token: string, _repository: string, number: number) => ({
       number,
       url: `https://github.com/owner/widgets/pull/${number}`,
@@ -183,6 +192,7 @@ beforeEach(async () => {
   githubApp.mergePullRequest.mockReset();
   githubApp.mergePullRequest.mockResolvedValue(undefined);
   githubApp.deleteBranch.mockClear();
+  githubApp.closePullRequest.mockClear();
   githubApp.readPullRequest.mockReset();
   githubApp.readPullRequest.mockImplementation(async (_token: string, _repository: string, number: number) => ({
     number, url: `https://github.com/owner/widgets/pull/${number}`, headSha: githubHead, mergeability: 'clean',
@@ -1045,14 +1055,16 @@ it('Reproduction F1-7: opener revises a delegated sibling from its own command',
   await fallback(cornerId);
   const outsider = await createAgentCommand(db, { roomId: cornerId, agentId: F, sourceMessageId: command.sourceMessageId, reason: 'audit' });
   await daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: outsider!.id, generationId: 'g1' }, F);
-  await expect(daemon.execute('reviseCornerBrief', { roomId: cornerId, cornerId, requestId: outsider!.turn_request_id, generationId: 'g1', expectedRevision: 2, brief: { ...input.brief, change: 'Unauthorized' } }, F)).rejects.toThrow('revision denied');
+  // Reach, not role, decides: an agent outside both the corner and its parent Room is refused.
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IN ($1,$2) AND identity_id=$3`, [cornerId, R, F]);
+  await expect(daemon.execute('reviseCornerBrief', { roomId: cornerId, cornerId, requestId: outsider!.turn_request_id, generationId: 'g1', expectedRevision: 2, brief: { ...input.brief, change: 'Unauthorized' } }, F)).rejects.toThrow(/denied/);
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [cornerId, B]);
   const unwoken = await daemon.execute('reviseCornerBrief', { roomId: source, cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 2, brief: { ...input.brief, spec: 'Saved without a worker', change: 'Keep the revision' } }, A);
   expect(unwoken).toMatchObject({ revision: 3, wake: { queued: false, reason: expect.any(String) } });
   expect((await daemon.execute('listCornerBriefRevisions', { cornerId }, A)).revisions[0]!.revision).toBe(3);
 });
 
-it('the agent a person handed the corner to revises its brief', async () => {
+it('any agent in the corner revises its brief, not only the one a person handed it to', async () => {
   const cornerId = await open('owner/widgets');
   const command = await commissioned(cornerId);
   const G = '8'.repeat(64);
@@ -1063,8 +1075,6 @@ it('the agent a person handed the corner to revises its brief', async () => {
   const turn = await createAgentCommand(db, { roomId: cornerId, agentId: G, sourceMessageId: command.sourceMessageId, reason: 'human_tag' });
   await daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: turn!.id, generationId: 'g1' }, G);
   const input = { cornerId, requestId: turn!.turn_request_id, generationId: 'g1', expectedRevision: 1, brief: { ...brief(command.sourceMessageId), spec: 'Heir scope', change: 'Take over' } };
-  await expect(daemon.execute('reviseCornerBrief', input, G)).rejects.toThrow('revision denied');
-  await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [cornerId, G]);
   expect(await daemon.execute('reviseCornerBrief', input, G)).toMatchObject({ revision: 2 });
 });
 
@@ -1912,6 +1922,205 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(
       (await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [cornerId])).rowCount,
     ).toBe(1);
+  });
+
+  it('lets any corner member close its pull request without merging; the corner stays open with no PR', async () => {
+    const cornerId = await inReview();
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, (id: string) => github.landCorner(id),
+      (id: string) => github.closeCornerPullRequest(id));
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IN ($1,$3) AND identity_id=$2`, [cornerId, B, R]);
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, B)).rejects.toThrow(/access denied/);
+    expect(githubApp.closePullRequest).not.toHaveBeenCalled();
+    await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id IN ($1,$3) AND identity_id=$2`, [cornerId, B, R]);
+    // B is a member, not the opener or implementer.
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, B)).resolves.toEqual({
+      status: 'closed', pullRequestNumber: 7, url: expect.stringContaining('/pull/7'),
+    });
+    expect(githubApp.closePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7);
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+    const fact = (
+      await db.query<{ pr: unknown; archived: boolean }>(
+        `SELECT fact.lifecycle->'pr' pr,corner.archived_at IS NOT NULL archived
+         FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=$1`,
+        [cornerId],
+      )
+    ).rows[0];
+    expect(fact).toEqual({ pr: null, archived: false });
+    await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
+      .resolves.toEqual({ status: 'blocked', blocker: 'the corner has no pull request' });
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, B))
+      .resolves.toEqual({ status: 'blocked', blocker: 'the corner has no pull request' });
+    expect(githubApp.closePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('Reproduction REACH-1: a parent Room agent outside the corner closes, renames, steers, reads, revises and posts to it; an outsider cannot', async () => {
+    const cornerId = await inReview();
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, (id: string) => github.landCorner(id),
+      (id: string) => github.closeCornerPullRequest(id), (id: string) => github.readCornerPullRequest(id));
+    // B stays in the parent Room but is not a member of the corner.
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [cornerId, B]);
+    const outsider = '3'.repeat(64);
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Outsider','outsider') ON CONFLICT DO NOTHING`, [outsider]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [outsider, H]);
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`,
+      [W, outsider],
+    );
+
+    // Reads.
+    await expect(wiredDaemon.execute('getCornerRestoreState', { cornerId }, B)).resolves.toBeDefined();
+    await expect(wiredDaemon.execute('listCornerBriefRevisions', { cornerId }, B)).resolves.toBeDefined();
+    await expect(wiredDaemon.execute('getRoomConversation', { roomId: cornerId, limit: 5 }, B)).resolves.toBeDefined();
+    const members = await wiredDaemon.execute('listRoomMembers', { roomId: cornerId }, B);
+    expect(members.members.map((member) => member.id)).toEqual(expect.arrayContaining([A, H]));
+    expect(members.members.map((member) => member.id)).not.toContain(B);
+    expect((await wiredDaemon.execute('listRoomCorners', { roomId: R }, B)).corners).toEqual([]);
+    expect((await wiredDaemon.execute('listReachableCorners', { roomId: R }, B)).corners)
+      .toEqual([expect.objectContaining({ cornerId, pullRequestNumber: 7, archived: false })]);
+    await expect(wiredDaemon.execute('readCornerPullRequest', { cornerId, roomId: R }, B)).resolves.toMatchObject({
+      status: 'ok', number: 7, files: [{ filename: 'widget.ts', additions: 3, deletions: 1 }],
+      reviews: [{ author: 'speedy', body: 'Looks close' }],
+    });
+    for (const [operation, input] of [
+      ['getCornerRestoreState', { cornerId }],
+      ['listCornerBriefRevisions', { cornerId }],
+      ['getRoomConversation', { roomId: cornerId, limit: 5 }],
+      ['listRoomMembers', { roomId: cornerId }],
+      ['readCornerPullRequest', { cornerId }],
+      ['closeCornerPullRequest', { cornerId }],
+      ['archiveCorner', { cornerId }],
+    ] as const)
+      await expect(wiredDaemon.execute(operation, input as never, outsider)).rejects.toThrow(/access denied/);
+
+    // Writes from B's own Room turn.
+    await say(R, '@goosy look after the widget corner');
+    const turn = (await commands(B, R)).at(-1)!;
+    await claim(turn);
+    const authority = { roomId: R, requestId: turn.turnRequestId, generationId: 'g1' };
+    await wiredDaemon.execute('postCornerMessage', { ...authority, cornerId, text: 'A note from the Room' }, B);
+    expect((await db.query(`SELECT author_id FROM messages WHERE room_id=$1 AND text='A note from the Room'`, [cornerId])).rows)
+      .toEqual([{ author_id: B }]);
+    await wiredDaemon.execute('renameCorner', { ...authority, cornerId, name: 'Renamed-widget' }, B);
+    expect((await db.query(`SELECT name FROM rooms WHERE id=$1`, [cornerId])).rows[0]).toEqual({ name: 'Renamed-widget' });
+    await wiredDaemon.execute('postRoomMessage', {
+      ...authority, text: 'Pick this up', relay: { fromRoomId: R, toRoomId: cornerId, direction: 'down' },
+    }, B);
+    expect((await commands(A, cornerId)).at(-1)?.reason).toBe('relay_steer');
+    await expect(wiredDaemon.execute('reviseCornerBrief', {
+      ...authority, cornerId, expectedRevision: 1,
+      brief: { ...brief(turn.sourceMessageId), spec: 'Revised from the Room\n\n## Checklist\n- Ship it', change: 'Room revision' },
+    }, B)).resolves.toMatchObject({ revision: 2 });
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId, roomId: R }, B))
+      .resolves.toMatchObject({ status: 'closed', pullRequestNumber: 7 });
+    await wiredDaemon.execute('archiveCorner', { cornerId, roomId: R }, B);
+    expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0])
+      .toEqual({ archived: true });
+  });
+
+  it('Reproduction R1: a corner member outside the parent Room inspects the corner; an outsider cannot', async () => {
+    const cornerId = await inReview();
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input) => github.prChecksStatus(input));
+    // A stays in the corner but leaves the parent Room.
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, A]);
+    try {
+      await expect(wiredDaemon.execute('listReachableCorners', { roomId: R }, A)).rejects.toThrow(/access denied/);
+      await expect(wiredDaemon.execute('getCornerRestoreState', { cornerId }, A))
+        .resolves.toMatchObject({ lifecycle: expect.objectContaining({ pr: expect.objectContaining({ number: 7 }) }) });
+      await expect(wiredDaemon.execute('getPrChecksStatus', { cornerId, pullRequest: 7 }, A)).resolves.toBeDefined();
+      await expect(wiredDaemon.execute('getRoomConversation', { roomId: cornerId, limit: 9, window: 'earliest' }, A))
+        .resolves.toMatchObject({ items: expect.any(Array) });
+
+      const outsider = '3'.repeat(64);
+      await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Outsider','outsider') ON CONFLICT DO NOTHING`, [outsider]);
+      await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [outsider, H]);
+      for (const [operation, input] of [
+        ['getCornerRestoreState', { cornerId }],
+        ['getPrChecksStatus', { cornerId, pullRequest: 7 }],
+        ['getRoomConversation', { roomId: cornerId, limit: 9, window: 'earliest' }],
+      ] as const)
+        await expect(wiredDaemon.execute(operation, input as never, outsider)).rejects.toThrow(/access denied/);
+    } finally {
+      await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [R, A]);
+    }
+  });
+
+  it('Reproduction R4-TARGET-READ: an unrelated roomId never opens a corner read', async () => {
+    const cornerId = await inReview();
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input) => github.prChecksStatus(input));
+    const unrelated = randomUUID();
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Unrelated')`, [unrelated, W]);
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+      [W, unrelated, A, B],
+    );
+    // B leaves the corner and its parent Room but stays in the unrelated Room.
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IN ($1,$2) AND identity_id=$3`, [cornerId, R, B]);
+    try {
+      const reads = [
+        ['getCornerRestoreState', { roomId: unrelated, cornerId }],
+        ['getPrChecksStatus', { roomId: unrelated, cornerId, pullRequest: 7 }],
+        ['listCornerBriefRevisions', { roomId: unrelated, cornerId }],
+      ] as const;
+      for (const [operation, input] of reads)
+        await expect(wiredDaemon.execute(operation, input as never, B), operation).rejects.toThrow(/access denied/);
+      // A, who reaches the corner, still reads it with the same unrelated roomId.
+      for (const [operation, input] of reads)
+        await expect(wiredDaemon.execute(operation, input as never, A), operation).resolves.toBeDefined();
+    } finally {
+      await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id IN ($1,$2) AND identity_id=$3`, [cornerId, R, B]);
+      await db.query(`DELETE FROM memberships WHERE room_id=$1`, [unrelated]);
+      await db.query(`DELETE FROM rooms WHERE id=$1`, [unrelated]);
+    }
+  });
+
+  it('Reproduction REACH-2: a Room and its corner read each other even when their human members differ', async () => {
+    const cornerId = await open();
+    const cornerOnly = '5'.repeat(64);
+    const roomOnly = '6'.repeat(64);
+    await db.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Corner only'),($2,'human','Room only') ON CONFLICT DO NOTHING`,
+      [cornerOnly, roomOnly],
+    );
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member'),($1,$4,$5,'member') ON CONFLICT DO NOTHING`,
+      [W, cornerId, cornerOnly, R, roomOnly],
+    );
+    try {
+      await say(R, 'Room fact: the widget ships blue');
+      const roomMessage = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1 AND text LIKE 'Room fact%'`, [R])).rows[0]!.id;
+      await say(cornerId, 'Corner fact: the widget ships on Friday');
+      const cornerMessage = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1 AND text LIKE 'Corner fact%'`, [cornerId])).rows[0]!.id;
+
+      await say(cornerId, '@hoots what colour is the widget?');
+      const inCorner = (await commands(A, cornerId)).at(-1)!;
+      await claim(inCorner);
+      await expect(daemon.execute('getRoomMessage', {
+        roomId: cornerId, requestId: inCorner.turnRequestId, generationId: 'g1', messageId: roomMessage,
+      }, A)).resolves.toMatchObject({ body: expect.stringContaining('ships blue') });
+      // The pair rule opens only the parent: a sibling corner whose people differ stays closed.
+      const sibling = await open();
+      await say(sibling, 'Sibling fact: the widget is heavy');
+      const siblingMessage = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1 AND text LIKE 'Sibling fact%'`, [sibling])).rows[0]!.id;
+      await expect(daemon.execute('getRoomMessage', {
+        roomId: cornerId, requestId: inCorner.turnRequestId, generationId: 'g1', messageId: siblingMessage,
+      }, A)).rejects.toThrow(/access denied/);
+
+      await say(R, '@hoots when does the widget ship?');
+      const inRoom = (await commands(A, R)).at(-1)!;
+      await claim(inRoom);
+      await expect(daemon.execute('getRoomMessage', {
+        roomId: R, requestId: inRoom.turnRequestId, generationId: 'g1', messageId: cornerMessage,
+      }, A)).resolves.toMatchObject({ body: expect.stringContaining('on Friday') });
+    } finally {
+      await db.query(`DELETE FROM memberships WHERE identity_id IN ($1,$2)`, [cornerOnly, roomOnly]);
+    }
   });
 
   it('Reproduction R2199: a reviewer that opened its own corner is woken to review it, and its PASS merges it', async () => {

@@ -355,10 +355,12 @@ describe('monolith integration', () => {
       `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
       [steerCorner, AGENT],
     );
+    // Parent Room membership reaches the corner, so losing the corner seat is
+    // no membership refusal; with no agent left in the corner, nobody can receive it.
     const lost = await steer(lostTurn);
-    expect(lost.status).toBe(403);
+    expect(lost.status).toBe(409);
     expect(await lost.json()).toMatchObject({
-      error: expect.stringContaining('membership'),
+      error: expect.stringContaining('no agent member'),
     });
     await database.query(
       `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
@@ -6303,7 +6305,7 @@ describe('monolith integration', () => {
     expect(Buffer.from(await media.arrayBuffer()).toString()).toBe('video-bytes');
   });
 
-  it('archives a repository corner for its opener and still refuses another member', async () => {
+  it('archives a repository corner for any member agent, not only its opener', async () => {
     const helper = 'e'.repeat(64);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Helper','helper')`,
@@ -6329,19 +6331,42 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
 
-    // The helper was pulled in for one question; closing is still not its call.
-    expect((await daemonOperation('archiveCorner', { cornerId }, helperToken)).status).toBe(403);
+    // Reach is checked on the target corner, not on the turn's room: an agent
+    // outside the corner and its parent is refused even when it names a Room it
+    // does belong to.
+    const elsewhere = '66666666-6666-4666-8666-666666666666';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Elsewhere')`, [
+      elsewhere,
+      WORKSPACE,
+    ]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, elsewhere, helper],
+    );
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id IN ($1,$2) AND identity_id=$3`,
+      [cornerId, ROOM, helper],
+    );
+    expect(
+      (await daemonOperation('archiveCorner', { roomId: elsewhere, cornerId }, helperToken))
+        .status,
+    ).toBe(403);
     expect(
       (
-        await database.query<{ archived: boolean }>(
-          `SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`,
-          [cornerId],
+        await daemonOperation(
+          'closeCornerPullRequest',
+          { roomId: elsewhere, cornerId },
+          helperToken,
         )
-      ).rows[0]?.archived,
-    ).toBe(false);
+      ).status,
+    ).toBe(403);
+    await database.query(
+      `UPDATE memberships SET removed_at=NULL WHERE room_id IN ($1,$2) AND identity_id=$3`,
+      [cornerId, ROOM, helper],
+    );
 
-    // The opener closes its own repository corner, no merge required.
-    expect((await daemonOperation('archiveCorner', { cornerId })).status).toBe(200);
+    // A member that did not open the corner closes it, no merge required.
+    expect((await daemonOperation('archiveCorner', { cornerId }, helperToken)).status).toBe(200);
     expect(
       (
         await database.query<{ archived: boolean; close_requested: boolean }>(
@@ -8011,8 +8036,8 @@ describe('monolith integration', () => {
         )
       ).status,
     ).toBe(200);
-    // Archiving is terminal for everyone's work, so it stays with the opener.
-    expect((await daemonOperation('archiveCorner', { cornerId }, peerToken)).status).toBe(403);
+    // Any member may close the corner; an agent outside it may not.
+    expect((await daemonOperation('archiveCorner', { cornerId }, strangerToken)).status).toBe(403);
     expect(
       (
         await daemonOperation(

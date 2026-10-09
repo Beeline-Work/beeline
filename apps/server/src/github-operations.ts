@@ -8,6 +8,7 @@ import {
   githubMergeability,
 } from '@beeline/auth/github';
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
+import type { CornerPullRequestResult } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
 import {
@@ -961,6 +962,99 @@ export class GitHubOperations {
       }
     }
     return true;
+  }
+
+  /**
+   * Close a corner's own pull request without merging (`close_pull_request`).
+   * The branch and its commits stay on GitHub, and the corner stays open: its
+   * lifecycle drops the PR, so the merge gate reads "no pull request" until
+   * a new one opens.
+   */
+  async closeCornerPullRequest(
+    cornerId: string,
+  ): Promise<
+    | { status: 'closed'; number: number; url: string; title: string }
+    | { status: 'blocked'; blocker: string }
+  > {
+    const target = (
+      await this.database.query<{
+        number: number | null;
+        url: string | null;
+        title: string | null;
+        repository_id: string | null;
+        installation_id: string | null;
+        full_name: string | null;
+      }>(
+        `SELECT (fact.lifecycle->'pr'->>'number')::int number,fact.lifecycle->'pr'->>'url' url,
+           fact.lifecycle->'pr'->>'title' title,
+           repository.repository_id,repository.installation_id,repository.full_name
+         FROM rooms corner
+         JOIN rooms parent ON parent.id=corner.parent_id
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         LEFT JOIN github_repositories repository ON repository.installation_id=parent.github_installation_id
+           AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
+             COALESCE(parent.repository_remote,parent.repository_key,''),
+             '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+         WHERE corner.id=$1 AND corner.archived_at IS NULL`,
+        [cornerId],
+      )
+    ).rows[0];
+    if (!target) return { status: 'blocked', blocker: 'no open corner found' };
+    if (!target.number || !target.url)
+      return { status: 'blocked', blocker: 'the corner has no pull request' };
+    if (!target.repository_id || !target.installation_id || !target.full_name)
+      return { status: 'blocked', blocker: 'the GitHub app cannot reach this repository' };
+    await this.app.closePullRequest(
+      Number(target.installation_id),
+      Number(target.repository_id),
+      target.full_name,
+      target.number,
+    );
+    await this.database.transaction(async (database) => {
+      await lockCornerLifecycle(database, cornerId);
+      await database.query(
+        `UPDATE corner_facts SET merge_attempt_head=NULL,
+           lifecycle=(lifecycle-'pr'-'mergeRecovery')||'{"lifecycle":"working","checks":"unknown"}'::jsonb,
+           updated_at=now()
+         WHERE corner_id=$1 AND (lifecycle->'pr'->>'number')::int=$2`,
+        [cornerId, target.number],
+      );
+    });
+    this.onRoomChanged?.(cornerId);
+    return {
+      status: 'closed',
+      number: target.number,
+      url: target.url,
+      title: target.title ?? `Pull request #${target.number}`,
+    };
+  }
+
+  /** Caller is authorized by DaemonService: it reaches the corner. */
+  async readCornerPullRequest(cornerId: string): Promise<CornerPullRequestResult> {
+    const corner = (
+      await this.database.query<{ parent_id: string; number: number | null }>(
+        `SELECT corner.parent_id,(fact.lifecycle->'pr'->>'number')::int number
+         FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
+         WHERE corner.id=$1 AND corner.parent_id IS NOT NULL`,
+        [cornerId],
+      )
+    ).rows[0];
+    if (!corner) return { status: 'blocked', blocker: 'corner not found' };
+    if (!corner.number) return { status: 'blocked', blocker: 'the corner has no pull request' };
+    const target = await this.roomWorkflowTarget(corner.parent_id);
+    const [pr, discussion] = await Promise.all([
+      this.app.readPullRequest(target.token, target.repository, corner.number),
+      this.app.readPullRequestDiscussion(target.token, target.repository, corner.number),
+    ]);
+    return {
+      status: 'ok',
+      number: pr.number,
+      url: pr.url,
+      ...(pr.title ? { title: pr.title } : {}),
+      headSha: pr.headSha,
+      merged: pr.merged,
+      ...discussion,
+    };
   }
 
   async processWebhook(event: string, payload: unknown) {

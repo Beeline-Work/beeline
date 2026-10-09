@@ -29,7 +29,7 @@ describe('workflow run tools', () => {
     for (const tools of [agentToolsFor(true, false), agentToolsFor(true, true), agentToolsFor(true, false, true)]) {
       expect(tools.map(t => t.name)).toEqual(expect.arrayContaining(['get_workflow_run', 'cancel_workflow_run']));
     }
-    expect(agentToolsFor(true, false, false, false, true, false, false).map(t => t.name)).not.toContain('get_workflow_run');
+    expect(agentToolsFor(true, false, false, false, true, false).map(t => t.name)).not.toContain('get_workflow_run');
   });
 
   it('reads a returned run id without requiring a write turn', async () => {

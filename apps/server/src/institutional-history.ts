@@ -27,10 +27,21 @@ type SearchRow = {
 
 /**
  * Params: $1 output Room, $2 durable requester, $3 Workspace, $4 answering agent.
- * A source Room qualifies only when the requester, the agent, and every current
- * human of the output Room can all read it.
+ * A source Room qualifies when the requester, the agent, and every current
+ * human of the output Room can all read it. A Room and its corners always read
+ * each other for an agent that is a current member of the output Room.
  */
 export const AUTHORIZED_ROOMS_CTE = `authorized_rooms AS (
+         SELECT source.id
+         FROM rooms source
+         WHERE source.workspace_id=$3
+           AND (source.id=$1 OR source.parent_id=$1
+                OR source.id=(SELECT output.parent_id FROM rooms output WHERE output.id=$1))
+           AND EXISTS (
+             SELECT 1 FROM memberships member
+             WHERE member.room_id=$1 AND member.identity_id=$4 AND member.removed_at IS NULL
+           )
+         UNION
          SELECT source.id
          FROM rooms source
          WHERE source.workspace_id=$3

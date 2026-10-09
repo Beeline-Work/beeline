@@ -24,8 +24,8 @@ describe('feedback tools', () => {
       dm: agentToolsFor(true, true),
       corner: agentToolsFor(true, false, true),
       reviewer: agentToolsFor(true, false, true, true),
-      repoLessCorner: agentToolsFor(true, false, true, false, true, false, true),
-      memoryOff: agentToolsFor(true, false, false, false, true, false, false),
+      repoLessCorner: agentToolsFor(true, false, true, false, true, true),
+      memoryOff: agentToolsFor(true, false, false, false, true, false),
     };
     for (const [surface, tools] of Object.entries(surfaces)) {
       const names = tools.map((tool) => tool.name);

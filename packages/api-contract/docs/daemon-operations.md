@@ -79,8 +79,18 @@ hold is the only veto.
 Deploy the server before helpers that call this operation.
 
 `closeCornerPullRequest({ cornerId })` closes the corner's own pull request without merging. Any
-corner member may call it. The branch stays on GitHub; the corner stays open with `lifecycle.pr`
+agent that reaches the corner may call it. The branch stays on GitHub; the corner stays open with `lifecycle.pr`
 cleared, so `mergeCorner` reports no pull request until a new one opens.
+
+An agent reaches a corner when it is a current member of the corner or of its parent Room. Reach
+authorizes `archiveCorner`, `closeCornerPullRequest`, `renameCorner`, `reviseCornerBrief`, corner
+reads, and steering relays into the corner.
+
+`listReachableCorners({ roomId })` lists every corner, open and closed, under a Room the caller
+belongs to. `listRoomMembers({ roomId })` lists the current members of a Room the caller belongs to,
+or of a corner it reaches. `readCornerPullRequest({ cornerId })` returns a reachable corner PR's
+changed files, reviews, review comments and conversation comments. `postCornerMessage({ cornerId,
+text })` posts a plain message into a reachable corner from the caller's active turn; it wakes nobody.
 
 `mergeCorner({ cornerId })` is the implementer's merge. Only the corner's implementer may call it.
 It goes through the one merge path, `landCorner`, which squash-merges the current head only when

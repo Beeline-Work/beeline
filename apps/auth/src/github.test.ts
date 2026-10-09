@@ -348,6 +348,34 @@ describe('GitHub-only account and repository access', () => {
     ]);
   });
 
+  it('reads a pull request discussion: files, reviews, inline and conversation comments', async () => {
+    const byPath: Record<string, unknown[]> = {
+      '/pulls/42/files': [{ filename: 'a.ts', status: 'modified', additions: 2, deletions: 1 }],
+      '/pulls/42/reviews': [
+        { user: { login: 'speedy' }, state: 'CHANGES_REQUESTED', body: 'Fix R1', submitted_at: '2026-10-09T00:00:00Z' },
+      ],
+      '/pulls/42/comments': [{ user: { login: 'speedy' }, path: 'a.ts', line: 3, body: 'Here' }],
+      '/issues/42/comments': [{ user: { login: 'ruby' }, body: 'Pushed', created_at: '2026-10-09T01:00:00Z' }],
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = Object.keys(byPath).find((suffix) => new URL(url).pathname.endsWith(suffix))!;
+      return new Response(JSON.stringify(byPath[path]), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+
+    await expect(app.readPullRequestDiscussion('read-token', 'acme/beeline', 42)).resolves.toEqual({
+      files: [{ filename: 'a.ts', status: 'modified', additions: 2, deletions: 1 }],
+      reviews: [{ author: 'speedy', state: 'CHANGES_REQUESTED', body: 'Fix R1', submittedAt: '2026-10-09T00:00:00Z' }],
+      reviewComments: [{ author: 'speedy', path: 'a.ts', line: 3, body: 'Here' }],
+      comments: [{ author: 'ruby', body: 'Pushed', createdAt: '2026-10-09T01:00:00Z' }],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.github.com/repos/acme/beeline/pulls/42/files?per_page=100',
+      expect.objectContaining({ headers: expect.objectContaining({ authorization: 'Bearer read-token' }) }),
+    );
+  });
+
   it('lists only workflow-dispatch workflows with their latest run result', async () => {
     const fetchMock = vi
       .fn()

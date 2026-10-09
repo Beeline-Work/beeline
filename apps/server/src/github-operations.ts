@@ -8,6 +8,7 @@ import {
   githubMergeability,
 } from '@beeline/auth/github';
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
+import type { CornerPullRequestResult } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
 import {
@@ -1009,6 +1010,34 @@ export class GitHubOperations {
       number: target.number,
       url: target.url,
       title: target.title ?? `Pull request #${target.number}`,
+    };
+  }
+
+  /** Caller is authorized by DaemonService: it reaches the corner. */
+  async readCornerPullRequest(cornerId: string): Promise<CornerPullRequestResult> {
+    const corner = (
+      await this.database.query<{ parent_id: string; number: number | null }>(
+        `SELECT corner.parent_id,(fact.lifecycle->'pr'->>'number')::int number
+         FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
+         WHERE corner.id=$1 AND corner.parent_id IS NOT NULL`,
+        [cornerId],
+      )
+    ).rows[0];
+    if (!corner) return { status: 'blocked', blocker: 'corner not found' };
+    if (!corner.number) return { status: 'blocked', blocker: 'the corner has no pull request' };
+    const target = await this.roomWorkflowTarget(corner.parent_id);
+    const [pr, discussion] = await Promise.all([
+      this.app.readPullRequest(target.token, target.repository, corner.number),
+      this.app.readPullRequestDiscussion(target.token, target.repository, corner.number),
+    ]);
+    return {
+      status: 'ok',
+      number: pr.number,
+      url: pr.url,
+      ...(pr.title ? { title: pr.title } : {}),
+      headSha: pr.headSha,
+      merged: pr.merged,
+      ...discussion,
     };
   }
 

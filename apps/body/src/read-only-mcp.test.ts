@@ -231,9 +231,11 @@ describe('corner lifecycle tool surfaces', () => {
     const corner = agentToolsFor(true, false, true);
     const reviewerCorner = agentToolsFor(true, false, true, true);
 
-    for (const tools of [room, directMessage]) {
-      expect(tools.map((tool) => tool.name)).not.toContain('close_corner');
-    }
+    // A Room turn reaches its child corners, so it may close, rename or close
+    // the PR of one by naming its cornerId; a DM has no corners.
+    for (const name of ['close_corner', 'rename_corner', 'close_pull_request'])
+      expect(room.map((tool) => tool.name)).toContain(name);
+    expect(directMessage.map((tool) => tool.name)).not.toContain('close_corner');
     expect(room.map((tool) => tool.name)).toContain('open_corner');
     expect(directMessage.map((tool) => tool.name)).not.toContain('open_corner');
 
@@ -249,8 +251,7 @@ describe('corner lifecycle tool surfaces', () => {
     expect(repoLessCorner.map((tool) => tool.name)).toContain('close_corner');
     expect(repoLessCorner.map((tool) => tool.name)).not.toContain('close_pull_request');
     expect(reviewerCorner.map((tool) => tool.name)).toContain('close_pull_request');
-    for (const tools of [room, directMessage])
-      expect(tools.map((tool) => tool.name)).not.toContain('close_pull_request');
+    expect(directMessage.map((tool) => tool.name)).not.toContain('close_pull_request');
     expect(repoLessCorner.map((tool) => tool.name)).toContain('post_artifact');
     for (const tools of [room, directMessage, corner, reviewerCorner, repoLessCorner]) {
       expect(tools.map((tool) => tool.name)).not.toContain('upgrade_corner_to_code');
@@ -258,7 +259,12 @@ describe('corner lifecycle tool surfaces', () => {
     for (const tools of [room, directMessage]) {
       expect(tools.map((tool) => tool.name)).not.toContain('publish_corner_app');
       expect(tools.map((tool) => tool.name)).not.toContain('open_corner_app');
-      expect(tools.map((tool) => tool.name)).not.toContain('rename_corner');
+    }
+    expect(directMessage.map((tool) => tool.name)).not.toContain('rename_corner');
+    for (const name of ['list_corners', 'list_room_members', 'read_pull_request', 'post_to_corner']) {
+      for (const tools of [room, corner, repoLessCorner])
+        expect(tools.map((tool) => tool.name)).toContain(name);
+      expect(directMessage.map((tool) => tool.name)).not.toContain(name);
     }
   });
 });
@@ -347,7 +353,7 @@ describe('open_corner arguments', () => {
   });
 });
 
-it('advertises sibling steers in both corner lanes, but reads and questions only in Rooms', () => {
+it('advertises sibling steers and reads in both corner lanes, but questions only in Rooms', () => {
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('steer_corner');
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('ask_corner');
   expect(agentToolsFor(true, false).map((t) => t.name)).toContain('get_corner_ask');
@@ -357,7 +363,8 @@ it('advertises sibling steers in both corner lanes, but reads and questions only
   for (const repositoryCorner of [false, true]) {
     const names = agentToolsFor(true, false, true, repositoryCorner).map((t) => t.name);
     expect(names).toContain('steer_corner');
-    for (const name of ['ask_corner', 'get_corner_ask', 'inspect_corner'])
+    expect(names).toContain('inspect_corner');
+    for (const name of ['ask_corner', 'get_corner_ask'])
       expect(names).not.toContain(name);
     expect(agentToolsFor(true, true, true, repositoryCorner).map((t) => t.name)).not.toContain('steer_corner');
   }

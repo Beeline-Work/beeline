@@ -23,8 +23,8 @@ export function beelineAgentMcpServer(
     /** This corner session belongs to the parent Room's configured reviewer. */
     reviewer?: boolean;
     /** The corner's parent Room has a repository, so this is a code corner.
-     *  A code corner mounts approve_merge, merge_corner and close_pull_request on every turn; the
-     *  server decides whether the caller is the configured reviewer. */
+     *  A code corner mounts approve_merge and merge_corner on every turn; the server decides
+     *  whether the caller is the configured reviewer. */
     repositoryBacked?: boolean;
     attachRoot?: string;
     /** The session's whole writable home overlay (or, absent one, its

@@ -613,6 +613,52 @@ export class GitHubAppClient {
     };
   }
 
+  /** A PR's changed files, reviews, inline review comments and conversation comments. */
+  async readPullRequestDiscussion(accessToken: string, fullName: string, number: number) {
+    const list = async (path: string) => {
+      const response = await fetch(
+        `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}?per_page=100`,
+        { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
+      );
+      return jsonArray(response, 'GitHub pull request read');
+    };
+    const [files, reviews, reviewComments, comments] = await Promise.all([
+      list(`pulls/${number}/files`),
+      list(`pulls/${number}/reviews`),
+      list(`pulls/${number}/comments`),
+      list(`issues/${number}/comments`),
+    ]);
+    const text = (value: unknown) => (typeof value === 'string' ? value.slice(0, 2_000) : '');
+    const author = (value: unknown) =>
+      text((value as { login?: unknown } | null | undefined)?.login);
+    return {
+      files: files.map((file) => ({
+        filename: text(file.filename),
+        status: text(file.status),
+        additions: Number(file.additions) || 0,
+        deletions: Number(file.deletions) || 0,
+      })),
+      reviews: reviews.map((review) => ({
+        author: author(review.user),
+        state: text(review.state),
+        body: text(review.body),
+        ...(typeof review.submitted_at === 'string' ? { submittedAt: review.submitted_at } : {}),
+      })),
+      reviewComments: reviewComments.map((comment) => ({
+        author: author(comment.user),
+        path: text(comment.path),
+        ...(typeof comment.line === 'number' ? { line: comment.line } : {}),
+        body: text(comment.body),
+        ...(typeof comment.created_at === 'string' ? { createdAt: comment.created_at } : {}),
+      })),
+      comments: comments.map((comment) => ({
+        author: author(comment.user),
+        body: text(comment.body),
+        ...(typeof comment.created_at === 'string' ? { createdAt: comment.created_at } : {}),
+      })),
+    };
+  }
+
   /** Resolve a branch at GitHub now; push deliveries can arrive out of order. */
   async readBranchHead(accessToken: string, fullName: string, branch: string): Promise<string> {
     const body = await this.readRepositoryJson(

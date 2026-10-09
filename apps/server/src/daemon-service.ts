@@ -278,6 +278,16 @@ async function settleTurnFailureLine(
   }
 }
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
+/** Reads of one corner that a member of its parent Room may also make. */
+const CORNER_REACH_READS = new Set<string>([
+  'getCornerRestoreState',
+  'getPrChecksStatus',
+  'getRoomAuthority',
+  'getRoomConversation',
+  'listCornerBriefRevisions',
+  'listRoomMembers',
+  'readCornerPullRequest',
+]);
 export { CORNER_WAKE_TIMEOUT_MS } from './corner-wake.js';
 
 /**
@@ -358,6 +368,10 @@ export class DaemonService {
       | { status: 'closed'; number: number; url: string; title: string }
       | { status: 'blocked'; blocker: string }
     >,
+    /** The GitHub read behind `read_pull_request`. */
+    private readonly readPullRequest?: (
+      cornerId: string,
+    ) => Promise<Output<'readCornerPullRequest'>>,
   ) {}
 
   /** A turn's memory query, embedded before its command transaction opened. */
@@ -409,6 +423,12 @@ export class DaemonService {
             candidate.relay !== undefined
           )
             throw new RelayRefusalError('relay requires current Room and corner membership', 403);
+          // Reads of one corner also admit a member of its parent Room.
+          if (error instanceof AccessDeniedError && CORNER_REACH_READS.has(name))
+            return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
+              cornerReviewer: false,
+              isCorner: true,
+            }));
           throw error;
         },
       ));
@@ -1135,6 +1155,28 @@ export class DaemonService {
       case 'listUntrackedCorners':
         return (await this.corners(
           (input as Input<'listRoomCorners'>).roomId,
+          authenticatedAgentId,
+        )) as Output<Name>;
+      case 'listReachableCorners':
+        return (await this.corners(
+          (input as Input<'listReachableCorners'>).roomId,
+          authenticatedAgentId,
+          true,
+        )) as Output<Name>;
+      case 'listRoomMembers':
+        return (await this.roomMembers(
+          (input as Input<'listRoomMembers'>).roomId,
+        )) as Output<Name>;
+      case 'readCornerPullRequest': {
+        const { cornerId } = input as Input<'readCornerPullRequest'>;
+        await this.reach(cornerId, authenticatedAgentId);
+        if (!this.readPullRequest)
+          return { status: 'blocked', blocker: 'GitHub is not configured on this server' } as Output<Name>;
+        return (await this.readPullRequest(cornerId)) as Output<Name>;
+      }
+      case 'postCornerMessage':
+        return (await this.postCornerMessage(
+          input as Input<'postCornerMessage'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getPrChecksStatus':
@@ -2601,7 +2643,11 @@ export class DaemonService {
       name === 'getCornerCloseRequests'
         ? (input as unknown as { cornerId: string }).cornerId
         : input.roomId;
-    await this.access(roomId, agentId);
+    await this.access(roomId, agentId).catch((error: unknown) => {
+      if (error instanceof AccessDeniedError && name === 'getRoomConversation')
+        return this.reach(roomId, agentId);
+      throw error;
+    });
     const closeRequested =
       name === 'getCornerCloseRequests'
         ? Boolean(
@@ -2807,7 +2853,6 @@ export class DaemonService {
            JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
            JOIN rooms root_room ON root_room.id=root.room_id
              AND root_room.workspace_id=output.workspace_id
-           JOIN identities requester ON requester.id=root.author_id AND requester.kind='human'
            WHERE output.id=$1`,
           [input.roomId, this.authorizedCommand.root_source_message_id],
         )
@@ -3052,7 +3097,8 @@ export class DaemonService {
    * exactly the old heads where that record is thinnest, so the two
    * derivations must agree.
    */
-  private async corners(roomId: string, agentId: string) {
+  /** `reachable` lists every corner under the Room instead of only the caller's own. */
+  private async corners(roomId: string, agentId: string, reachable = false) {
     const rows = await this.database.query<{
       id: string;
       parent_id: string;
@@ -3067,9 +3113,10 @@ export class DaemonService {
               COALESCE(f.owner_agent_id,r.created_by) created_by,
               r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
-       JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
-       WHERE r.parent_id=$1`,
-      [roomId, agentId],
+       WHERE r.parent_id=$1 AND ($3 OR EXISTS(
+         SELECT 1 FROM memberships m
+         WHERE m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL))`,
+      [roomId, agentId, reachable],
     );
     return {
       corners: rows.rows.map((row) => ({
@@ -3147,7 +3194,7 @@ export class DaemonService {
     input: Input<'listCornerBriefRevisions'>,
     agentId: string,
   ) {
-    await this.access(input.cornerId, agentId);
+    await this.reach(input.cornerId, agentId);
     if (
       input.beforeRevision !== undefined &&
       (!Number.isInteger(input.beforeRevision) || input.beforeRevision < 1)
@@ -3219,7 +3266,7 @@ export class DaemonService {
     agentId: string,
   ): Promise<Output<'closeCornerPullRequest'>> {
     // The generic gate checks the turn's roomId; the target corner needs its own check.
-    await this.access(input.cornerId, agentId);
+    await this.reach(input.cornerId, agentId);
     if (!this.closePullRequest)
       return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
     const closed = await this.closePullRequest(input.cornerId);
@@ -3681,19 +3728,18 @@ export class DaemonService {
        FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
        JOIN rooms source ON source.id=$2 AND (source.id=parent.id OR source.parent_id=parent.id)
        JOIN corner_facts f ON f.corner_id=corner.id
-       JOIN memberships cm ON cm.room_id=corner.id AND cm.identity_id=$3 AND cm.removed_at IS NULL
        JOIN memberships pm ON pm.room_id=parent.id AND pm.identity_id=$3 AND pm.removed_at IS NULL
        JOIN memberships sm ON sm.room_id=source.id AND sm.identity_id=$3 AND sm.removed_at IS NULL
        WHERE corner.id=$1 AND source.id<>corner.id AND parent.parent_id IS NULL
          AND source.workspace_id=parent.workspace_id AND corner.workspace_id=parent.workspace_id
-       FOR SHARE OF corner,parent,source,cm,pm,sm`,
+       FOR SHARE OF corner,parent,source,pm,sm`,
         [cornerId, roomId, agentId],
       )
     ).rows[0];
-    // Membership is the caller's own gate; an archived target still has its
-    // membership rows, so a member is told the corner closed while a
-    // non-member keeps the same membership refusal a missing corner gets.
-    if (!pair) throw new RelayRefusalError('relay requires current Room and corner membership', 403);
+    // Parent Room membership reaches every corner under it; an archived target
+    // still has its parent membership, so a member is told the corner closed
+    // while a non-member keeps the same refusal a missing corner gets.
+    if (!pair) throw new RelayRefusalError('relay requires current Room membership', 403);
     if (pair.corner_archived_at)
       throw new RelayRefusalError('relay destination corner is closed', 409);
     if (pair.parent_archived_at)
@@ -5705,7 +5751,7 @@ export class DaemonService {
       if (objectiveRefusal) throw new Error(objectiveRefusal);
     }
     if (input.brief) validateCornerBrief(input.brief);
-    await this.access(input.cornerId, agentId);
+    await this.reach(input.cornerId, agentId);
     const parentId = await this.database.transaction(async (db) => {
       const corner = (
         await db.query<{ parent_id: string | null; archived_at: Date | null; kind: string; objective: string }>(
@@ -7355,19 +7401,16 @@ export class DaemonService {
           [input.cornerId],
         )
       ).rows[0];
-      // The agent a person handed the corner to revises its brief like the opener.
-      if (
-        !corner?.parent_id ||
-        (corner.owner_agent_id !== agentId &&
-          corner.implementer_agent_id !== agentId &&
-          corner.created_by !== agentId &&
-          corner.kind !== 'human')
-      )
+      // Any agent that reaches the corner revises it; the approval quote is
+      // what authorizes the new scope.
+      if (!corner?.parent_id) throw new Error('corner brief revision denied');
+      await this.reach(input.cornerId, agentId, db).catch(() => {
         throw new Error('corner brief revision denied');
+      });
       const commandRoomId = input.roomId ?? input.cornerId;
       if (commandRoomId !== input.cornerId) {
         const host = (await db.query<{ parent_id: string | null }>(`SELECT parent_id FROM rooms WHERE id=$1`, [commandRoomId])).rows[0];
-        if (corner.created_by !== agentId || (commandRoomId !== corner.parent_id && host?.parent_id !== corner.parent_id))
+        if (commandRoomId !== corner.parent_id && host?.parent_id !== corner.parent_id)
           throw new Error('corner brief revision denied');
       }
       const command = await authorizeCommandOutput(
@@ -7455,7 +7498,7 @@ export class DaemonService {
   }
   private async archiveCorner(cornerId: string, agentId: string) {
     // The generic gate checks the turn's roomId; the target corner needs its own check.
-    await this.access(cornerId, agentId);
+    await this.reach(cornerId, agentId);
     const parentId = await this.database.transaction(async (database) => {
       return (await closeCornerState(database, cornerId)).parentId;
     });
@@ -7558,6 +7601,66 @@ export class DaemonService {
     if (!result.rowCount) throw new AccessDeniedError();
     const row = result.rows[0]!;
     return { cornerReviewer: row.corner_reviewer, isCorner: row.is_corner };
+  }
+
+  private async roomMembers(roomId: string) {
+    const rows = await this.database.query<{
+      id: string;
+      kind: 'human' | 'agent';
+      name: string;
+      handle: string | null;
+      role: string;
+    }>(
+      `SELECT identity.id,identity.kind,identity.name,identity.handle,member.role
+       FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+       WHERE member.room_id=$1 AND member.removed_at IS NULL
+       ORDER BY identity.kind,identity.name`,
+      [roomId],
+    );
+    return { members: rows.rows };
+  }
+
+  /** A plain message into a corner the caller reaches; it wakes nobody. */
+  private async postCornerMessage(input: Input<'postCornerMessage'>, agentId: string) {
+    const text = typeof input.text === 'string' ? input.text.trim() : '';
+    if (!text || text.length > 16000) throw new Error('message text must be 1 to 16000 characters');
+    await this.reach(input.cornerId, agentId);
+    await authorizeCommandOutput(
+      this.database, input.roomId, agentId, input.requestId, input.generationId,
+    );
+    const saved = (
+      await this.database.query<{ id: string; created_at: Date }>(
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model)
+         SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3)
+         FROM rooms room WHERE room.id=$2 AND room.archived_at IS NULL
+         RETURNING id,created_at`,
+        [id(), input.cornerId, agentId, text],
+      )
+    ).rows[0];
+    if (!saved) throw new Error('corner is archived');
+    this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'message', agentId });
+    return { id: saved.id, createdAt: seconds(saved.created_at) };
+  }
+
+  /**
+   * An agent reaches a corner when it is a current member of the corner or of
+   * its parent Room. Returns the parent Room id.
+   */
+  private async reach(cornerId: string, agentId: string, database: SqlDatabase = this.database) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cornerId))
+      throw new AccessDeniedError();
+    const row = (
+      await database.query<{ parent_id: string }>(
+        `SELECT corner.parent_id FROM rooms corner
+         WHERE corner.id=$1 AND corner.parent_id IS NOT NULL
+           AND EXISTS(SELECT 1 FROM memberships member
+                      WHERE member.room_id IN (corner.id,corner.parent_id)
+                        AND member.identity_id=$2 AND member.removed_at IS NULL)`,
+        [cornerId, agentId],
+      )
+    ).rows[0];
+    if (!row) throw new AccessDeniedError();
+    return row.parent_id;
   }
 
   /** Adds one fixed-vocabulary reaction without turning a retried tool call into an unreact. */
@@ -7763,6 +7866,10 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   approveCornerMerge: true,
   mergeCorner: true,
   closeCornerPullRequest: true,
+  listReachableCorners: true,
+  listRoomMembers: true,
+  readCornerPullRequest: true,
+  postCornerMessage: true,
   getCornerCloseRequests: true,
   waitForCornerWake: true,
   listUntrackedCorners: true,

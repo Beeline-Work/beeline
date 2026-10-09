@@ -417,6 +417,17 @@ export type DaemonOperationMap = {
     | { readonly status: 'closed'; readonly pullRequestNumber: number; readonly url: string }
     | { readonly status: 'blocked'; readonly blocker: string }
   >;
+  /** Every corner, open and closed, under a Room the caller is a member of. */
+  listReachableCorners: Operation<RoomInput, CornerListResult>;
+  /** Current members of a Room the caller is in, or of a corner it reaches. */
+  listRoomMembers: Operation<RoomInput, RoomMemberListResult>;
+  /** A reachable corner's pull request: changed files, reviews and comments. */
+  readCornerPullRequest: Operation<CornerInput, CornerPullRequestResult>;
+  /** A plain message into a reachable corner, from the caller's active turn. */
+  postCornerMessage: Operation<
+    CornerInput & RoomInput & TurnOutputAuthority & { readonly text: string },
+    { readonly id: string; readonly createdAt: number }
+  >;
   getCornerCloseRequests: Operation<CornerCursorInput, RoomInboxResult>;
   /** Long-poll: resolves as soon as the corner has something new, or on a bounded timeout. */
   waitForCornerWake: Operation<CornerInput, CornerWakeResult>;
@@ -665,6 +676,49 @@ export type AgentInput = { readonly agentId: string };
 export type AgentRoomInput = AgentInput & RoomInput;
 export type AgentConfigurationInput = AgentInput & { readonly roomId?: string };
 export type CornerInput = { readonly cornerId: string };
+export type RoomMemberListResult = {
+  readonly members: readonly {
+    readonly id: string;
+    readonly kind: 'human' | 'agent';
+    readonly name: string;
+    readonly handle: string | null;
+    readonly role: string;
+  }[];
+};
+export type CornerPullRequestResult =
+  | {
+      readonly status: 'ok';
+      readonly number: number;
+      readonly url: string;
+      readonly title?: string;
+      readonly headSha: string;
+      readonly merged: boolean;
+      readonly files: readonly {
+        readonly filename: string;
+        readonly status: string;
+        readonly additions: number;
+        readonly deletions: number;
+      }[];
+      readonly reviews: readonly {
+        readonly author: string;
+        readonly state: string;
+        readonly body: string;
+        readonly submittedAt?: string;
+      }[];
+      readonly reviewComments: readonly {
+        readonly author: string;
+        readonly path: string;
+        readonly line?: number;
+        readonly body: string;
+        readonly createdAt?: string;
+      }[];
+      readonly comments: readonly {
+        readonly author: string;
+        readonly body: string;
+        readonly createdAt?: string;
+      }[];
+    }
+  | { readonly status: 'blocked'; readonly blocker: string };
 export type IdentityInput = { readonly identityId: string };
 export type RequestInput = RoomInput & { readonly requestId: string };
 export type RoomCursorInput = RoomInput & {

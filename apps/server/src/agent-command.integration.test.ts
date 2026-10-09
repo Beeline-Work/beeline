@@ -1936,11 +1936,26 @@ describe('sibling corner steers', () => {
     },
   );
 
-  it.each(['source', 'destination', 'parent'] as const)(
+  it('delivers after the steerer loses its destination seat; parent Room membership reaches the corner', async () => {
+    const source = await sourceCommand();
+    await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [
+      C,
+      A,
+    ]);
+    try {
+      const delivery = await steer(source, 'Parent reach steer');
+      expect((await commands(B, C))[0]).toMatchObject({ sourceMessageId: delivery.id });
+    } finally {
+      await db.query('DELETE FROM agent_commands');
+      await db.query("DELETE FROM messages WHERE room_id=$1 AND text='Parent reach steer'", [C]);
+    }
+  });
+
+  it.each(['source', 'parent'] as const)(
     'refuses removed %s membership without delivery',
     async (surface) => {
       const source = await sourceCommand();
-      const roomId = surface === 'source' ? sibling : surface === 'destination' ? C : R;
+      const roomId = surface === 'source' ? sibling : R;
       await db.query(
         'UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2',
         [roomId, A],
@@ -2305,14 +2320,14 @@ describe('Room/corner relays', () => {
       result(source, 'No', 'g1', { relay: { ...extra.relay, direction: 'up' } }),
     ).rejects.toThrow();
     await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [
-      C,
+      R,
       A,
     ]);
     try {
       await expect(result(source, 'No', 'g1', extra)).rejects.toThrow('membership');
     } finally {
       await db.query('UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2', [
-        C,
+        R,
         A,
       ]);
     }

@@ -861,7 +861,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'steer_corner',
     description:
-      'Pass input from your active Room or corner turn to another corner under the same parent Room; membership of that parent Room is enough. The hand-off queues input for the destination implementer (its first agent member when it has none), or, from a corner, for the implementer of your corner when that agent is a member of the destination; it keeps your turn active; membership alone never authorizes a turn.',
+      'Pass input from your active Room or corner turn to another corner under the same parent Room; membership of that corner or of the parent Room is enough. From a corner, the hand-off queues input for the agent who opened your corner when that agent is a member of the destination. Otherwise it goes to the agent who opened the destination; a corner opened from the phone has none, so it goes to its implementer, else its first agent member. It keeps your turn active; membership alone never authorizes a turn.',
     inputSchema: {
       type: 'object',
       required: ['cornerId', 'text'],

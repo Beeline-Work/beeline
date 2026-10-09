@@ -1951,14 +1951,33 @@ describe('sibling corner steers', () => {
     }
   });
 
-  it.each(['source', 'parent'] as const)(
+  it('Reproduction R2: delivers from a member of both sibling corners who left the parent Room', async () => {
+    const source = await sourceCommand();
+    await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [
+      R,
+      A,
+    ]);
+    try {
+      const delivery = await steer(source, 'Corner reach steer');
+      expect((await commands(B, C))[0]).toMatchObject({ sourceMessageId: delivery.id });
+    } finally {
+      await db.query('UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2', [
+        R,
+        A,
+      ]);
+      await db.query('DELETE FROM agent_commands');
+      await db.query("DELETE FROM messages WHERE room_id=$1 AND text='Corner reach steer'", [C]);
+    }
+  });
+
+  it.each(['source', 'parent and destination'] as const)(
     'refuses removed %s membership without delivery',
     async (surface) => {
       const source = await sourceCommand();
-      const roomId = surface === 'source' ? sibling : R;
+      const roomIds = surface === 'source' ? [sibling] : [R, C];
       await db.query(
-        'UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2',
-        [roomId, A],
+        'UPDATE memberships SET removed_at=now() WHERE room_id=ANY($1::uuid[]) AND identity_id=$2',
+        [roomIds, A],
       );
       await expect(steer(source)).rejects.toThrow();
       expect(
@@ -2001,6 +2020,42 @@ describe('sibling corner steers', () => {
         C,
         A,
       ]);
+    }
+  });
+
+  it('Reproduction R3: wakes the destination opener, not a different implementer, for a Room steer', async () => {
+    // C was opened by B; a person handed the work to A. The steer names B, as the tool says.
+    await db.query('UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1', [C, A]);
+    try {
+      await send('@hoots steer the corner');
+      const root = (await commands(A))[0]!;
+      await claim(root);
+      const delivery = await result(root, 'Opener steer', 'g1', {
+        relay: { fromRoomId: R, toRoomId: C, direction: 'down' },
+      });
+      expect(await commands(A, C)).toEqual([]);
+      expect((await commands(B, C))[0]).toMatchObject({
+        reason: 'relay_steer',
+        sourceMessageId: delivery.id,
+      });
+    } finally {
+      await db.query('UPDATE corner_facts SET worker_agent_id=NULL WHERE corner_id=$1', [C]);
+    }
+  });
+
+  it('wakes the implementer of a phone-opened destination, not its first agent member', async () => {
+    await db.query('UPDATE corner_facts SET owner_agent_id=NULL,worker_agent_id=$2 WHERE corner_id=$1', [C, B]);
+    try {
+      await send('@hoots steer the corner');
+      const root = (await commands(A))[0]!;
+      await claim(root);
+      const delivery = await result(root, 'Phone corner steer', 'g1', {
+        relay: { fromRoomId: R, toRoomId: C, direction: 'down' },
+      });
+      expect(await commands(A, C)).toEqual([]);
+      expect((await commands(B, C))[0]).toMatchObject({ sourceMessageId: delivery.id });
+    } finally {
+      await db.query('UPDATE corner_facts SET owner_agent_id=$2,worker_agent_id=NULL WHERE corner_id=$1', [C, B]);
     }
   });
 

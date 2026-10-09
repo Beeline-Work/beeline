@@ -3728,17 +3728,18 @@ export class DaemonService {
        FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
        JOIN rooms source ON source.id=$2 AND (source.id=parent.id OR source.parent_id=parent.id)
        JOIN corner_facts f ON f.corner_id=corner.id
-       JOIN memberships pm ON pm.room_id=parent.id AND pm.identity_id=$3 AND pm.removed_at IS NULL
+       JOIN memberships rm ON rm.room_id IN (corner.id,parent.id) AND rm.identity_id=$3 AND rm.removed_at IS NULL
        JOIN memberships sm ON sm.room_id=source.id AND sm.identity_id=$3 AND sm.removed_at IS NULL
        WHERE corner.id=$1 AND source.id<>corner.id AND parent.parent_id IS NULL
          AND source.workspace_id=parent.workspace_id AND corner.workspace_id=parent.workspace_id
-       FOR SHARE OF corner,parent,source,pm,sm`,
+       LIMIT 1
+       FOR SHARE OF corner,parent,source,rm,sm`,
         [cornerId, roomId, agentId],
       )
     ).rows[0];
-    // Parent Room membership reaches every corner under it; an archived target
-    // still has its parent membership, so a member is told the corner closed
-    // while a non-member keeps the same refusal a missing corner gets.
+    // Membership of the corner or its parent Room reaches the corner; an
+    // archived target keeps those memberships, so a member is told the corner
+    // closed while a non-member keeps the same refusal a missing corner gets.
     if (!pair) throw new RelayRefusalError('relay requires current Room membership', 403);
     if (pair.corner_archived_at)
       throw new RelayRefusalError('relay destination corner is closed', 409);

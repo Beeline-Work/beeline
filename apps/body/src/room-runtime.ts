@@ -1457,11 +1457,15 @@ export class RoomRuntimeCoordinator {
    * corners need a fresh listing; re-listing every Room's corners for one
    * Room's push would repeat that read for every other Room on each push.
    * Only new or newly-unarchived corners are started here - removals and
-   * archived-corner cleanup stay on the regular reconcile pass.
+   * archived-corner cleanup stay on the regular reconcile pass. The named
+   * Room itself is restarted the same way a full reconcile would, so a
+   * running Room picks up the change (a new GitHub installation, a token) too.
    */
   private async refreshRoomCorners(roomId: string): Promise<void> {
     if (this.stopped) return;
     try {
+      await this.restartRunningRoomForRepositoryChange(roomId);
+      if (this.stopped) return;
       const result = await this.options.daemonApi.execute('listRoomCorners', { roomId });
       for (const corner of result.corners) {
         this.monolithCornerParents.set(corner.cornerId, roomId);
@@ -1479,6 +1483,24 @@ export class RoomRuntimeCoordinator {
       console.error(`[thin-core] scoped corner refresh failed for Room ${roomId}:`, error);
       this.wakeDiscovery();
     }
+  }
+
+  /**
+   * Same stop/restart (or, mid-turn, defer-to-`notePoll`) a full reconcile
+   * applies to a Room whose `repositoryRevision` changed, for the one Room a
+   * live repository-change event names. A no-op when that id names nothing
+   * currently running - e.g. a Room whose corners changed but is not itself
+   * being served, or a corner id, which this event never actually names.
+   */
+  private async restartRunningRoomForRepositoryChange(roomId: string): Promise<void> {
+    const running = this.running.get(roomId);
+    if (!running) return;
+    if (running.body.isBusy()) {
+      this.deferredRepositoryRestarts.add(roomId);
+      return;
+    }
+    await this.stopRunning(roomId, running);
+    if (!this.stopped) await this.startRoom(roomId);
   }
 
   private async parentRepositoryState(roomId: string): Promise<RoomRepositoryStateResult> {

@@ -286,6 +286,82 @@ describe('monolith integration', () => {
     expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, HUMAN)).toEqual({ due: false });
   });
+  it('answers a refused steer with a 4xx naming its cause, never a 503', async () => {
+    const steerCorner = '55555555-5555-4555-8555-555555555555';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Steer target')`,
+      [steerCorner, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
+       VALUES($1,$2,'Steer target','{}')`,
+      [steerCorner, AGENT],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+      [WORKSPACE, steerCorner, HUMAN, AGENT],
+    );
+    const startTurn = async (label: string) => {
+      const messageId = createHash('sha256').update(`steer-source-${label}`).digest('hex');
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+        messageId,
+        ROOM,
+        HUMAN,
+        '@bee steer the corner',
+      ]);
+      const requestId = `steer-${label}`;
+      const command = await createAgentCommand(database, {
+        roomId: ROOM,
+        agentId: AGENT,
+        sourceMessageId: messageId,
+        reason: 'human_tag',
+        turnRequestId: requestId,
+      });
+      await claimAgentCommand(database, ROOM, AGENT, command!.id, `${requestId}-g`);
+      return { roomId: ROOM, requestId, generationId: `${requestId}-g` };
+    };
+    const steer = (turn: { roomId: string; requestId: string; generationId: string }) =>
+      request(
+        '/v1/daemon/operations/postRoomMessage',
+        'POST',
+        {
+          ...turn,
+          text: 'Steer into the corner',
+          relay: { fromRoomId: ROOM, toRoomId: steerCorner, direction: 'down' },
+        },
+        daemonToken,
+      );
+
+    const limited = await startTurn('hop-limit');
+    await database.query(`UPDATE agent_commands SET agent_depth=3 WHERE turn_request_id=$1`, [
+      limited.requestId,
+    ]);
+    const hop = await steer(limited);
+    expect(hop.status).toBe(409);
+    expect(await hop.json()).toMatchObject({
+      error: expect.stringContaining('delegation limit'),
+    });
+
+    const closedTurn = await startTurn('closed');
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [steerCorner]);
+    const closed = await steer(closedTurn);
+    expect(closed.status).toBe(409);
+    expect(await closed.json()).toMatchObject({ error: expect.stringContaining('closed') });
+    await database.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`, [steerCorner]);
+
+    const lostTurn = await startTurn('lost-membership');
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [steerCorner, AGENT],
+    );
+    const lost = await steer(lostTurn);
+    expect(lost.status).toBe(403);
+    expect(await lost.json()).toMatchObject({
+      error: expect.stringContaining('membership'),
+    });
+    expect([hop.status, closed.status, lost.status]).not.toContain(503);
+  });
   it('has no feedback triage setting or tools, refuses Fixed DMs from a non-sender, and opens fix corners beside the corner', async () => {
     const corner = (
       (await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Issues-triage' }, HUMAN)) as {

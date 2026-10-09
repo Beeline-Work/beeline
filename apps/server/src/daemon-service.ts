@@ -8,6 +8,7 @@ import {
   claimAgentCommand,
   commandInbox,
   createAgentCommand,
+  nextAgentDepth,
   queueCornerWorkerAfterReview,
   readAgentCommands,
   routeAgentResult,
@@ -304,6 +305,17 @@ function markExpiredAttachments(
 
 const MEDIA_URL_PATTERN = /\/v1\/media\/([0-9a-f-]{36})$/;
 const DEFAULT_MEDIA_MAXIMUM_BYTES = 25 * 1024 * 1024;
+
+/**
+ * A steer or ask refusal that names its cause and carries the HTTP status the
+ * daemon route answers with. A refusal is a client problem, never an outage,
+ * so it must not fall through to the route's 503 default.
+ */
+export class RelayRefusalError extends Error {
+  constructor(message: string, readonly status: 400 | 403 | 404 | 409) {
+    super(message);
+  }
+}
 
 export class DaemonService {
   constructor(
@@ -3573,11 +3585,16 @@ export class DaemonService {
       input.text.length > 16000 ||
       (relay.reply !== undefined && relay.reply !== 'once')
     )
-      throw new Error('invalid relay');
-    if (relay.direction === 'up') throw new Error('relay up is retired');
+      throw new RelayRefusalError('invalid relay', 400);
+    if (relay.direction === 'up') throw new RelayRefusalError('relay up is retired', 400);
     const command = this.authorizedCommand;
     if (!this.commandTransaction || !command || command.room_id !== relay.fromRoomId)
-      throw new Error('relay requires an active source command');
+      throw new RelayRefusalError('relay requires an active source command', 409);
+    // A relay queues a child command one hop deeper than its source. At the
+    // hop limit the destination can never run, so say the limit was reached
+    // instead of reporting a missing destination.
+    if (nextAgentDepth(command.agent_depth) === undefined)
+      throw new RelayRefusalError('relay delegation limit reached', 409);
     const cornerId = relay.toRoomId;
     const roomId = relay.fromRoomId;
     // Lock the source, destination and parent against removal/closure for the whole write.
@@ -3589,6 +3606,9 @@ export class DaemonService {
         worker_agent_id: string | null;
         source_owner_agent_id: string | null;
         fallback_agent_id: string | null;
+        corner_archived_at: Date | null;
+        parent_archived_at: Date | null;
+        source_archived_at: Date | null;
       }>(
         // A sibling corner's reports wake the agent who opened it when that agent is in the destination.
         // A corner opened from the phone (`createHumanCorner`) never records an
@@ -3596,6 +3616,7 @@ export class DaemonService {
         // implementer, then to any agent currently a member of the corner,
         // rather than a destination with no agent to receive it at all.
         `SELECT source.name source_name,source.parent_id source_parent_id,f.owner_agent_id,f.worker_agent_id,
+         corner.archived_at corner_archived_at,parent.archived_at parent_archived_at,source.archived_at source_archived_at,
          (SELECT sf.owner_agent_id FROM corner_facts sf
           JOIN memberships om ON om.room_id=corner.id AND om.identity_id=sf.owner_agent_id AND om.removed_at IS NULL
           WHERE sf.corner_id=source.id AND source.parent_id IS NOT NULL AND sf.owner_agent_id<>$3) source_owner_agent_id,
@@ -3610,18 +3631,25 @@ export class DaemonService {
        JOIN memberships sm ON sm.room_id=source.id AND sm.identity_id=$3 AND sm.removed_at IS NULL
        WHERE corner.id=$1 AND source.id<>corner.id AND parent.parent_id IS NULL
          AND source.workspace_id=parent.workspace_id AND corner.workspace_id=parent.workspace_id
-         AND corner.archived_at IS NULL AND parent.archived_at IS NULL AND source.archived_at IS NULL
        FOR SHARE OF corner,parent,source,cm,pm,sm`,
         [cornerId, roomId, agentId],
       )
     ).rows[0];
-    if (!pair) throw new Error('relay requires current Room and corner membership');
+    // Membership is the caller's own gate; an archived target still has its
+    // membership rows, so a member is told the corner closed while a
+    // non-member keeps the same membership refusal a missing corner gets.
+    if (!pair) throw new RelayRefusalError('relay requires current Room and corner membership', 403);
+    if (pair.corner_archived_at)
+      throw new RelayRefusalError('relay destination corner is closed', 409);
+    if (pair.parent_archived_at)
+      throw new RelayRefusalError('relay destination Room is closed', 409);
+    if (pair.source_archived_at) throw new RelayRefusalError('relay source is closed', 409);
     if (pair.source_parent_id !== null && relay.reply === 'once')
-      throw new Error('corner questions require a Room source');
+      throw new RelayRefusalError('corner questions require a Room source', 400);
     const target =
       pair.source_owner_agent_id ?? pair.owner_agent_id ?? pair.worker_agent_id ??
       pair.fallback_agent_id;
-    if (!target) throw new Error('relay destination corner has no agent member');
+    if (!target) throw new RelayRefusalError('relay destination corner has no agent member', 409);
     const received = Boolean(
       (
         await this.database.query(
@@ -3654,7 +3682,8 @@ export class DaemonService {
       parent: command,
       reason: relay.reply === 'once' ? 'relay_question' : 'relay_steer',
     });
-    if (!queued) throw new Error('relay target unavailable or delegation limit reached');
+    if (!queued)
+      throw new RelayRefusalError('relay destination corner has no agent member', 409);
     this.live.publish({ type: 'invalidate', roomId: relay.toRoomId, reason: 'message', agentId });
     return { id: saved.id, createdAt: seconds(saved.created_at) };
   }

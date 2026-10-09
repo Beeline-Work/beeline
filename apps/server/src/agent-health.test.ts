@@ -107,14 +107,6 @@ describe('roomAgentHealth', () => {
     expect(health.get(AGENT_TWO)).toEqual({ healthy: false, reason: 'offline' });
   });
 
-  it('marks an offline agent unhealthy', async () => {
-    await reportPresence(AGENT_ONE, 'online');
-    await reportPresence(AGENT_TWO, 'offline');
-    const health = await roomAgentHealth(database, ROOM, ALL());
-    expect(health.get(AGENT_ONE)).toEqual({ healthy: true });
-    expect(health.get(AGENT_TWO)).toEqual({ healthy: false, reason: 'offline' });
-  });
-
   it('marks an agent that failed within the last few minutes unhealthy', async () => {
     await reportPresence(AGENT_ONE, 'online');
     await reportPresence(AGENT_TWO, 'online');

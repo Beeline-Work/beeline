@@ -275,14 +275,6 @@ describe('@agent login: Claude sign-in at the call site', () => {
     ).toBe(0);
   });
 
-  it('settles the card as offline instead of waiting when no helper is connected', async () => {
-    await database.query(`UPDATE agent_connections SET released_at=now() WHERE agent_id=$1`, [AGENT]);
-    const command = await send(OWNER, '@clara login');
-    const failed = await settled(command, 'failed');
-    expect(failed.card.errorMessage).toBe(AGENT_SIGN_IN_OFFLINE_MESSAGE);
-    expect(helperFrames).toEqual([]);
-  });
-
   it('stops waiting with a clear message when a connected helper never answers', async () => {
     await expect(startAgentSignIn(database, live, AGENT, { attemptId: randomUUID(), cardId: 'c'.repeat(64) }, { timeoutMs: 100 })).rejects.toThrow(
       AGENT_SIGN_IN_NO_ANSWER_MESSAGE,

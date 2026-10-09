@@ -256,7 +256,7 @@ describe('search_memory recall (institutional memory)', () => {
   // Japanese address) extracts zero words. The whole-trimmed-query literal
   // substring match (the old, pre-tokenization behavior) is kept as a
   // standing OR alternative specifically so these keep working.
-  it('finds a fact by a literal Korean query with no extractable Latin words', async () => {
+  it('finds facts by literal Korean and Japanese queries with no extractable Latin words', async () => {
     const daemon = liveDaemon();
     await openCommand('cake-order-turn', 'cake-order-generation');
     const saved = await daemon.execute(
@@ -288,12 +288,7 @@ describe('search_memory recall (institutional memory)', () => {
       RONNIE,
     );
     expect(result.results.map((r) => r.id)).toContain(saved.itemId);
-  });
-
-  it('finds a fact by a literal Japanese query with no extractable Latin words', async () => {
-    const daemon = liveDaemon();
-    await openCommand('cake-order-turn', 'cake-order-generation');
-    const saved = await daemon.execute(
+    const japanese = await daemon.execute(
       'saveInstitutionalMemory',
       {
         agentId: RONNIE,
@@ -322,7 +317,7 @@ describe('search_memory recall (institutional memory)', () => {
         },
         RONNIE,
       );
-      expect(result.results.map((r) => r.id), `query: ${query}`).toContain(saved.itemId);
+      expect(result.results.map((r) => r.id), `query: ${query}`).toContain(japanese.itemId);
     }
   });
 

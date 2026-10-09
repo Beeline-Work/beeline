@@ -74,11 +74,10 @@ describe('message-source landing', () => {
     // Top of the screen on the inverted phone list.
     expect(controller).toContain("viewPosition: align === 'top' ? 1 : 0.5");
     expect(controller).not.toContain('setTimeout');
-    // Only the unread landing estimates an offset; a message jump waits for
-    // the next layout pass instead.
-    expect(controller).toContain(
-      "if (destination.kind === 'firstUnread') list.toEstimatedRow(index);",
-    );
+    // A row the list has not measured yet is reached through an estimated
+    // scroll near it, then one exact scroll on the next pass.
+    expect(controller).toContain('if (!list.toRow(index, rowId, align)) {');
+    expect(controller).toContain('list.toEstimatedRow(index);');
     expect(surface).toContain('onScrollToIndexFailed={phoneScrollList.scrollToIndexFailed}');
   });
 });

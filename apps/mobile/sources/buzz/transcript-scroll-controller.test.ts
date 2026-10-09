@@ -104,17 +104,42 @@ describe('transcript scroll controller', () => {
     expect(events).toEqual(['scrolled:message:m3', 'landed:message:m3']);
   });
 
-  it('waits for a later pass when the list has not measured the row', () => {
+  it('scrolls near a message row the list has not measured, then lands it on the next pass', () => {
     const { controller, moves, unmeasured, events, flush } = setup();
     unmeasured.add('m4');
     controller.request(message('m4'));
     flush();
-    expect(moves).toEqual(['miss:m4']);
+    // A list that has drawn every row it means to sends no further layout
+    // pass by itself. The estimated scroll draws and measures the row.
+    expect(moves).toEqual(['miss:m4', 'estimate:3']);
     expect(events).toEqual([]);
+    expect(controller.isLanding()).toBe(true);
     unmeasured.clear();
-    controller.observeLayout();
-    expect(moves).toEqual(['miss:m4', 'row:m4@3:top']);
+    controller.observeVisibleRows([{ id: 'm3' }]);
+    expect(moves).toEqual(['miss:m4', 'estimate:3', 'row:m4@3:top']);
     expect(events).toEqual(['scrolled:message:m4']);
+    controller.observeVisibleRows([{ id: 'm4' }]);
+    expect(events).toEqual(['scrolled:message:m4', 'landed:message:m4']);
+  });
+
+  it('does not land on a visibility report taken before the rows changed', () => {
+    const { controller, moves, events, flush, setRows } = setup();
+    // The target is on screen in the old window.
+    controller.observeVisibleRows([{ id: 'm2' }, { id: 'm3' }]);
+    // A tap opens a new window in the same commit, so the old report and the
+    // old row positions no longer describe the list.
+    setRows(['m1', 'm2', 'm3', 'm4'].map((id) => ({ id })));
+    controller.request(message('m3'));
+    flush();
+    expect(moves).toEqual(['row:m3@2:top']);
+    expect(events).toEqual(['scrolled:message:m3']);
+    expect(controller.isLanding()).toBe(true);
+    // The list reports the new window: the first scroll left the target off
+    // screen, so the request scrolls again, then lands when it is shown.
+    controller.observeVisibleRows([{ id: 'm4' }]);
+    expect(moves).toEqual(['row:m3@2:top', 'row:m3@2:top']);
+    controller.observeVisibleRows([{ id: 'm3' }]);
+    expect(events).toEqual(['scrolled:message:m3', 'landed:message:m3']);
   });
 
   it('asks the feature for a row that is not drawn, and lands it when it arrives', () => {

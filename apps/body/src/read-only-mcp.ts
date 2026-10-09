@@ -3100,7 +3100,7 @@ function sniffArtifactMime(bytes: Buffer, fromHtml: boolean): ArtifactMimeType {
     .trimStart()
     .toLowerCase();
   const prolog = head.replace(/^<\?xml[^>]*\?>\s*/, '').replace(/^(<!--[\s\S]*?-->\s*)+/, '');
-  if (prolog.startsWith('<svg')) return 'image/svg+xml';
+  if (prolog.startsWith('<svg') || /^<!doctype\s+svg[\s>]/.test(prolog)) return 'image/svg+xml';
   if (fromHtml || /^<(!doctype html|html)[\s>]/.test(prolog)) return 'text/html';
   return 'application/octet-stream';
 }

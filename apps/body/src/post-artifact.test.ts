@@ -151,6 +151,12 @@ describe('beeline-agent post_artifact', () => {
       svg.deps,
     );
     expect(svg.uploads[0]).toMatchObject({ mime: 'image/svg+xml' });
+    const doctype = deps();
+    await postArtifact(
+      { html: '<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg"/>', title: 'Glyph' },
+      doctype.deps,
+    );
+    expect(doctype.uploads[0]).toMatchObject({ mime: 'image/svg+xml' });
   });
 
   it.each([
@@ -161,6 +167,11 @@ describe('beeline-agent post_artifact', () => {
     ['RIFF\0\0\0\0WEBPrest', 'image/webp'],
     [VALID_HTML, 'text/html'],
     ['<svg xmlns="http://www.w3.org/2000/svg"/>', 'image/svg+xml'],
+    ['<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg"/>', 'image/svg+xml'],
+    [
+      '<?xml version="1.0"?>\n<!-- glyph -->\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<svg xmlns="http://www.w3.org/2000/svg"/>',
+      'image/svg+xml',
+    ],
   ])('sniffs octet-stream content %# as %s', async (content, expectedMime) => {
     const bytes = Buffer.from(content, 'latin1').toString('base64');
     for (const args of [

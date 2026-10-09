@@ -2004,6 +2004,16 @@ export class GitHubOperations {
       if (unfinishedClaimHead && current?.feature_branch !== pullRequest.branch) return;
       const currentLifecycle = current?.lifecycle;
       if (expectedPrNumber && currentLifecycle?.pr?.number !== expectedPrNumber) return;
+      // The branch lookup runs outside this transaction, so a second pull
+      // request on the same branch can be recorded between the lookup and this
+      // lock. Never archive a corner for a number it has since replaced.
+      const recordedPrNumber = currentLifecycle?.pr?.number;
+      if (
+        pullRequest.number !== undefined &&
+        recordedPrNumber !== undefined &&
+        recordedPrNumber !== pullRequest.number
+      )
+        return;
       const currentPr = currentLifecycle?.pr;
       const mergedPr =
         currentPr ??

@@ -58,7 +58,7 @@ test('OTA retry downloads the earlier candidate and recovers only its exact prod
   assert.match(promote.run, /recover-promotion/);
   assert.match(promote.run, /retry-attempt/);
   assert.match(promote.run, /if \[ "\$\(cat "\$RUNNER_TEMP\/mobile-ota-recovery.txt"\)" = new \]/);
-  assert.equal(workflow.jobs.mobile_ota['timeout-minutes'], 15);
+  assert.equal(workflow.jobs.mobile_ota['timeout-minutes'], 18);
   assert.match(workflow.jobs.mobile_ota.steps[0].with.ref, /stage_mobile_ota == 'pending'/);
   assert.match(workflow.jobs.mobile_ota.steps[0].with.ref, /github\.sha/);
 

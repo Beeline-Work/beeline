@@ -1,6 +1,6 @@
 import { messageJumpHref, roomHref } from '@/buzz/corner-navigation';
 import { useIsDesktop } from '@/utils/responsive';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   FlatList,
@@ -81,6 +81,7 @@ export default function TrayScreen() {
   const workspaceId = routeWorkspaceId || activeWorkspaceId || '';
   // A Workspace the person is no longer a member of: its items open nothing.
   const [lostWorkspaceId, setLostWorkspaceId] = useState<string | null>(null);
+  const lostWorkspaceRef = useRef<string | null>(null);
   const workspaceLost = Boolean(workspaceId) && lostWorkspaceId === workspaceId;
   const noWorkspace = (!routeWorkspaceId && activeWorkspaceId === null) || workspaceLost;
   const [needs, setNeeds] = useState<readonly NeedsYouItemView[]>([]);
@@ -106,11 +107,14 @@ export default function TrayScreen() {
       monolithPhoneOperation('readNeedsYou', { workspaceId }),
       monolithPhoneOperation('listMessageBookmarks', { workspaceId }),
     ]);
+    const results = [needsResult, savedResult];
+    // Once membership is lost, only a refresh that reads both sections shows
+    // access is back; any other failure keeps the No Workspace message.
     if (
-      [needsResult, savedResult].some(
-        (result) => result.status === 'rejected' && lostWorkspace(result.reason),
-      )
+      results.some((result) => result.status === 'rejected' && lostWorkspace(result.reason)) ||
+      (lostWorkspaceRef.current === workspaceId && results.some((result) => result.status === 'rejected'))
     ) {
+      lostWorkspaceRef.current = workspaceId;
       setLostWorkspaceId(workspaceId);
       setNeeds([]);
       setBookmarks([]);
@@ -118,6 +122,7 @@ export default function TrayScreen() {
       setLoading(false);
       return;
     }
+    lostWorkspaceRef.current = null;
     setLostWorkspaceId(null);
     if (needsResult.status === 'fulfilled') setNeeds(needsResult.value.items);
     if (savedResult.status === 'fulfilled') setBookmarks(savedResult.value.bookmarks);

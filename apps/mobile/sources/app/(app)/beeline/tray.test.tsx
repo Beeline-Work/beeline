@@ -504,6 +504,44 @@ describe('Bookmarks mobile open', () => {
     }
   });
 
+  it('keeps No Workspace when a refresh after membership loss fails for another reason', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const tree = await renderTray();
+      phoneOperation.mockImplementation(async () => {
+        throw Object.assign(new Error('Monolith readNeedsYou failed (400): workspace membership required'), {
+          code: 'workspace membership required',
+        });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await act(async () => undefined);
+      expect(tree.root.findByProps({ testID: 'tray-no-workspace' })).toBeTruthy();
+      phoneOperation.mockImplementation(async () => {
+        throw Object.assign(new Error('Monolith readNeedsYou failed (503): unavailable'), {
+          code: 'unavailable',
+        });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await act(async () => undefined);
+      expect(tree.root.findByProps({ testID: 'tray-no-workspace' })).toBeTruthy();
+      expect(textOf(tree)).toContain('You are no longer a member of this Workspace.');
+      expect(textOf(tree)).not.toContain('Retry');
+      serve({ bookmarks: [bookmark()] });
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      await act(async () => undefined);
+      expect(tree.root.findAllByProps({ testID: 'tray-no-workspace' })).toHaveLength(0);
+      expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the items and offers Retry when a refresh fails for another reason', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {

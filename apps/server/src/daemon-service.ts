@@ -1162,11 +1162,13 @@ export class DaemonService {
         return (await this.corners(
           (input as Input<'listRoomCorners'>).roomId,
           authenticatedAgentId,
+          (input as Input<'listRoomCorners'>).activeOnly === true,
         )) as Output<Name>;
       case 'listReachableCorners':
         return (await this.corners(
           (input as Input<'listReachableCorners'>).roomId,
           authenticatedAgentId,
+          false,
           true,
         )) as Output<Name>;
       case 'listRoomMembers':
@@ -3104,7 +3106,7 @@ export class DaemonService {
    * derivations must agree.
    */
   /** `reachable` lists every corner under the Room instead of only the caller's own. */
-  private async corners(roomId: string, agentId: string, reachable = false) {
+  private async corners(roomId: string, agentId: string, activeOnly = false, reachable = false) {
     const rows = await this.database.query<{
       id: string;
       parent_id: string;
@@ -3119,7 +3121,7 @@ export class DaemonService {
               COALESCE(f.owner_agent_id,r.created_by) created_by,
               r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
-       WHERE r.parent_id=$1 AND ($3 OR EXISTS(
+       WHERE r.parent_id=$1 ${activeOnly ? 'AND r.archived_at IS NULL' : ''} AND ($3 OR EXISTS(
          SELECT 1 FROM memberships m
          WHERE m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL))`,
       [roomId, agentId, reachable],

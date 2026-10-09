@@ -740,7 +740,7 @@ export class MonolithRoomTurnLoop {
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
-    if (client?.isAlive) await client.stop();
+    if (client) await client.stop();
   }
 
   /**
@@ -1287,7 +1287,7 @@ export class MonolithRoomTurnLoop {
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
-    if (client?.isAlive) await client.stop();
+    if (client) await client.stop();
     this.pinnedProviderOverride = next;
     await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());
     return next;
@@ -1988,6 +1988,7 @@ export class MonolithRoomTurnLoop {
       this.squireRelay.close();
       this.options.grantRunner?.unregister(roomId);
       await this.options.scheduler.suspend(roomId);
+      this.options.scheduler.forget(roomId);
     }
   }
 }

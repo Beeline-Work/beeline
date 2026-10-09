@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { ModelSelectionUnavailableError } from './model-config.js';
 import { distillTurnFailureReason, TURN_FAILURE_REASON_MAX } from './turn-failure-reason.js';
-import { AcpRuntimeExitedError, AcpTurnBackstopError, TURN_BACKSTOP_MS } from './acp.js';
+import { AcpResourceLimitError, AcpRuntimeExitedError, AcpTurnBackstopError, TURN_BACKSTOP_MS } from './acp.js';
 import { classifyTurnSilence, phraseTurnSilence } from '@beeline/api-contract/daemon';
 
 describe('distillTurnFailureReason', () => {
+  it('keeps a cgroup memory failure as a terminal resource limit receipt', () => {
+    const reason = distillTurnFailureReason(new AcpResourceLimitError(128 * 1024 * 1024));
+    expect(reason).toEqual({
+      text: 'resource_limit: ACP session exceeded its 128 MiB memory limit',
+      kind: 'resource-limit',
+    });
+  });
+
   it.each([
     [new AcpRuntimeExitedError('ACP agent pi-acp exited code=7 signal=null'), 'runtime_exited'],
     [new AcpTurnBackstopError(TURN_BACKSTOP_MS, 'plan'), 'turn_backstop'],

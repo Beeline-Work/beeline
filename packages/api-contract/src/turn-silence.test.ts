@@ -10,6 +10,16 @@ import {
 } from './turn-silence.js';
 
 describe('turn silence classification', () => {
+  it('settles a session memory limit without retrying the same allocation', () => {
+    const reason = 'resource_limit: ACP session exceeded its 8192 MiB memory limit';
+    expect(classifyTurnSilence(reason)).toEqual({ kind: 'resource-limit' });
+    expect(classifyTurnSilence(reason, 'resource-limit')).toEqual({ kind: 'resource-limit' });
+    expect(shouldRestartHiccup('resource-limit', 1)).toBe(false);
+    expect(shouldCompletePendingFailedCommand('resource-limit')).toBe(true);
+    expect(phraseTurnSilence('Bee', { kind: 'resource-limit' }).consequence)
+      .toContain('exceeded its memory limit');
+  });
+
   it('names a context-window overflow and never restarts it as a hiccup', () => {
     const overflow =
       "provider error 400: This endpoint's maximum context length is 1048576 tokens. However, you requested about 1053212 tokens (109494 of text input, 943718 in the output). · routed to morph, cloudflare";

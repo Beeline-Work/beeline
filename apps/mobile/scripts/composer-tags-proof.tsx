@@ -182,6 +182,7 @@ const chips = () =>
     .map((node) => node.dataset.testid!)
     .filter((id) => /^chat-tag-[a-z]+$/.test(id) && id !== 'chat-tag-empty')
     .map((id) => id.slice('chat-tag-'.length));
+const input = () => byTestID('chat-input') as HTMLTextAreaElement;
 const menuRow = (handle: string) => byTestID(`mention-suggestion-${handle}`)!;
 const menuChecks = () =>
   AGENTS.filter((agent) => byTestID(`mention-suggestion-${agent.handle}-checked`)).map(
@@ -216,106 +217,95 @@ async function run() {
   // The person keeps talking, so the silence stop never ends a take early.
   setInterval(() => speechProofRecognizer.emit('volumechange', { value: 4 }), 500);
   await pause();
-  // 1 Idle: the prefilled agent is a chip; the field is empty and keeps the mic.
-  check('idle: the prefilled @ruby shows as a chip', chips().join() === 'ruby');
-  check(
-    'idle: the field reads empty',
-    (byTestID('chat-input') as HTMLTextAreaElement).value === '',
-  );
+  // 1 Idle: the prefilled agent is a tag at the start of the field's first line.
+  check('idle: the prefilled @ruby shows as a tag', chips().join() === 'ruby');
+  check('idle: the field holds no typed text', input().value === '');
   check('idle: the mic is available', Boolean(byTestID('chat-mic')));
-  const edit = byTestID('chat-tag-ruby-edit')!.getBoundingClientRect();
-  const remove = byTestID('chat-tag-ruby-remove')!.getBoundingClientRect();
-  const row = byTestID('chat-composer-input-row')!.getBoundingClientRect();
+  check('idle: no × or tag strip beside the field', !byTestID('chat-tag-ruby-remove') && !byTestID('chat-tags-strip'));
+  const field = input().getBoundingClientRect();
+  const tag = byTestID('chat-tag-ruby')!.getBoundingClientRect();
   lines.push(
-    `chip targets: body ${edit.width}x${edit.height}, × ${remove.width}x${remove.height}, row ${row.height}`,
-  );
-  const face = byTestID('chat-tag-ruby')!.getBoundingClientRect();
-  const xFace = (
-    byTestID('chat-tag-ruby-remove')!.firstElementChild as HTMLElement
-  ).getBoundingClientRect();
-  lines.push(
-    `pill: ${Math.round(xFace.right - face.left)}px wide, × cell ${Math.round(xFace.width)}px`,
-    `× target reach: ${Math.round(xFace.left - remove.left)}px before the ×, ${Math.round(remove.right - xFace.right)}px after`,
+    `tag ${Math.round(tag.width)}x${Math.round(tag.height)} at ${Math.round(tag.left - field.left)},${Math.round(tag.top - field.top)} in the field; indent ${getComputedStyle(input()).textIndent}`,
   );
   check(
-    'idle: the × target is 44 wide centred on the ×, and both targets are 26 tall with 9 px slop like ＋',
-    remove.width === 44 &&
-      Math.abs(xFace.left - remove.left - 12) < 0.5 &&
-      Math.abs(remove.right - xFace.right - 12) < 0.5 &&
-      edit.height === 26 &&
-      remove.height === 26,
+    'idle: the tag sits at the field\'s top-left, and the first line starts after it',
+    Math.abs(tag.left - field.left) < 0.5 &&
+      Math.abs(tag.top - field.top) < 0.5 &&
+      Math.abs(parseFloat(getComputedStyle(input()).textIndent) - (tag.width + 4)) < 0.5,
   );
+  // Typed text wraps under the tag, across the field's full width.
+  state.setValue('@ruby why are they missing from the ledger and the daily report this morning');
+  await pause();
+  const wrapped = input().getBoundingClientRect();
+  lines.push(`long text: field ${Math.round(wrapped.width)}x${Math.round(input().scrollHeight)}`);
   check(
-    'idle: the pill is the handle plus a 20 px ×, in one piece',
-    xFace.width === 20 && Math.abs(xFace.left - face.right) < 0.5,
+    'wrap: the field spans the row from ＋ to the trailing control, not a column beside the tag',
+    Math.abs(wrapped.left - tag.left) < 0.5 &&
+      byTestID('chat-mic')!.getBoundingClientRect().left - wrapped.right <= 8.5,
   );
+  check('wrap: the text runs onto a second line under the tag', input().scrollHeight >= 40);
+  check('wrap: the keyboard lowered, the slot keeps the mic over typed text', Boolean(byTestID('chat-mic')));
   if (stopAt === 'idle') return;
+  state.setValue('@ruby ');
+  await pause();
 
-  // 2 Tap the chip: MENTION lists the agents, ✓ on the tagged ones; taps toggle.
+  // 2 Tap the tag: MENTION lists the agents, ✓ on the tagged ones; taps toggle.
   await tap('chat-tag-ruby-edit');
-  check('menu: tapping the chip opens MENTION', Boolean(byTestID('mention-suggestions')));
+  check('menu: tapping the tag opens MENTION', Boolean(byTestID('mention-suggestions')));
   check('menu: ✓ marks Ruby only', menuChecks().join() === 'ruby');
   check('menu: the keyboard does not open', document.activeElement !== byTestID('chat-input'));
   menuRow('sol').click();
   await pause();
-  check('menu: tapping Sol adds a second chip', chips().join() === 'ruby,sol');
+  check('menu: tapping Sol adds a second tag', chips().join() === 'ruby,sol');
   check('menu: the menu stays open with ✓ on Ruby and Sol', menuChecks().join() === 'ruby,sol');
   check('menu: the text sends as "@ruby @sol "', state.value === '@ruby @sol ');
   if (stopAt === 'menu') return;
   menuRow('sol').click();
   await pause();
-  check('menu: tapping Sol again removes its chip', chips().join() === 'ruby');
+  check('menu: tapping Sol again removes its tag', chips().join() === 'ruby');
   await tap('tag-menu-backdrop');
   check('menu: a tap outside closes it', !byTestID('mention-suggestions'));
 
-  // 3 Many tags: the chips scroll in a capped strip; the field and mic keep their room.
+  // 3 Many tags wrap like words; the text starts after the last one.
   await tap('chat-tag-ruby-edit');
   for (const handle of ['sol', 'fathom', 'goosy', 'hoots', 'milo']) {
     menuRow(handle).click();
     await pause();
   }
   await tap('tag-menu-backdrop');
-  const strip = byTestID('chat-tags')!.getBoundingClientRect();
   const inputRow = byTestID('chat-composer-input-row')!.getBoundingClientRect();
   const mic = byTestID('chat-mic')!.getBoundingClientRect();
+  const lastTag = byTestID('chat-tag-milo')!.getBoundingClientRect();
+  const manyField = input().getBoundingClientRect();
+  const style = getComputedStyle(input());
   lines.push(
-    `six chips: strip ${Math.round(strip.width)}px of row ${Math.round(inputRow.width)}px`,
+    `six tags: last ends ${Math.round(lastTag.right - manyField.left)}px in at ${Math.round(lastTag.top - manyField.top)}px down; indent ${style.textIndent}, padding-top ${style.paddingTop}`,
   );
   check('many: all six agents are tagged', chips().length === 6);
-  const rubyEnd = (
-    byTestID('chat-tag-ruby-remove')!.firstElementChild as HTMLElement
-  ).getBoundingClientRect();
-  const solStart = byTestID('chat-tag-sol')!.getBoundingClientRect();
-  lines.push(`gap between pills: ${Math.round(solStart.left - rubyEnd.right)}px`);
-  // The × target reaches over its own handle and the next pill, and is drawn above both.
-  const rubyX = byTestID('chat-tag-ruby-remove')!;
-  const rubyXTarget = rubyX.getBoundingClientRect();
-  const solEdit = byTestID('chat-tag-sol-edit')!.getBoundingClientRect();
-  const rubyEdit = byTestID('chat-tag-ruby-edit')!.getBoundingClientRect();
-  lines.push(
-    `× target ${Math.round(rubyXTarget.left)}–${Math.round(rubyXTarget.right)}, handle ends ${Math.round(rubyEdit.right)}, next handle starts ${Math.round(solEdit.left)}, z ${getComputedStyle(rubyX).zIndex}`,
-  );
   check(
-    'many: the × target overlaps the handle and the next pill and sits above them',
-    rubyXTarget.left < rubyEdit.right &&
-      rubyXTarget.right > solEdit.left &&
-      Number(getComputedStyle(rubyX).zIndex) >
-        (Number(getComputedStyle(byTestID('chat-tag-sol-edit')!).zIndex) || 0),
+    'many: the first line starts after the last tag, on its line',
+    Math.abs(parseFloat(style.textIndent) - (lastTag.right - manyField.left + 4)) < 0.5 &&
+      Math.abs(parseFloat(style.paddingTop) - (lastTag.top - manyField.top)) < 0.5,
   );
-  check('many: pills sit 4 px apart, as in v6', Math.abs(solStart.left - rubyEnd.right - 4) < 0.5);
-  check('many: the chip strip takes at most half the row', strip.width <= inputRow.width / 2 + 0.5);
   check('many: the mic stays fully inside the composer', mic.width > 0 && inside(mic, inputRow));
   if (stopAt === 'many') return;
-  for (const handle of ['milo', 'hoots', 'goosy', 'fathom', 'sol'])
-    await tap(`chat-tag-${handle}-remove`);
-  check('many: × removes chips back to @ruby', chips().join() === 'ruby');
+  // One backspace at the start of the field removes the last tag.
+  input().focus();
+  input().setSelectionRange(0, 0);
+  for (let count = 0; count < 5; count += 1) {
+    input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+    await pause();
+  }
+  check('many: backspace removes tags back to @ruby', chips().join() === 'ruby');
+  input().blur();
+  await pause();
 
-  // R1 Quote reply: the banner sits above; the agent is a chip; the mic stays.
+  // R1 Quote reply: the banner sits above; the agent is a tag; the mic stays.
   state.setReply(true);
   await pause();
   check('R1: the reply banner shows', Boolean(byTestID('reply-composer-banner')));
   check(
-    'R1: the agent is a chip and the field is empty',
+    'R1: the agent is a tag and the field holds no typed text',
     chips().join() === 'ruby' && !byTestID('chat-send'),
   );
 
@@ -334,22 +324,15 @@ async function run() {
   );
   if (stopAt === 'reply-recording') return;
 
-  // R3 Remove the chip while recording: the dashed @ chip takes its place.
-  await tap('chat-tag-ruby-remove');
-  check('R3: the dashed @ chip shows', Boolean(byTestID('chat-tag-empty')));
+  // R3 While recording the tag stays in view but cannot change, and no
+  // empty @ tag is offered: there is no keyboard to search agents with.
+  check('R3: the tag stays in view', chips().join() === 'ruby');
+  check('R3: the tag is read-only', !byTestID('chat-tag-ruby-edit'));
+  check('R3: no empty @ tag', !byTestID('chat-tag-empty'));
   check('R3: the reply stays threaded', Boolean(byTestID('reply-composer-banner')));
-  await tap('chat-tag-empty');
-  check(
-    'R3: the dashed chip opens MENTION while recording',
-    Boolean(byTestID('mention-suggestions')),
-  );
-  menuRow('ruby').click();
+  byTestID('chat-tag-ruby')!.click();
   await pause();
-  await tap('tag-menu-backdrop');
-  check(
-    'R3: the pick replaces the dashed chip',
-    chips().join() === 'ruby' && !byTestID('chat-tag-empty'),
-  );
+  check('R3: tapping the tag opens no menu', !byTestID('mention-suggestions'));
   check(
     'R3: recording kept going',
     Boolean(byTestID('chat-speech-waveform')) && speechProofRecognizer.started === 1,
@@ -376,7 +359,7 @@ async function run() {
   await pause();
   check('R4 ■: nothing reaches the Room', state.sent.length === 0);
   check(
-    'R4 ■: the chip and the banner stay',
+    'R4 ■: the tag and the banner stay',
     chips().join() === 'ruby' && Boolean(byTestID('reply-composer-banner')),
   );
   check('R4 ■: the dictated words are gone', state.value === '@ruby ');
@@ -394,7 +377,7 @@ async function run() {
       state.sent[0].wakes === 'ruby',
   );
   check(
-    'R4 sent: the banner and chip clear',
+    'R4 sent: the banner and tag clear',
     !byTestID('reply-composer-banner') && chips().length === 0,
   );
   check(
@@ -407,7 +390,10 @@ async function run() {
   state.setValue('@ruby ');
   state.setReply(true);
   await pause();
-  await tap('chat-tag-ruby-remove');
+  await tap('chat-tag-ruby-edit');
+  menuRow('ruby').click();
+  await pause();
+  await tap('tag-menu-backdrop');
   check('G: the reply is untagged', chips().length === 0 && state.value === '');
   await tap('chat-mic');
   for (let level = 1; level <= 8; level += 1) {

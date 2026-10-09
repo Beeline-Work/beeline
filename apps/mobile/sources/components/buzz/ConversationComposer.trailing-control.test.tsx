@@ -11,6 +11,12 @@ const platformSetter = vi.hoisted(() => {
     getOS: () => _os,
   };
 });
+// The soft keyboard: shown or hidden, with the composer's listeners.
+const keyboard = vi.hoisted(() => ({
+  visible: true,
+  listeners: new Map<string, () => void>(),
+  dismiss: vi.fn(),
+}));
 vi.mock('react-native', () => {
   function host(name: string) {
     return (props: any) => React.createElement(name, props, props.children);
@@ -22,6 +28,22 @@ vi.mock('react-native', () => {
     Pressable: host('Pressable'),
     View: host('View'),
     Linking: { openSettings: vi.fn() },
+    Keyboard: {
+      isVisible: () => keyboard.visible,
+      addListener: (event: string, listener: () => void) => {
+        keyboard.listeners.set(event, listener);
+        return { remove: () => keyboard.listeners.delete(event) };
+      },
+      dismiss: keyboard.dismiss,
+    },
+    Animated: {
+      View: host('View'),
+      Value: class {
+        constructor(readonly value: number) {}
+      },
+      timing: () => ({ start() {}, stop() {} }),
+    },
+    Easing: { linear: (t: number) => t },
     Platform: {
       get OS() { return platformSetter.getOS(); },
       select: (choices: any) => choices.default,
@@ -145,6 +167,8 @@ beforeEach(() => {
   handlerMap.clear();
   platformSetter.setOS('android');
   speechModuleState.present = true;
+  keyboard.visible = true;
+  keyboard.listeners.clear();
   mockMod.getPermissionsAsync.mockResolvedValue({ status: 'granted', granted: true, canAskAgain: true });
   mockMod.requestPermissionsAsync.mockResolvedValue({ status: 'granted', granted: true, canAskAgain: true });
   mockMod.addListener.mockImplementation((event: string, handler: (...args: any[]) => void) => {
@@ -161,25 +185,65 @@ afterEach(() => {
 // both. "Something to send" reuses the send button's own predicate
 // (`canSend ?? Boolean(value.trim())`), so text or a staged attachment — and
 // nothing else — moves the control from mic to send.
+// Steer 2026-10-09: the keyboard picks the slot. Lowered, it is the mic, even
+// over typed text; raised, it is send once there is something to send.
 
 describe('composer trailing control is mic XOR send', () => {
-  it('shows only the send control when there is text to send', () => {
-    const root = render({ value: 'ready to send' });
+  it('shows only the send control when there is text to send and the keyboard is up', () => {
+    const root = render({ value: 'ready to send', focused: true });
     expect(hosts(root, 'chat-mic')).toHaveLength(0);
     expect(hosts(root, 'chat-send')).toHaveLength(1);
+  });
+
+  it('shows the mic over typed text once the keyboard is lowered', () => {
+    const root = render({ value: 'ready to send', focused: true });
+    act(() => keyboard.listeners.get('keyboardDidHide')!());
+    expect(hosts(root, 'chat-send')).toHaveLength(0);
+    expect(hosts(root, 'chat-mic')).toHaveLength(1);
+    act(() => keyboard.listeners.get('keyboardDidShow')!());
+    expect(hosts(root, 'chat-send')).toHaveLength(1);
+  });
+
+  it('shows the mic when the field is not focused, though a keyboard is up elsewhere', () => {
+    const root = render({ value: 'ready to send', focused: false });
+    expect(hosts(root, 'chat-send')).toHaveLength(0);
+    expect(hosts(root, 'chat-mic')).toHaveLength(1);
+  });
+
+  it('keeps the mic with the keyboard up while only tags are in the field', () => {
+    const root = render({ value: '@ruby ', focused: true, tagHandles: new Set(['ruby']) });
+    expect(hosts(root, 'chat-send')).toHaveLength(0);
+    expect(hosts(root, 'chat-mic')).toHaveLength(1);
+  });
+
+  it('lowers the keyboard when the mic starts a take', async () => {
+    const root = render({ value: '', focused: true });
+    await act(async () => hosts(root, 'chat-mic')[0].props.onPress());
+    expect(keyboard.dismiss).toHaveBeenCalledOnce();
   });
 
   it('never hides the send control while an agent is working', () => {
     // PR #1340 removed the send button whenever a turn was active; it is
     // restored unconditionally. The composer takes no `running` prop at all,
     // so no turn state can remove the control — a tap queues the message.
-    expect(hosts(render({ value: 'next instruction' }), 'chat-send')).toHaveLength(1);
+    expect(hosts(render({ value: 'next instruction', focused: true }), 'chat-send')).toHaveLength(1);
   });
 
   it('shows only the send control when an attachment is staged via canSend', () => {
     // The chat screen computes canSend from text OR staged attachments; the
     // composer must reuse that same verdict, not a second predicate.
-    const root = render({ value: '', canSend: true });
+    const root = render({ value: '', canSend: true, focused: true });
+    expect(hosts(root, 'chat-mic')).toHaveLength(0);
+    expect(hosts(root, 'chat-send')).toHaveLength(1);
+  });
+
+  it('keeps send for a staged attachment with the keyboard lowered, as a take cannot carry it', () => {
+    keyboard.visible = false;
+    const root = render({
+      value: '',
+      canSend: true,
+      attachments: [{ uri: 'file:///tmp/a.png', name: 'a.png', mimeType: 'image/png', sizeLabel: '1 KB' }],
+    });
     expect(hosts(root, 'chat-mic')).toHaveLength(0);
     expect(hosts(root, 'chat-send')).toHaveLength(1);
   });
@@ -252,7 +316,7 @@ describe('composer trailing control is mic XOR send', () => {
     expect(micStyle.height).toBe(26);
     expect(micStyle.marginLeft).toBe(8);
 
-    const ready = render({ value: 'text' });
+    const ready = render({ value: 'text', focused: true });
     const send = hosts(ready, 'chat-send')[0];
     const sendStyle = Array.isArray(send.props.style) ? send.props.style[0] : send.props.style;
     expect(sendStyle.width).toBe(26);

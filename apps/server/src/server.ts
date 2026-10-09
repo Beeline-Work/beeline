@@ -1833,6 +1833,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     try {
       audio = await bytes(request, TRANSCRIPTION_MAXIMUM_BYTES);
     } catch {
+      console.warn('[transcription] audio over the upload limit; Groq not called');
       json(response, 413, { error: 'audio_too_large' });
       return;
     }

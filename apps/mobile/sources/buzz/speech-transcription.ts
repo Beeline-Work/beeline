@@ -7,10 +7,22 @@ import { monolithSession } from '@/auth/monolith-session';
 import { readFileBytes } from '@/utils/readFileBytes';
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { joinSpeechPieces } from './speech-correction';
-import { compressDictationWav, concatDictationWavs, dictationWavSeconds } from './wav-adpcm';
+import {
+  compressDictationWav,
+  concatDictationWavs,
+  dictationWavSeconds,
+  splitDictationWav,
+} from './wav-adpcm';
 
 // Pieces upload while the user talks, so stop waits only for the last one.
 export const DICTATION_TRANSCRIPTION_TIMEOUT_MS = 5000;
+// A long last piece needs time to upload: 8 KB of ADPCM per second of speech
+// is 64 ms on a 1 Mbit/s uplink. Stop waits this much more per second still out.
+const STOP_WAIT_PER_AUDIO_SECOND_MS = 150;
+const MAXIMUM_STOP_WAIT_MS = 30_000;
+// Longer pieces go to Groq as chunks of this length, sent together, so each
+// request stays well inside PIECE_TIMEOUT_MS.
+const CHUNK_SECONDS = 60;
 // One piece may be long and sent on a weak link while the user keeps talking.
 const PIECE_TIMEOUT_MS = 15_000;
 // A shorter piece is a word or two; Whisper hears it better with the next one.
@@ -64,7 +76,10 @@ async function transcribeOne(
     { timeoutMs: PIECE_TIMEOUT_MS },
   );
   if (response.status === 503) serverTranscriptionUnavailable = true;
-  if (!response.ok) return null;
+  if (!response.ok) {
+    console.warn(`[dictation] server transcription failed (${response.status})`);
+    return null;
+  }
   const value = (await response.json()) as { text?: unknown };
   return typeof value.text === 'string' ? value.text.trim() : null;
 }
@@ -114,19 +129,37 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
   let failed = false;
   let closed = false;
   let queue: Promise<void> = Promise.resolve();
+  // Seconds of audio sent but not yet answered; stop waits longer for them.
+  let outSeconds = 0;
+  let onOut: (() => void) | null = null;
 
   const send = async (wav: Uint8Array) => {
     const previous = joinSpeechPieces(texts, lexicon, locale);
-    const text = await transcribeOne(wav, dictationPrompt(lexicon, previous), language);
-    if (text === null) failed = true;
-    else texts.push(text);
+    const prompt = dictationPrompt(lexicon, previous);
+    const seconds = dictationWavSeconds(wav) ?? 0;
+    outSeconds += seconds;
+    onOut?.();
+    try {
+      const chunks = splitDictationWav(wav, CHUNK_SECONDS);
+      const results = await Promise.all(
+        chunks.map((chunk) => transcribeOne(chunk, prompt, language)),
+      );
+      if (results.some((text) => text === null)) failed = true;
+      else texts.push(...(results as string[]));
+    } finally {
+      outSeconds -= seconds;
+    }
   };
   const step = (work: () => Promise<void>) => {
     queue = queue.then(async () => {
       if (failed || closed) return;
       try {
         await work();
-      } catch {
+      } catch (error) {
+        console.warn(
+          '[dictation] server transcription failed:',
+          error instanceof Error ? error.message : 'unknown',
+        );
         failed = true;
       }
     });
@@ -169,15 +202,31 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
         await send(wav);
       });
       let timer: ReturnType<typeof setTimeout> | undefined;
+      const stoppedAt = Date.now();
       const late = new Promise<false>((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs);
+        // The wait grows with audio still out, never past MAXIMUM_STOP_WAIT_MS.
+        const arm = () => {
+          const extra = Math.min(
+            outSeconds * STOP_WAIT_PER_AUDIO_SECOND_MS,
+            MAXIMUM_STOP_WAIT_MS - timeoutMs,
+          );
+          clearTimeout(timer);
+          timer = setTimeout(
+            () => resolve(false),
+            stoppedAt + timeoutMs + Math.max(0, extra) - Date.now(),
+          );
+        };
+        onOut = arm;
+        arm();
       });
       try {
         const done = await Promise.race([queue.then(() => true as const), late]);
+        if (!done) console.warn('[dictation] server transcription missed the stop deadline');
         if (!done || failed) return null;
         return joinSpeechPieces(texts, lexicon, locale) || null;
       } finally {
         clearTimeout(timer);
+        onOut = null;
         closed = true;
         await discardDictationRecordings(uris);
       }

@@ -7,8 +7,9 @@
 
 export const GROQ_TRANSCRIPTION_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 export const GROQ_TRANSCRIPTION_MODEL = 'whisper-large-v3-turbo';
-// 16 kHz mono 16-bit PCM is 32 KB/s: about five minutes of dictation.
-export const TRANSCRIPTION_MAXIMUM_BYTES = 10 * 1024 * 1024;
+// Groq refuses uploads over 25 MB (free tier); a larger body stops here.
+// The phone sends IMA ADPCM chunks far below it.
+export const TRANSCRIPTION_MAXIMUM_BYTES = 25 * 1024 * 1024;
 // Whisper reads at most 224 prompt tokens; longer lexicons are cut, not refused.
 const PROMPT_MAXIMUM_CHARACTERS = 600;
 const GROQ_TIMEOUT_MS = 15_000;

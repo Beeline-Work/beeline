@@ -197,6 +197,38 @@ describe('startDictationUpload', () => {
     expect(deleted).toEqual(['file:///late.wav']);
   });
 
+  it('sends a long note to Groq in chunks and waits for them past the base stop deadline', async () => {
+    // Reproduction R1: one 90 s piece closes at stop on a 1 Mbit/s uplink.
+    vi.useFakeTimers();
+    try {
+      recordings.set('file:///long.wav', pcmWav(90));
+      // The phone's uplink is shared: requests send their bytes one after another.
+      let linkFreeAt = 0;
+      sessionFetch.mockImplementation((_url: string, init: { body: Uint8Array }) => {
+        const start = Math.max(Date.now(), linkFreeAt);
+        linkFreeAt = start + (init.body.length / 125_000) * 1000;
+        const answer = linkFreeAt + 500 - Date.now();
+        const call = sessionFetch.mock.calls.length;
+        return new Promise<Response>((resolve) =>
+          setTimeout(() => resolve(Response.json({ text: `part ${call}.` })), answer),
+        );
+      });
+      const { startDictationUpload } = await load();
+
+      const upload = startDictationUpload([], 'en-US');
+      upload.add('file:///long.wav');
+      const result = upload.finish();
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(await result).toBe('part 1. part 2.');
+      expect(sessionFetch).toHaveBeenCalledTimes(2);
+      expect(uploadedSamples(0) + uploadedSamples(1)).toBeGreaterThanOrEqual(16000 * 90);
+      expect(uploadedSamples(0)).toBeLessThanOrEqual(16000 * 60 + 505);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('uploads a PCM recording as IMA ADPCM, a quarter of the bytes', async () => {
     const wav = pcmWav(3);
     recordings.set('file:///take.wav', wav);

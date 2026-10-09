@@ -222,6 +222,9 @@ async function run() {
   check('idle: the field holds no typed text', input().value === '');
   check('idle: the mic is available', Boolean(byTestID('chat-mic')));
   check('idle: no × or tag strip beside the field', !byTestID('chat-tag-ruby-remove') && !byTestID('chat-tags-strip'));
+  const target = byTestID('chat-tag-ruby-edit')!.getBoundingClientRect();
+  lines.push(`tag target ${target.width.toFixed(2)}x${target.height.toFixed(2)}`);
+  check('idle: the tag\'s touch target is at least 44 by 44', target.width >= 44 && target.height >= 44);
   const field = input().getBoundingClientRect();
   const tag = byTestID('chat-tag-ruby')!.getBoundingClientRect();
   lines.push(

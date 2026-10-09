@@ -221,11 +221,18 @@ export function ConversationComposer({
   const [tagIndent, setTagIndent] = React.useState<{ paddingTop: number; textIndent: number }>();
   const measureTags = React.useCallback(() => {
     const overlay = tagOverlayRef.current as unknown as HTMLElement | null;
-    const tags = [...(overlay?.children ?? [])] as HTMLElement[];
-    if (tags.length === 0) return;
-    const top = Math.max(...tags.map((tag) => tag.offsetTop));
+    if (!overlay) return;
+    // Each tag's face, not its larger touch target.
+    const origin = overlay.getBoundingClientRect();
+    const faces = [...overlay.children]
+      .map((target) => target.firstElementChild?.getBoundingClientRect())
+      .filter((face) => face !== undefined);
+    if (faces.length === 0) return;
+    const top = Math.round(Math.max(...faces.map((face) => face.top - origin.top)));
     const right = Math.max(
-      ...tags.filter((tag) => tag.offsetTop === top).map((tag) => tag.offsetLeft + tag.offsetWidth),
+      ...faces
+        .filter((face) => Math.round(face.top - origin.top) === top)
+        .map((face) => face.right - origin.left),
     );
     setTagIndent((current) =>
       current?.paddingTop === top && current.textIndent === right + INLINE_TAG_GAP
@@ -553,7 +560,10 @@ export function ConversationComposer({
                   style={styles.overlayTag}
                   testID={`${testIDPrefix}-tag-${handle}-edit`}
                 >
-                  <Text style={styles.inlineTag} testID={`${testIDPrefix}-tag-${handle}`}>
+                  <Text
+                    style={[styles.inlineTag, styles.overlayTagFace]}
+                    testID={`${testIDPrefix}-tag-${handle}`}
+                  >
                     @{handle}
                   </Text>
                 </TouchableOpacity>
@@ -870,7 +880,15 @@ const styles = StyleSheet.create((theme) => ({
     flexWrap: 'wrap',
     columnGap: INLINE_TAG_GAP,
   },
-  overlayTag: { borderRadius: theme.buzz.radius, overflow: 'hidden' },
+  // Like ＋ and the mic, a tag's target is at least 44 by 44: it reaches 16
+  // past the tag on every side, and the negative margin keeps the tag's own
+  // place in the line.
+  // Every tag opens the same menu, so overlapping targets are harmless.
+  overlayTag: {
+    padding: theme.buzz.space.md,
+    margin: -theme.buzz.space.md,
+  },
+  overlayTagFace: { borderRadius: theme.buzz.radius, overflow: 'hidden' },
   dictationTag: { marginRight: INLINE_TAG_GAP, borderRadius: theme.buzz.radius },
   input: {
     ...theme.buzz.type.body,

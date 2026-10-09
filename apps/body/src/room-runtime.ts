@@ -844,6 +844,7 @@ export class RoomRuntimeCoordinator {
       try {
         const result = await this.options.daemonApi.execute('listRoomCorners', {
           roomId: room.roomId,
+          activeOnly: true,
         });
         for (const corner of result.corners) {
           this.monolithCornerParents.set(corner.cornerId, room.roomId);
@@ -898,6 +899,12 @@ export class RoomRuntimeCoordinator {
       if (confirmations < REMOVAL_CONFIRMATION_READS) continue;
       await this.stopRunning(channelId, running);
       this.roomRemovalConfirmations.delete(channelId);
+    }
+    // Archived corners are discovered for local cleanup through their exact
+    // checkout IDs. Their parent mapping serves only a running intake.
+    for (const cornerId of this.monolithCornerParents.keys()) {
+      if (!desired.has(cornerId) && !this.running.has(cornerId) &&
+          !this.startingCorners.has(cornerId)) this.monolithCornerParents.delete(cornerId);
     }
     this.surfaceHealth.retain(new Set([...desired, ...this.running.keys()]));
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
@@ -982,6 +989,7 @@ export class RoomRuntimeCoordinator {
     if (event.archived === true) {
       this.unwatchCorner(roomId);
       this.surfaceHealth.remove(roomId);
+      if (!this.running.has(roomId)) this.monolithCornerParents.delete(roomId);
       return;
     }
     this.roomRemovalConfirmations.delete(roomId);
@@ -1480,7 +1488,7 @@ export class RoomRuntimeCoordinator {
     try {
       await this.restartRunningRoomForRepositoryChange(roomId);
       if (this.stopped) return;
-      const result = await this.options.daemonApi.execute('listRoomCorners', { roomId });
+      const result = await this.options.daemonApi.execute('listRoomCorners', { roomId, activeOnly: true });
       for (const corner of result.corners) {
         this.monolithCornerParents.set(corner.cornerId, roomId);
         if (corner.archived) continue;

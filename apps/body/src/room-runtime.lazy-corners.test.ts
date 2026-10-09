@@ -12,6 +12,38 @@ afterEach(async () => {
 });
 
 describe('idle corner discovery', () => {
+  it('forgets archived parent mappings after discovery requests active corners only', async () => {
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-active-corner-'));
+    roots.push(supervisorRoot);
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getDaemonBootstrap')
+        return { workspaceIds: ['workspace'], rooms: [{ roomId: 'parent', archived: false }] };
+      if (name === 'listRoomCorners') return { corners: [] };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const runtime = new RoomRuntimeCoordinator(
+      { agent: { name: 'Bee', publicKey: identity.publicKey,
+          secretKeyHex: Buffer.from(identity.secretKey).toString('hex') },
+        rooms: [], communityId: 'workspace', supervisorRoot,
+        transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      } as unknown as AgentRuntimeRecord,
+      resolve(supervisorRoot, 'agent.json'),
+      { workspaceRoot: supervisorRoot } as never,
+      { daemonApi: { execute, liveSubscribe: vi.fn(() => () => undefined) } as unknown as DaemonApiClient },
+    );
+    const subject = runtime as unknown as {
+      monolithCornerParents: Map<string, string>;
+      startRoom(roomId: string): Promise<void>;
+    };
+    subject.monolithCornerParents.set('old-archived-corner', 'parent');
+    subject.startRoom = async () => undefined;
+    expect(await runtime.reconcile()).toBe('member');
+    expect(subject.monolithCornerParents.has('old-archived-corner')).toBe(false);
+    expect(execute).toHaveBeenCalledWith('listRoomCorners', { roomId: 'parent', activeOnly: true });
+    await runtime.shutdown();
+  });
+
   it('Reproduction H-10: counts ten active corners of one parent once', () => {
     const runtime = new RoomRuntimeCoordinator(
       {

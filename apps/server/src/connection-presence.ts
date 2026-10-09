@@ -51,14 +51,35 @@ interface EvidenceRefresh {
   resume?: () => void;
 }
 
+/** Retain only evidence that can still affect a delivery deadline. */
+export class RecentIdentityTimes {
+  private readonly values = new Map<string, number>();
+
+  constructor(private readonly limit: number, private readonly ttlMs: number) {}
+
+  get(id: string): number | undefined { return this.values.get(id); }
+
+  set(id: string, at: number): void {
+    this.values.delete(id);
+    this.values.set(id, at);
+    for (const [oldestId, oldestAt] of this.values) {
+      if (this.values.size <= this.limit && oldestAt > at - this.ttlMs) break;
+      this.values.delete(oldestId);
+    }
+  }
+
+  clear(): void { this.values.clear(); }
+  get size(): number { return this.values.size; }
+}
+
 /** Presence is the helper's newest authenticated evidence. Mention deadlines may
  * demote only the exact evidence version they observed when they were armed.
  */
 export class ConnectionPresence {
   readonly #timers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly #evidence = new Map<string, EvidenceRefresh>();
-  readonly #evidencePersistedAt = new Map<string, number>();
-  readonly #authenticatedAt = new Map<string, number>();
+  readonly #evidencePersistedAt: RecentIdentityTimes;
+  readonly #authenticatedAt: RecentIdentityTimes;
   /** Last helper-process announce; a newer value than the stalled receipt means systemd already revived it. */
   readonly #observePending = new Set<string | undefined>();
   readonly #observeDebounces = new Map<string, ReturnType<typeof setTimeout>>();
@@ -82,6 +103,8 @@ export class ConnectionPresence {
     ),
     lease: { instanceId?: string; renewMs?: number; expiryMs?: number } = {},
   ) {
+    this.#evidencePersistedAt = new RecentIdentityTimes(20_000, this.evidenceMinimumIntervalMs);
+    this.#authenticatedAt = new RecentIdentityTimes(20_000, this.pickupWindowMs);
     this.instanceId = lease.instanceId ?? randomUUID();
     this.#leaseRenewMs = lease.renewMs ?? SERVER_LEASE_RENEW_MS;
     this.#leaseExpiryMs = lease.expiryMs ?? SERVER_LEASE_EXPIRY_MS;

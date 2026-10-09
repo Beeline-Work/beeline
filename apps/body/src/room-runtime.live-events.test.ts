@@ -668,7 +668,7 @@ describe('RoomRuntimeCoordinator live membership apply', () => {
     try {
       roomsChanged?.({ roomId: 'room-1', repositoryChanged: true });
       await vi.waitFor(() =>
-        expect(execute).toHaveBeenCalledWith('listRoomCorners', { roomId: 'room-1' }),
+        expect(execute).toHaveBeenCalledWith('listRoomCorners', { roomId: 'room-1', activeOnly: true }),
       );
       expect(stop).not.toHaveBeenCalled();
       busy = false;

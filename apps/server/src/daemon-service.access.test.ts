@@ -7,6 +7,32 @@ const ROOM = '11111111-1111-4111-8111-111111111111';
 const AGENT = 'a'.repeat(64);
 
 describe('daemon room access', () => {
+  it('offers active-only discovery without changing the historical listing', async () => {
+    const query = vi.fn(async <Row>(sql: string): Promise<QueryResult<Row>> => {
+      if (sql.includes('FROM memberships WHERE room_id=$1'))
+        return { rows: [{ corner_reviewer: false, is_corner: false }] as Row[], rowCount: 1 };
+      if (sql.includes('FROM rooms r JOIN corner_facts f')) {
+        const rows = [
+          { id: 'active', parent_id: ROOM, created_by: AGENT, archived: false,
+            closed_at: null, lifecycle: {}, name: 'Active', objective: 'Active' },
+          { id: 'archived', parent_id: ROOM, created_by: AGENT, archived: true,
+            closed_at: new Date(), lifecycle: {}, name: 'Old', objective: 'Old' },
+        ];
+        const activeOnly = sql.includes('AND r.archived_at IS NULL');
+        return { rows: (activeOnly ? rows.slice(0, 1) : rows) as Row[],
+          rowCount: activeOnly ? 1 : 2 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const daemon = new DaemonService({ query } as unknown as SqlDatabase, new LiveHub());
+    const active = await daemon.execute('listRoomCorners', { roomId: ROOM, activeOnly: true }, AGENT);
+    const all = await daemon.execute('listRoomCorners', { roomId: ROOM }, AGENT);
+    expect(active.corners.map((corner) => corner.cornerId)).toEqual(['active']);
+    expect(all.corners.map((corner) => corner.cornerId)).toEqual(['active', 'archived']);
+    expect(query.mock.calls.find(([sql]) => sql.includes('FROM rooms r JOIN corner_facts f'))?.[0])
+      .toContain('AND r.archived_at IS NULL');
+  });
+
   it('checks membership once when listing a Room\'s corners', async () => {
     const query = vi.fn(async <Row>(sql: string): Promise<QueryResult<Row>> => {
       if (sql.includes('FROM memberships WHERE room_id=$1'))

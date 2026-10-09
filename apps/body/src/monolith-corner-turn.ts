@@ -721,7 +721,7 @@ export class MonolithCornerTurnLoop {
     this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
     this.sessionModel = null;
-    if (client?.isAlive) await client.stop();
+    if (client) await client.stop();
   }
 
   /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
@@ -1355,7 +1355,7 @@ export class MonolithCornerTurnLoop {
     this.sessionId = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
-    if (client?.isAlive) await client.stop();
+    if (client) await client.stop();
     this.pinnedProviderOverride = next;
     await (trace ? trace.measure('activation', () => this.activate(trace)) : this.activate());
     return next;
@@ -2394,6 +2394,7 @@ export class MonolithCornerTurnLoop {
       this.squireRelay.close();
       this.options.grantRunner?.unregister(cornerId);
       await this.options.scheduler.suspend(cornerId);
+      this.options.scheduler.forget(cornerId);
       // A harvest writes into host-wide state, so it finishes or is discarded
       // with this corner — never left running against a reaped worktree.
       await this.harvest;

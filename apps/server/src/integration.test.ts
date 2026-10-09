@@ -381,6 +381,64 @@ describe('monolith integration', () => {
     });
     expect([hop.status, closed.status, lost.status, lostSource.status]).not.toContain(503);
   });
+  it('answers a membership-check outage while steering as a 503, never a membership refusal', async () => {
+    const steerCorner = '55555555-5555-4555-8555-555555555555';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Steer target')`,
+      [steerCorner, WORKSPACE, ROOM],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
+       VALUES($1,$2,'Steer target','{}')`,
+      [steerCorner, AGENT],
+    );
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
+      [WORKSPACE, steerCorner, HUMAN, AGENT],
+    );
+    const messageId = createHash('sha256').update('steer-outage').digest('hex');
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
+      messageId,
+      ROOM,
+      HUMAN,
+      '@bee steer the corner',
+    ]);
+    const requestId = 'steer-outage';
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: messageId,
+      reason: 'human_tag',
+      turnRequestId: requestId,
+    });
+    await claimAgentCommand(database, ROOM, AGENT, command!.id, `${requestId}-g`);
+    // The membership check is a database read; its failure is an outage, not a
+    // refusal, so it must reach the route's 503 default intact.
+    const query = database.query.bind(database);
+    const querySpy = vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
+      if (sql.includes('parent.reviewer_fallback_ids')) throw new Error('database is unavailable');
+      return query(sql, values);
+    });
+    try {
+      const outage = await request(
+        '/v1/daemon/operations/postRoomMessage',
+        'POST',
+        {
+          roomId: ROOM,
+          requestId,
+          generationId: `${requestId}-g`,
+          text: 'Steer into the corner',
+          relay: { fromRoomId: ROOM, toRoomId: steerCorner, direction: 'down' },
+        },
+        daemonToken,
+      );
+      expect(outage.status).toBe(503);
+      expect(await outage.json()).toEqual({ error: 'database is unavailable' });
+    } finally {
+      querySpy.mockRestore();
+    }
+  });
   it('has no feedback triage setting or tools, refuses Fixed DMs from a non-sender, and opens fix corners beside the corner', async () => {
     const corner = (
       (await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Issues-triage' }, HUMAN)) as {

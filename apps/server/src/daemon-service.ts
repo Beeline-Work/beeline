@@ -317,6 +317,20 @@ export class RelayRefusalError extends Error {
   }
 }
 
+/**
+ * The caller is not a current member of the Room or corner it addressed.
+ *
+ * This is the one refusal `access` itself makes. A database or transport
+ * failure while checking membership is a different error and must stay one:
+ * translating an outage into a membership refusal hides the outage from the
+ * caller and from the route's 503 default.
+ */
+class AccessDeniedError extends Error {
+  constructor() {
+    super('daemon room access denied');
+  }
+}
+
 export class DaemonService {
   constructor(
     private readonly database: SqlDatabase,
@@ -387,8 +401,14 @@ export class DaemonService {
       ({ cornerReviewer, isCorner } = await this.access(scopedRoom, authenticatedAgentId).catch(
         (error: unknown) => {
           // A relay whose source Room membership is gone is the same lost
-          // membership postRelay names, not a generic access denial.
-          if (name === 'postRoomMessage' && candidate.relay !== undefined)
+          // membership postRelay names, not a generic access denial. Only
+          // that denial is translated; an infrastructure failure while
+          // checking membership stays an outage for the route to answer 503.
+          if (
+            error instanceof AccessDeniedError &&
+            name === 'postRoomMessage' &&
+            candidate.relay !== undefined
+          )
             throw new RelayRefusalError('relay requires current Room and corner membership', 403);
           throw error;
         },
@@ -7491,7 +7511,7 @@ export class DaemonService {
     agentId: string,
   ): Promise<{ cornerReviewer: boolean; isCorner: boolean }> {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId))
-      throw new Error('daemon room access denied');
+      throw new AccessDeniedError();
     const result = await this.database.query<{ corner_reviewer: boolean; is_corner: boolean }>(
       `SELECT EXISTS(
          SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
@@ -7506,7 +7526,7 @@ export class DaemonService {
        FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, agentId],
     );
-    if (!result.rowCount) throw new Error('daemon room access denied');
+    if (!result.rowCount) throw new AccessDeniedError();
     const row = result.rows[0]!;
     return { cornerReviewer: row.corner_reviewer, isCorner: row.is_corner };
   }

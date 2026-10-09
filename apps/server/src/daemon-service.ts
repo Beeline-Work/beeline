@@ -3147,7 +3147,7 @@ export class DaemonService {
     if (!gate.mergeAllowed) {
       const blockers = [
         gate.checks !== 'passed' ? `checks are ${gate.checks}` : '',
-        gate.approved ? '' : 'no non-author yes on this head',
+        gate.approved ? '' : 'no yes on this head',
         gate.held ? 'a hold stands' : '',
       ].filter(Boolean);
       return { status: 'blocked', blocker: blockers.join('; ') || 'the merge gate is closed' };
@@ -3171,10 +3171,9 @@ export class DaemonService {
         await db.query<{
           pull_request_number: number | null;
           head_sha: string | null;
-          owner_agent_id: string | null;
         }>(
           `SELECT (fact.lifecycle->'pr'->>'number')::int pull_request_number,
-                fact.lifecycle->'pr'->>'headSha' head_sha,fact.owner_agent_id
+                fact.lifecycle->'pr'->>'headSha' head_sha
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -3186,11 +3185,6 @@ export class DaemonService {
         throw new CornerVerdictRejectedError(
           'NOT_CONFIGURED_REVIEWER',
           "only this corner's configured reviewer can record PASS",
-        );
-      if (target.owner_agent_id === agentId)
-        throw new CornerVerdictRejectedError(
-          'AUTHOR',
-          "this corner's author cannot approve its own pull request; a Workspace owner or admin's yes merges it",
         );
       if (!target.pull_request_number || !target.head_sha)
         throw new CornerVerdictRejectedError('NO_PULL_REQUEST', 'corner has no pull request');

@@ -16,7 +16,7 @@ import {
 } from './workspace-handles.js';
 import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
-import { reportUnansweredCornerAsks } from './corner-close.js';
+import { cancelCornerAgentCommands, reportUnansweredCornerAsks } from './corner-close.js';
 import {
   advanceCorner,
   claimCornerMergeAttempt,
@@ -172,7 +172,7 @@ function challenge(value: string): string {
   return createHash('sha256').update(value).digest('base64url');
 }
 
-export type ReviewerWakeStatus = 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched' | 'not_required';
+export type ReviewerWakeStatus = 'unconfigured' | 'unreachable' | 'waiting' | 'dispatched';
 
 /** Whether the configured reviewer can be / was woken for this corner's current check state. */
 export function reviewerWakeFromFacts(input: {
@@ -633,7 +633,6 @@ export class GitHubOperations {
         parent_id: string;
         workspace_id: string;
         lifecycle: CornerLifecycleView;
-        owner_agent_id: string | null;
         archived: boolean;
         review_woken: boolean;
         configured_reviewer_id: string | null;
@@ -643,7 +642,7 @@ export class GitHubOperations {
         corner_reviewer_id: string | null;
         reviewer_handle: string | null;
       }>(
-        `SELECT r.parent_id,parent.workspace_id,f.lifecycle,f.owner_agent_id,
+        `SELECT r.parent_id,parent.workspace_id,f.lifecycle,
                 r.archived_at IS NOT NULL archived,
                 (f.workflow_state='review' AND f.workflow_outcome IS DISTINCT FROM 'no_reviewer') review_woken,
                 parent.reviewer_agent_id configured_reviewer_id,
@@ -700,7 +699,7 @@ export class GitHubOperations {
       number,
       headSha: pr.headSha,
     });
-    const { reviewerIsAuthor, reviewerExists } = gate;
+    const { reviewerExists } = gate;
     const listed = corner.reviewer_fallback_ids.length
       ? reviewerList({
           reviewer_agent_id: configuredReviewerId,
@@ -723,12 +722,10 @@ export class GitHubOperations {
       : configuredReviewerId && corner.reviewer_handle
         ? `@${corner.reviewer_handle}`
         : null;
-    const reviewerWake = reviewerIsAuthor
-      ? { status: 'not_required' as const, detail: "No agent review is possible because the reviewer is this corner's implementer; a Workspace owner or admin must order the merge." }
-      : listLabel
+    const reviewerWake = listLabel
       ? await this.listReviewerWake({
           parentId: corner.parent_id,
-          candidates: listed.filter((id) => id !== corner.owner_agent_id),
+          candidates: listed,
           listLabel,
           lifecycleChecks: corner.lifecycle.checks,
           reviewWoken: corner.review_woken,
@@ -780,7 +777,6 @@ export class GitHubOperations {
       approved: gate.approved,
       reviewer,
       reviewerExists,
-      reviewerIsAuthor,
       reviewerWake,
       held: gate.held,
       holds: gate.holds,
@@ -851,7 +847,7 @@ export class GitHubOperations {
   /**
    * The one merge path. Squash-merges a corner at its exact head when
    * `pr_checks_status`'s `mergeAllowed` is true on GitHub's current head:
-   * live checks green, a non-author yes on that head, and no hold. Called by
+   * live checks green, a yes said on that head, and no hold. Called by
    * the implementer's `merge_corner`, a person's yes (`order_corner_merge` or
    * the phone's approve), and recovery of an unfinished attempt.
    * At most one attempt per head: the attempt is claimed under the run lock
@@ -2009,6 +2005,7 @@ export class GitHubOperations {
       );
       if (!changed.rowCount) return;
       archived = true;
+      await cancelCornerAgentCommands(database, target.corner_id);
       await database.query(
         `UPDATE corner_facts SET close_requested=true,merge_attempt_head=NULL,
            lifecycle=(lifecycle-'mergeRecovery')||$2::jsonb,

@@ -153,8 +153,8 @@ describe('the turn a reconciled reviewer is woken into', () => {
   it('agrees with the configuration query when the reviewer opened the corner itself', async () => {
     await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [C, REVIEWER]);
     // The reviewer keeps its reviewer rules; if it writes the code itself,
-    // its conditional merge rule sends the yes to a person, matching the
-    // gate's `reviewerIsAuthor` path.
+    // its conditional merge rule sends the yes to a person (prompt
+    // discipline; the server gate no longer excludes the corner's opener).
     await expect(activationFacts(REVIEWER)).resolves.toEqual({
       isReviewer: true,
       openedBy: REVIEWER,

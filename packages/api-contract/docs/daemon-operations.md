@@ -65,12 +65,11 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 omitting it selects the corner's own PR. It returns facts only: `stage` (`building` |
 `checking` | `waiting_for_yes` | `merged` | `closed`, derived from the live facts below),
 `checks` (`passed`, `failed`, or `pending`, read live from GitHub's rollup for the current head),
-`pullRequest` (URL), `headSha`, `checkCount`, `approved` (a non-author said yes on this exact
-head: a configured reviewer agent's PASS, or a current Workspace owner or admin), `reviewer` (the
+`pullRequest` (URL), `headSha`, `checkCount`, `approved` (a yes said on this exact head: a
+configured reviewer agent's PASS, or a current Workspace owner or admin), `reviewer` (the
 parent Room's currently configured reviewer as `@handle`, or null), `reviewerExists`,
-`reviewerIsAuthor` (true when that reviewer is also this corner's implementer, so only a person's
-yes can merge it), `reviewerWake` (`unconfigured` | `unreachable` | `waiting` | `dispatched` |
-`not_required`, plus a `detail` sentence), `held`/`holds`, and `mergeAllowed`:
+`reviewerWake` (`unconfigured` | `unreachable` | `waiting` | `dispatched`, plus a `detail`
+sentence), `held`/`holds`, and `mergeAllowed`:
 
     mergeAllowed = checks === 'passed' && approved && !held
 

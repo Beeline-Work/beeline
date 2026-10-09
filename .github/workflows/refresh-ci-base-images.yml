@@ -1,0 +1,26 @@
+# Manually republish the exact upstream manifests pinned by our Dockerfiles
+# and CI checks. To update content, change the digests here, in the mirror
+# script, and in the consumers in one pull request.
+name: Refresh CI base image mirrors
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Mirror the pinned upstream indexes
+        run: ./scripts/mirror-ci-images.sh

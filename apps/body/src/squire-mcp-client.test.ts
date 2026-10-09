@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -177,6 +177,30 @@ describe('StdioSquireMcpClient', () => {
     child.emit('exit', 1);
     await expect(pending).rejects.toThrow('Squire MCP server exited');
     client.close();
+  });
+
+  it('does not time out at Squire\'s own longest in-call wait, and names the tool once it does', async () => {
+    vi.useFakeTimers();
+    try {
+      const { child } = fakeChild({ initialize: {} }); // 'tools/call' is absent, so the call stays pending
+      const client = new StdioSquireMcpClient({
+        scope: { agentId: 'agent-a', roomId: 'room-a' },
+        spawn: () => child as never,
+      });
+      const pending = client.call('operate_screenshot');
+      let settled = false;
+      pending.catch(() => { settled = true; });
+
+      await vi.advanceTimersByTimeAsync(180_000); // Squire's own longest in-call wait (captcha RES_TIMEOUT_MS)
+      expect(settled).toBe(false); // a 120 s client timeout used to kill this call here
+
+      await vi.advanceTimersByTimeAsync(30_000); // the margin above it: now the client's own ceiling
+      expect(settled).toBe(true);
+      await expect(pending).rejects.toThrow('operate_screenshot timed out after 210000ms');
+      client.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('spawns the non-electing façade, never a server of its own', async () => {

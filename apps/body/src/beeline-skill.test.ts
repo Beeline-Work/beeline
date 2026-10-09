@@ -487,7 +487,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
     expect(markdown).toContain('beeline-agent workbench_status');
     expect(markdown).toContain('Trusty Squire is vaulted credentials plus a browser');
     expect(markdown).toContain(
-      'Drive a multi-step browser flow such as checkout or signup with operate_drive rather than one operate_act call per step',
+      'operate_drive drives a whole flow, and flat steps (operate_click, operate_type, operate_select,',
     );
     expect(markdown).toContain('Connected apps are listed once per app with a stable ID');
     expect(markdown).toContain('Tailscale installs its CLI on the selected helper');

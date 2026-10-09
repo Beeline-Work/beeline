@@ -386,6 +386,16 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       ? 'When you need a tool you do not have, call workbench_status; offer_connector the tool it lists, otherwise call connect_app for the app.'
       : 'In corners, workbench_status discovers apps; connect_app starts sign-in here. Connector offers stay in Rooms and DMs.',
   },
+  {
+    id: 'surface.squire-drive',
+    topic: 'squire-browser',
+    why: 'Agents rarely called operate_drive and instead hand-drove checkouts/signups one flat step at a time, including after a drive handback (ts-drive-adoption-scout).',
+    budgetBytes: 420,
+    layer: 'surface',
+    surfaces: EVERYWHERE,
+    render: () =>
+      'For a multi-step browser goal (signup, checkout, provisioning), start with Trusty Squire operate_drive {url, goal, facts} rather than individual steps. On a low_confidence or needs_value handback, answer it from the offered options or take one flat step (operate_click, operate_type, operate_select, …), then resume operate_drive on that same session instead of finishing the task by hand.',
+  },
 
   // --- Room ----------------------------------------------------------------
   {

@@ -430,7 +430,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       [
         'Repository changes happen only in a corner. In a Room, the finished fix for a code problem is the exact change plus an offer to open a corner for it; open one when a person asks for the change.',
         'Before opening one, consult beeline-triage and beeline-spec, then call open_corner with a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message). The objective only titles the work; the brief is its authority. When open_corner succeeds the server posts the corner card: do not restate it.',
-        'For corners you belong to, use inspect_corner for status, steer_corner to pass Room input down, and ask_corner for one answer. Never post into a corner without a Room command.',
+        'For corners under this Room, use inspect_corner for status, steer_corner to pass Room input down, ask_corner for one answer, and post_to_corner for a note that wakes nobody.',
         'A corner ends when its pull request merges; since a person may merge minutes after it opens, anything still needed must already live in a different corner before that pull request opens, not after. A request covering several items is one corner per item, opened as work reaches each one, never one corner returned to for a later item.',
       ].join(' '),
   },
@@ -612,7 +612,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: ['repo-less-corner'],
     render: ({ requesterHandle }) =>
-      `${requesterHandle ? `Tag @${handle(requesterHandle)} once, when the deliverable is posted or you need their input. ` : ''}When you posted files, name them in one line; never restate your answer. Only a human closes this corner.`,
+      `${requesterHandle ? `Tag @${handle(requesterHandle)} once, when the deliverable is posted or you need their input. ` : ''}When you posted files, name them in one line; never restate your answer. Call close_corner only when a person asks.`,
   },
 ];
 
@@ -871,7 +871,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     render: ({ surface, corners, closedCorners }) =>
       [
         corners?.length
-          ? `Current corners you belong to (use the exact cornerId with ${surface === 'room' ? 'inspect_corner, steer_corner, or ask_corner' : 'steer_corner for a sibling under this parent Room'}):\n${JSON.stringify(corners)}`
+          ? `Current corners you belong to (use the exact cornerId with ${surface === 'room' ? 'inspect_corner, steer_corner, or ask_corner' : 'inspect_corner or steer_corner for a sibling under this parent Room'}):\n${JSON.stringify(corners)}`
           : '',
         surface === 'room' && closedCorners?.length
           ? `Corners you belong to closed in the last 24 hours (merge commit is unavailable when absent):\n${closedCorners

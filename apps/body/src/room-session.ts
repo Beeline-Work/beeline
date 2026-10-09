@@ -20,20 +20,19 @@ export function beelineAgentMcpServer(
     turnContextPath?: string;
     workspaceId: string;
     cornerId?: string;
-    /** Repository-corner authors may close landed or abandoned work. Repo-less
-     *  corners stay open until a human uses the phone's structured close. */
-    agentMayCloseCorner?: boolean;
     /** This corner session belongs to the parent Room's configured reviewer. */
     reviewer?: boolean;
     /** The corner's parent Room has a repository, so this is a code corner.
-     *  A code corner mounts approve_merge and merge_corner on every turn; the
-     *  server decides whether the caller is the configured reviewer. */
+     *  A code corner mounts approve_merge and merge_corner on every turn; the server decides
+     *  whether the caller is the configured reviewer. */
     repositoryBacked?: boolean;
     attachRoot?: string;
     /** The session's whole writable home overlay (or, absent one, its
      *  TMPDIR): a second legal post_artifact root covering anywhere the
      *  harness itself could have put a file it generated. */
     attachScratchRoot?: string;
+    /** Chat-only corner's bounded workspace, including the agent home. */
+    cornerScratchRoot?: string;
     directMessage?: boolean;
     /** The daemon's loopback grant runner, for run_granted_command. */
     grantRunner?: GrantRunnerEndpoint;
@@ -71,9 +70,6 @@ export function beelineAgentMcpServer(
       { name: 'BEELINE_DAEMON_ROOM_ID', value: context.roomId },
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },
       ...(context.cornerId ? [{ name: 'BEELINE_DAEMON_CORNER_ID', value: context.cornerId }] : []),
-      ...(context.agentMayCloseCorner
-        ? [{ name: 'BEELINE_CORNER_AGENT_CLOSE', value: '1' }]
-        : []),
       ...(context.reviewer ? [{ name: 'BEELINE_CORNER_REVIEWER', value: '1' }] : []),
       ...(context.cornerId && context.repositoryBacked
         ? [{ name: 'BEELINE_CORNER_REPOSITORY', value: '1' }]
@@ -81,6 +77,9 @@ export function beelineAgentMcpServer(
       ...(context.attachRoot ? [{ name: 'BEELINE_ATTACH_ROOT', value: context.attachRoot }] : []),
       ...(context.attachScratchRoot
         ? [{ name: 'BEELINE_ATTACH_SCRATCH_ROOT', value: context.attachScratchRoot }]
+        : []),
+      ...(context.cornerScratchRoot
+        ? [{ name: 'BEELINE_CORNER_SCRATCH_ROOT', value: context.cornerScratchRoot }]
         : []),
       ...(context.grantRunner
         ? [

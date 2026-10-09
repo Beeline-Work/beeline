@@ -189,10 +189,11 @@ it('cuts a worktree and runs the code-corner surface for a human corner of a rep
       Boolean(environment.get('BEELINE_DAEMON_CORNER_ID')),
       environment.get('BEELINE_CORNER_REPOSITORY') === '1',
       Boolean(environment.get('BEELINE_GRANT_RUNNER_URL')),
-      environment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
     ).map((tool) => tool.name);
     expect(tools).toContain('approve_merge');
     expect(tools).toContain('merge_corner');
+    expect(tools).toContain('close_pull_request');
+    expect(tools).toContain('close_corner');
     expect(tools).toContain('rename_corner');
     expect(tools).toContain('revise_corner_brief');
     expect(tools).not.toContain('upgrade_corner_to_code');

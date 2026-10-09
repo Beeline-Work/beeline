@@ -112,7 +112,6 @@ describe('daemon tool-call network retry', () => {
 
   it('sends a non-idempotent write once and says it may not have run', async () => {
     vi.stubEnv('BEELINE_DAEMON_CORNER_ID', 'corner-1');
-    vi.stubEnv('BEELINE_CORNER_AGENT_CLOSE', '1');
     let calls = 0;
     vi.stubGlobal('fetch', async () => {
       calls += 1;

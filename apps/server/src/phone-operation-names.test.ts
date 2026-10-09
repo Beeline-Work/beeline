@@ -27,6 +27,8 @@ const ALL_PHONE_OPERATION_NAMES = {
   claimAgentPairing: true,
   claimManagedHandle: true,
   clearNeedsYou: true,
+  clearNeedsYouSection: true,
+  clearMessageBookmarks: true,
   closeChat: true,
   completeAppSignIn: true,
   completeGitHubIdentityBind: true,

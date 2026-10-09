@@ -601,9 +601,8 @@ describe('prompt assembly guards', () => {
         task: { body: 'Steer the sibling' },
       }).text;
       expect(turn).toContain('sibling-id');
-      expect(turn).toContain('steer_corner for a sibling under this parent Room');
+      expect(turn).toContain('inspect_corner or steer_corner for a sibling under this parent Room');
       expect(turn).not.toContain('ask_corner');
-      expect(turn).not.toContain('inspect_corner');
     }
   });
 });

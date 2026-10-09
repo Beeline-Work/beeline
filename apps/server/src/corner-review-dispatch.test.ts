@@ -6,7 +6,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
-import { createAgentCommand, noteBlockedCornerChecks } from './agent-command.js';
+import { createAgentCommand, noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
 import { advanceCorner, REVIEW_HANDBACK_LIMIT } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
@@ -92,7 +92,7 @@ beforeEach(async () => {
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
-  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}'::text[]`);
   await db.query(
     `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL,
        review_handback_head=NULL,review_handback_count=0,commissioned_by=$1,worker_agent_id=NULL`,
@@ -350,6 +350,136 @@ describe('corner message attribution', () => {
       `Reproduction C3-1: wrong=1 re-wake of a reviewed head; right=0; observed=${reviewerWakes.length}`,
     );
     expect(reviewerWakes).toHaveLength(0);
+  });
+
+  it('Reproduction REVIEW-READY-1: a green corner already in review recovers its missing reviewer wake', async () => {
+    const head = '7'.repeat(40);
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(23, head);
+    const [firstReview] = await commands(B, C);
+    expect(firstReview).toBeDefined();
+    // The state is still review with passing checks, but the command was
+    // lost. Re-reporting the same green head used to refuse this wake.
+    await db.query(`DELETE FROM agent_commands WHERE id=$1`, [firstReview!.id]);
+    expect(await commands(B, C)).toHaveLength(0);
+    const reconciled = await reconcileConfiguredCornerReviewers(db, R);
+    const rereviews = await commands(B, C);
+    console.info(`Reproduction REVIEW-READY-1: wrong=0 reviewer commands; right=1; observed=${rereviews.length}`);
+    expect(reconciled.commands).toBe(1);
+    expect(rereviews).toHaveLength(1);
+    expect(rereviews[0]?.agentId).toBe(B);
+    expect((await db.query<{ lifecycle: { pr: { headSha: string }; checks: string } }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [C],
+    )).rows[0]?.lifecycle).toMatchObject({ pr: { headSha: head }, checks: 'passing' });
+    expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
+  });
+
+  it('Reproduction REVIEW-READY-2: a FAIL returns to review after the worker answers on the unchanged green head', async () => {
+    const head = 'b'.repeat(40);
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(27, head);
+    const [firstReview] = await commands(B, C);
+    await claim(firstReview!);
+    const findings = `FAIL on ${head}: the PR description lacks demonstration evidence.`;
+    await result(firstReview!, findings);
+    const [repair] = (await commands(A, C)).filter((command) => command.reason === 'corner_review');
+    expect(repair?.source.body).toBe(findings);
+    expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
+    await claim(repair!);
+    const reply = 'Added both demonstrations to the PR description; the code and head are unchanged.';
+    await result(repair!, reply);
+    expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(1);
+    const [rereview] = await commands(B, C);
+    expect(rereview?.reason).toBe('corner_review_dispatch');
+    expect((await db.query<{ workflow_state: string; review_handback_count: number; lifecycle: { pr: { headSha: string } } }>(
+      `SELECT workflow_state,review_handback_count,lifecycle FROM corner_facts WHERE corner_id=$1`, [C],
+    )).rows[0]).toMatchObject({ workflow_state: 'review', review_handback_count: 1, lifecycle: { pr: { headSha: head } } });
+    expect((await db.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND text IN ($2,$3) ORDER BY text`, [C, findings, reply],
+    )).rows).toHaveLength(2);
+  });
+
+  it('counts green same-head reconciled reviews toward the handback limit', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(28, 'c'.repeat(40));
+    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT + 1; round += 1) {
+      const [review] = await commands(B, C);
+      expect(review).toBeDefined();
+      await claim(review!, `r${round}`);
+      await result(review!, `FAIL round ${round}: demonstration is missing.`, `r${round}`);
+      const [repair] = (await commands(A, C)).filter((command) => command.reason === 'corner_review');
+      if (round <= REVIEW_HANDBACK_LIMIT) {
+        expect(repair).toBeDefined();
+        await claim(repair!, `w${round}`);
+        await result(repair!, `Demonstration updated after round ${round}.`, `w${round}`);
+        expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(1);
+      } else {
+        expect(repair).toBeUndefined();
+      }
+    }
+    expect((await db.query<{ workflow_state: string; review_handback_count: number }>(
+      `SELECT workflow_state,review_handback_count FROM corner_facts WHERE corner_id=$1`, [C],
+    )).rows[0]).toEqual({ workflow_state: 'ask_human', review_handback_count: REVIEW_HANDBACK_LIMIT + 1 });
+    expect((await db.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND card_type='corner-review-deadlock'`, [C],
+    )).rows[0]?.text).toContain('may need to step in');
+    expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
+  });
+
+  it('names the human who must act when a green review loses its configured reviewer', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(24, '8'.repeat(40));
+    await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, B]);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
+    await reconcileConfiguredCornerReviewers(db, R);
+    expect(await commands(B, C)).toHaveLength(0);
+    expect((await db.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND card_type='corner-merge-yes'`, [C],
+    )).rows.map((row) => row.text)).toEqual([
+      '@human needs to approve this pull request · checks passed and no other agent can review it',
+    ]);
+  });
+
+  it('names the unavailable reviewer list and the human action on a green head', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B, reviewerFallbackIds: [A] }, H);
+    await greenHead(25, '9'.repeat(40));
+    expect(await commands(B, C)).toHaveLength(0);
+    expect((await db.query<{ text: string }>(
+      `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%healthy enough to review%'`, [C],
+    )).rows.map((row) => row.text)).toEqual([
+      'No reviewer on the list is healthy enough to review this · a human can set a different reviewer, or wait for one on the list to come back healthy',
+    ]);
+  });
+
+  it('posts a visible failure when reviewer command insertion cannot queue', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(26, 'a'.repeat(40));
+    await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, B]);
+    await db.query(`
+      CREATE FUNCTION refuse_review_command() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.room_id='${C}' AND NEW.agent_id='${B}' THEN
+          RAISE EXCEPTION 'review queue denied by trigger';
+        END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER refuse_review_command BEFORE INSERT ON agent_commands
+        FOR EACH ROW EXECUTE FUNCTION refuse_review_command();
+    `);
+    try {
+      await reconcileConfiguredCornerReviewers(db, R);
+      expect(await commands(B, C)).toHaveLength(0);
+      expect((await db.query<{ text: string }>(
+        `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%restore review dispatch%'`, [C],
+      )).rows.map((row) => row.text)).toEqual([
+        expect.stringContaining('the reviewer command could not be queued on ' + 'a'.repeat(40)),
+      ]);
+      expect((await db.query<{ text: string }>(
+        `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%review queue denied by trigger%'`, [C],
+      )).rows).toHaveLength(1);
+    } finally {
+      await db.query(`DROP TRIGGER IF EXISTS refuse_review_command ON agent_commands; DROP FUNCTION IF EXISTS refuse_review_command();`);
+    }
   });
 
   it('commits the verdict and the handoff together, or neither', async () => {
@@ -757,7 +887,7 @@ describe('corner message attribution', () => {
           [C],
         )
       ).rows.map((row) => row.text),
-    ).toEqual(['@goosy could not be reached · not a current member of the parent Room']);
+    ).toEqual(['@goosy could not be reached · not a current member of the parent Room; a Workspace owner or admin must restore reviewer membership']);
   });
 
   it('names a parent-member reviewer it cannot deliver into the corner and still retries', async () => {
@@ -823,7 +953,7 @@ describe('corner message attribution', () => {
             [C],
           )
         ).rows.map((row) => row.text),
-      ).toEqual(['@goosy could not be reached · not a current member of this corner']);
+      ).toEqual(['@goosy could not be reached · not a current member of this corner; a Workspace owner or admin must restore reviewer membership']);
     } finally {
       await db.query(`
         DROP TRIGGER IF EXISTS keep_reviewer_off_corner ON memberships;

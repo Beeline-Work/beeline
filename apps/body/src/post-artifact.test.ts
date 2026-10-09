@@ -140,6 +140,60 @@ describe('beeline-agent post_artifact', () => {
     }
   });
 
+  it('types html content posted without a mime as a document the viewer opens', async () => {
+    const { deps: d, uploads, queued } = deps();
+    await postArtifact({ html: VALID_HTML, title: 'Row mock' }, d);
+    expect(uploads[0]).toMatchObject({ mime: 'text/html', title: 'Row mock' });
+    expect(queued[0]).toMatchObject({ mimeType: 'text/html' });
+    const svg = deps();
+    await postArtifact(
+      { html: '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>', title: 'Glyph' },
+      svg.deps,
+    );
+    expect(svg.uploads[0]).toMatchObject({ mime: 'image/svg+xml' });
+    const doctype = deps();
+    await postArtifact(
+      { html: '<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg"/>', title: 'Glyph' },
+      doctype.deps,
+    );
+    expect(doctype.uploads[0]).toMatchObject({ mime: 'image/svg+xml' });
+  });
+
+  it.each([
+    ['%PDF-1.7 minimal', 'application/pdf'],
+    ['\x89PNG\r\n\x1a\nrest', 'image/png'],
+    ['\xff\xd8\xffrest', 'image/jpeg'],
+    ['GIF89arest', 'image/gif'],
+    ['RIFF\0\0\0\0WEBPrest', 'image/webp'],
+    [VALID_HTML, 'text/html'],
+    ['<svg xmlns="http://www.w3.org/2000/svg"/>', 'image/svg+xml'],
+    ['<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg"/>', 'image/svg+xml'],
+    [
+      '<?xml version="1.0"?>\n<!-- glyph -->\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<svg xmlns="http://www.w3.org/2000/svg"/>',
+      'image/svg+xml',
+    ],
+  ])('sniffs octet-stream content %# as %s', async (content, expectedMime) => {
+    const bytes = Buffer.from(content, 'latin1').toString('base64');
+    for (const args of [
+      { bytes, title: 'blob' },
+      { bytes, title: 'blob', mime: 'application/octet-stream' },
+    ]) {
+      const { deps: d, uploads } = deps();
+      await postArtifact(args, d);
+      expect(uploads[0]).toMatchObject({ mime: expectedMime });
+    }
+    const { deps: d, uploads } = deps();
+    await writeFile(join(d.roots[0], 'mock'), Buffer.from(content, 'latin1'));
+    await postArtifact({ path: 'mock' }, d);
+    expect(uploads[0]).toMatchObject({ mime: expectedMime });
+  });
+
+  it('keeps a supplied mime other than octet-stream', async () => {
+    const { deps: d, uploads } = deps();
+    await postArtifact({ html: VALID_HTML, title: 'Source', mime: 'text/plain' }, d);
+    expect(uploads[0]).toMatchObject({ mime: 'text/plain' });
+  });
+
   it('refuses a path outside the roots and mixed path/content args', async () => {
     const { deps: d } = deps();
     await expect(postArtifact({ path: '/etc/passwd' }, d)).rejects.toThrow(/outside your checkout/);

@@ -65,7 +65,7 @@ async function daemonDoor(
       const payload =
         operation === 'getRoomRepositoryState'
           ? repository
-          : operation === 'listRoomCorners'
+          : operation === 'listReachableCorners'
             ? { corners: [{ cornerId: CORNER, parentRoomId: ROOM }] }
             : operation === 'getCornerRestoreState'
               ? {
@@ -119,7 +119,6 @@ async function callTool(
     cornerId?: string;
     repositoryCorner?: boolean;
     directMessage?: boolean;
-    agentMayCloseCorner?: boolean;
     toolCallId?: string;
   } = {},
 ): Promise<{ result?: ToolResult; error?: { code: number; message: string } }> {
@@ -145,7 +144,6 @@ async function callTool(
       BEELINE_DAEMON_ROOM_ID: ROOM,
       BEELINE_DAEMON_CORNER_ID: options.cornerId ?? '',
       BEELINE_CORNER_REPOSITORY: options.repositoryCorner ? '1' : '',
-      BEELINE_CORNER_AGENT_CLOSE: options.agentMayCloseCorner ? '1' : '',
       BEELINE_AGENT_DM: options.directMessage ? '1' : '0',
     },
     stdio: ['pipe', 'pipe', 'ignore'],
@@ -347,7 +345,7 @@ describe('open_corner over the grok wire', () => {
     expect(JSON.parse(result!.content[0]!.text)).not.toHaveProperty('lane');
   }, 30_000);
 
-  it('refuses agent closure for a repo-less corner', async () => {
+  it('closes a repo-less corner for any agent member', async () => {
     const door = await daemonDoor({ resolution: 'none' });
     const { result, error } = await callTool(
       door.origin,
@@ -359,9 +357,10 @@ describe('open_corner over the grok wire', () => {
     );
 
     expect(error).toBeUndefined();
-    expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toBe('this corner stays open until a human closes it');
-    expect(door.calls.some((call) => call.operation === 'archiveCorner')).toBe(false);
+    expect(result?.isError).toBeUndefined();
+    expect(door.calls).toContainEqual(
+      expect.objectContaining({ operation: 'archiveCorner', cornerId: CORNER }),
+    );
   }, 30_000);
 
   it('closes a repository corner through that same operation', async () => {
@@ -372,7 +371,6 @@ describe('open_corner over the grok wire', () => {
       {
         name: 'close_corner',
         cornerId: CORNER,
-        agentMayCloseCorner: true,
       },
     );
 
@@ -383,8 +381,23 @@ describe('open_corner over the grok wire', () => {
       expect.objectContaining({ operation: 'archiveCorner', cornerId: CORNER }),
     );
     // The repository shape of the parent Room is not consulted at all: who may
-    // archive is the server's opener check, not a question about the Room.
+    // archive is the server's membership check, not a question about the Room.
     expect(door.calls.some((call) => call.operation === 'getRoomRepositoryState')).toBe(false);
+  }, 30_000);
+
+  it("closes the corner's own pull request through the server", async () => {
+    const door = await daemonDoor();
+    const { result, error } = await callTool(
+      door.origin,
+      {},
+      { name: 'close_pull_request', cornerId: CORNER, repositoryCorner: true },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.isError).toBeUndefined();
+    expect(door.calls).toContainEqual(
+      expect.objectContaining({ operation: 'closeCornerPullRequest', cornerId: CORNER }),
+    );
   }, 30_000);
 
   it('refuses close_corner outside a corner instead of archiving something else', async () => {
@@ -392,9 +405,34 @@ describe('open_corner over the grok wire', () => {
     const { result } = await callTool(door.origin, {}, { name: 'close_corner' });
 
     expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toContain('BEELINE_DAEMON_CORNER_ID');
+    expect(result?.content[0]?.text).toBe('cornerId is required outside a corner');
     expect(door.calls.some((call) => call.operation === 'archiveCorner')).toBe(false);
   }, 30_000);
+
+  it('acts on a named child corner from a Room turn: close, close PR, rename, read, list and post', async () => {
+    const door = await daemonDoor();
+    for (const [name, args] of [
+      ['close_corner', { cornerId: CORNER }],
+      ['close_pull_request', { cornerId: CORNER }],
+      ['rename_corner', { cornerId: CORNER, name: 'New-name' }],
+      ['read_pull_request', { cornerId: CORNER }],
+      ['list_corners', {}],
+      ['list_room_members', { cornerId: CORNER }],
+      ['post_to_corner', { cornerId: CORNER, text: 'A note' }],
+    ] as const) {
+      const { result } = await callTool(door.origin, args, { name });
+      expect(result?.isError, name).not.toBe(true);
+    }
+    expect(door.calls.map(({ operation, cornerId, roomId }) => ({ operation, cornerId, roomId }))).toEqual([
+      { operation: 'archiveCorner', cornerId: CORNER, roomId: ROOM },
+      { operation: 'closeCornerPullRequest', cornerId: CORNER, roomId: ROOM },
+      { operation: 'renameCorner', cornerId: CORNER, roomId: ROOM },
+      { operation: 'readCornerPullRequest', cornerId: CORNER, roomId: ROOM },
+      { operation: 'listReachableCorners', cornerId: undefined, roomId: ROOM },
+      { operation: 'listRoomMembers', cornerId: undefined, roomId: CORNER },
+      { operation: 'postCornerMessage', cornerId: CORNER, roomId: ROOM },
+    ]);
+  }, 60_000);
 
   it('answers a genuine refusal as a tool result the model reads, not a protocol error', async () => {
     const door = await daemonDoor();
@@ -473,12 +511,11 @@ describe('relay tools', () => {
       merge: { mergeability: 'clean' },
     });
     expect(door.calls.map((call) => call.operation)).toEqual([
-      'listRoomCorners',
       'getCornerRestoreState',
       'getPrChecksStatus',
     ]);
   });
-  it('passes a transcript cursor only after listing the member corner', async () => {
+  it('passes a transcript cursor straight to the target corner read', async () => {
     const door = await daemonDoor();
     const response = await callTool(
       door.origin,

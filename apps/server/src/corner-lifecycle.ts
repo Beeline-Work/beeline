@@ -566,7 +566,13 @@ export async function advanceCorner(
       rejected(cornerId, event, run.toState, accepted.why);
       return { state: transition.state, accepted: false };
     }
-    return { state: transition.state, accepted: true, ...(accepted.wake ? { wake: accepted.wake } : {}) };
+    // A green review state must carry a reviewer command even when the state
+    // was entered while checks were already green or an earlier wake was lost.
+    const reviewWake = transition.state === 'review' && !accepted.wake?.queued
+      ? await ensureReviewDispatch(db, cornerId, corner, transition)
+      : undefined;
+    const wake = accepted.wake?.queued ? accepted.wake : reviewWake?.ok ? reviewWake.wake : accepted.wake;
+    return { state: transition.state, accepted: true, ...(wake ? { wake } : {}) };
   });
 }
 
@@ -669,7 +675,19 @@ async function checksReported(
   // waiting for a person's yes is re-planned: a reviewer configured since
   // then is woken.
   if (event.result === 'passing' && from === 'review' && sameHead && transition.run.outcome !== 'no_reviewer')
-    return no('checks already passed on this head');
+    return ensureReviewDispatch(db, cornerId, corner, transition);
+  if (event.result === 'passing' && from === 'implement' && sameHead && headSha &&
+      transition.run.outcome === 'changes_requested' &&
+      corner.lifecycle.lifecycle === 'in-review') {
+    const implementerWorking = corner.worker_agent_id ? await db.query(
+      `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+       AND state IN ('pending','claimed') LIMIT 1`,
+      [cornerId, corner.worker_agent_id],
+    ) : undefined;
+    if (implementerWorking?.rowCount) return no('implementer still answering the review');
+    await transition.take('rereview', { headSha });
+    return ensureReviewDispatch(db, cornerId, corner, transition);
+  }
   let plan: ChecksPlan;
   if (event.result === 'failing') plan = { outcome: 'failing' };
   // A yes given while checks ran (a PASS or a person's order) needs no review.
@@ -708,17 +726,23 @@ async function checksReported(
     });
     if (!command) return no('the implementer cannot be woken');
   } else if (plan.outcome === 'passing' && !plan.approved) {
-    const command = await createAgentCommand(db, {
+    const queued = await queueReviewerCommand(db, {
       roomId: cornerId,
       agentId: plan.reviewerAgentId,
       sourceMessageId: event.sourceMessageId,
       reason: 'subscribed_event',
     });
-    if (!command) return no('the reviewer cannot be woken');
+    if (!queued.command) {
+      const reason = `the reviewer command could not be queued on ${headSha ?? 'this head'}${queued.error ? `: ${queued.error}` : ''}; a Workspace owner or admin must restore reviewer access`;
+      console.error(`[corner-lifecycle] ${cornerId}: ${reason}`);
+      await noteReviewDispatchFailure(db, cornerId, headSha ?? event.sourceMessageId, reason, event.sourceMessageId);
+      return { ok: true, wake: { queued: false, reason } };
+    }
   }
   if (from !== 'checks') await transition.take('rechecked');
   const toState = await transition.take(plan.outcome, headSha ? { headSha } : {}, failingRound);
   if (toState === 'ask_human') {
+    console.error(`[corner-lifecycle] ${cornerId}: failing checks exceeded ${CHECKS_FAILING_LIMIT} attempts; the commissioning human must step in`);
     await askHuman(db, cornerId, corner, {
       key: `checks-failing-limit:${headSha ?? event.sourceMessageId}`,
       consequence: `checks have failed ${CHECKS_FAILING_LIMIT} times in this corner`,
@@ -728,23 +752,8 @@ async function checksReported(
     return OK;
   }
   if (plan.outcome === 'no_reviewer') {
-    await ensureSystemIdentity(db);
-    const approverIds = await mergeYesApprovers(db, cornerId);
-    await systemLine(db, {
-      id: createHash('sha256').update(`beeline:${cornerId}:waiting-for-yes:${headSha ?? event.sourceMessageId}`).digest('hex'),
-      roomId: cornerId,
-      authorId: SYSTEM_IDENTITY_ID,
-      subject:
-        approverIds.length === 1
-          ? { kind: 'person', id: approverIds[0]!, name: 'A Workspace owner or admin' }
-          : { kind: 'system', name: 'A Workspace owner or admin' },
-      verb: 'needs to approve',
-      object: 'this pull request',
-      consequence: 'checks passed and no other agent can review it',
-      afterMessageId: event.sourceMessageId,
-      cardType: CORNER_MERGE_YES_CARD_TYPE,
-      card: { cornerId, approverIds },
-    });
+    console.error(`[corner-lifecycle] ${cornerId}: green review has no configured reviewer; a Workspace owner or admin must approve`);
+    await noteNoReviewer(db, cornerId, headSha ?? event.sourceMessageId, event.sourceMessageId);
     return OK;
   }
   if (plan.outcome === 'passing' && plan.approved) {
@@ -752,6 +761,145 @@ async function checksReported(
     await wakeToLand(db, cornerId, corner, transition);
   }
   return OK;
+}
+
+async function noteNoReviewer(
+  db: SqlDatabase,
+  cornerId: string,
+  headKey: string,
+  afterMessageId?: string,
+): Promise<void> {
+  await ensureSystemIdentity(db);
+  const approverIds = await mergeYesApprovers(db, cornerId);
+  await systemLine(db, {
+    id: createHash('sha256').update(`beeline:${cornerId}:waiting-for-yes:${headKey}`).digest('hex'),
+    roomId: cornerId,
+    authorId: SYSTEM_IDENTITY_ID,
+    subject:
+      approverIds.length === 1
+        ? { kind: 'person', id: approverIds[0]!, name: 'A Workspace owner or admin' }
+        : { kind: 'system', name: 'A Workspace owner or admin' },
+    verb: 'needs to approve',
+    object: 'this pull request',
+    consequence: 'checks passed and no other agent can review it',
+    ...(afterMessageId ? { afterMessageId } : {}),
+    cardType: CORNER_MERGE_YES_CARD_TYPE,
+    card: { cornerId, approverIds },
+  });
+}
+
+async function noteReviewDispatchFailure(
+  db: SqlDatabase,
+  cornerId: string,
+  headSha: string,
+  reason: string,
+  afterMessageId: string,
+): Promise<void> {
+  await ensureSystemIdentity(db);
+  await systemLine(db, {
+    id: createHash('sha256').update(`beeline:${cornerId}:review-dispatch-failed:${headSha}:${reason}`).digest('hex'),
+    roomId: cornerId,
+    authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', name: 'A Workspace owner or admin' },
+    verb: 'needs to restore review dispatch',
+    consequence: reason,
+    afterMessageId,
+  });
+}
+
+/** Repair a green review state whose reviewer command is missing or spent. */
+async function ensureReviewDispatch(
+  db: SqlDatabase,
+  cornerId: string,
+  corner: CornerRow,
+  transition: Transition,
+): Promise<Applied> {
+  const pr = corner.lifecycle.pr;
+  if (transition.state !== 'review' || corner.lifecycle.checks !== 'passing' || !pr?.headSha)
+    return OK;
+  if (transition.run.headSha !== pr.headSha || await approvedCurrentHead(db, cornerId, corner))
+    return OK;
+  if (!corner.configured_reviewer_id) {
+    console.error(`[corner-lifecycle] ${cornerId}: green review has no configured reviewer; a Workspace owner or admin must approve`);
+    await noteNoReviewer(db, cornerId, pr.headSha);
+    return { ok: true, wake: { queued: false, reason: 'No configured reviewer; a Workspace owner or admin must approve' } };
+  }
+  const outstanding = await db.query(
+    `SELECT 1 FROM agent_commands command
+     JOIN messages source ON source.id=command.source_message_id
+     JOIN rooms corner ON corner.id=command.room_id
+     JOIN rooms parent ON parent.id=corner.parent_id
+     JOIN corner_facts fact ON fact.corner_id=corner.id
+     WHERE command.room_id=$1 AND command.state IN ('pending','claimed')
+       AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
+       AND command.action='input'
+       AND (command.reason='corner_review_dispatch'
+            OR (command.reason='subscribed_event' AND
+              (source.system_event->>'kind'='check-passed'
+                OR source.author_id=${cornerImplementerSql('fact', 'corner')}))
+            OR (command.reason='agent_tag' AND source.author_id=${cornerImplementerSql('fact', 'corner')}))
+       AND (source.system_event->'object'->>'headSha' IS NULL
+            OR source.system_event->'object'->>'headSha'=$2)
+       AND (source.card->'contents'->>'headSha' IS NULL
+            OR source.card->'contents'->>'headSha'=$2)
+     LIMIT 1`,
+    [cornerId, pr.headSha],
+  );
+  if (outstanding.rowCount) return OK;
+  const sourceId = transition.lastCardId ?? (
+    await db.query<{ id: string }>(
+      `SELECT id FROM messages WHERE room_id=$1 AND card_type=$2
+       AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1`,
+      [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
+    )
+  ).rows[0]?.id;
+  if (!sourceId) throw new Error(`green review ${cornerId} has no lifecycle card for dispatch`);
+  const reviewerAgentId = await reachableReviewer(db, cornerId, corner, sourceId, pr.headSha);
+  if (!reviewerAgentId) {
+    console.error(`[corner-lifecycle] ${cornerId}: green review reviewer is unreachable or unhealthy; a Workspace owner or admin must restore reviewer availability`);
+    return { ok: true, wake: { queued: false, reason: 'Reviewer unreachable or unhealthy; a Workspace owner or admin must act' } };
+  }
+  // A fresh source lets a recovered review wake follow an earlier completed
+  // command from the same check fact. The lifecycle card remains the run state.
+  const source = await systemLine(db, {
+    roomId: cornerId,
+    authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,
+    subject: GITHUB_SUBJECT,
+    verb: 'requested review of',
+    object: { text: pr.title ?? `pull request #${pr.number}`, ...(pr.url ? { url: pr.url } : {}), headSha: pr.headSha },
+  });
+  const queued = await queueReviewerCommand(db, {
+    roomId: cornerId,
+    agentId: reviewerAgentId,
+    sourceMessageId: source.id,
+    reason: 'corner_review_dispatch',
+  });
+  if (!queued.command) {
+    const reason = `the reviewer command could not be queued on ${pr.headSha}${queued.error ? `: ${queued.error}` : ''}; a Workspace owner or admin must restore reviewer access`;
+    console.error(`[corner-lifecycle] ${cornerId}: ${reason}`);
+    await noteReviewDispatchFailure(db, cornerId, pr.headSha, reason, source.id);
+    return { ok: true, wake: { queued: false, reason } };
+  }
+  return { ok: true, wake: { queued: true, agentId: reviewerAgentId } };
+}
+
+async function queueReviewerCommand(
+  db: SqlDatabase,
+  input: Parameters<typeof createAgentCommand>[1],
+): Promise<{ command?: CommandRow; error?: string }> {
+  // A rejected insert must leave this transaction usable so the failure line
+  // can commit. A broken connection still propagates rather than pretending
+  // the reviewer was woken.
+  await db.query('SAVEPOINT corner_reviewer_dispatch');
+  try {
+    const command = await createAgentCommand(db, input);
+    await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
+    return { command };
+  } catch (error) {
+    await db.query('ROLLBACK TO SAVEPOINT corner_reviewer_dispatch');
+    await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
+    return { error: error instanceof Error ? error.message.slice(0, 160) : 'unknown dispatch error' };
+  }
 }
 
 /**
@@ -960,6 +1108,7 @@ async function reviewEnded(
     handbacks,
   );
   if (toState === 'ask_human') {
+    console.error(`[corner-lifecycle] ${cornerId}: review handback limit reached on ${headSha}; the commissioning human must step in`);
     await askHuman(db, cornerId, corner, {
       key: `review-handback-limit:${headSha}`,
       consequence: `review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
@@ -1116,6 +1265,7 @@ async function noteUnreachableReviewer(
     reason: string;
   },
 ): Promise<void> {
+  console.error(`[corner-lifecycle] ${input.cornerId}: reviewer ${input.reviewerId} ${input.reason}; a Workspace owner or admin must restore membership`);
   const id = createHash('sha256')
     .update(`beeline:${input.cornerId}:reviewer-unreachable:${input.reviewerId}:${input.reason}`)
     .digest('hex');
@@ -1128,7 +1278,7 @@ async function noteUnreachableReviewer(
       name: input.reviewerName ?? 'the configured reviewer',
     },
     verb: 'could not be reached',
-    consequence: input.reason,
+    consequence: `${input.reason}; a Workspace owner or admin must restore reviewer membership`,
     afterMessageId: input.sourceMessageId,
   });
 }
@@ -1143,6 +1293,7 @@ async function noteReviewerListExhausted(
   db: SqlDatabase,
   input: { cornerId: string; sourceMessageId: string; headSha: string | null },
 ): Promise<void> {
+  console.error(`[corner-lifecycle] ${input.cornerId}: no reviewer on the list is healthy; a Workspace owner or admin must set a different reviewer or restore one`);
   const id = createHash('sha256')
     .update(
       `beeline:${input.cornerId}:reviewer-list-exhausted:${input.headSha ?? 'no-head'}:${input.sourceMessageId}`,

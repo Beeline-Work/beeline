@@ -66,6 +66,29 @@ describe('GitHub phone operations', () => {
     return { corners, headSha, app, payload };
   }
 
+  it('gives a check suite a browser card URL even when GitHub sends only its API URL', async () => {
+    const { corners, headSha, app, payload } = await checksFixture();
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
+    await operations.processWebhook('check_suite', {
+      ...payload,
+      check_suite: {
+        id: 42, status: 'completed', conclusion: 'success', head_branch: 'feature/checks-1',
+        head_sha: headSha, app: { name: 'GitHub Actions' },
+        url: 'https://api.github.com/repos/owner/widgets/check-suites/42',
+      },
+    });
+    const row = (await database.query<{ card_type: string; card: { source: string }; system_event: { object: { url: string } } }>(
+      `SELECT card_type,card,system_event FROM messages WHERE room_id=$1 AND text='@GitHub passed a check GitHub Actions check suite'`,
+      [corners[0]],
+    )).rows[0];
+    expect(row).toMatchObject({
+      card_type: 'github-corner-note',
+      card: { source: 'github' },
+      system_event: { object: { url: `https://github.com/owner/widgets/commit/${headSha}/checks` } },
+    });
+  });
+
   it.each([4, 5])('Reproduction F1-%s: push/open records checks without another event', async n => {
     const { corners, headSha, app, payload } = await checksFixture();
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');

@@ -201,6 +201,42 @@ const VIEWER_ROOMS = `
       AND room.workspace_id=$1 AND room.archived_at IS NULL
   )`;
 
+/** Keep the section clear's candidate rule identical to the read, without its 500-row display bound. */
+const QUESTION_WHERE = `m.presentation='message' AND m.deleted_at IS NULL AND m.author_id<>$2
+  AND m.created_at>now()-interval '${NEEDS_YOU_LOOKBACK_DAYS} days'
+  AND mark.cleared_at IS NULL
+  AND (mark.first_seen_at IS NULL
+    OR mark.first_seen_at>now()-interval '${NEEDS_YOU_EXPIRY_HOURS} hours')
+  AND ${askSql('m.text')}
+  AND ${tagsKnownIdentitySql('m', 'viewer.id', 'viewer.handle', 'viewer.kind')}
+  AND NOT EXISTS (
+    SELECT 1 FROM messages reply
+    WHERE reply.room_id=m.room_id AND reply.author_id=$2
+      AND reply.presentation='message' AND reply.deleted_at IS NULL
+      AND reply.created_at>m.created_at
+  )`;
+
+/** Clear every current question, including ones past the tray read's display limit. */
+export async function clearNeedsYouQuestions(
+  database: SqlDatabase,
+  workspaceId: string,
+  viewerId: string,
+): Promise<void> {
+  await database.query(
+    `WITH ${VIEWER_ROOMS}
+     INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at)
+     SELECT $2,m.id,$1,now()
+     FROM viewer_rooms room
+     JOIN messages m ON m.room_id=room.id
+     JOIN identities viewer ON viewer.id=$2
+     LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
+     WHERE ${QUESTION_WHERE}
+     ON CONFLICT(identity_id,message_id)
+       DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now())`,
+    [workspaceId, viewerId],
+  );
+}
+
 /** The viewer ($2) manages the Workspace ($1). */
 const VIEWER_MANAGES_WORKSPACE = `EXISTS (
   SELECT 1 FROM memberships manager
@@ -381,19 +417,7 @@ export async function needsYouItems(
        JOIN identities viewer ON viewer.id=$2
        LEFT JOIN identities author ON author.id=m.author_id
        LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
-       WHERE m.presentation='message' AND m.deleted_at IS NULL AND m.author_id<>$2
-         AND m.created_at>now()-interval '${NEEDS_YOU_LOOKBACK_DAYS} days'
-         AND mark.cleared_at IS NULL
-         AND (mark.first_seen_at IS NULL
-           OR mark.first_seen_at>now()-interval '${NEEDS_YOU_EXPIRY_HOURS} hours')
-         AND ${askSql('m.text')}
-         AND ${tagsKnownIdentitySql('m', 'viewer.id', 'viewer.handle', 'viewer.kind')}
-         AND NOT EXISTS (
-           SELECT 1 FROM messages reply
-           WHERE reply.room_id=m.room_id AND reply.author_id=$2
-             AND reply.presentation='message' AND reply.deleted_at IS NULL
-             AND reply.created_at>m.created_at
-         )
+       WHERE ${QUESTION_WHERE}
        ORDER BY m.created_at DESC,m.id DESC
        LIMIT ${CANDIDATE_LIMIT}`,
       [workspaceId, viewerId],

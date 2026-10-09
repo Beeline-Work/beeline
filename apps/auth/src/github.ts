@@ -613,6 +613,52 @@ export class GitHubAppClient {
     };
   }
 
+  /** A PR's changed files, reviews, inline review comments and conversation comments. */
+  async readPullRequestDiscussion(accessToken: string, fullName: string, number: number) {
+    const list = async (path: string) => {
+      const response = await fetch(
+        `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}?per_page=100`,
+        { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
+      );
+      return jsonArray(response, 'GitHub pull request read');
+    };
+    const [files, reviews, reviewComments, comments] = await Promise.all([
+      list(`pulls/${number}/files`),
+      list(`pulls/${number}/reviews`),
+      list(`pulls/${number}/comments`),
+      list(`issues/${number}/comments`),
+    ]);
+    const text = (value: unknown) => (typeof value === 'string' ? value.slice(0, 2_000) : '');
+    const author = (value: unknown) =>
+      text((value as { login?: unknown } | null | undefined)?.login);
+    return {
+      files: files.map((file) => ({
+        filename: text(file.filename),
+        status: text(file.status),
+        additions: Number(file.additions) || 0,
+        deletions: Number(file.deletions) || 0,
+      })),
+      reviews: reviews.map((review) => ({
+        author: author(review.user),
+        state: text(review.state),
+        body: text(review.body),
+        ...(typeof review.submitted_at === 'string' ? { submittedAt: review.submitted_at } : {}),
+      })),
+      reviewComments: reviewComments.map((comment) => ({
+        author: author(comment.user),
+        path: text(comment.path),
+        ...(typeof comment.line === 'number' ? { line: comment.line } : {}),
+        body: text(comment.body),
+        ...(typeof comment.created_at === 'string' ? { createdAt: comment.created_at } : {}),
+      })),
+      comments: comments.map((comment) => ({
+        author: author(comment.user),
+        body: text(comment.body),
+        ...(typeof comment.created_at === 'string' ? { createdAt: comment.created_at } : {}),
+      })),
+    };
+  }
+
   /** Resolve a branch at GitHub now; push deliveries can arrive out of order. */
   async readBranchHead(accessToken: string, fullName: string, branch: string): Promise<string> {
     const body = await this.readRepositoryJson(
@@ -817,6 +863,36 @@ export class GitHubAppClient {
         if (typeof body.message === 'string') reason = `: ${body.message}`;
       } catch {}
       throw new Error(`GitHub pull request merge failed: HTTP ${response.status}${reason}`);
+    }
+  }
+
+  /** Close one PR without merging; its branch and commits stay on GitHub. */
+  async closePullRequest(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    pullRequestNumber: number,
+  ): Promise<void> {
+    const token = await this.installationToken(installationId, {
+      repositoryIds: [repositoryId],
+      permissions: { pull_requests: 'write' },
+    });
+    const response = await fetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/pulls/${pullRequestNumber}`,
+      {
+        method: 'PATCH',
+        headers: { ...githubHeaders(token.token), 'content-type': 'application/json' },
+        body: JSON.stringify({ state: 'closed' }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!response.ok) {
+      let reason = '';
+      try {
+        const body = (await response.json()) as { message?: unknown };
+        if (typeof body.message === 'string') reason = `: ${body.message}`;
+      } catch {}
+      throw new Error(`GitHub pull request close failed: HTTP ${response.status}${reason}`);
     }
   }
 

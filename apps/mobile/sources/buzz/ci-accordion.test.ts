@@ -83,13 +83,29 @@ describe('Reproduction CI-ACCORDION-1', () => {
       url: failed.systemEvent.object!.url,
     });
   });
+  it('keeps mixed check notes in one card, including legacy API URLs and missing metadata', () => {
+    const suite = check('suite', 'GitHub Actions check suite', 'passed');
+    suite.systemEvent!.object!.url = 'https://api.github.com/repos/acme/repo/check-suites/42';
+    const noUrl = check('no-url', 'COMMIT STATUS', 'passed');
+    noUrl.systemEvent!.object!.url = undefined;
+    const noHead = check('no-head', 'EXTERNAL CI', 'started');
+    noHead.systemEvent!.object!.headSha = undefined;
+    const noName = check('no-name', 'UNNAMED CI', 'started');
+    noName.systemEvent!.object!.text = '';
+    const messages = [check('server'), suite, noUrl, noHead, noName, check('mobile', 'MOBILE SUITE')];
+    const rows = foldPrLifecycleRuns(messages);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].foldedIds).toEqual(messages.map((message) => message.id));
+    expect(rows[0].notificationLifecycleRun?.items).toHaveLength(6);
+    expect(rows[0].notificationLifecycleRun?.items.find((item) => item.updatedBy === 'suite')).toMatchObject({
+      title: 'GitHub Actions check suite',
+      url: `https://github.com/acme/repo/commit/${'a'.repeat(40)}/checks`,
+    });
+  });
   it.each([
     'chat',
     'notice',
     'deleted',
-    'no-head',
-    'no-url',
-    'no-name',
     'non-github',
     'other-verb',
     'reports',
@@ -107,21 +123,6 @@ describe('Reproduction CI-ACCORDION-1', () => {
         verb: 'saved a brief',
       };
     if (kind === 'deleted') boundary.deleted = true;
-    if (kind === 'no-head')
-      boundary.systemEvent = {
-        ...boundary.systemEvent!,
-        object: { ...boundary.systemEvent!.object!, headSha: undefined },
-      };
-    if (kind === 'no-url')
-      boundary.systemEvent = {
-        ...boundary.systemEvent!,
-        object: { ...boundary.systemEvent!.object!, url: undefined },
-      };
-    if (kind === 'no-name')
-      boundary.systemEvent = {
-        ...boundary.systemEvent!,
-        object: { ...boundary.systemEvent!.object!, text: '' },
-      };
     if (kind === 'non-github')
       boundary.systemEvent = {
         ...boundary.systemEvent!,

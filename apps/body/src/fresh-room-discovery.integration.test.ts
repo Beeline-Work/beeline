@@ -747,17 +747,11 @@ describe('fresh Room discovery through the live membership wake', () => {
       `UPDATE rooms SET repository_resolution='unverified',repository_updated_at=now() WHERE id=$1`,
       [ROOM],
     );
-    // A binding change can restart the Room's loop: the outgoing loop may read
-    // its commands just before it stops, and the replacement reads them again
-    // once it serves. The refresh is done when a loop serves the Room again,
-    // not at the instant of the first read, which can fall in that gap.
-    await vi.waitFor(
-      () => {
-        expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0);
-        expect(core.activeRoomIds()).toContain(ROOM);
-      },
-      { timeout: 10_000 },
-    );
+    await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0),
+      { timeout: 10_000 });
+    // The refresh restarts the Room, so it can be briefly absent from the
+    // active set right after the command read.
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 10_000 });
   });
 
   it('refreshes a running Room when its GitHub installation changes over the socket', async () => {

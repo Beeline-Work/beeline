@@ -23,12 +23,13 @@ for (const theme of ['obsidian', 'bone'])
           shims['./HullActionSheet'] =
             'export const HullActionSheetModal = () => null; export const HullActionSheetRow = () => null; export const HULL_SHEET_INSET = 22;';
           const reproduce = process.env.CI_ACCORDION_REPRODUCE === '1';
+          const mixed = process.env.CI_ACCORDION_MIXED === '1';
           const proof = await runBrowserProof({
             entry: path.join(mobile, 'scripts/ci-accordion-proof.tsx'),
             mobile,
             shims,
             width,
-            query: `?${theme}${reduced ? '&reduced' : ''}${reproduce ? '&reproduce' : ''}`,
+            query: `?${theme}${reduced ? '&reduced' : ''}${reproduce ? '&reproduce' : ''}${mixed ? '&mixed' : ''}`,
             screenshotPath: process.env.CI_ACCORDION_SCREENSHOT_DIR
               ? path.join(
                   process.env.CI_ACCORDION_SCREENSHOT_DIR,
@@ -39,7 +40,7 @@ for (const theme of ['obsidian', 'bone'])
           console.log(proof.result);
           expect(proof.status, proof.stderr).toBe(0);
           expect(proof.result, proof.stderr).toContain(
-            reproduce ? 'Reproduction CI-ACCORDION-1' : 'PASS CI-ACCORDION-1',
+            mixed ? 'Mixed CI checks:' : reproduce ? 'Reproduction CI-ACCORDION-1' : 'PASS CI-ACCORDION-1',
           );
         },
         90_000,

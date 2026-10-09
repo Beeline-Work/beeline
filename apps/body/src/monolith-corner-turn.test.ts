@@ -470,7 +470,6 @@ describe('corner merge instructions', () => {
     expect(agentServer?.env).toEqual(
       expect.arrayContaining([
         { name: 'BEELINE_DAEMON_CORNER_ID', value: 'corner-id' },
-        { name: 'BEELINE_CORNER_AGENT_CLOSE', value: '1' },
         { name: 'BEELINE_CORNER_REVIEWER', value: '1' },
         { name: 'BEELINE_CORNER_REPOSITORY', value: '1' },
       ]),
@@ -483,7 +482,6 @@ describe('corner merge instructions', () => {
         Boolean(agentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
         agentEnvironment.get('BEELINE_CORNER_REPOSITORY') === '1',
         Boolean(agentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
-        agentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
       ).map((tool) => tool.name),
     ).toContain('approve_merge');
     const activeInstruction = () =>
@@ -3289,6 +3287,8 @@ describe('thin monolith corner turn', () => {
               { name: 'npm_config_cache', value: sharedNpmCacheDir(root) },
               { name: 'PNPM_CONFIG_STORE_DIR', value: sharedPnpmStoreDir(root) },
               { name: 'CARGO_TARGET_DIR', value: sharedCargoTargetDir(root) },
+              { name: 'HF_HOME', value: join(root, 'beeline', 'model-cache') },
+              { name: 'HUGGINGFACE_HUB_CACHE', value: join(root, 'beeline', 'model-cache', 'hub') },
             ],
           }),
           expect.objectContaining({ name: 'beeline-agent' }),
@@ -3320,7 +3320,6 @@ describe('thin monolith corner turn', () => {
         Boolean(codeAgentEnvironment.get('BEELINE_DAEMON_CORNER_ID')),
         codeAgentEnvironment.get('BEELINE_CORNER_REPOSITORY') === '1',
         Boolean(codeAgentEnvironment.get('BEELINE_GRANT_RUNNER_URL')),
-        codeAgentEnvironment.get('BEELINE_CORNER_AGENT_CLOSE') === '1',
         false,
       ).map((tool) => tool.name),
     ).toContain('approve_merge');

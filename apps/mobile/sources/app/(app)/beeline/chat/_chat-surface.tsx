@@ -92,7 +92,7 @@ import {
 import { pushOpenBuzzChannelId, releaseOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { dismissPresentedNotificationsForChannel } from '@/push/presented-notifications';
 import { afterInteractions } from '@/buzz/defer-interaction';
-import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
+import { cancelScheduledAnimationFrame, scheduleAnimationFrame } from '@/buzz/host-scheduler';
 import {
   activeChannelAtCursor,
   channelSuggestionCandidates,
@@ -2559,6 +2559,26 @@ export function BuzzChatSurface({
     threshold: TAIL_PIN_THRESHOLD,
     fill: fillShortTranscript,
   });
+  // A page that folds into rows already shown changes no height, so no size
+  // report reopens the detached fill. Two frames after the window's rows
+  // change, the list has reported any new height; without one, the height it
+  // holds is current, so the fill checks it again.
+  const observeUnderfillContentHeight = phoneUnderfill.observeContentHeight;
+  useEffect(() => {
+    if (desktopTranscript || !anchoredSegmentActive || detachedFillMeasuredRef.current) return;
+    let second: number | false = false;
+    const first = scheduleAnimationFrame(() => {
+      second = scheduleAnimationFrame(() => {
+        if (detachedFillMeasuredRef.current || phoneContentHeightRef.current <= 0) return;
+        detachedFillMeasuredRef.current = true;
+        observeUnderfillContentHeight(phoneContentHeightRef.current);
+      });
+    });
+    return () => {
+      if (first !== false) cancelScheduledAnimationFrame(first);
+      if (second !== false) cancelScheduledAnimationFrame(second);
+    };
+  }, [anchoredSegmentActive, desktopTranscript, observeUnderfillContentHeight, transcriptMessages]);
   // The read cursor ranks rows by index to decide which is newest, so it reads
   // the chronological order for the same reason the jump control does: on the
   // phone `transcriptMessages` IS the reversed list, and ranking that array

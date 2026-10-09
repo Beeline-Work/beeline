@@ -4,7 +4,7 @@ import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const layout = vi.hoisted(() => ({ os: 'web', width: 1200 }));
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
@@ -569,7 +569,7 @@ describe('Tray Needs you', () => {
     return phoneOperation.mock.calls.filter(([name]) => name === 'clearNeedsYou');
   }
 
-  it('shows Questions then Saved, each question cell its asker, sentence and source', async () => {
+  it('shows Needs you then Saved, each question cell its asker, sentence and source', async () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_300_000);
     serve({
       needs: [need(), need({ messageId: 'ask-2', roomKind: 'corner', roomName: 'signing' })],
@@ -585,7 +585,7 @@ describe('Tray Needs you', () => {
         .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index)
         .filter((id: string) => !/^needs-you-(text|head|age)-/.test(id));
       expect(order).toEqual([
-        'tray-section-questions',
+        'tray-section-needs',
         'needs-you-ask-1',
         'needs-you-ask-2',
         'tray-section-saved',
@@ -601,7 +601,7 @@ describe('Tray Needs you', () => {
     }
   });
 
-  it('lists approvals as text rows before questions, and opening one leaves it in the tray', async () => {
+  it('lists approvals before questions in one Needs you section, and opening one leaves it in the tray', async () => {
     layout.os = 'ios';
     layout.width = 390;
     const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000 + 2 * 86_400_000);
@@ -633,11 +633,12 @@ describe('Tray Needs you', () => {
         .findAll((node: any) => /^tray-section-/.test(String(node.props.testID ?? '')))
         .map((node: any) => node.props.testID)
         .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index);
-      expect(sections).toEqual([
-        'tray-section-approvals',
-        'tray-section-questions',
-        'tray-section-saved',
-      ]);
+      expect(sections).toEqual(['tray-section-needs', 'tray-section-saved']);
+      const cells = tree.root
+        .findAll((node: any) => /^needs-you-(grant|ask)-1$/.test(String(node.props.testID ?? '')))
+        .map((node: any) => node.props.testID)
+        .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index);
+      expect(cells).toEqual(['needs-you-grant-1', 'needs-you-ask-1']);
       const head = tree.root.findByProps({ testID: 'needs-you-head-grant-1' });
       const [actor, ask] = head.props.children;
       expect(actor.props.children).toBe('BBC');
@@ -784,6 +785,198 @@ describe('Tray Needs you', () => {
   });
 });
 
+describe('Tray section CLEAR', () => {
+  const approval = () =>
+    need({
+      messageId: 'grant-1',
+      approval: { kind: 'grant', actor: 'BBC', ask: 'asks to run', subject: 'git push' },
+    });
+  const calls = (name: string) => phoneOperation.mock.calls.filter(([called]) => called === name);
+  const ids = (tree: ReactTestRenderer, pattern: RegExp) =>
+    tree.root
+      .findAll((node: any) => pattern.test(String(node.props.testID ?? '')))
+      .map((node: any) => node.props.testID)
+      .filter((id: string, index: number, all: string[]) => all.indexOf(id) === index);
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it.each([
+    { surface: 'desktop', os: 'web', width: 1200 },
+    { surface: 'mobile', os: 'ios', width: 390 },
+  ])('clears every question on $surface, keeps approvals, and sends after the Undo window', async ({ os, width }) => {
+    layout.os = os;
+    layout.width = width;
+    serve({ needs: [approval(), need(), need({ messageId: 'ask-2' })] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    expect(ids(tree, /^needs-you-(grant|ask)-\d$/)).toEqual(['needs-you-grant-1']);
+    expect(textOf(tree)).toContain('Cleared 2 items');
+    expect(calls('clearNeedsYou')).toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(calls('clearNeedsYou').map(([, input]) => input.messageId)).toEqual(['ask-1', 'ask-2']);
+    expect(tree.root.findAllByProps({ testID: 'tray-clear-undo' })).toHaveLength(0);
+    // Only an approval is left, and a decision clears that.
+    expect(tree.root.findAllByProps({ testID: 'tray-clear-needs' })).toHaveLength(0);
+  });
+
+  it('UNDO brings every bookmark back and sends nothing', async () => {
+    serve({ bookmarks: [bookmark(), bookmark({ messageId: 'msg-2' })] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
+    expect(ids(tree, /^bookmark-msg-\d$/)).toEqual([]);
+    expect(tree.root.findByProps({ testID: 'bookmarks-empty' })).toBeDefined();
+    const undo = tree.root.findByProps({ testID: 'tray-clear-undo' });
+    expect(textOf(tree)).toContain('Cleared 2 bookmarks');
+    await act(async () => undo.findByProps({ accessibilityRole: 'button' }).props.onPress());
+    await act(async () => {
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(ids(tree, /^bookmark-msg-\d$/)).toEqual(['bookmark-msg-1', 'bookmark-msg-2']);
+    expect(calls('setMessageBookmark')).toEqual([]);
+  });
+
+  it('puts back a bookmark the server refuses to clear', async () => {
+    serve({ bookmarks: [bookmark(), bookmark({ messageId: 'msg-2' })] });
+    const tree = await renderTray();
+    phoneOperation.mockImplementation(async (name: string, input: any) => {
+      if (name === 'setMessageBookmark' && input.messageId === 'msg-2')
+        throw new Error('bookmark is locked');
+      return undefined;
+    });
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
+    await act(async () => {
+      vi.advanceTimersByTime(6_000);
+    });
+    await act(async () => undefined);
+    expect(calls('setMessageBookmark')).toHaveLength(2);
+    expect(ids(tree, /^bookmark-msg-\d$/)).toEqual(['bookmark-msg-2']);
+    expect(textOf(tree)).toContain('bookmark is locked');
+  });
+
+  it('Reproduction TRAY-UNDO-1: a second CLEAR keeps the first clear undoable for its full window', async () => {
+    serve({ needs: [need()], bookmarks: [bookmark()] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
+    expect(calls('clearNeedsYou')).toEqual([]);
+    expect(textOf(tree)).toContain('Cleared 1 bookmark');
+    // UNDO takes back the newest clear; the older one, still in its window, shows next.
+    await act(async () =>
+      tree.root
+        .findByProps({ testID: 'tray-clear-undo' })
+        .findByProps({ accessibilityRole: 'button' })
+        .props.onPress(),
+    );
+    expect(textOf(tree)).toContain('Cleared 1 item');
+    await act(async () =>
+      tree.root
+        .findByProps({ testID: 'tray-clear-undo' })
+        .findByProps({ accessibilityRole: 'button' })
+        .props.onPress(),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(ids(tree, /^(needs-you-ask|bookmark-msg)-\d$/)).toEqual(['needs-you-ask-1', 'bookmark-msg-1']);
+    expect(calls('clearNeedsYou')).toEqual([]);
+    expect(calls('setMessageBookmark')).toEqual([]);
+  });
+
+  it('sends each held clear when its own six seconds end', async () => {
+    serve({ needs: [need()], bookmarks: [bookmark()] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
+    await act(async () => {
+      vi.advanceTimersByTime(4_999);
+    });
+    expect(calls('clearNeedsYou')).toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(calls('clearNeedsYou')).toHaveLength(1);
+    expect(calls('setMessageBookmark')).toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(calls('setMessageBookmark')).toHaveLength(1);
+  });
+
+  it('REMOVE during the Undo window does not send the held clear', async () => {
+    layout.os = 'android';
+    layout.width = 390;
+    serve({ needs: [need()], bookmarks: [bookmark({ messageId: 'gone', available: false, text: undefined })] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    await act(async () => {
+      await tree.root.findByProps({ accessibilityLabel: 'Remove unavailable bookmark' }).props.onPress();
+    });
+    expect(calls('clearNeedsYou')).toEqual([]);
+    await act(async () => {
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(calls('clearNeedsYou')).toHaveLength(1);
+  });
+
+  it('Reproduction TRAY-UNDO-REMOVE-1: bulk UNDO stays on screen after a REMOVE', async () => {
+    layout.os = 'android';
+    layout.width = 390;
+    serve({ needs: [need()], bookmarks: [bookmark({ messageId: 'gone', available: false, text: undefined })] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    await act(async () => {
+      await tree.root.findByProps({ accessibilityLabel: 'Remove unavailable bookmark' }).props.onPress();
+    });
+    expect(ids(tree, /^(bookmark|tray-clear)-undo$/)).toEqual(['bookmark-undo', 'tray-clear-undo']);
+    const undo = tree.root.findByProps({ testID: 'tray-clear-undo' });
+    expect(textOf(tree)).toContain('Cleared 1 item');
+    const bottom = (node: any) => Object.assign({}, ...[node.props.style].flat(Infinity as 1)).bottom;
+    expect(bottom(undo)).toBeGreaterThan(bottom(tree.root.findByProps({ testID: 'bookmark-undo' })));
+    await act(async () => {
+      vi.advanceTimersByTime(4_000);
+    });
+    await act(async () => undo.findByProps({ accessibilityRole: 'button' }).props.onPress());
+    await act(async () => {
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(ids(tree, /^needs-you-ask-\d$/)).toEqual(['needs-you-ask-1']);
+    expect(calls('clearNeedsYou')).toEqual([]);
+  });
+
+  it('keeps the desktop Undo bar inside the list column', async () => {
+    layout.os = 'web';
+    layout.width = 1200;
+    serve({ bookmarks: [bookmark()] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
+    const undo = tree.root.findByProps({ testID: 'tray-clear-undo' });
+    const style = Object.assign({}, ...[undo.props.style].flat(Infinity as 1));
+    expect(style.left + style.maxWidth).toBeLessThanOrEqual(390 - 16);
+  });
+
+  it('sends a held clear when the Tray closes', async () => {
+    serve({ needs: [need()] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    await act(async () => tree.unmount());
+    expect(calls('clearNeedsYou')).toHaveLength(1);
+  });
+});
+
 it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN → in a compact Tray', async () => {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
@@ -812,3 +1005,46 @@ it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN �
   expect(result).toContain('OPEN →');
   console.log('R12a Demonstrated, Chrome 760px:', result);
 }, 90_000);
+
+it.skipIf(!existsSync(CHROME)).each([
+  { section: 'needs', surface: 'phone', width: 390 },
+  { section: 'saved', surface: 'phone', width: 390 },
+  { section: 'saved', surface: 'desktop', width: 1200 },
+  { section: 'needs', surface: 'phone', width: 390, remove: true },
+])(
+  'Demonstrated: Chrome $surface CLEAR on $section empties the section, keeps approvals, and offers Undo',
+  async ({ section, surface, width, remove }) => {
+    const mobile = process.cwd();
+    const { result, status, stderr } = await runBrowserProof({
+      entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'), mobile, width, budgetMs: 3000,
+      query: `?surface=${surface}&mode=clear&clear=${section}${remove ? '&remove=1' : ''}`,
+      shims: {
+        ...webProofShims(mobile),
+        'expo-router': `import React from 'react';
+          export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
+          export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });
+          export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
+        '@/sync/transport/monolith-operation': `const now = Math.floor(Date.now() / 1000);
+          const base = { workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'launch', roomKind: 'room', createdAt: now - 600, author: { name: 'Avery' } };
+          export const monolithPhoneOperation = async (name) => name === 'readNeedsYou' ? { items: [
+            { ...base, messageId: 'grant-1', text: 'BBC asks to run git push', approval: { kind: 'grant', actor: 'BBC', ask: 'asks to run', subject: 'git push', literal: true } },
+            { ...base, messageId: 'ask-1', text: 'can you confirm the review note?', expiresAt: now + 80000 },
+          ] } : name === 'listMessageBookmarks' ? { bookmarks: [{
+            messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'Room', roomKind: 'room',
+            messageCreatedAt: now - 7200, bookmarkedAt: now - 120, available: !location.search.includes('remove=1'), author: { name: 'Avery' }, text: 'Bookmarked line'
+          }] } : undefined;`,
+        '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
+        '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
+        '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
+        '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
+        'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
+        '@expo/vector-icons': "import React from 'react'; export const Ionicons = () => React.createElement('span');",
+      },
+    });
+    expect(status, stderr).toBe(0);
+    expect(result).toContain('PASS');
+    expect(result).toContain(section === 'needs' ? 'Cleared 1 item' : 'Cleared 1 bookmark');
+    console.log(`Demonstrated, Chrome ${width}px, CLEAR ${section}${remove ? ' then REMOVE' : ''}:`, result);
+  },
+  90_000,
+);

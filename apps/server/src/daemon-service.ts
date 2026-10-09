@@ -144,9 +144,11 @@ import type {
 } from '@beeline/api-contract/workbench';
 import {
   CONNECTOR_OFFER_REASON_MAX_LENGTH,
+  CONNECTOR_OFFER_SWITCH_KIND,
   connectorOfferConsequence,
   connectorPurpose,
   isOfferableConnectorKind,
+  squireAccountSwitchConsequence,
   squireLoginWallConsequence,
   type ConnectorOfferCardView,
 } from '@beeline/api-contract/connector-offers';
@@ -6950,6 +6952,13 @@ export class DaemonService {
    * addressee already has, or that ANOTHER agent already offered here, is a
    * refusal the agent can restate — a second agent could never be woken by
    * the first agent's card, so it must not wait on it.
+   *
+   * `intent: 'switch'` is the inverse ask on the same chassis: the addressee
+   * ALREADY has Trusty Squire connected on this machine, and the card asks
+   * them to sign in to Google again with a different account. Accepting
+   * re-arms that connector with `force_relogin_provider='google'`
+   * (`acceptConnectorOffer`), so Squire's connect opens its sign-in page even
+   * while the bound session is still valid.
    */
   private async offerConnector(
     input: Input<'offerConnector'>,
@@ -6966,14 +6975,36 @@ export class DaemonService {
     if (reason.length > CONNECTOR_OFFER_REASON_MAX_LENGTH)
       throw new Error('offer reason is invalid: too long');
     const connectorType: ConnectorKind = input.connectorType;
+    if (input.intent !== undefined && input.intent !== 'switch')
+      throw new Error(`offer intent is invalid: ${String(input.intent)}`);
+    const switching = input.intent === 'switch';
+    if (switching && connectorType !== CONNECTOR_OFFER_SWITCH_KIND)
+      throw new Error(
+        `connector offer is invalid: only ${connectorDisplayName(CONNECTOR_OFFER_SWITCH_KIND)}'s account can be switched`,
+      );
+    const intent = switching ? 'switch' : 'add';
+    const provider = switching ? 'google' : undefined;
     const context = await this.offerContext(input.roomId, agentId);
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
     const connectorName = connectorDisplayName(connectorType);
+    if (switching) {
+      const bound = await this.database.query(
+        `SELECT 1 FROM workspace_connectors
+         WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type=$3
+           AND machine_id=$4 AND status='connected'`,
+        [context.workspaceId, context.addressee.pubkey, connectorType, context.machine.machineId],
+      );
+      if (!bound.rowCount)
+        throw new Error(
+          `connector offer is invalid: ${context.addressee.name} has no connected ${connectorName} on this machine to switch; check workbench_status`,
+        );
+    }
     // The wallet has no connector row: it is connected while its owner's
     // grant to sign is active.
-    const already =
-      connectorType === 'wallet'
+    const already = switching
+      ? undefined
+      : connectorType === 'wallet'
         ? (await delegationView(this.database, context.addressee.pubkey)).active
           ? { status: 'connected' }
           : undefined
@@ -6997,13 +7028,22 @@ export class DaemonService {
         `connector-offer:${input.roomId}:${connectorType}`,
       ]);
       const open = (
-        await database.query<{ id: string; agent_id: string; message_id: string | null }>(
-          `SELECT id,agent_id,message_id FROM connector_offers
+        await database.query<{
+          id: string;
+          agent_id: string;
+          message_id: string | null;
+          intent: string;
+        }>(
+          `SELECT id,agent_id,message_id,intent FROM connector_offers
            WHERE room_id=$1 AND connector_type=$2 AND status='pending'
            ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
           [input.roomId, connectorType],
         )
       ).rows[0];
+      if (open && open.intent !== intent)
+        throw new Error(
+          `connector offer conflict: another ${connectorName} card is already open here; let that card be answered`,
+        );
       if (open && open.agent_id === agentId && open.message_id)
         return { offerId: open.id, messageId: open.message_id, joined: true };
       if (open && open.agent_id !== agentId) {
@@ -7021,8 +7061,9 @@ export class DaemonService {
       const created = (
         await database.query<{ created_at: Date }>(
           `INSERT INTO connector_offers(
-             id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id
-           ) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING created_at`,
+             id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,
+             intent,provider
+           ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING created_at`,
           [
             offerId,
             agentId,
@@ -7032,6 +7073,8 @@ export class DaemonService {
             connectorType,
             reason,
             context.machine.machineId,
+            intent,
+            provider ?? null,
           ],
         )
       ).rows[0]!;
@@ -7042,25 +7085,29 @@ export class DaemonService {
         connectorType,
         connectorName,
         reason,
-        consequence: connectorOfferConsequence(connectorType, reason),
+        consequence: switching
+          ? squireAccountSwitchConsequence(reason)
+          : connectorOfferConsequence(connectorType, reason),
         helper: context.machine,
         status: 'pending',
         createdAt: seconds(created.created_at),
+        ...(switching ? { intent: 'switch' as const, provider } : {}),
       };
       // The addressee is reached by the card itself in the Room — a card is
       // outside `background.ts`'s push ceiling — not by a wake: this line has
       // no kind, so it starts no turn.
+      const addresseeMention = systemIdentityMention({
+        id: context.addressee.pubkey,
+        kind: 'human',
+        name: context.addressee.name,
+        handle: context.addressee.handle ?? null,
+      });
       await systemLine(database, {
         id: messageId,
         roomId: input.roomId,
         subject: { kind: 'agent', id: agentId, name: context.agent.name },
-        verb: `offered ${systemIdentityMention({
-          id: context.addressee.pubkey,
-          kind: 'human',
-          name: context.addressee.name,
-          handle: context.addressee.handle ?? null,
-        })}`,
-        object: connectorName,
+        verb: switching ? `asked ${addresseeMention} to switch` : `offered ${addresseeMention}`,
+        object: switching ? `${connectorName}'s Google account` : connectorName,
         consequence: reason,
         presentation: 'card',
         cardType: 'connector-offer',

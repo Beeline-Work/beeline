@@ -18,6 +18,13 @@
 import type { RoomViewIdentity } from './phone-types.js';
 import { CONNECTABLE_CONNECTOR_KINDS, type ConnectorKind } from './workbench.js';
 
+const CONNECTOR_OFFER_INTENTS = ['add', 'reconnect', 'switch'] as const;
+export type ConnectorOfferIntent = (typeof CONNECTOR_OFFER_INTENTS)[number];
+
+export function isConnectorOfferIntent(value: unknown): value is ConnectorOfferIntent {
+  return (CONNECTOR_OFFER_INTENTS as readonly string[]).includes(value as string);
+}
+
 export const CONNECTOR_OFFER_STATUSES = ['pending', 'connecting', 'accepted'] as const;
 export type ConnectorOfferStatus = (typeof CONNECTOR_OFFER_STATUSES)[number];
 
@@ -92,6 +99,21 @@ export function squireLoginWallConsequence(provider?: string): string {
     : `A task hit a stuck sign-in in Trusty Squire's shared browser. Sign in again to let it continue.`;
 }
 
+/** The one connector whose bound account an agent may offer to switch. */
+export const CONNECTOR_OFFER_SWITCH_KIND: ConnectorKind = 'trusty-squire';
+
+/**
+ * The card's one line for a `'switch'` offer: the person signs in to Google
+ * again with the account Trusty Squire should use, replacing the one bound
+ * now. Server-owned; the agent's reason is the closing "Then I can …".
+ */
+export function squireAccountSwitchConsequence(reason?: string): string {
+  const clause = reason?.trim().replace(/[.]+$/u, '');
+  const line =
+    "You'll sign in to Google again, with the account Trusty Squire should use. The account signed in now is replaced for every task on this machine.";
+  return clause ? `${line} Then I can ${clause}` : line;
+}
+
 function connectorOfferBoundary(kind: ConnectorKind): string {
   switch (kind) {
     case 'trusty-squire':
@@ -162,7 +184,11 @@ export function connectorOfferActionLabel(connectorName: string): string {
  * `'google'`). A `'reconnect'` card's existing `connectorId` is what already
  * drives the phone's "Continue sign-in" ceremony screen — the same in-app
  * browser / noVNC overlay an `'add'` offer opens after acceptance, reading
- * Squire's live sign-in page off the connector row it polls.
+ * Squire's live sign-in page off the connector row it polls. `'switch'`
+ * asks the person to replace the Google account an already-connected Trusty
+ * Squire is bound to: accepting re-arms that connector with Squire's own
+ * `--force-relogin=<provider>`, so the sign-in opens even while the current
+ * session is still valid.
  */
 export type ConnectorOfferCardView = {
   readonly offerId: string;
@@ -181,8 +207,8 @@ export type ConnectorOfferCardView = {
   /** The Workbench connector row the acceptance created, for the settled card's link. */
   readonly connectorId?: string;
   /** `'add'` when omitted — every offer before this field existed. */
-  readonly intent?: 'add' | 'reconnect';
-  /** The provider a `'reconnect'` offer is refreshing, e.g. `'google'`. */
+  readonly intent?: ConnectorOfferIntent;
+  /** The provider a `'reconnect'` or `'switch'` offer signs in again, e.g. `'google'`. */
   readonly provider?: string;
 };
 

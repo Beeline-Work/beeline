@@ -135,6 +135,8 @@ export async function runBrowserProof(options: {
   query?: string;
   budgetMs?: number;
   screenshotPath?: string;
+  /** Extra markup for the page head, e.g. the app's @font-face rules. */
+  head?: string;
 }): Promise<{ result: string; status: number | null; stderr: string }> {
   const { entry, mobile, shims, width, height = 900, query = '' } = options;
   const directory = await mkdtemp(path.join(tmpdir(), 'browser-proof-'));
@@ -186,7 +188,7 @@ export async function runBrowserProof(options: {
     const html = path.join(directory, 'index.html');
     await writeFile(
       html,
-      `<!doctype html><meta charset="utf-8"><style>html,body{margin:0}</style>
+      `<!doctype html><meta charset="utf-8"><style>html,body{margin:0}</style>${options.head ?? ''}
 <div id="root"></div><pre id="result">PENDING</pre>
 <script>window.__console=[];for(const level of ['error','warn']){const base=console[level].bind(console);console[level]=(...a)=>{window.__console.push(level+': '+a.map(String).join(' '));base(...a);};}</script>
 <script src="bundle.js"></script>`,

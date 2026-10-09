@@ -809,9 +809,11 @@ jobs:
       (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
       (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success'))
     runs-on: [self-hosted, beeline-prod-host]
-    # Fourteen runtime targets took 12m10s in v0.0.128; allow the ledger and
-    # artifact uploads to finish after EAS has already changed production.
-    timeout-minutes: 15
+    # Six runtime targets (each pin plus the two latest shipped runtimes) and
+    # one bundle per platform. Seventeen per-target bundles hit the old
+    # 15-minute cap; the extra minutes are margin for the ledger and artifact
+    # uploads after EAS has already changed production, not room to grow.
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
         with:

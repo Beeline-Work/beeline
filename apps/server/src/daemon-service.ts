@@ -4194,6 +4194,8 @@ export class DaemonService {
              ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
                status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,
                failure_reason=EXCLUDED.failure_reason,created_at=now(),
+               started_at=CASE WHEN EXCLUDED.status='working' AND agent_turns.status<>'working'
+                 THEN now() ELSE agent_turns.started_at END,
                tool_calls=COALESCE(EXCLUDED.tool_calls,agent_turns.tool_calls)
              WHERE agent_turns.status<>'cancelled'
              RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id

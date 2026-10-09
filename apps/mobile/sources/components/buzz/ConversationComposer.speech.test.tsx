@@ -26,6 +26,15 @@ vi.mock('react-native', () => {
     ScrollView: host('ScrollView'),
     View: host('View'),
     Linking: { openSettings: vi.fn() },
+    Keyboard: { isVisible: () => true, addListener: () => ({ remove() {} }), dismiss() {} },
+    Animated: {
+      View: host('View'),
+      Value: class {
+        constructor(readonly value: number) {}
+      },
+      timing: () => ({ start() {}, stop() {} }),
+    },
+    Easing: { linear: (t: number) => t },
     Platform: {
       get OS() {
         return platformSetter.getOS();
@@ -146,7 +155,25 @@ function fireEvent(eventName: string, data?: any) {
 
 const renderers: any[] = [];
 
-/** Every string the composer renders, read from `.props.children`. */
+/** The native input host, which holds the whole text as spans. */
+function inputHost(root: any) {
+  return root.findAll(
+    (node: any) => node.props.testID === 'chat-input' && typeof node.type === 'string',
+  )[0];
+}
+
+/** The text a native input holds: its tag spans, then the typed text. */
+function inputText(root: any): string {
+  return inputHost(root)
+    .findAll((node: any) => node.type === 'Text')
+    .map((node: any) => node.props.children)
+    .join('');
+}
+
+/**
+ * Every string the composer shows, read from `.props.children`. The input's
+ * own spans do not count: under the waveform it is hidden.
+ */
 function renderedText(renderer: any): string {
   const parts: string[] = [];
   const collect = (node: any) => {
@@ -155,7 +182,10 @@ function renderedText(renderer: any): string {
     if (typeof node === 'object') return;
     parts.push(String(node));
   };
-  for (const text of renderer.root.findAllByType('Text')) collect(text.props.children);
+  const inInput = new Set(inputHost(renderer.root).findAll((node: any) => node.type === 'Text'));
+  for (const text of renderer.root.findAllByType('Text')) {
+    if (!inInput.has(text)) collect(text.props.children);
+  }
   return parts.join(' ');
 }
 
@@ -296,7 +326,7 @@ describe('listening flow', () => {
     expect(renderedText(renderer)).not.toContain('recognized words');
     const input = renderer.root.findByProps({ testID: 'chat-input' });
     // The typed draft stays in the hidden input and returns after the take.
-    expect(input.props.value).toBe('draft words');
+    expect(inputText(renderer.root)).toBe('draft words');
     expect(input.props.style.flat(Infinity)).toEqual(
       expect.arrayContaining([expect.objectContaining({ opacity: 0 })]),
     );
@@ -344,7 +374,8 @@ describe('listening flow', () => {
       const heights = waveform.children.map(
         (bar: any) => bar.props.style.flat(Infinity).find((style: any) => style?.height).height,
       );
-      expect(heights).toEqual([2, 18]);
+      // Each bar is added a sample before it glides into view.
+      expect(heights).toEqual([2, 2, 18]);
     } finally {
       vi.useRealTimers();
     }
@@ -440,12 +471,12 @@ describe('listening flow', () => {
     await act(async () => {
       fireEvent('result', { results: [{ transcript: 'hello world' }], isFinal: false });
     });
-    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
+    expect(inputText(renderer.root)).toBe('');
 
     await act(async () => {
       fireEvent('result', { results: [{ transcript: 'hello world' }], isFinal: true });
     });
-    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('hello world');
+    expect(inputText(renderer.root)).toBe('hello world');
   });
 
   it('auto-stops after silence timeout', async () => {
@@ -504,7 +535,7 @@ describe('listening flow', () => {
       fireEvent('end');
     });
 
-    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('Sally sell');
+    expect(inputText(renderer.root)).toBe('Sally sell');
     expect(renderer.root.findAllByProps({ testID: 'chat-speech-status' })).toHaveLength(0);
     vi.useRealTimers();
   });
@@ -660,7 +691,7 @@ describe('send and mic state', () => {
 
     expect(sentText).toHaveBeenCalledOnce();
     expect(sentText).toHaveBeenCalledWith('Sally sells seashells by the seashore');
-    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
+    expect(inputText(renderer.root)).toBe('');
     expect(renderer.root.findAllByProps({ testID: 'chat-speech-finalizing' })).toHaveLength(0);
   });
 
@@ -698,12 +729,12 @@ describe('send and mic state', () => {
     await act(async () => {
       fireEvent('result', { results: [{ transcript: 'already final' }], isFinal: true });
     });
-    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('already final');
+    expect(inputText(renderer.root)).toBe('already final');
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => fireEvent('end'));
 
     expect(onSend).toHaveBeenCalledOnce();
-    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
+    expect(inputText(renderer.root)).toBe('');
   });
 
   it('an empty mic press only stops and does not send', async () => {
@@ -736,7 +767,7 @@ describe('stop button', () => {
     expect(onSend).not.toHaveBeenCalled();
     expect(renderer.root.findAllByProps({ testID: 'chat-speech-waveform' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'chat-attach-button' })).toBeTruthy();
-    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('typed ');
+    expect(inputText(renderer.root)).toBe('typed ');
   });
 
   it('discards a take while it is being transcribed, so the mic press sends nothing', async () => {
@@ -847,7 +878,7 @@ describe('stop button while a dictated message is sent', () => {
     await act(async () => root.findByProps({ testID: 'chat-speech-discard' }).props.onPress());
 
     expect(sends[0].dictated.cancelled).toBe(true);
-    expect(root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
+    expect(inputText(root)).toBe('@ruby ');
     expect(root.findAllByProps({ testID: 'chat-tag-ruby' }).length).toBeGreaterThan(0);
     expect(root.findAllByProps({ testID: 'chat-speech-finalizing' })).toHaveLength(0);
     expect(root.findByProps({ testID: 'chat-attach-button' })).toBeTruthy();
@@ -866,7 +897,7 @@ describe('stop button while a dictated message is sent', () => {
 
     const root = renderer().root;
     expect(sends).toHaveLength(0);
-    expect(root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
+    expect(inputText(root)).toBe('@ruby ');
     expect(root.findAllByProps({ testID: 'chat-tag-ruby' }).length).toBeGreaterThan(0);
   });
 
@@ -890,105 +921,90 @@ describe('stop button while a dictated message is sent', () => {
 describe('recipient chips', () => {
   const tagHandles = new Set(['ruby', 'sol']);
 
-  it('shows a leading agent tag as a chip; the field reads empty and keeps the mic', () => {
+  it('shows a leading agent tag as a tinted word of the text, and keeps the mic', () => {
     const { renderer } = render({ value: '@ruby ', tagHandles });
-    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('');
-    expect(renderer.root.findAllByProps({ testID: 'chat-tag-ruby' }).length).toBeGreaterThan(0);
-    expect(
-      renderer.root.findByProps({ testID: 'chat-tag-ruby-edit' }).props.accessibilityLabel,
-    ).toBe('Edit tags, @ruby');
-    expect(
-      renderer.root.findByProps({ testID: 'chat-tag-ruby-remove' }).props.accessibilityLabel,
-    ).toBe('Remove @ruby');
+    expect(inputText(renderer.root)).toBe('@ruby ');
+    const tag = renderer.root.findAll(
+      (node: any) => node.props.testID === 'chat-tag-ruby' && typeof node.type === 'string',
+    );
+    expect(tag).toHaveLength(1);
+    expect(tag[0].props.children).toBe('@ruby');
     expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
     expect(renderer.root.findAllByProps({ testID: 'chat-send' })).toHaveLength(0);
   });
 
-  it('gives each chip 44 pt targets like ＋ and the mic, and scrolls many chips beside the mic', () => {
-    const many = new Set(['ruby', 'sol', 'fathom', 'goosy', 'hoots', 'milo']);
-    const { renderer } = render({
-      value: '@ruby @sol @fathom @goosy @hoots @milo ',
-      tagHandles: many,
-      onEditTags: vi.fn(),
-    });
-    const strip = renderer.root.findByProps({ testID: 'chat-tags' });
-    expect(strip.props.horizontal).toBe(true);
-    expect(strip.props.style).toMatchObject({ flexShrink: 1, maxWidth: '50%' });
-    const tall = (testID: string) => {
-      const target = renderer.root.findByProps({ testID });
-      return target.props.style.height + target.props.hitSlop.top + target.props.hitSlop.bottom;
-    };
-    for (const handle of many) {
-      expect(tall(`chat-tag-${handle}-edit`)).toBe(44);
-      expect(tall(`chat-tag-${handle}-remove`)).toBe(44);
-      expect(
-        renderer.root.findByProps({ testID: `chat-tag-${handle}-remove` }).props.style.width,
-      ).toBe(44);
-    }
-    expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
+  it('wraps typed text under the tags: they are spans of the input, with no column of their own', () => {
+    const { renderer } = render({ value: '@ruby @sol make it smaller', tagHandles });
+    const input = inputHost(renderer.root);
+    expect(input.props.value).toBeUndefined();
+    expect(
+      input.findAll((node: any) => node.type === 'Text').map((node: any) => node.props.children),
+    ).toEqual(['@ruby', ' ', '@sol', ' ', 'make it smaller']);
+    expect(renderer.root.findAllByProps({ testID: 'chat-tags' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'chat-tag-ruby-remove' })).toHaveLength(0);
   });
 
   it('leaves a person or unknown handle as typed text', () => {
     const { renderer } = render({ value: '@lunchbox hi', tagHandles });
-    expect(renderer.root.findByProps({ testID: 'chat-input' }).props.value).toBe('@lunchbox hi');
+    expect(inputText(renderer.root)).toBe('@lunchbox hi');
+    expect(renderer.root.findAllByProps({ testID: 'chat-tag-lunchbox' })).toHaveLength(0);
   });
 
-  it('writes typed text back behind the chips, and reports whole-text cursor offsets', () => {
+  it('writes typed text through whole, and reports the input\'s own cursor offsets', () => {
     const onSelectionChange = vi.fn();
     const { renderer, onChangeText } = render({ value: '@ruby ', tagHandles, onSelectionChange });
     const input = renderer.root.findByProps({ testID: 'chat-input' });
-    act(() => input.props.onChangeText('hello'));
+    act(() => input.props.onChangeText('@ruby hello'));
     expect(onChangeText).toHaveBeenCalledWith('@ruby hello');
-    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 2, end: 2 } } }));
+    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 8, end: 8 } } }));
     expect(onSelectionChange.mock.calls[0][0].nativeEvent.selection).toEqual({ start: 8, end: 8 });
   });
 
-  it('removes the last chip with one backspace at the start of the field', () => {
-    const onKeyPress = vi.fn();
-    const { renderer, onChangeText } = render({
-      value: '@ruby @sol hi',
-      tagHandles,
-      onKeyPress,
-    });
+  it('removes the whole tag a backspace reaches into, and keeps other edits', () => {
+    const { renderer, onChangeText } = render({ value: '@ruby @sol hi', tagHandles });
+    const input = renderer.root.findByProps({ testID: 'chat-input' });
+    // A backspace right after the tags takes the space behind @sol.
+    act(() => input.props.onChangeText('@ruby @solhi'));
+    expect(onChangeText).toHaveBeenLastCalledWith('@ruby hi');
+    act(() => input.props.onChangeText('@rub @sol hi'));
+    expect(onChangeText).toHaveBeenLastCalledWith('@sol hi');
+    act(() => input.props.onChangeText('@ruby @sol h'));
+    expect(onChangeText).toHaveBeenLastCalledWith('@ruby @sol h');
+    // A selection that runs past the tags deletes exactly what it covered.
+    act(() => input.props.onChangeText('@ruby @si'));
+    expect(onChangeText).toHaveBeenLastCalledWith('@ruby @si');
+  });
+
+  it('opens the tag menu from a tap on a tag, but not from a caret the app moved', () => {
+    const onEditTags = vi.fn();
+    const { renderer } = render({ value: '@ruby @sol ', tagHandles, onEditTags });
     const input = renderer.root.findByProps({ testID: 'chat-input' });
     act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 0, end: 0 } } }));
-    const preventDefault = vi.fn();
-    act(() => input.props.onKeyPress({ nativeEvent: { key: 'Backspace' }, preventDefault }));
-    expect(onChangeText).toHaveBeenCalledWith('@ruby hi');
-    expect(preventDefault).toHaveBeenCalled();
-    expect(onKeyPress).not.toHaveBeenCalled();
-
-    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 2, end: 2 } } }));
-    act(() => input.props.onKeyPress({ nativeEvent: { key: 'Backspace' }, preventDefault }));
-    expect(onKeyPress).toHaveBeenCalledOnce();
-  });
-
-  it('removes one chip with its ×, and opens the tag menu from its body', () => {
-    const onEditTags = vi.fn();
-    const { renderer, onChangeText } = render({ value: '@ruby @sol ', tagHandles, onEditTags });
-    act(() => renderer.root.findByProps({ testID: 'chat-tag-ruby-remove' }).props.onPress());
-    expect(onChangeText).toHaveBeenCalledWith('@sol ');
-    act(() => renderer.root.findByProps({ testID: 'chat-tag-sol-edit' }).props.onPress());
+    expect(onEditTags).not.toHaveBeenCalled();
+    act(() => input.props.onPressIn());
+    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 8, end: 8 } } }));
+    expect(onEditTags).toHaveBeenCalledOnce();
+    // A tap in the typed text only moves the caret.
+    act(() => input.props.onPressIn());
+    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 11, end: 11 } } }));
     expect(onEditTags).toHaveBeenCalledOnce();
   });
 
-  it('keeps chips tappable while recording, and offers an empty @ chip when none is tagged', async () => {
+  it('shows tags read-only while recording, and offers no empty @ tag', async () => {
     const onEditTags = vi.fn();
     const { renderer } = render({ value: '', tagHandles, onEditTags });
-    expect(renderer.root.findAllByProps({ testID: 'chat-tag-empty' })).toHaveLength(0);
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
-    const empty = renderer.root.findByProps({ testID: 'chat-tag-empty' });
-    expect(empty.props.accessibilityLabel).toBe('Tag an agent');
-    act(() => empty.props.onPress());
-    expect(onEditTags).toHaveBeenCalledOnce();
-    expect(mockMod.stop).not.toHaveBeenCalled();
-    expect(mockMod.abort).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByProps({ testID: 'chat-tag-empty' })).toHaveLength(0);
 
     const props = renderer.root.findByType(ConversationComposer).props;
     act(() => renderer.update(<ConversationComposer {...props} value="@ruby " />));
-    expect(renderer.root.findAllByProps({ testID: 'chat-tag-empty' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'chat-tag-ruby' }).length).toBeGreaterThan(0);
+    const shown = renderer.root
+      .findAll((node: any) => node.props.testID === 'chat-tag-ruby' && typeof node.type === 'string')
+      .filter((node: any) => !inputHost(renderer.root).findAll(() => true).includes(node));
+    expect(shown).toHaveLength(1);
+    expect(shown[0].props.onPress).toBeUndefined();
+    expect(renderer.root.findAllByProps({ testID: 'chat-tag-ruby-edit' })).toHaveLength(0);
   });
 
   it('appends dictation after the chips with one space and sends it with the tag', async () => {

@@ -18,6 +18,15 @@ vi.mock('react-native', () => {
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
     Linking: { openSettings: vi.fn() },
+    Keyboard: { isVisible: () => true, addListener: () => ({ remove() {} }), dismiss() {} },
+    Animated: {
+      View: host('View'),
+      Value: class {
+        constructor(readonly value: number) {}
+      },
+      timing: () => ({ start() {}, stop() {} }),
+    },
+    Easing: { linear: (t: number) => t },
     Platform: {
       get OS() {
         return platform.OS;
@@ -219,12 +228,13 @@ describe('one composer', () => {
     expect(input.props.value).toBe(value);
     expect(input.props.multiline).toBe(true);
     expect(input.props.numberOfLines).toBeUndefined();
-    expect(input.props.style).toHaveLength(4);
+    expect(input.props.style).toHaveLength(5);
     expect(input.props.style[0]).not.toHaveProperty('flex');
     expect(input.parent.parent.props.style).toMatchObject({ flex: 1, position: 'relative' });
     expect(input.props.style[1]).toBeUndefined();
     expect(input.props.style[2]).toBe(false);
     expect(input.props.style[3]).toBeUndefined();
+    expect(input.props.style[4]).toBeUndefined();
   });
 
   it('rejects stale native text events after dispatch and replaces the consumed field', () => {

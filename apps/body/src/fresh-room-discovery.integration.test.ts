@@ -749,7 +749,9 @@ describe('fresh Room discovery through the live membership wake', () => {
     );
     await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0),
       { timeout: 10_000 });
-    expect(core.activeRoomIds()).toContain(ROOM);
+    // The refresh restarts the Room, so it can be briefly absent from the
+    // active set right after the command read.
+    await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM), { timeout: 10_000 });
   });
 
   it('refreshes a running Room when its GitHub installation changes over the socket', async () => {

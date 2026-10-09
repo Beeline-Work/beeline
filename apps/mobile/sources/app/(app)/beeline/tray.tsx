@@ -32,6 +32,12 @@ import brand from '@/buzz/brand.json';
 /** How often an open tray re-reads its sections. */
 const TRAY_REFRESH_MS = 60_000;
 
+/** How long a removal or a section clear can be undone. */
+const UNDO_MS = 6_000;
+
+/** How far a section clear's Undo bar sits above a bookmark removal's bar. */
+const UNDO_STACK = 56;
+
 /** The server's refusal once the person has left, or been removed from, the Workspace. */
 function lostWorkspace(reason: unknown): boolean {
   return (reason as { code?: unknown } | null)?.code === 'workspace membership required';
@@ -49,6 +55,12 @@ function sourceLabel(bookmark: MessageBookmarkView): string {
   return `${bookmark.roomKind === 'corner' ? 'corner ' : '#'}${sourceTitle(bookmark)}`;
 }
 
+function clearedLabel(clear: PendingClear): string {
+  const count = clear.items.length;
+  const noun = clear.kind === 'needs' ? 'item' : 'bookmark';
+  return `Cleared ${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
 /** The message a tray row points at: what the desktop pane opens. */
 type Target = {
   readonly messageId: string;
@@ -56,8 +68,20 @@ type Target = {
   readonly workspaceId: string;
 };
 
+/** A section clear held back until its own Undo window closes. */
+type PendingClear = { readonly id: number; readonly expiresAt: number } & (
+  | { readonly kind: 'needs'; readonly items: readonly NeedsYouItemView[] }
+  | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[] }
+);
+
 type Row =
-  | { readonly key: string; readonly type: 'head'; readonly title: string; readonly count: number }
+  | {
+      readonly key: string;
+      readonly type: 'head';
+      readonly title: string;
+      readonly count: number;
+      readonly clear?: PendingClear['kind'];
+    }
   | { readonly key: string; readonly type: 'needs'; readonly item: NeedsYouItemView }
   | { readonly key: string; readonly type: 'needs-empty' }
   | { readonly key: string; readonly type: 'saved'; readonly bookmark: MessageBookmarkView }
@@ -90,6 +114,10 @@ export default function TrayScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<MessageBookmarkView | null>(null);
+  // Oldest first; the Undo bar offers the newest.
+  const [pending, setPending] = useState<readonly PendingClear[]>([]);
+  const pendingRef = useRef<readonly PendingClear[]>([]);
+  const nextClearId = useRef(0);
   const [client, setClient] = useState<RoomViewClient | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [inspectRoom, setInspectRoom] = useState<RoomView | null>(null);
@@ -172,7 +200,7 @@ export default function TrayScreen() {
 
   useEffect(() => {
     if (!removed) return;
-    const timer = setTimeout(() => setRemoved(null), 6_000);
+    const timer = setTimeout(() => setRemoved(null), UNDO_MS);
     return () => clearTimeout(timer);
   }, [removed]);
 
@@ -300,6 +328,120 @@ export default function TrayScreen() {
     [clear],
   );
 
+  /**
+   * Send a held section clear. Items the server refuses come back to the
+   * list, newest first, and the error row says why.
+   */
+  const commitClear = useCallback(async (clear: PendingClear) => {
+    const ids = new Set(clear.items.map((item) => item.messageId));
+    if (clear.kind === 'needs') {
+      setNeeds((current) => current.filter((item) => !ids.has(item.messageId)));
+      const results = await Promise.allSettled(
+        clear.items.map((item) =>
+          monolithPhoneOperation('clearNeedsYou', {
+            workspaceId: item.workspaceId,
+            messageId: item.messageId,
+          }),
+        ),
+      );
+      const failed = clear.items.filter((_, index) => results[index].status === 'rejected');
+      if (failed.length < clear.items.length) announceNeedsYouChanged();
+      if (failed.length)
+        setNeeds((current) =>
+          [...failed, ...current].sort((left, right) => right.createdAt - left.createdAt),
+        );
+      const refusal = results.find((result) => result.status === 'rejected');
+      if (refusal?.status === 'rejected')
+        setError(refusal.reason instanceof Error ? refusal.reason.message : String(refusal.reason));
+      return;
+    }
+    setBookmarks((current) => current.filter((item) => !ids.has(item.messageId)));
+    const results = await Promise.allSettled(
+      clear.items.map((bookmark) =>
+        monolithPhoneOperation('setMessageBookmark', {
+          roomId: bookmark.roomId,
+          messageId: bookmark.messageId,
+          bookmarked: false,
+        }),
+      ),
+    );
+    const failed = clear.items.filter((_, index) => results[index].status === 'rejected');
+    if (failed.length)
+      setBookmarks((current) =>
+        [...failed, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
+      );
+    const refusal = results.find((result) => result.status === 'rejected');
+    if (refusal?.status === 'rejected')
+      setError(refusal.reason instanceof Error ? refusal.reason.message : String(refusal.reason));
+  }, []);
+
+  /** Send the held clears `which` picks, and stop holding them. */
+  const flushClears = useCallback(
+    (which: (clear: PendingClear) => boolean) => {
+      const due = pendingRef.current.filter(which);
+      if (!due.length) return;
+      pendingRef.current = pendingRef.current.filter((clear) => !which(clear));
+      setPending(pendingRef.current);
+      for (const clear of due) void commitClear(clear);
+    },
+    [commitClear],
+  );
+
+  // Each held clear goes out when its own Undo window closes; all of them go
+  // out when the Tray loses focus.
+  useEffect(() => {
+    const timers = pending.map((clear) =>
+      setTimeout(
+        () => flushClears((held) => held.id === clear.id),
+        Math.max(0, clear.expiresAt - Date.now()),
+      ),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [flushClears, pending]);
+  useFocusEffect(useCallback(() => () => flushClears(() => true), [flushClears]));
+
+  const visibleNeeds = useMemo(() => {
+    const held = new Set(
+      pending.flatMap((clear) =>
+        clear.kind === 'needs' ? clear.items.map((item) => item.messageId) : [],
+      ),
+    );
+    return held.size ? needs.filter((item) => !held.has(item.messageId)) : needs;
+  }, [needs, pending]);
+  const visibleBookmarks = useMemo(() => {
+    const held = new Set(
+      pending.flatMap((clear) =>
+        clear.kind === 'saved' ? clear.items.map((item) => item.messageId) : [],
+      ),
+    );
+    return held.size ? bookmarks.filter((item) => !held.has(item.messageId)) : bookmarks;
+  }, [bookmarks, pending]);
+  const newestClear = pending.at(-1);
+
+  /** Clear a section now, with Undo. Approvals stay: a decision clears those. */
+  const clearSection = useCallback(
+    (kind: PendingClear['kind']) => {
+      setRemoved(null);
+      const held = { id: nextClearId.current++, expiresAt: Date.now() + UNDO_MS };
+      const clear: PendingClear =
+        kind === 'needs'
+          ? { ...held, kind, items: visibleNeeds.filter((item) => !item.approval) }
+          : { ...held, kind, items: visibleBookmarks };
+      if (!clear.items.length) return;
+      pendingRef.current = [...pendingRef.current, clear];
+      setPending(pendingRef.current);
+      AccessibilityInfo.announceForAccessibility(`${clearedLabel(clear)}. Undo available.`);
+    },
+    [visibleBookmarks, visibleNeeds],
+  );
+
+  /** Undo the newest held clear; an older one still in its window shows next. */
+  const undoClear = useCallback(() => {
+    pendingRef.current = pendingRef.current.slice(0, -1);
+    setPending(pendingRef.current);
+    AccessibilityInfo.announceForAccessibility('Restored');
+  }, []);
+
   const remove = useCallback(async (bookmark: MessageBookmarkView) => {
     setBookmarks((current) => current.filter((item) => item.messageId !== bookmark.messageId));
     setRemoved(bookmark);
@@ -339,39 +481,36 @@ export default function TrayScreen() {
     if (loading || workspaceLost) return [];
     const cells = (items: NeedsYouItemView[]) =>
       items.map((item): Row => ({ key: `needs-${item.messageId}`, type: 'needs', item }));
-    const approvals = needs.filter((item) => item.approval);
-    const questions = needs.filter((item) => !item.approval);
+    const approvals = visibleNeeds.filter((item) => item.approval);
+    const questions = visibleNeeds.filter((item) => !item.approval);
     return [
+      {
+        key: 'head-needs',
+        type: 'head',
+        title: 'Needs you',
+        count: visibleNeeds.length,
+        ...(questions.length ? { clear: 'needs' as const } : {}),
+      },
       // Approvals before questions, each in the server's order.
-      ...(needs.length
-        ? [
-            ...(approvals.length
-              ? [
-                  { key: 'head-approvals', type: 'head', title: 'Approvals', count: approvals.length } as const,
-                  ...cells(approvals),
-                ]
-              : []),
-            ...(questions.length
-              ? [
-                  { key: 'head-questions', type: 'head', title: 'Questions', count: questions.length } as const,
-                  ...cells(questions),
-                ]
-              : []),
-          ]
-        : [
-            { key: 'head-needs', type: 'head', title: 'Needs you', count: 0 } as const,
-            { key: 'needs-empty', type: 'needs-empty' } as const,
-          ]),
-      { key: 'head-saved', type: 'head', title: 'Saved', count: bookmarks.length },
-      ...(bookmarks.length
-        ? bookmarks.map((bookmark): Row => ({
+      ...(visibleNeeds.length
+        ? [...cells(approvals), ...cells(questions)]
+        : [{ key: 'needs-empty', type: 'needs-empty' } as const]),
+      {
+        key: 'head-saved',
+        type: 'head',
+        title: 'Saved',
+        count: visibleBookmarks.length,
+        ...(visibleBookmarks.length ? { clear: 'saved' as const } : {}),
+      },
+      ...(visibleBookmarks.length
+        ? visibleBookmarks.map((bookmark): Row => ({
             key: `saved-${bookmark.messageId}`,
             type: 'saved',
             bookmark,
           }))
         : [{ key: 'saved-empty', type: 'saved-empty' } as const]),
     ];
-  }, [bookmarks, loading, needs, workspaceLost]);
+  }, [loading, visibleBookmarks, visibleNeeds, workspaceLost]);
 
   const renderSaved = (bookmark: MessageBookmarkView) => (
     <Pressable
@@ -487,7 +626,21 @@ export default function TrayScreen() {
             return (
               <View style={styles.sectionHead} testID={`tray-section-${row.key.slice(5)}`}>
                 <Text style={styles.sectionTitle}>{row.title}</Text>
-                <Text style={styles.sectionCount}>{row.count}</Text>
+                <View style={styles.sectionEnd}>
+                  <Text style={styles.sectionCount}>{row.count}</Text>
+                  {row.clear ? (
+                    <Pressable
+                      accessibilityLabel={`Clear ${row.title}`}
+                      accessibilityRole="button"
+                      hitSlop={8}
+                      onPress={() => clearSection(row.clear!)}
+                      style={({ pressed }) => [styles.sectionClear, pressed && { opacity: 0.7 }]}
+                      testID={`tray-clear-${row.clear}`}
+                    >
+                      <Text style={styles.removeText}>CLEAR</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               </View>
             );
           case 'needs':
@@ -619,6 +772,23 @@ export default function TrayScreen() {
           ) : null}
         </View>
       ) : null}
+      {/* A held clear keeps its UNDO in reach above a bookmark removal's bar. */}
+      {newestClear ? (
+        <View
+          accessibilityLiveRegion="polite"
+          style={[
+            styles.undo,
+            desktop && styles.desktopUndo,
+            { bottom: 16 + insets.bottom + (removed ? UNDO_STACK : 0) },
+          ]}
+          testID="tray-clear-undo"
+        >
+          <Text style={styles.undoText}>{clearedLabel(newestClear)}</Text>
+          <Pressable accessibilityRole="button" onPress={undoClear} style={styles.undoAction}>
+            <Text style={styles.undoActionText}>UNDO</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -633,7 +803,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRightColor: theme.buzz.border,
   },
   sectionHead: {
-    minHeight: 30,
+    minHeight: 44,
     marginTop: theme.buzz.space.lg,
     paddingHorizontal: 16,
     flexDirection: 'row',
@@ -644,6 +814,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   sectionTitle: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
   sectionCount: { ...theme.buzz.type.meta, color: theme.buzz.accent },
+  sectionEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.md },
+  sectionClear: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   cellDivider: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
@@ -721,6 +893,8 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.borderStrong,
     borderRadius: theme.buzz.radius,
   },
+  // The bulk Undo bar sits at the foot of the desktop list column.
+  desktopUndo: { maxWidth: 390 - 32 },
   undoText: {
     ...theme.buzz.type.meta,
     flex: 1,

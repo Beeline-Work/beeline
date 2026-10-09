@@ -99,7 +99,80 @@ async function readNoLink() {
   report(`PASS ${fallback!.textContent} in ${elapsed} ms; back to ${replaced}`);
 }
 
+/** CLEAR on a section head empties it at once and offers Undo; approvals stay. */
+async function readClear() {
+  const section = new URLSearchParams(location.search).get('clear') === 'saved' ? 'saved' : 'needs';
+  createRoot(document.getElementById('root')!).render(<TrayScreen />);
+  await pause();
+  await pause();
+  const clear = document.querySelector<HTMLElement>(`[data-testid="tray-clear-${section}"]`);
+  assert(clear != null, `the ${section} head has no CLEAR`);
+  const target = clear!.getBoundingClientRect();
+  const head = clear!.closest<HTMLElement>('[data-testid^="tray-section-"]')!.getBoundingClientRect();
+  assert(
+    target.width >= 44 && target.height >= 44 && head.height >= 44,
+    `CLEAR is ${target.width}×${target.height} in a ${head.height} px head; it needs 44×44`,
+  );
+  const size = `CLEAR ${Math.round(target.width)}×${Math.round(target.height)} in ${Math.round(head.height)} px head`;
+  clear!.click();
+  await pause();
+  const undo = document.querySelector<HTMLElement>('[data-testid="tray-clear-undo"]');
+  assert(undo != null, 'no Undo bar after CLEAR');
+  const gone = section === 'needs' ? 'needs-you-ask-1' : 'bookmark-msg-1';
+  assert(
+    document.querySelector(`[data-testid="${gone}"]`) == null,
+    `${gone} is still on screen after CLEAR`,
+  );
+  if (section === 'needs')
+    assert(
+      document.querySelector('[data-testid="needs-you-grant-1"]') != null,
+      'CLEAR took the approval too',
+    );
+  const heads = Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="tray-section-"]'))
+    .map((head) => head.textContent)
+    .join(' | ');
+  if (new URLSearchParams(location.search).get('remove') === '1') {
+    const remove = document.querySelector<HTMLElement>('[aria-label="Remove unavailable bookmark"]');
+    assert(remove != null, 'no REMOVE on the unavailable bookmark');
+    remove!.click();
+    await pause();
+    const removal = document.querySelector<HTMLElement>('[data-testid="bookmark-undo"]');
+    const bulk = document.querySelector<HTMLElement>('[data-testid="tray-clear-undo"]');
+    assert(removal != null, 'no Bookmark removed bar after REMOVE');
+    assert(bulk != null, `bulk Undo disappeared after REMOVE: ${removal!.textContent}`);
+    assert(
+      bulk!.getBoundingClientRect().bottom <= removal!.getBoundingClientRect().top,
+      'the bulk Undo bar overlaps the Bookmark removed bar',
+    );
+    const bars = `${bulk!.textContent} above ${removal!.textContent}`;
+    bulk!.querySelector<HTMLElement>('[role="button"]')!.click();
+    await pause();
+    assert(
+      document.querySelector('[data-testid="needs-you-ask-1"]') != null,
+      'bulk UNDO did not bring the question back',
+    );
+    report(`PASS ${size} | ${bars} | UNDO restored needs-you-ask-1`);
+    return;
+  }
+  if (desktop) {
+    const list = document.querySelector<HTMLElement>('[data-testid="tray-list"]')!.getBoundingClientRect();
+    const bar = undo!.getBoundingClientRect();
+    assert(
+      bar.left >= list.left && bar.right <= list.right,
+      `the Undo bar spans x${Math.round(bar.left)}–${Math.round(bar.right)}, outside the list x${Math.round(list.left)}–${Math.round(list.right)}`,
+    );
+    report(`PASS ${size} | ${heads} | ${undo!.textContent} | Undo x${Math.round(bar.left)}–${Math.round(bar.right)} in list x${Math.round(list.left)}–${Math.round(list.right)}`);
+    return;
+  }
+  report(`PASS ${size} | ${heads} | ${undo!.textContent}`);
+}
+
 const mode = new URLSearchParams(location.search).get('mode');
-(mode === 'row' ? readRow() : mode === 'no-link' ? readNoLink() : read()).catch((error) =>
-  report(String(error)),
-);
+(mode === 'row'
+  ? readRow()
+  : mode === 'no-link'
+    ? readNoLink()
+    : mode === 'clear'
+      ? readClear()
+      : read()
+).catch((error) => report(String(error)));

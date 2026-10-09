@@ -99,6 +99,9 @@ export function useRoomMessageStore({
   const olderPagesRef = useRef(olderPages);
   const [detached, setDetachedState] = useState<DetachedWindow | null>(null);
   const detachedRef = useRef<DetachedWindow | null>(null);
+  // Advances when a jump or a return to the latest rows replaces the rows on
+  // screen, rather than paging more rows onto them.
+  const [windowId, setWindowId] = useState(0);
   const [jump, setJumpState] = useState<RoomJump | null>(null);
   const jumpRef = useRef<RoomJump | null>(null);
   const [newerStatus, setNewerStatusState] = useState<TranscriptHistoryStatus>('idle');
@@ -245,9 +248,11 @@ export function useRoomMessageStore({
     ) => {
       const cut = index + 1 + JUMP_NEWER_ROWS;
       if (newerAfter === null && cut >= all.length) {
+        if (detachedRef.current) setWindowId((id) => id + 1);
         attachToTail(all, olderBefore, olderStatus === 'complete');
         return;
       }
+      setWindowId((id) => id + 1);
       setDetached({
         rows: all.slice(0, cut),
         buffered: all.slice(cut),
@@ -264,6 +269,7 @@ export function useRoomMessageStore({
   /** Drop a detached window so the transcript shows the newest rows again. */
   const showLatest = useCallback(() => {
     if (!detachedRef.current) return;
+    setWindowId((id) => id + 1);
     setDetached(null);
     setNewerStatus('idle');
     setWindowOlderStatus('idle');
@@ -337,7 +343,10 @@ export function useRoomMessageStore({
           }
           const tailNow = tailRef.current ?? [];
           const tailIds = new Set(tailNow.map((row) => row.id));
-          const reachesTail = page.messages.some((row) => tailIds.has(row.id));
+          // The page joins the tail only when it ends inside it. A tail that
+          // ends inside the page is older than the page's newest rows, and
+          // putting it after the page would move those rows above the tail.
+          const reachesTail = tailIds.has(page.messages.at(-1)!.id);
           const all = reachesTail
             ? [...page.messages.filter((row) => !tailIds.has(row.id)), ...tailNow]
             : page.messages;
@@ -369,6 +378,7 @@ export function useRoomMessageStore({
     (keepJumpRead = false) => {
       requestVersionRef.current += 1;
       if (!keepJumpRead) windowRequestRef.current += 1;
+      if (detachedRef.current) setWindowId((id) => id + 1);
       setDetached(null);
       setNewerStatus('idle');
       setWindowOlderStatus('idle');
@@ -638,6 +648,12 @@ export function useRoomMessageStore({
     /** Where the list shows the window. The list reports it; the scrubber reads it. */
     positions,
     attached: !detached,
+    /**
+     * Changes when a jump or a return to the latest rows replaces the rows
+     * the list shows. The list measures the new rows from scratch: a row it
+     * measured in the old rows keeps that position in its cache.
+     */
+    windowId,
     jump: sameRoom ? jump : null,
     visibleMessageCount,
     status: sameRoom ? (detached ? windowOlderStatus : statusRef.current) : 'idle',

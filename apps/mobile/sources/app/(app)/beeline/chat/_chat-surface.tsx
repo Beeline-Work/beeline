@@ -27,6 +27,7 @@ import {
   AppState,
   useWindowDimensions,
   AccessibilityInfo,
+  type ViewProps,
   type ViewToken,
 } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
@@ -586,7 +587,19 @@ export function BuzzChatSurface({
       : { paddingBottom: Math.max(insets.bottom, 8) };
   const navigation = useNavigation();
   const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
-  const [phoneScrollList] = useState(() => phoneTranscriptList(() => flatListRef.current));
+  // The phone list's row keys, and the keys of the rows it has laid out. Each
+  // window's rows get their own keys (`transcriptWindowId`, set below): the
+  // list caches a row's position by key, and a row kept from the rows a new
+  // window replaced would keep its old position.
+  const transcriptWindowIdRef = useRef(0);
+  const phoneRowKey = (rowId: string) => `${transcriptWindowIdRef.current}:${rowId}`;
+  const [measuredPhoneRowKeys] = useState(() => new Set<string>());
+  const [phoneScrollList] = useState(() =>
+    phoneTranscriptList(
+      () => flatListRef.current,
+      (rowId) => measuredPhoneRowKeys.has(phoneRowKey(rowId)),
+    ),
+  );
   const [desktopScrollList] = useState(() =>
     desktopTranscriptList(
       () => desktopScrollNodeRef.current,
@@ -630,19 +643,22 @@ export function BuzzChatSurface({
         scrollController.cancel();
       }
     },
-    onScrolled: (destination, rowId) => {
+    onScrolled: (destination) => {
       if (destination.kind !== 'message' || !destination.jump) return;
       endTranscriptJump();
-      raiseSourceLandingFlash(rowId);
     },
-    onLanded: (destination) => {
-      if (scrollController.isHoldingLanding())
+    onLanded: (destination, rowId) => {
+      if (scrollController.isHoldingLanding()) {
         heldLandingFromOldestRef.current =
           phoneContentHeightRef.current - phoneScrollOffsetRef.current;
+        heldLandingShortRef.current = phoneContentHeightRef.current < phoneListHeightRef.current;
+      }
       // The landing is COMPLETE here — the row is on screen, which is the same
-      // rule the badge runs on. A flash fired at row mount would burn off
-      // behind the fold while backward paging was still measuring, and the
-      // reader who followed the notification would arrive to nothing.
+      // rule the badge runs on. A flash fired at row mount or at the first
+      // scroll would burn off behind the fold while the list was still
+      // measuring, and the reader who followed the notification would arrive
+      // to nothing.
+      if (destination.kind === 'message' && destination.jump) raiseSourceLandingFlash(rowId);
       if (
         destination.kind === 'firstUnread' &&
         landingFlashesArrival({
@@ -670,6 +686,30 @@ export function BuzzChatSurface({
         endTranscriptJump();
     },
   });
+  // The phone list's cell. The list learns a row's position from the cell's
+  // layout. That can come after a landing's last scroll and visibility report,
+  // with the row off screen, so the landing runs again on it.
+  const [PhoneTranscriptCell] = useState(
+    () =>
+      function PhoneTranscriptCell({
+        cellKey,
+        index: _index,
+        item: _item,
+        onLayout,
+        ...props
+      }: ViewProps & { cellKey: string; index: number; item: ChatDisplayMessage }) {
+        return (
+          <View
+            {...props}
+            onLayout={(event) => {
+              onLayout?.(event);
+              measuredPhoneRowKeys.add(cellKey);
+              if (scrollController.isLanding()) scrollController.observeLayout();
+            }}
+          />
+        );
+      },
+  );
   const handledNotificationAnchorRef = useRef<string | null>(null);
   const composerRef = useRef<TextInput>(null);
   // React state can lag the final Android native text event when the user
@@ -1357,6 +1397,7 @@ export function BuzzChatSurface({
     rows: historyRows,
     positions: transcriptPositions,
     attached: historyAttached,
+    windowId: transcriptWindowId,
     jump: transcriptJump,
     newerStatus: transcriptNewerStatus,
     loadNewer: loadNewerTranscriptMessages,
@@ -1392,6 +1433,7 @@ export function BuzzChatSurface({
   );
   // A detached window (a jump target far from the newest rows) shows only its
   // own rows until `loadNewer` walks it back to the live tail.
+  transcriptWindowIdRef.current = transcriptWindowId;
   const anchoredSegmentActive = !historyAttached;
   const olderMessages = useMemo(
     () => (cacheViewerPubkey ? displayRoomMessages(historyRows, cacheViewerPubkey) : []),
@@ -2553,9 +2595,15 @@ export function BuzzChatSurface({
   const phoneContentHeightRef = useRef(0);
   const phoneScrollOffsetRef = useRef(0);
   const heldLandingFromOldestRef = useRef(0);
+  // Only a window shorter than the list grows by newer rows after its
+  // landing (the short-list fill). A window that fills the list grows only
+  // at its oldest end, as the list draws rows above the target, and the
+  // native offset keeps the target in place by itself.
+  const phoneListHeightRef = useRef(0);
+  const heldLandingShortRef = useRef(false);
   const holdPhoneLanding = (height: number) => {
     phoneContentHeightRef.current = height;
-    if (!scrollController.isHoldingLanding()) return;
+    if (!scrollController.isHoldingLanding() || !heldLandingShortRef.current) return;
     const offset = Math.max(0, height - heldLandingFromOldestRef.current);
     if (Math.abs(offset - phoneScrollOffsetRef.current) > 1) scrollController.holdLanding(offset);
   };
@@ -6282,7 +6330,8 @@ export function BuzzChatSurface({
                   ref={flatListRef}
                   inverted={transcriptMessages.length > 0}
                   data={transcriptMessages}
-                  keyExtractor={(item: ChatDisplayMessage) => item.id}
+                  keyExtractor={(item: ChatDisplayMessage) => phoneRowKey(item.id)}
+                  CellRendererComponent={PhoneTranscriptCell}
                   style={styles.messageList}
                   contentContainerStyle={[
                     styles.messageListContent,
@@ -6366,9 +6415,10 @@ export function BuzzChatSurface({
                         onWheel: scrollController.userScrolled,
                       }
                     : {})}
-                  onLayout={(event) =>
-                    phoneUnderfill.observeListHeight(event.nativeEvent.layout.height)
-                  }
+                  onLayout={(event) => {
+                    phoneListHeightRef.current = event.nativeEvent.layout.height;
+                    phoneUnderfill.observeListHeight(event.nativeEvent.layout.height);
+                  }}
                   onContentSizeChange={(_width, height) => {
                     transcriptPositions.observeContentSize(height);
                     detachedFillMeasuredRef.current = true;

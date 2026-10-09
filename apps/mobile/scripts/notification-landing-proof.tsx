@@ -21,7 +21,8 @@ import { createRoot } from 'react-dom/client';
  *   first   — the target is the Room's first message: answers with it and
  *     fewer newer rows than one screen, and `historyAfter` serves the rest
  * `?cache=1` paints a saved Room response first; `?roomDelay=` delays the
- * Room read by that many ms.
+ * Room read by that many ms. `?deep=1` serves a Room whose target is 40
+ * messages back (see the test's fixture).
  */
 type Around = {
   calls: number;
@@ -52,7 +53,11 @@ function visibleRows() {
   const top = Math.max(viewport.top, 0);
   const bottom = Math.min(viewport.bottom, innerHeight);
   return leaves(list())
-    .filter((node) => /^(Tail|Around) message \d+$|^TARGET MESSAGE$/.test(node.textContent!.trim()))
+    .filter((node) =>
+      /^(Tail|Around) message \d+$|^TARGET MESSAGE$|^Ann deleted a message$/.test(
+        node.textContent!.trim(),
+      ),
+    )
     .map((node) => ({ text: node.textContent!.trim(), box: node.getBoundingClientRect() }))
     .filter(({ box }) => box.bottom > top && box.top < bottom && box.height > 0)
     .sort((a, b) => a.box.top - b.box.top)
@@ -86,7 +91,14 @@ function target() {
   const viewport = list()?.getBoundingClientRect();
   const node = leaves(list()).find((leaf) => leaf.textContent!.trim() === targetText);
   if (!node || !viewport)
-    return { present: Boolean(node), flashed: false, flashColor: null, top: null, textTop: null };
+    return {
+      present: Boolean(node),
+      flashed: false,
+      flashColor: null,
+      flashOpacity: null,
+      top: null,
+      textTop: null,
+    };
   // The row's ground is the nearest ancestor that holds the flash fill.
   let row: HTMLElement | null = node;
   let flash: HTMLElement | null = null;
@@ -96,10 +108,16 @@ function target() {
     row = row.parentElement;
   }
   const box = (flash ? row! : node).getBoundingClientRect();
+  const fill = flash ? getComputedStyle(flash) : null;
+  const flashOpacity = fill ? Number(fill.opacity) : null;
   return {
     present: true,
-    flashed: Boolean(flash),
-    flashColor: flash ? getComputedStyle(flash).backgroundColor : null,
+    // The fill is mounted for the whole cycle; it shows only while opaque.
+    flashed: Boolean(
+      fill && flashOpacity! > 0 && !/^rgba\(.*,\s*0\)$|transparent/.test(fill.backgroundColor),
+    ),
+    flashColor: fill?.backgroundColor ?? null,
+    flashOpacity,
     top: Math.round(box.top - viewport.top),
     textTop: Math.round(node.getBoundingClientRect().top - viewport.top),
   };
@@ -234,7 +252,9 @@ async function run() {
     return;
   }
   if (mode === 'landed-then-missing') {
-    around().pending.splice(0).forEach(({ resolve }) => resolve(around().page));
+    around()
+      .pending.splice(0)
+      .forEach(({ resolve }) => resolve(around().page));
     await waitFor(() => target().flashed, 2000);
     await pause(1500);
     const landed = observe();
@@ -245,7 +265,9 @@ async function run() {
       notificationMessageId: query.get('gone'),
     });
     await waitFor(() => around().calls > 1, 2000);
-    around().pending.splice(0).forEach(({ reject }) => reject(around().makeMissing()));
+    around()
+      .pending.splice(0)
+      .forEach(({ reject }) => reject(around().makeMissing()));
     await waitFor(() => pageHasText('That message is no longer available'), 2000);
     await pause(500);
     report(JSON.stringify({ mode, pending, typing, landed, settled: observe() }));
@@ -253,7 +275,9 @@ async function run() {
   }
   if (mode === 'first') {
     around().serveNewer = true;
-    around().pending.splice(0).forEach(({ resolve }) => resolve(around().firstPage));
+    around()
+      .pending.splice(0)
+      .forEach(({ resolve }) => resolve(around().firstPage));
     await waitFor(() => target().flashed, 2000);
     const settled = observe();
     await pause(3000);
@@ -286,11 +310,15 @@ async function warm(mode: string) {
     around()
       .pending.splice(0)
       .forEach(({ resolve }) => resolve(around().page));
+  // The target's place and flash every 50 ms after the latest tap.
+  let timeline: ReturnType<typeof target>[] = [];
   /** The server answers each read around the target as soon as it is asked. */
   const twoSecondsLater = async () => {
+    timeline = [];
     const until = Date.now() + 2000;
     while (Date.now() < until) {
       answerReads();
+      timeline.push(target());
       await pause(50);
     }
     return observe();
@@ -314,7 +342,7 @@ async function warm(mode: string) {
   const beforeTap = { ...observe(), opened };
   const landed = await tap('push-1');
   if (mode === 'warm') {
-    report(JSON.stringify({ mode, beforeTap, landed }));
+    report(JSON.stringify({ mode, beforeTap, landed, timeline }));
     return;
   }
   // The reader scrolls back down to the newest rows. The inverted list's

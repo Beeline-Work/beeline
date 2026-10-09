@@ -58,6 +58,30 @@ const newerRows = Array.from({ length: 300 }, (_, n) =>
   row(id('d', 14 + n), `Around message ${14 + n}`, BASE + (15 + n) * 60),
 );
 
+/**
+ * `?deep=1` (Reproduction W1): a Room of 71 messages. The target is 40 back
+ * from the newest, the Room read holds the newest 30, and the read around the
+ * target answers 15 older rows, the target and 14 newer rows, the last 4 of
+ * them in the Room's rows. `&deleted=1`: the target is a deleted message's line.
+ */
+const DEEP_TARGET = id('9', 30);
+const deepSeries = (deleted: boolean) =>
+  Array.from({ length: 71 }, (_, n) =>
+    n !== 30
+      ? row(id('9', n), `Tail message ${100 + n}`, BASE + n * 60)
+      : deleted
+        ? {
+            ...row(DEEP_TARGET, 'Ann deleted a message', BASE + n * 60),
+            presentation: 'system',
+            deleted: true,
+          }
+        : row(DEEP_TARGET, 'TARGET MESSAGE', BASE + n * 60),
+  );
+/** Shim source: the Room's messages for this page's query. */
+const deepRoom = `const deepQuery = new URLSearchParams(location.search);
+    const deepSeries = deepQuery.get('deleted') ? ${JSON.stringify(deepSeries(true))} : ${JSON.stringify(deepSeries(false))};
+    const deep = Boolean(deepQuery.get('deep'));`;
+
 const roomView = {
   room: {
     id: ROOM,
@@ -93,7 +117,48 @@ function shims(mobile: string): Record<string, string> {
       absoluteFillObject: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 } };
     export const useUnistyles = () => ({ theme });
     export const UnistylesRuntime = { setTheme() {}, setRootViewBackgroundColor() {} };`,
-    'react-native-reanimated': `${base['react-native-reanimated']}
+    // The shared stand-in settles every animation at once, so a flash would be
+    // invisible from its first frame. Here a shared value re-renders its owner
+    // and a timing or delay settles after its duration, so the arrival flash
+    // holds visibly and then clears, as the app's does.
+    'react-native-reanimated': `import React from 'react';
+    import { Animated } from 'react-native';
+    const identity = value => value;
+    export const Easing = new Proxy({}, { get: () => (...args) => (typeof args[0] === 'function' ? args[0] : identity) });
+    const entering = new Proxy({}, { get: () => () => entering });
+    export const FadeInDown = entering;
+    export const ReduceMotion = { System: 'system' };
+    export const useReducedMotion = () => true;
+    export const useAnimatedStyle = factory => factory();
+    export const useFrameCallback = () => ({ setActive: () => undefined, isActive: false });
+    const after = (ms, settle) => ({ run: (set) => setTimeout(() => settle(set), ms) });
+    export const withTiming = (to, config) => after(config?.duration ?? 0, (set) => set(to));
+    export const withDelay = (ms, next) => after(ms, (set) => (next?.run ? next.run(set) : set(next)));
+    export const useSharedValue = (initial) => {
+      const [, rerender] = React.useReducer((n) => n + 1, 0);
+      const shared = React.useRef(null);
+      if (!shared.current) {
+        let current = initial;
+        let timer = null;
+        const set = (next) => { current = next; rerender(); };
+        shared.current = {
+          get value() { return current; },
+          set value(next) {
+            clearTimeout(timer);
+            if (next?.run) timer = next.run(set);
+            else set(next);
+          },
+        };
+      }
+      return shared.current;
+    };
+    export const withRepeat = identity; export const withSequence = (...v) => v[0];
+    export const cancelAnimation = () => undefined;
+    export const runOnJS = fn => fn; export const runOnUI = fn => fn;
+    export const useAnimatedProps = factory => factory();
+    export const useDerivedValue = factory => ({ value: factory() });
+    export const interpolate = identity;
+    export default { View: Animated.View, Text: Animated.Text, createAnimatedComponent: c => c };
     const builder = new Proxy({}, { get: () => () => builder });
     export const FadeOut = builder; export const FadeIn = builder; export const Layout = builder;
     export const FadeOutDown = builder; export const FadeInUp = builder; export const FadeOutUp = builder;
@@ -138,7 +203,11 @@ function shims(mobile: string): Record<string, string> {
     export const loadBuzzViewerPubkey = async () => '${VIEWER}';
     export const loadBuzzIdentity = async () => ({ publicKey: '${VIEWER}', secretKey: new Uint8Array(32) });`,
     // \`?cache=1\`: the Room was opened earlier, so its last response is saved.
-    '@/buzz/surface-storage': `const cached = new URLSearchParams(location.search).get('cache') ? ${JSON.stringify(roomView)} : null;
+    '@/buzz/surface-storage': `${deepRoom}
+    const saved = ${JSON.stringify(roomView)};
+    const cached = new URLSearchParams(location.search).get('cache')
+      ? (deep ? { ...saved, messages: deepSeries.slice(41) } : saved)
+      : null;
     export const mobileSurfaceCache = { read: async (address) => (address === '/room/${ROOM}' ? cached : null), write: async () => undefined, remove: async () => undefined };
     export const surfaceAddress = (_relay, _viewer, path) => path;
     export const createRoomOutbox = () => ({ restore: async () => undefined, list: () => [], reconcile: async () => undefined,
@@ -154,7 +223,9 @@ function shims(mobile: string): Record<string, string> {
     // The network boundary. historyAround parks its promise on globalThis.__around for the entry to settle.
     '@/sync/transport/room-view-client': `import { RoomViewHttpError } from '@beeline/buzz-client';
     export { RoomViewHttpError };
-    const view = ${JSON.stringify(roomView)};
+    ${deepRoom}
+    const saved = ${JSON.stringify(roomView)};
+    const view = deep ? { ...saved, messages: deepSeries.slice(41) } : saved;
     // A read around a row of the tail answers with the tail rows around it, as the server does.
     const aroundTail = (messageId) => {
       const at = view.messages.findIndex((row) => row.id === messageId);
@@ -187,7 +258,9 @@ function shims(mobile: string): Record<string, string> {
       historyAround(_roomId, messageId) {
         globalThis.__around.calls += 1;
         return new Promise((resolve, reject) => globalThis.__around.pending.push({
-          resolve: (page) => resolve(aroundTail(messageId) ?? page), reject }));
+          resolve: (page) => resolve(deep
+            ? { roomId: '${ROOM}', messages: deepSeries.slice(15, 45), nextBefore: null }
+            : (aroundTail(messageId) ?? page)), reject }));
       }
     }
     // Any other read the Room screen makes stays unanswered rather than inventing data.
@@ -209,6 +282,7 @@ type Observation = {
     present: boolean;
     flashed: boolean;
     flashColor: string | null;
+    flashOpacity: number | null;
     top: number | null;
     /** The target's text, whether or not its row still flashes. */
     textTop: number | null;
@@ -386,6 +460,55 @@ describe.skipIf(!existsSync(CHROME))(
         expect(page.landed.target.top!).toBeGreaterThanOrEqual(-10);
         expect(page.landed.target.top!).toBeLessThan(120);
       }, 120_000);
+    });
+
+    // Reproduction W1: the Room is open, and its rows are the newest 30. The
+    // tap names a message 40 back, so the window opened around it shows 20
+    // newer rows and keeps some rows the list already measured. The target
+    // stopped just above the top edge, never counted as on screen, and its
+    // flash had run out before it got there.
+    describe.each([
+      ['open now', '&warm=1&deep=1'],
+      ['opened earlier', '&warm=1&cache=1&deep=1'],
+    ])('Reproduction W1: a tap on a Room %s', (_name, room) => {
+      it.each([
+        ['a message', '', 'TARGET MESSAGE'],
+        ['a deleted message', '&deleted=1', 'Ann deleted a message'],
+      ])(
+        'lands %s 20 rows back at the top, flashed',
+        async (_target, deleted, text) => {
+          const page = (await proof(
+            'warm',
+            `${room}${deleted}&target=${DEEP_TARGET}&targetText=${encodeURIComponent(text)}`,
+          )) as Proof & {
+            beforeTap: Observation;
+            landed: Observation;
+            timeline: Observation['target'][];
+          };
+          // The target at the top of the list with its flash on.
+          const arrival = page.timeline.find(
+            (sample) =>
+              sample.top !== null && sample.top >= -10 && sample.top < 120 && sample.flashed,
+          );
+          console.log(
+            `W1 (${_name}, ${_target}): before tap rows=${page.beforeTap.rows.length} (${page.beforeTap.rows[0]} … ${page.beforeTap.rows.at(-1)}); ` +
+              `on arrival top=${arrival?.top ?? null}px flashed=${arrival?.flashed ?? null} (${arrival?.flashColor ?? null} at opacity ${arrival?.flashOpacity ?? null}); ` +
+              `2 s after tap top=${page.landed.target.top}px, historyAround calls=${page.landed.historyAroundCalls}, rows=${JSON.stringify(page.landed.rows.slice(0, 2))}`,
+          );
+          expect(page.beforeTap.rows).toContain('Tail message 170');
+          expect(page.landed.historyAroundCalls).toBe(1);
+          expect(page.landed.rows).toContain(text);
+          expect(page.landed.target.top).not.toBeNull();
+          expect(page.landed.target.top!).toBeGreaterThanOrEqual(-10);
+          expect(page.landed.target.top!).toBeLessThan(120);
+          // The flash runs from the landing, so the reader sees it there: the
+          // source-landing fill, opaque.
+          expect(arrival?.flashed).toBe(true);
+          expect(arrival?.flashOpacity).toBeGreaterThan(0);
+          expect(arrival?.flashColor).toBe('rgba(176, 138, 74, 0.28)');
+        },
+        120_000,
+      );
     });
 
     it('lands again on a second tap with a new response id for the same target', async () => {

@@ -274,6 +274,31 @@ describe('transcript scroll controller', () => {
     expect(controller.isUserDragging()).toBe(false);
   });
 
+  it('keeps a landing when momentum begins with no drag before it', () => {
+    const { controller, events, flush } = setup();
+    controller.request(message('m3'));
+    flush();
+    // Android can start momentum after a layout change, with no gesture.
+    controller.momentumStarted();
+    expect(controller.isLanding()).toBe(true);
+    expect(controller.isUserDragging()).toBe(false);
+    controller.momentumEnded();
+    controller.observeVisibleRows([{ id: 'm3' }]);
+    expect(events).toEqual(['scrolled:message:m3', 'landed:message:m3']);
+  });
+
+  it('cancels a landing on momentum after a drag, even past the held frame', () => {
+    const { controller, events, flush } = setup();
+    controller.dragStarted();
+    controller.dragEnded(true);
+    flush();
+    controller.request(message('m3'));
+    flush();
+    controller.momentumStarted();
+    expect(events).toEqual(['scrolled:message:m3', 'cancelled:message:drag']);
+    expect(controller.isUserDragging()).toBe(true);
+  });
+
   it('lands a send once more when its own row is drawn', () => {
     const { controller, moves, flush, setRows } = setup();
     controller.observeTailPinned(false);
@@ -404,7 +429,10 @@ describe('phone transcript list', () => {
   it('drives the inverted FlatList and reports an unmeasured row', () => {
     const scrollToIndex = vi.fn();
     const scrollToOffset = vi.fn();
-    const adapter = phoneTranscriptList(() => ({ scrollToIndex, scrollToOffset }));
+    const adapter = phoneTranscriptList(
+      () => ({ scrollToIndex, scrollToOffset }),
+      () => true,
+    );
 
     adapter.toNewest();
     expect(scrollToOffset).toHaveBeenLastCalledWith({ offset: 0, animated: false });
@@ -422,6 +450,29 @@ describe('phone transcript list', () => {
     });
     adapter.toEstimatedRow(9);
     expect(scrollToOffset).toHaveBeenLastCalledWith({ offset: 720, animated: false });
+  });
+
+  // Reproduction W1: rows measured before a new window opened left the list's
+  // highest measured index above the target, so the list placed the target by
+  // an estimate without reporting a failure. The landing took that scroll for
+  // the row's place and stopped with the row just above the top edge.
+  it('does not reach a row the list placed by an estimate', () => {
+    const scrollToIndex = vi.fn();
+    const scrollToOffset = vi.fn();
+    const measured = new Set<string>();
+    const adapter = phoneTranscriptList(
+      () => ({ scrollToIndex, scrollToOffset }),
+      (rowId) => measured.has(rowId),
+    );
+
+    expect(adapter.toRow(20, 'target', 'top')).toBe(false);
+    expect(scrollToIndex).toHaveBeenLastCalledWith({ index: 20, viewPosition: 1, animated: false });
+    // The list already scrolled near the row by its own estimate.
+    adapter.toEstimatedRow(20);
+    expect(scrollToOffset).not.toHaveBeenCalled();
+
+    measured.add('target');
+    expect(adapter.toRow(20, 'target', 'top')).toBe(true);
   });
 });
 

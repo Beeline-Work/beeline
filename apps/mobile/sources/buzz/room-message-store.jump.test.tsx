@@ -353,6 +353,76 @@ function toolRow(id: string, timestamp: number): ChatDisplayMessage {
   } as ChatDisplayMessage;
 }
 
+describe('Reproduction W1', () => {
+  it('keeps a page in order when the tail it overlaps is older than its newest rows', async () => {
+    const all = room(100);
+    // A saved tail that ends inside the page around the target.
+    const tail = all.slice(20, 55);
+    const target = all[60]!;
+    const client = serverOver(all);
+    const { state, renderer } = await mountStore(tail, client);
+
+    await act(async () => state.current.jumpTo(target.id));
+
+    expect(client.historyAround).toHaveBeenCalledExactlyOnceWith('room', target.id);
+    expect(state.current.attached).toBe(false);
+    const ids = shownIds(state.current, tail);
+    expect(ids).toEqual(all.slice(45, 75).map((message) => message.id));
+    expect(ids.slice(ids.indexOf(target.id) - 1, ids.indexOf(target.id) + 2)).toEqual(
+      [all[59]!, target, all[61]!].map((message) => message.id),
+    );
+    await act(async () => renderer.unmount());
+  });
+
+  it('joins a page that ends inside the tail to it', async () => {
+    const all = room(71);
+    const tail = all.slice(41);
+    const target = all[30]!;
+    const { state, renderer } = await mountStore(tail, serverOver(all));
+
+    await act(async () => state.current.jumpTo(target.id));
+
+    const ids = shownIds(state.current, tail);
+    expect(ids).toEqual(all.slice(15, 15 + 36).map((message) => message.id));
+    expect(ids.length - 1 - ids.indexOf(target.id)).toBe(JUMP_NEWER_ROWS);
+    await act(async () => renderer.unmount());
+  });
+
+  it('gives the list a new window id when a jump or a return to the latest rows replaces its rows', async () => {
+    const all = room(227);
+    const tail = all.slice(197);
+    const { state, renderer } = await mountStore(tail, serverOver(all));
+    const opened = state.current.windowId;
+
+    await act(async () => state.current.jumpTo(all[26]!.id));
+    const window = state.current.windowId;
+    expect(window).not.toBe(opened);
+
+    // Paging adds rows to the same window.
+    await act(async () => state.current.loadOlder(0));
+    await act(async () => state.current.loadNewer());
+    expect(state.current.windowId).toBe(window);
+
+    await act(async () => state.current.loadLatest());
+    expect(state.current.attached).toBe(true);
+    expect(state.current.windowId).not.toBe(window);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps the window id while paging forward joins the window to the tail', async () => {
+    const tail = room(30);
+    const { state, renderer } = await mountStore(tail, serverOver(tail));
+
+    await act(async () => state.current.jumpTo(tail[5]!.id));
+    const window = state.current.windowId;
+    await act(async () => state.current.loadNewer());
+
+    expect(state.current.attached).toBe(true);
+    expect(state.current.windowId).toBe(window);
+    await act(async () => renderer.unmount());
+  });
+});
+
 describe('foldTranscriptRows host map', () => {
   it('path 2: a notification for a folded check card lands on the run row that shows it', () => {
     const { rows, hostIds } = foldTranscriptRows(

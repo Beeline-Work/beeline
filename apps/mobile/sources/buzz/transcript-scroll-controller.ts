@@ -105,7 +105,11 @@ export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   observeTailPinned(pinned: boolean): void;
   /** A touch drag began. Cancels the active request. */
   dragStarted(): void;
-  /** Momentum began. Cancels the active request; a later offset waits for its end. */
+  /**
+   * Momentum began. After a drag it cancels the active request; a later
+   * offset waits for its end. Without one (Android can start momentum after a
+   * layout change) it is not the reader, and the request stays.
+   */
   momentumStarted(): void;
   /** The finger lifted. With `momentumMayFollow`, wait a frame for momentum to claim it. */
   dragEnded(momentumMayFollow: boolean): void;
@@ -149,6 +153,8 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   let dragging = false;
   let momentum = false;
   let dragSequence = 0;
+  // A drag ended with momentum still to come.
+  let momentumOwed = false;
   let held = false;
 
   const end = (reason: TranscriptScrollCancelReason) => {
@@ -277,6 +283,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     reset() {
       active = null;
       held = false;
+      momentumOwed = false;
       visibleRows = [];
       visibleRowsOf = null;
     },
@@ -295,12 +302,16 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       dragSequence += 1;
       dragging = true;
       momentum = false;
+      momentumOwed = false;
       end('drag');
     },
     momentumStarted() {
       dragSequence += 1;
-      dragging = true;
       momentum = true;
+      const fromDrag = dragging || momentumOwed;
+      momentumOwed = false;
+      if (!fromDrag) return;
+      dragging = true;
       end('drag');
     },
     dragEnded(momentumMayFollow) {
@@ -309,6 +320,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
         dragging = false;
         return;
       }
+      momentumOwed = true;
       schedule(() => {
         if (dragSequence === current) dragging = false;
       });
@@ -317,6 +329,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       dragSequence += 1;
       dragging = false;
       momentum = false;
+      momentumOwed = false;
       if (active?.destination.kind === 'offset') attempt(active);
     },
     userScrolled() {
@@ -379,9 +392,14 @@ type PhoneList = {
  * The inverted phone FlatList. Offset 0 is the newest end, and view position 1
  * puts a row's start at the top of the viewport. Pass `scrollToIndexFailed`
  * as the list's `onScrollToIndexFailed`: the list calls it synchronously from
- * `scrollToIndex` when the row is not measured yet.
+ * `scrollToIndex` when the row is beyond every row it measured. `isMeasured`
+ * says whether the list has laid out a row's cell; the list places a row it
+ * has not measured by an estimate, so that row is not reached yet.
  */
-export function phoneTranscriptList(getList: () => PhoneList | null): TranscriptScrollList & {
+export function phoneTranscriptList(
+  getList: () => PhoneList | null,
+  isMeasured: (rowId: string) => boolean,
+): TranscriptScrollList & {
   scrollToIndexFailed(info: { averageItemLength: number }): void;
 } {
   let failed = false;
@@ -390,17 +408,18 @@ export function phoneTranscriptList(getList: () => PhoneList | null): Transcript
     toNewest() {
       getList()?.scrollToOffset({ offset: 0, animated: false });
     },
-    toRow(index, _rowId, align) {
+    toRow(index, rowId, align) {
       const list = getList();
       if (!list) return false;
       failed = false;
       list.scrollToIndex({ index, viewPosition: align === 'top' ? 1 : 0.5, animated: false });
-      return !failed;
+      return !failed && isMeasured(rowId);
     },
     toEstimatedRow(index) {
       // Variable-height rows cannot provide getItemLayout. Scroll near the
       // row, let that window measure, then the next pass resolves it again.
-      if (averageItemLength > 0)
+      // A row below the measured ones was already scrolled near by its estimate.
+      if (failed && averageItemLength > 0)
         getList()?.scrollToOffset({ offset: averageItemLength * index, animated: false });
     },
     toOffset(offset) {

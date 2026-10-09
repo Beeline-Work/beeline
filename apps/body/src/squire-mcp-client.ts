@@ -23,7 +23,18 @@ import { squireConnectProcessEnv } from './connector-squire.js';
 import { squireFacadeLaunch, type SquireAgentScope } from './squire-host.js';
 
 const INITIALIZE_TIMEOUT_MS = 30_000;
-const CALL_TIMEOUT_MS = 120_000;
+/**
+ * `@trusty-squire/mcp`'s own longest in-call wait is its captcha solver's
+ * 180 s provider response timeout (`RES_TIMEOUT_MS`, `bot/captcha.ts`), which
+ * can run inside an ordinary `operate_click`/`operate_drive` call when a
+ * challenge appears. A 120 s client timeout once undercut that (and a slow
+ * 120 s screenshot read): it killed the relay session mid-call and forced
+ * `operate_start` instead of letting the call simply finish or fail on its
+ * own. Stay above Squire's longest bound with margin rather than matching it.
+ */
+const SQUIRE_LONGEST_CALL_MS = 180_000;
+const CALL_TIMEOUT_MARGIN_MS = 30_000;
+const CALL_TIMEOUT_MS = SQUIRE_LONGEST_CALL_MS + CALL_TIMEOUT_MARGIN_MS;
 
 export type SquireMcpClientOptions = {
   readonly scope: SquireAgentScope;
@@ -71,7 +82,7 @@ export class StdioSquireMcpClient {
   /** One Squire MCP tool call; resolves with the tool's parsed result. */
   async call(tool: string, args: Record<string, unknown> = {}): Promise<unknown> {
     await this.ensureSession();
-    const response = (await this.request('tools/call', { name: tool, arguments: args })) as {
+    const response = (await this.request('tools/call', { name: tool, arguments: args }, tool)) as {
       isError?: boolean;
       content?: readonly { type?: string; text?: string }[];
     };
@@ -174,17 +185,22 @@ export class StdioSquireMcpClient {
     this.child?.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, ...(params ? { params } : {}) })}\n`);
   }
 
-  private request(method: string, params: Record<string, unknown>): Promise<unknown> {
+  private request(
+    method: string,
+    params: Record<string, unknown>,
+    toolName?: string,
+  ): Promise<unknown> {
     const id = this.nextId++;
     const child = this.child;
     if (!child) return Promise.reject(new Error('Squire MCP session is not running'));
     return new Promise((resolve, reject) => {
+      const timeoutMs = method === 'initialize' ? INITIALIZE_TIMEOUT_MS : CALL_TIMEOUT_MS;
       const timer = setTimeout(
         () => {
           this.pending.delete(id);
-          reject(new Error(`${method} timed out`));
+          reject(new Error(`${toolName ?? method} timed out after ${timeoutMs}ms`));
         },
-        method === 'initialize' ? INITIALIZE_TIMEOUT_MS : CALL_TIMEOUT_MS,
+        timeoutMs,
       );
       this.pending.set(id, { resolve, reject, timer });
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);

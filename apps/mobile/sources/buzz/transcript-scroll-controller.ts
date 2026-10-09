@@ -24,6 +24,11 @@ import { scheduleAnimationFrame } from './host-scheduler';
  * - `offset`: a raw list offset (the scrubber). Runs at once. During
  *   momentum the list may coast past it, so it stays active and runs again
  *   when momentum ends. A drag on the list cancels it.
+ *
+ * A landed row request the feature holds (`holdsLanding`) keeps its row in
+ * place while newer rows grow the list below it (`holdLanding`), and nothing
+ * follows the newest end meanwhile. The hold ends with the next request, a
+ * drag, a cancel or a reset.
  */
 export type TranscriptScrollDestination =
   | { kind: 'newest'; untilRowId?: string }
@@ -71,6 +76,8 @@ export type TranscriptScrollControllerOptions<Row extends TranscriptScrollRow> =
   onScrolled?(destination: TranscriptRowDestination, rowId: string): void;
   /** A visibility report shows the row; the request is done. */
   onLanded?(destination: TranscriptRowDestination, rowId: string): void;
+  /** Whether a row that lands now stays held in place. */
+  holdsLanding?(destination: TranscriptRowDestination): boolean;
   /** The request ended before it landed. */
   onCancelled?(
     destination: TranscriptScrollDestination,
@@ -81,12 +88,14 @@ export type TranscriptScrollControllerOptions<Row extends TranscriptScrollRow> =
 
 export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   request(destination: TranscriptScrollDestination): void;
-  /** Follow new content to the newest end, unless a drag or a row request owns the list. */
+  /** Follow new content to the newest end, unless a drag, a row request or a held landing owns the list. */
   follow(): void;
   /** Same as `follow`, without waiting a frame (a measured desktop resize). */
   followNow(): void;
   /** Keep a reading row in place while nothing else owns the list. */
   holdReadingPosition(delta: number): void;
+  /** The content changed: move a held landing to `offset`, where it keeps its place. */
+  holdLanding(offset: number): void;
   cancel(): void;
   /** The room changed: drop the request and the visible rows, no callbacks. */
   reset(): void;
@@ -106,6 +115,8 @@ export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   active(): TranscriptScrollDestination | null;
   /** A row request owns the list. */
   isLanding(): boolean;
+  /** A landed row is held in place (`holdsLanding`). */
+  isHoldingLanding(): boolean;
   isPinnedToTail(): boolean;
   isUserDragging(): boolean;
 };
@@ -138,8 +149,10 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   let dragging = false;
   let momentum = false;
   let dragSequence = 0;
+  let held = false;
 
   const end = (reason: TranscriptScrollCancelReason) => {
+    held = false;
     const ended = active;
     if (!ended) return;
     active = null;
@@ -149,7 +162,9 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   const land = (current: Active, rowId: string) => {
     if (active !== current) return;
     active = null;
-    options.onLanded?.(current.destination as TranscriptRowDestination, rowId);
+    const destination = current.destination as TranscriptRowDestination;
+    held = options.holdsLanding?.(destination) ?? false;
+    options.onLanded?.(destination, rowId);
   };
 
   /** The visible row that settles a row request, or null. */
@@ -234,7 +249,8 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     schedule(() => attempt(current));
   };
 
-  const followAllowed = () => !dragging && !(active && isRowDestination(active.destination));
+  const followAllowed = () =>
+    !dragging && !held && !(active && isRowDestination(active.destination));
 
   return {
     request,
@@ -251,11 +267,16 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       if (active || pinned || delta === 0) return;
       options.list()?.shiftBy(delta);
     },
+    holdLanding(offset) {
+      if (!held || active) return;
+      options.list()?.toOffset(offset);
+    },
     cancel() {
       end('cancelled');
     },
     reset() {
       active = null;
+      held = false;
       visibleRows = [];
       visibleRowsOf = null;
     },
@@ -303,6 +324,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     },
     active: () => active?.destination ?? null,
     isLanding: () => Boolean(active && isRowDestination(active.destination)),
+    isHoldingLanding: () => held && !active,
     isPinnedToTail: () => pinned,
     isUserDragging: () => dragging,
   };
@@ -340,6 +362,7 @@ export function useTranscriptScrollController<Row extends TranscriptScrollRow>(
       onUnreachable: (destination) => optionsRef.current.onUnreachable?.(destination),
       onScrolled: (destination, rowId) => optionsRef.current.onScrolled?.(destination, rowId),
       onLanded: (destination, rowId) => optionsRef.current.onLanded?.(destination, rowId),
+      holdsLanding: (destination) => optionsRef.current.holdsLanding?.(destination) ?? false,
       onCancelled: (destination, reason) => optionsRef.current.onCancelled?.(destination, reason),
       schedule: (callback) => (optionsRef.current.schedule ?? defaultSchedule)(callback),
     }),

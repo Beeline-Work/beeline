@@ -340,6 +340,52 @@ describe('transcript scroll controller', () => {
     expect(moves).toEqual(['shift:30']);
   });
 
+  it('holds a landed jump the feature holds while newer rows grow the list, until the reader drags', () => {
+    const { controller, moves, flush } = setup({
+      holdsLanding: (destination) => destination.kind === 'message' && destination.jump,
+    });
+    controller.request(message('m1'));
+    flush();
+    controller.observeVisibleRows([{ id: 'm1' }]);
+    expect(controller.active()).toBeNull();
+    expect(controller.isHoldingLanding()).toBe(true);
+    // The reader sits at the window's newest end; newer rows still keep the target in place.
+    controller.observeTailPinned(true);
+    controller.holdLanding(600);
+    expect(moves).toEqual(['row:m1@0:top', 'offset:600']);
+    // Nothing follows the newest end meanwhile.
+    controller.follow();
+    controller.followNow();
+    flush();
+    expect(moves).toEqual(['row:m1@0:top', 'offset:600']);
+    controller.dragStarted();
+    expect(controller.isHoldingLanding()).toBe(false);
+    controller.holdLanding(600);
+    controller.dragEnded(false);
+    controller.follow();
+    flush();
+    expect(moves).toEqual(['row:m1@0:top', 'offset:600', 'newest']);
+  });
+
+  it('ends a held landing with the next request, and holds nothing it was not asked to', () => {
+    const { controller, moves, flush } = setup({
+      holdsLanding: (destination) => destination.kind === 'message' && destination.jump,
+    });
+    controller.request(message('m1'));
+    flush();
+    controller.observeVisibleRows([{ id: 'm1' }]);
+    controller.request({ kind: 'newest' });
+    flush();
+    controller.holdLanding(600);
+    expect(moves).toEqual(['row:m1@0:top', 'newest']);
+
+    controller.request({ kind: 'message', messageId: 'm2', align: 'center', jump: false });
+    flush();
+    controller.observeVisibleRows([{ id: 'm2' }]);
+    controller.holdLanding(600);
+    expect(moves).toEqual(['row:m1@0:top', 'newest', 'row:m2@1:center']);
+  });
+
   it('drops the request without callbacks when the room changes', () => {
     const { controller, moves, events, flush } = setup();
     controller.observeVisibleRows([{ id: 'm2' }]);

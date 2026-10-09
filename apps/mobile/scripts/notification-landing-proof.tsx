@@ -18,6 +18,8 @@ import { createRoot } from 'react-dom/client';
  *   warm-retap — `warm`, then the reader returns to the newest rows and a
  *     second tap with a new response id names the same target
  *   cold — the tap opens the Room on `?target=`; reads answer at once
+ *   first   — the target is the Room's first message: answers with it and
+ *     fewer newer rows than one screen, and `historyAfter` serves the rest
  * `?cache=1` paints a saved Room response first; `?roomDelay=` delays the
  * Room read by that many ms.
  */
@@ -25,6 +27,9 @@ type Around = {
   calls: number;
   pending: { resolve(value: unknown): void; reject(error: unknown): void }[];
   page: unknown;
+  firstPage: unknown;
+  serveNewer: boolean;
+  afterCalls: number;
   makeMissing(): unknown;
 };
 const around = () => (globalThis as unknown as { __around: Around }).__around;
@@ -81,7 +86,7 @@ function target() {
   const viewport = list()?.getBoundingClientRect();
   const node = leaves(list()).find((leaf) => leaf.textContent!.trim() === targetText);
   if (!node || !viewport)
-    return { present: Boolean(node), flashed: false, flashColor: null, top: null };
+    return { present: Boolean(node), flashed: false, flashColor: null, top: null, textTop: null };
   // The row's ground is the nearest ancestor that holds the flash fill.
   let row: HTMLElement | null = node;
   let flash: HTMLElement | null = null;
@@ -96,6 +101,7 @@ function target() {
     flashed: Boolean(flash),
     flashColor: flash ? getComputedStyle(flash).backgroundColor : null,
     top: Math.round(box.top - viewport.top),
+    textTop: Math.round(node.getBoundingClientRect().top - viewport.top),
   };
 }
 
@@ -128,6 +134,7 @@ function observe() {
     composer: Boolean(composer()),
     target: target(),
     historyAroundCalls: around().calls,
+    historyAfterCalls: around().afterCalls,
     scroll: scrollState(),
     listTop: Math.round(list()?.getBoundingClientRect().top ?? 0),
     listHeight: Math.round(list()?.getBoundingClientRect().height ?? 0),
@@ -242,6 +249,15 @@ async function run() {
     await waitFor(() => pageHasText('That message is no longer available'), 2000);
     await pause(500);
     report(JSON.stringify({ mode, pending, typing, landed, settled: observe() }));
+    return;
+  }
+  if (mode === 'first') {
+    around().serveNewer = true;
+    around().pending.splice(0).forEach(({ resolve }) => resolve(around().firstPage));
+    await waitFor(() => target().flashed, 2000);
+    const settled = observe();
+    await pause(3000);
+    report(JSON.stringify({ mode, pending, typing, settled, later: observe() }));
     return;
   }
   if (mode === 'answer') around().pending.forEach(({ resolve }) => resolve(around().page));

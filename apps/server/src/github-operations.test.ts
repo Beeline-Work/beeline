@@ -537,6 +537,114 @@ describe('GitHub phone operations', () => {
     expect(mergedNotes.rowCount).toBe(0);
     expect(app.deleteBranch).not.toHaveBeenCalled();
   });
+  it('Reproduction MERGE-WEBHOOK-2: an edited event for another pull request cannot re-point the corner before its merge', async () => {
+    const workspace = '11111111-1111-4111-8111-111111111111';
+    const room = '22222222-2222-4222-8222-222222222222';
+    const corner = '33333333-3333-4333-8333-333333333333';
+    const branch = 'feature/corner-333333333333';
+    const headSha = '3'.repeat(40);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+    await database.query(
+      `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+       VALUES(77,$1,'42','owner','User','selected','active')`,
+      [HUMAN],
+    );
+    await database.query(
+      `INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+       VALUES(101,77,'owner/widgets','main')`,
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name,repository_remote,github_installation_id)
+       VALUES($1,$2,$3,'General','https://github.com/owner/widgets.git',77)`,
+      [room, workspace, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+       VALUES($1,$2,$3,$4,'Two PRs')`,
+      [corner, workspace, room, HUMAN],
+    );
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
+       VALUES($1,'Two PRs',$2,$3::jsonb)`,
+      [
+        corner,
+        branch,
+        JSON.stringify({
+          checks: 'passing',
+          pr: {
+            number: 100,
+            url: 'https://github.com/owner/widgets/pull/100',
+            headSha,
+          },
+        }),
+      ],
+    );
+    const app = {
+      installationToken: vi.fn(async () => ({ token: 'room-token' })),
+      readCommitCheckRollup: vi.fn(async () => ({
+        state: 'passed',
+        total: 1,
+        failing: [],
+        checks: [{ name: 'build', status: 'passed' }],
+      })),
+      deleteBranch: vi.fn(async () => undefined),
+    } as unknown as GitHubAppClient;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    // The corner's own PR #100 is still open; #200 merely shares its head branch.
+    // An edit to #200 arrives first and must not replace the recorded #100.
+    await operations.processWebhook('pull_request', {
+      action: 'edited',
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+      pull_request: {
+        number: 200,
+        title: 'Another PR',
+        html_url: 'https://github.com/owner/widgets/pull/200',
+        head: { ref: branch, sha: '2'.repeat(40) },
+        base: { ref: 'main', sha: '4'.repeat(40) },
+        mergeable_state: 'clean',
+      },
+    });
+    await operations.processWebhook('pull_request', {
+      action: 'closed',
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+      pull_request: {
+        number: 200,
+        title: 'Another PR',
+        html_url: 'https://github.com/owner/widgets/pull/200',
+        head: { ref: branch, sha: '2'.repeat(40) },
+        base: { ref: 'main' },
+        merged: true,
+        merged_at: '2026-09-30T14:00:00Z',
+        merge_commit_sha: 'f'.repeat(40),
+        merged_by: { login: 'owner' },
+      },
+    });
+    const cornerRow = (
+      await database.query<{ archived_at: string | null }>(
+        `SELECT archived_at FROM rooms WHERE id=$1`,
+        [corner],
+      )
+    ).rows[0];
+    const recorded = (
+      await database.query<{ number: string | null }>(
+        `SELECT lifecycle->'pr'->>'number' number FROM corner_facts WHERE corner_id=$1`,
+        [corner],
+      )
+    ).rows[0];
+    const mergedNotes = await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'verb'='merged'`,
+      [corner],
+    );
+    console.info(
+      `Reproduction MERGE-WEBHOOK-2: corner PR=#100 edited+merged webhook=#200 recorded=#${recorded?.number} archived=${cornerRow?.archived_at ?? 'no'} mergedNotes=${mergedNotes.rowCount}`,
+    );
+    expect(recorded).toMatchObject({ number: '100' });
+    expect(cornerRow).toMatchObject({ archived_at: null });
+    expect(mergedNotes.rowCount).toBe(0);
+    expect(app.deleteBranch).not.toHaveBeenCalled();
+  });
   it('matches a webhook on its recorded feature branch, never the prefix fallback', async () => {
     // A corner with a recorded feature_branch must have its webhook
     // resolve through the exact `fact.feature_branch=$3` join (processCornerEvent

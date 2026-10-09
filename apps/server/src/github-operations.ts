@@ -1624,11 +1624,18 @@ export class GitHubOperations {
         const url = text(pullRequest?.html_url);
         const merged = body.action === 'closed' && pullRequest?.merged === true;
         const number = integer(pullRequest?.number);
+        // A branch can carry a second pull request once its first was closed:
+        // never let an event for a different number replace the pull
+        // association the corner recorded. A corner that never recorded a
+        // number (its opened webhook was lost) keeps the branch match.
+        const recordedPrNumber = target.pr_number ? Number(target.pr_number) : undefined;
+        if (recordedPrNumber && number && recordedPrNumber !== number) continue;
         const targetBranch = text(record(pullRequest?.base)?.ref);
         const webhookBaseSha = text(record(pullRequest?.base)?.sha);
         const headSha = text(record(pullRequest?.head)?.sha);
         const mergeabilityValue = text(pullRequest?.mergeable_state);
         let mergeability = githubMergeability(mergeabilityValue);
+        let differentPr = false;
         if (!merged && url && number && targetBranch && headSha && body.action !== 'closed') {
           await database.transaction(async (tx) => {
             const previous = (
@@ -1637,6 +1644,12 @@ export class GitHubOperations {
                 [target.corner_id],
               )
             ).rows[0]?.lifecycle;
+            // Re-check under the row lock: a concurrent event must not have
+            // recorded a different pull request since the branch match.
+            if (previous?.pr?.number !== undefined && previous?.pr?.number !== number) {
+              differentPr = true;
+              return;
+            }
             const sameHead = previous?.pr?.headSha === headSha;
             const staleBase = Boolean(
               sameHead && previous?.pr?.baseSha && previous.pr.baseSha !== webhookBaseSha,
@@ -1674,6 +1687,7 @@ export class GitHubOperations {
               tx,
             );
           });
+          if (differentPr) continue;
           if (mergeability === 'unknown' || mergeability === 'dirty')
             await this.refreshStaleMergeability(target.corner_id);
           if (body.action === 'opened' || body.action === 'synchronize')
@@ -1681,12 +1695,6 @@ export class GitHubOperations {
               { name: 'Pull request checks', status: 'pending', headSha, url }, database);
         }
         if (merged && url) {
-          // A branch can carry a second pull request once its first was closed:
-          // never archive the corner for a merge event whose number is not the
-          // one the corner recorded. A corner that never recorded a number (its
-          // opened webhook was lost) keeps the branch match.
-          const recordedPrNumber = target.pr_number ? Number(target.pr_number) : undefined;
-          if (recordedPrNumber && number && recordedPrNumber !== number) continue;
           await this.mergeCorner(
             target,
             {

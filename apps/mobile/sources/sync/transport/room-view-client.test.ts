@@ -25,6 +25,7 @@ vi.mock('@/auth/monolith-session', () => {
     MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
     MonolithRequestTimeoutError,
     monolithSession: {
+      noteStalled: vi.fn(),
       fetch: vi.fn(async () => {
         controls.monolithCalls += 1;
         return new Response(JSON.stringify(fixture), { status: 200 });
@@ -109,7 +110,7 @@ describe('mobile transport cutover switch', () => {
     expect(vi.mocked(monolithSession.fetch)).toHaveBeenCalledWith(
       'https://server.example/v1/phone/rooms/room-a',
       expect.objectContaining({ method: 'GET' }),
-      { timeoutMs: 15_000 },
+      { timeoutMs: 15_000, idempotent: true },
     );
   });
 
@@ -134,7 +135,7 @@ describe('mobile transport cutover switch', () => {
     expect(vi.mocked(monolithSession.fetch)).toHaveBeenLastCalledWith(
       `https://server.example/v1/phone/workspaces/${workspaceId}/search?q=gradle+cache`,
       expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) }),
-      { timeoutMs: 15_000 },
+      { timeoutMs: 15_000, idempotent: true },
     );
     expect(sent?.aborted).toBe(false);
     controller.abort();
@@ -192,7 +193,7 @@ describe('mobile transport cutover switch', () => {
     expect(vi.mocked(monolithSession.fetch)).toHaveBeenLastCalledWith(
       `https://server.example/v1/phone/workspaces/${workspaceId}/agents/${agentId}?workCursor=${encodeURIComponent(cursor)}`,
       expect.objectContaining({ method: 'GET' }),
-      { timeoutMs: 15_000 },
+      { timeoutMs: 15_000, idempotent: true },
     );
     expect(older.recentWork).toEqual([olderWork]);
     expect(older.recentWorkCursor).toBeUndefined();
@@ -230,7 +231,7 @@ describe('mobile transport cutover switch', () => {
     expect(vi.mocked(monolithSession.fetch)).toHaveBeenCalledWith(
       `https://server.example/v1/phone/rooms/${roomId}/corners?archived=1`,
       expect.objectContaining({ method: 'GET' }),
-      { timeoutMs: 15_000 },
+      { timeoutMs: 15_000, idempotent: true },
     );
 
     await client.corners(roomId, { archived: true, before: `1790000000000001,${roomId}` });
@@ -238,7 +239,7 @@ describe('mobile transport cutover switch', () => {
     expect(vi.mocked(monolithSession.fetch)).toHaveBeenCalledWith(
       `https://server.example/v1/phone/rooms/${roomId}/corners?archived=1&before=1790000000000001%2C${roomId}`,
       expect.objectContaining({ method: 'GET' }),
-      { timeoutMs: 15_000 },
+      { timeoutMs: 15_000, idempotent: true },
     );
   });
 });

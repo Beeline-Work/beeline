@@ -290,6 +290,7 @@ function readViewer(value: unknown): RoomViewer {
     role: role as RoomViewer['role'],
     permissions,
     ...field('readCursor', readCursor),
+    ...(item.pushMuted === true ? { pushMuted: true as const } : {}),
   };
 }
 

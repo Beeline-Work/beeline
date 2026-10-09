@@ -9,7 +9,7 @@ import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { cornerHref, messageJumpHref } from '@/buzz/corner-navigation';
 import { useRoomLiveDrafts } from '@/buzz/room-live-drafts';
 import { previewHandle } from '@/buzz/room-list-row';
-import { liveRoomRuns } from '@/buzz/use-room-workflow-run';
+import { liveRoomRuns, useRoomWorkflowRuns } from '@/buzz/use-room-workflow-run';
 import { workflowDisplayName, workflowStateLabel } from '@/buzz/workflow-graph';
 import { formatRunDuration, runDayLabel, workflowRunHeadline, workflowRunHref, workflowStarterLine } from '@/buzz/workflow-run-copy';
 import { HullLivePulse } from '@/components/buzz/MonoHull';
@@ -169,17 +169,9 @@ export default function WorkflowRun() {
  * stack, so Back from any run page always returns to the corner.
  */
 function AlsoRunning({ roomId, current, now }: { roomId: string; current: WorkflowRunSummaryView; now: number }) {
-  const { data: live } = useObservedResource<readonly WorkflowRunSummaryView[]>(
-    `workflow-siblings:${roomId}`,
-    {
-      load: async () => {
-        const { workflows } = await monolithPhoneOperation('listRoomWorkflowRuns', { roomId });
-        return liveRoomRuns(roomId, workflows);
-      },
-      subscribe: observeRoomResource(roomId),
-    },
-  );
-  const others = (live ?? []).filter((candidate) => candidate.runId !== current.runId);
+  // The Room's one shared workflow-run read, not a second copy of it.
+  const runs = useRoomWorkflowRuns(roomId);
+  const others = liveRoomRuns(roomId, runs).filter((candidate) => candidate.runId !== current.runId);
   if (others.length === 0) return null;
   return (
     <View testID="workflow-run-also-running">

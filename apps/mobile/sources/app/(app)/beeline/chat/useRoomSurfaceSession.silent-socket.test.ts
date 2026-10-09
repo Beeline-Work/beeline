@@ -168,7 +168,7 @@ async function advance(ms: number) {
 }
 
 describe('Reproduction R1: open Room whose live socket goes silent', () => {
-  it('shows the newest message the server holds while the Room stays open', async () => {
+  it('reads nothing while the Room sits idle, and the next send finds what the socket missed', async () => {
     let latest: UseRoomSurfaceSessionResult | undefined;
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -176,6 +176,7 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     });
     await advance(100);
     expect(latest?.roomSurface?.messages.at(-1)?.id).toBe('m-2042');
+    const openingReads = controls.roomReads;
 
     // BBC posts to the Room. The phone's socket never delivers a frame for it.
     controls.serverMessages = [
@@ -183,12 +184,23 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       message('adf6a0c9', 1_791_247_547, 'All five operational timers are now in Equities Operations'),
     ];
 
-    // The reader keeps the Room open for ten minutes.
+    // The reader keeps the Room open for ten minutes: nothing is read on a timer.
     await advance(10 * 60_000);
+    expect(controls.roomReads).toBe(openingReads);
 
-    const newest = latest?.roomSurface?.messages.at(-1)?.id;
+    // The reader sends. Its own delta never arrives either, so one read
+    // confirms it, and that read paints what the socket missed.
+    controls.serverMessages = [
+      ...controls.serverMessages,
+      message('5e7d', 1_791_248_000, 'Thanks — looks good'),
+    ];
+    latest!.outbox.scheduleConfirmation('5e7d');
+    await advance(5_000);
+
+    const newest = latest?.roomSurface?.messages.map((item) => item.id).slice(-2);
     console.log(`[R1] room reads=${controls.roomReads} newest painted=${newest}`);
-    expect(newest).toBe('adf6a0c9');
+    expect(newest).toEqual(['adf6a0c9', '5e7d']);
+    expect(controls.roomReads).toBe(openingReads + 1);
     // The read that found it also proves the socket missed it, so the socket is replaced.
     expect(controls.reconnects).toBe(1);
     await act(async () => renderer.unmount());

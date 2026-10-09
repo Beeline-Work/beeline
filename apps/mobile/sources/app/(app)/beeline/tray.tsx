@@ -3,6 +3,7 @@ import { useIsDesktop } from '@/utils/responsive';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
+  AppState,
   FlatList,
   Pressable,
   Text,
@@ -17,7 +18,7 @@ import type { RoomView } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
-import { announceNeedsYouChanged } from '@/buzz/needs-you';
+import { announceNeedsYouChanged, subscribeNeedsYouActivity } from '@/buzz/needs-you';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
@@ -28,9 +29,6 @@ import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import brand from '@/buzz/brand.json';
-
-/** How often an open tray re-reads its sections. */
-const TRAY_REFRESH_MS = 60_000;
 
 /** How long a removal or a section clear can be undone. */
 const UNDO_MS = 6_000;
@@ -160,13 +158,26 @@ export default function TrayScreen() {
     setLoading(false);
   }, [workspaceId]);
 
-  // An open tray keeps re-reading: another device may clear a cell, and a
-  // cell's 24-hour clock may run out while this screen stays up.
+  // An open tray reads when it opens, when the app comes back to the
+  // foreground (another device may have cleared a cell meanwhile), and when
+  // the Room list hears a message that can need the viewer. Nothing repeats
+  // on a timer.
   useFocusEffect(
     useCallback(() => {
       void load();
-      const timer = setInterval(() => void load(), TRAY_REFRESH_MS);
-      return () => clearInterval(timer);
+      const stopActivity = subscribeNeedsYouActivity(() => void load());
+      let backgrounded = AppState.currentState === 'background';
+      const appState = AppState.addEventListener('change', (state) => {
+        if (state === 'background') backgrounded = true;
+        else if (state === 'active' && backgrounded) {
+          backgrounded = false;
+          void load();
+        }
+      });
+      return () => {
+        stopActivity();
+        appState.remove();
+      };
     }, [load]),
   );
 

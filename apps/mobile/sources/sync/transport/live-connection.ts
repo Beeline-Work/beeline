@@ -3,6 +3,7 @@ import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { NostrEvent } from '@beeline/nostr';
 import type { LiveWireEvent, MonolithSurfaceEvent } from './monolith-rig-transport';
+import { noteLiveFrame } from './live-frame-epoch';
 
 type SurfaceFilters = readonly {
   readonly '#h'?: readonly string[];
@@ -28,7 +29,8 @@ type Registration = {
   readonly filters: SurfaceFilters;
   readonly listener: SurfaceListener;
   readonly roomIds: ReadonlySet<string>;
-  tickDueAt?: number;
+  /** A socket was open at some point while this registration held. */
+  sawOpen: boolean;
   closed: boolean;
 };
 
@@ -38,16 +40,15 @@ type LiveConnectionDeps = {
   subscribeIdentityChange: (listener: () => void) => () => void;
   /** Fires when the app returns to the foreground from the background. */
   subscribeForeground: (listener: () => void) => () => void;
-  isBackground: () => boolean;
 };
 
-const FALLBACK_INTERVAL_MS = 30_000;
 /** A socket stuck opening on a bad network fires no close on its own. */
 const LIVE_CONNECT_TIMEOUT_MS = 15_000;
-/** An open socket can die without a close event, e.g. when the phone changes
- *  network on unlock. A foreground app pings on this interval; a socket that
- *  delivered no frame by the next ping is replaced. */
-const LIVE_PING_INTERVAL_MS = 20_000;
+/** A push can beat the socket frame for the same message; past this, the
+ *  socket missed it. */
+const PUSH_MISS_GRACE_MS = 5_000;
+/** Message ids recently delivered by the socket, to judge a later push. */
+const HEARD_MESSAGE_LIMIT = 256;
 /** The same window the server's own `liveDraftSnapshot` is gated on: past it a
  *  cached draft is no longer live text, so a late join must not paint it. A
  *  turn that ends `failed` or `cancelled` leaves no `retract` behind, so this
@@ -95,11 +96,9 @@ export class LiveConnection {
   private socket: WebSocket | undefined;
   private connectInFlight: Promise<void> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-  private fallbackTimer: ReturnType<typeof setInterval> | undefined;
-  private pingTimer: ReturnType<typeof setInterval> | undefined;
-  /** Set by the first pong: a server without ping support never kills a socket. */
-  private serverAnswersPing = false;
-  private heardSinceLastPing = true;
+  /** Rooms on screen, counted per holder; the server holds their pushes. */
+  private readonly viewing = new Map<string, number>();
+  private readonly heardMessages = new Set<string>();
   private reconnectDelayMs = 1_000;
   private nextRegistrationId = 1;
   private generation = 0;
@@ -118,7 +117,7 @@ export class LiveConnection {
       filters,
       listener,
       roomIds,
-      ...(roomIds.size === 0 ? { tickDueAt: Date.now() + FALLBACK_INTERVAL_MS } : {}),
+      sawOpen: Boolean(this.socket && isSocketOpen(this.socket)),
       closed: false,
     };
     this.registrations.set(registration.id, registration);
@@ -130,7 +129,6 @@ export class LiveConnection {
       if (this.seenSubscribed.has(roomId)) held.push(roomId);
       else if (previous === 0 && !this.pendingSubscribe.has(roomId)) fresh.push(roomId);
     }
-    if (roomIds.size === 0) this.ensureFallback();
     if (fresh.length && this.socket && isSocketOpen(this.socket)) this.sendSubscribe(fresh);
     for (const roomId of held) this.replayLateJoin(registration, roomId);
     // Registration is complete before the socket authenticates. Initial
@@ -144,6 +142,43 @@ export class LiveConnection {
     this.handleIdentityChanged();
     this.unsubscribeIdentity();
     this.unsubscribeForeground();
+  }
+
+  /**
+   * Hold a Room's pushes while it is on screen. The server keeps the view
+   * until the returned release says it left, or the socket that carried it
+   * closes; a replacement socket carries every held view again on open.
+   */
+  view(roomId: string): () => void {
+    const generation = this.generation;
+    const previous = this.viewing.get(roomId) ?? 0;
+    this.viewing.set(roomId, previous + 1);
+    if (previous === 0) this.sendViewing(roomId, true);
+    let released = false;
+    return () => {
+      if (released || generation !== this.generation) return;
+      released = true;
+      const remaining = (this.viewing.get(roomId) ?? 1) - 1;
+      if (remaining > 0) {
+        this.viewing.set(roomId, remaining);
+        return;
+      }
+      this.viewing.delete(roomId);
+      this.sendViewing(roomId, false);
+    };
+  }
+
+  /**
+   * A push arrived for a message in a Room this socket carries. When the
+   * socket never delivered that message, it is silently dead: replace it.
+   */
+  notePushedMessage(roomId: string, messageId: string): void {
+    if (!this.seenSubscribed.has(roomId) || this.heardMessages.has(messageId)) return;
+    const socket = this.socket;
+    setTimeout(() => {
+      if (this.socket !== socket || !this.seenSubscribed.has(roomId)) return;
+      if (!this.heardMessages.has(messageId)) this.reconnect();
+    }, PUSH_MISS_GRACE_MS);
   }
 
   /** Fires once per successful socket open, first connect and every
@@ -186,7 +221,6 @@ export class LiveConnection {
   }
 
   private handleForeground(): void {
-    this.tickFallbacks();
     this.reconnect();
   }
 
@@ -195,13 +229,9 @@ export class LiveConnection {
     this.connectInFlight = undefined;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
-    if (this.fallbackTimer) clearInterval(this.fallbackTimer);
-    this.fallbackTimer = undefined;
     const current = this.socket;
     this.socket = undefined;
     current?.close();
-    if (this.pingTimer) clearInterval(this.pingTimer);
-    this.pingTimer = undefined;
     for (const registration of this.registrations.values()) registration.closed = true;
     this.registrations.clear();
     this.refcount.clear();
@@ -209,6 +239,8 @@ export class LiveConnection {
     this.pendingSubscribe.clear();
     this.overlays.clear();
     this.traceOwners.clear();
+    this.viewing.clear();
+    this.heardMessages.clear();
     this.reconnectDelayMs = 1_000;
   }
 
@@ -216,13 +248,6 @@ export class LiveConnection {
     if (registration.closed) return;
     registration.closed = true;
     this.registrations.delete(registration.id);
-    if (
-      this.fallbackTimer &&
-      ![...this.registrations.values()].some((item) => item.tickDueAt !== undefined)
-    ) {
-      clearInterval(this.fallbackTimer);
-      this.fallbackTimer = undefined;
-    }
     for (const [traceId, owner] of this.traceOwners) {
       if (owner === registration) this.traceOwners.delete(traceId);
     }
@@ -237,30 +262,6 @@ export class LiveConnection {
         if (acknowledged && this.socket && isSocketOpen(this.socket))
           this.socket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
       }
-    }
-  }
-
-  private ensureFallback(): void {
-    if (this.fallbackTimer) return;
-    this.fallbackTimer = setInterval(() => this.tickFallbacks(), FALLBACK_INTERVAL_MS);
-  }
-
-  /** A hidden app polls nothing; the foreground runs whatever fell due. */
-  private tickFallbacks(): void {
-    if (this.deps.isBackground()) return;
-    const now = Date.now();
-    for (const registration of this.registrations.values()) {
-      if (
-        registration.closed ||
-        registration.tickDueAt === undefined ||
-        now < registration.tickDueAt
-      )
-        continue;
-      registration.tickDueAt = now + FALLBACK_INTERVAL_MS;
-      const roomId = [...registration.roomIds][0] ?? '';
-      registration.listener({
-        monolithLive: { type: 'invalidate', roomId, reason: 'poll' },
-      });
     }
   }
 
@@ -291,13 +292,14 @@ export class LiveConnection {
         clearTimeout(connectTimer);
         if (this.socket !== next) return;
         this.reconnectDelayMs = 1_000;
-        this.startPing(next);
         this.sendSubscribe([...this.refcount.keys()]);
+        for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
+        this.coverRoomlessRegistrations();
         for (const listener of this.connectedListeners) listener();
       };
       next.onmessage = (message) => {
         if (this.socket !== next) return;
-        this.heardSinceLastPing = true;
+        noteLiveFrame();
         let live: LiveWireEvent;
         try {
           live = JSON.parse(String(message.data)) as LiveWireEvent;
@@ -320,8 +322,6 @@ export class LiveConnection {
   }
 
   private dropSocketState(): void {
-    if (this.pingTimer) clearInterval(this.pingTimer);
-    this.pingTimer = undefined;
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     this.overlays.clear();
@@ -338,23 +338,35 @@ export class LiveConnection {
     }, delayMs);
   }
 
-  private startPing(socket: WebSocket): void {
-    if (this.pingTimer) clearInterval(this.pingTimer);
-    this.heardSinceLastPing = true;
-    this.pingTimer = setInterval(() => {
-      if (this.socket !== socket || !isSocketOpen(socket)) return;
-      // A hidden app sends nothing; the foreground replaces the socket anyway.
-      if (this.deps.isBackground()) {
-        this.heardSinceLastPing = true;
-        return;
-      }
-      if (!this.heardSinceLastPing && this.serverAnswersPing) {
-        this.reconnect();
-        return;
-      }
-      this.heardSinceLastPing = false;
-      socket.send(JSON.stringify({ type: 'ping' }));
-    }, LIVE_PING_INTERVAL_MS);
+  /**
+   * A registration without Rooms hears only identity-wide invalidations, which
+   * a socket gap can drop. One that lived through a gap gets one covering
+   * signal per reopened socket instead of a timer; a new one already read.
+   */
+  private coverRoomlessRegistrations(): void {
+    for (const registration of this.registrations.values()) {
+      if (registration.closed) continue;
+      if (registration.roomIds.size === 0 && registration.sawOpen)
+        registration.listener({
+          monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' },
+        });
+      registration.sawOpen = true;
+    }
+  }
+
+  private sendViewing(roomId: string, viewing: boolean): void {
+    if (!this.socket || !isSocketOpen(this.socket)) return;
+    this.socket.send(JSON.stringify({ type: 'viewing', roomId, viewing }));
+  }
+
+  private hear(messageId: string | undefined): void {
+    if (!messageId) return;
+    this.heardMessages.delete(messageId);
+    this.heardMessages.add(messageId);
+    if (this.heardMessages.size > HEARD_MESSAGE_LIMIT) {
+      const oldest = this.heardMessages.values().next().value;
+      if (oldest !== undefined) this.heardMessages.delete(oldest);
+    }
   }
 
   private sendSubscribe(roomIds: readonly string[]): void {
@@ -375,10 +387,9 @@ export class LiveConnection {
   }
 
   private dispatch(live: LiveWireEvent | { type: 'pong' }, generation: WebSocket): void {
-    if (live.type === 'pong') {
-      this.serverAnswersPing = true;
-      return;
-    }
+    if (live.type === 'pong') return;
+    if (live.type === 'message-delta') this.hear(live.message.id);
+    else if (live.type === 'invalidate') this.hear(live.messageId);
     if (live.type === 'trace-painted') {
       const owner = this.traceOwners.get(live.id);
       this.traceOwners.delete(live.id);
@@ -498,7 +509,6 @@ export function sharedLiveConnection(): LiveConnection {
       });
       return () => subscription.remove();
     },
-    isBackground: () => AppState.currentState === 'background',
   });
   return shared;
 }

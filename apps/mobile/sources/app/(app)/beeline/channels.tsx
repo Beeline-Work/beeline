@@ -1,6 +1,10 @@
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
-import { useNeedsYouCount } from '@/buzz/needs-you';
+import {
+  announceNeedsYouActivity,
+  messageCanNeedViewer,
+  useNeedsYouCount,
+} from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
@@ -191,7 +195,13 @@ export default function BuzzChannels() {
   const [workspacesConfirmed, setWorkspacesConfirmed] = useState(false);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
   const [welcomeDue, setWelcomeDue] = useState(false);
-  const needsYouCount = useNeedsYouCount(chatList?.workspace.id, chatList);
+  // Bumped by a full Room-list read and by a message that can need the
+  // viewer; prose elsewhere and tool rows never re-count the badge.
+  const [needsYouSignal, setNeedsYouSignal] = useState(0);
+  const needsYouCount = useNeedsYouCount(
+    chatList?.workspace.id,
+    needsYouSignal === 0 ? undefined : needsYouSignal,
+  );
   const cornerDropdowns = useCornerDropdowns(chatList?.chats);
   const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -226,6 +236,8 @@ export default function BuzzChannels() {
     () => deckFocusedRef.current && AppState.currentState !== 'background',
     [],
   );
+  /** Reads the hidden deck skipped; returning to it makes exactly those. */
+  const deckMissedRef = useRef({ chats: false, workspaces: false });
 
   const communities = useMemo(
     () => workspaceList?.workspaces.map(workspaceRailItem) ?? [],
@@ -329,18 +341,16 @@ export default function BuzzChannels() {
     chatScheduler.current?.force();
   }, []);
 
-  // Frames that arrived while the app was in the background were not acted
-  // on. One read on return covers them; it is never repeated on a timer.
-  useEffect(() => {
-    let backgrounded = AppState.currentState === 'background';
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'background') backgrounded = true;
-      else if (state === 'active' && backgrounded) {
-        backgrounded = false;
-        if (deckFocusedRef.current) chatScheduler.current?.signal();
-      }
-    });
-    return () => subscription.remove();
+  /**
+   * Returning to the deck reads only what it skipped while hidden: a change
+   * its socket heard but did not read. Coming back to the foreground needs
+   * nothing here, because the replaced socket's resubscribe is that read.
+   */
+  const refreshMissed = useCallback(() => {
+    const missed = deckMissedRef.current;
+    if (missed.workspaces) workspaceScheduler.current?.force();
+    if (missed.chats) chatScheduler.current?.force();
+    deckMissedRef.current = { chats: false, workspaces: false };
   }, []);
 
   const swipeableRefs = useRef<Map<string, Swipeable | null>>(new Map());
@@ -454,6 +464,7 @@ export default function BuzzChannels() {
       workspaceRefresh = new SurfaceRefreshScheduler({
         fetch: () => http.workspaces(),
         apply: (value) => {
+          deckMissedRef.current.workspaces = false;
           setWorkspaceList(value);
           setWorkspacesConfirmed(true);
           void mobileSurfaceCache.write(workspaceCacheAddress, value, isWorkspaceListView);
@@ -516,9 +527,19 @@ export default function BuzzChannels() {
             if (live && 'roomId' in live) heardRooms.add(live.roomId);
             if (live?.type === 'message-delta' || live?.type === 'turn-delta') {
               if (readInFlight) deltasDuringRead.push(live);
+              if (
+                live.type === 'message-delta' &&
+                messageCanNeedViewer(live.message, nextIdentity.publicKey)
+              ) {
+                setNeedsYouSignal((value) => value + 1);
+                announceNeedsYouActivity();
+              }
               const needsRead = !heldChats || chatListDeltaNeedsRead(heldChats, live);
               if (heldChats) paintChats(applyChatListDelta(heldChats, live));
-              if (needsRead && deckVisible()) chatsRefresh?.signal();
+              if (needsRead) {
+                if (deckVisible()) chatsRefresh?.signal();
+                else deckMissedRef.current.chats = true;
+              }
               return;
             }
             // A corner-status hint is a child corner's working/waiting change,
@@ -527,6 +548,7 @@ export default function BuzzChannels() {
             // A committed-row invalidation announces the delta that follows it.
             if (live?.type === 'invalidate' && live.deliveryId) return;
             if (deckVisible()) chatsRefresh?.signal();
+            else deckMissedRef.current.chats = true;
           });
           previous?.();
           if (cancelled || selectedWorkspaceRemoved || generation !== chatWatchGeneration) {
@@ -546,6 +568,7 @@ export default function BuzzChannels() {
             }
           },
           apply: (read) => {
+            deckMissedRef.current.chats = false;
             const missedLive =
               liveReadApplied &&
               heldChats !== null &&
@@ -557,6 +580,7 @@ export default function BuzzChannels() {
               keepUnavailableChatFacts(heldChats, read),
             );
             paintChats(value);
+            setNeedsYouSignal((signal) => signal + 1);
             if (missedLive) nextTransport.reconnectLive();
             setRefreshing(false);
             setError(null);
@@ -587,6 +611,7 @@ export default function BuzzChannels() {
           ],
           () => {
             if (deckVisible()) workspaceRefresh?.signal();
+            else deckMissedRef.current.workspaces = true;
           },
         )
         .then((stop) => {
@@ -614,14 +639,14 @@ export default function BuzzChannels() {
   useFocusEffect(
     useCallback(() => {
       deckFocusedRef.current = true;
-      refreshNow();
+      refreshMissed();
       setAgeNow(Date.now());
       const timer = setInterval(() => setAgeNow(Date.now()), AGE_TICK_MS);
       return () => {
         deckFocusedRef.current = false;
         clearInterval(timer);
       };
-    }, [activeCommunityId, refreshNow]),
+    }, [activeCommunityId, refreshMissed]),
   );
 
   useEffect(() => {

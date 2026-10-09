@@ -75,6 +75,7 @@ import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
 import { startDesktopNotifications } from '@/push/desktop-notifications';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
 
 const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
 
@@ -107,6 +108,20 @@ if (Platform.OS === 'android') {
     );
   });
 }
+
+// A push names a message the live socket should already have delivered; one
+// that never arrived proves the socket silently dead, so it is replaced.
+Notifications.addNotificationReceivedListener((notification) => {
+  const data = notification.request.content.data as Record<string, unknown> | undefined;
+  const roomId =
+    typeof data?.cornerId === 'string' && data.cornerId
+      ? data.cornerId
+      : typeof data?.channelId === 'string'
+        ? data.channelId
+        : '';
+  if (roomId && typeof data?.messageId === 'string' && data.messageId)
+    sharedLiveConnection().notePushedMessage(roomId, data.messageId);
+});
 
 // Setup Android notification channels (required for Android 8.0+)
 if (Platform.OS === 'android') {
@@ -235,14 +250,18 @@ export default function RootLayout() {
   React.useEffect(startDesktopNotifications, []);
   const isDesktop = useIsDesktop();
   React.useEffect(() => {
+    // The push level is read from the server once per launch; this device
+    // stores every change it makes, so later activations use the stored one.
+    let readPushLevelFor: string | null = null;
     const reconcileBadge = () => {
       if (AppState.currentState !== 'active') return;
       void (async () => {
         const identity = await loadBuzzIdentity();
         let pushLevel = identity ? await loadStoredPushLevel(identity.publicKey) : 'mine';
-        if (identity) {
+        if (identity && readPushLevelFor !== identity.publicKey) {
           const managed = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
           if (managed) {
+            readPushLevelFor = identity.publicKey;
             pushLevel = managed.pushLevel;
             await saveStoredPushLevel(identity.publicKey, pushLevel);
           }

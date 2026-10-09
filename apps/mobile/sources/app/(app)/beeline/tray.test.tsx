@@ -7,6 +7,10 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const layout = vi.hoisted(() => ({ os: 'web', width: 1200 }));
+const appState = vi.hoisted(() => ({
+  current: 'active',
+  listeners: new Set<(state: string) => void>(),
+}));
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const route = vi.hoisted(() => ({ params: { communityId: 'ws' } as { communityId?: string } }));
 const workspaceSet = vi.hoisted(() => ({
@@ -27,6 +31,15 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     AccessibilityInfo: { announceForAccessibility: vi.fn() },
+    AppState: {
+      get currentState() {
+        return appState.current;
+      },
+      addEventListener: (_type: string, listener: (state: string) => void) => {
+        appState.listeners.add(listener);
+        return { remove: () => appState.listeners.delete(listener) };
+      },
+    },
     FlatList: (props: any) =>
       ReactModule.createElement(
         'FlatList',
@@ -123,6 +136,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 });
 
 import TrayScreen from './tray';
+import { announceNeedsYouActivity } from '@/buzz/needs-you';
 
 const person = {
   pubkey: 'person-1',
@@ -216,6 +230,17 @@ function serve({
     if (name === 'listMessageBookmarks') return { bookmarks };
     return undefined;
   });
+}
+
+/** The app goes to the background and comes back: an open tray reads again. */
+async function returnToForeground() {
+  await act(async () => {
+    for (const state of ['background', 'active']) {
+      appState.current = state;
+      for (const listener of [...appState.listeners]) listener(state);
+    }
+  });
+  await act(async () => undefined);
 }
 
 function textOf(tree: ReactTestRenderer): string {
@@ -482,8 +507,7 @@ describe('Bookmarks mobile open', () => {
   it('shows No Workspace instead of stale items once the person leaves the Workspace', async () => {
     layout.os = 'ios';
     layout.width = 390;
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    try {
+    {
       const tree = await renderTray();
       expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
       phoneOperation.mockImplementation(async () => {
@@ -491,75 +515,52 @@ describe('Bookmarks mobile open', () => {
           code: 'workspace membership required',
         });
       });
-      await act(async () => {
-        vi.advanceTimersByTime(60_000);
-      });
-      await act(async () => undefined);
+      await returnToForeground();
       expect(tree.root.findAllByProps({ testID: 'bookmark-msg-1' })).toHaveLength(0);
       expect(tree.root.findByProps({ testID: 'tray-no-workspace' })).toBeTruthy();
       expect(textOf(tree)).toContain('You are no longer a member of this Workspace.');
       expect(textOf(tree)).not.toContain('Retry');
-    } finally {
-      vi.useRealTimers();
     }
   });
 
   it('keeps No Workspace when a refresh after membership loss fails for another reason', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    try {
+    {
       const tree = await renderTray();
       phoneOperation.mockImplementation(async () => {
         throw Object.assign(new Error('Monolith readNeedsYou failed (400): workspace membership required'), {
           code: 'workspace membership required',
         });
       });
-      await act(async () => {
-        vi.advanceTimersByTime(60_000);
-      });
-      await act(async () => undefined);
+      await returnToForeground();
       expect(tree.root.findByProps({ testID: 'tray-no-workspace' })).toBeTruthy();
       phoneOperation.mockImplementation(async () => {
         throw Object.assign(new Error('Monolith readNeedsYou failed (503): unavailable'), {
           code: 'unavailable',
         });
       });
-      await act(async () => {
-        vi.advanceTimersByTime(60_000);
-      });
-      await act(async () => undefined);
+      await returnToForeground();
       expect(tree.root.findByProps({ testID: 'tray-no-workspace' })).toBeTruthy();
       expect(textOf(tree)).toContain('You are no longer a member of this Workspace.');
       expect(textOf(tree)).not.toContain('Retry');
       serve({ bookmarks: [bookmark()] });
-      await act(async () => {
-        vi.advanceTimersByTime(60_000);
-      });
-      await act(async () => undefined);
+      await returnToForeground();
       expect(tree.root.findAllByProps({ testID: 'tray-no-workspace' })).toHaveLength(0);
       expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
-    } finally {
-      vi.useRealTimers();
     }
   });
 
   it('keeps the items and offers Retry when a refresh fails for another reason', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    try {
+    {
       const tree = await renderTray();
       phoneOperation.mockImplementation(async () => {
         throw Object.assign(new Error('Monolith readNeedsYou failed (503): unavailable'), {
           code: 'unavailable',
         });
       });
-      await act(async () => {
-        vi.advanceTimersByTime(60_000);
-      });
-      await act(async () => undefined);
+      await returnToForeground();
       expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
       expect(tree.root.findAllByProps({ testID: 'tray-no-workspace' })).toHaveLength(0);
       expect(textOf(tree)).toContain('Retry');
-    } finally {
-      vi.useRealTimers();
     }
   });
 });
@@ -750,24 +751,38 @@ describe('Tray Needs you', () => {
     expect(tree.root.findAllByType('DesktopRoomInspector' as any)).toHaveLength(0);
   });
 
-  it('an open tray drops a cell cleared on another device at its next re-read', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    try {
+  it('an open tray drops a cell cleared on another device when the app returns to the foreground', async () => {
+    {
       serve({ needs: [need()] });
       const tree = await renderTray();
       expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' }).length).toBeGreaterThan(0);
       serve({ needs: [] });
-      await act(async () => {
-        vi.advanceTimersByTime(60_000);
-      });
-      await act(async () => undefined);
+      await returnToForeground();
       expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' })).toHaveLength(0);
       expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
+    }
+  });
+
+
+  it('an open tray reads nothing on a timer and again when a message can need the viewer', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
+    try {
+      serve({ needs: [need()] });
+      await renderTray();
+      const reads = () => phoneOperation.mock.calls.filter(([name]) => name === 'readNeedsYou').length;
+      const opened = reads();
+      await act(async () => {
+        vi.advanceTimersByTime(30 * 60_000);
+      });
+      expect(reads()).toBe(opened);
+      // Every tray this file left mounted hears it too; this one reads at least once.
+      await act(async () => announceNeedsYouActivity());
+      await act(async () => undefined);
+      expect(reads()).toBeGreaterThan(opened);
     } finally {
       vi.useRealTimers();
     }
   });
-
   it('puts a cell back when the server refuses to clear it', async () => {
     layout.os = 'ios';
     layout.width = 390;

@@ -380,7 +380,7 @@ describe('monolith Room send path', () => {
     expect(controls.fetch).toHaveBeenCalledWith(
       'https://server.example/v1/phone/operations/sendRoomMessage',
       expect.objectContaining({ method: 'POST' }),
-      { timeoutMs: 15_000 },
+      { timeoutMs: 15_000, idempotent: true },
     );
   });
 
@@ -419,7 +419,7 @@ describe('monolith Room send path', () => {
     expect(controls.fetch).toHaveBeenCalledWith(
       'https://server.example/v1/phone/operations/sendRoomReply',
       expect.objectContaining({ method: 'POST' }),
-      { timeoutMs: 15_000 },
+      { timeoutMs: 15_000, idempotent: true },
     );
     expect(JSON.parse(String(controls.fetch.mock.calls[0]![1]?.body))).toEqual({
       roomId: ROOM,
@@ -544,6 +544,7 @@ describe('monolith Room send path', () => {
     expect(controls.fetch).toHaveBeenCalledWith(
       'https://server.example/v1/phone/operations/getManagedIdentity',
       expect.objectContaining({ method: 'POST' }),
+      { timeoutMs: 15_000, idempotent: true },
     );
   });
 
@@ -642,7 +643,7 @@ describe('monolith Room send path', () => {
           cornerId,
         }),
       }),
-      { timeoutMs: 15_000 },
+      { timeoutMs: 15_000, idempotent: true },
     );
   });
 

@@ -648,7 +648,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('keeps an acknowledged send pending while authoritative projection catches up', async () => {
+  it('confirms an acknowledged send from its delta, with one Room read only if it never comes', async () => {
     vi.useFakeTimers();
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;
@@ -662,27 +662,39 @@ describe('useRoomSurfaceSession', () => {
       );
     });
     await flushEffects();
+    const scheduler = controls.schedulers[0]!;
 
-    current.outbox.scheduleConfirmation('accepted-message');
-    await act(async () => vi.advanceTimersByTimeAsync(15_000));
-    expect(controls.outboxFail).not.toHaveBeenCalled();
-    expect(current.outbox.failedIds).not.toContain('accepted-message');
-    const expectation = controls.schedulers[0]!.expectations[0]!;
-    expect(expectation(roomView('room-a'))).toBe(false);
-    expect(
-      expectation({
-        ...roomView('room-a'),
-        messages: [
-          {
-            id: 'accepted-message',
+    // Its delta lands first: nothing is read.
+    current.outbox.scheduleConfirmation('delivered-message');
+    await act(async () => {
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'message-delta',
+          roomId: 'room-a',
+          message: {
+            id: 'delivered-message',
             text: 'hello',
             createdAt: 1,
             author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
             presentation: 'message',
           },
-        ],
-      }),
-    ).toBe(true);
+        },
+      });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(scheduler.signalCalls).toBe(0);
+    expect(scheduler.expectations).toEqual([]);
+
+    // No delta: one read after the grace, and the send is never failed for it.
+    current.outbox.scheduleConfirmation('accepted-message');
+    await act(async () => vi.advanceTimersByTimeAsync(3_999));
+    expect(scheduler.signalCalls).toBe(0);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(scheduler.signalCalls).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(scheduler.signalCalls).toBe(1);
+    expect(controls.outboxFail).not.toHaveBeenCalled();
+    expect(current.outbox.failedIds).not.toContain('accepted-message');
     await act(async () => renderer.unmount());
     vi.useRealTimers();
   });
@@ -1156,7 +1168,7 @@ describe('useRoomSurfaceSession', () => {
         deliveryId: 'delivery-stop',
       },
     ],
-  ])('refreshes %s immediately from the committed-row event', async (_id, event) => {
+  ])('reads nothing for the %s hint whose delta follows', async (_id, event) => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1171,12 +1183,13 @@ describe('useRoomSurfaceSession', () => {
       controls.subscriptions[0]!.emit({ monolithLive: event });
     });
 
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads + 1);
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads);
     expect(controls.schedulers[0]!.signalCalls).toBe(0);
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
     await act(async () => renderer.unmount());
   });
 
-  it('STOP-01 clears the working turn from the event-triggered authoritative read', async () => {
+  it('STOP-01 clears the working turn from its turn delta, with no Room read', async () => {
     controls.cached = {
       ...roomView('room-a'),
       latestAgentTurns: [
@@ -1212,27 +1225,25 @@ describe('useRoomSurfaceSession', () => {
           deliveryId: 'delivery-stop',
         },
       });
-      controls.schedulers[0]!.apply({
-        ...roomView('room-a'),
-        latestAgentTurns: [
-          {
-            requestId: 'request-a',
-            agentPubkey: 'agent-a',
-            status: 'cancelled',
-            createdAt: 1,
-          },
-        ],
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'turn-delta',
+          roomId: 'room-a',
+          reconcilesDelivery: 'delivery-stop',
+          turn: { requestId: 'request-a', agentPubkey: 'agent-a', status: 'cancelled', createdAt: 1 },
+        },
       });
     });
 
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads + 1);
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads);
+    expect(controls.schedulers[0]!.forceCalls).toBe(0);
     expect(current.roomSurface?.latestAgentTurns).toEqual([
       expect.objectContaining({ requestId: 'request-a', status: 'cancelled' }),
     ]);
     await act(async () => renderer.unmount());
   });
 
-  it('uses a paired delta as the fast paint without scheduling a second Room read', async () => {
+  it('paints a paired delta and reads no Room for it', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
@@ -1274,7 +1285,7 @@ describe('useRoomSurfaceSession', () => {
     });
 
     expect(current.roomSurface?.messages.map((message) => message.id)).toEqual(['message-a']);
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads + 1);
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads);
     expect(controls.schedulers[0]!.signalCalls).toBe(0);
     await act(async () => renderer.unmount());
   });
@@ -1303,7 +1314,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('does not reread for the fallback of a delivery it already reread', async () => {
+  it('reads the Room once for the fallback of a delivery the server could not read', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1335,8 +1346,8 @@ describe('useRoomSurfaceSession', () => {
       });
     });
 
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads + 1);
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads);
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
     await act(async () => renderer.unmount());
   });
 

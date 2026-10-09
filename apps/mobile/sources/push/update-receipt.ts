@@ -67,7 +67,12 @@ async function installationDeviceId(): Promise<string> {
  * of notification permission and FCM registration, so a push-disabled owner
  * device can still close the OTA delivery loop.
  */
+/** The identity and update this JS context already reported; the bytes cannot change under it. */
+let reportedRunningUpdate: string | null = null;
+
 export async function reportRunningUpdateReceipt(identity: Identity): Promise<void> {
+  const reportKey = `${identity.publicKey}:${Updates.updateId ?? ''}`;
+  if (reportedRunningUpdate === reportKey) return;
   const platform = runningUpdatePlatform(
     Platform.OS,
     isTauri(),
@@ -96,6 +101,7 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
         ...(release.releaseVersion ? { releaseVersion: release.releaseVersion } : {}),
         ...(release.releaseSha ? { sourceSha: release.releaseSha } : {}),
       });
+      reportedRunningUpdate = reportKey;
       return;
     }
     const response = await fetch(receiptUrl, {

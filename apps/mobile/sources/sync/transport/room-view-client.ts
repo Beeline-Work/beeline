@@ -37,8 +37,31 @@ import {
   MONOLITH_REQUEST_TIMEOUT_MS,
 } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { liveFrameEpoch } from './live-frame-epoch';
 
 export { RoomViewHttpError };
+
+/**
+ * Identical GETs in flight at once share one request: every screen mounting
+ * on the same open asks for the same Workspace, Room list or Room. A caller
+ * that asks after the live socket delivered anything new starts its own read,
+ * because the shared one may predate the change that frame announced.
+ */
+const readsInFlight = new Map<string, { promise: Promise<unknown>; epoch: number }>();
+
+function shareRead<T>(key: string, start: () => Promise<T>): Promise<T> {
+  const epoch = liveFrameEpoch();
+  const shared = readsInFlight.get(key);
+  if (shared && shared.epoch === epoch) return shared.promise as Promise<T>;
+  const promise = start();
+  const entry = { promise, epoch };
+  readsInFlight.set(key, entry);
+  const release = () => {
+    if (readsInFlight.get(key) === entry) readsInFlight.delete(key);
+  };
+  promise.then(release, release);
+  return promise;
+}
 
 /** A bounded deadline fired before the server answered the phone's read. */
 export function isRoomViewTimeoutError(error: unknown): boolean {
@@ -160,7 +183,9 @@ class MonolithRoomViewClient {
   }
 
   private get<T>(path: string, guard: Guard<T>, signal?: AbortSignal): Promise<T> {
-    return this.checked(path, 'GET', guard, undefined, signal);
+    // A read its caller can cancel (search) is never shared.
+    if (signal) return this.checked(path, 'GET', guard, undefined, signal);
+    return shareRead(path, () => this.checked(path, 'GET', guard));
   }
   private operation<T>(name: string, input: unknown, guard: Guard<T>): Promise<T> {
     return this.checked(`/v1/phone/operations/${name}`, 'POST', guard, input);
@@ -191,7 +216,12 @@ class MonolithRoomViewClient {
       if (projected === null) throw new RoomViewHttpError(502, 'invalid_surface_response');
       return projected;
     } catch (error) {
-      if (timedOut) throw new RoomViewHttpError(0, 'timeout');
+      if (timedOut) {
+        // The answer stalled after its headers: the connection under it is
+        // presumed dead, so the next request goes elsewhere.
+        monolithSession.noteStalled(`${this.baseUrl}${path}`);
+        throw new RoomViewHttpError(0, 'timeout');
+      }
       throw error;
     } finally {
       clearTimeout(timer);
@@ -216,7 +246,12 @@ class MonolithRoomViewClient {
             ? {}
             : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
         },
-        { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS },
+        // Reads, read marks and invite lookups repeat safely on a fresh
+        // connection; claiming a pairing code does not.
+        {
+          timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+          idempotent: !path.endsWith('/operations/claimAgentPairing'),
+        },
       )
       .catch((error: unknown) => {
         if (error instanceof MonolithRequestTimeoutError) throw new RoomViewHttpError(0, 'timeout');

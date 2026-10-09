@@ -10,7 +10,7 @@ Two web builds (`expo export --platform web`) pointed at that server: `main` and
 
 Fixture: Room `scroll-probe` with 60 messages. The Room read returns messages 31–60. The target is message 38: it is in those rows, 22 rows above the newest, the same position as message 38 in the production `scroll-probe-2232` report. "Top" is the target row's top edge minus the list's top edge.
 
-| Case | `main` at 2 s / 6 s | This branch at 2 s / 6 s |
+| Case | `main` at 2 s / 6 s | This branch (final head) at 2 s / 6 s |
 |---|---|---|
 | Cold open: the notification link is the first page | 0 px / 0 px | 0 px / 0 px |
 | Room opened earlier: open the Room, go to the Room list, then load the notification link | -1015 px / -1015 px (rows 50–58 on screen) | 0 px / 0 px (rows 38–46) |
@@ -36,10 +36,10 @@ On production, `main` missed 1 of 12 case runs: a cold open whose read around th
 
 The dev-client APK loaded this branch's JS from Metro, then `main`'s JS (the three changed files swapped back), against the local server, signed in through `beeline://review/<secret>`. A local server cannot send FCM. So each tray notification was posted from inside the app with `expo-notifications` and the push payload (`type: message`, `channelId`, `messageId`, `workspaceId`), with the app in the background. Each notification was then tapped in the shade with `adb`. The app's foreground policy hides a notification for the Room that is open in the foreground, so "open now" means the Room screen stayed mounted while the app was in the background. The offset is the target row's top minus the list top, read from UI bounds.
 
-| Case | `main` at 2 s / 6 s | This branch at 2 s / 6 s |
+| Case | `main` at 2 s / 6 s | This branch (final head) at 2 s / 6 s |
 |---|---|---|
-| Room opened earlier (another Room open when the tap arrives) | target off screen, rows 49–58 (2 of 2 runs) | 18 px / 18 px (3 of 3 runs) |
-| Same Room open, at its newest rows | 74 px / 74 px (3 of 3) | 74 px / 74 px (4 of 4) |
+| Room opened earlier (another Room open when the tap arrives) | target off screen, rows 49–58 (2 of 2 runs) | 18 px / 18 px (2 of 2 runs) |
+| Same Room open, at its newest rows | 74 px / 74 px (3 of 3) | 74 px / 74 px (2 of 2) |
 | Second tap, same target, after a landing | 18 px / 18 px | 18 px / 18 px (2 of 2) |
 | After a landing, the Room opened again without a notification, then a tap on the same target | target off screen, rows 39–49, no flash (2 of 4 runs; 2 of 3 on the branch before its last commit) | 74 px / 74 px (4 of 4) |
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compressDictationWav } from './wav-adpcm';
+import { compressDictationWav, dictationWavSeconds, splitDictationWav } from './wav-adpcm';
 
 const STEPS = [
   7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73,
@@ -109,5 +109,26 @@ describe('compressDictationWav', () => {
 
     expect(compressDictationWav(stereo)).toBe(stereo);
     expect(compressDictationWav(text)).toBe(text);
+  });
+});
+
+describe('splitDictationWav', () => {
+  // Loud tone at 100 Hz rate with a quiet gap at 7.0-7.2 s and another at 13.5-13.7 s.
+  const rate = 100;
+  const quiet = (i: number) => (i >= 700 && i < 720) || (i >= 1350 && i < 1370);
+  const samples = Int16Array.from({ length: 1800 }, (_, i) => (quiet(i) ? 0 : 8000));
+
+  it('cuts at the quietest moment before each limit and keeps every sample', () => {
+    const chunks = splitDictationWav(pcmWav(samples, rate), 8);
+    expect(chunks.map((chunk) => dictationWavSeconds(chunk))).toEqual([7.05, 6.5, 4.45]);
+    const joined = chunks.flatMap((chunk) => Array.from(new Int16Array(chunk.slice(44).buffer)));
+    expect(joined).toEqual(Array.from(samples));
+  });
+
+  it('answers a short WAV or another file alone', () => {
+    const short = pcmWav(samples.subarray(0, 500), rate);
+    expect(splitDictationWav(short, 8)).toEqual([short]);
+    const other = new TextEncoder().encode('not a wav');
+    expect(splitDictationWav(other, 8)).toEqual([other]);
   });
 });

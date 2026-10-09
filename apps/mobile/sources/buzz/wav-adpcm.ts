@@ -140,15 +140,9 @@ export function dictationWavSeconds(wav: Uint8Array): number | null {
   return pcm ? pcm.samples.length / pcm.rate : null;
 }
 
-/**
- * Joins 16-bit mono PCM WAVs of one rate into one PCM WAV, in order. Answers
- * null when any input is another format or the rates differ.
- */
-export function concatDictationWavs(wavs: readonly Uint8Array[]): Uint8Array | null {
-  const parts = wavs.map(pcmSamples);
-  const rate = parts[0]?.rate;
-  if (!rate || parts.some((part) => !part || part.rate !== rate)) return null;
-  const count = parts.reduce((total, part) => total + part!.samples.length, 0);
+/** Writes 16-bit mono PCM samples, in order, as one PCM WAV. */
+function pcmWav(rate: number, parts: readonly Int16Array[]): Uint8Array {
+  const count = parts.reduce((total, part) => total + part.length, 0);
   const out = new Uint8Array(44 + count * 2);
   const view = new DataView(out.buffer);
   const text = (offset: number, value: string) => {
@@ -169,10 +163,65 @@ export function concatDictationWavs(wavs: readonly Uint8Array[]): Uint8Array | n
   view.setUint32(40, count * 2, true);
   let offset = 44;
   for (const part of parts) {
-    for (const sample of part!.samples) {
+    for (const sample of part) {
       view.setInt16(offset, sample, true);
       offset += 2;
     }
   }
   return out;
+}
+
+/**
+ * Joins 16-bit mono PCM WAVs of one rate into one PCM WAV, in order. Answers
+ * null when any input is another format or the rates differ.
+ */
+export function concatDictationWavs(wavs: readonly Uint8Array[]): Uint8Array | null {
+  const parts = wavs.map(pcmSamples);
+  const rate = parts[0]?.rate;
+  if (!rate || parts.some((part) => !part || part.rate !== rate)) return null;
+  return pcmWav(
+    rate,
+    parts.map((part) => part!.samples),
+  );
+}
+
+// A cut lands in the quietest tenth of a second in the last few before the limit.
+const CUT_WINDOW_SECONDS = 0.1;
+const CUT_SEARCH_SECONDS = 5;
+
+/**
+ * Cuts a 16-bit mono PCM WAV into PCM WAVs of at most `maxSeconds`. Each cut
+ * lands in the quietest 100 ms of the 5 s before the limit, so it rarely
+ * splits a word. A shorter WAV or any other file is answered alone.
+ */
+export function splitDictationWav(wav: Uint8Array, maxSeconds: number): Uint8Array[] {
+  const pcm = pcmSamples(wav);
+  if (!pcm) return [wav];
+  const { rate, samples } = pcm;
+  const limit = Math.floor(maxSeconds * rate);
+  if (samples.length <= limit) return [wav];
+  const window = Math.max(1, Math.floor(CUT_WINDOW_SECONDS * rate));
+  const search = Math.min(Math.floor(CUT_SEARCH_SECONDS * rate), limit - window);
+  const chunks: Uint8Array[] = [];
+  let start = 0;
+  while (samples.length - start > limit) {
+    let cut = start + limit;
+    let quietest = Infinity;
+    for (
+      let from = start + limit - search;
+      from + window <= start + limit;
+      from += window >> 1 || 1
+    ) {
+      let energy = 0;
+      for (let i = from; i < from + window; i++) energy += Math.abs(samples[i]!);
+      if (energy < quietest) {
+        quietest = energy;
+        cut = from + (window >> 1);
+      }
+    }
+    chunks.push(pcmWav(rate, [samples.subarray(start, cut)]));
+    start = cut;
+  }
+  chunks.push(pcmWav(rate, [samples.subarray(start)]));
+  return chunks;
 }

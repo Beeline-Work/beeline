@@ -141,8 +141,31 @@ describe('startDictationUpload', () => {
     expect(uploadedSamples(1)).toBe(16000);
   });
 
-  it('answers null when any piece fails, and sends no later piece', async () => {
-    sessionFetch.mockResolvedValueOnce(new Response('', { status: 502 }));
+  it('keeps sending after a failed piece and retries it once at stop', async () => {
+    // Reproduction R2: piece a fails while the user still talks; piece b follows.
+    sessionFetch
+      .mockResolvedValueOnce(new Response('', { status: 502 }))
+      .mockResolvedValueOnce(Response.json({ text: 'second part.' }))
+      .mockResolvedValueOnce(Response.json({ text: 'First part.' }));
+    const { startDictationUpload } = await load();
+
+    const upload = startDictationUpload([], 'en-US');
+    upload.add('file:///a.wav');
+    upload.add('file:///b.wav');
+    await settle();
+    await settle();
+    expect(sessionFetch).toHaveBeenCalledTimes(2);
+
+    expect(await upload.finish()).toBe('First part. second part.');
+    expect(sessionFetch).toHaveBeenCalledTimes(3);
+    expect(deleted).toEqual(['file:///a.wav', 'file:///b.wav']);
+  });
+
+  it('answers null when a failed piece fails again at stop', async () => {
+    sessionFetch
+      .mockResolvedValueOnce(new Response('', { status: 502 }))
+      .mockResolvedValueOnce(Response.json({ text: 'second part.' }))
+      .mockResolvedValueOnce(new Response('', { status: 502 }));
     const { startDictationUpload } = await load();
 
     const upload = startDictationUpload([], 'en-US');
@@ -150,8 +173,20 @@ describe('startDictationUpload', () => {
     upload.add('file:///b.wav');
 
     expect(await upload.finish()).toBeNull();
-    expect(sessionFetch).toHaveBeenCalledTimes(1);
-    expect(deleted).toEqual(['file:///a.wav', 'file:///b.wav']);
+    expect(sessionFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps transcription on after a 503 that is not the no-key answer', async () => {
+    // Reproduction R3: a proxy 503 during a deploy.
+    sessionFetch
+      .mockResolvedValueOnce(new Response('', { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ text: 'Retried.' }));
+    const { dictationTranscriptionAvailable, startDictationUpload } = await load();
+
+    const upload = startDictationUpload([], 'en-US');
+    upload.add('file:///a.wav');
+    expect(await upload.finish()).toBe('Retried.');
+    expect(dictationTranscriptionAvailable()).toBe(true);
   });
 
   it('answers null when the last piece is still out at the stop deadline', async () => {
@@ -195,6 +230,71 @@ describe('startDictationUpload', () => {
     await settle();
     expect(sessionFetch).not.toHaveBeenCalled();
     expect(deleted).toEqual(['file:///late.wav']);
+  });
+
+  it('sends a long note to Groq in chunks and waits for them past the base stop deadline', async () => {
+    // Reproduction R1: one 90 s piece closes at stop on a 1 Mbit/s uplink.
+    vi.useFakeTimers();
+    try {
+      recordings.set('file:///long.wav', pcmWav(90));
+      // The phone's uplink is shared: requests send their bytes one after another.
+      let linkFreeAt = 0;
+      sessionFetch.mockImplementation((_url: string, init: { body: Uint8Array }) => {
+        const start = Math.max(Date.now(), linkFreeAt);
+        linkFreeAt = start + (init.body.length / 125_000) * 1000;
+        const answer = linkFreeAt + 500 - Date.now();
+        const call = sessionFetch.mock.calls.length;
+        return new Promise<Response>((resolve) =>
+          setTimeout(() => resolve(Response.json({ text: `part ${call}.` })), answer),
+        );
+      });
+      const { startDictationUpload } = await load();
+
+      const upload = startDictationUpload([], 'en-US');
+      upload.add('file:///long.wav');
+      const result = upload.finish();
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(await result).toBe('part 1. part 2.');
+      expect(sessionFetch).toHaveBeenCalledTimes(2);
+      expect(uploadedSamples(0) + uploadedSamples(1)).toBeGreaterThanOrEqual(16000 * 90);
+      expect(uploadedSamples(0)).toBeLessThanOrEqual(16000 * 60 + 505);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the stop wait granted to a long piece when a short piece follows it', async () => {
+    // Review F1: a 60 s piece answers after 6 s, then a 3 s piece after 1 s.
+    vi.useFakeTimers();
+    try {
+      recordings.set('file:///long.wav', pcmWav(60));
+      recordings.set('file:///short.wav', pcmWav(3));
+      sessionFetch
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) =>
+              setTimeout(() => resolve(Response.json({ text: 'Long part.' })), 6000),
+            ),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) =>
+              setTimeout(() => resolve(Response.json({ text: 'short part.' })), 1000),
+            ),
+        );
+      const { startDictationUpload } = await load();
+
+      const upload = startDictationUpload([], 'en-US');
+      upload.add('file:///long.wav');
+      upload.add('file:///short.wav');
+      const result = upload.finish();
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(await result).toBe('Long part. short part.');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('uploads a PCM recording as IMA ADPCM, a quarter of the bytes', async () => {

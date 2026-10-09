@@ -128,6 +128,14 @@ describe('POST /v1/phone/transcriptions', () => {
     expect(transcribe).not.toHaveBeenCalled();
   });
 
+  it("sends audio up to Groq's 25 MB upload limit to Groq", async () => {
+    const transcribe = vi.fn(async () => 'long note');
+    const response = await post({ transcribe }, new Uint8Array(12 * 1024 * 1024));
+    expect(TRANSCRIPTION_MAXIMUM_BYTES).toBe(25 * 1024 * 1024);
+    expect(response.status).toBe(200);
+    expect(transcribe).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses audio over the size limit before calling Groq', async () => {
     const transcribe = vi.fn();
     const response = await post({ transcribe }, new Uint8Array(TRANSCRIPTION_MAXIMUM_BYTES + 1));

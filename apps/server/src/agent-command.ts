@@ -838,7 +838,8 @@ export async function queueCornerWorkerAfterReview(
          AND worker.kind='agent'
        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
          AND command.action IN ('input','resume')
-         AND (dispatch.system_event->>'kind'='check-passed'
+         AND (command.reason='corner_review_dispatch'
+              OR dispatch.system_event->>'kind'='check-passed'
               OR dispatch.author_id=${cornerImplementerSql('fact', 'corner')})
          AND ${cornerImplementerSql('fact', 'corner')}<>command.agent_id
        ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
@@ -1122,10 +1123,13 @@ export async function readAgentCommands(
      EXISTS(
        SELECT 1 FROM rooms corner
        JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN corner_facts fact ON fact.corner_id=corner.id
        WHERE corner.id=c.room_id
          AND (parent.reviewer_agent_id=c.agent_id OR c.agent_id=ANY(parent.reviewer_fallback_ids))
-         AND (c.reason='corner_check'
-              OR (c.reason='subscribed_event' AND m.system_event->>'kind'='check-passed'))
+         AND (c.reason='corner_check' OR c.reason='corner_review_dispatch'
+              OR (c.reason='subscribed_event' AND
+                (m.system_event->>'kind'='check-passed'
+                  OR m.author_id=${cornerImplementerSql('fact', 'corner')})))
      )
      AND EXISTS(
        SELECT 1 FROM agent_commands busy
@@ -1477,7 +1481,8 @@ export async function reconcileCornerMergeBlockers(
  * Room configuration is the dispatch authority. The subscription remains a
  * visible description of what wakes the reviewer, but losing or overwriting
  * that projection must not lose a review. Existing green heads are dispatched
- * from their latest check fact when no exact-head verdict has been recorded.
+ * from their latest check fact when the lifecycle is ready and no review
+ * command is pending or running on that head.
  */
 export async function reconcileConfiguredCornerReviewers(
   db: SqlDatabase,
@@ -1589,7 +1594,7 @@ export async function reconcileConfiguredCornerReviewers(
   }
   const candidates = await db.query<{
     corner_id: string;
-    reviewer_agent_id: string;
+    reviewer_agent_id: string | null;
     source_message_id: string;
     head_sha: string | null;
   }>(
@@ -1598,13 +1603,6 @@ export async function reconcileConfiguredCornerReviewers(
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
      JOIN corner_facts fact ON fact.corner_id=corner.id
-     JOIN memberships parent_reviewer ON parent_reviewer.room_id=parent.id
-       AND parent_reviewer.identity_id=parent.reviewer_agent_id
-       AND parent_reviewer.removed_at IS NULL
-     JOIN memberships corner_reviewer ON corner_reviewer.room_id=corner.id
-       AND corner_reviewer.identity_id=parent.reviewer_agent_id
-       AND corner_reviewer.removed_at IS NULL
-     JOIN identities reviewer ON reviewer.id=parent.reviewer_agent_id AND reviewer.kind='agent'
      JOIN LATERAL (
        SELECT message.id
        FROM messages message
@@ -1615,6 +1613,7 @@ export async function reconcileConfiguredCornerReviewers(
        ORDER BY message.created_at DESC,message.id DESC LIMIT 1
      ) source ON true
      WHERE corner.archived_at IS NULL
+       AND fact.workflow_state IS DISTINCT FROM 'ask_human'
        AND fact.lifecycle->>'checks'='passing'
        AND fact.lifecycle->'pr'->>'number' IS NOT NULL
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
@@ -1628,26 +1627,35 @@ export async function reconcileConfiguredCornerReviewers(
        )
        AND NOT EXISTS (
          SELECT 1 FROM agent_commands command
+         JOIN messages dispatch ON dispatch.id=command.source_message_id
          WHERE command.room_id=corner.id
-           AND command.agent_id=parent.reviewer_agent_id
-           AND command.source_message_id=source.id
-           AND command.action='input'
+           AND (command.agent_id=parent.reviewer_agent_id
+             OR command.agent_id=ANY(parent.reviewer_fallback_ids))
+           AND command.state IN ('pending','claimed') AND command.action='input'
+           AND (command.reason='corner_review_dispatch'
+             OR (command.reason='subscribed_event' AND
+               (dispatch.system_event->>'kind'='check-passed'
+                 OR dispatch.author_id=${cornerImplementerSql('fact', 'corner')}))
+             OR (command.reason='agent_tag' AND dispatch.author_id=${cornerImplementerSql('fact', 'corner')}))
+           AND (dispatch.system_event->'object'->>'headSha' IS NULL
+                OR dispatch.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha')
        )`,
     [parentRoomId ?? null],
   );
   for (const candidate of candidates.rows) {
-    // Re-report the green head; the transition decides whether it wakes the
-    // reviewer (it does not when the run already moved past checks).
-    await advanceCorner(db, candidate.corner_id, {
+    // Re-report the green head. A review state repairs a missing wake; an
+    // implement state waits for its current worker before taking rereview.
+    const outcome = await advanceCorner(db, candidate.corner_id, {
       kind: 'checks',
       result: 'passing',
       sourceMessageId: candidate.source_message_id,
     });
     const routed = await db.query(
-      `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3`,
+      `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2 AND agent_id=$3
+         AND state IN ('pending','claimed')`,
       [candidate.corner_id, candidate.source_message_id, candidate.reviewer_agent_id],
     );
-    if (routed.rowCount) commands += 1;
+    if (outcome.wake?.queued || routed.rowCount) commands += 1;
   }
   return { subscriptions: subscriptions.rowCount, commands };
 }

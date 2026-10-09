@@ -949,7 +949,7 @@ it('does not wake the author or consume a green transition when the configured r
         [C],
       )
     ).rows.map((row) => row.text),
-  ).toEqual(['@hoots could not be reached · not a current member of the parent Room']);
+  ).toEqual(['@hoots could not be reached · not a current member of the parent Room; a Workspace owner or admin must restore reviewer membership']);
   await expect(
     daemon.execute('getAgentConfiguration', { agentId: B, roomId: C }, B),
   ).resolves.toEqual(expect.objectContaining({ reviewerHandle: 'hoots' }));

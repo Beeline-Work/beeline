@@ -19,7 +19,7 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
-import { noteBlockedCornerChecks } from './agent-command.js';
+import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
 import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { createFirebasePushSender } from './firebase-push.js';
@@ -391,6 +391,8 @@ async function main() {
           noteBlockedCornerChecks(jobsDatabase));
         await backgroundJobs.run('expired-command-leases', () =>
           reclaimExpiredCommandLeases(jobsDatabase, live));
+        await backgroundJobs.run('corner-reviewers', () =>
+          reconcileConfiguredCornerReviewers(jobsDatabase));
         await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
         await backgroundJobs.run('institutional-curator', () =>
           runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {

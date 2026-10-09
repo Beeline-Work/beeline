@@ -15,6 +15,9 @@ vi.mock('react-native', async () => {
     Pressable: rnw.Pressable,
     View: rnw.View,
     Platform: rnw.Platform,
+    Keyboard: rnw.Keyboard,
+    Animated: rnw.Animated,
+    Easing: rnw.Easing,
   };
 });
 vi.mock('expo-haptics', () => ({

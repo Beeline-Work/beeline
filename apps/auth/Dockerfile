@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS build
+FROM ghcr.io/beeline-work/ci-node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS build
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ COPY packages/buzz-client/src ./packages/buzz-client/src
 COPY scripts/clean-dist.mjs ./scripts/clean-dist.mjs
 RUN npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/auth
 
-FROM node:22-bookworm-slim AS runtime
+FROM ghcr.io/beeline-work/ci-node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS runtime
 
 ARG BEELINE_RELEASE_VERSION=development
 ARG BEELINE_RELEASE_SHA=unknown

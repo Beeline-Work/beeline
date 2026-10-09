@@ -648,9 +648,11 @@ export function BuzzChatSurface({
       endTranscriptJump();
     },
     onLanded: (destination, rowId) => {
-      if (scrollController.isHoldingLanding())
+      if (scrollController.isHoldingLanding()) {
         heldLandingFromOldestRef.current =
           phoneContentHeightRef.current - phoneScrollOffsetRef.current;
+        heldLandingShortRef.current = phoneContentHeightRef.current < phoneListHeightRef.current;
+      }
       // The landing is COMPLETE here — the row is on screen, which is the same
       // rule the badge runs on. A flash fired at row mount or at the first
       // scroll would burn off behind the fold while the list was still
@@ -2593,9 +2595,15 @@ export function BuzzChatSurface({
   const phoneContentHeightRef = useRef(0);
   const phoneScrollOffsetRef = useRef(0);
   const heldLandingFromOldestRef = useRef(0);
+  // Only a window shorter than the list grows by newer rows after its
+  // landing (the short-list fill). A window that fills the list grows only
+  // at its oldest end, as the list draws rows above the target, and the
+  // native offset keeps the target in place by itself.
+  const phoneListHeightRef = useRef(0);
+  const heldLandingShortRef = useRef(false);
   const holdPhoneLanding = (height: number) => {
     phoneContentHeightRef.current = height;
-    if (!scrollController.isHoldingLanding()) return;
+    if (!scrollController.isHoldingLanding() || !heldLandingShortRef.current) return;
     const offset = Math.max(0, height - heldLandingFromOldestRef.current);
     if (Math.abs(offset - phoneScrollOffsetRef.current) > 1) scrollController.holdLanding(offset);
   };
@@ -6407,9 +6415,10 @@ export function BuzzChatSurface({
                         onWheel: scrollController.userScrolled,
                       }
                     : {})}
-                  onLayout={(event) =>
-                    phoneUnderfill.observeListHeight(event.nativeEvent.layout.height)
-                  }
+                  onLayout={(event) => {
+                    phoneListHeightRef.current = event.nativeEvent.layout.height;
+                    phoneUnderfill.observeListHeight(event.nativeEvent.layout.height);
+                  }}
                   onContentSizeChange={(_width, height) => {
                     transcriptPositions.observeContentSize(height);
                     detachedFillMeasuredRef.current = true;

@@ -229,10 +229,26 @@ describe('composer trailing control is mic XOR send', () => {
     expect(hosts(render({ value: 'next instruction', focused: true }), 'chat-send')).toHaveLength(1);
   });
 
-  it('shows only the send control when an attachment is staged via canSend', () => {
-    // The chat screen computes canSend from text OR staged attachments; the
-    // composer must reuse that same verdict, not a second predicate.
-    const root = render({ value: '', canSend: true, focused: true });
+  it('keeps the mic with the keyboard up while only a staged attachment is sendable', () => {
+    // canSend counts staged attachments; the slot follows typed text only.
+    const root = render({
+      value: '@ruby ',
+      canSend: true,
+      focused: true,
+      tagHandles: new Set(['ruby']),
+      attachments: [{ uri: 'file:///tmp/a.png', name: 'a.png', mimeType: 'image/png', sizeLabel: '1 KB' }],
+    });
+    expect(hosts(root, 'chat-send')).toHaveLength(0);
+    expect(hosts(root, 'chat-mic')).toHaveLength(1);
+  });
+
+  it('shows send with the keyboard up once text is typed beside a staged attachment', () => {
+    const root = render({
+      value: 'see this',
+      canSend: true,
+      focused: true,
+      attachments: [{ uri: 'file:///tmp/a.png', name: 'a.png', mimeType: 'image/png', sizeLabel: '1 KB' }],
+    });
     expect(hosts(root, 'chat-mic')).toHaveLength(0);
     expect(hosts(root, 'chat-send')).toHaveLength(1);
   });

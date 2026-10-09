@@ -262,11 +262,13 @@ export function ConversationComposer({
   // The trailing control is mic XOR send, in one slot: while dictation is live
   // the control stays the listening/stop control. Otherwise the keyboard picks:
   // lowered, it is the mic, and a take adds to any typed text; raised, it is
-  // send once there is something to send. Without speech the send control
-  // always shows (disabled when nothing is sendable), so the corner is never
-  // empty — including while an agent is working, when a tap queues the next
-  // instruction.
-  const showMic = speechAvailable && (dictationBusy || !hasSomethingToSend || !keyboardUp);
+  // send once there is typed text. Tags and staged files alone keep the mic:
+  // they go out with the next take or typed text. Without speech the send
+  // control always shows (disabled when nothing is sendable), so the corner is
+  // never empty — including while an agent is working, when a tap queues the
+  // next instruction.
+  const showMic =
+    speechAvailable && (dictationBusy || !keyboardUp || !tagSplit.rest.trim());
   const showSend = !showMic;
 
   // Dictation shows a waveform, never live words. Only a failure that needs

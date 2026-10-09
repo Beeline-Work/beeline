@@ -236,6 +236,35 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     expect(pendingGrantToolCall({ title: 'offer_connector', content: joined })).toBe(true);
   });
 
+  it('offer_connector with intent switch asks to replace the bound Squire account and pauses the turn', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const reply = await offerConnector(
+      { connectorType: 'trusty-squire', reason: 'sign up with your work account', intent: 'switch' },
+      deps({ offerId: 'o-2', status: 'pending', messageId: 'm-2', joined: false }, ops),
+    );
+    expect(ops).toEqual([
+      {
+        name: 'offerConnector',
+        input: {
+          roomId: 'room-1',
+          connectorType: 'trusty-squire',
+          reason: 'sign up with your work account',
+          intent: 'switch',
+        },
+      },
+    ]);
+    expect(reply).toMatch(/^pending, card posted: switch trusty-squire account \[offer o-2\]/);
+    expect(pendingGrantToolCall({ title: 'offer_connector', content: reply })).toBe(true);
+    const joined = await offerConnector(
+      { connectorType: 'trusty-squire', reason: 'sign up with your work account', intent: 'switch' },
+      deps({ offerId: 'o-2', status: 'pending', messageId: 'm-2', joined: true }),
+    );
+    expect(pendingGrantToolCall({ title: 'offer_connector', content: joined })).toBe(true);
+    await expect(
+      offerConnector({ connectorType: 'trusty-squire', reason: 'x', intent: 'add' }, deps({ offerId: 'never' })),
+    ).rejects.toThrow('intent must be "switch" when given');
+  });
+
   it('refuses a non-offerable kind and an empty reason before the server is called', async () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const answer = deps({ offerId: 'never' }, ops);

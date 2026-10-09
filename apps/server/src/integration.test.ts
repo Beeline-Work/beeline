@@ -12144,6 +12144,135 @@ describe('monolith integration', () => {
     expect(gmail.status).toBe(400);
   });
 
+  it('offers a switch of the bound Squire account and re-arms it with force-relogin on the tap', async () => {
+    expect(
+      (
+        await daemonOperation('postAgentMachineReport', {
+          machineId: 'machine-otter-switch',
+          machineName: 'otter-laptop',
+        })
+      ).status,
+    ).toBe(200);
+    const ask = (await (
+      await operation('sendRoomMessage', {
+        roomId: ROOM,
+        text: '@bee switch squire to my work google account',
+        mentions: [AGENT],
+      })
+    ).json()) as { messageId: string };
+    const offerSwitch = () =>
+      daemonOperation('offerConnector', {
+        roomId: ROOM,
+        requestId: ask.messageId,
+        connectorType: 'trusty-squire',
+        reason: 'sign up for Vercel with your work account',
+        intent: 'switch',
+      });
+    // Nothing is bound yet: there is no account to switch.
+    const unbound = await offerSwitch();
+    expect(unbound.status).toBe(400);
+    expect(((await unbound.json()) as { error: string }).error).toContain('no connected Trusty Squire');
+    expect(
+      (
+        await daemonOperation('offerConnector', {
+          roomId: ROOM,
+          requestId: ask.messageId,
+          connectorType: 'tailscale',
+          reason: 'x',
+          intent: 'switch',
+        })
+      ).status,
+    ).toBe(400);
+
+    const connector = (
+      await database.query<{ id: string }>(
+        `INSERT INTO workspace_connectors(
+           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status,
+           signed_in_as
+         ) VALUES(gen_random_uuid(),$1,$2,'trusty-squire',$3,'machine-otter-switch','connected',
+                  'personal@example.com') RETURNING id`,
+        [WORKSPACE, HUMAN, AGENT],
+      )
+    ).rows[0]!;
+    const posted = await offerSwitch();
+    expect(posted.status).toBe(200);
+    const offer = (await posted.json()) as { offerId: string; messageId: string; joined: boolean };
+    expect(offer.joined).toBe(false);
+    // Posting asks; it does not touch the bound session yet.
+    expect(
+      (
+        await database.query<{ status: string; force_relogin_provider: string | null }>(
+          `SELECT status,force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+          [connector.id],
+        )
+      ).rows[0],
+    ).toEqual({ status: 'connected', force_relogin_provider: null });
+    const card = (
+      await database.query<{ text: string; card: Record<string, any> }>(
+        `SELECT text,card FROM messages WHERE id=$1`,
+        [offer.messageId],
+      )
+    ).rows[0]!;
+    expect(card.text).toBe(
+      "@bee asked @owner to switch Trusty Squire's Google account · sign up for Vercel with your work account",
+    );
+    expect(card.card).toEqual(
+      expect.objectContaining({
+        status: 'pending',
+        intent: 'switch',
+        provider: 'google',
+        connectorType: 'trusty-squire',
+        consequence:
+          "You'll sign in to Google again, with the account Trusty Squire should use. The account signed in now is replaced for every task on this machine. Then I can sign up for Vercel with your work account",
+      }),
+    );
+    expect(((await (await offerSwitch()).json()) as { joined: boolean }).joined).toBe(true);
+
+    // The tap re-arms the SAME connector with Squire's own --force-relogin.
+    const accepted = await operation('acceptConnectorOffer', { offerId: offer.offerId });
+    expect(accepted.status).toBe(200);
+    expect(((await accepted.json()) as { connectorId: string }).connectorId).toBe(connector.id);
+    expect(
+      (
+        await database.query<{ status: string; force_relogin_provider: string | null }>(
+          `SELECT status,force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+          [connector.id],
+        )
+      ).rows[0],
+    ).toEqual({ status: 'installing', force_relogin_provider: 'google' });
+    const assignments = (await (
+      await daemonOperation('getConnectorAssignments', { agentId: AGENT })
+    ).json()) as {
+      assignments: Array<{ kind: string; connectorId: string; forceReloginProvider?: string }>;
+    };
+    expect(assignments.assignments).toEqual([
+      expect.objectContaining({
+        kind: 'install',
+        connectorId: connector.id,
+        forceReloginProvider: 'google',
+      }),
+    ]);
+
+    // The helper's connected report settles the card and clears the flag.
+    expect((await daemonOperation('installConnector', { connectorId: connector.id })).status).toBe(
+      200,
+    );
+    const settled = (
+      await database.query<{ card: Record<string, any> }>(`SELECT card FROM messages WHERE id=$1`, [
+        offer.messageId,
+      ])
+    ).rows[0]!;
+    expect(settled.card).toEqual(expect.objectContaining({ status: 'accepted', intent: 'switch' }));
+    expect(
+      (
+        await database.query<{ force_relogin_provider: string | null }>(
+          `SELECT force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+          [connector.id],
+        )
+      ).rows[0]!.force_relogin_provider,
+    ).toBeNull();
+  });
+
   it('posts a reconnect card from a Squire google_session wall and resumes the stuck turn once it reconnects', async () => {
     // Squire is ALREADY connected for this owner/agent — the scenario is a
     // live task hitting a stale session in the shared browser, not a missing

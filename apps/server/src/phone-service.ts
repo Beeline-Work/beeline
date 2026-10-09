@@ -6735,6 +6735,8 @@ export class PhoneService {
    * Google consent is owned by the agent's human owner and settles directly
    * from the OAuth callback. Other connectors still pair on the offering
    * agent's machine; their helper report settles the card and resumes the turn.
+   * A `'switch'` offer re-arms the same row with `force_relogin_provider`, so
+   * Squire's connect signs in again even while the bound session is valid.
    */
   private async acceptConnectorOffer(
     input: Input<'acceptConnectorOffer'>,
@@ -6753,9 +6755,11 @@ export class PhoneService {
         status: ConnectorOfferStatus;
         accepted_by: string | null;
         accepted_at: Date | null;
+        intent: string;
+        provider: string | null;
       }>(
         `SELECT id,agent_id,workspace_id,room_id,addressee_id,connector_type,machine_id,status,
-                accepted_by,accepted_at
+                accepted_by,accepted_at,intent,provider
          FROM connector_offers WHERE id::text=$1`,
         [input.offerId],
       )
@@ -6806,6 +6810,13 @@ export class PhoneService {
         helperAgentId: offer.agent_id,
         machineId: offer.machine_id,
       });
+      // The helper reads its assignment only after this transaction commits,
+      // so it sees the forced provider on the same install.
+      if (offer.intent === 'switch' && offer.provider)
+        await database.query(
+          `UPDATE workspace_connectors SET force_relogin_provider=$2 WHERE id=$1::uuid`,
+          [pairing.connectorId, offer.provider],
+        );
       await database.query(`UPDATE connector_offers SET connector_id=$2::uuid WHERE id::text=$1`, [
         input.offerId,
         pairing.connectorId,

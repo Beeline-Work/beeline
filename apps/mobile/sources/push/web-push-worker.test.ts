@@ -109,5 +109,23 @@ describe('Chrome push service worker', () => {
       'http://localhost:8082/beeline/chat/room-1?communityId=workspace-1',
     );
     expect(focus).toHaveBeenCalledOnce();
+
+    handlers.get('push')!({
+      data: {
+        json: () => ({
+          title: 'beeline-dev › push-title',
+          body: 'Test teammate: Hello',
+          url: '/beeline/chat/corner-1?communityId=workspace-1',
+        }),
+      },
+      waitUntil: (promise: Promise<unknown>) => {
+        pending = promise;
+      },
+    });
+    await pending;
+    expect(showNotification).toHaveBeenLastCalledWith(
+      'beeline-dev › push-title',
+      expect.objectContaining({ body: 'Test teammate: Hello' }),
+    );
   });
 });

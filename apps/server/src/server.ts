@@ -924,7 +924,11 @@ export function createBeelineServer(options: ServerOptions): Server {
                   // committedRow is process-local authority input. Strip it
                   // before every wire branch, including malformed/no-target
                   // invalidations, so only a projected public delta can leave.
-                  const { committedRow, trace: eventTrace, ...wireEvent } = event;
+                  const { committedRow, trace: eventTrace } = event;
+                  // Phone readers react to the reason and Room; the remaining
+                  // LiveEvent fields route helper work or identify a row that
+                  // will instead be sent as a projected delta below.
+                  const wireEvent = { type: 'invalidate', roomId, reason: event.reason };
                   const target = event.messageId
                     ? ({ type: 'message' as const, messageId: event.messageId } as const)
                     : event.agentId && event.requestId

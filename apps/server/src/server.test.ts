@@ -1304,7 +1304,7 @@ describe('phone committed-row live delivery', () => {
     });
 
     await expect(invalidated).resolves.toMatchObject({
-      reason: 'delta-fallback:postgres:messages', messageId: 'message-hidden',
+      reason: 'delta-fallback:postgres:messages',
     });
     await expectNoSocketMessage(socket, 100);
   });
@@ -1331,9 +1331,9 @@ describe('phone committed-row live delivery', () => {
       expect(fallback).toMatchObject({
         type: 'invalidate',
         roomId,
-        messageId: 'message-fallback',
         reason: 'delta-fallback:postgres:messages',
       });
+      expect(fallback).not.toHaveProperty('messageId');
       await expectNoSocketMessage(socket, 100);
     },
   );
@@ -1400,7 +1400,6 @@ describe('phone committed-row live delivery', () => {
     await expect(fallback).resolves.toMatchObject({
       type: 'invalidate',
       roomId,
-      messageId: 'message-fallback',
       reason: 'delta-fallback:message',
     });
     expect(read).not.toHaveBeenCalled();

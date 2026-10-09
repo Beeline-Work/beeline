@@ -188,7 +188,7 @@ function applyWebAppCors(
 
   response.writeHead(204, {
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': 'authorization, content-type, x-file-name',
+    'access-control-allow-headers': 'authorization, content-type, x-file-name, x-beeline-view',
     'access-control-max-age': '600',
     'cache-control': 'private, no-store',
   });
@@ -216,10 +216,17 @@ const jsonEncodings = new WeakMap<ServerResponse, JsonEncoding>();
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   const { bytes, encoding } = encodeJsonBody(body, jsonEncodings.get(response));
+  // writeHead replaces a header set earlier, and CORS already set `vary: Origin`.
+  const vary = response.getHeader('vary');
   response.writeHead(status, {
     'content-type': 'application/json',
     'cache-control': 'private, no-store',
-    ...(encoding ? { 'content-encoding': encoding, vary: 'accept-encoding' } : {}),
+    ...(encoding
+      ? {
+          'content-encoding': encoding,
+          vary: vary ? `${String(vary)}, accept-encoding` : 'accept-encoding',
+        }
+      : {}),
   });
   response.end(bytes);
 }

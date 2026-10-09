@@ -866,9 +866,13 @@ function roomSchedule(row: RoomScheduleRow): RoomScheduleView {
 }
 
 /**
- * The author has read their own message, so their read mark moves with the
- * write (forward only, as `PhoneService.markRead` moves it): the phone never
- * spends a second request after every send.
+ * The author has read everything up to their own message, so their read mark
+ * moves with the write (forward only, as `PhoneService.markRead` moves it):
+ * the phone never spends a second request after every send. `updated_at`
+ * stays where it was (the epoch on a new mark): it means "read here just now",
+ * and the push gate holds pushes for 30 s after it. A reply sent from a
+ * notification is not someone reading the Room, and a sender still in the
+ * Room is already held by its view.
  */
 async function advanceAuthorReadMark(
   database: Pick<SqlDatabase, 'query'>,
@@ -877,9 +881,10 @@ async function advanceAuthorReadMark(
   messageIdValue: string,
 ): Promise<void> {
   await database.query(
-    `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-    SELECT $1,$2,message.created_at,$3 FROM messages message WHERE message.id=$3 AND message.room_id=$1
-    ON CONFLICT(room_id,identity_id) DO UPDATE SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()
+    `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
+    SELECT $1,$2,message.created_at,$3,'epoch'::timestamptz FROM messages message
+    WHERE message.id=$3 AND message.room_id=$1
+    ON CONFLICT(room_id,identity_id) DO UPDATE SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id
     WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>(room_read_marks.message_created_at,room_read_marks.message_id)`,
     [roomId, authorId, messageIdValue],
   );

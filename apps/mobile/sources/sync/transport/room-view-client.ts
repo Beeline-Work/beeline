@@ -77,9 +77,12 @@ type Guard<T> = SurfaceReader<T>;
 /**
  * Room and history reads ask the server to leave out what the reader
  * rebuilds (`readScopedMessage`, packages/api-contract/src/phone-guards.ts);
- * an older server ignores the header and answers in full.
+ * an older server ignores the header and answers in full. Only the native
+ * phone asks: in a browser the header costs a CORS preflight, and a server
+ * rolled back past its allow-list would refuse the read outright.
  */
-const COMPACT_ROOM_READ = { 'x-beeline-view': 'compact' } as const;
+const COMPACT_ROOM_READ: Record<string, string> | undefined =
+  typeof document === 'undefined' ? { 'x-beeline-view': 'compact' } : undefined;
 
 class MonolithRoomViewClient {
   private readonly baseUrl = getBuzzRuntimeConfig().monolithUrl;

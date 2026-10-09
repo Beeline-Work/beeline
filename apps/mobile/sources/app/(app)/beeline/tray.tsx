@@ -1,6 +1,6 @@
 import { messageJumpHref, roomHref } from '@/buzz/corner-navigation';
 import { useIsDesktop } from '@/utils/responsive';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   FlatList,
@@ -31,6 +31,9 @@ import brand from '@/buzz/brand.json';
 /** How often an open tray re-reads its sections. */
 const TRAY_REFRESH_MS = 60_000;
 
+/** How long a removal or a section clear can be undone. */
+const UNDO_MS = 6_000;
+
 function first(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
 }
@@ -43,6 +46,12 @@ function sourceLabel(bookmark: MessageBookmarkView): string {
   return `${bookmark.roomKind === 'corner' ? 'corner ' : '#'}${sourceTitle(bookmark)}`;
 }
 
+function clearedLabel(clear: PendingClear): string {
+  const count = clear.items.length;
+  const noun = clear.kind === 'needs' ? 'item' : 'bookmark';
+  return `Cleared ${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
 /** The message a tray row points at: what the desktop pane opens. */
 type Target = {
   readonly messageId: string;
@@ -50,8 +59,19 @@ type Target = {
   readonly workspaceId: string;
 };
 
+/** A section clear held back until its Undo window closes. */
+type PendingClear =
+  | { readonly kind: 'needs'; readonly items: readonly NeedsYouItemView[] }
+  | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[] };
+
 type Row =
-  | { readonly key: string; readonly type: 'head'; readonly title: string; readonly count: number }
+  | {
+      readonly key: string;
+      readonly type: 'head';
+      readonly title: string;
+      readonly count: number;
+      readonly clear?: PendingClear['kind'];
+    }
   | { readonly key: string; readonly type: 'needs'; readonly item: NeedsYouItemView }
   | { readonly key: string; readonly type: 'needs-empty' }
   | { readonly key: string; readonly type: 'saved'; readonly bookmark: MessageBookmarkView }
@@ -80,6 +100,8 @@ export default function TrayScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<MessageBookmarkView | null>(null);
+  const [pending, setPending] = useState<PendingClear | null>(null);
+  const pendingRef = useRef<PendingClear | null>(null);
   const [client, setClient] = useState<RoomViewClient | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [inspectRoom, setInspectRoom] = useState<RoomView | null>(null);
@@ -145,7 +167,7 @@ export default function TrayScreen() {
 
   useEffect(() => {
     if (!removed) return;
-    const timer = setTimeout(() => setRemoved(null), 6_000);
+    const timer = setTimeout(() => setRemoved(null), UNDO_MS);
     return () => clearTimeout(timer);
   }, [removed]);
 
@@ -270,7 +292,111 @@ export default function TrayScreen() {
     [clear],
   );
 
+  /**
+   * Send a held section clear. Items the server refuses come back to the
+   * list, newest first, and the error row says why.
+   */
+  const commitClear = useCallback(async (clear: PendingClear) => {
+    const ids = new Set(clear.items.map((item) => item.messageId));
+    if (clear.kind === 'needs') {
+      setNeeds((current) => current.filter((item) => !ids.has(item.messageId)));
+      const results = await Promise.allSettled(
+        clear.items.map((item) =>
+          monolithPhoneOperation('clearNeedsYou', {
+            workspaceId: item.workspaceId,
+            messageId: item.messageId,
+          }),
+        ),
+      );
+      const failed = clear.items.filter((_, index) => results[index].status === 'rejected');
+      if (failed.length < clear.items.length) announceNeedsYouChanged();
+      if (failed.length)
+        setNeeds((current) =>
+          [...failed, ...current].sort((left, right) => right.createdAt - left.createdAt),
+        );
+      const refusal = results.find((result) => result.status === 'rejected');
+      if (refusal?.status === 'rejected')
+        setError(refusal.reason instanceof Error ? refusal.reason.message : String(refusal.reason));
+      return;
+    }
+    setBookmarks((current) => current.filter((item) => !ids.has(item.messageId)));
+    const results = await Promise.allSettled(
+      clear.items.map((bookmark) =>
+        monolithPhoneOperation('setMessageBookmark', {
+          roomId: bookmark.roomId,
+          messageId: bookmark.messageId,
+          bookmarked: false,
+        }),
+      ),
+    );
+    const failed = clear.items.filter((_, index) => results[index].status === 'rejected');
+    if (failed.length)
+      setBookmarks((current) =>
+        [...failed, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
+      );
+    const refusal = results.find((result) => result.status === 'rejected');
+    if (refusal?.status === 'rejected')
+      setError(refusal.reason instanceof Error ? refusal.reason.message : String(refusal.reason));
+  }, []);
+
+  const flushClear = useCallback(() => {
+    const clear = pendingRef.current;
+    if (!clear) return;
+    pendingRef.current = null;
+    setPending(null);
+    void commitClear(clear);
+  }, [commitClear]);
+
+  // A held clear goes out when its Undo window closes or the Tray loses focus.
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setTimeout(flushClear, UNDO_MS);
+    return () => clearTimeout(timer);
+  }, [flushClear, pending]);
+  useFocusEffect(useCallback(() => flushClear, [flushClear]));
+
+  const visibleNeeds = useMemo(
+    () =>
+      pending?.kind === 'needs'
+        ? needs.filter((item) => !pending.items.some((held) => held.messageId === item.messageId))
+        : needs,
+    [needs, pending],
+  );
+  const visibleBookmarks = useMemo(
+    () =>
+      pending?.kind === 'saved'
+        ? bookmarks.filter(
+            (item) => !pending.items.some((held) => held.messageId === item.messageId),
+          )
+        : bookmarks,
+    [bookmarks, pending],
+  );
+
+  /** Clear a section now, with Undo. Approvals stay: a decision clears those. */
+  const clearSection = useCallback(
+    (kind: PendingClear['kind']) => {
+      flushClear();
+      setRemoved(null);
+      const clear: PendingClear =
+        kind === 'needs'
+          ? { kind, items: visibleNeeds.filter((item) => !item.approval) }
+          : { kind, items: visibleBookmarks };
+      if (!clear.items.length) return;
+      pendingRef.current = clear;
+      setPending(clear);
+      AccessibilityInfo.announceForAccessibility(`${clearedLabel(clear)}. Undo available.`);
+    },
+    [flushClear, visibleBookmarks, visibleNeeds],
+  );
+
+  const undoClear = useCallback(() => {
+    pendingRef.current = null;
+    setPending(null);
+    AccessibilityInfo.announceForAccessibility('Restored');
+  }, []);
+
   const remove = useCallback(async (bookmark: MessageBookmarkView) => {
+    flushClear();
     setBookmarks((current) => current.filter((item) => item.messageId !== bookmark.messageId));
     setRemoved(bookmark);
     AccessibilityInfo.announceForAccessibility('Bookmark removed. Undo available.');
@@ -285,7 +411,7 @@ export default function TrayScreen() {
       setBookmarks((current) => [bookmark, ...current]);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, []);
+  }, [flushClear]);
 
   const undo = useCallback(async () => {
     if (!removed?.available) return;
@@ -309,39 +435,36 @@ export default function TrayScreen() {
     if (loading) return [];
     const cells = (items: NeedsYouItemView[]) =>
       items.map((item): Row => ({ key: `needs-${item.messageId}`, type: 'needs', item }));
-    const approvals = needs.filter((item) => item.approval);
-    const questions = needs.filter((item) => !item.approval);
+    const approvals = visibleNeeds.filter((item) => item.approval);
+    const questions = visibleNeeds.filter((item) => !item.approval);
     return [
+      {
+        key: 'head-needs',
+        type: 'head',
+        title: 'Needs you',
+        count: visibleNeeds.length,
+        ...(questions.length ? { clear: 'needs' as const } : {}),
+      },
       // Approvals before questions, each in the server's order.
-      ...(needs.length
-        ? [
-            ...(approvals.length
-              ? [
-                  { key: 'head-approvals', type: 'head', title: 'Approvals', count: approvals.length } as const,
-                  ...cells(approvals),
-                ]
-              : []),
-            ...(questions.length
-              ? [
-                  { key: 'head-questions', type: 'head', title: 'Questions', count: questions.length } as const,
-                  ...cells(questions),
-                ]
-              : []),
-          ]
-        : [
-            { key: 'head-needs', type: 'head', title: 'Needs you', count: 0 } as const,
-            { key: 'needs-empty', type: 'needs-empty' } as const,
-          ]),
-      { key: 'head-saved', type: 'head', title: 'Saved', count: bookmarks.length },
-      ...(bookmarks.length
-        ? bookmarks.map((bookmark): Row => ({
+      ...(visibleNeeds.length
+        ? [...cells(approvals), ...cells(questions)]
+        : [{ key: 'needs-empty', type: 'needs-empty' } as const]),
+      {
+        key: 'head-saved',
+        type: 'head',
+        title: 'Saved',
+        count: visibleBookmarks.length,
+        ...(visibleBookmarks.length ? { clear: 'saved' as const } : {}),
+      },
+      ...(visibleBookmarks.length
+        ? visibleBookmarks.map((bookmark): Row => ({
             key: `saved-${bookmark.messageId}`,
             type: 'saved',
             bookmark,
           }))
         : [{ key: 'saved-empty', type: 'saved-empty' } as const]),
     ];
-  }, [bookmarks, loading, needs]);
+  }, [loading, visibleBookmarks, visibleNeeds]);
 
   const renderSaved = (bookmark: MessageBookmarkView) => (
     <Pressable
@@ -453,7 +576,21 @@ export default function TrayScreen() {
             return (
               <View style={styles.sectionHead} testID={`tray-section-${row.key.slice(5)}`}>
                 <Text style={styles.sectionTitle}>{row.title}</Text>
-                <Text style={styles.sectionCount}>{row.count}</Text>
+                <View style={styles.sectionEnd}>
+                  <Text style={styles.sectionCount}>{row.count}</Text>
+                  {row.clear ? (
+                    <Pressable
+                      accessibilityLabel={`Clear ${row.title}`}
+                      accessibilityRole="button"
+                      hitSlop={8}
+                      onPress={() => clearSection(row.clear!)}
+                      style={({ pressed }) => [styles.sectionClear, pressed && { opacity: 0.7 }]}
+                      testID={`tray-clear-${row.clear}`}
+                    >
+                      <Text style={styles.removeText}>CLEAR</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               </View>
             );
           case 'needs':
@@ -567,7 +704,18 @@ export default function TrayScreen() {
         {list}
         {pane}
       </View>
-      {removed ? (
+      {pending ? (
+        <View
+          accessibilityLiveRegion="polite"
+          style={[styles.undo, { bottom: 16 + insets.bottom }]}
+          testID="tray-clear-undo"
+        >
+          <Text style={styles.undoText}>{clearedLabel(pending)}</Text>
+          <Pressable accessibilityRole="button" onPress={undoClear} style={styles.undoAction}>
+            <Text style={styles.undoActionText}>UNDO</Text>
+          </Pressable>
+        </View>
+      ) : removed ? (
         <View
           accessibilityLiveRegion="polite"
           style={[styles.undo, { bottom: 16 + insets.bottom }]}
@@ -610,6 +758,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   sectionTitle: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
   sectionCount: { ...theme.buzz.type.meta, color: theme.buzz.accent },
+  sectionEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.md },
+  sectionClear: { minHeight: 30, justifyContent: 'center' },
   cellDivider: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,

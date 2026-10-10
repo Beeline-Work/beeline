@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const stores = vi.hoisted(() => new Map<string, Map<string, string>>());
+// Models a full storage: writes are dropped without an error, as
+// webStringStorage does on a quota failure.
+const quota = vi.hoisted(() => ({ full: false }));
 
 vi.mock('react-native-mmkv', () => ({
   MMKV: class {
@@ -16,6 +19,7 @@ vi.mock('react-native-mmkv', () => ({
     }
 
     set(key: string, value: string) {
+      if (quota.full) return;
       this.values.set(key, value);
     }
 
@@ -74,5 +78,30 @@ describe('relay-scoped Room outbox', () => {
     const again = createRoomOutbox('https://relay-one.example', { publicKey: VIEWER }, ROOM);
     await again.restore();
     expect(again.list().map((record) => record.event.id)).toEqual([event.id]);
+  });
+
+  it('keeps the unscoped copy when the scoped write is dropped', async () => {
+    const outboxStore = stores.get('buzz-surface-outbox')!;
+    outboxStore.clear();
+    const legacyKey = `outbox.${VIEWER}.${ROOM}`;
+    const legacy: SignedOutboxRecord[] = [{ event, row, status: 'failed', attempts: 2 }];
+    outboxStore.set(legacyKey, JSON.stringify(legacy));
+
+    quota.full = true;
+    try {
+      const full = createRoomOutbox('https://relay-one.example', { publicKey: VIEWER }, ROOM);
+      await full.restore();
+      expect(full.list().map((record) => record.event.id)).toEqual([event.id]);
+      expect([...outboxStore.keys()]).toEqual([legacyKey]);
+    } finally {
+      quota.full = false;
+    }
+
+    const reopened = createRoomOutbox('https://relay-one.example', { publicKey: VIEWER }, ROOM);
+    await reopened.restore();
+    expect(reopened.list().map((record) => record.event.id)).toEqual([event.id]);
+    expect([...outboxStore.keys()]).toEqual([
+      `outbox.${encodeURIComponent('https://relay-one.example')}.${VIEWER}.${ROOM}`,
+    ]);
   });
 });

@@ -107,7 +107,9 @@ export function createRoomOutbox(
           encoded = mutations.getString(unscopedKey);
           if (encoded) {
             mutations.set(key, encoded);
-            mutations.delete(unscopedKey);
+            // A full or denied storage drops the write; the legacy copy then
+            // stays the only durable one.
+            if (mutations.getString(key) === encoded) mutations.delete(unscopedKey);
           }
         }
         if (!encoded) return [];
@@ -119,8 +121,11 @@ export function createRoomOutbox(
         }
       },
       save: async (records) => {
-        if (records.length === 0) mutations.delete(key);
-        else mutations.set(key, JSON.stringify(records));
+        const encoded = records.length === 0 ? undefined : JSON.stringify(records);
+        if (encoded === undefined) mutations.delete(key);
+        else mutations.set(key, encoded);
+        // The records include any legacy ones, so a stored save replaces them.
+        if (mutations.getString(key) === encoded) mutations.delete(unscopedKey);
       },
     },
     {

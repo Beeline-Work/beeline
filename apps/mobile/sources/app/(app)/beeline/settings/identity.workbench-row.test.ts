@@ -132,7 +132,13 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   })),
   loadBuzzIdentityNsecForExport: vi.fn(async () => 'nsec1test'),
 }));
-vi.mock('@/buzz/community-storage', () => ({ loadActiveCommunityId: vi.fn(async () => null) }));
+vi.mock('@/buzz/community-storage', () => ({
+  loadActiveCommunityId: vi.fn(async () => null),
+  watchActiveCommunityId: vi.fn((_pubkey: string, listener: (id: string | null) => void) => {
+    void Promise.resolve(null).then(listener);
+    return () => undefined;
+  }),
+}));
 vi.mock('@/buzz/avatar-upload', () => ({ pickAndUploadAvatar: vi.fn() }));
 vi.mock('@/buzz/nip05-verification', () => ({ useVerifiedNip05Status: () => 'unverified' }));
 vi.mock('@/buzz/person-name', () => ({
@@ -225,7 +231,11 @@ vi.mock('@/sync/storage', () => ({
   useLocalSettingMutable: (name: string) => [name === 'appearance' ? 'dark' : 'medium', vi.fn()],
 }));
 vi.mock('@/push/buzz-push-registration', () => pushModule);
-vi.mock('@/push/push-level-storage', () => ({ saveStoredPushLevel: vi.fn(async () => undefined) }));
+vi.mock('@/push/push-level-storage', () => ({
+  saveStoredPushLevel: vi.fn(async () => undefined),
+  subscribeStoredPushLevel: () => () => undefined,
+}));
+vi.mock('@/buzz/identity-live', () => ({ subscribeOwnIdentityChange: () => () => undefined }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
 vi.mock('@/buzz/surface-storage', () => ({

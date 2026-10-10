@@ -188,4 +188,49 @@ describe('person name persistence', () => {
     expect(client.getPersonProfile).not.toHaveBeenCalled();
     expect(client.setGlobalPersonProfile).not.toHaveBeenCalled();
   });
+
+  it('lets the server name replace a stale device copy at onboarding', async () => {
+    asyncStorage.getItem.mockResolvedValue('Old Name');
+    const profile = { name: 'Server Name' };
+    const client = { getGlobalPersonProfile: vi.fn().mockResolvedValue(profile) } as any;
+
+    await expect(resolveOnboardingPersonName(client, 'person')).resolves.toMatchObject({
+      name: 'Server Name',
+      needsPrompt: false,
+    });
+    expect(asyncStorage.setItem).toHaveBeenCalledWith(
+      '@beeline/person-name/preferred/person',
+      'Server Name',
+    );
+  });
+
+  it('overwrites the device hint with the server name on Workspace entry', async () => {
+    asyncStorage.getItem.mockResolvedValue('Old Name');
+    const client = {
+      getGlobalPersonProfile: vi.fn().mockResolvedValue({ name: 'Server Name' }),
+      getPersonProfile: vi.fn(),
+      setGlobalPersonProfile: vi.fn(),
+    } as any;
+
+    await ensurePersonNameForWorkspace(client, 'workspace-1', 'person');
+    expect(asyncStorage.setItem).toHaveBeenCalledWith(
+      '@beeline/person-name/preferred/person',
+      'Server Name',
+    );
+    expect(client.setGlobalPersonProfile).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the device hint only while the server cannot answer', async () => {
+    asyncStorage.getItem.mockResolvedValue('Hint');
+    const client = {
+      getGlobalPersonProfile: vi.fn().mockRejectedValue(new Error('offline')),
+    } as any;
+
+    await expect(resolveOnboardingPersonName(client, 'person')).resolves.toEqual({
+      name: 'Hint',
+      communityId: null,
+      needsPrompt: false,
+    });
+    expect(asyncStorage.setItem).not.toHaveBeenCalled();
+  });
 });

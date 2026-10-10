@@ -2,8 +2,10 @@ import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import type { CornerAppManifest, CornerAppView } from '@beeline/api-contract/phone';
+import { isRoomView } from '@beeline/buzz-client';
 import { CornerAppScreen } from '@/components/buzz/CornerAppScreen';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { MonolithRigTransport } from '@/sync/transport/monolith-rig-transport';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
@@ -20,25 +22,36 @@ export default function CornerAppRoute() {
 
   React.useEffect(() => {
     let live = true;
+    let stop: (() => void) | undefined;
     void (async () => {
       if (!roomId || !slug) return;
       try {
         const identity = await loadBuzzIdentity();
         if (!identity) throw new Error('not signed in');
-        const view = await new RoomViewClient({
-          baseUrl: await getEffectiveRelayUrl(),
-          identity,
-        }).room(roomId);
-        if (live) {
+        const relayUrl = await getEffectiveRelayUrl();
+        if (!live) return;
+        // The chat's live Room surface owns the app list; this route reads the same entry.
+        const address = surfaceAddress(relayUrl, identity.publicKey, `/room/${roomId}`);
+        const paint = () => {
+          const view = mobileSurfaceCache.peek(address, isRoomView);
+          if (!live || !view) return false;
           setApp(view.cornerApps?.find((candidate) => candidate.slug === slug));
           setManifest(view.boundApp?.manifest.slug === slug ? view.boundApp.manifest : undefined);
-        }
+          setLoadError(undefined);
+          return true;
+        };
+        stop = mobileSurfaceCache.subscribe(address, () => void paint());
+        if (paint()) return;
+        await mobileSurfaceCache.fetch(address, isRoomView, () =>
+          new RoomViewClient({ baseUrl: relayUrl, identity }).room(roomId),
+        );
       } catch (error) {
         if (live) setLoadError(`Could not load this app. ${phoneOperationFailureReason(error)}`);
       }
     })();
     return () => {
       live = false;
+      stop?.();
     };
   }, [roomId, slug]);
 

@@ -7,9 +7,11 @@ import type {
   KnownMessageReference,
   RoomRepositoryInput,
   RoomViewAgentTurn,
+  RoomViewIdentity,
   RoomViewMessage,
   WritePermissionDecision,
 } from '@beeline/buzz-client';
+import type { PushLevel } from '@beeline/api-contract/phone';
 import type { AgentMessageWriteResult, ChatListCorner, ChatListItem, CornerListItem, MessageBookmarkView, NeedsYouItemView, RoomRepositoryResult, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import type { MessageSubmitInput } from './rig-transport';
 import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
@@ -44,6 +46,8 @@ export type LiveWireEvent = (
   | { type: 'sync-ok' }
   | { type: 'bookmark-delta'; roomId: ''; workspaceId: string; messageId: string;
       bookmark: MessageBookmarkView | null }
+  | { type: 'workspace-changed'; roomId: ''; workspace: { id: string; name: string; avatar?: string } }
+  | { type: 'person-changed'; roomId: ''; person: RoomViewIdentity; pushLevel?: PushLevel }
   | { type: 'needs-you-delta'; roomId: ''; workspaceId: string;
       sourceRoomId: string; count: number; items: readonly NeedsYouItemView[] }
   | { type: 'corner-status'; roomId: string; cornerCount: number;

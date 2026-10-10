@@ -15,6 +15,7 @@ import {
   type LivePgClient,
 } from './postgres-live.js';
 import { PgliteDatabase } from './test-support.js';
+import { PhoneService } from './phone-service.js';
 
 const AUTHOR = 'a'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -118,6 +119,63 @@ describe('Postgres live fanout', () => {
       ownerId: AUTHOR, resource: 'install', resourceId: connector });
     expect(received).toContainEqual({ type: 'resource-change', roomId: '',
       ownerId: AUTHOR, resource: 'workbench' });
+  });
+
+  it('names a Workspace header or identity change by id, and only to who shares it', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const events: LiveEvent[] = [];
+    live.subscribeAll((event) => events.push(event));
+    void listener.run();
+    await eventually(() => listener.projectionHealth().connected);
+
+    const workspaceMate = 'c'.repeat(64);
+    const roomMate = 'd'.repeat(64);
+    const outsider = 'e'.repeat(64);
+    const otherWorkspace = '55555555-5555-4555-8555-555555555555';
+    const otherRoom = '66666666-6666-4666-8666-666666666666';
+    for (const [id, name] of [[workspaceMate, 'Mate'], [roomMate, 'Guest'], [outsider, 'Outsider']])
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human',$2)`, [id, name]);
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Elsewhere')`, [otherWorkspace]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Shared')`,
+      [otherRoom, otherWorkspace, roomMate],
+    );
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,NULL,$3,'owner'),($1,NULL,$4,'member'),
+      ($2,NULL,$5,'owner'),($2,NULL,$6,'member'),($2,$7,$5,'owner'),($2,$7,$3,'member')`,
+      [WORKSPACE, otherWorkspace, AUTHOR, workspaceMate, roomMate, outsider, otherRoom]);
+
+    await database.query(`UPDATE workspaces SET about='no header change' WHERE id=$1`, [WORKSPACE]);
+    await database.query(`UPDATE identities SET welcome_cards_due=false WHERE id=$1`, [AUTHOR]);
+    await database.query(`UPDATE workspaces SET name='Renamed' WHERE id=$1`, [WORKSPACE]);
+    await database.query(`UPDATE identities SET name='Author Two' WHERE id=$1`, [AUTHOR]);
+    await eventually(() => events.some((event) =>
+      event.type === 'invalidate' && event.reason === 'postgres:identities'));
+    const changes = events.filter((event) => event.type === 'invalidate' &&
+      (event.reason === 'postgres:workspaces' || event.reason === 'postgres:identities'));
+    expect(changes).toEqual([
+      { type: 'invalidate', roomId: '', reason: 'postgres:workspaces', workspaceId: WORKSPACE },
+      { type: 'invalidate', roomId: '', reason: 'postgres:identities', personId: AUTHOR },
+    ]);
+
+    const phone = new PhoneService(database, 'http://local.test');
+    const workspace = await phone.liveWorkspaceChange(WORKSPACE);
+    expect(workspace?.workspace).toEqual({ id: WORKSPACE, name: 'Renamed' });
+    expect([...workspace!.viewers].sort()).toEqual([AUTHOR, workspaceMate].sort());
+
+    const person = await phone.livePersonChange(AUTHOR);
+    expect(person?.person).toEqual({ pubkey: AUTHOR, kind: 'human', name: 'Author Two' });
+    expect(person?.pushLevel).toBe('mine');
+    expect([...person!.viewers].sort()).toEqual([AUTHOR, workspaceMate, roomMate].sort());
+    // A viewer who shares no Workspace or Room with the person never hears it.
+    expect(person!.viewers.has(outsider)).toBe(false);
+
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [workspaceMate]);
+    expect((await phone.livePersonChange(AUTHOR))!.viewers.has(workspaceMate)).toBe(false);
+    expect((await phone.liveWorkspaceChange(WORKSPACE))!.viewers.has(workspaceMate)).toBe(false);
   });
 
   it('wakes push only after message and device writes commit', async () => {

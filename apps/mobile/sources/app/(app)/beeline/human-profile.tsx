@@ -25,6 +25,15 @@ import { Modal } from '@/modal/ModalManager';
 import { navigateToRoom } from '@/buzz/corner-navigation';
 import { displayModel } from '@/buzz/model-display';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import {
+  currentWorkspaceRecord,
+  currentWorkspaceRows,
+  recordWorkspaceRemoval,
+  recordWorkspaceRows,
+  useWorkspaceRecords,
+  workspaceRecordScope,
+} from '@/buzz/workspace-records';
+import { BuzzRigTransport } from '@/sync/transport';
 import { isWorkspaceView } from '@beeline/buzz-client';
 
 export function HumanProfile({
@@ -39,27 +48,72 @@ export function HumanProfile({
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const allowNavigation = useRef(false);
-  const [member, setMember] = useState<RoomViewMember | null>(null);
+  const [loadedMember, setMember] = useState<RoomViewMember | null>(null);
+  const [recordScope, setRecordScope] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState(0);
   const [viewer, setViewer] = useState<RoomViewer | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   useLatencyRouteFrame('/beeline/human-profile', !loading, true);
   const [busy, setBusy] = useState(false);
-  const [connectedAgents, setConnectedAgents] = useState<WorkspaceView['agents']>([]);
+  const [listedAgents, setConnectedAgents] = useState<WorkspaceView['agents']>([]);
   const [grants, setGrants] = useState<readonly WorkspaceMemberGrantView[]>([]);
   const [agentsHasMore, setAgentsHasMore] = useState(false);
   const [editing, setEditing] = useState(false);
   const [role, setRole] = useState<RoomViewMember['role']>('member');
   const [retry, setRetry] = useState(0);
   const mutation = useRef(false);
+  // Role, membership and owned agents read the shared Workspace records, so a
+  // change from Members, another device or a live identity event lands here.
+  useWorkspaceRecords(recordScope);
+  const record = currentWorkspaceRecord(recordScope, memberId);
+  const member = record === null ? null : (record as RoomViewMember | undefined) ?? loadedMember;
+  const connectedAgents = currentWorkspaceRows(recordScope, listedAgents)
+    .filter((agent) => !agent.owner || agent.owner.pubkey === memberId);
+  useEffect(() => {
+    if (!editing && member) setRole(member.role);
+  }, [editing, member?.role]);
+  useEffect(() => {
+    setEditing(false);
+  }, [workspaceId, memberId, retry]);
+  useEffect(() => {
+    // The same Workspace entry and relay watch Members refreshes from.
+    let cancelled = false;
+    let stopEntry: (() => void) | undefined;
+    let stopWatch: (() => void) | undefined;
+    void (async () => {
+      const [identity, baseUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
+      if (!identity || cancelled) return;
+      const address = surfaceAddress(baseUrl, identity.publicKey, '/workspace/:id', { workspaceId });
+      stopEntry = mobileSurfaceCache.subscribe(address, () => setRefresh((value) => value + 1));
+      const cached = mobileSurfaceCache.peek(address, isWorkspaceView);
+      const http = new RoomViewClient({ identity, baseUrl });
+      const relay = await new BuzzRigTransport(identity).ensureClient();
+      const filters = cached?.watchFilters.length
+        ? cached.watchFilters
+        : [{ kinds: [0, 9, 9000, 9001], '#h': [workspaceId] }];
+      const release = await relay.surfaceSubscribe(filters, () => {
+        void mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId))
+          .catch(() => undefined);
+      });
+      if (cancelled) release();
+      else stopWatch = release;
+    })().catch(() => undefined);
+    return () => {
+      cancelled = true;
+      stopEntry?.();
+      stopWatch?.();
+    };
+  }, [workspaceId]);
   useEffect(() => {
     let cancelled = false;
-    if (!member) setLoading(true);
+    if (!loadedMember) setLoading(true);
     setError(null);
-    setEditing(false);
     void (async () => {
       const [identity, baseUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
       if (!identity) throw new Error('Sign in to view this profile.');
+      const scope = workspaceRecordScope(baseUrl, identity.publicKey, workspaceId);
+      if (!cancelled) setRecordScope(scope);
       const workspace = await mobileSurfaceCache.read(
         surfaceAddress(baseUrl, identity.publicKey, '/workspace/:id', { workspaceId }), isWorkspaceView);
       const cachedPerson = workspace?.members.find((entry) => entry.identity.pubkey === memberId);
@@ -75,7 +129,11 @@ export function HumanProfile({
         client.workspaceMembers(workspaceId, { kind: 'agent', ownerId: memberId }),
       ]);
       const person = page.members.find((entry) => entry.identity.pubkey === memberId);
-      if (!person) throw new Error('This person is no longer a member of this Workspace.');
+      if (!person) {
+        recordWorkspaceRemoval(scope, memberId);
+        throw new Error('This person is no longer a member of this Workspace.');
+      }
+      recordWorkspaceRows(scope, [person, ...owned.agents]);
       if (!cancelled) {
         if (identity.publicKey === memberId) {
           router.replace('/beeline/settings');
@@ -98,7 +156,7 @@ export function HumanProfile({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, memberId, retry]);
+  }, [workspaceId, memberId, retry, refresh]);
   const self = viewer?.identity.pubkey === memberId;
   const manager = Boolean(viewer?.permissions.manage);
   const canEditRole =
@@ -170,6 +228,7 @@ export function HumanProfile({
     if (confirmed)
       await perform(async () => {
         await monolithPhoneOperation('removeWorkspaceMember', { workspaceId, memberId });
+        if (recordScope) recordWorkspaceRemoval(recordScope, memberId);
         onClose();
       });
   };
@@ -240,7 +299,8 @@ export function HumanProfile({
                                       memberId,
                                       role,
                                     });
-                                    setMember({ ...member, role });
+                                    if (recordScope) recordWorkspaceRows(recordScope, [{ ...member, role }]);
+                                    else setMember({ ...member, role });
                                     setEditing(false);
                                   }),
                               },
@@ -345,8 +405,9 @@ export function HumanProfile({
                     const page = await client.workspaceMembers(workspaceId, {
                       kind: 'agent',
                       ownerId: memberId,
-                      offset: connectedAgents.length,
+                      offset: listedAgents.length,
                     });
+                    if (recordScope) recordWorkspaceRows(recordScope, page.agents);
                     setConnectedAgents((current) => [...current, ...page.agents]);
                     setAgentsHasMore(page.agentsTruncated);
                   })

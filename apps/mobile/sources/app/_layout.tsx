@@ -68,13 +68,19 @@ import {
   clearLegacyPresentedNotificationsOnce,
   reconcilePresentedNotificationBadge,
 } from '@/push/presented-notifications';
-import { loadStoredPushLevel, saveStoredPushLevel } from '@/push/push-level-storage';
+import {
+  loadStoredPushLevel,
+  saveStoredPushLevel,
+  subscribeStoredPushLevel,
+} from '@/push/push-level-storage';
+import type { PushLevel } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
 import { startDesktopNotifications } from '@/push/desktop-notifications';
+import { startIdentityLive } from '@/buzz/identity-live';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { latencyFrameTraceEnabled, markLatencyRouteNavigation, markLatencyTouch } from '@/buzz/latency-frame-trace';
 
@@ -261,22 +267,26 @@ async function loadFonts() {
 
 export default function RootLayout() {
   React.useEffect(startDesktopNotifications, []);
+  React.useEffect(startIdentityLive, []);
   const isDesktop = useIsDesktop();
   React.useEffect(() => {
-    // The push level is read from the server once per launch; this device
-    // stores every change it makes, so later activations use the stored one.
+    // The server's push level wins: it is read once per launch, and every
+    // later change is stored and announced, so the device copy is only the
+    // cold-start hint until the server answers.
     let readPushLevelFor: string | null = null;
-    const reconcileBadge = () => {
+    const reconcileLevel = (changed?: { pubkey: string; level: PushLevel }) => {
       if (AppState.currentState !== 'active') return;
       void (async () => {
         const identity = await loadBuzzIdentity();
-        let pushLevel = identity ? await loadStoredPushLevel(identity.publicKey) : 'mine';
-        if (identity && readPushLevelFor !== identity.publicKey) {
+        if (changed && changed.pubkey !== identity?.publicKey) return;
+        const pushLevel =
+          changed?.level ?? (identity ? await loadStoredPushLevel(identity.publicKey) : 'mine');
+        if (!changed && identity && readPushLevelFor !== identity.publicKey) {
           const managed = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
           if (managed) {
             readPushLevelFor = identity.publicKey;
-            pushLevel = managed.pushLevel;
-            await saveStoredPushLevel(identity.publicKey, pushLevel);
+            // The save announces the server level; that announcement reconciles.
+            return saveStoredPushLevel(identity.publicKey, managed.pushLevel);
           }
         }
         if (pushLevel !== 'off' && getOpenBuzzChannelId()) return;
@@ -285,6 +295,7 @@ export default function RootLayout() {
         console.log('Failed to reconcile the presented notification badge:', error);
       });
     };
+    const reconcileBadge = () => reconcileLevel();
     void clearLegacyPresentedNotificationsOnce(Notifications, Platform.OS, AsyncStorage).catch(
       (error) => {
         console.log('Failed to clear legacy presented notifications:', error);
@@ -293,9 +304,11 @@ export default function RootLayout() {
     // Begin after the first frame without waiting for a tap or navigation to end.
     const cancelInitialBadge = afterFirstFrame(reconcileBadge);
     const subscription = AppState.addEventListener('change', reconcileBadge);
+    const stopPushLevel = subscribeStoredPushLevel((pubkey, level) => reconcileLevel({ pubkey, level }));
     return () => {
       cancelInitialBadge();
       subscription.remove();
+      stopPushLevel();
     };
   }, []);
 

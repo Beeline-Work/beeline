@@ -242,14 +242,40 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: VIEWER, secretKey: new Uint8Array(32) })),
 }));
-vi.mock('@/buzz/surface-storage', () => ({
-  mobileSurfaceCache: {
-    read: vi.fn(async () => null),
-    write: vi.fn(async () => undefined),
-    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
-  },
-  surfaceAddress: vi.fn(() => 'surface-address'),
+// One shared entry per address, like the app's surface registry, so every
+// mounted Members instance reads and repaints the same projection.
+const surfaces = vi.hoisted(() => ({
+  values: new Map<string, unknown>(),
+  listeners: new Map<string, Set<() => void>>(),
 }));
+vi.mock('@/buzz/surface-storage', () => {
+  const key = (address: any) => JSON.stringify(address);
+  const write = async (address: unknown, value: unknown) => {
+    surfaces.values.set(key(address), value);
+    for (const listener of surfaces.listeners.get(key(address)) ?? []) listener();
+  };
+  return {
+    mobileSurfaceCache: {
+      read: vi.fn(async (address: unknown) => surfaces.values.get(key(address)) ?? null),
+      peek: vi.fn((address: unknown) => surfaces.values.get(key(address)) ?? null),
+      write: vi.fn(write),
+      fetch: vi.fn(async (address: unknown, _guard: unknown, request: () => Promise<unknown>) => {
+        const value = await request();
+        await write(address, value);
+        return value;
+      }),
+      subscribe: vi.fn((address: unknown, listener: () => void) => {
+        const listeners = surfaces.listeners.get(key(address)) ?? new Set();
+        listeners.add(listener);
+        surfaces.listeners.set(key(address), listeners);
+        return () => listeners.delete(listener);
+      }),
+    },
+    surfaceAddress: vi.fn((relayOrigin: string, viewerPubkey: string, endpoint: string, params?: unknown) => ({
+      relayOrigin, viewerPubkey, endpoint, ...(params ? { params } : {}),
+    })),
+  };
+});
 vi.mock('@/buzz/room-view-presentation', () => ({ workspaceRailItem: (value: any) => value }));
 vi.mock('@/components/buzz/CommunityRail', async () => {
   const ReactModule = await import('react');
@@ -496,6 +522,8 @@ async function openAgentManagement(renderer: ReactTestRenderer): Promise<void> {
 
 beforeEach(() => {
   liveListeners.clear();
+  surfaces.values.clear();
+  surfaces.listeners.clear();
   vi.clearAllMocks();
   platform.OS = 'ios';
   navigation.beforeRemove = null;
@@ -1648,6 +1676,127 @@ describe('Members workspace management', () => {
     ]);
     expect(renderer.root.findAllByProps({ testID: 'remove-agent' })).toHaveLength(0);
   });
+  it('repaints the Members list under an agent profile from the profile receipt', async () => {
+    const list = await render();
+    const row = () => list.root.findAllByProps({ testID: `agent-${AGENT}-identity` })
+      .find((node: any) => typeof node.props.name === 'string')!.props;
+    expect(row().name).toBe('Clara');
+    let profile!: ReactTestRenderer;
+    await act(async () => {
+      profile = create(<MembersScreen profileAgentId={AGENT} workspaceIdOverride={WORKSPACE} />);
+    });
+    await press(profile, 'edit-agent-soul');
+    await act(async () => {
+      profile.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
+    });
+    const workspaceReads = roomView.workspace.mock.calls.length;
+    await press(profile, 'save-agent-soul');
+    expect(row().name).toBe('Scout');
+    expect(roomView.workspace.mock.calls.length).toBe(workspaceReads);
+  });
+
+  it('patches a paged agent row under its profile on rename and removal (J26)', async () => {
+    const PAGED = 'f'.repeat(64);
+    const paged = {
+      identity: { pubkey: PAGED, kind: 'agent', name: 'Pip', handle: 'pip' },
+      role: 'member',
+      model: 'Sonnet',
+      owner: { pubkey: VIEWER, kind: 'human', name: 'Viewer', handle: 'viewer' },
+    };
+    state.workspace = { ...baseWorkspace(), agentTotal: 2, agentsTruncated: true };
+    state.agent = {
+      ...baseAgent(),
+      agent: { identity: paged.identity, role: 'member' },
+      soul: { name: 'Pip', instructions: 'Keep the tests green.', avatarSeed: PAGED },
+    };
+    roomView.workspaceMembers.mockImplementation(async (_workspaceId: string, query: any = {}) => ({
+      viewer: state.workspace.viewer,
+      members: query.kind === 'agent' ? [] : state.workspace.members,
+      agents: Number(query.offset ?? 0) > 0 ? [paged] : state.workspace.agents,
+      peopleTotal: state.workspace.peopleTotal,
+      agentTotal: 2,
+      membersTruncated: false,
+      agentsTruncated: false,
+    }));
+    const list = await render();
+    await press(list, 'members-load-more-agents');
+    const pagedName = () => list.root.findAllByProps({ testID: `agent-${PAGED}-identity` })
+      .find((node: any) => typeof node.props.name === 'string')?.props.name;
+    expect(pagedName()).toBe('Pip');
+
+    let profile!: ReactTestRenderer;
+    await act(async () => {
+      profile = create(<MembersScreen profileAgentId={PAGED} workspaceIdOverride={WORKSPACE} />);
+    });
+    await press(profile, 'edit-agent-soul');
+    await act(async () => {
+      profile.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
+    });
+    await press(profile, 'save-agent-soul');
+    expect(pagedName()).toBe('Scout');
+
+    await press(profile, 'edit-agent-soul');
+    await press(profile, 'remove-agent');
+    expect(list.root.findAllByProps({ testID: `agent-${PAGED}-identity` })).toHaveLength(0);
+    expect(list.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
+      'Agents ',
+      1,
+    ]);
+  });
+
+  it('drops an agent removed from its profile out of the Members list underneath', async () => {
+    const list = await render();
+    let profile!: ReactTestRenderer;
+    await act(async () => {
+      profile = create(<MembersScreen profileAgentId={AGENT} workspaceIdOverride={WORKSPACE} />);
+    });
+    await press(profile, 'edit-agent-soul');
+    const workspaceReads = roomView.workspace.mock.calls.length;
+    await press(profile, 'remove-agent');
+    expect(list.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
+    expect(list.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
+      'Agents ',
+      0,
+    ]);
+    expect(roomView.workspace.mock.calls.length).toBe(workspaceReads);
+  });
+
+  it('drops an agent another session removed from a searched roster on the next Workspace refresh (G7-R2)', async () => {
+    const renderer = await render();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('Clara');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).not.toHaveLength(0);
+
+    // Another session removes Clara; the Workspace refresh no longer lists her.
+    state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 0 };
+    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
+      [unknown, () => void]
+    >;
+    await act(async () => subscriptions.at(-1)![1]());
+
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
+  });
+
+  it('keeps a searched agent a truncated Workspace refresh only leaves out', async () => {
+    const renderer = await render();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('Clara');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 1, agentsTruncated: true };
+    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
+      [unknown, () => void]
+    >;
+    await act(async () => subscriptions.at(-1)![1]());
+
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).not.toHaveLength(0);
+  });
+
   // The grants block was removed from this page: under yolo it read as an
   // approval queue, not the ledger it needed to be. Grants keep recording
   // server-side (agent_grants, including the auto marker) — see database.ts

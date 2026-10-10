@@ -19,6 +19,7 @@ function preferredPersonNameKey(pubkey: string): string {
   return `${PREFERRED_PERSON_NAME_PREFIX}${pubkey}`;
 }
 
+/** Device copy of the name: a cold-start hint only; a server profile name always replaces it. */
 export async function loadPreferredPersonName(pubkey: string): Promise<string | null> {
   try {
     const stored = await AsyncStorage.getItem(preferredPersonNameKey(pubkey));
@@ -32,7 +33,7 @@ async function rememberPreferredPersonName(pubkey: string, name: string): Promis
   try {
     await savePreferredPersonName(pubkey, name);
   } catch {
-    // Device-local migration hints are optional; relay-backed identity remains authoritative.
+    // Device-local hints are optional; relay-backed identity remains authoritative.
   }
 }
 
@@ -80,8 +81,8 @@ export async function resolveOnboardingPersonName(
     globalProfile = null;
   }
   if (globalProfile?.name) {
-    const name = stored ?? globalProfile.name;
-    if (!stored) await rememberPreferredPersonName(pubkey, name);
+    const name = globalProfile.name;
+    if (stored !== name) await rememberPreferredPersonName(pubkey, name);
     return { name, communityId: null, profile: globalProfile, needsPrompt: false };
   }
   let communities: Awaited<ReturnType<PersonNameClient['listCommunities']>>;
@@ -169,7 +170,7 @@ export async function ensurePersonNameForWorkspace(
     // A failed global lookup must not discard an otherwise valid legacy profile.
   }
   if (global?.name) {
-    if (!preferred) await rememberPreferredPersonName(pubkey, global.name);
+    if (preferred !== global.name) await rememberPreferredPersonName(pubkey, global.name);
     return global;
   }
   let current: PersonProfile | null = null;

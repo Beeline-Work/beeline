@@ -21,6 +21,19 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
+vi.mock('react-native-mmkv', () => ({
+  MMKV: class {
+    getString() { return undefined; }
+    set() {}
+    delete() {}
+    getAllKeys() { return []; }
+  },
+}));
+vi.mock('@beeline/buzz-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@beeline/buzz-client')>()),
+  // Fixtures carry only the corner-app fields this route reads.
+  isRoomView: (value: unknown) => Boolean(value) && typeof value === 'object',
+}));
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
@@ -56,6 +69,13 @@ vi.mock('@/sync/transport/monolith-rig-transport', () => ({
 }));
 
 import CornerAppRoute from './[slug]';
+import { isRoomView } from '@beeline/buzz-client';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+
+const roomAddress = surfaceAddress('https://relay.test', 'viewer', '/room/corner-a');
+const ledger = (title: string) => ({
+  cornerApps: [{ slug: 'ledger', title, authorId: 'agent-a', blocks: [] }],
+});
 
 function text(node: any): string {
   return node.children
@@ -72,6 +92,7 @@ async function mount(): Promise<ReactTestRenderer> {
 }
 
 beforeEach(() => {
+  mobileSurfaceCache.clear();
   app.roomRead.mockReset();
   app.publish.mockReset();
   app.alert.mockReset();
@@ -104,5 +125,28 @@ describe('Corner App screen failures', () => {
     await vi.waitFor(() =>
       expect(app.alert).toHaveBeenCalledWith('Could not send', "Couldn't reach Beeline."),
     );
+  });
+});
+
+describe('Corner App definition source', () => {
+  it('reads the live Room surface the chat writes and follows its updates without a Room read', async () => {
+    mobileSurfaceCache.publish(roomAddress, ledger('Ledger v1') as never, isRoomView);
+    const renderer = await mount();
+    const screen = () => renderer.root.find((node: any) => node.props?.onBack && 'app' in node.props);
+    expect(screen().props.app.title).toBe('Ledger v1');
+    await act(async () => {
+      mobileSurfaceCache.publish(roomAddress, ledger('Ledger v2') as never, isRoomView);
+    });
+    expect(screen().props.app.title).toBe('Ledger v2');
+    expect(app.roomRead).not.toHaveBeenCalled();
+  });
+
+  it('falls back to one Room read when the surface has no entry and shares it with the chat', async () => {
+    app.roomRead.mockResolvedValue(ledger('Ledger'));
+    const renderer = await mount();
+    const screen = renderer.root.find((node: any) => node.props?.onBack && 'app' in node.props);
+    expect(screen.props.app.title).toBe('Ledger');
+    expect(app.roomRead).toHaveBeenCalledTimes(1);
+    expect(mobileSurfaceCache.peek(roomAddress, isRoomView)).toEqual(ledger('Ledger'));
   });
 });

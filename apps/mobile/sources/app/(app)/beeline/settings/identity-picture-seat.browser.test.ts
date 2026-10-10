@@ -31,7 +31,11 @@ function seatShims(mobile: string): Record<string, string> {
     export const clearBuzzIdentity = async () => undefined;`,
     '@/auth/github-auth-session': `export const clearPendingGitHubSignInState = async () => undefined;`,
     '@/auth/monolith-session': `export const monolithSession = { signOut: async () => undefined };`,
-    '@/buzz/community-storage': `export const loadActiveCommunityId = async () => null;`,
+    '@/buzz/community-storage': `export const loadActiveCommunityId = async () => null;
+    export const watchActiveCommunityId = (_pubkey, listener) => {
+      void Promise.resolve(null).then(listener);
+      return () => undefined;
+    };`,
     '@/buzz/person-name': `export const ensurePersonNameForWorkspace = async () => ({ name: 'Captain' });
     export const loadPreferredPersonName = async () => 'Captain';
     export const savePreferredPersonName = async () => undefined;`,
@@ -70,7 +74,9 @@ function seatShims(mobile: string): Record<string, string> {
     export const setBuzzPushEnabled = async () => ({ registered: true });`,
     '@/push/buzz-push-status': `export const buzzPushPhaseDetail = () => null;
     export const pushSwitchValue = () => true;`,
-    '@/push/push-level-storage': `export const saveStoredPushLevel = async () => undefined;`,
+    '@/push/push-level-storage': `export const saveStoredPushLevel = async () => undefined;
+      export const subscribeStoredPushLevel = () => () => undefined;`,
+    '@/buzz/identity-live': `export const subscribeOwnIdentityChange = () => () => undefined;`,
     '@/push/presented-notifications': `export const reconcilePresentedNotificationBadge = async () => undefined;`,
     '@/sync/pushRegistration': `export const getPushPermissionInfo = async () => ({ status: 'granted', granted: true, canAskAgain: true });`,
     '@/utils/open-external-url': `export const openExternalUrl = async () => undefined;`,

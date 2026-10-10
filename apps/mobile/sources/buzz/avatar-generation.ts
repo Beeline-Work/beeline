@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { subscribeClientReset } from '@/sync/client-reset';
 
 type Job = {
   pending: boolean;
@@ -16,6 +17,10 @@ function publish(agentId: string, job: Job) {
   jobs.set(agentId, job);
   for (const listener of listeners) listener();
 }
+subscribeClientReset(() => {
+  jobs.clear();
+  for (const listener of listeners) listener();
+});
 export function useAvatarGeneration(agentId: string) {
   return useSyncExternalStore(
     (listener) => {

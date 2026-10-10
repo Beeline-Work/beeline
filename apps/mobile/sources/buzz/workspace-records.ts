@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AgentDetailView, RoomViewIdentity, WorkspaceView } from '@beeline/buzz-client';
+import { subscribeClientReset } from '@/sync/client-reset';
 import { workspaceAgentFromDetail } from './workspace-surface';
 
 type MemberRecord = WorkspaceView['members'][number];
@@ -24,6 +25,11 @@ function notify(scope: string): void {
   versions.set(scope, (versions.get(scope) ?? 0) + 1);
   for (const listener of listeners.get(scope) ?? []) listener();
 }
+
+subscribeClientReset(() => {
+  scopes.clear();
+  for (const scope of [...listeners.keys()]) notify(scope);
+});
 
 function records(scope: string): Map<string, WorkspaceRecord | null> {
   let scoped = scopes.get(scope);

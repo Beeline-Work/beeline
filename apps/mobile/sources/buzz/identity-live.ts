@@ -2,6 +2,7 @@ import { isWorkspaceListView, isWorkspaceView, type RoomViewIdentity } from '@be
 import type { PushLevel } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { saveStoredPushLevel } from '@/push/push-level-storage';
+import { clientResetGeneration } from '@/sync/client-reset';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { savePreferredPersonName } from './person-name';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
@@ -88,8 +89,9 @@ export function subscribeOwnIdentityChange(
 
 /** A server `workspace-changed` frame: patch every cached copy of that header. */
 export async function applyWorkspaceChanged(change: WorkspaceHeaderChange): Promise<void> {
+  const generation = clientResetGeneration();
   const [identity, relayUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
-  if (!identity) return;
+  if (!identity || generation !== clientResetGeneration()) return;
   // The rail and settings entries may be cold; load them so they are patched too.
   await Promise.all([
     mobileSurfaceCache.read(surfaceAddress(relayUrl, identity.publicKey, '/workspaces'),
@@ -97,6 +99,8 @@ export async function applyWorkspaceChanged(change: WorkspaceHeaderChange): Prom
     mobileSurfaceCache.read(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id',
       { workspaceId: change.id }), isWorkspaceView),
   ]);
+  // A frame read for the previous account must not patch the new one.
+  if (generation !== clientResetGeneration()) return;
   await mobileSurfaceCache.patchViewer(relayUrl, identity.publicKey,
     (value) => patchWorkspaceHeader(value, change));
 }
@@ -107,8 +111,9 @@ export async function applyPersonChanged(
   person: RoomViewIdentity,
   pushLevel?: PushLevel,
 ): Promise<void> {
+  const generation = clientResetGeneration();
   const [identity, relayUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
-  if (!identity) return;
+  if (!identity || generation !== clientResetGeneration()) return;
   recordIdentityChange(relayUrl, identity.publicKey, person);
   await mobileSurfaceCache.patchViewer(relayUrl, identity.publicKey,
     (value) => patchIdentity(value, person));

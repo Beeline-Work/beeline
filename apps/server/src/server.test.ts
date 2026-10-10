@@ -6,6 +6,7 @@ import { PostgresDatabase, type SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { PhoneService } from './phone-service.js';
 import type { DaemonService } from './daemon-service.js';
+import { WorkspaceSkillNotFoundError } from './institutional-skills.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer, maxLiveDbTasks, type ServerOptions } from './server.js';
 import { databaseConnectionBudget } from './database-budget.js';
@@ -1115,6 +1116,42 @@ describe('daemon operation presence evidence', () => {
         .splice(0)
         .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
     );
+  });
+
+  it('answers a missing Workspace procedure slug with 404 and the slug, not 503', async () => {
+    const execute = vi
+      .fn()
+      .mockRejectedValue(new WorkspaceSkillNotFoundError('never-saved-procedure'));
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: {
+        authenticatePhone: vi.fn().mockResolvedValue(null),
+        authenticateDaemon: vi.fn().mockResolvedValue('agent'),
+      } as unknown as TokenAuth,
+      phone: {} as PhoneService,
+      daemon: { execute } as unknown as DaemonService,
+      live: {} as LiveHub,
+      mediaMaximumBytes: 1,
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(
+      `http://127.0.0.1:${port}/v1/daemon/operations/loadWorkspaceSkill`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer bdt_${'t'.repeat(43)}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ roomId: 'room', slug: 'never-saved-procedure' }),
+      },
+    );
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: 'workspace skill never-saved-procedure not found',
+    });
   });
 
   it('does not hold a command read behind a blocked durable evidence refresh', async () => {

@@ -95,7 +95,8 @@ You keep memory yourself. No background reviewer exists: what you do not keep cu
 | Workflows | Roles and steps for a run across agents | save_workflow; run with start_workflow |
 | History | Every message in the Workspace | Nothing; read with search_history |
 
-- **Look up.** At task start, call load_workspace_skill for \`workspace-core\`. Before you say "can't" or "not saved", run search_memory, list_credentials and workbench_status.
+- **Look up.** Before you say "can't" or "not saved", run search_memory, list_credentials and workbench_status.
+- **Load.** Call load_workspace_skill with the slug of a procedure this Workspace lists, when the task or a Room message names one.
 - **Use.** Call report_memory_used for what your answer used. When a saved item fails, fix it in the same turn.
 - **Save.** Put each fact in one store only. Never save "X is impossible". Save the specific failure and the machine: "On Niglet's host, the highroll Fly token returns 403."
 - **Prune.** Rewrite \`workspace-core\` whole and keep it at most 2,200 characters. An agent-saved Workspace fact that nobody uses expires in the weekly pass. Replace a procedure or workflow by saving its slug again; remove it with delete_skill.

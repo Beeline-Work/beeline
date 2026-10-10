@@ -537,6 +537,19 @@ export async function applyWorkspaceSkillProposal(
   return { skillId, version };
 }
 
+/**
+ * A load with no matching authorized row: the slug does not exist, or it
+ * exists but this caller may not read it. The one error covers both on
+ * purpose, so a 404 never tells a caller which of the two it was.
+ */
+export class WorkspaceSkillNotFoundError extends Error {
+  readonly status = 404 as const;
+  constructor(slug: string) {
+    super(`workspace skill ${slug} not found`);
+    this.name = 'WorkspaceSkillNotFoundError';
+  }
+}
+
 export async function loadWorkspaceSkill(
   database: SqlDatabase,
   command: CommandRow,
@@ -569,7 +582,7 @@ export async function loadWorkspaceSkill(
         [room.workspace_id, command.agent_id, command.agent_id, slug],
       )
     ).rows[0];
-    if (!skill) throw new Error('workspace skill is unavailable');
+    if (!skill) throw new WorkspaceSkillNotFoundError(slug);
     await db.query(
       `INSERT INTO workspace_skill_uses
        (id,workspace_id,skill_id,skill_version,room_id,request_id,

@@ -78,7 +78,10 @@ describe('using-beeline Room guidance', () => {
       expect(memory, tool).toContain(tool);
     }
     expect(memory).toContain('No background reviewer exists');
-    expect(memory).toContain('call load_workspace_skill for `workspace-core`');
+    // The task-start lookup lives in the turn prompt, which knows the
+    // Workspace's own procedure list; a static skill cannot.
+    expect(memory).not.toContain('At task start, call load_workspace_skill');
+    expect(memory).toContain('`workspace-core`');
     expect(memory).toContain('Never save "X is impossible".');
     expect(memory).toContain('at most 2,200 characters');
     // The upkeep and search-first rules stay in their tool descriptions.

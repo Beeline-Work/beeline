@@ -1,4 +1,4 @@
-import { boundReplyExcerpt, quoteOutsideData, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
+import { boundReplyExcerpt, quoteOutsideData, WORKSPACE_CORE_SKILL_SLUG, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { CornerGitHubCli } from './corner-github-auth.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
@@ -220,6 +220,18 @@ export const MEMORY_UPKEEP_RULE =
   'Before saving, call search_memory. If the fact is already saved, do not save it again. If a saved item is out of date, update_memory it instead of deleting and saving again. delete_memory any item this turn proves wrong, duplicate, or obsolete. Before ending the turn, report_memory_used the items your answer relied on.';
 
 const handle = (value: string): string => value.replace(/^@/, '');
+
+/**
+ * Whether the turn's already-fetched Workspace procedure list (the Memory
+ * section built by `getInstitutionalContext`) names the `workspace-core`
+ * procedure. The instruction to load it must not appear in a Workspace that
+ * never saved one: the lookup there answers 404 and reads as an outage.
+ */
+function memoryListsWorkspaceCoreProcedure(memory: string | undefined): boolean {
+  return (memory ?? '')
+    .split('\n')
+    .some((line) => line.startsWith(`- Procedure ${WORKSPACE_CORE_SKILL_SLUG} (load_workspace_skill):`));
+}
 
 /**
  * The one merge rule for an author session: what to do once the pull request
@@ -860,6 +872,16 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     layer: 'turn',
     surfaces: EVERYWHERE,
     render: ({ memory }) => memory ?? '',
+  },
+  {
+    id: 'turn.workspace-core',
+    topic: 'workspace-core',
+    why: 'Most Workspaces never saved a workspace-core procedure; only a Workspace that lists it should be told to load it at task start.',
+    budgetBytes: 120,
+    layer: 'turn',
+    surfaces: EVERYWHERE,
+    when: ({ memory }) => memoryListsWorkspaceCoreProcedure(memory),
+    render: () => 'At task start, call load_workspace_skill for `workspace-core`.',
   },
   {
     id: 'turn.corners',

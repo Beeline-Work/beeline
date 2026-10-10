@@ -23,7 +23,8 @@ export type CornerDisplayItem = {
   readonly state: CornerState;
   readonly stateAt?: number;
   readonly reason?: CornerStateReason;
-  /** PR/check narration only; never an input to the displayed state. */
+  /** PR/check narration; never an input to the displayed state. The transcript's
+   *  check card reads its current-head check states from it (`withCornerChecks`). */
   readonly lifecycle: CornerLifecycleView;
 };
 

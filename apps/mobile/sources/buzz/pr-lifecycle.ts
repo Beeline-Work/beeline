@@ -1,3 +1,4 @@
+import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import type { SystemLineMessage } from './system-lines';
 
 export type NotificationLifecycleState =
@@ -18,6 +19,8 @@ export type NotificationLifecycleRun = {
     kind: 'corner' | 'pull-request' | 'issue' | 'check';
     url?: string;
     cornerId?: string;
+    /** A check cell's commit, lowercase. */
+    headSha?: string;
     actor: string;
     updatedBy: string;
   }[];
@@ -166,6 +169,7 @@ function lifecycleItem(message: SystemLineMessage): LifecycleEvent | undefined {
             : 'Checks failed',
       kindLine: `Check${head ? ` · ${head.slice(0, 7)}` : ''}${check.consequence ? ` · ${check.consequence}` : ''}`,
       kind: 'check',
+      ...(head ? { headSha: head } : {}),
       ...(url ? { url } : {}),
       actor: check.subject.name,
       updatedBy: message.id,
@@ -259,4 +263,31 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
     };
   }
   return result;
+}
+
+const CHECK_STATE = {
+  pending: 'Checks running',
+  passed: 'Checks passed',
+  failed: 'Checks failed',
+} as const satisfies Record<string, NotificationLifecycleState>;
+
+/**
+ * A corner's check cells against the corner row its header reads. A cell for
+ * the PR's current head takes that check's state from the row, so the card and
+ * the header agree. A cell for an older head keeps its posted state and says
+ * it belongs to an earlier push. Without the row's head, cells stay as posted.
+ */
+export function withCornerChecks(
+  items: NotificationLifecycleRun['items'],
+  lifecycle: CornerLifecycleView | undefined,
+): NotificationLifecycleRun['items'] {
+  const current = lifecycle?.pr?.headSha.toLowerCase();
+  if (!current) return items;
+  return items.map((item) => {
+    if (item.kind !== 'check' || !item.headSha) return item;
+    if (item.headSha !== current)
+      return { ...item, kindLine: `${item.kindLine} · checks for an earlier push` };
+    const check = lifecycle?.checksSummary?.checks.find((entry) => entry.name === item.title);
+    return check ? { ...item, state: CHECK_STATE[check.status] } : item;
+  });
 }

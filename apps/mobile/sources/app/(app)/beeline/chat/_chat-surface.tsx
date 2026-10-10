@@ -5827,6 +5827,7 @@ export function BuzzChatSurface({
         return (
           <NotificationLifecycleCard
             message={item}
+            cornerLifecycle={cornerHeaderSource?.lifecycle}
             onOpenCorner={openCorner}
             onOpenUrl={handleOpenGitHubEvent}
           />
@@ -6034,6 +6035,7 @@ export function BuzzChatSurface({
       isArchived,
       isCorner,
       decodedId,
+      cornerHeaderSource?.lifecycle,
     ],
   );
   const renderItem = useRoomMessageRenderItem({

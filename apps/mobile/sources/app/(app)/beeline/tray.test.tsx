@@ -820,6 +820,112 @@ describe('Needs-you badge and tray', () => {
     expect([rows(tree), badge(tree)]).toEqual([1, 1]);
   });
 
+  /** Clears and list reads wait until the test answers them; a read sees `server.needs`. */
+  function holdClearsAndReads(server: { needs: unknown[] }) {
+    const clears: Array<{ ok(): void; fail(): void }> = [];
+    const reads: Array<() => void> = [];
+    phoneOperation.mockImplementation((name: string) => {
+      if (name === 'readNeedsYou') {
+        const items = server.needs;
+        return new Promise((resolve) => { reads.push(() => resolve({ items })); });
+      }
+      if (name === 'clearNeedsYou' || name === 'clearNeedsYouSection') return new Promise((resolve, reject) => {
+        clears.push({ ok: () => resolve(undefined), fail: () => reject(new Error('clear refused')) });
+      });
+      if (name === 'listMessageBookmarks') return Promise.resolve({ bookmarks: [] });
+      return Promise.resolve(undefined);
+    });
+    return { clears, reads };
+  }
+
+  async function gap() {
+    await act(async () => {
+      for (const listener of [...liveRegistrations])
+        listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'needs-you-gap' } });
+    });
+    await act(async () => undefined);
+  }
+
+  it('Reproduction NEEDS-YOU-READ-CLEAR-2: a gap read started during a pending dismiss does not bring the cell back', async () => {
+    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
+    serveNeeds(server);
+    const tree = await render(true);
+    const held = holdClearsAndReads(server);
+    await swipe(tree, 'ask-2');
+    expect(held.clears).toHaveLength(1);
+    // The read starts before the server applies the clear, so it still sees both cells.
+    await gap();
+    expect(held.reads).toHaveLength(1);
+    await act(async () => held.clears[0]!.ok());
+    await act(async () => held.reads[0]!());
+    await act(async () => undefined);
+    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
+  });
+
+  it('a gap read that answers while a dismiss is still pending leaves the cell out', async () => {
+    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
+    serveNeeds(server);
+    const tree = await render(true);
+    const held = holdClearsAndReads(server);
+    await swipe(tree, 'ask-2');
+    await gap();
+    await act(async () => held.reads[0]!());
+    await act(async () => undefined);
+    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
+    await act(async () => held.clears[0]!.ok());
+    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
+  });
+
+  it('a dismiss that fails while a gap read is pending puts the cell back once', async () => {
+    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
+    serveNeeds(server);
+    const tree = await render(true);
+    const held = holdClearsAndReads(server);
+    await swipe(tree, 'ask-2');
+    await gap();
+    await act(async () => held.clears[0]!.fail());
+    await act(async () => undefined);
+    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
+    await act(async () => held.reads[0]!());
+    await act(async () => undefined);
+    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
+  });
+
+  it('a gap read started during a pending section clear does not bring the cells back', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
+      serveNeeds(server);
+      const tree = await render(true);
+      const held = holdClearsAndReads(server);
+      await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+      await act(async () => { vi.advanceTimersByTime(6_000); });
+      expect(held.clears).toHaveLength(1);
+      await gap();
+      await act(async () => held.clears[0]!.ok());
+      await act(async () => held.reads[0]!());
+      await act(async () => undefined);
+      expect([rows(tree), badge(tree)]).toEqual([0, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a client reset forgets the previous account\'s pending clears', async () => {
+    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
+    serveNeeds(server);
+    const treeA = await render(true);
+    holdClearsAndReads(server);
+    await swipe(treeA, 'ask-2');
+    await act(async () => treeA.unmount());
+    // B's server holds a cell with the same id; A's pending clear must not hide it.
+    serveNeeds(server);
+    auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'other-viewer' }));
+    await act(async () => resetClientState());
+    const treeB = await render(true);
+    expect([rows(treeB), badge(treeB)]).toEqual([2, 2]);
+  });
+
   it('a live delta moves the badge and the list together', async () => {
     serveNeeds({ needs: [need()] });
     const tree = await render(true);

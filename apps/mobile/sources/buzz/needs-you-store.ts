@@ -34,6 +34,11 @@ const versions = new Map<string, number>();
  */
 type ReadInFlight = { readonly deltas: NeedsYouLiveDelta[]; readonly cleared: Set<string> };
 const readsInFlight = new Map<string, Set<ReadInFlight>>();
+/**
+ * Cells whose clear the server has not answered yet, counted per clear. A read
+ * that starts meanwhile may answer from before the clear, so it leaves them out.
+ */
+const pendingClears = new Map<string, Map<string, number>>();
 /** Start order of list reads; a read never overwrites one that started after it. */
 let readsStarted = 0;
 const newestRead = new Map<string, number>();
@@ -82,6 +87,7 @@ subscribeClientReset(() => {
   entries.clear();
   versions.clear();
   readsInFlight.clear();
+  pendingClears.clear();
   newestRead.clear();
   countsInFlight.clear();
   viewer = undefined;
@@ -177,7 +183,7 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
   const viewerId = await resolveViewer();
   const key = entryKey(viewerId, workspaceId);
   const started = ++readsStarted;
-  const read: ReadInFlight = { deltas: [], cleared: new Set() };
+  const read: ReadInFlight = { deltas: [], cleared: new Set(pendingClears.get(key)?.keys()) };
   const reads = readsInFlight.get(key) ?? new Set();
   reads.add(read);
   readsInFlight.set(key, reads);
@@ -212,14 +218,36 @@ function pendingReads(workspaceId: string): Iterable<ReadInFlight> {
 
 /**
  * An optimistic clear: the cells leave the list and the badge together. A read
- * already in flight may answer from before the clear, so it leaves them out too.
+ * in flight, or one that starts before the server answers the clear, may answer
+ * from before it, so it leaves them out too. Call the returned function once
+ * the server answers, before any restore; after a client reset it does nothing.
  */
-export function removeNeedsYou(workspaceId: string, messageIds: Iterable<string>): void {
+export function removeNeedsYou(workspaceId: string, messageIds: Iterable<string>): () => void {
   const ids = new Set(messageIds);
   for (const read of pendingReads(workspaceId)) for (const id of ids) read.cleared.add(id);
+  const pending = viewer === undefined ? undefined : entryKey(viewer, workspaceId);
+  if (pending !== undefined) {
+    const counts = pendingClears.get(pending) ?? new Map<string, number>();
+    for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1);
+    pendingClears.set(pending, counts);
+  }
   write(workspaceId, (entry) => entry.items
     ? { ...entry, items: entry.items.filter((item) => !ids.has(item.messageId)) }
     : entry);
+  const at = clientResetGeneration();
+  let settled = false;
+  return () => {
+    if (settled || pending === undefined || at !== clientResetGeneration()) return;
+    settled = true;
+    const counts = pendingClears.get(pending);
+    if (!counts) return;
+    for (const id of ids) {
+      const left = (counts.get(id) ?? 1) - 1;
+      if (left) counts.set(id, left);
+      else counts.delete(id);
+    }
+    if (!counts.size) pendingClears.delete(pending);
+  };
 }
 
 /** A failed clear puts its cells back in the list and the badge together. */

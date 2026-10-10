@@ -481,13 +481,15 @@ export default function TrayScreen() {
   /** Tapped or dismissed: the cell leaves this tray, and every other device's. */
   const clear = useCallback(async (item: NeedsYouItemView) => {
     const at = clientResetGeneration();
-    removeNeedsYou(item.workspaceId, [item.messageId]);
+    const settle = removeNeedsYou(item.workspaceId, [item.messageId]);
     try {
       await monolithPhoneOperation('clearNeedsYou', {
         workspaceId: item.workspaceId,
         messageId: item.messageId,
       });
+      settle();
     } catch (cause) {
+      settle();
       // A failure that lands after an account switch belongs to the previous account.
       if (at !== clientResetGeneration()) return;
       restoreNeedsYou(item.workspaceId, [item]);
@@ -518,10 +520,12 @@ export default function TrayScreen() {
     const ids = new Set(clear.items.map((item) => item.messageId));
     if (clear.kind === 'needs') {
       const at = clientResetGeneration();
-      removeNeedsYou(clear.workspaceId, ids);
+      const settle = removeNeedsYou(clear.workspaceId, ids);
       try {
         await monolithPhoneOperation('clearNeedsYouSection', { workspaceId: clear.workspaceId });
+        settle();
       } catch (cause) {
+        settle();
         if (at !== clientResetGeneration()) return;
         restoreNeedsYou(clear.workspaceId, clear.items);
         setError(cause instanceof Error ? cause.message : String(cause));

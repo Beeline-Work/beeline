@@ -1220,8 +1220,6 @@ export function BuzzChatSurface({
       source: 'config',
     };
   }, [activeCommunityId, decodedId, isCorner, roomSurface?.repository]);
-  const { openCornerCount, confirmReplacement: confirmRoomRepoReplacement } =
-    useRoomRepoReplacementGuard(workspaceChats, parentChannelId ?? decodedId, roomRepository);
   const roomRepositoryState = roomSurface?.repositoryResolution;
   // A loaded surface with no repository field is not enough to prompt. The
   // indexer distinguishes a proven empty Room from an unverified binding,
@@ -5094,23 +5092,14 @@ export function BuzzChatSurface({
     [applyRoomRepository, transport],
   );
 
-  const handleSelectRoomRepoCandidate = useCallback(
-    (candidate: RepoCandidate) => {
-      void confirmRoomRepoReplacement().then((confirmed) => {
-        if (confirmed) void applyRoomRepository(candidate);
-      });
-    },
-    [applyRoomRepository, confirmRoomRepoReplacement],
-  );
-
-  // Creating a repo for a linked Room replaces its repo too, so it asks first.
-  const handleCreateRoomRepository = useCallback(
-    async (installationId: number, name: string) => {
-      if (!(await confirmRoomRepoReplacement())) return;
-      await handleCreateGitHubRepository(installationId, name);
-    },
-    [confirmRoomRepoReplacement, handleCreateGitHubRepository],
-  );
+  const {
+    openCornerCount,
+    selectCandidate: handleSelectRoomRepoCandidate,
+    createRepository: handleCreateRoomRepository,
+  } = useRoomRepoReplacementGuard(workspaceChats, parentChannelId ?? decodedId, roomRepository, {
+    link: applyRoomRepository,
+    create: handleCreateGitHubRepository,
+  });
 
   // Unassigning the repo is the inverse of linking it: the Room becomes
   // chat-only. It is confirmed like the other destructive Room actions, and

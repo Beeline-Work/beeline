@@ -37,6 +37,19 @@ vi.mock('./surface-storage', () => ({
   },
 }));
 vi.mock('@/modal', async () => ({ Modal: (await import('@/modal/ModalManager')).Modal }));
+// The real ModalProvider and confirm dialog render; only the native Hull
+// primitives under them become host elements so a test can press a button.
+vi.mock('@/components/buzz/HullDialog', async () => {
+  const ReactModule = await import('react');
+  return { HullDialog: (props: any) => ReactModule.createElement('HullDialog', props) };
+});
+vi.mock('@/modal/components/WebPromptModal', () => ({ WebPromptModal: () => null }));
+vi.mock('@/modal/components/CustomModal', () => ({ CustomModal: () => null }));
+vi.mock('@/components/buzz/HullActionSheet', () => ({
+  HullActionSheetCancel: () => null,
+  HullActionSheetModal: () => null,
+  HullActionSheetRow: () => null,
+}));
 vi.mock('@/sync/transport/live-connection', () => ({
   sharedLiveConnection: () => ({
     register: async (filters: unknown, listener: (event: unknown) => void) => {
@@ -55,7 +68,8 @@ vi.mock('@/sync/transport/live-connection', () => ({
 }));
 
 import type { RoomRepository } from '@beeline/buzz-client';
-import { Modal } from '@/modal/ModalManager';
+import { ModalProvider } from '@/modal/ModalProvider';
+import type { RepoCandidate } from './room-repo-picker';
 import { resetClientState } from '@/sync/client-reset';
 import { useRoomRepoReplacementGuard } from './room-repo-replacement';
 import { acquireChatList, liveChatList, resetChatListStoresForTest, useChatList } from './chat-list-store';
@@ -405,17 +419,8 @@ describe('a read that cannot say unread', () => {
 });
 
 describe('the Room screen reads the live list', () => {
-  it('warns on a repository change after a corner opens live', async () => {
+  it('warns on a repository change after a corner opens live, and Cancel blocks the write', async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    const shown: Array<{ title?: string; message?: string; confirmText?: string }> = [];
-    Modal.setFunctions(
-      (config) => {
-        shown.push(config as (typeof shown)[number]);
-        return `modal-${shown.length}`;
-      },
-      vi.fn(),
-      vi.fn(),
-    );
     const chats = vi.fn(async () => listOf([row('room-a', 10, { cornerCount: 0 })]));
     const source = { chats };
     const repository: RoomRepository = {
@@ -424,24 +429,34 @@ describe('the Room screen reads the live list', () => {
       binding: { key: 'repo-key', name: 'acme/app', remote: 'https://github.com/acme/app', localOnly: false },
       source: 'config',
     };
-    let confirmReplacement!: () => Promise<boolean>;
-    // The Room screen's wiring: its live list feeds the production guard.
+    const candidate: RepoCandidate = {
+      key: 'next-key', name: 'acme/next', remote: 'https://github.com/acme/next',
+    };
+    // The repository write the Room screen hands the guard (transport.roomRepositorySet).
+    const roomRepositorySet = vi.fn(async (_candidate: RepoCandidate) => undefined);
+    const createRepository = vi.fn(async () => undefined);
+    let selectCandidate!: (candidate: RepoCandidate) => void;
     function RoomScreen() {
       const list = useChatList(key, source);
-      confirmReplacement = useRoomRepoReplacementGuard(list?.chats ?? [], 'room-a', repository)
-        .confirmReplacement;
+      selectCandidate = useRoomRepoReplacementGuard(list?.chats ?? [], 'room-a', repository, {
+        link: roomRepositorySet,
+        create: createRepository,
+      }).selectCandidate;
       return null;
     }
-    let renderer!: { unmount(): void };
+    let renderer!: { unmount(): void; root: { findAllByType(type: unknown): Array<{ props: any }> } };
     await act(async () => {
-      renderer = create(React.createElement(RoomScreen));
+      renderer = create(React.createElement(ModalProvider, null, React.createElement(RoomScreen)));
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
-    // No open corner: the change goes ahead without a warning.
-    await expect(confirmReplacement()).resolves.toBe(true);
-    expect(shown).toHaveLength(0);
+    const dialogs = () => renderer.root.findAllByType('HullDialog');
+
+    // No open corner: picking a repo writes it without a warning.
+    await act(async () => selectCandidate(candidate));
+    expect(dialogs()).toHaveLength(0);
+    expect(roomRepositorySet).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       emit({
@@ -451,16 +466,29 @@ describe('the Room screen reads the live list', () => {
         },
       });
     });
-    // A corner opened while the screen was up: the same action now warns.
-    const answer = confirmReplacement();
-    expect(shown).toHaveLength(1);
-    expect(shown[0]).toMatchObject({
+    // A corner opened while the screen was up: the same pick now shows the warning.
+    await act(async () => selectCandidate(candidate));
+    const [dialog] = dialogs();
+    expect(dialog!.props).toMatchObject({
       title: 'Change Room repo?',
-      message: expect.stringContaining('corners still open on acme/app'),
-      confirmText: 'Change anyway',
+      body: expect.stringContaining('corners still open on acme/app'),
     });
-    Modal.resolveConfirm('modal-1', false);
-    await expect(answer).resolves.toBe(false);
+    const labels = dialog!.props.actions.map((action: { label: string }) => action.label);
+    expect(labels).toEqual(['Cancel', 'Change anyway']);
+    const cancel = dialog!.props.actions.find(
+      (action: { testID: string }) => action.testID === 'hull-confirm-cancel',
+    );
+    await act(async () => cancel.onPress());
+    expect(dialogs()).toHaveLength(0);
+    expect(roomRepositorySet).toHaveBeenCalledTimes(1);
+
+    // The confirm button is the only way through.
+    await act(async () => selectCandidate(candidate));
+    const submit = dialogs()[0]!.props.actions.find(
+      (action: { testID: string }) => action.testID === 'hull-confirm-submit',
+    );
+    await act(async () => submit.onPress());
+    expect(roomRepositorySet).toHaveBeenCalledTimes(2);
     expect(chats).toHaveBeenCalledTimes(1);
     await act(async () => renderer.unmount());
   });

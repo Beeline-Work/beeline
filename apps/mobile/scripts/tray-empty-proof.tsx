@@ -99,9 +99,10 @@ async function readNoLink() {
   report(`PASS ${fallback!.textContent} in ${elapsed} ms; back to ${replaced}`);
 }
 
-/** CLEAR on a section head empties it at once and offers Undo; approvals stay. */
+/** CLEAR on a section head empties every row at once and offers Undo. */
 async function readClear() {
-  const section = new URLSearchParams(location.search).get('clear') === 'saved' ? 'saved' : 'needs';
+  const params = new URLSearchParams(location.search);
+  const section = params.get('clear') === 'saved' ? 'saved' : 'needs';
   createRoot(document.getElementById('root')!).render(<TrayScreen />);
   await pause();
   await pause();
@@ -114,6 +115,12 @@ async function readClear() {
     `CLEAR is ${target.width}×${target.height} in a ${head.height} px head; it needs 44×44`,
   );
   const size = `CLEAR ${Math.round(target.width)}×${Math.round(target.height)} in ${Math.round(head.height)} px head`;
+  if (params.get('frame') === 'before') {
+    const expected = section === 'needs' ? 'needs-you-grant-1' : 'bookmark-msg-1';
+    assert(document.querySelector(`[data-testid="${expected}"]`) != null, `${expected} is missing`);
+    report(`PASS before ${section} ${size}`);
+    return;
+  }
   clear!.click();
   await pause();
   const undo = document.querySelector<HTMLElement>('[data-testid="tray-clear-undo"]');
@@ -125,8 +132,8 @@ async function readClear() {
   );
   if (section === 'needs')
     assert(
-      document.querySelector('[data-testid="needs-you-grant-1"]') != null,
-      'CLEAR took the approval too',
+      document.querySelector('[data-testid="needs-you-grant-1"]') == null,
+      'CLEAR left the approval on screen',
     );
   const heads = Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="tray-section-"]'))
     .map((head) => head.textContent)

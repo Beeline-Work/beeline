@@ -36,8 +36,8 @@ function sourcePath(item: NeedsYouItemView): string {
  * the request's reason or a choice's options, then where it sits, who it is
  * for and when it expires. The verb names the kind, so there is no type
  * label. Tapping opens the exact message; it clears a question, never an
- * approval, which leaves only once decided. A phone swipes a question right
- * to dismiss; a pointer hovers to reveal DISMISS.
+ * approval. A phone swipes any cell right to dismiss it from the tray;
+ * a pointer hovers to reveal DISMISS. Dismissal does not decide an approval.
  */
 export function NeedsYouCell({
   item,
@@ -120,7 +120,7 @@ export function NeedsYouCell({
           {approval.detail}
         </Text>
       ) : null}
-      <View style={[styles.meta, desktop && !approval && styles.metaDesktop]}>
+      <View style={[styles.meta, desktop && styles.metaDesktop]}>
         {item.roomKind === 'corner' ? (
           <CornerGlyph size={CORNER_META_SIZE} />
         ) : item.roomKind === 'room' ? (
@@ -130,7 +130,7 @@ export function NeedsYouCell({
           {meta}
         </Text>
       </View>
-      {desktop && hovered && !approval ? (
+      {desktop && hovered ? (
         <Pressable
           accessibilityLabel="Dismiss"
           accessibilityRole="button"
@@ -148,8 +148,7 @@ export function NeedsYouCell({
       ) : null}
     </Pressable>
   );
-  // An approval leaves when it is decided, never by a swipe.
-  if (desktop || approval) return cell;
+  if (desktop) return cell;
   return (
     <Swipeable
       friction={1}

@@ -323,7 +323,7 @@ export default function TrayScreen() {
 
   const openNeed = useCallback(
     (item: NeedsYouItemView) => {
-      // An approval stays until it is decided on its card.
+      // Opening an approval does not dismiss or decide it.
       if (!item.approval) void clear(item);
       if (desktop) setSelected(item);
       else open(item, 'needs-you');
@@ -411,14 +411,14 @@ export default function TrayScreen() {
   }, [bookmarks, pending]);
   const newestClear = pending.at(-1);
 
-  /** Clear a section now, with Undo. Approvals stay: a decision clears those. */
+  /** Clear a section now, with Undo. This only dismisses approval cards from the tray. */
   const clearSection = useCallback(
     (kind: PendingClear['kind']) => {
       setRemoved(null);
       const held = { id: nextClearId.current++, expiresAt: Date.now() + UNDO_MS, workspaceId };
       const clear: PendingClear =
         kind === 'needs'
-          ? { ...held, kind, items: visibleNeeds.filter((item) => !item.approval) }
+          ? { ...held, kind, items: visibleNeeds }
           : { ...held, kind, items: visibleBookmarks };
       if (!clear.items.length) return;
       pendingRef.current = [...pendingRef.current, clear];
@@ -482,7 +482,7 @@ export default function TrayScreen() {
         type: 'head',
         title: 'Needs you',
         count: visibleNeeds.length,
-        ...(questions.length ? { clear: 'needs' as const } : {}),
+        ...(visibleNeeds.length ? { clear: 'needs' as const } : {}),
       },
       // Approvals before questions, each in the server's order.
       ...(visibleNeeds.length

@@ -1432,6 +1432,8 @@ export type PostSquireApprovalInput = TurnOutputAuthority &
     readonly approvalUrl: string;
     readonly approvalId?: string;
     readonly linkKind: 'approval' | 'passkey' | 'vouch';
+    /** Squire's absolute expires_at, as Unix milliseconds. */
+    readonly expiresAt?: number;
     /**
      * The provider page this Squire session was driving, when the call carried
      * one. It names the exact Registry authorization attempt whose owner link

@@ -13,6 +13,7 @@ import {
   keepUnavailableChatFacts,
   roomsMissedByLive,
   type ChatListDelta,
+  type ChatListDeltaContext,
 } from './chat-list-delta';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { isDraftFrame } from '@/sync/transport/live-frames';
@@ -38,6 +39,8 @@ export type ChatListSource = {
     listener: (event: SurfaceEvent) => void,
   ) => Promise<() => void>;
   readonly reconnect?: () => void;
+  /** Whether a Room is on screen. Defaults to the shared live connection's views. */
+  readonly viewing?: (roomId: string) => boolean;
 };
 
 export type ChatListConsumer = {
@@ -101,6 +104,10 @@ class ChatListStore {
   private readonly cornerStatusSequence = new Map<string, number>();
   private opened = false;
   private durableTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly deltaContext: ChatListDeltaContext = {
+    viewing: (roomId) =>
+      this.source.viewing ? this.source.viewing(roomId) : sharedLiveConnection().isViewing(roomId),
+  };
 
   constructor(
     readonly key: ChatListKey,
@@ -212,7 +219,10 @@ class ChatListStore {
     const missedLive =
       this.readFromServer && held !== null && roomsMissedByLive(held, read, this.heardRooms).length > 0;
     this.heardRooms.clear();
-    const value = this.deltasDuringRead.reduce(applyChatListDelta, keepUnavailableChatFacts(held, read));
+    const value = this.deltasDuringRead.reduce(
+      (view, delta) => applyChatListDelta(view, delta, this.deltaContext),
+      keepUnavailableChatFacts(held, read),
+    );
     this.readFromServer = true;
     this.value = value;
     if (this.durableTimer) clearTimeout(this.durableTimer);
@@ -283,7 +293,7 @@ class ChatListStore {
       if (this.readInFlight) this.deltasDuringRead.push(live);
       const held = this.value;
       const needsRead = !held || chatListDeltaNeedsRead(held, live);
-      if (held) this.paint(applyChatListDelta(held, live));
+      if (held) this.paint(applyChatListDelta(held, live, this.deltaContext));
       if (needsRead) this.requestRead();
       return;
     }

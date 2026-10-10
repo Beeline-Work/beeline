@@ -90,6 +90,32 @@ describe('chat list deltas', () => {
     expect(own.chats[0]).toMatchObject({ closed: true, unread: false });
   });
 
+  it('keeps held unread for the viewer’s own message, which another device may have sent', () => {
+    // An older agent message is still past the read cursor.
+    const view = deck(item('a', 10, { unread: true }));
+    const next = applyChatListDelta(view, {
+      type: 'message-delta',
+      roomId: 'a',
+      message: message('mine', 20, { author: viewer }),
+    });
+    expect(next.chats[0]).toMatchObject({ unread: true, latestMessage: { id: 'mine' } });
+  });
+
+  it('does not light unread for a Room the reader has on screen', () => {
+    const view = deck(item('a', 20), item('b', 10));
+    const viewing = (roomId: string) => roomId === 'b';
+    const onScreen = applyChatListDelta(view, {
+      type: 'message-delta', roomId: 'b', message: message('seen', 30),
+    }, { viewing });
+    expect(onScreen.chats[0]).toMatchObject({ room: { id: 'b' }, unread: false,
+      latestMessage: { id: 'seen' } });
+
+    const offScreen = applyChatListDelta(view, {
+      type: 'message-delta', roomId: 'a', message: message('away', 30),
+    }, { viewing });
+    expect(offScreen.chats[0]).toMatchObject({ room: { id: 'a' }, unread: true });
+  });
+
   it('ignores older rows, activity rows, and unknown Rooms', () => {
     const view = deck(item('a', 20));
     for (const delta of [
@@ -203,9 +229,21 @@ describe('keepUnavailableChatFacts', () => {
     expect('unavailable' in kept).toBe(false);
   });
 
-  it('leaves a Room it never held as the server sent it', () => {
+  it('shows no dot for a Room it never held and keeps that fact unknown', () => {
     const read = { ...deck(item('room-b', 5)), unavailable: ['unread' as const, 'corners' as const] };
-    expect(keepUnavailableChatFacts(held, read).chats[0]).toEqual(item('room-b', 5));
+    const kept = keepUnavailableChatFacts(held, read);
+    expect(kept.chats[0]).toEqual(item('room-b', 5));
+    expect(kept.unavailable).toEqual(['unread', 'corners']);
+  });
+
+  it('keeps a cold read with no held copy unknown, then takes the next complete read', () => {
+    const cold = keepUnavailableChatFacts(null, {
+      ...deck(item('room-a', 10)), unavailable: ['unread' as const],
+    });
+    expect(cold.chats[0]?.unread).toBe(false);
+    expect(cold.unavailable).toEqual(['unread']);
+    const complete = deck(item('room-a', 10, { unread: true }));
+    expect(keepUnavailableChatFacts(cold, complete)).toBe(complete);
   });
 });
 

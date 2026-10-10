@@ -4,6 +4,13 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const phoneOperation = vi.hoisted(() => vi.fn());
+const liveListeners = vi.hoisted(() => new Set<(event: any) => void>());
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
+  register: async (_filters: unknown, listener: (event: any) => void) => {
+    liveListeners.add(listener);
+    return () => liveListeners.delete(listener);
+  },
+}) }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
@@ -116,6 +123,7 @@ afterAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  liveListeners.clear();
   setWorkbenchSource(new MockWorkbenchSource());
   searchParams.params = {
     workspaceId: 'workspace-1',
@@ -142,11 +150,16 @@ async function render(): Promise<ReactTestRenderer> {
   return renderer;
 }
 
-/** One install poll per 700 ms of fake time, plus its microtask tail. */
+/** A server commit wakes the install observer once. */
 async function advancePolls(count = 1): Promise<void> {
   for (let index = 0; index < count; index += 1) {
     await act(async () => {
-      vi.advanceTimersByTime(700);
+      for (const resourceId of ['squire-install', 'trusty-squire:helper-squire-box-1',
+        'tailscale:helper-squire-box-1',
+        'missing-row', 'fresh-row', 'connector-row-1'])
+        for (const listener of liveListeners) listener({ monolithLive: {
+          type: 'resource-change', roomId: '', resource: 'install', resourceId,
+        } });
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -546,7 +559,7 @@ vi.mock('@/buzz/use-observed-resource', async (importOriginal) => {
   } };
 });
 
-it('R12b Demonstrated: the Squire installer polls only its install operation', async () => {
+it('R12b: the Squire installer reads on commit and stays idle for five minutes', async () => {
   setWorkbenchSource(new MonolithWorkbenchSource());
   phoneOperation.mockImplementation(async (name: string) => {
     if (name === 'readWorkbench') return { helpers: [{ id: 'helper-squire-box', name: 'Squire box', online: true }], catalog: [], connectors: [], connections: [], apps: [] };
@@ -555,10 +568,10 @@ it('R12b Demonstrated: the Squire installer polls only its install operation', a
     throw new Error(name);
   });
   const renderer = await render();
-  await advancePolls(3);
+  await act(async () => { vi.advanceTimersByTime(300_000); await Promise.resolve(); });
   expect(renderer.root.findByProps({ testID: 'connect-install-progress' })).toBeDefined();
   const operations = phoneOperation.mock.calls.map(([name]) => name);
   expect(operations.filter(name => name === 'readWorkbench')).toHaveLength(1); // initial helper selection
-  expect(operations.filter(name => name === 'readConnectorInstall').length).toBeGreaterThan(1);
+  expect(operations.filter(name => name === 'readConnectorInstall')).toHaveLength(1);
   console.log('R12b Demonstrated installer operations:', operations.join(', '));
 });

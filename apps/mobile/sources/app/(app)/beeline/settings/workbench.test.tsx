@@ -19,6 +19,13 @@ const focus = vi.hoisted(() => ({
 const appState = vi.hoisted(() => ({
   listener: undefined as undefined | ((state: string) => void),
 }));
+const liveListeners = vi.hoisted(() => new Set<(event: any) => void>());
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
+  register: async (_filters: unknown, listener: (event: any) => void) => {
+    liveListeners.add(listener);
+    return () => liveListeners.delete(listener);
+  },
+}) }));
 
 vi.mock('expo-router', () => ({
   router: navigation,
@@ -127,6 +134,7 @@ afterEach(() => vi.useRealTimers());
 
 beforeEach(() => {
   vi.clearAllMocks();
+  liveListeners.clear();
   focus.effect = undefined;
   appState.listener = undefined;
   layout.desktop = false;
@@ -149,6 +157,33 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 describe('Workbench settings screen', () => {
+  it('holds a stale vault for five minutes without another GET, then applies its commit notice', async () => {
+    vi.useFakeTimers();
+    const source = new MockWorkbenchSource();
+    const originalRead = source.readWorkbench.bind(source);
+    let stale = true;
+    const read = vi.fn(async (input: Parameters<typeof source.readWorkbench>[0]) => {
+      const view = await originalRead(input);
+      return { ...view, connections: view.connections.map((connection) =>
+        ({ ...connection, ...(stale ? { stale: true } : {}) })) };
+    });
+    source.readWorkbench = read;
+    setWorkbenchSource(source);
+    const renderer = await render();
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(300_000); await Promise.resolve(); });
+    expect(read).toHaveBeenCalledTimes(1);
+    stale = false;
+    await act(async () => {
+      for (const listener of liveListeners) listener({ monolithLive: {
+        type: 'resource-change', roomId: '', resource: 'workbench',
+      } });
+      await Promise.resolve();
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' })).toBeDefined();
+  });
+
   it('pads the bottom of the scroll by the system navigation bar so the last app row can scroll above it', async () => {
     // Android 3-button navigation reports a 48dp bottom inset; the screen draws
     // edge to edge behind it, so the scroll content must end above that bar.
@@ -256,6 +291,12 @@ describe('Workbench settings screen', () => {
       await vi.advanceTimersByTimeAsync(500);
       await Promise.resolve();
     });
+    await act(async () => {
+      for (const listener of liveListeners) listener({ monolithLive: {
+        type: 'resource-change', roomId: '', resource: 'workbench',
+      } });
+      await Promise.resolve();
+    });
     const edited = renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' });
     expect(edited.props.title).toBe('vercel-renamed');
     expect(edited.props.description).toBe('api.vercel-renamed.example');
@@ -271,6 +312,12 @@ describe('Workbench settings screen', () => {
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      for (const listener of liveListeners) listener({ monolithLive: {
+        type: 'resource-change', roomId: '', resource: 'workbench',
+      } });
       await Promise.resolve();
     });
     expect(

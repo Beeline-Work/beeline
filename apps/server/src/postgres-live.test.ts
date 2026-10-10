@@ -91,6 +91,35 @@ describe('Postgres live fanout', () => {
     vi.restoreAllMocks();
   });
 
+  it('publishes owner-scoped install, vault and agent commits without an idle read', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+
+    const agent = 'b'.repeat(64);
+    const connector = '33333333-3333-4333-8333-333333333333';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')`, [agent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, AUTHOR]);
+    await database.query(`INSERT INTO workspace_connectors
+      (id,workspace_id,owner_identity_id,connector_type,helper_agent_id)
+      VALUES($1,$2,$3,'trusty-squire',$4)`, [connector, WORKSPACE, AUTHOR, agent]);
+    await database.query(`INSERT INTO workspace_connections
+      (id,connector_id,owner_identity_id,reference) VALUES($1,$2,$3,'vault-ref')`,
+      ['44444444-4444-4444-8444-444444444444', connector, AUTHOR]);
+    await eventually(() => ['agent', 'install', 'workbench'].every((resource) =>
+      received.some((event) => event.type === 'resource-change' &&
+        event.resource === resource)));
+    expect(received).toContainEqual({ type: 'resource-change', roomId: '',
+      ownerId: AUTHOR, resource: 'install', resourceId: connector });
+    expect(received).toContainEqual({ type: 'resource-change', roomId: '',
+      ownerId: AUTHOR, resource: 'workbench' });
+  });
+
   it('wakes push only after message and device writes commit', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);

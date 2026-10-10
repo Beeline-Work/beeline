@@ -901,7 +901,10 @@ describe('monolith integration', () => {
       avatarSeed: AGENT,
       avatar: 'https://example.com/old-avatar.png',
     });
-    expect(soulSave.status).toBe(204);
+    expect(soulSave.status).toBe(200);
+    const committedSoul = await soulSave.json();
+    expect(isAgentDetailView(committedSoul)).toBe(true);
+    expect(committedSoul.agent.identity.avatar).toBe(url);
     expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.agent.identity.avatar).toBe(url);
     const context = await daemonOperation('getAgentAvatar', { roomId: ROOM });
     expect((await context.json()).drawing).toEqual(drawing);

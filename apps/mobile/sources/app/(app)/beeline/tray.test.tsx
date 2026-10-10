@@ -18,6 +18,7 @@ const workspaceSet = vi.hoisted(() => ({
   workspaces: [] as { id: string }[],
 }));
 const phoneOperation = vi.hoisted(() => vi.fn());
+const liveRegistrations = vi.hoisted(() => new Set<(event: unknown) => void>());
 const roomRead = vi.hoisted(() => vi.fn());
 const prefetchRoom = vi.hoisted(() => vi.fn());
 const auth = vi.hoisted(() => ({
@@ -105,6 +106,14 @@ vi.mock('@expo/vector-icons', async () => {
 });
 vi.mock('@/auth/buzz-identity-storage', () => auth);
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/sync/transport/live-connection', () => ({
+  sharedLiveConnection: () => ({
+    register: async (_filters: unknown, listener: (event: unknown) => void) => {
+      liveRegistrations.add(listener);
+      return () => liveRegistrations.delete(listener);
+    },
+  }),
+}));
 vi.mock('@/push/push-room-prefetch', () => ({ prefetchPushRoom: prefetchRoom }));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
@@ -136,7 +145,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 });
 
 import TrayScreen from './tray';
-import { announceNeedsYouActivity } from '@/buzz/needs-you';
+import { applyNeedsYouLiveDelta } from '@/buzz/needs-you';
 
 const person = {
   pubkey: 'person-1',
@@ -211,7 +220,7 @@ function need(overrides: Record<string, unknown> = {}) {
     workspaceId: 'ws',
     roomId: 'room-1',
     roomName: 'Launch room',
-    roomKind: 'room',
+    roomKind: 'room' as const,
     text: 'can you confirm the review note?',
     createdAt: 1_700_000_000,
     expiresAt: 1_700_080_000,
@@ -240,13 +249,11 @@ function serve({
   });
 }
 
-/** The app goes to the background and comes back: an open tray reads again. */
+/** A socket gap asks the held tray for one covering read. */
 async function returnToForeground() {
   await act(async () => {
-    for (const state of ['background', 'active']) {
-      appState.current = state;
-      for (const listener of [...appState.listeners]) listener(state);
-    }
+    for (const listener of [...liveRegistrations])
+      listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' } });
   });
   await act(async () => undefined);
 }
@@ -270,6 +277,7 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
+  liveRegistrations.clear();
   layout.os = 'web';
   layout.width = 1200;
   navigation.back.mockReset();
@@ -489,6 +497,39 @@ describe('Bookmarks empty state', () => {
 });
 
 describe('Bookmarks mobile open', () => {
+  it('keeps a live removal when an older covering read finishes afterward', async () => {
+    let finishSaved!: (value: { bookmarks: ReturnType<typeof bookmark>[] }) => void;
+    phoneOperation.mockImplementation((name: string) => name === 'readNeedsYou'
+      ? Promise.resolve({ items: [] })
+      : name === 'listMessageBookmarks'
+        ? new Promise((resolve) => { finishSaved = resolve; })
+        : Promise.resolve(undefined));
+    let tree!: ReactTestRenderer;
+    await act(async () => { tree = create(<TrayScreen />); });
+    await act(async () => undefined);
+    await act(async () => {
+      for (const listener of [...liveRegistrations]) listener({ monolithLive: {
+        type: 'bookmark-delta', roomId: '', workspaceId: 'ws',
+        messageId: 'msg-1', bookmark: null,
+      } });
+    });
+    await act(async () => finishSaved({ bookmarks: [bookmark()] }));
+    expect(tree.root.findAllByProps({ testID: 'bookmark-msg-1' })).toHaveLength(0);
+  });
+
+  it('applies a saved-row removal from live without another list read', async () => {
+    const tree = await renderTray();
+    const reads = phoneOperation.mock.calls.filter(([name]) => name === 'listMessageBookmarks').length;
+    await act(async () => {
+      for (const listener of [...liveRegistrations]) listener({ monolithLive: {
+        type: 'bookmark-delta', roomId: '', workspaceId: 'ws',
+        messageId: 'msg-1', bookmark: null,
+      } });
+    });
+    expect(tree.root.findAllByProps({ testID: 'bookmark-msg-1' })).toHaveLength(0);
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'listMessageBookmarks'))
+      .toHaveLength(reads);
+  });
   it('opens the original message in its room from a compact tap', async () => {
     layout.os = 'ios';
     layout.width = 390;
@@ -759,20 +800,20 @@ describe('Tray Needs you', () => {
     expect(tree.root.findAllByType('DesktopRoomInspector' as any)).toHaveLength(0);
   });
 
-  it('an open tray drops a cell cleared on another device when the app returns to the foreground', async () => {
+  it('an open tray drops a cell cleared on another device from a typed delta', async () => {
     {
       serve({ needs: [need()] });
       const tree = await renderTray();
       expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' }).length).toBeGreaterThan(0);
-      serve({ needs: [] });
-      await returnToForeground();
+      await act(async () => applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-1',
+        count: 0, items: [] }));
       expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' })).toHaveLength(0);
       expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
     }
   });
 
 
-  it('an open tray reads nothing on a timer and again when a message can need the viewer', async () => {
+  it('an open tray applies a new cell without a timer or HTTP read', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] });
     try {
       serve({ needs: [need()] });
@@ -783,10 +824,11 @@ describe('Tray Needs you', () => {
         vi.advanceTimersByTime(30 * 60_000);
       });
       expect(reads()).toBe(opened);
-      // Every tray this file left mounted hears it too; this one reads at least once.
-      await act(async () => announceNeedsYouActivity());
+      await act(async () => applyNeedsYouLiveDelta({ workspaceId: 'ws',
+        sourceRoomId: 'room-1', count: 2,
+        items: [need(), need({ messageId: 'ask-2', text: 'please check this too' })] }));
       await act(async () => undefined);
-      expect(reads()).toBeGreaterThan(opened);
+      expect(reads()).toBe(opened);
     } finally {
       vi.useRealTimers();
     }

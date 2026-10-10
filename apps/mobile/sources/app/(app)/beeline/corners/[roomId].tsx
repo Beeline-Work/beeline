@@ -70,6 +70,7 @@ export default function BuzzCorners() {
         roomId: decodedId,
       });
       const cached = await mobileSurfaceCache.read(address, isCornerListView);
+      const hadCached = Boolean(cached);
       if (cancelled) return;
       if (cached) setSurface(cached);
       const http = new RoomViewClient({ baseUrl: relayUrl, identity });
@@ -98,9 +99,23 @@ export default function BuzzCorners() {
         const live = (event as MonolithSurfaceEvent).monolithLive;
         if (live.type === 'subscribed') {
           // The first frame opens this watch; a later one is a reconnect, and
-          // one read closes whatever it missed.
-          if (handshakeSeen) scheduler?.force();
+          // one read closes a gap. A resumed lane proves the cached list is
+          // continuous, so it needs no opening HTTP request.
+          if ((handshakeSeen || hadCached) && !live.resumed) scheduler?.force();
           handshakeSeen = true;
+          return;
+        }
+        if (live.type === 'corner-status' && live.corners) {
+          setSurface((current) => {
+            if (!current) return current;
+            const next = { ...current, corners: live.corners! };
+            void mobileSurfaceCache.write(address, next, isCornerListView);
+            return next;
+          });
+          return;
+        }
+        if (live.type === 'corner-status') {
+          scheduler?.signal();
           return;
         }
         if (live.type === 'invalidate' && CORNER_LIST_REASONS.has(live.reason)) {
@@ -108,7 +123,7 @@ export default function BuzzCorners() {
         }
       });
       if (cancelled) return unsubscribe();
-      await scheduler.startAfter(Promise.resolve());
+      if (!hadCached) await scheduler.startAfter(Promise.resolve());
     })().catch((reason) => {
       if (!cancelled) setError(String(reason));
     });

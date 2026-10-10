@@ -1,25 +1,24 @@
 import { useEffect, useState } from 'react';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import type { NeedsYouItemView } from '@beeline/api-contract/phone';
 
-const listeners = new Set<() => void>();
+export type NeedsYouLiveDelta = { readonly workspaceId: string; readonly sourceRoomId: string;
+  readonly count: number; readonly items: readonly NeedsYouItemView[] };
+const liveCounts = new Map<string, number>();
+const liveVersions = new Map<string, number>();
+const liveListeners = new Set<(delta: NeedsYouLiveDelta) => void>();
 
-/** A cell was cleared here: every mounted tray badge re-reads its count. */
-export function announceNeedsYouChanged(): void {
-  for (const listener of listeners) listener();
+export function applyNeedsYouLiveDelta(delta: NeedsYouLiveDelta): void {
+  liveCounts.set(delta.workspaceId, delta.count);
+  liveVersions.set(delta.workspaceId, (liveVersions.get(delta.workspaceId) ?? 0) + 1);
+  for (const listener of liveListeners) listener(delta);
 }
 
-const activityListeners = new Set<() => void>();
-
-/** The Room list heard a message that can need the viewer: an open tray reads again. */
-export function announceNeedsYouActivity(): void {
-  for (const listener of activityListeners) listener();
-}
-
-export function subscribeNeedsYouActivity(listener: () => void): () => void {
-  activityListeners.add(listener);
-  return () => {
-    activityListeners.delete(listener);
-  };
+export function subscribeNeedsYouLiveDelta(
+  listener: (delta: NeedsYouLiveDelta) => void,
+): () => void {
+  liveListeners.add(listener);
+  return () => { liveListeners.delete(listener); };
 }
 
 /** `9+` past nine, so the badge never widens its 44px slot. */
@@ -41,38 +40,19 @@ function countNeedsYou(workspaceId: string): Promise<number> {
 }
 
 /**
- * Whether a committed message can change anybody's Needs-you count: one that
- * tags the viewer, or a card or system line (approvals, questions, a corner
- * handing back). Plain prose to someone else and tool rows cannot.
- */
-export function messageCanNeedViewer(
-  message: { readonly presentation: string; readonly mentionPubkeys?: readonly string[] },
-  viewerPubkey: string,
-): boolean {
-  return (
-    message.presentation === 'card' ||
-    message.presentation === 'system' ||
-    Boolean(message.mentionPubkeys?.includes(viewerPubkey))
-  );
-}
-
-/**
- * The tray badge: the server's Needs-you count for this Workspace. It is
- * re-read whenever `refreshKey` changes — callers bump it when their Room list
- * is read in full or a message that can need the viewer lands, and pass
- * `undefined` until then — and after a clear. Reading the count never starts a cell's 24-hour clock; only opening
- * the tray does.
+ * The tray badge follows exact live counts. A covering Room-list read supplies
+ * its count after an unproven socket gap. Reading a count never starts a cell's
+ * 24-hour clock; only opening the tray does.
  */
 export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown) {
-  const [count, setCount] = useState(0);
-  const [cleared, setCleared] = useState(0);
+  const [count, setCount] = useState(() => workspaceId ? liveCounts.get(workspaceId) ?? 0 : 0);
   useEffect(() => {
-    const listener = () => setCleared((value) => value + 1);
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
+    setCount(workspaceId ? liveCounts.get(workspaceId) ?? 0 : 0);
+    const stop = subscribeNeedsYouLiveDelta((delta) => {
+      if (delta.workspaceId === workspaceId) setCount(delta.count);
+    });
+    return stop;
+  }, [workspaceId]);
   useEffect(() => {
     if (!workspaceId) {
       setCount(0);
@@ -81,10 +61,14 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
     // A caller with nothing read yet has nothing to count against.
     if (refreshKey === undefined) return;
     let cancelled = false;
+    const version = liveVersions.get(workspaceId) ?? 0;
     void (async () => {
       try {
         const next = await countNeedsYou(workspaceId);
-        if (!cancelled) setCount(next);
+        if (!cancelled && version === (liveVersions.get(workspaceId) ?? 0)) {
+          liveCounts.set(workspaceId, next);
+          setCount(next);
+        }
       } catch {
         // A failed count keeps the last one: the tray itself is the truth.
       }
@@ -92,7 +76,7 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, refreshKey, cleared]);
+  }, [workspaceId, refreshKey]);
   return count;
 }
 

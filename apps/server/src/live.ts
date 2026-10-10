@@ -75,8 +75,12 @@ export type LiveEvent =
       targetAgentId?: string;
       /** A read-cursor change belongs only to this reader's devices. */
       readerId?: string;
+      workspaceId?: string;
+      sourceRoomId?: string;
+      needsYouCandidate?: boolean;
       messageId?: string;
       requestId?: string;
+      turnStatus?: CommittedTurnLiveRow['status'];
       operation?: string;
       /** Parent Room when this invalidate names a corner membership. */
       parentRoomId?: string;
@@ -137,6 +141,7 @@ export class LiveHub {
   readonly #recentOutputs = new Map<string, { text: string; latestChunk?: string;
     source: 'local' | 'postgres'; at: number }>();
   readonly #localMessageInserts = new Map<string, number>();
+  readonly #localTurnUpdates = new Map<string, { status: CommittedTurnLiveRow['status']; at: number }>();
   readonly #presence = new Map<string, Map<string, Extract<LiveEvent, { type: 'presence' }>>>();
   /** Oldest observed Room/agent pair first; one cap across all Rooms. */
   readonly #presenceOrder = new Map<string, { roomId: string; agentId: string }>();
@@ -202,13 +207,25 @@ export class LiveHub {
     if (input.type === 'invalidate' && input.messageId) {
       const key = `${input.roomId}:${input.messageId}`;
       const now = Date.now();
-      if (input.committedRow?.type === 'message') {
+      if (input.committedRow?.type === 'message' || input.reason === 'phone-write') {
         this.#localMessageInserts.delete(key);
         this.#localMessageInserts.set(key, now);
         if (this.#localMessageInserts.size > 512)
           this.#localMessageInserts.delete(this.#localMessageInserts.keys().next().value!);
       } else if (input.reason === 'postgres:messages' && input.operation === 'INSERT' &&
           now - (this.#localMessageInserts.get(key) ?? 0) < 10_000) return;
+    }
+    if (input.type === 'invalidate' && input.agentId && input.requestId) {
+      const key = `${input.roomId}:${input.agentId}:${input.requestId}`;
+      const now = Date.now();
+      if (input.committedRow?.type === 'turn') {
+        this.#localTurnUpdates.delete(key);
+        this.#localTurnUpdates.set(key, { status: input.committedRow.row.status, at: now });
+        if (this.#localTurnUpdates.size > 512)
+          this.#localTurnUpdates.delete(this.#localTurnUpdates.keys().next().value!);
+      } else if (input.reason === 'postgres:agent_turns' && input.turnStatus &&
+          this.#localTurnUpdates.get(key)?.status === input.turnStatus &&
+          now - (this.#localTurnUpdates.get(key)?.at ?? 0) < 10_000) return;
     }
     if (input.type === 'draft' || input.type === 'thought') {
       const key = `${input.roomId}:${input.agentId}:${input.turnId}:${input.type}`;

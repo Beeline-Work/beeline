@@ -1,8 +1,6 @@
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import {
-  announceNeedsYouActivity,
-  messageCanNeedViewer,
   useNeedsYouCount,
 } from '@/buzz/needs-you';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
@@ -202,8 +200,8 @@ export default function BuzzChannels() {
   const [workspacesConfirmed, setWorkspacesConfirmed] = useState(false);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
   const [welcomeDue, setWelcomeDue] = useState(false);
-  // Bumped by a full Room-list read and by a message that can need the
-  // viewer; prose elsewhere and tool rows never re-count the badge.
+  // A covering list read seeds the badge; ordinary changes carry a typed
+  // server count on the live socket.
   const [needsYouSignal, setNeedsYouSignal] = useState(0);
   const needsYouCount = useNeedsYouCount(
     chatList?.workspace.id,
@@ -511,9 +509,10 @@ export default function BuzzChannels() {
         // Deltas that landed while a chats read was in flight: the read may
         // predate them, and no later read comes to correct it.
         let readInFlight = false;
-        // The first read waits for the watch's confirmation, so the
-        // confirmations themselves need no covering read of their own.
-        let firstReadStarted = false;
+        // Decide whether a cached list needs a covering read after all Room
+        // subscriptions report their resume cursors.
+        let coverageDecided = false;
+        const resumedRooms = new Set<string>();
         let deltasDuringRead: ChatListDelta[] = [];
         const cornerStatusSequence = new Map<string, number>();
         // Rooms the socket delivered any frame for since the last applied read.
@@ -536,8 +535,11 @@ export default function BuzzChannels() {
             const live =
               'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
             if (live && 'roomId' in live) heardRooms.add(live.roomId);
-            if (live?.type === 'subscribed' && !live.resumed)
-              cornerStatusSequence.delete(live.roomId);
+            if (live?.type === 'subscribed') {
+              if (!live.resumed) cornerStatusSequence.delete(live.roomId);
+              if (live.resumed) resumedRooms.add(live.roomId);
+              else resumedRooms.delete(live.roomId);
+            }
             if (live?.type === 'corner-status' && live.sequence !== undefined) {
               if (live.sequence <= (cornerStatusSequence.get(live.roomId) ?? -1)) return;
               cornerStatusSequence.set(live.roomId, live.sequence);
@@ -545,13 +547,6 @@ export default function BuzzChannels() {
             if (live?.type === 'message-delta' || live?.type === 'turn-delta' ||
                 live?.type === 'corner-status') {
               if (readInFlight) deltasDuringRead.push(live);
-              if (
-                live.type === 'message-delta' &&
-                messageCanNeedViewer(live.message, nextIdentity.publicKey)
-              ) {
-                setNeedsYouSignal((value) => value + 1);
-                announceNeedsYouActivity();
-              }
               const needsRead = !heldChats || chatListDeltaNeedsRead(heldChats, live);
               if (heldChats) paintChats(applyChatListDelta(heldChats, live));
               if (needsRead) {
@@ -563,10 +558,9 @@ export default function BuzzChannels() {
             // A corner-status hint is a child corner's working/waiting change,
             // which this deck's rows roll up; it falls through to a read.
             if (isDraftFrame(event)) return;
-            if (live?.type === 'subscribed' && live.resumed) return;
+            if (live?.type === 'subscribed' && (live.resumed || !coverageDecided)) return;
             // A committed-row invalidation announces the delta that follows it.
             if (live?.type === 'invalidate' && live.deliveryId) return;
-            if (live?.type === 'subscribed' && !firstReadStarted) return;
             if (deckVisible()) chatsRefresh?.signal();
             else deckMissedRef.current.chats = true;
           });
@@ -579,7 +573,6 @@ export default function BuzzChannels() {
         };
         chatsRefresh = new SurfaceRefreshScheduler({
           fetch: async () => {
-            firstReadStarted = true;
             deltasDuringRead = [];
             readInFlight = true;
             try {
@@ -623,9 +616,20 @@ export default function BuzzChannels() {
         // Seed from cache when present; otherwise the first chats GET apply
         // reinstalls so the deck never watches a Workspace id.
         const cachedFilters = cachedChats?.watchFilters ?? [];
+        const expectedRooms = [...new Set(cachedFilters.flatMap((filter) => [
+          ...(filter['#h'] ?? []),
+          ...(filter['#d'] ?? []).map((value) => value.split(':').at(-1) ?? ''),
+        ]).filter(Boolean))];
         chatListenReady = installChatWatch(cachedFilters).then(() =>
           sharedLiveConnection().whenSubscribed(cachedFilters, CHAT_SUBSCRIBE_WAIT_MS),
         );
+        const openingChats = chatListenReady.then(async () => {
+          coverageDecided = true;
+          if (cachedChats && expectedRooms.length &&
+              expectedRooms.every((roomId) => resumedRooms.has(roomId))) return;
+          await chatsRefresh?.startAfter(Promise.resolve());
+        });
+        chatListenReady = openingChats;
       }
 
       const workspaceListenReady = relay
@@ -644,7 +648,7 @@ export default function BuzzChannels() {
         });
       await Promise.all([
         workspaceRefresh.startAfter(workspaceListenReady),
-        chatsRefresh?.startAfter(chatListenReady),
+        chatListenReady,
       ]);
     })().catch((reason) => {
       if (!cancelled) setError(String(reason));

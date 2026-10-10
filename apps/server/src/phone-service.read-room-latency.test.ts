@@ -434,6 +434,61 @@ describe('PhoneService.readRoom latency', () => {
     expect(representative.spans).toHaveLength(2);
   });
 
+  it('reads one live row for eight sockets while authorizing each viewer', async () => {
+    const representative = new RepresentativeDatabase(database, POOL_MAX, 0);
+    const phone = new PhoneService(representative, 'https://server.usebeeline.app');
+    const otherMember = '0'.repeat(64);
+    const outsider = 'f'.repeat(64);
+    const viewers = [VIEWER, ...Array(5).fill(VIEWER), otherMember, outsider];
+    const deltas = await phone.readLiveDeltas(ROOM, viewers, {
+      type: 'message', messageId: 'reply-message',
+    });
+    expect(representative.spans).toHaveLength(1);
+    expect(deltas.get(VIEWER)?.type).toBe('message-delta');
+    expect(deltas.get(otherMember)?.type).toBe('message-delta');
+    expect(deltas.has(outsider)).toBe(false);
+  });
+
+  it('carries the next visible deck preview when the latest message is deleted', async () => {
+    await database.query(`UPDATE messages SET deleted_at=now() WHERE id='reply-message'`);
+    try {
+      const phone = new PhoneService(database, 'https://server.usebeeline.app');
+      const delta = await phone.readLiveDelta(ROOM, VIEWER, {
+        type: 'message', messageId: 'reply-message',
+      });
+      const deck = await phone.readChats(WORKSPACE, VIEWER);
+      expect(delta?.type).toBe('message-delta');
+      if (delta?.type !== 'message-delta') return;
+      expect(delta.deckPreview).toEqual(
+        deck?.chats.find((item) => item.room.id === ROOM)?.latestMessage,
+      );
+    } finally {
+      await database.query(`UPDATE messages SET deleted_at=NULL WHERE id='reply-message'`);
+    }
+  });
+
+  it('projects one saved bookmark and removes it after deletion', async () => {
+    await database.query(`INSERT INTO message_bookmarks(
+      identity_id,workspace_id,room_id,message_id,source_room_name,source_room_kind,
+      message_created_at
+    ) SELECT $1,$2,$3,id,'Busy Room','room',created_at FROM messages WHERE id='reply-message'`,
+    [VIEWER, WORKSPACE, ROOM]);
+    try {
+      const representative = new RepresentativeDatabase(database, POOL_MAX, 0);
+      const phone = new PhoneService(representative, 'https://server.usebeeline.app');
+      const bookmark = await phone.readLiveBookmark('reply-message', VIEWER);
+      expect(bookmark).toMatchObject({ messageId: 'reply-message', available: true,
+        text: 'Done' });
+      expect(representative.spans).toHaveLength(1);
+      await database.query(`DELETE FROM message_bookmarks WHERE identity_id=$1
+        AND message_id='reply-message'`, [VIEWER]);
+      await expect(phone.readLiveBookmark('reply-message', VIEWER)).resolves.toBeNull();
+    } finally {
+      await database.query(`DELETE FROM message_bookmarks WHERE identity_id=$1
+        AND message_id='reply-message'`, [VIEWER]);
+    }
+  });
+
   it('projects committed message and turn rows exactly like the authorized row reads', async () => {
     const phone = new PhoneService(database, 'https://server.usebeeline.app');
     const messageRow = (
@@ -464,13 +519,14 @@ describe('PhoneService.readRoom latency', () => {
         messageId: 'reply-message',
       }),
     );
-    expect(phone.projectCommittedLiveDelta(ROOM, { type: 'turn', row: turnRow })).toEqual(
-      await phone.readLiveDelta(ROOM, VIEWER, {
-        type: 'turn',
-        agentId: '0'.repeat(64),
-        requestId: 'message-179',
-      }),
-    );
+    const persistedTurn = await phone.readLiveDelta(ROOM, VIEWER, {
+      type: 'turn', agentId: '0'.repeat(64), requestId: 'message-179',
+    });
+    expect(persistedTurn?.type).toBe('turn-delta');
+    expect(phone.projectCommittedLiveDelta(ROOM, { type: 'turn', row: turnRow })).toMatchObject({
+      type: 'turn-delta', roomId: ROOM,
+      turn: persistedTurn?.type === 'turn-delta' ? persistedTurn.turn : undefined,
+    });
     expect(
       phone.projectCommittedLiveDelta('cross-room', { type: 'message', row: messageRow }),
     ).toBeNull();

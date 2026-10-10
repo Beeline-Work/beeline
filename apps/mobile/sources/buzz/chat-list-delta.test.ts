@@ -136,9 +136,12 @@ describe('chat list deltas', () => {
     } }));
     expect(reconciled.chats[0]?.latestMessage?.text).toBe('earlier');
     expect(chatListDeltaNeedsRead(reconciled, delta)).toBe(false);
+    const projected = { ...delta, deckPreview: reconciled.chats[0]!.latestMessage! };
+    expect(chatListDeltaNeedsRead(view, projected)).toBe(false);
+    expect(applyChatListDelta(view, projected).chats[0]?.latestMessage?.id).toBe('previous');
   });
 
-  it('lights a working turn, and asks for a read only when a settled turn meets a working row', () => {
+  it('lights a working turn and clears it from the server rollup', () => {
     const view = deck(item('a', 20));
     const working = {
       type: 'turn-delta' as const,
@@ -149,9 +152,10 @@ describe('chat list deltas', () => {
     expect(lit.chats[0]!.agentState).toBe('working');
     expect(chatListDeltaNeedsRead(view, working)).toBe(false);
 
-    const complete = { ...working, turn: { ...working.turn, status: 'complete' as const } };
-    expect(applyChatListDelta(lit, complete)).toBe(lit);
-    expect(chatListDeltaNeedsRead(lit, complete)).toBe(true);
+    const complete = { ...working, turn: { ...working.turn, status: 'complete' as const },
+      agentState: null };
+    expect(applyChatListDelta(lit, complete).chats[0]?.agentState).toBeUndefined();
+    expect(chatListDeltaNeedsRead(lit, complete)).toBe(false);
     expect(chatListDeltaNeedsRead(view, complete)).toBe(false);
 
     const needsYou = deck(item('a', 20, { agentState: 'needs-you' }));

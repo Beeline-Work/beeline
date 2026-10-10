@@ -3,7 +3,6 @@ import { useIsDesktop } from '@/utils/responsive';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
-  AppState,
   FlatList,
   Pressable,
   Text,
@@ -18,7 +17,7 @@ import type { RoomView } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
-import { announceNeedsYouChanged, subscribeNeedsYouActivity } from '@/buzz/needs-you';
+import { subscribeNeedsYouLiveDelta, type NeedsYouLiveDelta } from '@/buzz/needs-you';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
@@ -27,6 +26,8 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import brand from '@/buzz/brand.json';
 
@@ -85,6 +86,26 @@ type Row =
   | { readonly key: string; readonly type: 'saved'; readonly bookmark: MessageBookmarkView }
   | { readonly key: string; readonly type: 'saved-empty' };
 
+function applyNeedsSlice(
+  current: readonly NeedsYouItemView[], delta: NeedsYouLiveDelta,
+): NeedsYouItemView[] {
+  return [...current.filter((item) => item.roomId !== delta.sourceRoomId),
+    ...delta.items].sort((a, b) => Number(!a.approval) - Number(!b.approval) ||
+      (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity) ||
+      a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId));
+}
+
+type BookmarkDelta = { readonly messageId: string; readonly bookmark: MessageBookmarkView | null };
+function applyBookmarkChange(
+  current: readonly MessageBookmarkView[], delta: BookmarkDelta,
+): MessageBookmarkView[] {
+  const next = current.filter((item) => item.messageId !== delta.messageId);
+  if (delta.bookmark) next.push(delta.bookmark);
+  next.sort((a, b) => b.bookmarkedAt - a.bookmarkedAt ||
+    a.messageId.localeCompare(b.messageId));
+  return next;
+}
+
 /**
  * The tray: exactly two sections, Needs you then Saved. Needs you is the
  * server's per-person projection (`readNeedsYou`); Saved is every bookmark,
@@ -110,6 +131,11 @@ export default function TrayScreen() {
   const [bookmarks, setBookmarks] = useState<readonly MessageBookmarkView[]>([]);
   const [selected, setSelected] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
+  const loadedWorkspaceRef = useRef<string | null>(null);
+  const loadGenerationRef = useRef(0);
+  const loadInFlightRef = useRef(false);
+  const needsDuringLoadRef = useRef<NeedsYouLiveDelta[]>([]);
+  const bookmarksDuringLoadRef = useRef<BookmarkDelta[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<MessageBookmarkView | null>(null);
   // Oldest first; the Undo bar offers the newest.
@@ -125,6 +151,10 @@ export default function TrayScreen() {
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
+    const generation = ++loadGenerationRef.current;
+    loadInFlightRef.current = true;
+    needsDuringLoadRef.current = [];
+    bookmarksDuringLoadRef.current = [];
     setError(null);
     setNow(Date.now());
     // Each section reads on its own: a failed Saved read must not hide what
@@ -134,6 +164,8 @@ export default function TrayScreen() {
       monolithPhoneOperation('listMessageBookmarks', { workspaceId }),
     ]);
     const results = [needsResult, savedResult];
+    if (generation !== loadGenerationRef.current) return;
+    loadInFlightRef.current = false;
     // Once membership is lost, only a refresh that reads both sections shows
     // access is back; any other failure keeps the No Workspace message.
     if (
@@ -146,38 +178,59 @@ export default function TrayScreen() {
       setBookmarks([]);
       setSelected(null);
       setLoading(false);
+      loadedWorkspaceRef.current = null;
       return;
     }
     lostWorkspaceRef.current = null;
     setLostWorkspaceId(null);
-    if (needsResult.status === 'fulfilled') setNeeds(needsResult.value.items);
-    if (savedResult.status === 'fulfilled') setBookmarks(savedResult.value.bookmarks);
+    if (needsResult.status === 'fulfilled')
+      setNeeds(needsDuringLoadRef.current.reduce(applyNeedsSlice, [...needsResult.value.items]));
+    if (savedResult.status === 'fulfilled')
+      setBookmarks(bookmarksDuringLoadRef.current.reduce(
+        applyBookmarkChange, [...savedResult.value.bookmarks]));
     const failed = [needsResult, savedResult].find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected')
       setError(failed.reason instanceof Error ? failed.reason.message : String(failed.reason));
+    if (needsResult.status === 'fulfilled' || savedResult.status === 'fulfilled')
+      loadedWorkspaceRef.current = workspaceId;
     setLoading(false);
   }, [workspaceId]);
 
-  // An open tray reads when it opens, when the app comes back to the
-  // foreground (another device may have cleared a cell meanwhile), and when
-  // the Room list hears a message that can need the viewer. Nothing repeats
-  // on a timer.
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-      const stopActivity = subscribeNeedsYouActivity(() => void load());
-      let backgrounded = AppState.currentState === 'background';
-      const appState = AppState.addEventListener('change', (state) => {
-        if (state === 'background') backgrounded = true;
-        else if (state === 'active' && backgrounded) {
-          backgrounded = false;
+  useEffect(() => subscribeNeedsYouLiveDelta((delta) => {
+    if (delta.workspaceId !== workspaceId) return;
+    if (loadInFlightRef.current) needsDuringLoadRef.current.push(delta);
+    setNeeds((current) => applyNeedsSlice(current, delta));
+  }), [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    void (async () => {
+      unsubscribe = await sharedLiveConnection().register([], (event) => {
+        if (!('monolithLive' in event)) return;
+        const live = (event as MonolithSurfaceEvent).monolithLive;
+        if (live.type === 'bookmark-delta' && live.workspaceId === workspaceId) {
+          if (loadInFlightRef.current) bookmarksDuringLoadRef.current.push(live);
+          setBookmarks((current) => applyBookmarkChange(current, live));
+        } else if (live.type === 'invalidate' &&
+            (live.reason === 'bookmark-gap' || live.reason === 'needs-you-gap' ||
+              live.reason === 'reconnect' ||
+              live.reason === 'postgres:memberships')) {
           void load();
         }
       });
-      return () => {
-        stopActivity();
-        appState.remove();
-      };
+      if (cancelled) unsubscribe();
+    })().catch(() => undefined);
+    return () => { cancelled = true; unsubscribe?.(); };
+  }, [workspaceId, load]);
+
+  // A held tray paints its last projection immediately. Socket gaps signal
+  // one covering read through the roomless registration above.
+  useFocusEffect(
+    useCallback(() => {
+      if (loadedWorkspaceRef.current !== workspaceId) void load();
+      return undefined;
     }, [load]),
   );
 
@@ -312,7 +365,6 @@ export default function TrayScreen() {
         workspaceId: item.workspaceId,
         messageId: item.messageId,
       });
-      announceNeedsYouChanged();
     } catch (cause) {
       setNeeds((current) =>
         [item, ...current].sort((left, right) => right.createdAt - left.createdAt),
@@ -339,15 +391,13 @@ export default function TrayScreen() {
     [clear],
   );
 
-  /** Send one Workspace-scoped operation after Undo expires, then reconcile the tray. */
+  /** Send one Workspace-scoped operation after Undo expires. */
   const commitClear = useCallback(async (clear: PendingClear) => {
     const ids = new Set(clear.items.map((item) => item.messageId));
     if (clear.kind === 'needs') {
       setNeeds((current) => current.filter((item) => !ids.has(item.messageId)));
       try {
         await monolithPhoneOperation('clearNeedsYouSection', { workspaceId: clear.workspaceId });
-        announceNeedsYouChanged();
-        await load();
       } catch (cause) {
         setNeeds((current) =>
           [...clear.items, ...current].sort((left, right) => right.createdAt - left.createdAt),
@@ -359,14 +409,13 @@ export default function TrayScreen() {
     setBookmarks((current) => current.filter((item) => !ids.has(item.messageId)));
     try {
       await monolithPhoneOperation('clearMessageBookmarks', { workspaceId: clear.workspaceId });
-      await load();
     } catch (cause) {
       setBookmarks((current) =>
         [...clear.items, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
       );
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [load]);
+  }, []);
 
   /** Send the held clears `which` picks, and stop holding them. */
   const flushClears = useCallback(

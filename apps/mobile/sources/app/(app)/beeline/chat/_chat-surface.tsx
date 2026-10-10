@@ -124,7 +124,7 @@ import {
 } from '@/buzz/room-indicators';
 import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnBandSlot, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
-import { useRoomCorners } from '@/buzz/use-room-corners';
+import { useCornerHeaderItem, useRoomCorners } from '@/buzz/use-room-corners';
 import { roomOpenCornerRows } from '@/buzz/room-corner-store';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { openExternalUrl } from '@/utils/open-external-url';
@@ -164,7 +164,6 @@ import {
 } from '@/buzz/room-participants';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import {
-  cornerDisplayFromRoomView,
   cornerDisplayState,
   cornerHeaderAgent,
   roomViewParentId,
@@ -2518,16 +2517,16 @@ export function BuzzChatSurface({
   const dismissComposerKeyboard = useCallback(() => {
     Keyboard.dismiss();
   }, []);
-  const canonicalCornerItem =
-    isCorner && roomSurface
-      ? cornerDisplayFromRoomView({ ...roomSurface, latestAgentTurns: activeAgentTurns })
-      : undefined;
-  const cornerHeaderDisplay = cornerDisplayState(
-    canonicalCornerItem ?? {
-      state: isArchived ? 'archived' : 'waiting',
-      lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
-    },
+  // The header reads this corner's row from the parent Room's corner record,
+  // the same row the Corners screen and Room list paint. Live turns pick the
+  // name and ring below; they never pick the state.
+  const cornerHeaderSource = useCornerHeaderItem(
+    isCorner ? (parentChannelId ?? undefined) : undefined,
+    decodedId,
+    roomSurface?.room.archived,
+    roomClient,
   );
+  const cornerHeaderDisplay = cornerHeaderSource ? cornerDisplayState(cornerHeaderSource) : undefined;
   const cornerAgentPubkey = useMemo(
     () =>
       resolveCornerViewAgentPubkey(
@@ -2553,8 +2552,8 @@ export function BuzzChatSurface({
   // byline still names the actual worker (C77).
   const cornerHeaderAgentView = cornerHeaderAgent({
     ownerPubkey: cornerAgentPubkey,
-    status: cornerHeaderDisplay.status,
-    ...(cornerHeaderDisplay.headerSuffix ? { headerSuffix: cornerHeaderDisplay.headerSuffix } : {}),
+    ...(cornerHeaderDisplay ? { status: cornerHeaderDisplay.status } : {}),
+    ...(cornerHeaderDisplay?.headerSuffix ? { headerSuffix: cornerHeaderDisplay.headerSuffix } : {}),
     activeTurnPubkeys: activeAgentTurns.map((turn) => turn.agentPubkey),
   });
   const cornerOwnerPubkey = cornerHeaderAgentView.pubkey;
@@ -6227,11 +6226,11 @@ export function BuzzChatSurface({
                     stateWord={cornerHeaderWord}
                     style={[
                       styles.cornerHeaderAgent,
-                      cornerHeaderDisplay.status === 'working'
+                      cornerHeaderDisplay?.status === 'working'
                         ? styles.cornerHeaderWorking
-                        : cornerHeaderDisplay.status === 'review'
+                        : cornerHeaderDisplay?.status === 'review'
                           ? styles.cornerHeaderReview
-                          : cornerHeaderDisplay.status === 'archived'
+                          : cornerHeaderDisplay?.status === 'archived'
                             ? styles.cornerHeaderArchived
                             : styles.cornerHeaderWaiting,
                     ]}

@@ -3,7 +3,6 @@ import type {
   CornerState,
   CornerStateReason,
 } from '@beeline/api-contract/phone';
-import { deriveCornerState } from '@beeline/api-contract/phone';
 import { cornerStatusLine } from '@/buzz/corner-status-line';
 import type { CornerVisualState } from '@/buzz/corners';
 
@@ -40,23 +39,19 @@ export function roomViewParentId(view: {
   return view.parent?.id ?? view.room.parentId;
 }
 
-/** A corner viewing itself: derive state from this Room, never sibling corners. */
-export function cornerDisplayFromRoomView(view: {
-  readonly room: { readonly archived?: boolean };
-  readonly latestAgentTurns: readonly { readonly status: string }[];
-  readonly cornerLifecycle?: CornerLifecycleView;
-  readonly cornerOwed?: boolean;
-}): CornerDisplayItem {
-  const derived = deriveCornerState({
-    archived: view.room.archived !== false,
-    turnRunning: view.latestAgentTurns.some((turn) => turn.status === 'working'),
-    lifecycle: view.cornerLifecycle,
-    ...(view.cornerOwed !== undefined ? { owed: view.cornerOwed } : {}),
-  });
-  return {
-    ...derived,
-    lifecycle: view.cornerLifecycle ?? { lifecycle: 'unknown', checks: 'unknown' },
-  };
+/**
+ * A corner's header state is its row in the parent Room's corner record, the
+ * same row the Corners screen paints. With no row yet, only the server's
+ * `archived: true` is a fact; anything else shows no state until the row lands.
+ */
+export function cornerHeaderItem(
+  row: CornerDisplayItem | undefined,
+  archived: boolean | undefined,
+): CornerDisplayItem | undefined {
+  if (row) return row;
+  if (archived === true)
+    return { state: 'archived', lifecycle: { lifecycle: 'unknown', checks: 'unknown' } };
+  return undefined;
 }
 
 export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState {
@@ -94,7 +89,8 @@ export type CornerHeaderAgentInput = {
    * cold-start fallback the caller may pass when the projection has not
    * landed; the name never swaps to whoever holds a live turn. */
   readonly ownerPubkey?: string;
-  readonly status: CornerState;
+  /** Absent until the corner's row lands; the header then shows no state. */
+  readonly status?: CornerState;
   readonly headerSuffix?: 'failed' | 'checks failed';
   /** Pubkeys holding a live working receipt in this corner. */
   readonly activeTurnPubkeys: readonly string[];
@@ -106,29 +102,31 @@ export type CornerHeaderAgent = {
    * a working state — it reads `reviewing` while the running turn belongs to
    * an agent other than the corner's own. The name never swaps. */
   readonly reviewerTurnRunning: boolean;
-  readonly stateWord: string;
+  readonly stateWord?: string;
   /** The header mark's gold ring is the corner's own agent's aliveness, not
    * the corner's: a reviewer's turn must not light the owner's creature. */
   readonly ownerWorking: boolean;
 };
 
 export function cornerHeaderAgent(input: CornerHeaderAgentInput): CornerHeaderAgent {
-  const base = input.headerSuffix
-    ? `${input.status} · ${input.headerSuffix}`
-    : input.status;
+  const base =
+    input.status && input.headerSuffix
+      ? `${input.status} · ${input.headerSuffix}`
+      : input.status;
   const reviewerTurnRunning =
     input.status === 'working' &&
     input.ownerPubkey !== undefined &&
     input.activeTurnPubkeys.length > 0 &&
     !input.activeTurnPubkeys.includes(input.ownerPubkey);
+  const stateWord = reviewerTurnRunning
+    ? input.headerSuffix
+      ? `reviewing · ${input.headerSuffix}`
+      : 'reviewing'
+    : base;
   return {
     ...(input.ownerPubkey !== undefined ? { pubkey: input.ownerPubkey } : {}),
     reviewerTurnRunning,
-    stateWord: reviewerTurnRunning
-      ? input.headerSuffix
-        ? `reviewing · ${input.headerSuffix}`
-        : 'reviewing'
-      : base,
+    ...(stateWord ? { stateWord } : {}),
     ownerWorking: input.ownerPubkey !== undefined && input.activeTurnPubkeys.includes(input.ownerPubkey),
   };
 }

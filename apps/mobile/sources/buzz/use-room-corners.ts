@@ -10,12 +10,14 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
+import { cornerHeaderItem, type CornerDisplayItem } from '@/buzz/corner-display-state';
 import {
   applyArchivedCorners,
   applyCornerListRead,
   applyOpenCornerPage,
   cornerReadMark,
   cornerStoreClock,
+  findRoomCornerRow,
   getRoomCorners,
   hydrateRoomCorners,
   noteCornerReadStarted,
@@ -241,4 +243,19 @@ export function useRoomCorners(
     loadMoreOpen,
     loadArchived,
   };
+}
+
+/**
+ * A corner header's state: this corner's row in its parent Room's record, the
+ * row the Corners screen paints. Holding the parent lane keeps it current.
+ */
+export function useCornerHeaderItem(
+  parentId: string | undefined,
+  cornerId: string,
+  archived: boolean | undefined,
+  client?: CornersClient | null,
+): CornerDisplayItem | undefined {
+  const { record } = useRoomCorners(parentId, client);
+  if (!parentId) return undefined;
+  return cornerHeaderItem(record ? findRoomCornerRow(record, cornerId) : undefined, archived);
 }

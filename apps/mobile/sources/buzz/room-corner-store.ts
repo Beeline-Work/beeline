@@ -163,6 +163,15 @@ export function roomOpenCornerRows(corners: RoomCorners): readonly CornerListIte
   return [...(corners.rows ?? []), ...corners.openMore];
 }
 
+/** One corner's row wherever the record holds it: open pages, then archived. */
+export function findRoomCornerRow(
+  corners: RoomCorners,
+  cornerId: string,
+): CornerListItem | undefined {
+  const match = (item: CornerListItem) => item.corner.id === cornerId;
+  return roomOpenCornerRows(corners).find(match) ?? corners.archived?.corners.find(match);
+}
+
 /** The whole Corners page, once both its rows and its header are held. */
 export function roomCornerListView(corners: RoomCorners): CornerListView | undefined {
   if (!corners.header || !corners.rows) return undefined;

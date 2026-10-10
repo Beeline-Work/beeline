@@ -116,11 +116,15 @@ import { cornerOpenEnded } from '@/buzz/corner-open-status';
 import { resetRoomCornerStore } from '@/buzz/room-corner-store';
 import { LiveConnection } from '@/sync/transport/live-connection';
 import { router } from 'expo-router';
+import { cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
+import { useCornerHeaderItem } from '@/buzz/use-room-corners';
+import { CornerHeaderAgentText } from '@/components/buzz/HeaderLadder';
 
 const viewer = { pubkey: 'viewer', kind: 'human' as const, name: 'Captain' };
 
-function corner(id: string, state: string): CornerListItem {
+function corner(id: string, state: string, reason?: string): CornerListItem {
   return {
+    ...(reason ? { reason } : {}),
     corner: {
       id,
       workspaceId: 'workspace',
@@ -207,6 +211,39 @@ function textOf(node: { children: unknown[] }): string {
   return node.children
     .map((child) => (typeof child === 'string' ? child : textOf(child as { children: unknown[] })))
     .join('');
+}
+
+/** The corner header's state path, as the chat surface runs it. */
+function CornerHeader({ cornerId, archived, turns = [] }: {
+  cornerId: string;
+  archived?: boolean;
+  turns?: readonly string[];
+}) {
+  const item = useCornerHeaderItem('room-a', cornerId, archived);
+  const display = item ? cornerDisplayState(item) : undefined;
+  const header = cornerHeaderAgent({
+    ownerPubkey: 'agent-owner',
+    ...(display ? { status: display.status } : {}),
+    ...(display?.headerSuffix ? { headerSuffix: display.headerSuffix } : {}),
+    activeTurnPubkeys: turns,
+  });
+  return React.createElement(CornerHeaderAgentText, {
+    name: 'Ruby',
+    ...(header.stateWord ? { stateWord: header.stateWord } : {}),
+  });
+}
+
+function headerText(renderer: ReactTestRenderer): string {
+  return textOf(renderer.root.find((node: { type: unknown }) => node.type === 'Text'));
+}
+
+async function mountHeader(props: React.ComponentProps<typeof CornerHeader>) {
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(CornerHeader, props));
+  });
+  await settle();
+  return renderer;
 }
 
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 20)));
@@ -491,5 +528,35 @@ describe('Corner list live path', () => {
     await settle();
     expect(openReads()).toBe(2);
     expect(painted(renderer)).toEqual(['corner-1:working']);
+  });
+});
+
+describe('Corner header reads the parent Room record (3.6)', () => {
+  it('shows the same row as the Corners list, and follows its frames', async () => {
+    const screen = await mountList();
+    const header = await mountHeader({ cornerId: 'corner-1' });
+    expect(headerText(header)).toBe('RUBY · waiting');
+    server.status(1, [corner('corner-1', 'review', 'checks-failed')]);
+    await settle();
+    expect(painted(screen)).toEqual(['corner-1:review']);
+    expect(headerText(header)).toBe('RUBY · review · checks failed');
+    expect(openReads()).toBe(1);
+  });
+
+  it('keeps an idle row idle while a turn runs in the corner', async () => {
+    const screen = await mountList();
+    server.status(1, [corner('corner-1', 'idle')]);
+    await settle();
+    expect(painted(screen)).toEqual(['corner-1:idle']);
+    const header = await mountHeader({ cornerId: 'corner-1', turns: ['agent-owner'] });
+    expect(headerText(header)).toBe('RUBY · idle');
+  });
+
+  it('shows no state word before the row lands, and archived only from the server', async () => {
+    await mountList();
+    const unknown = await mountHeader({ cornerId: 'corner-elsewhere', archived: false });
+    expect(headerText(unknown)).toBe('RUBY');
+    const closed = await mountHeader({ cornerId: 'corner-elsewhere', archived: true });
+    expect(headerText(closed)).toBe('RUBY · archived');
   });
 });

@@ -6,7 +6,6 @@ import type {
   CornerStateReason,
 } from '@beeline/api-contract/phone';
 import {
-  cornerDisplayFromRoomView,
   roomViewParentId,
   cornerDisplayState,
   cornerHeaderStateLabel,
@@ -75,39 +74,6 @@ describe('server-owned corner display state', () => {
         (entry) => entry.display.status,
       ),
     ).toEqual(['working', 'waiting', 'review', 'archived']);
-  });
-
-  it('derives a corner viewing itself from this Room, not sibling corners', () => {
-    expect(
-      cornerDisplayFromRoomView({
-        room: { archived: false },
-        latestAgentTurns: [{ status: 'working' }],
-        cornerLifecycle: lifecycle({ lifecycle: 'in-review' }),
-      }),
-    ).toMatchObject({ state: 'working' });
-    expect(
-      cornerDisplayFromRoomView({
-        room: { archived: true },
-        latestAgentTurns: [{ status: 'working' }],
-        cornerLifecycle: lifecycle({ lifecycle: 'in-review' }),
-      }),
-    ).toMatchObject({ state: 'archived' });
-  });
-
-  it("reads the corner header idle when the server says nothing is owed", () => {
-    const view = { room: { archived: false }, latestAgentTurns: [], cornerLifecycle: lifecycle() };
-    const idle = cornerDisplayFromRoomView({ ...view, cornerOwed: false });
-    expect(idle).toMatchObject({ state: 'idle' });
-    expect(cornerDisplayState(idle)).toMatchObject({
-      word: 'idle',
-      needsYou: false,
-      tone: 'quiet',
-      visual: 'idle',
-    });
-    expect(cornerDisplayFromRoomView({ ...view, cornerOwed: true })).toMatchObject({
-      state: 'waiting',
-    });
-    expect(cornerDisplayFromRoomView(view)).toMatchObject({ state: 'waiting' });
   });
 
   it('contains no client-side daemon-state resolver', () => {
@@ -193,22 +159,5 @@ describe('roomViewParentId', () => {
 
   it('reads a top-level Room as having no parent', () => {
     expect(roomViewParentId({ room: {} })).toBeUndefined();
-  });
-});
-
-describe('cornerDisplayFromRoomView with an unreadable archived flag', () => {
-  it('does not paint a corner whose live/closed state is unknown as live', () => {
-    expect(
-      cornerDisplayFromRoomView({ room: {}, latestAgentTurns: [] }).state,
-    ).toBe('archived');
-  });
-
-  it('still paints a known-live corner from its own turns', () => {
-    expect(
-      cornerDisplayFromRoomView({
-        room: { archived: false },
-        latestAgentTurns: [{ status: 'working' }],
-      }).state,
-    ).toBe('working');
   });
 });

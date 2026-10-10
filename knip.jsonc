@@ -13,6 +13,8 @@
       "entry": [
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/{provision-smoke,publish-smoke-replies}.ts",
+        // CI and the local Android runner invoke these tools by path.
+        "scripts/latency-rig/*.{mjs,cjs}",
       ],
       "project": [
         "scripts/**/*.{js,cjs,mjs,ts,tsx}",

@@ -1,6 +1,7 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { subscribeClientReset } from '@/sync/client-reset';
 import type { RoomViewMessage } from '@beeline/buzz-client';
 import type { ConnectorInstallState } from './workbench';
 
@@ -129,7 +130,21 @@ class Resource<T> {
     };
   };
   getSnapshot = () => this.snapshot;
+  /** Drop the old account's data at once and read again as the new one. */
+  reset() {
+    this.version += 1;
+    this.misses = 0;
+    this.publish({ data: undefined, loading: true, error: null, successVersion: this.snapshot.successVersion });
+    void this.invalidate();
+  }
 }
+
+subscribeClientReset(() => {
+  for (const [key, resource] of resources) {
+    if (resource.listeners.size) resource.reset();
+    else resources.delete(key);
+  }
+});
 const idleSubscribe = () => () => undefined;
 const idleSnapshot = () => empty;
 

@@ -5,6 +5,7 @@ import type { NostrEvent } from '@beeline/nostr';
 import type { LiveWireEvent, MonolithSurfaceEvent } from './monolith-rig-transport';
 import { noteLiveFrame } from './live-frame-epoch';
 import { applyNeedsYouLiveDelta } from '@/buzz/needs-you';
+import { subscribeClientReset } from '@/sync/client-reset';
 
 type SurfaceFilters = readonly {
   readonly '#h'?: readonly string[];
@@ -42,6 +43,7 @@ type RoomCursor = { epoch: string; base: number; seen: Set<number> };
 type LiveConnectionDeps = {
   authorization: () => Promise<string>;
   liveUrl: () => string;
+  /** Fires on an identity or relay change. */
   subscribeIdentityChange: (listener: () => void) => () => void;
   /** Fires when the app returns to the foreground from the background. */
   subscribeForeground: (listener: () => void) => () => void;
@@ -110,6 +112,8 @@ export class LiveConnection {
   private reconnectDelayMs = 1_000;
   private nextRegistrationId = 1;
   private generation = 0;
+  /** Bumped only by `dispose`; a held view survives an identity change. */
+  private viewEpoch = 0;
   private readonly unsubscribeIdentity: () => void;
   private readonly unsubscribeForeground: () => void;
 
@@ -147,7 +151,12 @@ export class LiveConnection {
   }
 
   dispose(): void {
-    this.handleIdentityChanged();
+    this.dropConnection();
+    for (const registration of this.registrations.values()) registration.closed = true;
+    this.registrations.clear();
+    this.refcount.clear();
+    this.viewEpoch += 1;
+    this.viewing.clear();
     this.unsubscribeIdentity();
     this.unsubscribeForeground();
   }
@@ -158,13 +167,13 @@ export class LiveConnection {
    * closes; a replacement socket carries every held view again on open.
    */
   view(roomId: string): () => void {
-    const generation = this.generation;
+    const epoch = this.viewEpoch;
     const previous = this.viewing.get(roomId) ?? 0;
     this.viewing.set(roomId, previous + 1);
     if (previous === 0) this.sendViewing(roomId, true);
     let released = false;
     return () => {
-      if (released || generation !== this.generation) return;
+      if (released || epoch !== this.viewEpoch) return;
       released = true;
       const remaining = (this.viewing.get(roomId) ?? 1) - 1;
       if (remaining > 0) {
@@ -268,7 +277,24 @@ export class LiveConnection {
     this.reconnect();
   }
 
+  /**
+   * Mounted screens stay registered across an identity or relay change. The
+   * next socket subscribes their Rooms without the old identity's cursors, so
+   * each hears a fresh `subscribed` (or a roomless reconnect signal) and reads
+   * again as the new identity.
+   */
   private handleIdentityChanged(): void {
+    this.dropConnection();
+    this.refcount.clear();
+    for (const registration of this.registrations.values()) {
+      registration.sawOpen = true;
+      for (const roomId of registration.roomIds)
+        this.refcount.set(roomId, (this.refcount.get(roomId) ?? 0) + 1);
+    }
+    if (this.registrations.size) void this.ensureSocket();
+  }
+
+  private dropConnection(): void {
     this.generation += 1;
     this.connectInFlight = undefined;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -278,15 +304,11 @@ export class LiveConnection {
     current?.close();
     if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
     this.foregroundSyncTimer = undefined;
-    for (const registration of this.registrations.values()) registration.closed = true;
-    this.registrations.clear();
-    this.refcount.clear();
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     this.overlays.clear();
     this.roomCursors.clear();
     this.traceOwners.clear();
-    this.viewing.clear();
     this.heardMessages.clear();
     this.reconnectDelayMs = 1_000;
   }
@@ -315,10 +337,13 @@ export class LiveConnection {
 
   private ensureSocket(): Promise<void> {
     if (this.socket) return Promise.resolve();
-    this.connectInFlight ??= this.connect().finally(() => {
-      this.connectInFlight = undefined;
+    if (this.connectInFlight) return this.connectInFlight;
+    // A connect from before an identity change settles after the next one starts.
+    const flight: Promise<void> = this.connect().finally(() => {
+      if (this.connectInFlight === flight) this.connectInFlight = undefined;
     });
-    return this.connectInFlight;
+    this.connectInFlight = flight;
+    return flight;
   }
 
   private async connect(): Promise<void> {
@@ -618,7 +643,7 @@ export function sharedLiveConnection(): LiveConnection {
   shared ??= new LiveConnection({
     authorization: () => monolithSession.authorization(),
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
-    subscribeIdentityChange: (listener) => monolithSession.subscribeIdentityChange(listener),
+    subscribeIdentityChange: subscribeClientReset,
     subscribeForeground: (listener) => {
       let backgrounded = AppState.currentState === 'background';
       const subscription = AppState.addEventListener('change', (state) => {

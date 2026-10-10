@@ -73,6 +73,7 @@
         "scripts/room-list-gestures-proof.tsx",
         "scripts/room-list-blank-proof.tsx",
         "scripts/notification-landing-proof.tsx",
+        "scripts/cross-tab-signout-proof.ts",
         "scripts/render-consolidated-board-proof.mjs",
         "scripts/consolidated-board-proof.tsx",
         "scripts/android-splash-theme-proof.js",

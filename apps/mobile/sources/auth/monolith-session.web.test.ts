@@ -55,7 +55,7 @@ describe('ordinary web monolith session storage', () => {
 
   beforeEach(() => {
     origin = memoryStorage();
-    vi.stubGlobal('window', {});
+    vi.stubGlobal('window', { document: {} });
     vi.stubGlobal('localStorage', origin);
     fetcher = vi.fn(async () => new Response(JSON.stringify(tokens), { status: 200 }));
   });
@@ -94,5 +94,26 @@ describe('ordinary web monolith session storage', () => {
     expect(origin.length).toBe(0);
     await expect(openTab().identityId()).resolves.toBeNull();
     await expect(openTab().authorization()).rejects.toThrow('GitHub sign-in is required');
+  });
+
+  it('signs an open tab out when another tab signs out', async () => {
+    const first = openTab();
+    const otherTabs = new EventTarget();
+    first.watchOtherTabs(otherTabs as unknown as Window, origin);
+    const changed = vi.fn();
+    first.subscribeIdentityChange(changed);
+    await first.exchangeGitHubTicket('ticket');
+    changed.mockClear();
+    fetcher.mockClear();
+    fetcher.mockImplementation(async () => new Response('{}', { status: 401 }));
+
+    await openTab().clear();
+    const event = new Event('storage') as Event & { key: string; storageArea: Storage };
+    Object.assign(event, { key: 'buzzy.monolith.identity.v1', storageArea: origin });
+    otherTabs.dispatchEvent(event);
+
+    expect(changed).toHaveBeenCalledTimes(1);
+    await expect(first.identityId()).resolves.toBeNull();
+    await expect(first.authorization()).rejects.toThrow('GitHub sign-in is required');
   });
 });

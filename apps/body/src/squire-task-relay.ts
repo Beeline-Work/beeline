@@ -12,6 +12,13 @@ import { homedir } from 'node:os';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
 import { squireApprovalFromMcp } from './resource-mcp-facade.js';
+import {
+  forgetSquireSessions,
+  registerSquireSession,
+  squireSessionInheritable,
+  squireSessionOwner,
+  tagSquireSessionSchedule,
+} from './squire-session-registry.js';
 
 type TurnKey = { roomId: string; requestId: string; taskId: string; generationId: string };
 type RelayRequest = TurnKey & { method: string; params?: Record<string, unknown> };
@@ -103,6 +110,8 @@ export class SquireTaskRelay {
   private url?: string;
   private readonly token = randomUUID();
   private active?: TurnKey;
+  /** The schedule a `schedule` command is a run of, if any. */
+  private activeScheduleId?: string;
   private task?: TaskConnection;
   private leaseTimer?: ReturnType<typeof setTimeout>;
   private approvalRequestId?: string;
@@ -179,6 +188,7 @@ export class SquireTaskRelay {
       taskId: command.rootCommandId,
       generationId,
     };
+    this.activeScheduleId = command.scheduleId ?? command.source?.systemEvent?.scheduleId;
     if (this.task) {
       this.task.taskId = command.rootCommandId;
       this.task.lastRequestId = command.turnRequestId;
@@ -261,12 +271,55 @@ export class SquireTaskRelay {
         task.dead = true;
         this.log('relay-exit', task, { pid, exitCode: code,
           sessionId: redactedSessionId(task.sessions.values().next().value) });
+        forgetSquireSessions(task.sessions);
         task.sessions.clear();
         task.pendingApprovals.clear();
       },
     });
     this.task = task;
     return task;
+  }
+
+  /**
+   * The client that may drive the requested sessions. Own sessions use this
+   * relay's connection. A schedule run may borrow a live session from its
+   * creating conversation or an earlier run of the same schedule, and the call
+   * then runs on that session's owning connection. Anything else returns this
+   * relay's client so the ordinary ownership refusal fires.
+   */
+  private inheritedCallClient(
+    task: TaskConnection,
+    borrowed: readonly string[],
+    requestedCount: number,
+  ): StdioSquireMcpClient {
+    if (!borrowed.length) return task.client;
+    // One MCP call reaches one connection. A mix of owned and borrowed
+    // sessions cannot be served by either, so it falls through to the refusal.
+    if (borrowed.length !== requestedCount) return task.client;
+    const scheduleId = this.activeScheduleId;
+    if (!scheduleId) return task.client;
+    const owner = squireSessionOwner(borrowed[0]!);
+    if (!owner || !borrowed.every((id) =>
+      squireSessionOwner(id)?.client === owner.client &&
+      squireSessionInheritable(id, this.agentId, this.roomId, scheduleId)))
+      return task.client;
+    return owner.client;
+  }
+
+  /**
+   * Record every session this connection holds, so another conversation can
+   * find the owning client when a schedule it created runs there. The owning
+   * relay stays the one that issues the call.
+   */
+  private rememberSessions(
+    client: StdioSquireMcpClient,
+    ids: Iterable<string>,
+    scheduleId?: string,
+  ): void {
+    for (const id of ids) {
+      registerSquireSession(id, { agentId: this.agentId, conversationId: this.roomId, client });
+      if (scheduleId) tagSquireSessionSchedule(id, scheduleId);
+    }
   }
 
   private retire(reason: string): void {
@@ -276,6 +329,7 @@ export class SquireTaskRelay {
     this.log('relay-close', this.task, { reason,
       sessionId: redactedSessionId(this.task.sessions.values().next().value) });
     this.task.client.close();
+    forgetSquireSessions(this.task.sessions);
     this.task.sessions.clear();
     this.task.pendingApprovals.clear();
     this.task = undefined;
@@ -320,12 +374,29 @@ export class SquireTaskRelay {
       this.log('call-end', task, { method: input.method, source: 'cached' });
       return task.tools;
     }
-    if (input.method === 'tools/call' && task.dead && toolName !== 'operate_start') {
+    // A scheduled turn may inherit a live session from the conversation that
+    // created its schedule, or from an earlier run of the same schedule, even
+    // though that session belongs to another conversation's relay. The call
+    // still runs on the owning connection, which is the only one Squire lets
+    // drive the session; ordinary conversations never reach this path.
+    const borrowed = input.method === 'tools/call'
+      ? requestedIds.filter((id) => !task.sessions.has(id))
+      : [];
+    let callClient = this.inheritedCallClient(task, borrowed, requestedIds.length);
+    const usingOwnConnection = callClient === task.client;
+    if (input.method === 'tools/call' && usingOwnConnection && task.dead &&
+        toolName !== 'operate_start') {
       this.log('call-refused', task, { reason: 'connection-died' });
       throw new Error('Squire MCP connection died and its browser session is gone; call operate_start');
     }
+    // A scheduled turn must also pass schedule provenance for every session,
+    // including ones this relay owns, so a second schedule in the same
+    // conversation cannot drive a session another schedule claimed.
+    const scheduleId = this.activeScheduleId;
     if (input.method === 'tools/call' && (!safeToolName ||
-        requestedIds.some((id) => !task.sessions.has(id)))) {
+        (usingOwnConnection && requestedIds.some((id) => !task.sessions.has(id))) ||
+        (scheduleId && requestedIds.some((id) =>
+          !squireSessionInheritable(id, this.agentId, this.roomId, scheduleId))))) {
       this.log('call-refused', task, { reason: 'session-not-owned' });
       throw new Error('Squire browser session is no longer owned by this conversation; call operate_start');
     }
@@ -338,16 +409,17 @@ export class SquireTaskRelay {
       this.log('call-refused', task, { reason: 'resource-denied' });
       throw new Error('Squire call is not authorized for this task');
     }
-    if (task.dead) {
+    if (usingOwnConnection && task.dead) {
       if (toolName !== 'operate_start' || requestedIds.length) {
         this.log('call-refused', task, { reason: 'restart-required' });
         throw new Error('Squire MCP connection died; call operate_start for a fresh browser session');
       }
       this.retire('restart-required');
       task = this.connection(active!.taskId);
+      callClient = task.client;
     }
     try {
-      const result = await task.client.requestMcp(input.method, input.params ?? {});
+      const result = await callClient.requestMcp(input.method, input.params ?? {});
       if (this.closed || this.task !== task || (active && (this.active?.taskId !== active.taskId ||
           this.active?.requestId !== active.requestId)))
         throw new Error('Squire task ended while the call was running');
@@ -355,6 +427,7 @@ export class SquireTaskRelay {
       if (!active) this.scheduleIdle();
       if (staleLeaseResult(result)) {
         for (const id of requestedIds) task.sessions.delete(id);
+        forgetSquireSessions(requestedIds);
         this.releasePendingApprovals(task, requestedIds);
         this.log('call-error', task, { method: input.method, tool: safeToolName ?? null,
           reason: 'stale-lease', sessionId: redactedSessionId(requestedIds[0]) });
@@ -365,10 +438,18 @@ export class SquireTaskRelay {
       if (safeToolName === 'operate_finish' &&
           !(result && typeof result === 'object' && (result as { isError?: unknown }).isError === true)) {
         for (const id of requestedIds) task.sessions.delete(id);
+        forgetSquireSessions(requestedIds);
         this.releasePendingApprovals(task, requestedIds);
-      } else {
-        for (const id of sessionIds(result)) task.sessions.add(id);
+      } else if (usingOwnConnection) {
+        const created = sessionIds(result);
+        for (const id of created) task.sessions.add(id);
+        this.rememberSessions(callClient, created, this.activeScheduleId);
       }
+      // A schedule that uses a session claims it, so another schedule in the
+      // same conversation is refused (story 3). A borrowed session keeps its
+      // owning relay; only its schedule lineage is recorded here.
+      if (this.activeScheduleId)
+        for (const id of requestedIds) tagSquireSessionSchedule(id, this.activeScheduleId);
       const approval = input.method === 'tools/call' && squireApprovalFromMcp(
         { id: 1, method: input.method, params: input.params }, { id: 1, result },
       );

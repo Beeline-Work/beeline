@@ -813,9 +813,12 @@ CREATE TABLE IF NOT EXISTS room_push_views (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   session_id text NOT NULL,
-  expires_at timestamptz NOT NULL,
+  instance_id text,
+  expires_at timestamptz,
   PRIMARY KEY (room_id,identity_id,session_id)
 );
+ALTER TABLE room_push_views ADD COLUMN IF NOT EXISTS instance_id text;
+ALTER TABLE room_push_views ALTER COLUMN expires_at DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS room_push_views_identity_idx ON room_push_views(identity_id);
 
 CREATE TABLE IF NOT EXISTS agents (

@@ -421,7 +421,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   }, heartbeatMs);
   heartbeat.unref?.();
   const invitePreview = new InvitePreviewAccess(options.database);
-  const phoneViewing = new PhoneViewing(options.database);
+  const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
   const server = createServer((request, response) => {
     const url = exactPath(request.url);
@@ -541,11 +541,18 @@ export function createBeelineServer(options: ServerOptions): Server {
     // instance, and this instance's lease releases whatever never returns.
     shuttingDown = true;
     clearInterval(heartbeat);
-    phoneViewing.dispose();
     releaseConnectionEpochs?.();
     for (const client of webSockets.clients) client.terminate();
     webSockets.close();
-    return closeHttp(callback);
+    return closeHttp((error) => {
+      void phoneViewing.endAll().then(
+        () => callback?.(error),
+        (releaseError: unknown) => {
+          console.error('[live] viewing shutdown release failed', releaseError);
+          callback?.(error ?? (releaseError instanceof Error ? releaseError : new Error(String(releaseError))));
+        },
+      );
+    });
   }) as Server['close'];
   server.on('upgrade', (request, socket, head) => {
     void (async () => {
@@ -705,6 +712,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       options.live.humanConnected(principal.identityId);
       // Rooms this socket views hold pushes until it says otherwise or closes.
       const viewingSession = randomUUID();
+      let phoneViewClosed = false;
       // Workspace membership notifications survive the deletion cascade and
       // reach the affected identity without requiring a readable Room.
       const releaseWorkspaces = options.live.subscribeAll((event) => {
@@ -1083,7 +1091,8 @@ export function createBeelineServer(options: ServerOptions): Server {
             ROOM_ID_PATTERN.test(item.roomId) &&
             typeof item.viewing === 'boolean'
           ) {
-            await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
+            if (!phoneViewClosed)
+              await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
             return;
           }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
@@ -1125,12 +1134,18 @@ export function createBeelineServer(options: ServerOptions): Server {
             socketQueuedBytes -= frameBytes;
           });
       });
-      client.on('close', () => {
-        socketSubscriptions.delete(client);
-        options.live.humanDisconnected(principal.identityId);
+      const releasePhoneView = () => {
+        if (phoneViewClosed) return;
+        phoneViewClosed = true;
         void phoneViewing.end(viewingSession).catch((error) =>
           console.error('[live] viewing release failed', error),
         );
+      };
+      client.on('error', releasePhoneView);
+      client.on('close', () => {
+        socketSubscriptions.delete(client);
+        options.live.humanDisconnected(principal.identityId);
+        releasePhoneView();
         releaseWorkspaces();
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();

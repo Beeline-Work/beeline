@@ -143,6 +143,7 @@ import {
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { useChatList } from '@/buzz/chat-list-store';
+import { useRoomRepoReplacementGuard } from '@/buzz/room-repo-replacement';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
   activeMentionAtCursor,
@@ -1197,9 +1198,6 @@ export function BuzzChatSurface({
         : [],
     [activeCommunityId, roomSurface?.parent, roomSurface?.room, roomSurface?.viewer.role],
   );
-  const openCornerCount =
-    workspaceChats.find((item) => item.room.id === (parentChannelId ?? decodedId))?.cornerCount ??
-    0;
   const cornerTask = surfaceParentId ? roomSurface?.room.about : undefined;
   const roomRepository = useMemo<RoomRepository | null>(() => {
     if (isCorner || !roomSurface?.repository || !activeCommunityId) return null;
@@ -1222,6 +1220,8 @@ export function BuzzChatSurface({
       source: 'config',
     };
   }, [activeCommunityId, decodedId, isCorner, roomSurface?.repository]);
+  const { openCornerCount, confirmReplacement: confirmRoomRepoReplacement } =
+    useRoomRepoReplacementGuard(workspaceChats, parentChannelId ?? decodedId, roomRepository);
   const roomRepositoryState = roomSurface?.repositoryResolution;
   // A loaded surface with no repository field is not enough to prompt. The
   // indexer distinguishes a proven empty Room from an unverified binding,
@@ -5093,19 +5093,6 @@ export function BuzzChatSurface({
     },
     [applyRoomRepository, transport],
   );
-
-  // Changing the repo under a Room with open corners strands those corners on
-  // the old repo, so re-binding is confirmed like the other destructive Room
-  // actions (delete/leave) above, and skipped when there is nothing to strand.
-  const confirmRoomRepoReplacement = useCallback(async () => {
-    const hasOpenCorners = openCornerCount > 0;
-    if (!roomRepository || !hasOpenCorners) return true;
-    return Modal.confirm(
-      `Change ${ROOM_LABEL} repo?`,
-      `This ${ROOM_LABEL} has ${CORNER_LABEL}s still open on ${roomRepository.binding.name}. Changing the repo will not move them — they stay bound to the old repo.`,
-      { cancelText: 'Cancel', confirmText: 'Change anyway', destructive: true },
-    );
-  }, [openCornerCount, roomRepository]);
 
   const handleSelectRoomRepoCandidate = useCallback(
     (candidate: RepoCandidate) => {

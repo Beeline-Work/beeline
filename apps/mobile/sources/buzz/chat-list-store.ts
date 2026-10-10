@@ -19,6 +19,7 @@ import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { isDraftFrame } from '@/sync/transport/live-frames';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { subscribeClientReset } from '@/sync/client-reset';
 
 /**
  * How long the opening Room-list read waits for its live watch to be confirmed.
@@ -177,6 +178,16 @@ class ChatListStore {
     await mobileSurfaceCache.remove(this.address);
   }
 
+  /** The account changed: drop the list and its watch, and write nothing to disk. */
+  reset(): void {
+    if (this.durableTimer) clearTimeout(this.durableTimer);
+    this.durableTimer = undefined;
+    this.close();
+    this.value = null;
+    this.readFromServer = false;
+    this.notify();
+  }
+
   private visible(): boolean {
     if (!foreground()) return false;
     for (const consumer of this.consumers) if (consumer.visible()) return true;
@@ -318,6 +329,11 @@ class ChatListStore {
 }
 
 const stores = new Map<string, ChatListStore>();
+
+subscribeClientReset(() => {
+  for (const store of [...stores.values()]) store.reset();
+  stores.clear();
+});
 
 /**
  * Join the Workspace's Room list. The first consumer opens it with its source;

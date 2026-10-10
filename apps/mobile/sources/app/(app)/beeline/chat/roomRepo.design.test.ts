@@ -122,11 +122,16 @@ describe('Room→repo write confirmation', () => {
 
 describe('Room→repo settings change', () => {
   it('confirms before re-binding a repo out from under a Room with open corners', () => {
-    const confirm = blockFrom(
-      chatSource,
-      'const confirmRoomRepoReplacement = useCallback(',
-      'confirmRoomRepoReplacement',
+    const guardSource = readFileSync(
+      new URL('../../../../buzz/room-repo-replacement.ts', import.meta.url),
+      'utf8',
     );
+    const confirm = blockFrom(
+      guardSource,
+      'const confirmReplacement = useCallback(',
+      'confirmReplacement',
+    );
+    expect(chatSource).toContain('useRoomRepoReplacementGuard(workspaceChats,');
     expect(confirm).toContain('openCornerCount');
     expect(confirm).toContain('Modal.confirm');
     expect(confirm).toContain('!roomRepository || !hasOpenCorners');

@@ -36,6 +36,7 @@ vi.mock('./surface-storage', () => ({
     },
   },
 }));
+vi.mock('@/modal', async () => ({ Modal: (await import('@/modal/ModalManager')).Modal }));
 vi.mock('@/sync/transport/live-connection', () => ({
   sharedLiveConnection: () => ({
     register: async (filters: unknown, listener: (event: unknown) => void) => {
@@ -53,6 +54,10 @@ vi.mock('@/sync/transport/live-connection', () => ({
   }),
 }));
 
+import type { RoomRepository } from '@beeline/buzz-client';
+import { Modal } from '@/modal/ModalManager';
+import { resetClientState } from '@/sync/client-reset';
+import { useRoomRepoReplacementGuard } from './room-repo-replacement';
 import { acquireChatList, liveChatList, resetChatListStoresForTest, useChatList } from './chat-list-store';
 
 const key = { relayUrl: 'https://relay.test', viewerPubkey: 'viewer', workspaceId: 'workspace' };
@@ -233,6 +238,37 @@ describe('app-level Room list store', () => {
     expect(liveChatList(key)?.chats[0]?.closed).toBe(true);
     handle.release();
   });
+
+  it('drops the list and its watch on an identity or relay change', async () => {
+    const chats = vi.fn(async () => listOf([row('room-a', 10)]));
+    const handle = acquireChatList(key, { chats }, visible);
+    await vi.advanceTimersByTimeAsync(10);
+    const seen = vi.fn();
+    handle.subscribe(seen);
+    emit(agentMessage('room-a', 'm-old-account', 20));
+    const writesBefore = disk.writes.length;
+
+    resetClientState();
+
+    expect(handle.current()).toBeNull();
+    expect(seen).toHaveBeenLastCalledWith();
+    expect(liveChatList(key)).toBeNull();
+    expect(openWatches()).toBe(0);
+    // The pending live write for the old account never lands.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(disk.writes.length).toBe(writesBefore);
+    emit(agentMessage('room-a', 'm-after-reset', 30));
+    expect(handle.current()).toBeNull();
+
+    // The next screen opens a fresh store with its own read and watch.
+    const next = acquireChatList(key, { chats }, visible);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(chats).toHaveBeenCalledTimes(2);
+    expect(next.current()?.chats.map((item) => item.room.id)).toEqual(['room-a']);
+    expect(openWatches()).toBe(1);
+    handle.release();
+    next.release();
+  });
 });
 
 function agentMessage(roomId: string, id: string, createdAt: number) {
@@ -369,15 +405,31 @@ describe('a read that cannot say unread', () => {
 });
 
 describe('the Room screen reads the live list', () => {
-  it('gives the repository-change warning the current open-corner count', async () => {
+  it('warns on a repository change after a corner opens live', async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const shown: Array<{ title?: string; message?: string; confirmText?: string }> = [];
+    Modal.setFunctions(
+      (config) => {
+        shown.push(config as (typeof shown)[number]);
+        return `modal-${shown.length}`;
+      },
+      vi.fn(),
+      vi.fn(),
+    );
     const chats = vi.fn(async () => listOf([row('room-a', 10, { cornerCount: 0 })]));
     const source = { chats };
-    const counts: number[] = [];
-    // The same lookup the Room screen's repository-change guard makes.
+    const repository: RoomRepository = {
+      channelId: 'room-a',
+      communityId: 'workspace',
+      binding: { key: 'repo-key', name: 'acme/app', remote: 'https://github.com/acme/app', localOnly: false },
+      source: 'config',
+    };
+    let confirmReplacement!: () => Promise<boolean>;
+    // The Room screen's wiring: its live list feeds the production guard.
     function RoomScreen() {
       const list = useChatList(key, source);
-      counts.push(list?.chats.find((item) => item.room.id === 'room-a')?.cornerCount ?? 0);
+      confirmReplacement = useRoomRepoReplacementGuard(list?.chats ?? [], 'room-a', repository)
+        .confirmReplacement;
       return null;
     }
     let renderer!: { unmount(): void };
@@ -387,7 +439,10 @@ describe('the Room screen reads the live list', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
-    expect(counts.at(-1)).toBe(0);
+    // No open corner: the change goes ahead without a warning.
+    await expect(confirmReplacement()).resolves.toBe(true);
+    expect(shown).toHaveLength(0);
+
     await act(async () => {
       emit({
         monolithLive: {
@@ -396,7 +451,16 @@ describe('the Room screen reads the live list', () => {
         },
       });
     });
-    expect(counts.at(-1)).toBe(2);
+    // A corner opened while the screen was up: the same action now warns.
+    const answer = confirmReplacement();
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toMatchObject({
+      title: 'Change Room repo?',
+      message: expect.stringContaining('corners still open on acme/app'),
+      confirmText: 'Change anyway',
+    });
+    Modal.resolveConfirm('modal-1', false);
+    await expect(answer).resolves.toBe(false);
     expect(chats).toHaveBeenCalledTimes(1);
     await act(async () => renderer.unmount());
   });

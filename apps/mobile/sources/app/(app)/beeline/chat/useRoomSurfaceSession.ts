@@ -247,6 +247,7 @@ export interface UseRoomSurfaceSessionResult {
   /** A message mutation returned the same canonical row as the live lane. */
   applyRoomMessageResult(message: RoomViewMessage): void;
   applyRoomName(name: string, expected?: string): void;
+  applyRoomReviewers(reviewerAgentId: string | undefined, reviewerFallbackIds: readonly string[]): void;
   /** Exact server-owned unread boundary captured before this visit advances the read mark. */
   firstUnreadMessageId: string | null;
   /** Server counts captured with the opening boundary, before viewport reads advance it. */
@@ -330,6 +331,14 @@ export function useRoomSurfaceSession({
     setRoomSurface((current) => {
       if (!current || (expected !== undefined && current.room.name !== expected)) return current;
       const next = { ...current, room: { ...current.room, name } };
+      reconciledViewRef.current = next;
+      return next;
+    });
+  }, []);
+  const applyRoomReviewers = useCallback((reviewerAgentId: string | undefined, reviewerFallbackIds: readonly string[]) => {
+    setRoomSurface((current) => {
+      if (!current) return current;
+      const next = { ...current, room: { ...current.room, reviewerAgentId, reviewerFallbackIds } };
       reconciledViewRef.current = next;
       return next;
     });
@@ -1279,6 +1288,7 @@ export function useRoomSurfaceSession({
     clearRoomRepository,
     applyRoomMessageResult,
     applyRoomName,
+    applyRoomReviewers,
     firstUnreadMessageId,
     openingUnreadCounts,
     advanceReadCursor,

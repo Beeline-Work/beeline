@@ -62,7 +62,7 @@ type RoomReviewerActionsProps = {
   allowAutoMerge?: boolean;
   canManage: boolean;
   hasRepository: boolean;
-  onSaved?: () => void;
+  onSaved?: (reviewers: readonly string[]) => void;
   reviewerAgentId?: string;
   /** Agents tried in order after `reviewerAgentId`. */
   reviewerFallbackIds?: readonly string[];
@@ -134,7 +134,7 @@ export function RoomReviewerActions({
         });
         setOrder(next);
         if (!next.length) setPickerVisible(false);
-        onSaved?.();
+        onSaved?.(next);
       } catch (caught) {
         setError(`Could not change ${ROOM_LABEL} reviewer: ${String(caught)}`);
       } finally {

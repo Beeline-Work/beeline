@@ -817,6 +817,7 @@ export function BuzzChatSurface({
     clearRoomRepository,
     applyRoomMessageResult,
     applyRoomName,
+    applyRoomReviewers,
     firstUnreadMessageId,
     openingUnreadCounts,
     advanceReadCursor,
@@ -831,7 +832,6 @@ export function BuzzChatSurface({
     hydrationFailed: transcriptHydrationFailed,
     hydrationError: transcriptHydrationError,
     retryHydration,
-    refreshSignal,
     outbox,
   } = session;
   useEffect(() => {
@@ -7256,7 +7256,7 @@ export function BuzzChatSurface({
               allowAutoMerge={roomRepository?.allowAutoMerge}
               canManage={canManageWorkspace}
               hasRepository={roomRepository !== null}
-              onSaved={() => refreshSignal.force()}
+              onSaved={(reviewers) => applyRoomReviewers(reviewers[0], reviewers.slice(1))}
               reviewerAgentId={roomSurface?.room.reviewerAgentId}
               reviewerFallbackIds={roomSurface?.room.reviewerFallbackIds}
               roomId={decodedId}

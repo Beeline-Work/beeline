@@ -298,8 +298,16 @@ it('uses the same activity slot for APNs collapse and grouping, separate from at
 });
 
 describe('APNs read-clear request', () => {
-  it('is a low-priority background push carrying only channel ids', () => {
-    const request = apnsReadClearRequest('device', ['room-a', 'corner-b'], 'app.bundle', 'jwt');
+  it('is a low-priority background push carrying only channel ids and read times', () => {
+    const request = apnsReadClearRequest(
+      'device',
+      [
+        { channelId: 'room-a', readAt: 1_760_000_000_000 },
+        { channelId: 'corner-b', readAt: 1_760_000_001_000 },
+      ],
+      'app.bundle',
+      'jwt',
+    );
     expect(request.headers).toMatchObject({
       'apns-push-type': 'background',
       'apns-priority': '5',
@@ -310,6 +318,7 @@ describe('APNs read-clear request', () => {
       aps: { 'content-available': 1 },
       type: 'read-clear',
       channelIds: ['room-a', 'corner-b'],
+      readAts: [1_760_000_000_000, 1_760_000_001_000],
     });
   });
 });

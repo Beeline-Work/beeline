@@ -75,7 +75,7 @@ export interface PushSender {
     ),
   ): Promise<void>;
   /** iOS only: a silent push that clears these conversations from the shade. */
-  clearRead?(token: string, channelIds: readonly string[]): Promise<void>;
+  clearRead?(token: string, reads: readonly { channelId: string; readAt: number }[]): Promise<void>;
 }
 
 /** At most one read-clear push per device in this window; reads inside it batch. */
@@ -214,18 +214,24 @@ export class PushDeliveryLoop {
       cleared_through: string;
       cleared_through_room: string;
       channel_ids: string[];
+      read_ats: number[];
     }>(
       // Each push takes the oldest READ_CLEAR_MAX_CHANNELS marks past the
       // device's (read_at, room_id) cursor and moves the cursor to the last
       // one sent, so overflow and marks tied on read_at go in later pushes.
       // read_at moves only on markRead, so marking a Room unread sends nothing.
       // Text, not a JS Date: a Date drops microseconds, and the next pass
-      // would see the same mark as newer than the boundary forever.
-      `SELECT device.token,batch.cleared_through,batch.cleared_through_room,batch.channel_ids
+      // would see the same mark as newer than the boundary forever. read_ats
+      // (epoch ms, rounded up) let the phone keep notifications that arrived
+      // after the read.
+      `SELECT device.token,batch.cleared_through,batch.cleared_through_room,batch.channel_ids,
+         batch.read_ats
        FROM push_devices device
        LEFT JOIN push_read_clears clear ON clear.device_token=device.token
        CROSS JOIN LATERAL (
          SELECT array_agg(pending.room_id ORDER BY pending.read_at,pending.room_id) channel_ids,
+           array_agg(ceil(extract(epoch FROM pending.read_at)*1000)::float8
+             ORDER BY pending.read_at,pending.room_id) read_ats,
            (array_agg(pending.read_at::text
              ORDER BY pending.read_at DESC,pending.room_id DESC))[1] cleared_through,
            (array_agg(pending.room_id
@@ -248,7 +254,13 @@ export class PushDeliveryLoop {
     );
     for (const row of due.rows) {
       try {
-        await sender.clearRead(row.token, row.channel_ids);
+        await sender.clearRead(
+          row.token,
+          row.channel_ids.map((channelId, index) => ({
+            channelId,
+            readAt: Number(row.read_ats[index]),
+          })),
+        );
         await this.database.query(
           `INSERT INTO push_read_clears(device_token,cleared_through,cleared_through_room,sent_at)
            VALUES($1,$2::timestamptz,$3,now())

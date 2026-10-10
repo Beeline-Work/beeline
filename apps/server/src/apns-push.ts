@@ -110,7 +110,7 @@ export function apnsPushRequest(
  */
 export function apnsReadClearRequest(
   token: string,
-  channelIds: readonly string[],
+  reads: readonly { channelId: string; readAt: number }[],
   bundleId: string,
   providerToken: string,
 ): { headers: OutgoingHttpHeaders; payload: Record<string, unknown> } {
@@ -124,7 +124,7 @@ export function apnsReadClearRequest(
       'apns-priority': '5',
       'apns-expiration': '0',
     },
-    payload: { aps: { 'content-available': 1 }, ...readClearPushData(channelIds) },
+    payload: { aps: { 'content-available': 1 }, ...readClearPushData(reads) },
   };
 }
 
@@ -201,8 +201,11 @@ export class ApnsPushProvider implements PushSender {
     await this.#post(apnsPushRequest(token, message, this.#bundleId, this.#token()));
   }
 
-  async clearRead(token: string, channelIds: readonly string[]): Promise<void> {
-    await this.#post(apnsReadClearRequest(token, channelIds, this.#bundleId, this.#token()));
+  async clearRead(
+    token: string,
+    reads: readonly { channelId: string; readAt: number }[],
+  ): Promise<void> {
+    await this.#post(apnsReadClearRequest(token, reads, this.#bundleId, this.#token()));
   }
 
   async #post(request: {

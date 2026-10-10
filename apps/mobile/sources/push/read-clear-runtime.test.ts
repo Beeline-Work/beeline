@@ -11,7 +11,12 @@ const cornerA = '22222222-2222-4222-8222-222222222222';
 const roomB = '33333333-3333-4333-8333-333333333333';
 
 // The routing data the server's message push carries (`pushMessageData`).
-function push(identifier: string, channelId: string, roomId: string) {
+// iOS reports a presented notification's date in epoch seconds.
+const READ_AT = 1_760_000_000_000;
+const BEFORE_READ = READ_AT / 1000 - 60;
+const AFTER_READ = READ_AT / 1000 + 5;
+
+function push(identifier: string, channelId: string, roomId: string, date = BEFORE_READ) {
   const data = {
     type: 'channel-activity',
     target: channelId === roomId ? 'message' : 'corner',
@@ -22,16 +27,17 @@ function push(identifier: string, channelId: string, roomId: string) {
     ...(channelId === roomId ? {} : { cornerId: channelId }),
     messageId: `${identifier}-message`,
   };
-  return { request: { identifier, content: { data } } };
+  return { date, request: { identifier, content: { data } } };
 }
 
-function shade() {
-  const presented = [
+function shade(
+  presented = [
     push('a1', roomA, roomA),
     push('a2', roomA, roomA),
     push('c1', cornerA, roomA),
     push('b1', roomB, roomB),
-  ];
+  ],
+) {
   return {
     getPresentedNotificationsAsync: vi.fn(() => Promise.resolve(presented)),
     dismissNotificationAsync: vi.fn(() => Promise.resolve()),
@@ -44,7 +50,16 @@ describe('read-clear push on iOS', () => {
   // and badge untouched until the phone opened that Room itself.
   it('clears the read Room and corner from the shade and recounts the badge', async () => {
     const api = shade();
-    const payload = { data: { dataString: JSON.stringify(readClearPushData([roomA, cornerA])) } };
+    const payload = {
+      data: {
+        dataString: JSON.stringify(
+          readClearPushData([
+            { channelId: roomA, readAt: READ_AT },
+            { channelId: cornerA, readAt: READ_AT },
+          ]),
+        ),
+      },
+    };
 
     await expect(handleReadClearPayload(payload, api, 'ios')).resolves.toBe(true);
 
@@ -55,12 +70,28 @@ describe('read-clear push on iOS', () => {
   it('reads the flat payload shape too', async () => {
     const api = shade();
     await handleReadClearPayload(
-      { aps: { 'content-available': 1 }, ...readClearPushData([roomB]) },
+      {
+        aps: { 'content-available': 1 },
+        ...readClearPushData([{ channelId: roomB, readAt: READ_AT }]),
+      },
       api,
       'ios',
     );
     expect(api.dismissNotificationAsync.mock.calls).toEqual([['b1']]);
     expect(api.setBadgeCountAsync).toHaveBeenCalledWith(3);
+  });
+
+  // G9-R3: a read-clear that lands after a newer message for the same Room
+  // dismissed that unread notification too and set the badge to 0.
+  it('keeps a notification that arrived after the read, and counts it', async () => {
+    const api = shade([push('a1', roomA, roomA), push('a2', roomA, roomA, AFTER_READ)]);
+    await handleReadClearPayload(
+      readClearPushData([{ channelId: roomA, readAt: READ_AT }]),
+      api,
+      'ios',
+    );
+    expect(api.dismissNotificationAsync.mock.calls).toEqual([['a1']]);
+    expect(api.setBadgeCountAsync).toHaveBeenCalledWith(1);
   });
 
   it('leaves the shade alone for any other background push', async () => {

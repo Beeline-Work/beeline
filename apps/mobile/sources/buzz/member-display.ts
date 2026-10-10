@@ -7,6 +7,7 @@ import {
 } from '@beeline/buzz-client';
 import type { Nip05VerificationStatus } from '@beeline/buzz-client';
 import { isConnectorKind } from '@beeline/api-contract/workbench';
+import { directMessageTitle } from '@beeline/api-contract/phone';
 
 /** Connector peer names come from the server, even when an old profile exists. */
 function isConnectorPeer(peer: RoomViewIdentity | undefined): boolean {
@@ -39,20 +40,23 @@ export function personIdentityLabel(
 
 /**
  * A read-only announcement DM uses the server-owned peer name verbatim so its
- * header and message byline cannot disagree. Ordinary DMs retain the familiar
- * verified handle-first presentation, with the indexed identity as fallback.
+ * header and message byline cannot disagree. Ordinary DMs use the shared
+ * `@<handle>` title, from the same peer identity the Room list row reads, so
+ * header and list never disagree; the profile is only a fallback.
  */
 export function directMessageHeaderName(
   peer: RoomViewIdentity | undefined,
-  profile: Pick<PersonProfile, 'name' | 'handle' | 'nip05'> | undefined,
+  profile: Pick<PersonProfile, 'name' | 'handle'> | undefined,
   pubkey: string,
-  nip05Status: Nip05VerificationStatus | 'checking' | 'none' | undefined,
   announcementsOnly: boolean,
   announcementAuthor?: RoomViewIdentity,
 ): string {
   if ((announcementsOnly || isConnectorPeer(peer)) && peer?.name.trim()) return peer.name.trim();
   if (announcementsOnly && announcementAuthor?.name.trim()) return announcementAuthor.name.trim();
-  return personIdentityLabel(profile ?? peer, pubkey, nip05Status);
+  const identity = peer?.name.trim() || peer?.handle?.trim() ? peer : profile;
+  if (identity && (identity.name?.trim() || identity.handle?.trim()))
+    return directMessageTitle({ name: identity.name ?? '', handle: identity.handle });
+  return fallbackMemberName(pubkey);
 }
 
 export function directMessagePeer(dm: DirectMessage, viewerPubkey: string): string {

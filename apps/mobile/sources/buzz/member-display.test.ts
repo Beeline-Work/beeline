@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { directMessageTitle } from '@beeline/api-contract/phone';
+import { roomRowName } from './room-list-row';
 import {
   directMessageHeaderName,
   directMessagePeer,
@@ -16,7 +18,6 @@ describe('direct-message member display', () => {
         { pubkey: 's'.repeat(64), kind: 'human', name: 'Trusty Squire', handle: 'trusty-squire' },
         undefined,
         's'.repeat(64),
-        'none',
         true,
       ),
     ).toBe('Trusty Squire');
@@ -27,7 +28,6 @@ describe('direct-message member display', () => {
         { pubkey: 's'.repeat(64), kind: 'human', name: 'Trusty Squire', handle: 'trusty-squire' },
         { name: 'Lena', handle: 'lena', nip05: 'lena@example.com' },
         's'.repeat(64),
-        'verified',
         false,
       ),
     ).toBe('Trusty Squire');
@@ -38,21 +38,37 @@ describe('direct-message member display', () => {
         { pubkey: 'g'.repeat(64), kind: 'human', name: 'Google Drive', handle: 'google-drive' },
         { name: 'Lena' },
         'g'.repeat(64),
-        'none',
         false,
       ),
     ).toBe('Google Drive');
   });
-  it('keeps the profile label for an ordinary writable DM', () => {
+  it('titles an ordinary DM from the same peer identity as the Room list row', () => {
     expect(
       directMessageHeaderName(
         { pubkey, kind: 'human', name: 'Ada', handle: 'ada' },
         { name: 'Lena', handle: 'lena' },
         pubkey,
-        'none',
         false,
       ),
+    ).toBe('@ada');
+  });
+  // G9-R4: the header showed `@alice@host` while the shared title is `@alice`.
+  it('uses the shared title rules for a domain handle', () => {
+    const peer = { pubkey, kind: 'human' as const, name: 'Alice', handle: 'alice@host' };
+    expect(directMessageHeaderName(peer, undefined, pubkey, false)).toBe(directMessageTitle(peer));
+    expect(directMessageHeaderName(peer, undefined, pubkey, false)).toBe('@alice');
+    expect(roomRowName({ room: { id: 'dm' }, directMessage: { peer } } as never)).toEqual({
+      sigil: '@',
+      name: 'alice',
+    });
+  });
+  it('falls back to the profile, then a friendly name', () => {
+    expect(
+      directMessageHeaderName(undefined, { name: 'Lena', handle: 'lena' }, pubkey, false),
     ).toBe('@lena');
+    expect(directMessageHeaderName(undefined, undefined, pubkey, false)).toBe(
+      fallbackMemberName(pubkey),
+    );
   });
   it('uses the indexed System name for an announcements-only DM header', () => {
     expect(
@@ -60,7 +76,6 @@ describe('direct-message member display', () => {
         { pubkey: 's'.repeat(64), kind: 'human', name: 'System', handle: 'system' },
         undefined,
         's'.repeat(64),
-        'none',
         true,
       ),
     ).toBe('System');
@@ -68,7 +83,7 @@ describe('direct-message member display', () => {
 
   it('uses the indexed announcement author when the hidden System peer is absent', () => {
     expect(
-      directMessageHeaderName(undefined, undefined, 's'.repeat(64), 'none', true, {
+      directMessageHeaderName(undefined, undefined, 's'.repeat(64), true, {
         pubkey: 's'.repeat(64),
         kind: 'human',
         name: 'System',

@@ -2,6 +2,8 @@ import { getBuzzNotificationTargetFromData } from '@/utils/notificationRouting';
 import type { PushLevel } from '@beeline/api-contract/phone';
 
 export type PresentedNotification = {
+  /** When iOS presented it: epoch seconds on iOS, milliseconds on Android. */
+  date?: number;
   request: {
     identifier: string;
     content?: { data?: unknown };
@@ -99,24 +101,42 @@ export async function dismissPresentedNotificationsForChannel(
   api: PresentedNotificationApi,
   platform: string,
 ): Promise<void> {
-  await dismissPresentedNotificationsForChannels([channelId], api, platform);
+  await dismissPresentedNotificationsForChannels([{ channelId }], api, platform);
+}
+
+/** A presented notification's time in epoch milliseconds, or null when unknown. */
+function presentedAtMs(notification: PresentedNotification): number | null {
+  const date = notification.date;
+  if (typeof date !== 'number' || !Number.isFinite(date) || date <= 0) return null;
+  // Expo reports seconds on iOS and milliseconds on Android.
+  return date < 1e11 ? date * 1000 : date;
 }
 
 /**
- * Dismiss every presented push for these Rooms or corners — the ones opened
- * here, or read on another device — and recount iOS's badge from the shade.
+ * Dismiss presented pushes for these Rooms or corners — the ones opened here,
+ * or read on another device — and recount iOS's badge from the shade. With a
+ * `readAt`, only notifications presented at or before that read go: a newer
+ * message arrived after the read and is still unread.
  */
 export async function dismissPresentedNotificationsForChannels(
-  channelIds: readonly string[],
+  reads: readonly { channelId: string; readAt?: number | null }[],
   api: PresentedNotificationApi,
   platform: string,
 ): Promise<void> {
-  const readChannelIds = channelIds.map((id) => id.trim()).filter(Boolean);
-  if (readChannelIds.length === 0) return;
+  const readChannels = reads.flatMap((read) => {
+    const channelId = read.channelId.trim();
+    return channelId ? [{ channelId, readAt: read.readAt ?? null }] : [];
+  });
+  if (readChannels.length === 0) return;
 
   const presented = await api.getPresentedNotificationsAsync();
   const matchingIds = presented.flatMap((notification) =>
-    readChannelIds.some((channelId) => presentedNotificationMatchesChannel(notification, channelId))
+    readChannels.some(({ channelId, readAt }) => {
+      if (!presentedNotificationMatchesChannel(notification, channelId)) return false;
+      if (readAt === null) return true;
+      const presentedAt = presentedAtMs(notification);
+      return presentedAt !== null && presentedAt <= readAt;
+    })
       ? [notification.request.identifier]
       : [],
   );

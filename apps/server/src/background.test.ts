@@ -581,7 +581,9 @@ describe('background advisory-lock ownership', () => {
       await read(room, '1'.repeat(64));
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
-      expect(clearRead).toHaveBeenLastCalledWith(ios, [room]);
+      expect(clearRead).toHaveBeenLastCalledWith(ios, [
+        { channelId: room, readAt: expect.any(Number) },
+      ]);
 
       // Reads inside the interval wait and then go out together, once.
       await read(corner, '2'.repeat(64));
@@ -594,7 +596,9 @@ describe('background advisory-lock ownership', () => {
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(clearRead.mock.calls[1]![0]).toBe(ios);
-      expect([...clearRead.mock.calls[1]![1]].sort()).toEqual([room, corner].sort());
+      expect(clearRead.mock.calls[1]![1].map((read) => read.channelId).sort()).toEqual(
+        [room, corner].sort(),
+      );
 
       await db.query(
         `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
@@ -670,7 +674,9 @@ describe('background advisory-lock ownership', () => {
       await ageThrottle();
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
-      const cleared = clearRead.mock.calls.flatMap((call) => [...call[1]]);
+      const cleared = clearRead.mock.calls.flatMap((call) =>
+        call[1].map((read: { channelId: string }) => read.channelId),
+      );
       expect(new Set(cleared).size).toBe(count);
       expect([...cleared].sort()).toEqual([...rooms].sort());
     } finally {
@@ -728,7 +734,16 @@ describe('background advisory-lock ownership', () => {
       await phone.markRead(room, second, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
-      expect(clearRead).toHaveBeenLastCalledWith(ios, [room]);
+      // G9-R3: the push carries the read time, so the phone keeps any
+      // notification that arrived after this read.
+      const readAt = (
+        await db.query<{ ms: number }>(
+          `SELECT ceil(extract(epoch FROM read_at)*1000)::float8 ms FROM room_read_marks
+           WHERE room_id=$1 AND identity_id=$2`,
+          [room, human],
+        )
+      ).rows[0]!.ms;
+      expect(clearRead).toHaveBeenLastCalledWith(ios, [{ channelId: room, readAt }]);
 
       await ageThrottle();
       await phone.markUnread(room, second, human);
@@ -740,7 +755,9 @@ describe('background advisory-lock ownership', () => {
       await phone.markRead(room, second, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
-      expect(clearRead).toHaveBeenLastCalledWith(ios, [room]);
+      expect(clearRead).toHaveBeenLastCalledWith(ios, [
+        { channelId: room, readAt: expect.any(Number) },
+      ]);
     } finally {
       await db.close();
     }

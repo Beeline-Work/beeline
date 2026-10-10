@@ -71,6 +71,7 @@ import {
 } from '@beeline/buzz-client';
 import {
   cornerDisplayName,
+  directMessageTitle,
   type AgentComposerCommand,
   type WorkflowRunSummaryView,
   type WorkspaceView,
@@ -182,7 +183,6 @@ import {
   resolveCommunityInvitePublicOrigin,
 } from '@/buzz/community-invite';
 import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
-import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
 import { normalizedRoomRole } from '@/buzz/room-management';
 import {
   looksLikeCornerOpenIntent,
@@ -2367,18 +2367,14 @@ export function BuzzChatSurface({
   const dmAnnouncementAuthor = dmPeerPubkey
     ? roomSurface?.messages.find((message) => message.author.pubkey === dmPeerPubkey)?.author
     : undefined;
-  const dmPeerNip05Status = useVerifiedNip05Status(
-    dmPeerPubkey ?? '',
-    dmPeerProfile ? { nip05: undefined } : undefined,
-  );
   const displayRoomName = useMemo(() => {
     if (!dmPeerPubkey) return roomName;
-    if (dmPeerAgentDisplay) return dmPeerAgentDisplay.name;
+    // One title rule with the Room list row: `@<handle>` from the peer.
+    if (dmPeerAgentDisplay) return directMessageTitle(dmPeerIdentity ?? dmPeerAgentDisplay);
     return directMessageHeaderName(
       dmPeerIdentity,
       dmPeerProfile,
       dmPeerPubkey,
-      dmPeerNip05Status,
       isReadOnlyDirectMessage,
       dmAnnouncementAuthor,
     );
@@ -2386,7 +2382,6 @@ export function BuzzChatSurface({
     dmAnnouncementAuthor,
     dmPeerAgentDisplay,
     dmPeerIdentity,
-    dmPeerNip05Status,
     dmPeerProfile,
     dmPeerPubkey,
     isReadOnlyDirectMessage,

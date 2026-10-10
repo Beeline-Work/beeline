@@ -6,7 +6,7 @@ import {
   identityHandle,
   roomTitle,
 } from './chat-title.js';
-import { readClearChannelIds, readClearPushData } from './push-actions.js';
+import { readClearPushData, readClearReads } from './push-actions.js';
 
 describe('roomTitle', () => {
   it('marks a stored name once and never decorates a missing one', () => {
@@ -88,18 +88,27 @@ describe('directMessageTitle', () => {
 
 describe('read-clear push data', () => {
   const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
+  const reads = [
+    { channelId: ids[0]!, readAt: 1_760_000_000_000 },
+    { channelId: ids[1]!, readAt: 1_760_000_001_500 },
+  ];
 
   it('round-trips flat, nested and dataString payloads', () => {
-    const data = readClearPushData(ids);
-    expect(readClearChannelIds(data)).toEqual(ids);
-    expect(readClearChannelIds({ data })).toEqual(ids);
-    expect(readClearChannelIds({ data: { dataString: JSON.stringify(data) } })).toEqual(ids);
-    expect(readClearChannelIds({ type: 'read-clear', channelIds: ids.join(',') })).toEqual(ids);
+    const data = readClearPushData(reads);
+    expect(readClearReads(data)).toEqual(reads);
+    expect(readClearReads({ data })).toEqual(reads);
+    expect(readClearReads({ data: { dataString: JSON.stringify(data) } })).toEqual(reads);
+  });
+
+  it('keeps ids without a read time', () => {
+    expect(readClearReads({ type: 'read-clear', channelIds: ids.join(',') })).toEqual(
+      ids.map((channelId) => ({ channelId, readAt: null })),
+    );
   });
 
   it('ignores every other push', () => {
-    expect(readClearChannelIds({ type: 'channel-activity', channelId: ids[0] })).toBeNull();
-    expect(readClearChannelIds({ data: { dataString: 'not json' } })).toBeNull();
-    expect(readClearChannelIds(null)).toBeNull();
+    expect(readClearReads({ type: 'channel-activity', channelId: ids[0] })).toBeNull();
+    expect(readClearReads({ data: { dataString: 'not json' } })).toBeNull();
+    expect(readClearReads(null)).toBeNull();
   });
 });

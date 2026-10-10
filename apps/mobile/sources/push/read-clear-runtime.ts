@@ -1,23 +1,24 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { readClearChannelIds } from '@beeline/api-contract/phone';
+import { readClearReads } from '@beeline/api-contract/phone';
 import { dismissPresentedNotificationsForChannels } from './presented-notifications';
 
 export const READ_CLEAR_TASK = 'beeline-read-clear';
 
 /**
  * Handle one background notification payload: when it is the server's silent
- * read-clear push, remove those Rooms' and corners' notifications from the
- * shade and recount the badge. Any other payload is left alone.
+ * read-clear push, remove those Rooms' and corners' notifications presented
+ * before each read from the shade and recount the badge. Any other payload is
+ * left alone.
  */
 export async function handleReadClearPayload(
   payload: unknown,
   api: Parameters<typeof dismissPresentedNotificationsForChannels>[1] = Notifications,
   platform: string = Platform.OS,
 ): Promise<boolean> {
-  const channelIds = readClearChannelIds(payload);
-  if (!channelIds?.length) return false;
-  await dismissPresentedNotificationsForChannels(channelIds, api, platform);
+  const reads = readClearReads(payload);
+  if (!reads?.length) return false;
+  await dismissPresentedNotificationsForChannels(reads, api, platform);
   return true;
 }
 

@@ -55,23 +55,35 @@ export function grantDecisionForPushAction(actionId: string): AgentGrantDecision
 /**
  * A silent iOS push: the recipient read these Rooms or corners on some
  * device, so the phone removes their notifications from the shade and
- * recounts its badge. It carries ids only, never text.
+ * recounts its badge. It carries ids and read times only, never text.
  */
 export const READ_CLEAR_PUSH_TYPE = 'read-clear';
 
-export function readClearPushData(channelIds: readonly string[]): {
+/**
+ * One Room or corner a read-clear push names. `readAt` is the read mark's
+ * time in epoch milliseconds; a notification presented after it is newer
+ * than the read and stays. `null` means the payload gave no time.
+ */
+export type ReadClear = { channelId: string; readAt: number | null };
+
+export function readClearPushData(reads: readonly { channelId: string; readAt: number }[]): {
   type: typeof READ_CLEAR_PUSH_TYPE;
   channelIds: string[];
+  readAts: number[];
 } {
-  return { type: READ_CLEAR_PUSH_TYPE, channelIds: [...channelIds] };
+  return {
+    type: READ_CLEAR_PUSH_TYPE,
+    channelIds: reads.map((read) => read.channelId),
+    readAts: reads.map((read) => read.readAt),
+  };
 }
 
 /**
- * The channel ids a read-clear push names, or `null` for any other push. The
- * phone's background task may hand the payload over flat, under `data`, or
- * as a `dataString` JSON body, so each of those shapes is searched.
+ * The Rooms and corners a read-clear push names, or `null` for any other
+ * push. The phone's background task may hand the payload over flat, under
+ * `data`, or as a `dataString` JSON body, so each of those shapes is searched.
  */
-export function readClearChannelIds(payload: unknown, depth = 0): string[] | null {
+export function readClearReads(payload: unknown, depth = 0): ReadClear[] | null {
   if (!payload || typeof payload !== 'object' || depth > 3) return null;
   const record = payload as Record<string, unknown>;
   if (record.type === READ_CLEAR_PUSH_TYPE) {
@@ -80,11 +92,16 @@ export function readClearChannelIds(payload: unknown, depth = 0): string[] | nul
       : typeof record.channelIds === 'string'
         ? record.channelIds.split(',')
         : [];
-    return ids.filter((id): id is string => typeof id === 'string' && id.trim() !== '');
+    const readAts = Array.isArray(record.readAts) ? record.readAts : [];
+    return ids.flatMap((id, index): ReadClear[] => {
+      if (typeof id !== 'string' || id.trim() === '') return [];
+      const readAt = Number(readAts[index]);
+      return [{ channelId: id, readAt: Number.isFinite(readAt) && readAt > 0 ? readAt : null }];
+    });
   }
   if (typeof record.dataString === 'string') {
     try {
-      const parsed = readClearChannelIds(JSON.parse(record.dataString), depth + 1);
+      const parsed = readClearReads(JSON.parse(record.dataString), depth + 1);
       if (parsed) return parsed;
     } catch {
       // Not JSON: fall through to the nested shapes.
@@ -92,7 +109,7 @@ export function readClearChannelIds(payload: unknown, depth = 0): string[] | nul
   }
   for (const key of ['data', 'body', 'notification'])
     if (key in record) {
-      const parsed = readClearChannelIds(record[key], depth + 1);
+      const parsed = readClearReads(record[key], depth + 1);
       if (parsed) return parsed;
     }
   return null;

@@ -408,6 +408,7 @@ describe('corner merge instructions', () => {
       }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
     const sessionNew = vi
@@ -641,6 +642,7 @@ describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its cor
       connection: () => ({ baseUrl: 'https://server.example', daemonToken: 'daemon-token', agentId: agent.publicKey }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
     const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'reviewer-session', raw: {} });
@@ -762,6 +764,7 @@ describe('corner close-request delivery', () => {
       }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     let sessionInput: Parameters<AcpClient['sessionNew']>[0] | undefined;
     vi.spyOn(acp, 'sessionNew').mockImplementation(async (input) => {
@@ -932,6 +935,7 @@ describe('corner close-request delivery', () => {
       }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
     const sessionPrompt = vi
@@ -1100,6 +1104,7 @@ describe('corner close-request delivery', () => {
       }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
     const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
@@ -1256,6 +1261,7 @@ describe('corner close-request delivery', () => {
       }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
     let promptCalls = 0;
@@ -1539,6 +1545,7 @@ describe('corner close-request delivery', () => {
       ...(liveSubscribe ? { liveSubscribe } : {}),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
     vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
@@ -3162,6 +3169,7 @@ describe('thin monolith corner turn', () => {
       }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({
       sessionId: 'corner-session',
@@ -3535,6 +3543,7 @@ describe('corner turn institutional-memory prefetch', () => {
       }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     const sessionNew = vi.spyOn(acp, 'sessionNew').mockImplementation(async () => {
       order.push('session-new');
@@ -3647,6 +3656,7 @@ describe('corner turn rename prompt', () => {
       }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
     const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
@@ -3763,6 +3773,7 @@ describe('corner turn failure receipt', () => {
       }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'corner-session', raw: {} });
     const failure = new AcpTurnBackstopError(
@@ -3906,6 +3917,7 @@ describe('a context-window overflow', () => {
       }),
     } as unknown as DaemonApiClient;
     const acp = new AcpClient({ agentBinary: '/opt/bin/pi-acp', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     let opened = 0;
     const sessionNew = vi.spyOn(acp, 'sessionNew').mockImplementation(async () => {
@@ -4089,6 +4101,7 @@ describe('an instantly approved device grant', () => {
     } as unknown as DaemonApiClient;
     const spawns: Array<ConstructorParameters<typeof AcpClient>[0]> = [];
     const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
     vi.spyOn(acp, 'start').mockResolvedValue(undefined);
     vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
     let opened = 0;
@@ -4172,5 +4185,133 @@ describe('an instantly approved device grant', () => {
     expect(spawns).toHaveLength(2);
     expect(argv(spawns[0]!)).not.toContain('/dev/ttyUSB0');
     expect(argv(spawns[1]!)).toContain('--dev-bind-try /dev/ttyUSB0 /dev/ttyUSB0');
+  });
+});
+
+describe('Reproduction steer-dead-acp: a steer after the corner harness exited', () => {
+  it('answers the steered turn on a fresh harness process', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-dead-acp-'));
+    roots.push(root);
+    await execFileAsync('git', ['init', root]);
+    const agent = stored('11'.repeat(32), 'Bee');
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent,
+      rooms: [],
+      supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'daemon-token' },
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind: 'codex',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      workspaceRoot: root,
+      autoApprovePermissions: true,
+    };
+    let alive = false;
+    let starts = 0;
+    let steerSent = false;
+    const receipts: Array<Record<string, unknown>> = [];
+    const settled = () => receipts.filter((receipt) => receipt.status !== 'working').length;
+    let loop!: MonolithCornerTurnLoop;
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster')
+        return { members: [{ identityId: agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' }] };
+      if (name === 'getRoomInbox') {
+        if (steerSent || settled() < 1) return { items: [], cursor: 'latest' };
+        // The memory limit killed the harness after the objective turn.
+        alive = false;
+        steerSent = true;
+        return {
+          items: [
+            {
+              id: 'relay-card',
+              authorId: agent.publicKey,
+              createdAt: 2,
+              type: 'message',
+              body: 'Steer: also cover the Room loop',
+              attachments: [],
+              fixtureCommandReason: 'relay_steer',
+            },
+          ],
+          cursor: 'relay-card',
+        };
+      }
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', closeRequested: false };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'postAgentTurnReceipt') {
+        receipts.push(input);
+        if (input.status !== 'working' && settled() === 2) queueMicrotask(() => loop.requestClose());
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockImplementation(() => alive);
+    vi.spyOn(acp, 'start').mockImplementation(async () => {
+      starts += 1;
+      alive = true;
+    });
+    vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'sessionNew').mockImplementation(async () => ({
+      sessionId: `corner-session-${starts}`,
+      raw: {},
+    }));
+    const sessionPrompt = vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
+      if (!alive) throw new Error('AcpClient not started');
+      return { stopReason: 'end_turn', updates: [], agentText: 'Done.', toolCalls: [] };
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Implement the widget',
+      worktreePath: root,
+      repository: {
+        featureBranch: 'feature/widget',
+        targetBranch: 'main',
+        gitCommonDir: join(root, '.git'),
+        githubToken: 'token',
+      },
+      runtime,
+      config,
+      api: commandFixtureApi(api, 'corner-id', agent.publicKey, 'Implement the widget'),
+      scheduler,
+      signal: new AbortController().signal,
+      pollMs: 5,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: async () => undefined,
+      createAcpClient: () => acp,
+    });
+    await loop.run().catch(() => undefined);
+    await scheduler.dispose();
+
+    const endings = receipts.filter((receipt) => receipt.status !== 'working');
+    console.info(
+      `Reproduction steer-dead-acp: harness starts=${starts}; receipts=${endings
+        .map((receipt) => `${String(receipt.requestId)}:${String(receipt.status)}${receipt.reason ? ` (${String(receipt.reason)})` : ''}`)
+        .join(', ')}`,
+    );
+    expect(endings.map((receipt) => [receipt.requestId, receipt.status])).toEqual([
+      ['cornerid', 'complete'],
+      ['relay-card', 'complete'],
+    ]);
+    expect(starts).toBe(2);
+    expect(sessionPrompt.mock.calls[1]?.[0]).toBe('corner-session-2');
+    expect(String(sessionPrompt.mock.calls[1]?.[1])).toContain('Steer: also cover the Room loop');
   });
 });

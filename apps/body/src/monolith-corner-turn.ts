@@ -726,8 +726,9 @@ export class MonolithCornerTurnLoop {
 
   /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
    *  session whose persona, model pin, or mounted MCP set the operator has
-   *  since changed. */
+   *  since changed, or whose harness process has exited. */
   private async sessionIsCurrent(): Promise<boolean> {
+    if (!this.client?.isAlive) return false;
     return (await this.currentSessionFingerprint()) === this.sessionFingerprint;
   }
 

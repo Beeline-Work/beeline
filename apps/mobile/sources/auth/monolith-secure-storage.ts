@@ -1,4 +1,5 @@
 import { isDesktopShell } from '@/utils/isDesktopShell';
+import { webRuntimeStorage } from '@/utils/web-storage';
 
 export interface MonolithSecureStorage {
   getItemAsync(key: string): Promise<string | null>;
@@ -41,8 +42,7 @@ export async function monolithSecureStorage(
   // exist in an ordinary branch-preview browser. localStorage, like the legacy
   // identity path, keeps one sign-in for the origin across reloads and tabs;
   // sign-out removes it for every tab.
-  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-    return browserMonolithStorage(localStorage);
-  }
+  const browserStorage = webRuntimeStorage()?.storage;
+  if (browserStorage) return browserMonolithStorage(browserStorage);
   return import('expo-secure-store');
 }

@@ -1,7 +1,7 @@
 /**
  * Buzz identity persistence — store/load nsec from device storage.
  *
- * Web: localStorage. Native: expo-secure-store.
+ * Web build (browser and Tauri): localStorage. Native: expo-secure-store.
  *
  * This is the "minimal acceptable onboarding" per spec.md — generate a key
  * or paste an nsec1… string, then stash it so the app boots into the channel
@@ -18,6 +18,8 @@ import {
 import * as SecureStore from 'expo-secure-store';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { monolithSession } from '@/auth/monolith-session';
+import { resetClientState } from '@/sync/client-reset';
+import { webRuntimeStorage } from '@/utils/web-storage';
 
 // SecureStore on Android requires keys matching [A-Za-z0-9._-]+
 const BUZZ_NSEC_KEY = 'buzzy.identity.nsec';
@@ -33,7 +35,7 @@ const NSEC_STORAGE_OPTIONS: SecureStore.SecureStoreOptions = {
 export const DEFAULT_RELAY_URL = 'https://usebeeline.app';
 
 function isWeb(): boolean {
-  return typeof window !== 'undefined' && typeof window.document !== 'undefined';
+  return webRuntimeStorage() !== null;
 }
 
 async function storageGet(key: string): Promise<string | null> {
@@ -182,12 +184,16 @@ export async function loadRelayUrl(): Promise<string | null> {
 
 /** Persist a relay URL for next launch. */
 export async function saveRelayUrl(url: string): Promise<void> {
+  const previous = await storageGet(BUZZ_RELAY_URL_KEY);
   await storageSet(BUZZ_RELAY_URL_KEY, url);
+  if (previous !== url) resetClientState();
 }
 
 /** Forget the stored relay URL (reset to default). */
 export async function clearRelayUrl(): Promise<void> {
+  const previous = await storageGet(BUZZ_RELAY_URL_KEY);
   await storageRemove(BUZZ_RELAY_URL_KEY);
+  if (previous !== null) resetClientState();
 }
 
 /**

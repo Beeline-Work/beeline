@@ -1,15 +1,15 @@
 import { MMKV } from 'react-native-mmkv';
-import { Platform } from 'react-native';
+import { webRuntimeStorage } from '@/utils/web-storage';
 import { webStringStorage, type BrowserStringStorage } from './browser-string-storage';
 import { type Settings, settingsDefaults, settingsParse, settingsToSyncPayload } from './settings';
 import { type LocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
-/** Ordinary Expo web has no MMKV host object. Keep the same synchronous
- * settings contract through browser storage; native and Tauri retain MMKV. */
-const browserStorage =
-  Platform.OS === 'web' && typeof localStorage !== 'undefined' ? localStorage : undefined;
-const mmkv: BrowserStringStorage =
-  Platform.OS === 'web' ? webStringStorage(browserStorage, 'beeline.settings.') : new MMKV();
+/** The web build (browser and Tauri) has no MMKV host object. Keep the same
+ * synchronous settings contract through browser storage; native keeps MMKV. */
+const web = webRuntimeStorage();
+const mmkv: BrowserStringStorage = web
+  ? webStringStorage(web.storage, 'beeline.settings.')
+  : new MMKV();
 
 export function loadSettings(): { settings: Settings; version: number | null } {
   const raw = mmkv.getString('settings');

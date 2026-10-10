@@ -35,6 +35,8 @@ export type SystemEvent = {
   readonly consequence?: string;
   /** What this line IS, for subscribers and daemons. Absent on a line nobody reacts to. */
   readonly kind?: SystemEventKind;
+  /** The schedule a `schedule-ran` line fired, so its run may inherit its sessions. */
+  readonly scheduleId?: string;
   /** Outside input, carried only by an untrusted webhook event. */
   readonly payload?: unknown;
 };
@@ -275,6 +277,7 @@ export function isSystemEvent(value: unknown): value is SystemEvent {
     (subject.id === undefined || typeof subject.id === 'string') &&
     typeof subject.name === 'string' &&
     typeof event.verb === 'string' &&
+    (event.scheduleId === undefined || typeof event.scheduleId === 'string') &&
     (object === undefined ||
       (object &&
         typeof object === 'object' &&

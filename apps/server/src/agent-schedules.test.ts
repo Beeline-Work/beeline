@@ -379,6 +379,7 @@ describe('agent schedule background posting', () => {
           // The machine half beside the prose: the daemon matches this, never
           // the verb, and the text above is unchanged by its presence.
           kind: 'schedule-ran',
+          scheduleId: created.scheduleId,
           object: { text: '@worker', id: AGENT },
           consequence: 'Post exactly: hello @methoxine-debug',
         },

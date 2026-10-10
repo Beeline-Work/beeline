@@ -908,24 +908,74 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('closes the socket and clears registrations on identity change', async () => {
-    vi.useFakeTimers();
+  it('resubscribes mounted registrations on a new socket after an identity change', async () => {
     const { connection, changeIdentity } = createConnection();
-    const received: unknown[] = [];
-    await connection.register([{ '#h': [ROOM_A] }], (event) => received.push(event));
+    const room: Array<{ monolithLive: { type: string; reason?: string; resumed?: boolean } }> = [];
+    const roomless: Array<{ monolithLive: { type: string; reason?: string } }> = [];
+    await connection.register([{ '#h': [ROOM_A] }], (event) =>
+      room.push(event as (typeof room)[number]),
+    );
+    await connection.register([], (event) => roomless.push(event as (typeof roomless)[number]));
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A, epoch: 'old', cursor: 7 });
+    room.length = 0;
 
     changeIdentity();
     expect(sockets[0]!.closed).toBe(true);
+    sockets[0]!.emit({ type: 'invalidate', roomId: ROOM_A, reason: 'old-account' });
+    expect(room).toEqual([]);
 
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    sockets[1]!.open();
+    expect(sockets[1]!.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: 'subscribe', roomIds: [ROOM_A] },
+    ]);
+    expect(roomless.map((event) => event.monolithLive)).toEqual([
+      { type: 'invalidate', roomId: '', reason: 'reconnect' },
+    ]);
+    sockets[1]!.emit({ type: 'subscribed', roomId: ROOM_A, epoch: 'new', cursor: 0 });
+    sockets[1]!.emit({ type: 'invalidate', roomId: ROOM_A, reason: 'message' });
+    expect(room.map((event) => event.monolithLive.type)).toEqual(['subscribed', 'invalidate']);
+
+    connection.dispose();
+  });
+
+  it('keeps a held view across an identity change', async () => {
+    const { connection, changeIdentity } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    sockets[0]!.open();
+    const release = connection.view(ROOM_A);
+
+    changeIdentity();
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    sockets[1]!.open();
+    release();
+    expect(sockets[1]!.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: 'subscribe', roomIds: [ROOM_A] },
+      { type: 'viewing', roomId: ROOM_A, viewing: true },
+      { type: 'viewing', roomId: ROOM_A, viewing: false },
+    ]);
+
+    connection.dispose();
+  });
+
+  it('closes the socket and stops delivery on dispose', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    const received: unknown[] = [];
+    await connection.register([{ '#h': [ROOM_A] }], (event) => received.push(event));
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.open();
+
+    connection.dispose();
+    expect(sockets[0]!.closed).toBe(true);
     sockets[0]!.drop();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(sockets).toHaveLength(1);
-
     sockets[0]!.emit({ type: 'invalidate', roomId: ROOM_A, reason: 'message' });
     expect(received).toEqual([]);
-
-    connection.dispose();
   });
 
   it('routes trace-painted to the registration that sent trace-paint', async () => {

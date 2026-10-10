@@ -41,7 +41,6 @@
     "exports:apps/mobile/sources/buzz/factory-permissions.ts:publishPermissionRevocationFromCard",
     "exports:apps/mobile/sources/buzz/room-view-presentation.ts:chatListItemUpdatedAt",
     "exports:apps/mobile/sources/buzz/room-view-presentation.ts:workspacePeople",
-    "exports:apps/mobile/sources/buzz/surface-storage.ts:evictMobileSurfaceViewer",
     "exports:apps/mobile/sources/buzz/vocabulary.ts:CHANGE_LABEL",
     "exports:apps/mobile/sources/changelog/storage.ts:hasUnreadChangelog",
     "exports:apps/mobile/sources/components/ShortcutHints.tsx:SessionShortcutHintBadge",

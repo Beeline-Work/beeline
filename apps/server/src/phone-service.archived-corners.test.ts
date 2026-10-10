@@ -59,6 +59,13 @@ async function fixture(seed?: (database: PgliteDatabase) => Promise<unknown>) {
 const unix = (iso: string) => Math.floor(Date.parse(iso) / 1_000);
 
 describe('readCorners', () => {
+  it('projects the ordered live list into its parent status frame', async () => {
+    const phone = await fixture();
+    const status = await phone.liveChatCornerStatus(ROOM, VIEWER);
+    expect(status?.cornerCount).toBe(1);
+    expect(status?.corners.map((item) => item.corner.id)).toEqual([LIVE]);
+    expect(status?.corners).toEqual((await phone.readCorners(ROOM, VIEWER))?.corners);
+  });
   it('leaves closed work out of the live list', async () => {
     const phone = await fixture();
     const view = await phone.readCorners(ROOM, VIEWER);
@@ -84,6 +91,10 @@ describe('readCorners', () => {
     const first = (await phone.readCorners(ROOM, VIEWER))!;
     expect(first.corners).toHaveLength(30);
     expect(first.nextOpen).toBeDefined();
+    const live = (await phone.liveChatCornerStatus(ROOM, VIEWER))!;
+    expect(live.cornerCount).toBe(32);
+    expect(live.corners).toEqual(first.corners);
+    expect(live.nextOpen).toBe(first.nextOpen);
     const cursor = first.nextOpen!.split(',');
     const second = (await phone.readCorners(ROOM, VIEWER, false, false, undefined, {
       micros: cursor[0]!, id: cursor[1]!,

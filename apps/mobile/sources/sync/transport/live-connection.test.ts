@@ -112,6 +112,18 @@ describe('LiveConnection', () => {
     sockets[0]!.emit(invalidation);
     expect(workspace).toHaveBeenCalledWith({ monolithLive: invalidation });
     expect(room).not.toHaveBeenCalled();
+    const bookmark = { type: 'bookmark-delta', roomId: '', workspaceId: 'workspace',
+      messageId: 'saved', bookmark: null };
+    const needs = { type: 'needs-you-delta', roomId: '', workspaceId: 'workspace',
+      sourceRoomId: ROOM_A, count: 0, items: [] };
+    const resource = { type: 'resource-change', roomId: '', resource: 'workbench' };
+    sockets[0]!.emit(bookmark);
+    sockets[0]!.emit(needs);
+    sockets[0]!.emit(resource);
+    expect(workspace).toHaveBeenCalledWith({ monolithLive: bookmark });
+    expect(workspace).toHaveBeenCalledWith({ monolithLive: needs });
+    expect(workspace).toHaveBeenCalledWith({ monolithLive: resource });
+    expect(room).not.toHaveBeenCalled();
     stop();
     workspace.mockClear();
     sockets[0]!.emit(invalidation);
@@ -163,6 +175,19 @@ describe('LiveConnection', () => {
     expect(second).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
     expect(first).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
 
+    connection.dispose();
+  });
+
+  it('marks a late join as continuous when the held Room has a cursor', async () => {
+    const { connection } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A,
+      epoch: 'epoch-1', cursor: 0, resumed: false });
+    const late = vi.fn();
+    await connection.register([{ '#h': [ROOM_A] }], late);
+    expect(late).toHaveBeenCalledWith({ monolithLive: { type: 'subscribed',
+      roomId: ROOM_A, epoch: 'epoch-1', cursor: 0, resumed: true } });
     connection.dispose();
   });
 

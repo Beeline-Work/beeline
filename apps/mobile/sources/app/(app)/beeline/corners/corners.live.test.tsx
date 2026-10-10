@@ -201,6 +201,24 @@ beforeEach(() => {
 });
 
 describe('Corner list live path', () => {
+  it('paints a held list and applies an ordered frame without a GET on a resumed lane', async () => {
+    list.cached = cornerList('working');
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<BuzzCorners />); });
+    await vi.waitFor(() => expect(() => parentWatch()).not.toThrow());
+    parentWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a',
+      epoch: 'epoch', cursor: 1, resumed: true } });
+    await quiet();
+    expect(list.reads).toBe(0);
+    expect(paintedStates(renderer)).toEqual(['working']);
+    parentWatch().emit({ monolithLive: { type: 'corner-status', roomId: 'room-a',
+      cornerCount: 1, waitingCornerCount: 1, openCorners: [], agentState: null,
+      corners: cornerList('waiting').corners, nextOpen: 'older-corners' } });
+    await quiet();
+    expect(paintedStates(renderer)).toEqual(['waiting']);
+    expect(renderer.root.findByType('RoomCornersList').props.moreOpen).toBe(true);
+    expect(list.reads).toBe(0);
+  });
   it('creates and opens a randomly named corner from the plus button', async () => {
     const renderer = await mountList();
     const header = renderer.root.findByType('RoomCornersHeader');

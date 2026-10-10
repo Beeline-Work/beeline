@@ -4,7 +4,6 @@ import { useIsDesktop } from '@/utils/responsive';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
-  AppState,
   FlatList,
   Pressable,
   Text,
@@ -20,7 +19,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
-import { announceNeedsYouChanged, subscribeNeedsYouActivity } from '@/buzz/needs-you';
+import { subscribeNeedsYouLiveDelta, type NeedsYouLiveDelta } from '@/buzz/needs-you';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
@@ -29,6 +28,8 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import brand from '@/buzz/brand.json';
 
@@ -59,7 +60,8 @@ function isNeedsYouList(value: unknown): value is NeedsYouListResult {
 }
 
 function isBookmarkList(value: unknown): value is MessageBookmarkListResult {
-  return isRecord(value) && Array.isArray(value.bookmarks) && value.bookmarks.every((item: unknown) =>
+  return isRecord(value) && (value.next === undefined || typeof value.next === 'string') &&
+    Array.isArray(value.bookmarks) && value.bookmarks.every((item: unknown) =>
     isRecord(item) && typeof item.messageId === 'string' && typeof item.workspaceId === 'string' &&
     typeof item.roomId === 'string' && typeof item.roomName === 'string' &&
     typeof item.bookmarkedAt === 'number' && typeof item.available === 'boolean');
@@ -107,6 +109,26 @@ type Row =
   | { readonly key: string; readonly type: 'saved-empty' }
   | { readonly key: string; readonly type: 'saved-more' };
 
+function applyNeedsSlice(
+  current: readonly NeedsYouItemView[], delta: NeedsYouLiveDelta,
+): NeedsYouItemView[] {
+  return [...current.filter((item) => item.roomId !== delta.sourceRoomId),
+    ...delta.items].sort((a, b) => Number(!a.approval) - Number(!b.approval) ||
+      (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity) ||
+      a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId));
+}
+
+type BookmarkDelta = { readonly messageId: string; readonly bookmark: MessageBookmarkView | null };
+function applyBookmarkChange(
+  current: readonly MessageBookmarkView[], delta: BookmarkDelta,
+): MessageBookmarkView[] {
+  const next = current.filter((item) => item.messageId !== delta.messageId);
+  if (delta.bookmark) next.push(delta.bookmark);
+  next.sort((a, b) => b.bookmarkedAt - a.bookmarkedAt ||
+    a.messageId.localeCompare(b.messageId));
+  return next;
+}
+
 /**
  * The tray: exactly two sections, Needs you then Saved. Needs you is the
  * server's per-person projection (`readNeedsYou`); Saved is every bookmark,
@@ -136,6 +158,12 @@ export default function TrayScreen() {
   const savedScroll = useRef(false);
   const [selected, setSelected] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
+  const loadedWorkspaceRef = useRef<string | null>(null);
+  const loadGenerationRef = useRef(0);
+  const loadInFlightRef = useRef(false);
+  const needsDuringLoadRef = useRef<NeedsYouLiveDelta[]>([]);
+  const bookmarksDuringLoadRef = useRef<BookmarkDelta[]>([]);
+  const bookmarksDuringPageRef = useRef<BookmarkDelta[]>([]);
   useLatencyRouteFrame('/beeline/tray', !loading, true);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<MessageBookmarkView | null>(null);
@@ -150,9 +178,15 @@ export default function TrayScreen() {
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const loadedSections = useRef({ workspaceId: '', needs: false, bookmarks: false });
+  const needsVersionRef = useRef(0);
+  const bookmarksVersionRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
+    const generation = ++loadGenerationRef.current;
+    loadInFlightRef.current = true;
+    needsDuringLoadRef.current = [];
+    bookmarksDuringLoadRef.current = [];
     savedScroll.current = false;
     if (loadedSections.current.workspaceId !== workspaceId)
       loadedSections.current = { workspaceId, needs: false, bookmarks: false };
@@ -165,6 +199,8 @@ export default function TrayScreen() {
       monolithPhoneOperation('listMessageBookmarks', { workspaceId }),
     ]);
     const results = [needsResult, savedResult];
+    if (generation !== loadGenerationRef.current) return;
+    loadInFlightRef.current = false;
     // Once membership is lost, only a refresh that reads both sections shows
     // access is back; any other failure keeps the No Workspace message.
     if (
@@ -179,6 +215,7 @@ export default function TrayScreen() {
       setSavedNext(undefined);
       setSelected(null);
       setLoading(false);
+      loadedWorkspaceRef.current = null;
       void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
         if (!identity) return;
         void mobileSurfaceCache.remove(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/needs-you', { workspaceId }));
@@ -188,65 +225,128 @@ export default function TrayScreen() {
     }
     lostWorkspaceRef.current = null;
     setLostWorkspaceId(null);
-    if (needsResult.status === 'fulfilled') {
+    const mergedNeeds = needsResult.status === 'fulfilled'
+      ? needsDuringLoadRef.current.reduce(applyNeedsSlice, [...needsResult.value.items]) : null;
+    const mergedBookmarks = savedResult.status === 'fulfilled'
+      ? bookmarksDuringLoadRef.current.reduce(applyBookmarkChange, [...savedResult.value.bookmarks]) : null;
+    if (mergedNeeds) {
       loadedSections.current.needs = true;
-      setNeeds(needsResult.value.items);
+      setNeeds(mergedNeeds);
     }
-    if (savedResult.status === 'fulfilled') {
+    if (mergedBookmarks) {
       loadedSections.current.bookmarks = true;
-      setBookmarks(savedResult.value.bookmarks);
-      setSavedNext(savedResult.value.next);
-    }
-    if (needsResult.status === 'fulfilled' || savedResult.status === 'fulfilled') {
-      void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
-        if (!identity) return;
-        if (needsResult.status === 'fulfilled')
-          void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/needs-you', { workspaceId }), needsResult.value, isNeedsYouList);
-        if (savedResult.status === 'fulfilled')
-          void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/bookmarks', { workspaceId }), savedResult.value, isBookmarkList);
-      });
+      setBookmarks(mergedBookmarks);
+      if (savedResult.status === 'fulfilled') setSavedNext(savedResult.value.next);
     }
     const failed = [needsResult, savedResult].find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected')
       setError(failed.reason instanceof Error ? failed.reason.message : String(failed.reason));
+    if (needsResult.status === 'fulfilled' || savedResult.status === 'fulfilled')
+      loadedWorkspaceRef.current = workspaceId;
     setLoading(false);
   }, [workspaceId]);
 
+  // Persist the reconciled projection, including later live changes, for a
+  // zero-request paint when this route mounts again.
+  useEffect(() => {
+    if (!workspaceId || loadedSections.current.workspaceId !== workspaceId ||
+        !loadedSections.current.needs || lostWorkspaceRef.current === workspaceId) return;
+    void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
+      if (identity && loadedSections.current.workspaceId === workspaceId &&
+          lostWorkspaceRef.current !== workspaceId) void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey,
+        '/workspace/:id/needs-you', { workspaceId }), { items: needs }, isNeedsYouList);
+    });
+  }, [workspaceId, needs]);
+
+  useEffect(() => {
+    if (!workspaceId || loadedSections.current.workspaceId !== workspaceId ||
+        !loadedSections.current.bookmarks || lostWorkspaceRef.current === workspaceId) return;
+    void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
+      if (identity && loadedSections.current.workspaceId === workspaceId &&
+          lostWorkspaceRef.current !== workspaceId) void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey,
+        '/workspace/:id/bookmarks', { workspaceId }), { bookmarks, next: savedNext }, isBookmarkList);
+    });
+  }, [workspaceId, bookmarks, savedNext]);
+
+  useEffect(() => subscribeNeedsYouLiveDelta((delta) => {
+    if (delta.workspaceId !== workspaceId) return;
+    needsVersionRef.current += 1;
+    if (loadInFlightRef.current) needsDuringLoadRef.current.push(delta);
+    setNeeds((current) => applyNeedsSlice(current, delta));
+  }), [workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    void (async () => {
+      unsubscribe = await sharedLiveConnection().register([], (event) => {
+        if (!('monolithLive' in event)) return;
+        const live = (event as MonolithSurfaceEvent).monolithLive;
+        if (live.type === 'bookmark-delta' && live.workspaceId === workspaceId) {
+          bookmarksVersionRef.current += 1;
+          if (loadInFlightRef.current) bookmarksDuringLoadRef.current.push(live);
+          if (loadingSaved.current) bookmarksDuringPageRef.current.push(live);
+          setBookmarks((current) => applyBookmarkChange(current, live));
+        } else if (live.type === 'invalidate' &&
+            (live.reason === 'bookmark-gap' || live.reason === 'needs-you-gap' ||
+              live.reason === 'reconnect' ||
+              live.reason === 'postgres:memberships')) {
+          void load();
+        }
+      });
+      if (cancelled) unsubscribe();
+    })().catch(() => undefined);
+    return () => { cancelled = true; unsubscribe?.(); };
+  }, [workspaceId, load]);
+
   const loadMoreSaved = useCallback(async () => {
     if (!workspaceId || !savedNext || loadingSaved.current) return;
+    const generation = loadGenerationRef.current;
     loadingSaved.current = true;
+    bookmarksDuringPageRef.current = [];
     try {
       const page = await monolithPhoneOperation('listMessageBookmarks', {
         workspaceId, before: savedNext,
       });
+      if (generation !== loadGenerationRef.current) return;
+      const deltas = bookmarksDuringPageRef.current;
       setBookmarks((current) => {
         const seen = new Set(current.map((item) => item.messageId));
-        return [...current, ...page.bookmarks.filter((item) => !seen.has(item.messageId))];
+        const combined = [...current, ...page.bookmarks.filter((item) => !seen.has(item.messageId))];
+        return deltas.reduce(applyBookmarkChange, combined).sort((a, b) =>
+          b.bookmarkedAt - a.bookmarkedAt || a.messageId.localeCompare(b.messageId));
       });
       setSavedNext(page.next);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (generation === loadGenerationRef.current)
+        setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       loadingSaved.current = false;
+      bookmarksDuringPageRef.current = [];
     }
   }, [workspaceId, savedNext]);
+
   useEffect(() => {
     if (!workspaceId) return;
     if (loadedSections.current.workspaceId !== workspaceId)
       loadedSections.current = { workspaceId, needs: false, bookmarks: false };
+    const needsVersion = needsVersionRef.current;
+    const bookmarksVersion = bookmarksVersionRef.current;
     let cancelled = false;
     void (async () => {
       const [identity, relayUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
       if (!identity || cancelled) return;
-      const needsAddress = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/needs-you', { workspaceId });
-      const bookmarksAddress = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/bookmarks', { workspaceId });
       const [savedNeeds, savedBookmarks] = await Promise.all([
-        mobileSurfaceCache.read(needsAddress, isNeedsYouList),
-        mobileSurfaceCache.read(bookmarksAddress, isBookmarkList),
+        mobileSurfaceCache.read(surfaceAddress(relayUrl, identity.publicKey,
+          '/workspace/:id/needs-you', { workspaceId }), isNeedsYouList),
+        mobileSurfaceCache.read(surfaceAddress(relayUrl, identity.publicKey,
+          '/workspace/:id/bookmarks', { workspaceId }), isBookmarkList),
       ]);
       if (cancelled) return;
-      if (savedNeeds && !loadedSections.current.needs) setNeeds(savedNeeds.items);
-      if (savedBookmarks && !loadedSections.current.bookmarks) {
+      if (savedNeeds && !loadedSections.current.needs && needsVersion === needsVersionRef.current)
+        setNeeds(savedNeeds.items);
+      if (savedBookmarks && !loadedSections.current.bookmarks && bookmarksVersion === bookmarksVersionRef.current) {
         setBookmarks(savedBookmarks.bookmarks);
         setSavedNext(savedBookmarks.next);
       }
@@ -255,26 +355,12 @@ export default function TrayScreen() {
     return () => { cancelled = true; };
   }, [workspaceId]);
 
-  // An open tray reads when it opens, when the app comes back to the
-  // foreground (another device may have cleared a cell meanwhile), and when
-  // the Room list hears a message that can need the viewer. Nothing repeats
-  // on a timer.
+  // A held tray paints its last projection immediately. Socket gaps signal
+  // one covering read through the roomless registration above.
   useFocusEffect(
     useCallback(() => {
-      void load();
-      const stopActivity = subscribeNeedsYouActivity(() => void load());
-      let backgrounded = AppState.currentState === 'background';
-      const appState = AppState.addEventListener('change', (state) => {
-        if (state === 'background') backgrounded = true;
-        else if (state === 'active' && backgrounded) {
-          backgrounded = false;
-          void load();
-        }
-      });
-      return () => {
-        stopActivity();
-        appState.remove();
-      };
+      if (loadedWorkspaceRef.current !== workspaceId) void load();
+      return undefined;
     }, [load]),
   );
 
@@ -410,7 +496,6 @@ export default function TrayScreen() {
         workspaceId: item.workspaceId,
         messageId: item.messageId,
       });
-      announceNeedsYouChanged();
     } catch (cause) {
       setNeeds((current) =>
         [item, ...current].sort((left, right) => right.createdAt - left.createdAt),
@@ -437,15 +522,13 @@ export default function TrayScreen() {
     [clear],
   );
 
-  /** Send one Workspace-scoped operation after Undo expires, then reconcile the tray. */
+  /** Send one Workspace-scoped operation after Undo expires. */
   const commitClear = useCallback(async (clear: PendingClear) => {
     const ids = new Set(clear.items.map((item) => item.messageId));
     if (clear.kind === 'needs') {
       setNeeds((current) => current.filter((item) => !ids.has(item.messageId)));
       try {
         await monolithPhoneOperation('clearNeedsYouSection', { workspaceId: clear.workspaceId });
-        announceNeedsYouChanged();
-        await load();
       } catch (cause) {
         setNeeds((current) =>
           [...clear.items, ...current].sort((left, right) => right.createdAt - left.createdAt),
@@ -465,7 +548,7 @@ export default function TrayScreen() {
       );
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [load]);
+  }, []);
 
   /** Send the held clears `which` picks, and stop holding them. */
   const flushClears = useCallback(

@@ -1176,6 +1176,9 @@ describe('phone committed-row live delivery', () => {
     livePaintDiagnostics = false,
     databaseQuery = vi.fn(),
     liveChatCornerStatus?: PhoneService['liveChatCornerStatus'],
+    readLiveDeltas?: PhoneService['readLiveDeltas'],
+    readLiveBookmark?: PhoneService['readLiveBookmark'],
+    liveNeedsYou?: PhoneService['liveNeedsYou'],
   ) {
     const roomId = 'room-live';
     const live = new LiveHub();
@@ -1188,6 +1191,9 @@ describe('phone committed-row live delivery', () => {
         canReadRooms: canReadRoomsFrom(canReadRoom),
         liveDraftSnapshot,
         readLiveDelta,
+        readLiveDeltas,
+        readLiveBookmark,
+        liveNeedsYou,
         projectCommittedLiveDelta,
         liveChatCornerStatus,
       } as unknown as PhoneService,
@@ -1227,6 +1233,118 @@ describe('phone committed-row live delivery', () => {
     live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
     await noDuplicate;
     expect(project).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([1, 2, 8])('reads a cross-process row once for %i sockets', async (count) => {
+    const roomId = 'room-live';
+    const delta = { type: 'message-delta' as const, roomId,
+      message: { id: 'one-row', text: 'hello', createdAt: 1,
+        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Agent' },
+        presentation: 'message' as const } };
+    const batch = vi.fn().mockImplementation(async (_roomId, viewers: string[]) =>
+      new Map(viewers.map((viewer) => [viewer, delta])));
+    const read = vi.fn().mockRejectedValue(new Error('per-socket read'));
+    const { live, socket, port } = await connect(
+      read as PhoneService['readLiveDelta'], undefined, undefined, false,
+      undefined, undefined, batch as PhoneService['readLiveDeltas']);
+    const viewers = [socket];
+    for (let index = 1; index < count; index++) {
+      const next = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+      sockets.push(next);
+      await new Promise<void>((resolve, reject) => {
+        next.once('open', resolve);
+        next.once('error', reject);
+      });
+      const subscribed = nextSocketMessage(next, 'subscribed');
+      next.send(JSON.stringify({ type: 'subscribe', roomId }));
+      await subscribed;
+      viewers.push(next);
+    }
+    const frames = viewers.map((viewer) => nextSocketMessage(viewer, 'message-delta'));
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages',
+      operation: 'INSERT', messageId: 'one-row' });
+    for (const frame of frames) await expect(frame).resolves.toMatchObject(delta);
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(read).not.toHaveBeenCalled();
+    await Promise.all(viewers.map((viewer) => expectNoSocketMessage(viewer, 50)));
+  });
+
+  it('sends owner-scoped resource changes on the shared phone socket', async () => {
+    const { live, socket } = await connect(vi.fn() as PhoneService['readLiveDelta']);
+    const frame = nextSocketMessage(socket, 'resource-change');
+    live.publish({ type: 'resource-change', roomId: '', ownerId: 'viewer',
+      resource: 'workbench', resourceId: 'connection' });
+    await expect(frame).resolves.toEqual({ type: 'resource-change', roomId: '',
+      resource: 'workbench', resourceId: 'connection' });
+    const noLeak = expectNoSocketMessage(socket, 100);
+    live.publish({ type: 'resource-change', roomId: '', ownerId: 'other',
+      resource: 'agent', resourceId: 'other-agent' });
+    await noLeak;
+  });
+
+  it('reads a bookmark once and sends the typed change to both devices', async () => {
+    const bookmark = { messageId: 'saved', workspaceId: 'workspace', roomId: 'room-live',
+      roomName: 'Room', roomKind: 'room' as const, messageCreatedAt: 1,
+      bookmarkedAt: 2, available: true };
+    const read = vi.fn().mockResolvedValue(bookmark);
+    const { live, socket, port } = await connect(
+      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,
+      undefined, undefined, undefined, read as PhoneService['readLiveBookmark']);
+    const second = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+    sockets.push(second);
+    await new Promise<void>((resolve, reject) => {
+      second.once('open', resolve);
+      second.once('error', reject);
+    });
+    const firstFrame = nextSocketMessage(socket, 'bookmark-delta');
+    const secondFrame = nextSocketMessage(second, 'bookmark-delta');
+    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:message_bookmarks',
+      readerId: 'viewer', workspaceId: 'workspace', messageId: 'saved' });
+    await expect(firstFrame).resolves.toMatchObject({ bookmark, messageId: 'saved' });
+    await expect(secondFrame).resolves.toMatchObject({ bookmark, messageId: 'saved' });
+    expect(read).toHaveBeenCalledTimes(1);
+    const removed = nextSocketMessage(socket, 'bookmark-delta');
+    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:message_bookmarks',
+      readerId: 'viewer', workspaceId: 'workspace', messageId: 'saved', operation: 'DELETE' });
+    await expect(removed).resolves.toMatchObject({ messageId: 'saved', bookmark: null });
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends one server-derived Needs-you room slice to each device', async () => {
+    const roomId = 'room-live';
+    const message = { id: 'ask', text: '@viewer please review', createdAt: 1,
+      author: { pubkey: 'agent', kind: 'agent' as const, name: 'Agent' },
+      presentation: 'message' as const, mentionPubkeys: ['viewer'] };
+    const batch = vi.fn().mockImplementation(async (_roomId, viewers: string[]) =>
+      new Map(viewers.map((viewer) => [viewer,
+        { type: 'message-delta', roomId, message }])));
+    const needs = { workspaceId: 'workspace', count: 1,
+      items: [{ messageId: 'ask', workspaceId: 'workspace', roomId,
+        roomName: 'Room', roomKind: 'room', text: 'please review', createdAt: 1 }] };
+    const readNeeds = vi.fn().mockResolvedValue(needs);
+    const { live, socket, port } = await connect(
+      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,
+      undefined, undefined, batch as PhoneService['readLiveDeltas'],
+      undefined, readNeeds as PhoneService['liveNeedsYou']);
+    const second = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+    sockets.push(second);
+    await new Promise<void>((resolve, reject) => {
+      second.once('open', resolve);
+      second.once('error', reject);
+    });
+    const subscribed = nextSocketMessage(second, 'subscribed');
+    second.send(JSON.stringify({ type: 'subscribe', roomId }));
+    await subscribed;
+    const first = nextSocketMessage(socket, 'needs-you-delta');
+    const next = nextSocketMessage(second, 'needs-you-delta');
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages',
+      operation: 'INSERT', messageId: 'ask', needsYouCandidate: true,
+      agentId: 'agent' });
+    await expect(first).resolves.toMatchObject({ type: 'needs-you-delta', count: 1,
+      sourceRoomId: roomId, items: needs.items });
+    await expect(next).resolves.toMatchObject({ type: 'needs-you-delta', count: 1 });
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(readNeeds).toHaveBeenCalledTimes(1);
   });
 
   it('sends append frames and suppresses a duplicate Postgres draft', async () => {

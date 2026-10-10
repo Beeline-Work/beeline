@@ -35,9 +35,12 @@ import {
   MESSAGE_SEARCH_QUERY_MAX_BYTES,
   PHONE_READ_OPERATIONS,
   messageSearchTerms,
+  type MessageBookmarkView,
   type RoomHistoryView,
+  type RoomLiveDelta,
 } from '@beeline/api-contract/phone';
 import type { LiveEvent, LiveHub, LiveTrace } from './live.js';
+import { isNeedsYouAsk } from './needs-you.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
 import { TRANSCRIPTION_MAXIMUM_BYTES, type SpeechTranscriber } from './speech-transcription.js';
@@ -326,6 +329,80 @@ function bearerSecretMatches(secret: string, request: IncomingMessage): boolean 
 }
 
 export function createBeelineServer(options: ServerOptions): Server {
+  // LiveHub invokes every socket listener synchronously with the same event.
+  // Gather those viewers before the microtask starts one authorized row read.
+  // Weak keys release the batch when the notification leaves the bus.
+  const liveRowBatches = new WeakMap<LiveEvent, {
+    viewers: Set<string>;
+    result: Promise<ReadonlyMap<string, RoomLiveDelta>>;
+  }>();
+  const bookmarkReads = new WeakMap<LiveEvent, Promise<MessageBookmarkView | null>>();
+  const cornerStatusReads = new WeakMap<LiveEvent, Map<string,
+    ReturnType<PhoneService['liveChatCornerStatus']>>>();
+  const readCornerStatusForViewer = (event: LiveEvent, roomId: string, viewerId: string) => {
+    let viewers = cornerStatusReads.get(event);
+    if (!viewers) {
+      viewers = new Map();
+      cornerStatusReads.set(event, viewers);
+    }
+    let read = viewers.get(viewerId);
+    if (!read) {
+      read = withLiveDbTask(() => options.phone.liveChatCornerStatus(roomId, viewerId))
+        .finally(() => {
+          viewers!.delete(viewerId);
+          if (!viewers!.size) cornerStatusReads.delete(event);
+        });
+      viewers.set(viewerId, read);
+    }
+    return read;
+  };
+  const needsYouReads = new WeakMap<LiveEvent, Map<string,
+    ReturnType<PhoneService['liveNeedsYou']>>>();
+  const readNeedsYouForViewer = (event: LiveEvent, roomId: string, viewerId: string) => {
+    let viewers = needsYouReads.get(event);
+    if (!viewers) {
+      viewers = new Map();
+      needsYouReads.set(event, viewers);
+    }
+    let read = viewers.get(viewerId);
+    if (!read) {
+      read = withLiveDbTask(() => options.phone.liveNeedsYou(roomId, viewerId))
+        .finally(() => {
+          viewers!.delete(viewerId);
+          if (!viewers!.size) needsYouReads.delete(event);
+        });
+      viewers.set(viewerId, read);
+    }
+    return read;
+  };
+  const readLiveRowForViewer = (
+    event: LiveEvent,
+    roomId: string,
+    viewerId: string,
+    target: { type: 'message'; messageId: string } |
+      { type: 'turn'; agentId: string; requestId: string },
+  ): Promise<RoomLiveDelta | null> => {
+    if (typeof options.phone.readLiveDeltas !== 'function')
+      return options.phone.readLiveDelta(roomId, viewerId, target);
+    let batch = liveRowBatches.get(event);
+    if (!batch) {
+      const viewers = new Set<string>();
+      batch = {
+        viewers,
+        result: Promise.resolve().then(() => {
+          // The synchronous fanout is complete. A later cursor replay of this
+          // event must authorize its own viewers against current membership.
+          liveRowBatches.delete(event);
+          return withLiveDbTask(() => options.phone.readLiveDeltas(
+            roomId, [...viewers], target,
+          ));
+        }),
+      };
+      liveRowBatches.set(event, batch);
+    }
+    batch.viewers.add(viewerId);
+    return batch.result.then((deltas) => deltas.get(viewerId) ?? null);
+  };
   const helperVersionGate =
     options.helperVersionGate ?? new HelperVersionGate(process.env.BEELINE_MIN_HELPER_VERSION);
   const webSockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
@@ -374,6 +451,11 @@ export function createBeelineServer(options: ServerOptions): Server {
       throw new Error('live admission overloaded');
     await new Promise<void>((resolve) => liveDbWaiters.push(resolve));
     return releaseLiveDbTask;
+  };
+  const withLiveDbTask = async <T>(work: () => Promise<T>): Promise<T> => {
+    const release = await acquireLiveDbTask();
+    try { return await work(); }
+    finally { release(); }
   };
   const daemonRegistry = new DaemonConnectionRegistry();
   let shuttingDown = false;
@@ -718,25 +800,82 @@ export function createBeelineServer(options: ServerOptions): Server {
       options.live.humanConnected(principal.identityId);
       // Rooms this socket views hold pushes until it says otherwise or closes.
       const viewingSession = randomUUID();
+      const releases = new Map<string, () => void>();
       let phoneViewClosed = false;
       // Workspace membership notifications survive the deletion cascade and
       // reach the affected identity without requiring a readable Room.
+      let needsYouDelivery = Promise.resolve();
+      const sendNeedsYouDelta = (event: LiveEvent, roomId: string) => {
+        if (!options.phone.liveNeedsYou) return;
+        // A later projection must not overtake an earlier one and then be
+        // overwritten by its stale count or slice on the same socket.
+        needsYouDelivery = needsYouDelivery.then(() =>
+          readNeedsYouForViewer(event, roomId, principal.identityId).then((value) => {
+            if (!value) return;
+            sendLive(JSON.stringify({ type: 'needs-you-delta', roomId: '',
+              sourceRoomId: roomId, ...value }));
+          })).catch(() => sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
+          reason: 'needs-you-gap' })));
+      };
       const releaseWorkspaces = options.live.subscribeAll((event) => {
-        if (event.type === 'resource-change' && event.ownerId === principal.identityId) {
-          sendLive(JSON.stringify({ type: 'resource-change', roomId: '',
-            resource: event.resource, ...(event.resourceId ? { resourceId: event.resourceId } : {}),
-            ...(event.version ? { version: event.version } : {}) }));
+        if (event.type === 'resource-change') {
+          if (event.ownerId === principal.identityId)
+            sendLive(JSON.stringify({ type: 'resource-change', roomId: '',
+              resource: event.resource, ...(event.resourceId ? { resourceId: event.resourceId } : {}),
+              ...(event.version ? { version: event.version } : {}) }));
           return;
         }
-        if (event.type === 'invalidate' && event.roomId === '' &&
-            event.reason === 'postgres:memberships' && event.readerId === principal.identityId)
+        if (event.type !== 'invalidate') return;
+        if (event.roomId !== '') {
+          if (releases.has(event.roomId)) return;
+          if (!event.messageId || !options.phone.liveNeedsYou) return;
+          const local = event.committedRow?.type === 'message' ? event.committedRow.row : null;
+          const candidate = event.needsYouCandidate || event.reason === 'phone-write' ||
+            event.agentId === principal.identityId ||
+            (local && (local.presentation === 'card' || local.presentation === 'system' ||
+              isNeedsYouAsk(local.text)));
+          if (!candidate) return;
+          void readLiveRowForViewer(event, event.roomId, principal.identityId,
+            { type: 'message', messageId: event.messageId }).then((delta) => {
+            if (delta?.type !== 'message-delta') return;
+            const message = delta.message;
+            if (message.author.pubkey === principal.identityId ||
+                message.presentation === 'card' || message.presentation === 'system' ||
+                (message.mentionPubkeys?.includes(principal.identityId) &&
+                  isNeedsYouAsk(message.text))) sendNeedsYouDelta(event, event.roomId);
+          }).catch(() => undefined);
+          return;
+        }
+        if (event.readerId !== principal.identityId) return;
+        if (event.reason === 'postgres:memberships') {
           sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: event.reason }));
+          return;
+        }
+        if (event.reason === 'postgres:needs_you_marks' && event.sourceRoomId) {
+          sendNeedsYouDelta(event, event.sourceRoomId);
+          return;
+        }
+        if (event.reason !== 'postgres:message_bookmarks' || !event.messageId ||
+            !event.workspaceId || !options.phone.readLiveBookmark) return;
+        let read = bookmarkReads.get(event);
+        if (!read) {
+          read = (event.operation === 'DELETE'
+            ? Promise.resolve(null)
+            : withLiveDbTask(() => options.phone.readLiveBookmark(
+              event.messageId!, principal.identityId)))
+            .finally(() => bookmarkReads.delete(event));
+          bookmarkReads.set(event, read);
+        }
+        void read.then((bookmark) => {
+          sendLive(JSON.stringify({ type: 'bookmark-delta', roomId: '',
+            workspaceId: event.workspaceId, messageId: event.messageId, bookmark }));
+        }).catch(() => sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
+          reason: 'bookmark-gap' })));
       });
       const releasePersonalResync = options.live.subscribeResync(() => {
         if (client.readyState === client.OPEN)
           sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: 'reconnect' }));
       });
-      const releases = new Map<string, () => void>();
       // The socket is an ordered stream. Keep the last text handed to this
       // reader so duplicate local/PG publications cost no wire bytes, and a
       // growing draft carries only its new suffix. A new subscription starts
@@ -964,9 +1103,9 @@ export function createBeelineServer(options: ServerOptions): Server {
                         } as const)
                       : undefined;
                   if (!target) {
-                    if (event.reason === 'corner-status' &&
+                    if ((event.reason === 'corner-status' || event.reason === 'corner') &&
                         typeof options.phone.liveChatCornerStatus === 'function') {
-                      void options.phone.liveChatCornerStatus(roomId, principal.identityId)
+                      void readCornerStatusForViewer(event, roomId, principal.identityId)
                         .then((status) => {
                           if (client.readyState !== client.OPEN) return;
                           if (!status) { sendFrame(wireEvent); return; }
@@ -1006,7 +1145,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                   let projectionError: unknown;
                   let committedDelta;
                   try {
-                    committedDelta = committedRow
+                    committedDelta = committedRow &&
+                      (committedRow.type === 'message' || !options.phone.readLiveDeltas)
                       ? options.phone.projectCommittedLiveDelta(roomId, committedRow)
                       : undefined;
                   } catch (error) {
@@ -1016,13 +1156,13 @@ export function createBeelineServer(options: ServerOptions): Server {
                   // mismatch is neither serialized nor retried against attacker-
                   // controlled ids; the canonical PostgreSQL hint remains the
                   // independent recovery path for the real Room.
-                  if (committedRow && !committedDelta && !projectionError) return;
+                  if (committedRow?.type === 'message' && !committedDelta && !projectionError) return;
                   const pendingDelta = (
                     projectionError
                       ? Promise.reject(projectionError)
                       : committedDelta
                         ? Promise.resolve(committedDelta)
-                        : options.phone.readLiveDelta(roomId, principal.identityId, target)
+                        : readLiveRowForViewer(event, roomId, principal.identityId, target)
                   ).then(
                     (delta) => ({ delta }) as const,
                     (error: unknown) => ({ error }) as const,
@@ -1061,6 +1201,13 @@ export function createBeelineServer(options: ServerOptions): Server {
                       rememberPaintTrace(wireTrace, target.type);
                       sendFrame({ ...publicDelta,
                         ...(wireTrace ? { trace: wireTrace } : {}) });
+                      if (result.delta.type === 'message-delta') {
+                        const message = result.delta.message;
+                        if (message.author.pubkey === principal.identityId ||
+                            message.presentation === 'card' || message.presentation === 'system' ||
+                            (message.mentionPubkeys?.includes(principal.identityId) &&
+                              isNeedsYouAsk(message.text))) sendNeedsYouDelta(event, roomId);
+                      }
                     })
                     .catch((error) => {
                       console.error(

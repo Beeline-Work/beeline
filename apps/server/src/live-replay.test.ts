@@ -65,4 +65,35 @@ describe('phone live replay boundary', () => {
     resumed.release();
     subscription.release();
   });
+
+  it('suppresses the Postgres insert after a committed phone write', () => {
+    const live = new LiveHub();
+    const events: string[] = [];
+    const release = live.subscribe('room', (event) => events.push(event.type));
+    live.publish({ type: 'invalidate', roomId: 'room', reason: 'phone-write',
+      messageId: 'human-message' });
+    live.publish({ type: 'invalidate', roomId: 'room', reason: 'postgres:messages',
+      operation: 'INSERT', messageId: 'human-message' });
+    expect(events).toEqual(['invalidate']);
+    release();
+  });
+
+  it('suppresses an identical turn echo but keeps a later status', () => {
+    const live = new LiveHub();
+    const statuses: string[] = [];
+    const release = live.subscribe('room', (event) => {
+      if (event.type === 'invalidate') statuses.push(event.turnStatus ?? 'local');
+    });
+    live.publish({ type: 'invalidate', roomId: 'room', reason: 'turn',
+      agentId: 'agent', requestId: 'request',
+      committedRow: { type: 'turn', row: {
+        room_id: 'room', agent_id: 'agent', request_id: 'request', status: 'working',
+      } as never } });
+    live.publish({ type: 'invalidate', roomId: 'room', reason: 'postgres:agent_turns',
+      agentId: 'agent', requestId: 'request', turnStatus: 'working' });
+    live.publish({ type: 'invalidate', roomId: 'room', reason: 'postgres:agent_turns',
+      agentId: 'agent', requestId: 'request', turnStatus: 'complete' });
+    expect(statuses).toEqual(['local', 'complete']);
+    release();
+  });
 });

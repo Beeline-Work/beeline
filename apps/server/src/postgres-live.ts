@@ -2,6 +2,7 @@ import { Client } from 'pg';
 import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
+import { askSql } from './needs-you.js';
 
 export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
 
@@ -80,13 +81,31 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
         'messageId', COALESCE(NEW.id, OLD.id),
-        'agentId', COALESCE(NEW.author_id, OLD.author_id)
+        'agentId', COALESCE(NEW.author_id, OLD.author_id),
+        'needsYouCandidate', COALESCE(NEW.presentation,OLD.presentation) IN ('card','system')
+          OR (COALESCE(NEW.presentation,OLD.presentation)='message' AND
+            ${askSql('COALESCE(NEW.text,OLD.text)')})
       );
     WHEN 'room_read_marks' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
         'identityId', COALESCE(NEW.identity_id, OLD.identity_id)
+      );
+    WHEN 'message_bookmarks' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '',
+        'identityId', COALESCE(NEW.identity_id, OLD.identity_id),
+        'workspaceId', COALESCE(NEW.workspace_id, OLD.workspace_id),
+        'messageId', COALESCE(NEW.message_id, OLD.message_id)
+      );
+    WHEN 'needs_you_marks' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '',
+        'identityId', COALESCE(NEW.identity_id, OLD.identity_id),
+        'workspaceId', COALESCE(NEW.workspace_id, OLD.workspace_id),
+        'sourceRoomId', (SELECT room_id FROM messages
+          WHERE id=COALESCE(NEW.message_id, OLD.message_id))
       );
     WHEN 'live_outputs' THEN
       payload = jsonb_build_object(
@@ -125,6 +144,7 @@ BEGIN
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
         'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
         'requestId', COALESCE(NEW.request_id, OLD.request_id),
+        'turnStatus', COALESCE(NEW.status, OLD.status),
         'cornerParentId', CASE WHEN TG_OP <> 'UPDATE' OR NEW.status IS DISTINCT FROM OLD.status
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)) END
       );
@@ -242,10 +262,19 @@ BEGIN
         'releaseVersion', NEW.version, 'releaseSha', NEW.sha
       );
   END CASE;
-  payload = payload || jsonb_build_object(
-    'traceId', md5(random()::text || clock_timestamp()::text || txid_current()::text),
-    'databaseAt', floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint
-  );
+  -- A section clear can touch hundreds of marks in one transaction. Equal
+  -- room/reader payloads let PostgreSQL collapse them into one notification.
+  IF TG_TABLE_NAME = 'needs_you_marks' THEN
+    payload = payload || jsonb_build_object(
+      'traceId', md5(txid_current()::text || payload::text),
+      'databaseAt', floor(extract(epoch FROM transaction_timestamp()) * 1000)::bigint
+    );
+  ELSE
+    payload = payload || jsonb_build_object(
+      'traceId', md5(random()::text || clock_timestamp()::text || txid_current()::text),
+      'databaseAt', floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint
+    );
+  END IF;
   IF payload->>'roomId' IS NOT NULL THEN
     PERFORM pg_notify('${POSTGRES_LIVE_CHANNEL}', payload::text);
   END IF;
@@ -270,7 +299,8 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
-    'corner_facts', 'permission_authority', 'room_read_marks',
+    'corner_facts', 'permission_authority', 'room_read_marks', 'message_bookmarks',
+    'needs_you_marks',
     'agent_grants', 'agent_schedules', 'agent_commands',
     'github_installations', 'github_repositories',
     'workspace_connectors', 'workspace_connections', 'agents', 'agent_avatars',
@@ -319,8 +349,12 @@ interface LiveNotificationPayload {
   version?: string;
   messageId?: string;
   requestId?: string;
+  turnStatus?: string;
   agentId?: string;
   identityId?: string;
+  workspaceId?: string;
+  sourceRoomId?: string;
+  needsYouCandidate?: boolean;
   turnId?: string;
   kind?: string;
   observedAt?: number;
@@ -371,8 +405,13 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.version === 'string' ? { version: parsed.version } : {}),
       ...(typeof parsed.agentId === 'string' ? { agentId: parsed.agentId } : {}),
       ...(typeof parsed.identityId === 'string' ? { identityId: parsed.identityId } : {}),
+      ...(typeof parsed.workspaceId === 'string' ? { workspaceId: parsed.workspaceId } : {}),
+      ...(typeof parsed.sourceRoomId === 'string' ? { sourceRoomId: parsed.sourceRoomId } : {}),
+      ...(typeof parsed.needsYouCandidate === 'boolean'
+        ? { needsYouCandidate: parsed.needsYouCandidate } : {}),
       ...(typeof parsed.messageId === 'string' ? { messageId: parsed.messageId } : {}),
       ...(typeof parsed.requestId === 'string' ? { requestId: parsed.requestId } : {}),
+      ...(typeof parsed.turnStatus === 'string' ? { turnStatus: parsed.turnStatus } : {}),
       ...(typeof parsed.turnId === 'string' ? { turnId: parsed.turnId } : {}),
       ...(typeof parsed.kind === 'string' ? { kind: parsed.kind } : {}),
       ...(typeof parsed.observedAt === 'number' ? { observedAt: parsed.observedAt } : {}),
@@ -782,6 +821,21 @@ export class PostgresLiveListener {
           reason: 'postgres:rooms', repositoryChanged: true });
       return;
     }
+    if (payload.table === 'message_bookmarks' && payload.identityId &&
+        payload.workspaceId && payload.messageId) {
+      this.live.publish({ type: 'invalidate', roomId: '',
+        reason: 'postgres:message_bookmarks', readerId: payload.identityId,
+        workspaceId: payload.workspaceId, messageId: payload.messageId,
+        operation: payload.operation });
+      return;
+    }
+    if (payload.table === 'needs_you_marks' && payload.identityId &&
+        payload.sourceRoomId) {
+      this.live.publish({ type: 'invalidate', roomId: '',
+        reason: 'postgres:needs_you_marks', readerId: payload.identityId,
+        sourceRoomId: payload.sourceRoomId });
+      return;
+    }
     const event: LiveEvent = {
       type: 'invalidate',
       roomId: payload.roomId,
@@ -792,6 +846,10 @@ export class PostgresLiveListener {
         : {}),
       ...(payload.messageId ? { messageId: payload.messageId } : {}),
       ...(payload.requestId ? { requestId: payload.requestId } : {}),
+      ...(payload.turnStatus === 'working' || payload.turnStatus === 'complete' ||
+        payload.turnStatus === 'failed' || payload.turnStatus === 'cancelled'
+        ? { turnStatus: payload.turnStatus } : {}),
+      ...(payload.needsYouCandidate ? { needsYouCandidate: true } : {}),
       ...(payload.table === 'agent_commands' ? { targetAgentId: payload.agentId } : {}),
       ...(payload.table === 'agent_commands' && payload.released ? { commandReleased: true } : {}),
       ...(payload.table === 'memberships' && payload.identityId

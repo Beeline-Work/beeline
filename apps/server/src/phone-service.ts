@@ -46,6 +46,7 @@ import type {
   AgentDetailView,
   AgentPairingClaimView,
   ChatListView,
+  ChatListItem,
   ChatListCorner,
   CornerAppView,
   CornerListView,
@@ -53,6 +54,8 @@ import type {
   InviteView,
   MessageSearchSnippetPart,
   MessageSearchView,
+  MessageBookmarkView,
+  NeedsYouItemView,
   RoomLiveDelta,
   RoomHistoryOutline,
   RoomHistoryView,
@@ -419,6 +422,7 @@ interface CornerRow extends RoomRow {
   /** `cornerOwedLookupSql`'s facts; null on the archived page, which skips them. */
   owed: boolean | null;
   owed_viewer: boolean | null;
+  attention: boolean | null;
   follows_viewer: boolean | null;
   /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
   archived_us: string | null;
@@ -1060,44 +1064,120 @@ export class PhoneService {
       { type: 'message'; messageId: string } | { type: 'turn'; agentId: string; requestId: string },
     database: SqlDatabase = this.database,
   ): Promise<RoomLiveDelta | null> {
+    return (await this.readLiveDeltas(roomId, [viewerId], target, database)).get(viewerId) ?? null;
+  }
+
+  /** Resolve one committed row for every viewer listening on this process.
+   * The authorized set and the base row come from one statement, so adding
+   * sockets does not multiply row reads or trust a stale subscribe grant. */
+  async readLiveDeltas(
+    roomId: string,
+    viewerIds: readonly string[],
+    target:
+      { type: 'message'; messageId: string } | { type: 'turn'; agentId: string; requestId: string },
+    database: SqlDatabase = this.database,
+  ): Promise<ReadonlyMap<string, RoomLiveDelta>> {
+    const viewers = [...new Set(viewerIds)];
+    const deltas = new Map<string, RoomLiveDelta>();
+    if (!viewers.length) return deltas;
     if (target.type === 'turn') {
       const row = (
-        await database.query<AgentTurnRow>(
-          `SELECT turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
-             requester.id requested_by
+        await database.query<AgentTurnRow & {
+          authorized_viewers: string[];
+          deck_needs_you: boolean;
+          deck_working: boolean;
+        }>(
+          `WITH authorized AS (
+             SELECT member.identity_id FROM rooms room
+             JOIN memberships member ON member.room_id=room.id
+               AND member.identity_id=ANY($2::text[]) AND member.removed_at IS NULL
+             JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+               AND workspace_member.room_id IS NULL
+               AND workspace_member.identity_id=member.identity_id
+               AND workspace_member.removed_at IS NULL
+             WHERE room.id=$1
+           )
+           SELECT turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
+             requester.id requested_by,
+             ARRAY(SELECT identity_id FROM authorized) authorized_viewers,
+             EXISTS(SELECT 1 FROM permission_authority p
+               WHERE p.status='pending' AND (p.room_id=room.id OR p.room_id IN
+                 (SELECT id FROM rooms WHERE parent_id=room.id))) deck_needs_you,
+             EXISTS(SELECT 1 FROM agent_turns active
+               WHERE active.status='working' AND (active.room_id=room.id OR active.room_id IN
+                 (SELECT id FROM rooms WHERE parent_id=room.id AND archived_at IS NULL))) deck_working
            FROM rooms room
-           JOIN memberships member ON member.room_id=room.id AND member.identity_id=$2
-             AND member.removed_at IS NULL
-           JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
-             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
-             AND workspace_member.removed_at IS NULL
            JOIN agent_turns turn ON turn.room_id=room.id AND turn.agent_id=$3
            LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('turn')}
            LEFT JOIN identities requester ON requester.id=trigger.author_id
              AND requester.kind='human'
-           WHERE room.id=$1
+           WHERE room.id=$1 AND EXISTS(SELECT 1 FROM authorized)
            ORDER BY turn.created_at DESC,turn.request_id DESC LIMIT 1`,
-          [roomId, viewerId, target.agentId],
+          [roomId, viewers, target.agentId],
         )
       ).rows[0];
-      if (!row || row.request_id !== target.requestId) return null;
-      return { type: 'turn-delta', roomId, turn: this.projectAgentTurns([row])[0]! };
+      if (!row || row.request_id !== target.requestId) return deltas;
+      const delta: RoomLiveDelta = {
+        type: 'turn-delta', roomId, turn: this.projectAgentTurns([row])[0]!,
+        agentState: row.deck_needs_you ? 'needs-you' : row.deck_working ? 'working' : null,
+      };
+      for (const viewer of row.authorized_viewers) deltas.set(viewer, delta);
+      return deltas;
     }
     const row = (
-      await database.query<MessageRow>(
-        `SELECT message.*,author.kind author_kind,author.name author_name,
+      await database.query<MessageRow & {
+        authorized_viewers: string[];
+        deck_latest_id: string | null;
+        deck_latest_text: string | null;
+        deck_latest_attachments: MessageRow['attachments'] | null;
+        deck_latest_created_at: Date | null;
+        deck_latest_author_id: string | null;
+        deck_latest_author_kind: 'human' | 'agent' | null;
+        deck_latest_author_name: string | null;
+        deck_latest_author_handle: string | null;
+        deck_latest_author_avatar: string | null;
+        deck_latest_author_face: string | null;
+        deck_latest_tagged_ids: string[] | null;
+      }>(
+        `WITH authorized AS (
+           SELECT member.identity_id FROM rooms room
+           JOIN memberships member ON member.room_id=room.id
+             AND member.identity_id=ANY($3::text[]) AND member.removed_at IS NULL
+           JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL
+             AND workspace_member.identity_id=member.identity_id
+             AND workspace_member.removed_at IS NULL
+           WHERE room.id=$1
+         )
+         SELECT message.*,author.kind author_kind,author.name author_name,
            author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
            ${reactionIdentitiesSql('message')} reaction_identities,
-           ${taggedIdentityIdsSql('message')} tagged_ids
+           ${taggedIdentityIdsSql('message')} tagged_ids,
+           ARRAY(SELECT identity_id FROM authorized) authorized_viewers,
+           latest.id deck_latest_id,latest.text deck_latest_text,
+           latest.attachments deck_latest_attachments,
+           latest.created_at deck_latest_created_at,
+           preview_author.id deck_latest_author_id,
+           preview_author.kind deck_latest_author_kind,
+           preview_author.name deck_latest_author_name,
+           preview_author.handle deck_latest_author_handle,
+           preview_author.avatar deck_latest_author_avatar,
+           preview_author.face_id deck_latest_author_face,
+           CASE WHEN message.deleted_at IS NOT NULL
+             THEN ${taggedIdentityIdsSql('latest')}
+             ELSE '{}'::text[] END deck_latest_tagged_ids
          FROM rooms room
-         JOIN memberships member ON member.room_id=room.id AND member.identity_id=$3
-           AND member.removed_at IS NULL
-         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
-           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
-           AND workspace_member.removed_at IS NULL
          JOIN messages message ON message.room_id=room.id AND message.id=$2
          JOIN identities author ON author.id=message.author_id
-         WHERE room.id=$1 AND ${hiddenWakeCardSql('message')}
+         LEFT JOIN LATERAL (
+           SELECT candidate.* FROM messages candidate
+           WHERE message.deleted_at IS NOT NULL AND candidate.room_id=room.id
+             AND ${visibleChatMessageSql('candidate')}
+           ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 1
+         ) latest ON true
+         LEFT JOIN identities preview_author ON preview_author.id=latest.author_id
+         WHERE room.id=$1 AND EXISTS(SELECT 1 FROM authorized)
+           AND ${hiddenWakeCardSql('message')}
            AND (
              message.presentation<>'activity' OR message.durable_fact IS NOT NULL OR EXISTS(
                SELECT 1 FROM agent_turns turn
@@ -1111,16 +1191,120 @@ export class PhoneService {
                  )
              )
            )`,
-        [roomId, target.messageId, viewerId],
+        [roomId, target.messageId, viewers],
       )
     ).rows[0];
+    if (!row) return deltas;
+    const base = projectedMessage(row, this.publicOrigin);
+    const facts = await this.attachmentFacts([base]);
+    const preview: ChatListItem['latestMessage'] | null =
+      row.deck_latest_id && row.deck_latest_created_at && row.deck_latest_author_id &&
+      row.deck_latest_author_kind && row.deck_latest_author_name
+        ? {
+            id: row.deck_latest_id,
+            text: row.deck_latest_text ?? '',
+            createdAt: unix(row.deck_latest_created_at),
+            author: identity({
+              id: row.deck_latest_author_id, kind: row.deck_latest_author_kind,
+              name: row.deck_latest_author_name, handle: row.deck_latest_author_handle,
+              avatar: row.deck_latest_author_avatar, face_id: row.deck_latest_author_face,
+            }, this.publicOrigin),
+            ...(row.deck_latest_attachments?.length ? {
+              attachments: (row.deck_latest_attachments as NonNullable<RoomViewMessage['attachments']>)
+                .map((attachment) => ({
+                ...attachment,
+                url: attachment.url.startsWith('/')
+                  ? `${this.publicOrigin}${attachment.url}` : attachment.url,
+                ...(attachment.previewUrl?.startsWith('/')
+                  ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` } : {}),
+                ...(attachment.thumbnailUrl?.startsWith('/')
+                  ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` } : {}),
+                })),
+            } : {}),
+          }
+        : null;
+    for (const viewer of row.authorized_viewers) {
+      const message = projectedMessage(row, this.publicOrigin, viewer);
+      deltas.set(viewer, {
+        type: 'message-delta', roomId,
+        message: decorateAttachments([message], facts)[0]!,
+        ...(row.deleted_at ? { deckPreview: preview ? {
+          ...preview,
+          ...(row.deck_latest_tagged_ids?.includes(viewer) ? { mentionsViewer: true as const } : {}),
+        } : null } : {}),
+      });
+    }
+    return deltas;
+  }
+
+  /** One bookmark row for an identity-wide live update. A lost Workspace or
+   * Room membership can only remove fields from the result, never expose a
+   * message the viewer can no longer read. */
+  async readLiveBookmark(messageId: string, viewerId: string): Promise<MessageBookmarkView | null> {
+    const row = (await this.database.query<{
+      message_id: string; workspace_id: string; room_id: string;
+      room_name: string; room_kind: 'room' | 'corner';
+      message_created_at: Date; bookmarked_at: Date; available: boolean;
+      text: string | null; author_id: string | null;
+      author_kind: 'human' | 'agent' | null; author_name: string | null;
+      author_handle: string | null; author_avatar: string | null; author_face: string | null;
+    }>(`SELECT bookmark.message_id,bookmark.workspace_id,bookmark.room_id,
+         COALESCE(room.name,bookmark.source_room_name) room_name,
+         bookmark.source_room_kind room_kind,
+         bookmark.message_created_at,bookmark.created_at bookmarked_at,
+         (message.id IS NOT NULL AND message.deleted_at IS NULL AND room_member.identity_id IS NOT NULL) available,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN message.text END text,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.id END author_id,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.kind END author_kind,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.name END author_name,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.handle END author_handle,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.avatar END author_avatar,
+         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.face_id END author_face
+       FROM message_bookmarks bookmark
+       JOIN memberships workspace_member ON workspace_member.workspace_id=bookmark.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+         AND workspace_member.removed_at IS NULL
+       LEFT JOIN rooms room ON room.id=bookmark.room_id AND room.workspace_id=bookmark.workspace_id
+       LEFT JOIN memberships room_member ON room_member.room_id=room.id
+         AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+       LEFT JOIN messages message ON message.id=bookmark.message_id AND message.room_id=room.id
+       LEFT JOIN identities author ON author.id=message.author_id
+       WHERE bookmark.message_id=$1 AND bookmark.identity_id=$2`,
+    [messageId, viewerId])).rows[0];
     if (!row) return null;
-    const message = projectedMessage(row, this.publicOrigin, viewerId);
     return {
-      type: 'message-delta',
-      roomId,
-      message: decorateAttachments([message], await this.attachmentFacts([message]))[0]!,
+      messageId: row.message_id, workspaceId: row.workspace_id, roomId: row.room_id,
+      roomName: row.room_name, roomKind: row.room_kind,
+      messageCreatedAt: unix(row.message_created_at), bookmarkedAt: unix(row.bookmarked_at),
+      available: row.available,
+      ...(row.available && row.text !== null ? { text: row.text } : {}),
+      ...(row.available && row.author_id && row.author_kind && row.author_name
+        ? { author: identity({ id: row.author_id, kind: row.author_kind,
+            name: row.author_name, handle: row.author_handle,
+            avatar: row.author_avatar, face_id: row.author_face }, this.publicOrigin) }
+        : {}),
     };
+  }
+
+  /** Current count plus only the changed Room's cells. This is a peek: the
+   * 24-hour first-seen clock starts only when the tray's read operation runs. */
+  async liveNeedsYou(roomId: string, viewerId: string): Promise<{
+    workspaceId: string; count: number; items: readonly NeedsYouItemView[];
+  } | null> {
+    const scope = (await this.database.query<{ workspace_id: string }>(
+      `SELECT room.workspace_id FROM rooms room
+       JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+         AND workspace_member.removed_at IS NULL
+       JOIN memberships room_member ON room_member.room_id=room.id
+         AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+       WHERE room.id=$1`, [roomId, viewerId],
+    )).rows[0];
+    if (!scope) return null;
+    const { items } = await needsYouItems(this.database, scope.workspace_id, viewerId,
+      (row) => identity(row, this.publicOrigin));
+    return { workspaceId: scope.workspace_id, count: items.length,
+      items: items.filter((item) => item.roomId === roomId) };
   }
 
   /**
@@ -1398,10 +1582,21 @@ export class PhoneService {
     waitingCornerCount: number;
     openCorners: ChatListCorner[];
     agentState: 'needs-you' | 'working' | null;
+    corners: CornerListView['corners'];
+    nextOpen?: string;
   } | null> {
+    const view = await this.readCorners(parentRoomId, viewerId);
+    if (!view) return null;
     const parent = await this.database.query<{
       needs_you: boolean;
       working: boolean;
+      corner_rows: Array<{
+        id: string; name: string; parent_id: string; archived_at: Date | null;
+        lifecycle: CornerLifecycleView | null; workflow_state: string | null;
+        workflow_outcome: string | null; latest_turn_status: string | null;
+        follows_viewer: boolean | null; latest_created_at: Date | null;
+        owed: boolean; owed_viewer: boolean; attention: boolean;
+      }>;
     }>(
       `SELECT
          EXISTS(SELECT 1 FROM permission_authority p
@@ -1410,57 +1605,42 @@ export class PhoneService {
          EXISTS(SELECT 1 FROM agent_turns t
            WHERE (t.room_id=r.id OR t.room_id IN
              (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL))
-             AND t.status='working') working
+             AND t.status='working') working,
+         COALESCE((SELECT jsonb_agg(to_jsonb(corners) ORDER BY corners.created_at DESC,corners.id)
+           FROM (SELECT c.id,c.name,c.parent_id,c.created_at,c.archived_at,
+             f.lifecycle,f.workflow_state,f.workflow_outcome,
+             turn.status latest_turn_status,
+             ${followsCornerSql('c', '$2')} follows_viewer,
+             lm.created_at latest_created_at,
+             owed.owed,owed.owed_viewer,owed.attention
+           FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+           LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id
+             AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+           LEFT JOIN LATERAL (SELECT status FROM agent_turns WHERE room_id=c.id
+             ORDER BY created_at DESC LIMIT 1) turn ON true
+           ${cornerOwedLookupSql('c', '$2')}
+           WHERE c.parent_id=r.id AND c.archived_at IS NULL AND EXISTS (
+             SELECT 1 FROM memberships child_member WHERE child_member.room_id=c.id
+               AND child_member.identity_id=$2 AND child_member.removed_at IS NULL)
+           ) corners),'[]'::jsonb) corner_rows
        FROM rooms r JOIN memberships member ON member.room_id=r.id
          AND member.identity_id=$2 AND member.removed_at IS NULL
+       JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+         AND workspace_member.removed_at IS NULL
        WHERE r.id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL`,
       [parentRoomId, viewerId],
     );
     if (!parent.rows[0]) return null;
-    const corners = await this.database.query<{
-      id: string;
-      name: string;
-      parent_id: string;
-      archived_at: Date | null;
-      lifecycle: CornerLifecycleView | null;
-      workflow_state: string | null;
-      workflow_outcome: string | null;
-      latest_turn_status: string | null;
-      follows_viewer: boolean | null;
-      latest_created_at: Date | null;
-      owed: boolean;
-      owed_viewer: boolean;
-      attention: boolean;
-    }>(
-      `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
-         turn.status latest_turn_status,
-         ${followsCornerSql('c', '$2')} follows_viewer,
-         lm.created_at latest_created_at,
-         owed.owed,owed.owed_viewer,owed.attention
-       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
-       LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id
-         AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
-       LEFT JOIN LATERAL (SELECT status FROM agent_turns WHERE room_id=c.id
-         ORDER BY created_at DESC LIMIT 1) turn ON true
-       ${cornerOwedLookupSql('c', '$2')}
-       WHERE c.parent_id=$1 AND c.archived_at IS NULL AND EXISTS (
-         SELECT 1 FROM memberships member WHERE member.room_id=c.id
-           AND member.identity_id=$2 AND member.removed_at IS NULL)
-       ORDER BY c.created_at DESC,c.id`,
-      [parentRoomId, viewerId],
-    );
-    const counts = chatCornerCounts(corners.rows).get(parentRoomId) ?? {
-      cornerCount: 0,
-      waitingCornerCount: 0,
-      openCorners: [],
+    const counts = chatCornerCounts(parent.rows[0].corner_rows.map((corner) =>
+      reviveDates(corner, ['archived_at', 'latest_created_at']))).get(parentRoomId) ?? {
+      cornerCount: 0, waitingCornerCount: 0, openCorners: [],
     };
-    return {
-      ...counts,
-      agentState: parent.rows[0].needs_you
-        ? 'needs-you'
-        : parent.rows[0].working
-          ? 'working'
-          : null,
+    return { ...counts,
+      agentState: parent.rows[0].needs_you ? 'needs-you'
+        : parent.rows[0].working ? 'working' : null,
+      corners: view.corners,
+      ...(view.nextOpen ? { nextOpen: view.nextOpen } : {}),
     };
   }
 
@@ -2970,7 +3150,7 @@ export class PhoneService {
         turn.status latest_turn_status,turn.created_at latest_turn_created_at,
         app_binding.installation_id app_installation_id,
         app_binding.instance_id app_instance_id,app_installation.manifest app_manifest,
-        ${archived ? 'NULL::boolean owed,NULL::boolean owed_viewer' : 'owed.owed,owed.owed_viewer'},
+        ${archived ? 'NULL::boolean owed,NULL::boolean owed_viewer,NULL::boolean attention' : 'owed.owed,owed.owed_viewer,owed.attention'},
         ${archived ? 'NULL::boolean' : followsCornerSql('c', '$2')} follows_viewer,
         ${archivedMicros}::text archived_us,
         ${createdMicros}::text created_us,

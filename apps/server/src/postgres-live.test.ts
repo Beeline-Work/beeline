@@ -187,6 +187,58 @@ describe('Postgres live fanout', () => {
     await listener.stop();
   });
 
+  it('routes a bookmark change to its owner without broadcasting its content', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const events: LiveEvent[] = [];
+    live.subscribeAll((event) => events.push(event));
+    void listener.run();
+    await eventually(() => listener.projectionHealth().connected);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text)
+      VALUES('saved-message',$1,$2,'private content')`, [ROOM, AUTHOR]);
+    await database.query(`INSERT INTO message_bookmarks(
+      identity_id,workspace_id,room_id,message_id,source_room_name,source_room_kind,
+      message_created_at
+    ) SELECT $1,$2,$3,id,'Room','room',created_at FROM messages WHERE id='saved-message'`,
+    [AUTHOR, WORKSPACE, ROOM]);
+    await eventually(() => events.some((event) => event.type === 'invalidate' &&
+      event.reason === 'postgres:message_bookmarks'));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'invalidate', roomId: '', reason: 'postgres:message_bookmarks',
+      readerId: AUTHOR, workspaceId: WORKSPACE, messageId: 'saved-message',
+    }));
+    expect(client.payloads.find((payload) => payload.includes('message_bookmarks')))
+      .not.toContain('private content');
+  });
+
+  it('coalesces a section clear into one Needs-you wake per Room', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const events: LiveEvent[] = [];
+    live.subscribeAll((event) => events.push(event));
+    void listener.run();
+    await eventually(() => listener.projectionHealth().connected);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text)
+      VALUES('ask-one',$1,$2,'@author please review?'),
+        ('ask-two',$1,$2,'@author please approve?')`, [ROOM, AUTHOR]);
+    await database.transaction(async (db) => {
+      await db.query(`INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at)
+        VALUES($1,'ask-one',$2,now()),($1,'ask-two',$2,now())`, [AUTHOR, WORKSPACE]);
+    });
+    await eventually(() => events.some((event) => event.type === 'invalidate' &&
+      event.reason === 'postgres:needs_you_marks'));
+    expect(events.filter((event) => event.type === 'invalidate' &&
+      event.reason === 'postgres:needs_you_marks')).toEqual([
+      expect.objectContaining({ roomId: '', readerId: AUTHOR, sourceRoomId: ROOM }),
+    ]);
+    expect(client.payloads.filter((payload) => payload.includes('needs_you_marks')))
+      .toHaveLength(1);
+  });
+
   it('bounds notification DB projections and coalesces a repeated repository wake', async () => {
     let releaseReads!: () => void;
     const readBarrier = new Promise<void>((resolve) => { releaseReads = resolve; });

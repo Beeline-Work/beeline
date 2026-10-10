@@ -601,11 +601,15 @@ export type RoomLiveDelta =
       readonly type: 'message-delta';
       readonly roomId: string;
       readonly message: RoomViewMessage;
+      /** Present on deletion: the deck's next visible preview, or null. */
+      readonly deckPreview?: ChatListItem['latestMessage'] | null;
     }
   | {
       readonly type: 'turn-delta';
       readonly roomId: string;
       readonly turn: RoomViewAgentTurn;
+      /** Current top-level Room rollup, when the committed row was read from the database. */
+      readonly agentState?: 'needs-you' | 'working' | null;
     };
 
 export type RoomView = {

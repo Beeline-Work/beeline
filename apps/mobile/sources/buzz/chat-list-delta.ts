@@ -7,8 +7,10 @@ import type {
 } from '@beeline/buzz-client';
 
 export type ChatListDelta =
-  | { readonly type: 'message-delta'; readonly roomId: string; readonly message: RoomViewMessage }
-  | { readonly type: 'turn-delta'; readonly roomId: string; readonly turn: RoomViewAgentTurn }
+  | { readonly type: 'message-delta'; readonly roomId: string; readonly message: RoomViewMessage;
+      readonly deckPreview?: ChatListItem['latestMessage'] | null }
+  | { readonly type: 'turn-delta'; readonly roomId: string; readonly turn: RoomViewAgentTurn;
+      readonly agentState?: 'needs-you' | 'working' | null }
   | { readonly type: 'corner-status'; readonly roomId: string; readonly cornerCount: number;
       readonly waitingCornerCount: number; readonly openCorners: readonly ChatListCorner[];
       readonly agentState: 'needs-you' | 'working' | null };
@@ -60,8 +62,19 @@ function applyMessage(view: ChatListView, index: number, message: RoomViewMessag
 export function applyChatListDelta(view: ChatListView, delta: ChatListDelta): ChatListView {
   const index = view.chats.findIndex((item) => item.room.id === delta.roomId);
   if (index < 0) return view;
-  if (delta.type === 'message-delta') return applyMessage(view, index, delta.message);
   const item = view.chats[index]!;
+  if (delta.type === 'message-delta') {
+    if (delta.message.deleted && 'deckPreview' in delta &&
+        item.latestMessage?.id === delta.message.id) {
+      const { latestMessage: _old, ...rest } = item;
+      const next = { ...rest, ...(delta.deckPreview ? { latestMessage: delta.deckPreview } : {}) };
+      const chats = view.chats.filter((_, position) => position !== index);
+      const at = chats.findIndex((candidate) => chatActivityAt(candidate) <= chatActivityAt(next));
+      chats.splice(at < 0 ? chats.length : at, 0, next);
+      return { ...view, chats };
+    }
+    return applyMessage(view, index, delta.message);
+  }
   if (delta.type === 'corner-status') {
     const { agentState: _oldState, attentionReason: _oldReason, ...rest } = item;
     const next: ChatListItem = { ...rest,
@@ -76,21 +89,31 @@ export function applyChatListDelta(view: ChatListView, delta: ChatListDelta): Ch
     chats.splice(at < 0 ? chats.length : at, 0, next);
     return { ...view, chats };
   }
+  if ('agentState' in delta) {
+    const { agentState: _oldState, attentionReason: _oldReason, ...rest } = item;
+    const chats = [...view.chats];
+    chats[index] = { ...rest,
+      ...(delta.agentState ? { agentState: delta.agentState } : {}),
+      ...(delta.agentState === 'needs-you'
+        ? { attentionReason: { kind: 'approval' as const } } : {}),
+    };
+    return { ...view, chats };
+  }
   if (delta.turn.status !== 'working' || item.agentState) return view;
   const chats = [...view.chats];
   chats[index] = { ...item, agentState: 'working' };
   return { ...view, chats };
 }
 
-/** A deleted preview or settled turn needs the server's full Room-list projection. */
+/** Older live frames without a preview or terminal state need one covering read. */
 export function chatListDeltaNeedsRead(view: ChatListView, delta: ChatListDelta): boolean {
   if (delta.type === 'corner-status') return false;
   if (delta.type === 'message-delta') {
-    return delta.message.deleted === true && view.chats.some((item) =>
+    return delta.message.deleted === true && !('deckPreview' in delta) && view.chats.some((item) =>
       item.room.id === delta.roomId && item.latestMessage?.id === delta.message.id);
   }
-  if (delta.type !== 'turn-delta' || delta.turn.status === 'working') return false;
-  return view.chats.find((item) => item.room.id === delta.roomId)?.agentState === 'working';
+  return !('agentState' in delta) && delta.turn.status !== 'working' &&
+    view.chats.find((item) => item.room.id === delta.roomId)?.agentState === 'working';
 }
 
 /**

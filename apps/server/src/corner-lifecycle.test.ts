@@ -21,7 +21,6 @@ import {
   cornerMergeGate,
   claimCornerMergeAttempt,
   deleteStoredCornerWorkflows,
-  REVIEW_HANDBACK_LIMIT,
 } from './corner-lifecycle.js';
 import {
   createAgentCommand,
@@ -718,11 +717,11 @@ describe('checks dispatch (rows 6-8)', () => {
     expect((startCard as unknown as { roleBindings: Record<string, string> }).roleBindings.reviewer).toBe(
       'live:parent.reviewer_agent_id',
     );
-    // A real changes-requested round sends it back to implement...
+    // A review that ends without a PASS leaves it in review...
     const [review] = await commands(B, cornerId);
     await claim(review!);
     await result(review!, 'Review complete: please fix the race condition.');
-    expect(await currentState(cornerId)).toBe('implement');
+    expect(await currentState(cornerId)).toBe('review');
     // ...the parent Room's reviewer is reassigned to itself (the only other
     // agent identity this fixture has) while the corner is mid-flight...
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
@@ -788,30 +787,34 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_land')).toHaveLength(1);
   });
 
-  it('a changes-requested review records review -> implement', async () => {
+  it('a review that ends without a PASS records nothing and stays in review', async () => {
     const cornerId = await toReview();
+    const before = await cards(cornerId);
     const [review] = await commands(B, cornerId);
     await claim(review!);
     await result(review!, 'Review complete: please fix the race condition.');
-    expect(await currentState(cornerId)).toBe('implement');
-    expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'review', outcome: 'changes_requested', toState: 'implement' }),
-    );
+    expect(await currentState(cornerId)).toBe('review');
+    expect(await cards(cornerId)).toEqual(before);
+    expect(await reasons(cornerId, A)).not.toContain('corner_review');
   });
 
-  it('exceeding the handback limit records review -> ask_human and stops there', async () => {
+  it('Reproduction REVIEW-TAG-1: reviewer and implementer trade tagged messages on one green head and it stays in review', async () => {
     const cornerId = await toReview();
-    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT + 1; round += 1) {
-      const [review] = await commands(B, cornerId);
+    // Agent-to-agent tags stop at COMMAND_MAX_DEPTH; two full rounds fit.
+    for (let round = 1; round <= 2; round += 1) {
+      const [review] = (await commands(B, cornerId)).slice(-1);
       await claim(review!, `r${round}`);
-      await result(review!, `Round ${round}: still not fixed.`, `r${round}`);
-      const [handback] = (await commands(A, cornerId)).filter((c) => c.reason === 'corner_review');
-      if (handback) {
-        await claim(handback, `w${round}`);
-        await result(handback, '@goosy still not right, look again.', `w${round}`);
-      }
+      await result(review!, `@hoots round ${round}: still not fixed.`, `r${round}`);
+      const [reply] = (await commands(A, cornerId)).slice(-1);
+      await claim(reply!, `w${round}`);
+      await result(reply!, '@goosy the replay recipe is attached; look again.', `w${round}`);
+      expect(await currentState(cornerId)).toBe('review');
     }
-    expect(await currentState(cornerId)).toBe('ask_human');
+    expect((await cards(cornerId)).map((card) => card.outcome)).not.toContain('changes_requested');
+    expect(await reasons(cornerId, A)).not.toContain('corner_review');
+    // The reviewer's PASS on that same head still opens the merge.
+    await daemon.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_land')).toHaveLength(1);
   });
 });
 
@@ -1404,11 +1407,18 @@ describe('re-runs and pushes out of review (AC-1)', () => {
     );
   });
 
-  it("the reviewer's PASS after a handback on the same head goes implement -> review -> review and wakes the implementer to merge", async () => {
+  it("the reviewer's PASS on a corner left in a recorded handback goes implement -> review -> review and wakes the implementer to merge", async () => {
     const cornerId = await inReview();
-    const [review] = await commands(B, cornerId);
-    await claim(review!);
-    await result(review!, '@hoots please fix the race.');
+    // Servers before handbacks were removed left runs here.
+    await db.query(
+      `UPDATE messages SET card=card||jsonb_build_object('fromState',card->>'toState','toState','implement','outcome','changes_requested')
+       WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type=$2 ORDER BY (card->>'seq')::int DESC LIMIT 1)`,
+      [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
+    );
+    await db.query(
+      `UPDATE corner_facts SET workflow_state='implement',workflow_outcome='changes_requested' WHERE corner_id=$1`,
+      [cornerId],
+    );
     expect(await currentState(cornerId)).toBe('implement');
     await approve(cornerId);
     expect(await currentState(cornerId)).toBe('review');
@@ -1440,15 +1450,6 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
     await pushToCorner(cornerId, SHA);
     await pushToCorner(cornerId, SHA);
     expect((await cards(cornerId)).filter((card) => card.outcome === 'pushed')).toHaveLength(1);
-  });
-
-  it('changes requested wakes the implementer once', async () => {
-    const cornerId = await inReview();
-    const [review] = await commands(B, cornerId);
-    await claim(review!);
-    await result(review!, 'Please fix the race.');
-    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_review')).toHaveLength(1);
-    expect(await reasons(cornerId, B)).toEqual(['subscribed_event']);
   });
 });
 
@@ -1595,19 +1596,6 @@ describe('a person hands the corner to another agent (the implementer follows th
     await redHead(cornerId, 3, SHA);
     expect((await reasons(cornerId, B)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(0);
-  });
-
-  it('a review handback wakes the tagged implementer, not the opener', async () => {
-    const cornerId = await open('owner/widgets');
-    await taggableMember(cornerId);
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await say(cornerId, '@sol take this one');
-    await greenHead(cornerId, 7, SHA);
-    const [review] = await commands(B, cornerId);
-    await claim(review!);
-    await result(review!, 'Please fix the race.');
-    expect((await reasons(cornerId, D)).filter((reason) => reason === 'corner_review')).toHaveLength(1);
-    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_review')).toHaveLength(0);
   });
 
   it('a refused merge wakes the tagged implementer, not the opener', async () => {
@@ -1786,36 +1774,6 @@ describe('loop caps (AC-3)', () => {
       expect.objectContaining({ fromState: 'ask_human', outcome: 'pushed', toState: 'checks' }),
     );
   }, 60_000);
-
-  it(`the ${REVIEW_HANDBACK_LIMIT + 1}th handback on one head moves to ask_human; a new push resets the count`, async () => {
-    const cornerId = await inReview();
-    async function handBack(round: string) {
-      const [review] = (await commands(B, cornerId)).slice(-1);
-      await claim(review!, `r${round}`);
-      await result(review!, `Round ${round}: still not fixed.`, `r${round}`);
-      const [handback] = (await commands(A, cornerId)).filter((c) => c.reason === 'corner_review');
-      if (handback) {
-        await claim(handback, `w${round}`);
-        await result(handback, '@goosy look again.', `w${round}`);
-      }
-    }
-    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT; round += 1) await handBack(String(round));
-    expect(await currentState(cornerId)).toBe('implement');
-    // A push resets the per-head count.
-    await greenHead(cornerId, 7, '8'.repeat(40));
-    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT; round += 1) await handBack(`b${round}`);
-    expect(await currentState(cornerId)).toBe('implement');
-    await handBack('last');
-    expect(await currentState(cornerId)).toBe('ask_human');
-    const line = (
-      await db.query<{ system_event: { subject: { id?: string } } }>(
-        `SELECT system_event FROM messages WHERE room_id=$1 AND card_type='corner-review-deadlock'`,
-        [cornerId],
-      )
-    ).rows;
-    expect(line).toHaveLength(1);
-    expect(line[0]!.system_event.subject.id).toBe(H);
-  });
 });
 
 describe("the configured reviewer's verdict (AC-4)", () => {

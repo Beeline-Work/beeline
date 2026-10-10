@@ -190,10 +190,10 @@ The PR body MUST have ## Reproduced and ## Demonstrated. Cite Reproduction <id> 
 No unrequested features, flags, compatibility shims or refactors.`;
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
-  "You are this Room's configured reviewer. A review turn prompt names the latest stable green PR head. Review and approve only that exact head; if no stable green head is named, end the turn without a verdict. Never merge a pull request you review.";
+  "You are this Room's configured reviewer. Your PASS is approve_merge on the current green PR head, which your turn prompt names. Call it when that head is ready to merge. Never merge a pull request you review.";
 
 export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
-  'There is no stable green PR head for this active reviewer turn. Do not review or call approve_merge. End this turn without a verdict; the next green transition will wake you.';
+  'The current PR head is not green, so approve_merge on it fails now. The server wakes you when checks pass on the current head.';
 
 export const CORNER_DELIVERY_NUDGE =
   'Only when you write code in this corner and the brief calls for repository changes, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the brief; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn. Otherwise do not commit, push or open a PR; deliver with post_artifact.';

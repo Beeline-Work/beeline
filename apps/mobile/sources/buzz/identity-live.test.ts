@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   isWorkspaceListView,
   isWorkspaceView,
+  type RoomView,
   type WorkspaceListView,
   type WorkspaceView,
 } from '@beeline/buzz-client';
@@ -35,10 +36,8 @@ vi.mock('./person-name', () => ({
   savePreferredPersonName: async (pubkey: string, name: string) => { savedNames.push([pubkey, name]); },
 }));
 
-const {
-  applyPersonChanged, applyWorkspaceChanged, patchIdentity, subscribeOwnIdentityChange,
-  subscribePersonChange,
-} = await import('./identity-live');
+const { applyPersonChanged, applyWorkspaceChanged, subscribeOwnIdentityChange } = await import('./identity-live');
+const { IdentitySelection, identityScope } = await import('./identity-records');
 const { mobileSurfaceCache, surfaceAddress } = await import('./surface-storage');
 const records = await import('./workspace-records');
 
@@ -90,32 +89,57 @@ describe('live Workspace and person changes', () => {
       .toMatchObject({ name: 'Atelier', avatar: 'https://relay.test/w.png', createdAt: 1 });
   });
 
-  it('renames a person as member, agent owner and paged record, but not anyone else', async () => {
+  it('renames a person as member, agent owner and roster record, but not anyone else', async () => {
     const scope = records.workspaceRecordScope(relay, viewer, workspaceId);
-    records.recordWorkspaceRows(scope, workspaceView().members);
     const untouched = mobileSurfaceCache.peek(detailAddress, isWorkspaceView)!.members[0];
     await applyPersonChanged({ ...mateIdentity, name: 'Mate Renamed', face: 'fox' });
     const view = mobileSurfaceCache.peek(detailAddress, isWorkspaceView)!;
     expect(view.members[1]!.identity).toEqual({ ...mateIdentity, name: 'Mate Renamed', face: 'fox' });
     expect(view.agents[0]!.owner).toEqual({ ...mateIdentity, name: 'Mate Renamed', face: 'fox' });
     expect(view.members[0]).toBe(untouched);
-    expect(records.currentWorkspaceRecord(scope, mate)?.identity.name).toBe('Mate Renamed');
+    expect(records.workspaceRecord(scope, mate)?.identity.name).toBe('Mate Renamed');
     expect(savedNames).toEqual([]);
     expect(savedLevels).toEqual([]);
   });
 
-  it('tells an open Room session about another person\'s change so it can patch its bylines', async () => {
-    let room: unknown = {
+  it('lets an open Room read before the change select its members and bylines', async () => {
+    const readAt = mobileSurfaceCache.now();
+    const room = {
       members: [{ identity: mateIdentity, role: 'member' }],
-      messages: [{ id: 'm1', author: mateIdentity, text: 'hi' }],
-    };
-    const stop = subscribePersonChange((person) => { room = patchIdentity(room, person); });
+      messages: [{ id: 'm1', author: mateIdentity, text: 'hi', reactions: [{ members: [mateIdentity] }] }],
+      viewer: { identity: viewerIdentity, role: 'owner' },
+    } as unknown as RoomView;
     await applyPersonChanged({ ...mateIdentity, name: 'Mate Again' });
-    stop();
-    expect(room).toEqual({
-      members: [{ identity: { ...mateIdentity, name: 'Mate Again' }, role: 'member' }],
-      messages: [{ id: 'm1', author: { ...mateIdentity, name: 'Mate Again' }, text: 'hi' }],
-    });
+    const selected = new IdentitySelection(identityScope(relay, viewer), readAt).roomView(room);
+    expect(selected.members[0]!.identity.name).toBe('Mate Again');
+    expect(selected.messages[0]!.author.name).toBe('Mate Again');
+    expect(selected.messages[0]!.reactions![0]!.members![0]!.name).toBe('Mate Again');
+    expect(selected.viewer).toBe(room.viewer);
+    // A Room read after the change already carries the server's answer.
+    const later = new IdentitySelection(identityScope(relay, viewer), mobileSurfaceCache.now()).roomView(room);
+    expect(later).toBe(room);
+  });
+
+  it('fences a Workspace read in flight when the change lands, and keeps a later read', async () => {
+    let answer!: (value: WorkspaceView) => void;
+    const inFlight = mobileSurfaceCache.fetch(detailAddress, isWorkspaceView,
+      () => new Promise<WorkspaceView>((resolve) => { answer = resolve; }));
+    await applyPersonChanged({ ...mateIdentity, name: 'Mate Renamed' });
+    answer(workspaceView());
+    expect((await inFlight)!.members[1]!.identity.name).toBe('Mate Renamed');
+    const later = workspaceView();
+    await mobileSurfaceCache.fetch(detailAddress, isWorkspaceView, async () => ({
+      ...later,
+      members: [later.members[0]!, { ...later.members[1]!, identity: { ...mateIdentity, name: 'Server Name' } }],
+    }));
+    expect(mobileSurfaceCache.peek(detailAddress, isWorkspaceView)!.members[1]!.identity.name).toBe('Server Name');
+  });
+
+  it('applies a Workspace rename to an entry restored from storage afterwards', async () => {
+    mobileSurfaceCache.clear();
+    await applyWorkspaceChanged({ id: workspaceId, name: 'Atelier' });
+    const restored = await mobileSurfaceCache.read(listAddress, isWorkspaceListView);
+    expect(restored!.workspaces[0]!.name).toBe('Atelier');
   });
 
   it('refreshes the viewer\'s own name and push level from another device', async () => {

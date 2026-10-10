@@ -1611,7 +1611,8 @@ export class PhoneService {
         membersTruncated: roster.membersTruncated,agentsTruncated: roster.agentsTruncated,
       };
     }
-    const detail = await this.database.query<{
+    // One profile read: the person, their grants and the agents they own.
+    const [detail, owned] = await Promise.all([this.database.query<{
       role: 'owner' | 'admin' | 'member' | 'spectator';
       viewer_row: IdentityRow;
       member_row: MemberRow | null;
@@ -1648,9 +1649,10 @@ export class PhoneService {
           ORDER BY g.created_at DESC,g.id LIMIT $4
         ) grant_row),'[]'::jsonb) grant_rows
       FROM authorized JOIN identities viewer ON viewer.id=$2`,
-      [workspaceId, viewerId, query.memberId, PROFILE_GRANT_LIMIT]);
+      [workspaceId, viewerId, query.memberId, PROFILE_GRANT_LIMIT]),
+    this.workspaceRoster(workspaceId, viewerId, { kind: 'agent', ownerId: query.memberId })]);
     const row = detail.rows[0];
-    if (!row) return null;
+    if (!row || !owned) return null;
     const member = row.member_row ? reviveDates(row.member_row, ['presence_updated_at']) : null;
     if (member) {
       const presence = await this.optionalEnrichment('member-presence',
@@ -1666,9 +1668,10 @@ export class PhoneService {
       viewer: { identity: identity(row.viewer_row, this.publicOrigin), role,
         permissions: { send: role !== 'spectator', manage: role === 'owner' || role === 'admin' } },
       members: member ? this.projectMembers([member], null) : [],
-      agents: [],grants: this.projectMemberGrantRows(row.grant_rows.map((grant) =>
+      agents: owned.agents,grants: this.projectMemberGrantRows(row.grant_rows.map((grant) =>
         reviveDates(grant, ['created_at', 'decided_at', 'expires_at']))),
-      membersTruncated: false,agentsTruncated: false,
+      agentTotal: owned.agentTotal,
+      membersTruncated: false,agentsTruncated: owned.agentsTruncated,
     };
   }
 

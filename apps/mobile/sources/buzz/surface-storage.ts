@@ -8,6 +8,7 @@ import {
   type SignedOutboxRecord,
   type SurfaceCacheAddress,
 } from '@beeline/buzz-client';
+import { selectIdentities } from './identity-records';
 import { stripRetiredAgentNotices } from './retired-agent-notices';
 import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
 import { SurfaceRegistry } from './surface-registry';
@@ -50,7 +51,8 @@ const durableSurfaceCache = new SurfaceResponseCache(
   },
   stripRetiredAgentNotices,
 );
-export const mobileSurfaceCache = new SurfaceRegistry(durableSurfaceCache, stripRetiredAgentNotices);
+export const mobileSurfaceCache = new SurfaceRegistry(
+  durableSurfaceCache, stripRetiredAgentNotices, selectIdentities);
 
 // Another tab's sign-out removes the shared responses; drop this tab's hot
 // copies so it neither shows nor writes them back.

@@ -100,16 +100,38 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: VIEWER, secretKey: new Uint8Array(32) })),
 }));
-vi.mock('@/buzz/surface-storage', () => ({
-  mobileSurfaceCache: {
-    read: vi.fn(async () => null),
-    write: vi.fn(async () => undefined),
-    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
-    subscribe: vi.fn(() => () => undefined),
-    peek: vi.fn(() => null),
-  },
-  surfaceAddress: vi.fn(() => 'surface-address'),
-}));
+vi.mock('@/buzz/surface-storage', () => {
+  // One shared value per address, so the shared Workspace watch sees the read.
+  const values = new Map<string, unknown>();
+  const listeners = new Map<string, Set<() => void>>();
+  const key = (address: unknown) => JSON.stringify(address);
+  const write = async (address: unknown, value: unknown) => {
+    values.set(key(address), value);
+    for (const listener of listeners.get(key(address)) ?? []) listener();
+  };
+  return {
+    mobileSurfaceCache: {
+      read: vi.fn(async () => null),
+      write: vi.fn(write),
+      fetch: vi.fn(async (address: unknown, _guard: unknown, request: () => Promise<unknown>) => {
+        const value = await request();
+        await write(address, value);
+        return value;
+      }),
+      subscribe: vi.fn((address: unknown, listener: () => void) => {
+        const set = listeners.get(key(address)) ?? new Set();
+        set.add(listener);
+        listeners.set(key(address), set);
+        return () => set.delete(listener);
+      }),
+      peek: vi.fn((address: unknown) => values.get(key(address)) ?? null),
+      observe: vi.fn(() => () => undefined),
+      now: vi.fn(() => 0),
+      fenceEndpoint: vi.fn(() => 0),
+    },
+    surfaceAddress: vi.fn(() => 'surface-address'),
+  };
+});
 vi.mock('@/buzz/room-view-presentation', () => ({ workspaceRailItem: (value: any) => value }));
 vi.mock('@/components/buzz/CommunityRail', async () => {
   const ReactModule = await import('react');

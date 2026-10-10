@@ -1,9 +1,4 @@
-import {
-  isWorkspaceView,
-  type AgentDetailView,
-  type WorkspaceView,
-} from '@beeline/buzz-client';
-import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
+import type { AgentDetailView, WorkspaceView } from '@beeline/buzz-client';
 
 type WorkspaceAgentView = WorkspaceView['agents'][number];
 
@@ -29,34 +24,3 @@ export function workspaceAgentFromDetail(
     ...(detail.owner ? { owner: detail.owner } : {}),
   };
 }
-
-/**
- * Patch one agent in the shared `/workspace/:id` entry so every mounted reader
- * (Members under a profile, Room bylines, mention menu) repaints at once.
- * `null` removes the agent.
- */
-export async function patchWorkspaceAgent(
-  relayUrl: string,
-  viewerPubkey: string,
-  workspaceId: string,
-  agentPubkey: string,
-  detail: AgentDetailView | null,
-): Promise<void> {
-  const address = surfaceAddress(relayUrl, viewerPubkey, '/workspace/:id', { workspaceId });
-  const current = await mobileSurfaceCache.read(address, isWorkspaceView);
-  if (!current) return;
-  const index = current.agents.findIndex((agent) => agent.identity.pubkey === agentPubkey);
-  if (index < 0) return;
-  const agents = detail
-    ? current.agents.map((agent, at) => (at === index ? workspaceAgentFromDetail(agent, detail) : agent))
-    : current.agents.filter((_, at) => at !== index);
-  const next: WorkspaceView = {
-    ...current,
-    agents,
-    ...(!detail && current.agentTotal !== undefined
-      ? { agentTotal: Math.max(0, current.agentTotal - 1) }
-      : {}),
-  };
-  await mobileSurfaceCache.write(address, next, isWorkspaceView);
-}
-

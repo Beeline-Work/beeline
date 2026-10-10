@@ -932,6 +932,7 @@ export type WorkspaceView = {
 export type WorkspaceMemberListView = {
   readonly viewer?: RoomViewer;
   readonly members: readonly RoomViewMember[];
+  /** On a single-human profile query: the first page of agents that person owns. */
   readonly agents: readonly WorkspaceAgentView[];
   /** Present on a single-human profile query; absent from ordinary roster pages. */
   readonly grants?: readonly WorkspaceMemberGrantView[];

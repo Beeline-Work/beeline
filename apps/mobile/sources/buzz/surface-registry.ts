@@ -1,6 +1,9 @@
 import { surfaceCacheKey, type SurfaceCacheAddress, type SurfaceResponseCache } from '@beeline/buzz-client';
 
 type Guard<T> = (value: unknown) => value is T;
+/** The projection a surface reads, selected from the stored value and the time it was stored. */
+type Select = (address: SurfaceCacheAddress, value: unknown, stamp: number) => unknown;
+type Observer = (address: SurfaceCacheAddress, value: unknown, stamp: number) => void;
 const MAX_HOT_SURFACES = 128;
 
 /** Validated projections shared by mounted routes and restored from durable storage on a miss. */
@@ -10,11 +13,17 @@ export class SurfaceRegistry {
   private readonly fetches = new Map<string, Promise<unknown | null>>();
   private readonly listeners = new Map<string, Set<() => void>>();
   private readonly revisions = new Map<string, number>();
+  /** When each hot value was stored; a value restored from storage is older than any. */
+  private readonly stamps = new Map<string, number>();
+  private readonly selected = new Map<string, { value: unknown; projection: unknown }>();
+  private readonly observers = new Map<string, Set<Observer>>();
+  private clock = 0;
   private epoch = 0;
 
   constructor(
     private readonly durable: SurfaceResponseCache,
     private readonly normalize: (value: unknown) => unknown = (value) => value,
+    private readonly select: Select = (_address, value) => value,
   ) {}
 
   peek<T>(address: SurfaceCacheAddress, guard: Guard<T>): T | null {
@@ -24,10 +33,18 @@ export class SurfaceRegistry {
     if (guard(value)) {
       this.values.delete(key);
       this.values.set(key, value);
-      return value;
+      return this.projection(key, address, value) as T;
     }
     this.values.delete(key);
     return null;
+  }
+
+  private projection(key: string, address: SurfaceCacheAddress, value: unknown): unknown {
+    const memo = this.selected.get(key);
+    if (memo && memo.value === value) return memo.projection;
+    const projection = this.select(address, value, this.stamps.get(key) ?? 0);
+    this.selected.set(key, { value, projection });
+    return projection;
   }
 
   subscribe(address: SurfaceCacheAddress, listener: () => void): () => void {
@@ -41,17 +58,37 @@ export class SurfaceRegistry {
     };
   }
 
+  /** Hear every value stored for one endpoint, from a server answer or from storage. */
+  observe(endpoint: string, observer: Observer): () => void {
+    const observers = this.observers.get(endpoint) ?? new Set<Observer>();
+    observers.add(observer);
+    this.observers.set(endpoint, observers);
+    return () => {
+      observers.delete(observer);
+    };
+  }
+
+  /** The current stamp: a value read from a server after this is newer than every change before it. */
+  now(): number {
+    return this.clock;
+  }
+
   private notify(key: string): void {
     for (const listener of this.listeners.get(key) ?? []) listener();
   }
 
-  private remember(key: string, value: unknown): void {
+  private remember(key: string, address: SurfaceCacheAddress, value: unknown, stamp: number): void {
     this.values.delete(key);
     this.values.set(key, value);
+    this.stamps.set(key, stamp);
+    this.selected.delete(key);
+    for (const observer of this.observers.get(address.endpoint) ?? []) observer(address, value, stamp);
     if (this.values.size <= MAX_HOT_SURFACES) return;
     for (const oldest of this.values.keys()) {
       if (this.listeners.has(oldest)) continue;
       this.values.delete(oldest);
+      this.stamps.delete(oldest);
+      this.selected.delete(oldest);
       if (!this.reads.has(oldest) && !this.fetches.has(oldest)) this.revisions.delete(oldest);
       if (this.values.size <= MAX_HOT_SURFACES) break;
     }
@@ -79,9 +116,9 @@ export class SurfaceRegistry {
     if (current) return current;
     if (this.epoch !== epoch || (this.revisions.get(key) ?? 0) !== revision) return null;
     if (!guard(value)) return null;
-    this.remember(key, value);
+    this.remember(key, address, value, 0);
     this.notify(key);
-    return value;
+    return this.peek(address, guard);
   }
 
   async write<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>): Promise<void> {
@@ -95,7 +132,7 @@ export class SurfaceRegistry {
     if (!guard(normalized)) throw new Error('refusing to cache an invalid surface response');
     const key = surfaceCacheKey(address);
     this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
-    this.remember(key, normalized);
+    this.remember(key, address, normalized, ++this.clock);
     this.notify(key);
     return normalized;
   }
@@ -128,33 +165,57 @@ export class SurfaceRegistry {
     return pending;
   }
 
-  /** Rewrite every hot projection of one viewer that `patch` changes, then persist it. */
-  async patchViewer(
+  /**
+   * Apply a change that every projection of one viewer selects (an identity
+   * or Workspace header record). `record` receives the change's stamp, so
+   * only values stored before it select the change. A fetch of that viewer
+   * already in flight is fenced, the same way a publish fences it; every
+   * mounted reader repaints.
+   */
+  fenceViewer(relayOrigin: string, viewerPubkey: string, record: (stamp: number) => void): void {
+    for (const key of this.fence(relayOrigin, viewerPubkey, undefined, record)) {
+      if (!this.values.has(key)) continue;
+      this.selected.delete(key);
+      this.notify(key);
+    }
+  }
+
+  /**
+   * Fence the in-flight fetches of one endpoint of one viewer, for a write
+   * kept outside this registry (a roster removal) that their responses
+   * predate. Returns the write's stamp.
+   */
+  fenceEndpoint(relayOrigin: string, viewerPubkey: string, endpoint: string): number {
+    let stamp = 0;
+    this.fence(relayOrigin, viewerPubkey, endpoint, (next) => { stamp = next; });
+    return stamp;
+  }
+
+  private fence(
     relayOrigin: string,
     viewerPubkey: string,
-    patch: (value: unknown) => unknown,
-  ): Promise<void> {
+    endpoint: string | undefined,
+    record: (stamp: number) => void,
+  ): string[] {
     const origin = new URL(relayOrigin).origin;
-    const writes: Promise<void>[] = [];
-    for (const [key, value] of [...this.values]) {
-      const parts = JSON.parse(key) as [string, string, string, string, [string, string | number][]];
+    record(++this.clock);
+    const keys: string[] = [];
+    for (const key of new Set([...this.values.keys(), ...this.fetches.keys()])) {
+      const parts = JSON.parse(key) as unknown[];
       if (parts[1] !== origin || parts[2] !== viewerPubkey) continue;
-      const next = patch(value);
-      if (next === value) continue;
-      this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
-      this.values.set(key, next);
-      this.notify(key);
-      const address = { relayOrigin: origin, viewerPubkey, endpoint: parts[3],
-        params: Object.fromEntries(parts[4]) };
-      writes.push(this.durable.write(address, next, (_value): _value is unknown => true));
+      if (endpoint !== undefined && parts[3] !== endpoint) continue;
+      if (this.fetches.has(key)) this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
+      keys.push(key);
     }
-    await Promise.all(writes);
+    return keys;
   }
 
   async remove(address: SurfaceCacheAddress): Promise<void> {
     const key = surfaceCacheKey(address);
     this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
     this.values.delete(key);
+    this.stamps.delete(key);
+    this.selected.delete(key);
     this.notify(key);
     await this.durable.remove(address);
   }
@@ -167,6 +228,8 @@ export class SurfaceRegistry {
       if (parts[1] === origin && parts[2] === viewerPubkey) {
         this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
         this.values.delete(key);
+        this.stamps.delete(key);
+        this.selected.delete(key);
         this.notify(key);
       }
     }
@@ -181,5 +244,7 @@ export class SurfaceRegistry {
       this.notify(key);
     }
     this.revisions.clear();
+    this.stamps.clear();
+    this.selected.clear();
   }
 }

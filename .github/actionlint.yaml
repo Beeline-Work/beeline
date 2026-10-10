@@ -3,3 +3,4 @@ self-hosted-runner:
     - beeline-prod-host
     - ios-builder
     - beeline-android
+    - beeline-android-rig

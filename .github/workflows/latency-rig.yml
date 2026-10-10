@@ -1,0 +1,52 @@
+name: Latency rig
+
+on:
+  pull_request: {}
+  workflow_dispatch:
+    inputs:
+      run_device:
+        description: Run release Android device capture on the dedicated rig runner
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: LATENCY RIG CONTRACT
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify every route has a request and depth budget
+        run: node scripts/latency-rig/check-routes.mjs
+      - name: Verify measured-span math and fail-closed verdicts
+        run: node --test scripts/latency-rig/analyze.test.mjs scripts/latency-rig/join.test.mjs
+
+  device:
+    name: LATENCY RIG DEVICE (on demand)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_device
+    runs-on: [self-hosted, linux, beeline-android-rig]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Capture release Android samples on the dedicated rig
+        run: bash scripts/latency-rig/ci-timing.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: latency-rig-report
+          path: |
+            latency-rig-output/report.md
+            latency-rig-output/samples.ndjson
+          if-no-files-found: warn

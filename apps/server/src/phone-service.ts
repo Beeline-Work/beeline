@@ -3154,8 +3154,10 @@ export class PhoneService {
         owner_id: string | null;
         owner_name: string | null;
         owner_handle: string | null;
+        config_version: string;
       }>(
         `SELECT a.harness,a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.fast_mode,a.model_unavailable,
+                floor(extract(epoch FROM a.updated_at)*1000000)::bigint::text config_version,
                 (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
                 EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=a.agent_id AND c.avatar_job AND c.state IN ('pending','claimed')) avatar_generation_pending,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
@@ -3212,6 +3214,7 @@ export class PhoneService {
     const lastWork = workPage.at(-1);
     return {
       workspaceId,
+      ...(config?.config_version ? { configVersion: config.config_version } : {}),
       ...(config?.avatar_generation_id ? { avatarGenerationId: config.avatar_generation_id } : {}),
       avatarGenerationPending: config?.avatar_generation_pending ?? false,
       recentWork: workPage.map(({ title, url }) => ({ title, url })),
@@ -4217,10 +4220,12 @@ export class PhoneService {
       }
       case 'updateAgentSoul':
         await this.updateAgentSoul(input as Input<'updateAgentSoul'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentSoul'>).workspaceId,
+          (input as Input<'updateAgentSoul'>).agentId, viewerId)) as Output<Name>;
       case 'updateAgentModelSelection':
         await this.updateAgentModel(input as Input<'updateAgentModelSelection'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentModelSelection'>).workspaceId,
+          (input as Input<'updateAgentModelSelection'>).agentId, viewerId)) as Output<Name>;
       case 'refreshAgentModelCatalog':
         await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);
         return undefined as Output<Name>;
@@ -4231,10 +4236,12 @@ export class PhoneService {
         )) as Output<Name>;
       case 'updateAgentYolo':
         await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentYolo'>).workspaceId,
+          (input as Input<'updateAgentYolo'>).agentId, viewerId)) as Output<Name>;
       case 'updateAgentAccessPolicy':
         await this.updateAgentAccessPolicy(input as Input<'updateAgentAccessPolicy'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentAccessPolicy'>).workspaceId,
+          (input as Input<'updateAgentAccessPolicy'>).agentId, viewerId)) as Output<Name>;
       case 'removeAgent':
         await this.removeAgent(input as Input<'removeAgent'>, viewerId);
         return undefined as Output<Name>;

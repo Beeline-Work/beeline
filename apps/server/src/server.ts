@@ -812,6 +812,13 @@ export function createBeelineServer(options: ServerOptions): Server {
           reason: 'needs-you-gap' })));
       };
       const releaseWorkspaces = options.live.subscribeAll((event) => {
+        if (event.type === 'resource-change') {
+          if (event.ownerId === principal.identityId)
+            sendLive(JSON.stringify({ type: 'resource-change', roomId: '',
+              resource: event.resource, ...(event.resourceId ? { resourceId: event.resourceId } : {}),
+              ...(event.version ? { version: event.version } : {}) }));
+          return;
+        }
         if (event.type !== 'invalidate') return;
         if (event.roomId !== '') {
           if (releases.has(event.roomId)) return;
@@ -858,6 +865,10 @@ export function createBeelineServer(options: ServerOptions): Server {
             workspaceId: event.workspaceId, messageId: event.messageId, bookmark }));
         }).catch(() => sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
           reason: 'bookmark-gap' })));
+      });
+      const releasePersonalResync = options.live.subscribeResync(() => {
+        if (client.readyState === client.OPEN)
+          sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: 'reconnect' }));
       });
       // The socket is an ordered stream. Keep the last text handed to this
       // reader so duplicate local/PG publications cost no wire bytes, and a
@@ -1293,6 +1304,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         options.live.humanDisconnected(principal.identityId);
         releasePhoneView();
         releaseWorkspaces();
+        releasePersonalResync();
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();

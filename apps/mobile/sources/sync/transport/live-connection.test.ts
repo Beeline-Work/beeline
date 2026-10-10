@@ -116,10 +116,13 @@ describe('LiveConnection', () => {
       messageId: 'saved', bookmark: null };
     const needs = { type: 'needs-you-delta', roomId: '', workspaceId: 'workspace',
       sourceRoomId: ROOM_A, count: 0, items: [] };
+    const resource = { type: 'resource-change', roomId: '', resource: 'workbench' };
     sockets[0]!.emit(bookmark);
     sockets[0]!.emit(needs);
+    sockets[0]!.emit(resource);
     expect(workspace).toHaveBeenCalledWith({ monolithLive: bookmark });
     expect(workspace).toHaveBeenCalledWith({ monolithLive: needs });
+    expect(workspace).toHaveBeenCalledWith({ monolithLive: resource });
     expect(room).not.toHaveBeenCalled();
     stop();
     workspace.mockClear();

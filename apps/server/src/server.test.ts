@@ -1269,6 +1269,19 @@ describe('phone committed-row live delivery', () => {
     await Promise.all(viewers.map((viewer) => expectNoSocketMessage(viewer, 50)));
   });
 
+  it('sends owner-scoped resource changes on the shared phone socket', async () => {
+    const { live, socket } = await connect(vi.fn() as PhoneService['readLiveDelta']);
+    const frame = nextSocketMessage(socket, 'resource-change');
+    live.publish({ type: 'resource-change', roomId: '', ownerId: 'viewer',
+      resource: 'workbench', resourceId: 'connection' });
+    await expect(frame).resolves.toEqual({ type: 'resource-change', roomId: '',
+      resource: 'workbench', resourceId: 'connection' });
+    const noLeak = expectNoSocketMessage(socket, 100);
+    live.publish({ type: 'resource-change', roomId: '', ownerId: 'other',
+      resource: 'agent', resourceId: 'other-agent' });
+    await noLeak;
+  });
+
   it('reads a bookmark once and sends the typed change to both devices', async () => {
     const bookmark = { messageId: 'saved', workspaceId: 'workspace', roomId: 'room-live',
       roomName: 'Room', roomKind: 'room' as const, messageCreatedAt: 1,

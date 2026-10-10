@@ -12,6 +12,7 @@ import type {
 } from './workflow-contracts.js';
 import type { GrantWalletDelegationInput, GrantWalletDelegationResult } from './wallet.js';
 import type {
+  AgentDetailView,
   AgentModelSelection,
   AgentPairingClaimView,
   AttachmentReference,
@@ -157,13 +158,13 @@ export type PhoneOperationMap = {
   redeemInvite: { input: InviteTokenInput; output: InviteMembershipResult };
   createAgentPairingCode: { input: WorkspaceInput; output: PairingCodeResult };
   claimAgentPairing: { input: PairingCodeInput; output: AgentPairingClaimView };
-  updateAgentSoul: { input: UpdateAgentSoulInput; output: void };
-  updateAgentModelSelection: { input: UpdateAgentModelInput; output: void };
+  updateAgentSoul: { input: UpdateAgentSoulInput; output: AgentDetailView };
+  updateAgentModelSelection: { input: UpdateAgentModelInput; output: AgentDetailView };
   refreshAgentModelCatalog: { input: WorkspaceAgentInput; output: void };
   /** Owner-only: relay the code pasted into an `@agent /login` card to the agent's machine. */
   completeAgentSignIn: { input: CompleteAgentSignInInput; output: CompleteAgentSignInResult };
-  updateAgentYolo: { input: UpdateAgentYoloInput; output: void };
-  updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: void };
+  updateAgentYolo: { input: UpdateAgentYoloInput; output: AgentDetailView };
+  updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: AgentDetailView };
   removeAgent: { input: WorkspaceAgentInput; output: void };
   updatePersonProfile: { input: UpdatePersonProfileInput; output: PersonProfileResult };
   updateIdentityFace: { input: UpdateIdentityFaceInput; output: void };

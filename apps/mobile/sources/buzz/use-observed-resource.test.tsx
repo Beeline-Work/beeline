@@ -47,7 +47,7 @@ it('a failed read stays visible, stops automatic reads, and retry recovers', asy
   vi.useFakeTimers();
   const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('recovered');
   let current: any;
-  function Reader() { current = useObservedResource<string>('error', { load, refreshAfter: () => 700 }); return <span>{current.error ?? current.data}</span>; }
+  function Reader() { current = useObservedResource<string>('error', { load }); return <span>{current.error ?? current.data}</span>; }
   await act(async () => { mount(<Reader />); });
   expect(current.error).toBe('offline');
   await act(async () => { await vi.advanceTimersByTimeAsync(10000); });

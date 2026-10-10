@@ -27,6 +27,7 @@ export type LiveWireTrace = {
 };
 
 export type LiveWireEvent = (
+  | { type: 'resource-change'; roomId: ''; resource: 'install' | 'workbench' | 'agent'; resourceId?: string; version?: string }
   | {
       type: 'invalidate';
       roomId: string;

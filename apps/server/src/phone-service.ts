@@ -117,7 +117,7 @@ import {
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { clearNeedsYouQuestions, needsYouExpiresAt, needsYouItems } from './needs-you.js';
+import { clearNeedsYouQuestions, countNeedsYouItems, needsYouItems } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyConnectorAssignment,
@@ -4806,39 +4806,20 @@ export class PhoneService {
     input: Input<'readNeedsYou'>,
     viewerId: string,
   ): Promise<Output<'readNeedsYou'>> {
-    await this.requireWorkspaceMember(input.workspaceId, viewerId);
-    const { items, unseen } = await needsYouItems(
+    const { items } = await needsYouItems(
       this.database,
       input.workspaceId,
       viewerId,
       (row) => identity(row, this.publicOrigin),
     );
-    if (!unseen.length) return { items };
-    const started = await this.database.query<{ message_id: string; first_seen_at: Date }>(
-      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
-       SELECT $1,message_id,$3 FROM unnest($2::text[]) message_id
-       ON CONFLICT(identity_id,message_id) DO UPDATE SET first_seen_at=needs_you_marks.first_seen_at
-       RETURNING message_id,first_seen_at`,
-      [viewerId, unseen, input.workspaceId],
-    );
-    const clocks = new Map(started.rows.map((row) => [row.message_id, row.first_seen_at]));
-    return {
-      items: items.map((item) => {
-        const firstSeen = clocks.get(item.messageId);
-        return firstSeen ? { ...item, expiresAt: needsYouExpiresAt(firstSeen) } : item;
-      }),
-    };
+    return { items };
   }
 
   private async countNeedsYou(
     input: Input<'countNeedsYou'>,
     viewerId: string,
   ): Promise<Output<'countNeedsYou'>> {
-    await this.requireWorkspaceMember(input.workspaceId, viewerId);
-    const { items } = await needsYouItems(this.database, input.workspaceId, viewerId, (row) =>
-      identity(row, this.publicOrigin),
-    );
-    return { count: items.length };
+    return { count: await countNeedsYouItems(this.database, input.workspaceId, viewerId) };
   }
 
   /** A tap or a dismissal: the cell is handled, on every device. */

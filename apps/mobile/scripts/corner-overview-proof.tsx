@@ -37,10 +37,10 @@ function corner(
 const CORNERS = [
   corner('corner-pane', 'Corner pane rules', 'waiting', 'Ruby',
     'Research when Slack and leading IDEs open a second pane, and propose clearer corner pane and list rules for Beeline web and desktop.',
-    { initiator: { pubkey: VIEWER, kind: 'human', name: 'Me' }, briefRevision: 5 }),
+    { initiator: { pubkey: VIEWER, kind: 'human', name: 'Me' }, mine: true, briefRevision: 5 }),
   corner('corner-hyphen', 'Hyphenated room names', 'waiting', 'Earth',
     'Replace whitespace with hyphens during name entry and reject whitespace in room and corner names.',
-    { awaitsViewer: true, briefRevision: 2 }),
+    { awaitsViewer: true, mine: true, briefRevision: 2 }),
   corner('corner-ios', 'iOS Settings title', 'working', 'BBC',
     'Reproduce the clipped trailing "s" in the iOS Settings page title at Medium text size, then fix it narrowly.',
     { briefRevision: 1 }),
@@ -49,7 +49,7 @@ const CORNERS = [
     { briefRevision: 3 }),
   corner('corner-release', 'Release Corner', 'review', 'Hoots',
     'Verify no run exists; dispatch main through unified workflow; confirm OTA promotion and record; never change, push, merge code or submit stores.',
-    { initiator: { pubkey: VIEWER, kind: 'human', name: 'Me' } }),
+    { initiator: { pubkey: VIEWER, kind: 'human', name: 'Me' }, mine: true }),
   corner('corner-triage', 'Issues triage', 'idle', 'Milo',
     'Standing Feedback triage corner: run the Beeline feedback sweep daily, file or attach redacted issues, dismiss noise, and open fix corners.'),
 ];

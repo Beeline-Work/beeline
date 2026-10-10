@@ -58,6 +58,18 @@ describe('deriveCornerState from the workflow run', () => {
     );
   });
 
+  it('a run with no recorded outcome takes the lifecycle outcome', () => {
+    const failing = lifecycle({ checks: 'failing', pr });
+    expect(
+      deriveCornerState({ archived: false, turnRunning: false, run: { state: 'implement' }, lifecycle: failing }),
+    ).toEqual({ state: 'review', reason: 'checks-failed' });
+    expect(
+      deriveCornerState({
+        archived: false, turnRunning: false, run: { state: 'implement', outcome: 'code' }, lifecycle: failing,
+      }),
+    ).toEqual({ state: 'waiting' });
+  });
+
   it('an archived Room is archived whatever its run says', () => {
     expect(deriveCornerState({ archived: true, turnRunning: false, run: { state: 'review' } })).toEqual({
       state: 'archived',

@@ -20,6 +20,8 @@ function corner(
     stateAt: 1_790_000_000,
     initiator: { pubkey: initiator, kind: 'human', name: initiator === VIEWER ? 'Me' : 'Sam' },
     agent: { pubkey: AGENT, kind: 'agent', name: 'Sol' },
+    // The server marks a corner the viewer commissioned as Mine.
+    ...(initiator === VIEWER ? { mine: true } : {}),
     ...extra,
   } as CornerListItem;
 }
@@ -43,7 +45,7 @@ const view = (corners: readonly CornerListItem[], nextArchived?: string) =>
  * not, one of which waits on someone else. */
 const LIVE = [
   ...Array.from({ length: 6 }, (_, index) => corner(`corner-mine-${index + 1}`, 'working', VIEWER)),
-  corner('corner-asks-me', 'waiting', SOMEONE, { awaitsViewer: true }),
+  corner('corner-asks-me', 'waiting', SOMEONE, { awaitsViewer: true, mine: true }),
   corner('corner-theirs-1', 'working', SOMEONE),
   corner('corner-theirs-2', 'review', SOMEONE),
   corner('corner-asks-them', 'waiting', SOMEONE),

@@ -610,6 +610,8 @@ export type RoomLiveDelta =
       readonly turn: RoomViewAgentTurn;
       /** Current top-level Room rollup, when the committed row was read from the database. */
       readonly agentState?: 'needs-you' | 'working' | null;
+      /** Present with a `needs-you` rollup: why, as the Room list read names it. */
+      readonly attentionReason?: ChatListItem['attentionReason'];
     };
 
 export type RoomView = {
@@ -747,9 +749,9 @@ export type ChatListCorner = {
   readonly id: string;
   readonly name: string;
   readonly state: Exclude<CornerState, 'archived'>;
-  /** Present when the viewer follows this corner (opened, requested, posted,
-   * steered or was tagged in it) or it owes them something, the same rule as
-   * push's Followed level and the corners page's "Mine" filter. */
+  /** The server's Mine rule, the same on every surface: the viewer follows
+   * this corner (opened, requested, posted, steered or was tagged in it), it
+   * owes them something, or they commissioned it. */
   readonly mine?: true;
   /** On the viewer's waiting corners: when the corner last spoke (unix
    * seconds), the moment it handed back. It counts as Room activity. */
@@ -788,9 +790,16 @@ export type ChatListItem = {
   readonly cornerCount?: number;
   /** Non-archived corners whose canonical state is waiting. */
   readonly waitingCornerCount?: number;
+  /** Non-archived corners that are Mine, exact even when `openCorners` is capped. */
+  readonly mineCornerCount?: number;
   /**
    * The viewer's unarchived corners on this Room, so the desktop deck lists
-   * them from the chat list alone, with no per-Room corners read.
+   * them from the chat list alone, with no per-Room corners read. Every Mine
+   * corner is listed; the newest others fill the list to eight.
+   *
+   * A preview, not the full list: it is complete only when its length equals
+   * `cornerCount`. Read counts from `cornerCount` and `mineCornerCount`, never
+   * from this list; the Corners read holds every row.
    */
   readonly openCorners?: readonly ChatListCorner[];
   /** Server-owned, cross-device read state. Every accepted list response carries it. */
@@ -1085,6 +1094,8 @@ export type CornerListItem = {
    * posted in, steered or were tagged in it. Push's Followed level uses the
    * same rule. */
   readonly followsViewer?: true;
+  /** The server's Mine rule; see `ChatListCorner.mine`. */
+  readonly mine?: true;
   readonly agent?: RoomViewIdentity;
   readonly app?: CornerAppBindingView;
   /** The corner's latest brief revision. Absent when it has no brief. */

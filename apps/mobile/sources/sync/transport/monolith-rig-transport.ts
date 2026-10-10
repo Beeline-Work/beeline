@@ -47,8 +47,9 @@ export type LiveWireEvent = (
   | { type: 'needs-you-delta'; roomId: ''; workspaceId: string;
       sourceRoomId: string; count: number; items: readonly NeedsYouItemView[] }
   | { type: 'corner-status'; roomId: string; cornerCount: number;
-      waitingCornerCount: number; openCorners: readonly ChatListCorner[];
+      waitingCornerCount: number; mineCornerCount?: number; openCorners: readonly ChatListCorner[];
       agentState: 'needs-you' | 'working' | null;
+      attentionReason?: ChatListItem['attentionReason'];
       corners?: readonly CornerListItem[]; nextOpen?: string }
   | {
       type: 'message-delta';
@@ -64,6 +65,7 @@ export type LiveWireEvent = (
       roomId: string;
       turn: RoomViewAgentTurn;
       agentState?: 'needs-you' | 'working' | null;
+      attentionReason?: ChatListItem['attentionReason'];
       trace?: LiveWireTrace;
       reconcilesDelivery?: string;
     }

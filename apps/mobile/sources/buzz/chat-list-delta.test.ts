@@ -58,6 +58,21 @@ describe('chat list deltas', () => {
       agentState: 'needs-you', openCorners: [{ id: 'corner', state: 'waiting' }] });
   });
 
+  it('keeps the approval actor and Mine count a live update names', () => {
+    const view = deck(item('b', 10, {
+      agentState: 'needs-you', attentionReason: { kind: 'approval', actor: 'Bot' },
+    }));
+    const status = applyChatListDelta(view, { type: 'corner-status', roomId: 'b',
+      cornerCount: 2, waitingCornerCount: 0, mineCornerCount: 1, openCorners: [],
+      agentState: 'needs-you', attentionReason: { kind: 'approval', actor: 'Bot' } });
+    expect(status.chats[0]).toMatchObject({ mineCornerCount: 1,
+      attentionReason: { kind: 'approval', actor: 'Bot' } });
+    const turn = applyChatListDelta(view, { type: 'turn-delta', roomId: 'b',
+      turn: { status: 'complete' } as never,
+      agentState: 'needs-you', attentionReason: { kind: 'approval', actor: 'Bot' } });
+    expect(turn.chats[0]?.attentionReason).toEqual({ kind: 'approval', actor: 'Bot' });
+  });
+
   it('moves an incoming message to the top as the unread preview', () => {
     const view = deck(item('a', 20), item('b', 10));
     const next = applyChatListDelta(view, {

@@ -2158,11 +2158,14 @@ CREATE TABLE IF NOT EXISTS operator_function_events (
   function_name text NOT NULL CHECK (function_name IN
     ('page_load','message_delivery','corner_open','attachment_upload')),
   duration_ms integer NOT NULL CHECK (duration_ms >= 0 AND duration_ms <= 600000),
+  network_rtt_residual_ms integer CHECK (network_rtt_residual_ms >= 0 AND network_rtt_residual_ms <= 15000),
   failed boolean NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS operator_function_events_recent
   ON operator_function_events(created_at DESC);
+ALTER TABLE operator_function_events ADD COLUMN IF NOT EXISTS network_rtt_residual_ms integer
+  CHECK (network_rtt_residual_ms >= 0 AND network_rtt_residual_ms <= 15000);
 ALTER TABLE push_delivery_claims DROP CONSTRAINT IF EXISTS push_delivery_claims_status_check;
 ALTER TABLE push_delivery_claims ADD CONSTRAINT push_delivery_claims_status_check
   CHECK (status IN ('claimed', 'delivered', 'failed', 'suppressed', 'retryable'));

@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -43,6 +44,7 @@ function activityStamp(createdAt: number, now: number = Date.now()): string {
  * one row that connects it.
  */
 export default function WalletScreen() {
+  useLatencyRouteFrame('/beeline/settings/workbench/wallet');
   const params = useLocalSearchParams<{ workspaceId?: string | string[] }>();
   const routeWorkspaceId = firstParam(params.workspaceId);
   const [workspaceId, setWorkspaceId] = useState<string | null | undefined>(undefined);

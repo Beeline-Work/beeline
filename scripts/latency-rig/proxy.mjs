@@ -10,10 +10,10 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 const backend = new URL(process.env.LATENCY_RIG_BACKEND ?? 'http://127.0.0.1:8080');
 const listenPort = Number(process.env.LATENCY_RIG_PORT ?? 8081);
-const rttMs = Number(process.env.LATENCY_RIG_RTT_MS ?? 100);
-const jitterMs = Number(process.env.LATENCY_RIG_JITTER_MS ?? 0);
-const mbps = Number(process.env.LATENCY_RIG_MBPS ?? 10);
-const failureRate = Number(process.env.LATENCY_RIG_REQUEST_FAILURE_RATE ?? 0);
+let rttMs = Number(process.env.LATENCY_RIG_RTT_MS ?? 100);
+let jitterMs = Number(process.env.LATENCY_RIG_JITTER_MS ?? 0);
+let mbps = Number(process.env.LATENCY_RIG_MBPS ?? 10);
+let failureRate = Number(process.env.LATENCY_RIG_REQUEST_FAILURE_RATE ?? 0);
 const output = process.env.LATENCY_RIG_PROXY_LOG;
 if (!['127.0.0.1', 'localhost', '::1'].includes(backend.hostname) ||
     !['http:', 'https:'].includes(backend.protocol) ||
@@ -43,6 +43,26 @@ function shapedStream(onBytes) {
 }
 
 const handler = async (incoming, outgoing) => {
+  if (incoming.url === '/__latency-rig/profile' && incoming.method === 'POST') {
+    let raw = '';
+    for await (const chunk of incoming) {
+      raw += chunk;
+      if (raw.length > 1024) { outgoing.writeHead(413).end(); return; }
+    }
+    let profile;
+    try { profile = JSON.parse(raw); } catch { outgoing.writeHead(400).end(); return; }
+    if (!profile || typeof profile !== 'object' ||
+        !Number.isFinite(profile.rttMs) || profile.rttMs < 0 ||
+        !Number.isFinite(profile.jitterMs) || profile.jitterMs < 0 ||
+        !Number.isFinite(profile.mbps) || profile.mbps <= 0 ||
+        !Number.isFinite(profile.failureRate) || profile.failureRate < 0 || profile.failureRate > 1) {
+      outgoing.writeHead(400).end(); return;
+    }
+    ({ rttMs, jitterMs, mbps, failureRate } = profile);
+    emit({ type: 'profile', atMs: Date.now(), ...profile });
+    outgoing.writeHead(204).end();
+    return;
+  }
   const startMs = Date.now();
   const operation = incoming.url;
   const traceId = randomUUID();

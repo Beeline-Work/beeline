@@ -10,6 +10,7 @@
  * Default is still silent: an unset flag in a release bundle emits nothing,
  * exactly as before.
  */
+import { markLatencyRouteFrame } from './latency-frame-trace';
 
 /** Build-time opt-in. Expo inlines EXPO_PUBLIC_* at bundle time. */
 const RELEASE_TRACE_ENABLED =
@@ -33,16 +34,31 @@ let currentRun: TraceMark[] = [];
 let listeners: Array<(run: readonly TraceMark[]) => void> = [];
 let pageStartedAt: number | null = null;
 let pageReported = false;
+let pageRoomId: string | undefined;
+let roomReadNetwork: { requestToFirstByteMs: number; serverProcessingMs: number } | undefined;
 let successfulPagesSinceReport = 0;
 const SUCCESS_SAMPLE_RATE = 8;
 
+/** The successful Room GET's wire timing, kept locally until the existing page observation. */
+export function recordRoomReadNetworkTiming(
+  roomId: string,
+  timing: { requestToFirstByteMs: number; serverProcessingMs: number },
+): void {
+  if (pageStartedAt !== null && !pageReported && pageRoomId === roomId)
+    roomReadNetwork = timing;
+}
+
 function observePage(durationMs: number, failed: boolean): void {
-  // The current endpoint accepts only one observation. Sample successful
-  // opens so their durations stay real measurements, and never sample errors.
+  // Preserve the mainline one-in-eight success sample; failures report at once.
+  // The matched wire timings ride the same observation, never another request.
   if (!failed && ++successfulPagesSinceReport < SUCCESS_SAMPLE_RATE) return;
   if (!failed) successfulPagesSinceReport = 0;
+  const network = roomReadNetwork;
   void import('./room-page-observation').then(({ reportRoomPageObservation }) =>
-    reportRoomPageObservation(durationMs, failed), () => undefined);
+    network
+      ? reportRoomPageObservation(durationMs, failed, network)
+      : reportRoomPageObservation(durationMs, failed),
+  () => undefined);
 }
 
 /** The first mark of an open. Everything after it belongs to the same run. */
@@ -70,12 +86,15 @@ export function roomOpenTraceEnabled(): boolean {
 }
 
 export function markRoomOpen(phase: string, detail?: string): void {
+  if (phase === 'newest-frame') markLatencyRouteFrame('/beeline/chat/[channelId]');
   // Operational page timing is independent of the optional diagnostic trace.
   // Only the navigation and first painted frame matter; no Room identifier or
   // trace detail is sent. A failed covering read is the terminal failure event.
   if (phase === RUN_START_PHASE || (phase === 'route-mount' && (pageStartedAt === null || pageReported))) {
     pageStartedAt = performance.now();
     pageReported = false;
+    pageRoomId = detail;
+    roomReadNetwork = undefined;
   } else if ((phase === 'newest-frame' || phase === 'room-read-error') &&
              pageStartedAt !== null && !pageReported) {
     pageReported = true;

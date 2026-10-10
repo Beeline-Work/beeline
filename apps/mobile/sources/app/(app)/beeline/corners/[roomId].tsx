@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -39,6 +40,7 @@ import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 const CORNER_LIST_REASONS = new Set(['corner-status', 'corner', 'resync']);
 
 export default function BuzzCorners() {
+  useLatencyRouteFrame('/beeline/corners/[roomId]');
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
   const decodedId = roomId ? decodeURIComponent(roomId) : '';
   const insets = useSafeAreaInsets();
@@ -47,6 +49,7 @@ export default function BuzzCorners() {
   const [nextOpen, setNextOpen] = useState<string | undefined>();
   const loadingOpen = useRef(false);
   const openPageGeneration = useRef(0);
+  useLatencyRouteFrame('/beeline/corners/[roomId]', surface !== null, true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [retryGeneration, setRetryGeneration] = useState(0);

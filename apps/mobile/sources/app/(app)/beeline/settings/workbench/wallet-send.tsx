@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -15,6 +16,7 @@ function firstParam(value: string | string[] | undefined): string | undefined {
  * the shared `WalletSendForm` the wallet dashboard's Send tab also renders.
  */
 export default function WalletSendScreen() {
+  useLatencyRouteFrame('/beeline/settings/workbench/wallet-send');
   const params = useLocalSearchParams<{ workspaceId?: string | string[] }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const insets = useSafeAreaInsets();

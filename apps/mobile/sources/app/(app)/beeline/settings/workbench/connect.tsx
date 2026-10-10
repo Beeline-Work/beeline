@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -48,6 +49,7 @@ const PAIR_FEEDBACK_MS = 15_000;
  * a row inside the step list.
  */
 export default function ConnectTrustySquireScreen() {
+  useLatencyRouteFrame('/beeline/settings/workbench/connect');
   const params = useLocalSearchParams<{ connectorId?: string | string[];
     workspaceId?: string | string[]; viewerId?: string | string[] }>();
   const connectorId = firstParam(params.connectorId);

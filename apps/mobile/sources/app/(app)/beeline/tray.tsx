@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { messageJumpHref, roomHref } from '@/buzz/corner-navigation';
 import { useIsDesktop } from '@/utils/responsive';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -113,6 +114,7 @@ type Row =
  * wants to come back to it bookmarks it.
  */
 export default function TrayScreen() {
+  useLatencyRouteFrame('/beeline/tray');
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const desktop = useIsDesktop();
@@ -134,6 +136,7 @@ export default function TrayScreen() {
   const savedScroll = useRef(false);
   const [selected, setSelected] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
+  useLatencyRouteFrame('/beeline/tray', !loading, true);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<MessageBookmarkView | null>(null);
   // Oldest first; the Undo bar offers the newest.

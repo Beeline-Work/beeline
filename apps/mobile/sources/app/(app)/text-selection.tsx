@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -15,6 +16,7 @@ type Notice = {
 };
 
 export default function TextSelectionScreen() {
+  useLatencyRouteFrame('/text-selection', true, true);
     const router = useRouter();
     const { textId } = useLocalSearchParams<{ textId: string }>();
     const insets = useSafeAreaInsets();

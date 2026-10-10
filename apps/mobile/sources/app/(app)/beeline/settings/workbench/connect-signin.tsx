@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -18,6 +19,7 @@ function first(value: string | string[] | undefined): string | undefined { retur
 
 /** The provider returns a one-use verifier session; only the server can settle it. */
 export default function ConnectorSignInScreen() {
+  useLatencyRouteFrame('/beeline/settings/workbench/connect-signin');
   const params = useLocalSearchParams<{ appSignInSession?: string | string[] }>();
   const sessionUri = first(params.appSignInSession);
   return sessionUri ? <AppSignInReturnScreen sessionUri={sessionUri} /> : <ConnectorSignInOverlay />;

@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect } from 'react';
 import { ScrollView, View, Text } from 'react-native';
 import { router } from 'expo-router';
@@ -10,6 +11,7 @@ import { useLayoutClass } from '@/utils/responsive';
 import { PageHeader } from '@/components/buzz/PageHeader';
 
 export default function ChangelogScreen() {
+  useLatencyRouteFrame('/changelog', true, true);
     const insets = useSafeAreaInsets();
     const isCompact = useLayoutClass() === 'compact';
     const entries = getChangelogEntries();

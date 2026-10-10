@@ -102,6 +102,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 
 const AGE_TICK_MS = 60_000;
 /**
@@ -201,6 +202,7 @@ export default function BuzzChannels() {
   // Only a live read (never a cached one) may say "you have no Workspace".
   const [workspacesConfirmed, setWorkspacesConfirmed] = useState(false);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
+  useLatencyRouteFrame('/beeline/channels', chatList !== null, true);
   const [welcomeDue, setWelcomeDue] = useState(false);
   // Bumped by a full Room-list read and by a message that can need the
   // viewer; prose elsewhere and tool rows never re-count the badge.

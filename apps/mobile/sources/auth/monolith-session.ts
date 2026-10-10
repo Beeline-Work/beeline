@@ -12,6 +12,14 @@ async function monolithFetch(input: RequestInfo | URL, init?: RequestInit): Prom
   return desktopFetch(input, init);
 }
 
+/** Monotonic timing of the winning HTTP attempt, ending when response headers arrive. */
+const responseTimings = new WeakMap<Response, { requestStartMs: number; firstByteMs: number }>();
+
+export function monolithResponseTiming(response: Response):
+  { requestStartMs: number; firstByteMs: number } | null {
+  return responseTimings.get(response) ?? null;
+}
+
 export interface MonolithTokens {
   accessToken: string;
   accessExpiresAt: number;
@@ -390,7 +398,8 @@ export class MonolithSession {
     try {
       // Token restore or refresh can stall too; the deadline covers it.
       const authorized = await untilAborted(this.authorization(), controller.signal);
-      return await this.fetchImpl(input, {
+      const requestStartMs = performance.now();
+      const response = await this.fetchImpl(input, {
         ...init,
         signal: controller.signal,
         headers: {
@@ -398,6 +407,8 @@ export class MonolithSession {
           authorization: `Bearer ${authorized}`,
         },
       });
+      responseTimings.set(response, { requestStartMs, firstByteMs: performance.now() });
+      return response;
     } catch (error) {
       if (timedOut) throw new MonolithRequestTimeoutError();
       throw error;

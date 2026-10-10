@@ -1,11 +1,21 @@
 #!/usr/bin/env node
-/** Estimate phone-to-server RTT from matched, clock-synchronized production spans. */
+/** Summarize production phone-to-Fly network residuals or legacy matched spans. */
 import { readFile } from 'node:fs/promises';
 import { percentile } from './analyze.mjs';
 
 const path = process.argv[2];
 if (!path) throw new Error('usage: derive-rtt.mjs matched-production-spans.ndjson');
 const rows = (await readFile(path, 'utf8')).split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+if (rows.length < 20) throw new Error('At least 20 production requests are required');
+if (rows.every((row) => Number.isInteger(row.network_rtt_residual_ms) &&
+    row.network_rtt_residual_ms >= 0)) {
+  const residuals = rows.map((row) => row.network_rtt_residual_ms);
+  console.log(JSON.stringify({ matchedRequests: rows.length,
+    rttResidualMedianMs: percentile(residuals, .5),
+    rttResidualP95Ms: percentile(residuals, .95),
+    caveat: 'First-byte minus server processing includes Fly edge and connection setup; it is an RTT upper bound, not packet-level RTT' }, null, 2));
+  process.exit(0);
+}
 const oneWay = rows.map((row, index) => {
   if (typeof row.phoneFirstByteEpochMs !== 'number' ||
       typeof row.serverFinishEpochMs !== 'number')
@@ -15,7 +25,6 @@ const oneWay = rows.map((row, index) => {
     throw new Error(`line ${index + 1}: unsynchronized or invalid clocks`);
   return observed;
 });
-if (oneWay.length < 20) throw new Error('At least 20 matched production requests are required');
 const median = percentile(oneWay, .5);
 const p95 = percentile(oneWay, .95);
 console.log(JSON.stringify({ matchedRequests: oneWay.length,

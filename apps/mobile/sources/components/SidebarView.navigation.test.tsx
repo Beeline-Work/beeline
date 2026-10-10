@@ -197,10 +197,13 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'viewer' })),
 }));
 vi.mock('@/buzz/community-storage', () => ({
-  loadActiveCommunityId: vi.fn(async () => 'workspace-a'),
   loadLastViewedChannel,
   saveActiveCommunityId,
   subscribeActiveCommunityId: vi.fn(() => () => undefined),
+  watchActiveCommunityId: vi.fn((_pubkey: string, listener: (id: string | null) => void) => {
+    void Promise.resolve('workspace-a').then(listener);
+    return () => undefined;
+  }),
 }));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {

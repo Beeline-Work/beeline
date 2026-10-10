@@ -21,7 +21,6 @@ import {
   clearBuzzIdentity,
   loadBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
-import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
 import {
   ensurePersonNameForWorkspace,
@@ -197,7 +196,9 @@ export default function BuzzIdentitySettings() {
     }
   }, []);
 
+  // The profile name is read for the current Workspace, again after a switch.
   useEffect(() => {
+    if (currentWorkspaceId === undefined) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -224,20 +225,18 @@ export default function BuzzIdentitySettings() {
         if (cachedWorkspaces && !cancelled)
           setWorkspaceList({ workspaces: cachedWorkspaces.workspaces, confirmed: false });
         const client = await clientPromise;
-        const [freshWorkspaces, activeCommunityId, enabled, registration, permission] =
-          await Promise.all([
-            workspacePromise,
-            loadActiveCommunityId(identity.publicKey),
-            getBuzzPushEnabled(identity.publicKey),
-            getBuzzPushRegistrationState(identity.publicKey),
-            getPushPermissionInfo(),
-          ]);
+        const [freshWorkspaces, enabled, registration, permission] = await Promise.all([
+          workspacePromise,
+          getBuzzPushEnabled(identity.publicKey),
+          getBuzzPushRegistrationState(identity.publicKey),
+          getPushPermissionInfo(),
+        ]);
         // Null: an eviction overtook the read, so it confirms nothing.
         if (!cancelled && freshWorkspaces)
           setWorkspaceList({ workspaces: freshWorkspaces.workspaces, confirmed: true });
         const workspaces = freshWorkspaces?.workspaces ?? [];
-        const communityId = workspaces.some((item) => item.id === activeCommunityId)
-          ? (activeCommunityId ?? undefined)
+        const communityId = workspaces.some((item) => item.id === currentWorkspaceId)
+          ? (currentWorkspaceId ?? undefined)
           : workspaces[0]?.id;
         const profile = communityId
           ? await ensurePersonNameForWorkspace(client, communityId, identity.publicKey)
@@ -304,7 +303,7 @@ export default function BuzzIdentitySettings() {
     return () => {
       cancelled = true;
     };
-  }, [monolithEnabled]);
+  }, [currentWorkspaceId, monolithEnabled]);
 
   // Role and Workbench follow the current Workspace when a Room opens elsewhere.
   useEffect(() => {

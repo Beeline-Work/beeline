@@ -9,7 +9,7 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).toContain('subscribeActiveCommunityId');
     expect(source).toContain('if (workspaceIdRef.current === nextWorkspaceId) return;');
     expect(source).toContain('setWorkspaceId(nextWorkspaceId);');
-    expect(source).toContain('setSurface(null)');
+    expect(source).toContain('useChatList(chatListKey, chatListSource');
   });
 
   it('follows the Workspace encoded by browser history and deep links', () => {

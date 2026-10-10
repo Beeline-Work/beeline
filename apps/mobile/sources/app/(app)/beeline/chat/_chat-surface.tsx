@@ -67,7 +67,6 @@ import {
   type MessageReactionEmoji,
   type ChatListItem,
   AGENT_PRESENCE_STALE_MS,
-  isChatListView,
 } from '@beeline/buzz-client';
 import {
   cornerDisplayName,
@@ -145,6 +144,8 @@ import {
 } from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { useChatList } from '@/buzz/chat-list-store';
+import { useRoomRepoReplacementGuard } from '@/buzz/room-repo-replacement';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
   activeMentionAtCursor,
@@ -1007,7 +1008,6 @@ export function BuzzChatSurface({
   const directMessage = roomSurface?.directMessage ?? null;
   // Hoisted above the pane handlers that need it in their dependency arrays.
   const isDirectMessage = Boolean(directMessage);
-  const [workspaceChats, setWorkspaceChats] = useState<readonly ChatListItem[]>([]);
   const [composerFocused, setComposerFocused] = useState(false);
   const [createPollVisible, setCreatePollVisible] = useState(false);
   const [createPollBusy, setCreatePollBusy] = useState(false);
@@ -1147,6 +1147,35 @@ export function BuzzChatSurface({
   }, [firstUnreadMessageId, isCorner]);
   const resolvedChannelName = roomSurface?.room.name ?? routeChannelTitle ?? null;
   const activeCommunityId = roomSurface?.room.workspaceId ?? routeCommunityId ?? null;
+  // The DM header, the repository-change guard, mentions and forwarding read
+  // the app-level Room list, which stays live while this Room is open.
+  const [chatListRelayUrl, setChatListRelayUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void getEffectiveRelayUrl().then((url) => {
+      if (!cancelled) setChatListRelayUrl(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const chatListKey = useMemo(
+    () => (chatListRelayUrl && userPubkey && activeCommunityId
+      ? { relayUrl: chatListRelayUrl, viewerPubkey: userPubkey, workspaceId: activeCommunityId }
+      : null),
+    [activeCommunityId, chatListRelayUrl, userPubkey],
+  );
+  const chatListSource = useMemo(
+    () => (roomClient && activeCommunityId
+      ? { chats: () => roomClient.chats(activeCommunityId) }
+      : null),
+    [activeCommunityId, roomClient],
+  );
+  const workspaceChatList = useChatList(chatListKey, chatListSource);
+  const workspaceChats = useMemo<readonly ChatListItem[]>(
+    () => workspaceChatList?.chats ?? [],
+    [workspaceChatList],
+  );
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
   // The SERVER's statement of who is reading, so the phone's requester test and
   // the server's own are the same comparison over the same namespace.
@@ -1171,9 +1200,6 @@ export function BuzzChatSurface({
         : [],
     [activeCommunityId, roomSurface?.parent, roomSurface?.room, roomSurface?.viewer.role],
   );
-  const openCornerCount =
-    workspaceChats.find((item) => item.room.id === (parentChannelId ?? decodedId))?.cornerCount ??
-    0;
   const cornerTask = surfaceParentId ? roomSurface?.room.about : undefined;
   const roomRepository = useMemo<RoomRepository | null>(() => {
     if (isCorner || !roomSurface?.repository || !activeCommunityId) return null;
@@ -2120,42 +2146,6 @@ export function BuzzChatSurface({
   // read the first of them; the transcript and the gold ring take them all.
   const activeAgentTurn = activeAgentTurns[0];
   const messages = unprojectedMessages;
-  useEffect(() => {
-    if (!roomClient || !activeCommunityId || !userPubkey) {
-      setWorkspaceChats([]);
-      return;
-    }
-    let cancelled = false;
-    let painted = false;
-    void (async () => {
-      const address = surfaceAddress(
-        await getEffectiveRelayUrl(),
-        userPubkey,
-        '/workspace/:id/chats',
-        { workspaceId: activeCommunityId },
-      );
-      const apply = (view: { readonly chats: readonly ChatListItem[] }) => {
-        if (cancelled) return;
-        painted = true;
-        setWorkspaceChats(view.chats);
-      };
-      // The Room list keeps this response current; it is read here only when
-      // no Room list has run yet (a push or link opened this Room directly).
-      const cached = await mobileSurfaceCache.read(address, isChatListView);
-      if (cached) {
-        apply(cached);
-        return;
-      }
-      const fresh = await roomClient.chats(activeCommunityId);
-      apply(fresh);
-      void mobileSurfaceCache.write(address, fresh, isChatListView);
-    })().catch(() => {
-      if (!cancelled && !painted) setWorkspaceChats([]);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeCommunityId, roomClient, userPubkey]);
   const directMessageListItem = useMemo(
     () => workspaceChats.find((item) => item.room.id === decodedId && item.directMessage) ?? null,
     [decodedId, workspaceChats],
@@ -3869,6 +3859,8 @@ export function BuzzChatSurface({
     setMessageActionsTarget(message);
   }, []);
 
+  const workspaceChatListRef = useRef(workspaceChatList);
+  workspaceChatListRef.current = workspaceChatList;
   const beginForward = useCallback(
     async (message: ChatDisplayMessage) => {
       // Forward works wherever a transcript renders — the picker sheet and
@@ -3879,11 +3871,13 @@ export function BuzzChatSurface({
       setForwardRooms(null);
       setForwardError(null);
       try {
-        const [list, workspace] = await Promise.all([
-          roomClient.chats(activeCommunityId),
+        // The live Room list is current; only a list not yet loaded reads one.
+        const held = workspaceChatListRef.current;
+        const [chats, workspace] = await Promise.all([
+          held ? held.chats : roomClient.chats(activeCommunityId).then((list) => list.chats),
           roomClient.workspace(activeCommunityId),
         ]);
-        setForwardRooms(forwardTargets(list.chats, workspace, decodedId));
+        setForwardRooms(forwardTargets(chats, workspace, decodedId));
       } catch (error) {
         setForwardError(error instanceof Error ? error.message : String(error));
         setForwardRooms([]);
@@ -5111,36 +5105,14 @@ export function BuzzChatSurface({
     [applyRoomRepository, transport],
   );
 
-  // Changing the repo under a Room with open corners strands those corners on
-  // the old repo, so re-binding is confirmed like the other destructive Room
-  // actions (delete/leave) above, and skipped when there is nothing to strand.
-  const confirmRoomRepoReplacement = useCallback(async () => {
-    const hasOpenCorners = openCornerCount > 0;
-    if (!roomRepository || !hasOpenCorners) return true;
-    return Modal.confirm(
-      `Change ${ROOM_LABEL} repo?`,
-      `This ${ROOM_LABEL} has ${CORNER_LABEL}s still open on ${roomRepository.binding.name}. Changing the repo will not move them — they stay bound to the old repo.`,
-      { cancelText: 'Cancel', confirmText: 'Change anyway', destructive: true },
-    );
-  }, [openCornerCount, roomRepository]);
-
-  const handleSelectRoomRepoCandidate = useCallback(
-    (candidate: RepoCandidate) => {
-      void confirmRoomRepoReplacement().then((confirmed) => {
-        if (confirmed) void applyRoomRepository(candidate);
-      });
-    },
-    [applyRoomRepository, confirmRoomRepoReplacement],
-  );
-
-  // Creating a repo for a linked Room replaces its repo too, so it asks first.
-  const handleCreateRoomRepository = useCallback(
-    async (installationId: number, name: string) => {
-      if (!(await confirmRoomRepoReplacement())) return;
-      await handleCreateGitHubRepository(installationId, name);
-    },
-    [confirmRoomRepoReplacement, handleCreateGitHubRepository],
-  );
+  const {
+    openCornerCount,
+    selectCandidate: handleSelectRoomRepoCandidate,
+    createRepository: handleCreateRoomRepository,
+  } = useRoomRepoReplacementGuard(workspaceChats, parentChannelId ?? decodedId, roomRepository, {
+    link: applyRoomRepository,
+    create: handleCreateGitHubRepository,
+  });
 
   // Unassigning the repo is the inverse of linking it: the Room becomes
   // chat-only. It is confirmed like the other destructive Room actions, and

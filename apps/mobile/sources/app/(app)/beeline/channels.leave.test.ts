@@ -81,7 +81,7 @@ describe('Chat-list swipe-left actions', () => {
       source.indexOf('const handleLeaveRoom'),
     );
     expect(closePath).toContain('transport.closeChat(item.room.id)');
-    expect(closePath).toContain('chatScheduler.current?.force()');
+    expect(closePath).toContain('chatStore.current?.force()');
     expect(closePath).not.toContain('Modal.confirm');
     expect(closePath).toContain("Modal.alert('Cannot close yet'");
     expect(closePath).toContain('Could not close chat:');
@@ -102,7 +102,7 @@ describe('Chat-list swipe-left actions', () => {
     expect(leavePath).toContain('leaveRoomWithConfirmation(');
     expect(leavePath).toContain('item.leaveDeletesRoom === true,');
     expect(leavePath).toContain('transport.leaveRoom(item.room.id, confirmDelete)');
-    expect(leavePath).toContain('chatScheduler.current?.force()');
+    expect(leavePath).toContain('chatStore.current?.force()');
     expect(leavePath).not.toContain('transport.closeChat');
   });
 

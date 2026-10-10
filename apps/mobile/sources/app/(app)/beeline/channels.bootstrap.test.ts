@@ -77,7 +77,7 @@ describe('Room deck bootstrap', () => {
       source.indexOf('const createRoom = useCallback'),
       source.indexOf('const compose = useCallback'),
     );
-    expect(createPath).toContain('chatScheduler.current?.force()');
+    expect(createPath).toContain('chatStore.current?.force()');
     expect(createPath).not.toContain('openRoom(roomId)');
   });
 
@@ -91,11 +91,13 @@ describe('Room deck bootstrap', () => {
     expect(bootstrap).not.toContain('/beeline/chat/');
   });
 
-  it('reinstalls Room-deck watches from chats watchFilters and never seeds a Workspace #h', () => {
-    expect(source).toContain('installChatWatch');
-    expect(source).toContain('nextWatchKey !== chatWatchKey');
-    expect(source).toContain('cachedChats?.watchFilters ?? []');
-    expect(source).not.toContain("'#h': [selectedId]");
-    expect(source).toContain('if (filters.length === 0) {');
+  it('reads the Room list from the app-level store and never seeds a Workspace #h', () => {
+    const store = readFileSync(path.join(__dirname, '../../../buzz/chat-list-store.ts'), 'utf8');
+    expect(source).toContain('acquireChatList(');
+    expect(source).not.toContain('surfaceSubscribe(filters, (event)');
+    expect(store).toContain('chatWatchFiltersKey(value.watchFilters) !== this.watchKey');
+    expect(store).toContain("this.value?.watchFilters ?? []");
+    expect(store).not.toContain("'#h': [");
+    expect(store).toContain('if (filters.length === 0) {');
   });
 });

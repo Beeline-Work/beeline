@@ -75,6 +75,7 @@ function workflowRunShims(
       name === 'listRoomWorkflowRuns' ? { workflows: ${JSON.stringify(siblingRuns)} } : name === 'readWorkflowDefinition' ? { contract: ${JSON.stringify(view.contract)}, runs: [${JSON.stringify(view.run)}] } : (${JSON.stringify(detail, (key, value) => ['earlierRunCount', 'activeRunIds', 'contents', 'question', 'options', 'note'].includes(key) ? undefined : value)});`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ({ publicKey: '${'a'.repeat(64)}' });`,
+    '@/sync/transport/room-view-client': `export class RoomViewClient {}`,
   };
 }
 

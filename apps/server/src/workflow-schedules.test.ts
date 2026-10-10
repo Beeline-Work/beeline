@@ -346,6 +346,12 @@ it('Reproduction schedules-13: Room admin lists and deletes only their Room sche
       (row) => row.id,
     ),
   ).toEqual([created.scheduleId]);
+  await db.query(`UPDATE agent_schedules SET workflow_slug='daily',run_count=4 WHERE id=$1`, [
+    created.scheduleId,
+  ]);
+  expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules).toEqual([
+    expect.objectContaining({ id: created.scheduleId, workflowSlug: 'daily', runCount: 4 }),
+  ]);
   await expect(phone.execute('listRoomSchedules', { roomId: OTHER_ROOM }, ADMIN)).rejects.toThrow(
     'room manager required',
   );

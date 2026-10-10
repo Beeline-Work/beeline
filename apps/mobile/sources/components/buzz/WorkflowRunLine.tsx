@@ -8,6 +8,7 @@ import type {
   WorkflowRunDetailView,
 } from '@beeline/api-contract/phone';
 import {
+  workflowPlanLine,
   workflowRunLine,
   workflowStateLabel,
   type WorkflowLineStatus,
@@ -124,6 +125,18 @@ function Segment({ tone, style, testID }: { tone: SegmentTone; vertical: boolean
 }
 
 /**
+ * A workflow read before any run exists (a schedule's workflow): its
+ * contract alone, so every step is pending and nothing claims a run status.
+ */
+export type WorkflowPlanView = {
+  readonly contract: WorkflowRunDetailView['contract'];
+  readonly roleHolders: WorkflowRunDetailView['roleHolders'];
+  readonly run?: undefined;
+  readonly history?: undefined;
+  readonly viewer?: undefined;
+};
+
+/**
  * Every step of the workflow, one row each: done steps, the current step with
  * its live narration, and upcoming steps dimmed. The page reads the run;
  * decisions stay on the choice cards in the Room.
@@ -136,7 +149,7 @@ export function WorkflowRunLine({
   onOpenMessage,
   testID = 'workflow-run-line',
 }: {
-  detail: WorkflowRunDetailView;
+  detail: WorkflowRunDetailView | WorkflowPlanView;
   now: number;
   /** Newest chunks keyed by agent id and turn request id. */
   liveDrafts?: ReadonlyMap<string, string>;
@@ -146,8 +159,11 @@ export function WorkflowRunLine({
   testID?: string;
 }) {
   const line = useMemo(
-    () => workflowRunLine(detail.contract, detail.history, detail.run.status),
-    [detail.contract, detail.history, detail.run.status],
+    () =>
+      detail.run
+        ? workflowRunLine(detail.contract, detail.history, detail.run.status)
+        : workflowPlanLine(detail.contract),
+    [detail.contract, detail.history, detail.run],
   );
   return (
     <View style={styles.list} testID={testID}>
@@ -273,7 +289,7 @@ function StepRow({
   testID,
 }: {
   step: WorkflowLineStep;
-  detail: WorkflowRunDetailView;
+  detail: WorkflowRunDetailView | WorkflowPlanView;
   now: number;
   liveDrafts?: ReadonlyMap<string, string>;
   above?: SegmentTone;
@@ -283,12 +299,13 @@ function StepRow({
   testID: string;
 }) {
   const visit = step.visits[0];
+  const run = detail.run ?? { viewerHolds: false };
   const meta = workflowStepMeta(step, {
     contract: detail.contract,
-    run: detail.run,
-    history: detail.history,
+    run,
+    history: detail.history ?? [],
   });
-  const assignee = workflowStepAssignee(step, detail);
+  const assignee = workflowStepAssignee(step, { ...detail, run });
   const isViewer = assignee !== undefined && assignee.id === detail.viewer?.id;
   const current = step.status === 'current';
   const draft = current && assignee?.kind === 'agent'
@@ -300,7 +317,7 @@ function StepRow({
   const final = !current && step.kind === 'handoff' ? visit?.finalReply : undefined;
   const does = detail.contract.handoffs[step.state]?.does;
   const gate = visit?.gate;
-  const gateWaitingOn = detail.run.viewerHolds ? 'you' : `a person in ${detail.run.roomName}`;
+  const gateWaitingOn = detail.run?.viewerHolds ? 'you' : `a person in ${detail.run?.roomName}`;
   const gateLine =
     step.kind === 'gate'
       ? gate?.answer !== undefined

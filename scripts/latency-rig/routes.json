@@ -85,7 +85,17 @@
     "coldDepthMax": 1
   },
   {
+    "path": "/beeline/settings/schedule",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
     "path": "/beeline/settings/schedules",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/webhook",
     "coldHttpMax": 1,
     "coldDepthMax": 1
   },

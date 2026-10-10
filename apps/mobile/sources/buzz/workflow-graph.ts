@@ -141,6 +141,25 @@ export function workflowRunLine(
   return [...reached, ...predictedTail(contract, last.state, new Set(reached.map((step) => step.state)))];
 }
 
+/**
+ * The contract's path before any run: the start state, then the same
+ * predicted forward path a live run's tail uses, every row `pending`.
+ */
+export function workflowPlanLine(contract: WorkflowReadContract): WorkflowLineStep[] {
+  const declared = contract.handoffs[contract.start];
+  if (!declared) return [];
+  return [
+    {
+      state: contract.start,
+      kind: kindOf(declared),
+      ...(declared.kind === 'terminal' ? { terminalStatus: declared.status } : {}),
+      status: 'pending',
+      visits: [],
+    },
+    ...predictedTail(contract, contract.start, new Set([contract.start])),
+  ];
+}
+
 /** `feedback-triage` → `Feedback triage`. */
 export function workflowDisplayName(slug: string): string {
   return sentence(slug);

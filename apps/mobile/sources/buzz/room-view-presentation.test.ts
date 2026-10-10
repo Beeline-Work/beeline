@@ -292,10 +292,10 @@ describe('Room view presentation', () => {
     });
   });
 
-  it('keeps current member artwork when cached historical messages carry an older face', () => {
+  it('lets the current member identity win over a cached message author', () => {
     const agentPubkey = 'b'.repeat(64);
     const viewerPubkey = 'a'.repeat(64);
-    const staleMember = {
+    const member = {
       identity: {
         pubkey: agentPubkey,
         kind: 'agent' as const,
@@ -323,16 +323,17 @@ describe('Room view presentation', () => {
     const projector = createRoomMessageProjector();
 
     const cached = projector.project([indexedMessage('Arlo', 'arlo')], viewerPubkey);
-    expect(conversationIdentityByPubkey([staleMember], cached).get(agentPubkey)?.name).toBe('Arlo');
+    expect(conversationIdentityByPubkey([member], cached).get(agentPubkey)?.name).toBe('Arlo');
 
-    const fresh = projector.project([indexedMessage('Codex', 'codex')], viewerPubkey);
-    expect(fresh[0]).not.toBe(cached[0]);
-    expect(conversationIdentityByPubkey([staleMember], fresh).get(agentPubkey)).toMatchObject({
-      name: 'Codex',
-      handle: 'codex',
+    const renamed = projector.project([indexedMessage('Codex', 'codex')], viewerPubkey);
+    expect(renamed[0]).not.toBe(cached[0]);
+    expect(conversationIdentityByPubkey([member], renamed).get(agentPubkey)).toMatchObject({
+      name: 'Arlo',
+      handle: 'arlo',
       face: 'fox',
       avatar: 'https://images.example/current.png',
     });
+    expect(conversationIdentityByPubkey([], renamed).get(agentPubkey)?.name).toBe('Codex');
   });
 
   it('keeps a GitHub card out of speaker attribution', () => {

@@ -14,6 +14,7 @@ import { WalletQr } from '@/components/buzz/WalletQr';
 import { chainIcon, tokenIcon } from '@/buzz/wallet-icons';
 import { getWalletSource } from '@/buzz/wallet-source';
 import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
+import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { CONNECTOR_DESCRIPTIONS, WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 import type { WalletLedgerEntry, WalletView } from '@beeline/api-contract/wallet';
@@ -47,6 +48,9 @@ export default function WalletScreen() {
   useLatencyRouteFrame('/beeline/settings/workbench/wallet');
   const params = useLocalSearchParams<{ workspaceId?: string | string[] }>();
   const routeWorkspaceId = firstParam(params.workspaceId);
+  const activeWorkspaceId = useActiveCommunityId();
+  // A route Workspace wins; only a personal entry follows a later Room open.
+  const followedWorkspaceId = routeWorkspaceId ? undefined : activeWorkspaceId;
   const [workspaceId, setWorkspaceId] = useState<string | null | undefined>(undefined);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [wallet, setWallet] = useState<WalletView | null>(null);
@@ -62,7 +66,8 @@ export default function WalletScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    void resolveWalletWorkspaceId(routeWorkspaceId)
+    if (!routeWorkspaceId && followedWorkspaceId === undefined) return;
+    void resolveWalletWorkspaceId(routeWorkspaceId, followedWorkspaceId)
       .then((id) => {
         if (!cancelled) setWorkspaceId(id);
       })
@@ -73,7 +78,7 @@ export default function WalletScreen() {
     return () => {
       cancelled = true;
     };
-  }, [routeWorkspaceId]);
+  }, [followedWorkspaceId, routeWorkspaceId]);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;

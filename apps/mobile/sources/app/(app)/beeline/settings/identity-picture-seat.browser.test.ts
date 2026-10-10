@@ -31,7 +31,11 @@ function seatShims(mobile: string): Record<string, string> {
     export const clearBuzzIdentity = async () => undefined;`,
     '@/auth/github-auth-session': `export const clearPendingGitHubSignInState = async () => undefined;`,
     '@/auth/monolith-session': `export const monolithSession = { signOut: async () => undefined };`,
-    '@/buzz/community-storage': `export const loadActiveCommunityId = async () => null;`,
+    '@/buzz/community-storage': `export const loadActiveCommunityId = async () => null;
+    export const watchActiveCommunityId = (_pubkey, listener) => {
+      void Promise.resolve(null).then(listener);
+      return () => undefined;
+    };`,
     '@/buzz/person-name': `export const ensurePersonNameForWorkspace = async () => ({ name: 'Captain' });
     export const loadPreferredPersonName = async () => 'Captain';
     export const savePreferredPersonName = async () => undefined;`,

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const storage = vi.hoisted(() => ({ getItem: vi.fn(), setItem: vi.fn() }));
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: storage }));
 
-import { loadStoredPushLevel, saveStoredPushLevel } from './push-level-storage';
+import { loadStoredPushLevel, saveStoredPushLevel, subscribeStoredPushLevel } from './push-level-storage';
 
 describe('push level storage', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -18,5 +18,16 @@ describe('push level storage', () => {
     storage.setItem.mockResolvedValue(undefined);
     await saveStoredPushLevel('person', 'off');
     expect(storage.setItem).toHaveBeenCalledWith('@beeline/push-level/person', 'off');
+  });
+
+  it('tells mounted readers about a new level once it is durable', async () => {
+    storage.setItem.mockResolvedValue(undefined);
+    const listener = vi.fn(() => expect(storage.setItem).toHaveBeenCalled());
+    const stop = subscribeStoredPushLevel(listener);
+    await saveStoredPushLevel('person', 'all');
+    expect(listener).toHaveBeenCalledWith('person', 'all');
+    stop();
+    await saveStoredPushLevel('person', 'off');
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 });

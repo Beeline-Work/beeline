@@ -241,6 +241,7 @@ describe('presented notification dismissal', () => {
     expect(appLayoutSource).toContain("AppState.addEventListener('change', reconcileBadge)");
     expect(appLayoutSource).toContain('loadStoredPushLevel(identity.publicKey)');
     expect(appLayoutSource).toContain("pushLevel !== 'off' && getOpenBuzzChannelId()");
+    expect(appLayoutSource).toContain('subscribeStoredPushLevel((pubkey, level) => reconcileLevel(');
   });
 });
 

@@ -17,6 +17,7 @@ import {
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { syncWorkspaceListEntry } from '@/buzz/workspace-surface';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
@@ -251,6 +252,9 @@ export default function WorkspaceSettings() {
             fetch: () => mobileSurfaceCache.fetch(workspaceAddress, isWorkspaceView, () => http.workspace(communityId)),
             apply: (value) => {
               setWorkspaceView(value);
+              // The rail paints `/workspaces`; a rename or picture lands there too.
+              void syncWorkspaceListEntry(currentRelayUrl, currentIdentity.publicKey, value.workspace)
+                .catch(() => undefined);
               workspaceDraft.initialize(value.workspace.name);
               setLoading(false);
               setError(null);

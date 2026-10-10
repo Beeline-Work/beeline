@@ -142,6 +142,10 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
 vi.mock('@/buzz/community-storage', () => ({
   loadActiveCommunityId: vi.fn(async () => 'workspace'),
   saveActiveCommunityId: vi.fn(async () => undefined),
+  watchActiveCommunityId: vi.fn((_pubkey: string, listener: (id: string | null) => void) => {
+    void Promise.resolve('workspace').then(listener);
+    return () => undefined;
+  }),
 }));
 vi.mock('@/buzz/surface-storage', () => {
   const cache = {
@@ -149,6 +153,8 @@ vi.mock('@/buzz/surface-storage', () => {
     write: vi.fn(async (_address: unknown, _value: unknown, _guard: unknown) => undefined),
     remove: vi.fn(async () => undefined),
     publish: vi.fn((_address: unknown, value: unknown) => value),
+    subscribe: vi.fn(() => () => undefined),
+    peek: vi.fn(() => null),
     fetch: vi.fn(async (address: unknown, guard: unknown, request: () => Promise<unknown>) => {
       const value = await request();
       await cache.write(address, value, guard);

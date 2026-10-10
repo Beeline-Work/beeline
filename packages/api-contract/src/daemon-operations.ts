@@ -134,6 +134,8 @@ export type AgentCommand = {
   readonly turnRequestId: string;
   readonly action: AgentCommandAction;
   readonly reason: string;
+  /** The schedule whose run woke this turn, when this is a `schedule` command. */
+  readonly scheduleId?: string;
   readonly rootCommandId: string;
   readonly parentCommandId?: string;
   readonly rootSourceMessageId: string;

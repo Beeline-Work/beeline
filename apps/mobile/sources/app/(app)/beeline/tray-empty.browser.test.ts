@@ -39,6 +39,8 @@ function dataShims(
       async workspace() { return { workspace: { id: 'workspace-1', name: 'Clover Workspace' } }; }
     }`,
     '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
+    '@/sync/transport/live-connection':
+      'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
     '@/buzz/community-storage': `export const loadActiveCommunityId = async () => ${link === 'active' ? "'workspace-1'" : 'null'};`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ${link === 'workspace' ? 'null' : "({ publicKey: 'viewer' })"};`,

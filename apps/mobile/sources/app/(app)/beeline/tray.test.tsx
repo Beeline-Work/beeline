@@ -1112,6 +1112,8 @@ it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN â
       }] };`,
       '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
       '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
+      '@/sync/transport/live-connection':
+        'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
       '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
       '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
       'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
@@ -1142,6 +1144,8 @@ function clearProofShims(mobile: string) {
       }] } : undefined;`,
     '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
     '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
+    '@/sync/transport/live-connection':
+      'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
     '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
     '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
     'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',

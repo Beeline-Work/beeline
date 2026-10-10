@@ -1,6 +1,7 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { writeRoomMessage } from '@/buzz/room-message-records';
 import type { RoomViewMessage } from '@beeline/buzz-client';
 import type { ConnectorInstallState } from './workbench';
 
@@ -176,6 +177,8 @@ export function observeRoomResource(
         if (subscribed && !live.resumed) reconnect();
         subscribed = true;
       } else if (live.type === 'message-delta') {
+        // Every view holding this message shows the change before any re-read.
+        writeRoomMessage(roomId, live.message);
         if (changes(live.message)) invalidate();
       } else if (live.type === 'invalidate' && !live.deliveryId) {
         invalidate();

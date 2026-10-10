@@ -239,6 +239,7 @@ import { cornerDisplayFromRoomView } from '@/buzz/corner-display-state';
 import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
+import { useRoomMessageRecords } from '@/buzz/room-message-records';
 import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
 import {
   LIVE_TRACE_STORAGE_KEY,
@@ -287,7 +288,6 @@ function Harness({
     resetTranscript: vi.fn(),
     restoreOutboxMessages: vi.fn(),
     dismissOptimisticMessage: vi.fn(),
-    patchMessage: vi.fn(),
     observeRoomSurface: vi.fn(),
   });
   const result = useRoomSurfaceSession({
@@ -325,7 +325,6 @@ function LiveCornerHarness({ channelId }: { channelId: string }) {
     resetTranscript: vi.fn(),
     restoreOutboxMessages: vi.fn(),
     dismissOptimisticMessage: vi.fn(),
-    patchMessage: vi.fn(),
     observeRoomSurface: vi.fn(),
   });
   const { roomSurface } = useRoomSurfaceSession({ channelId, bindingsRef });
@@ -2175,16 +2174,15 @@ describe('Room history follows live row changes', () => {
   type Surface = {
     session: UseRoomSurfaceSessionResult;
     history: ReturnType<typeof useRoomMessageStore>;
+    historyRows: readonly RoomViewMessage[];
   };
 
-  // The chat screen's wiring: the session hands every server row to the store.
+  // The chat screen's wiring: history rows read through the Room's message records.
   function HistoryHarness({ capture }: { capture(surface: Surface): void }) {
-    const patchRef = React.useRef<(message: RoomViewMessage) => void>(() => undefined);
     const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
       resetTranscript: vi.fn(),
       restoreOutboxMessages: vi.fn(),
       dismissOptimisticMessage: vi.fn(),
-      patchMessage: (message) => patchRef.current(message),
       observeRoomSurface: vi.fn(),
     });
     const session = useRoomSurfaceSession({ channelId: 'room-a', bindingsRef });
@@ -2197,8 +2195,8 @@ describe('Room history follows live row changes', () => {
       enabled: true,
       initialVisibleCount: 30,
     });
-    patchRef.current = history.patch;
-    capture({ session, history });
+    const [historyRows] = useRoomMessageRecords('room-a', [history.rows]);
+    capture({ session, history, historyRows });
     return React.createElement('room-surface');
   }
 
@@ -2214,7 +2212,7 @@ describe('Room history follows live row changes', () => {
     await flushEffects();
     await act(async () => current.history.loadOlder(30));
     await flushEffects();
-    expect(current.history.rows.map((message) => message.text)).toEqual(['before']);
+    expect(current.historyRows.map((message) => message.text)).toEqual(['before']);
     return { current: () => current, renderer };
   }
 
@@ -2229,7 +2227,7 @@ describe('Room history follows live row changes', () => {
         },
       }),
     );
-    expect(current().history.rows.map((message) => message.text)).toEqual(['after']);
+    expect(current().historyRows.map((message) => message.text)).toEqual(['after']);
     expect(current().session.roomSurface?.messages.map((message) => message.id)).toEqual(
       tail.map((message) => message.id),
     );
@@ -2241,7 +2239,7 @@ describe('Room history follows live row changes', () => {
     await act(async () =>
       current().session.applyRoomMessageResult({ ...old, text: '', deleted: true }),
     );
-    expect(current().history.rows.map((message) => message.deleted)).toEqual([true]);
+    expect(current().historyRows.map((message) => message.deleted)).toEqual([true]);
     await act(async () => renderer.unmount());
   });
 

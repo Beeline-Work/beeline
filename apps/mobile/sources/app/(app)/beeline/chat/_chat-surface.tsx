@@ -294,6 +294,7 @@ import {
   hostRowIndex,
   useRoomMessageStore,
 } from '@/buzz/room-message-store';
+import { roomMessageRecord, useRoomMessageRecords } from '@/buzz/room-message-records';
 import {
   markRoomOpen,
   useRoomSurfaceSession,
@@ -1205,12 +1206,9 @@ export function BuzzChatSurface({
       setCornerOpenRepoPrompt(false);
     }
   }, [roomRepoAccessIssue, roomRepositoryState]);
-  const cachedMessages = useMemo(
-    () =>
-      roomSurface && cacheViewerPubkey
-        ? roomMessageProjector.project(roomViewTranscriptMessages(roomSurface), cacheViewerPubkey)
-        : [],
-    [cacheViewerPubkey, roomMessageProjector, roomSurface?.messages, roomSurface?.toolRows],
+  const serverTailRows = useMemo(
+    () => (roomSurface ? roomViewTranscriptMessages(roomSurface) : []),
+    [roomSurface?.messages, roomSurface?.toolRows],
   );
   // Resolve references only within the Room family returned by this surface.
   const channelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
@@ -1409,7 +1407,7 @@ export function BuzzChatSurface({
   // converted to render props only below, never persisted as a derived
   // transcript or folded into the current Room response.
   const {
-    rows: historyRows,
+    rows: serverHistoryRows,
     positions: transcriptPositions,
     attached: historyAttached,
     windowId: transcriptWindowId,
@@ -1427,7 +1425,6 @@ export function BuzzChatSurface({
     loadOlder: loadOlderHistory,
     retryOlder: retryOlderHistory,
     revealThrough: revealTranscriptThrough,
-    patch: patchTranscriptHistory,
     reset: resetTranscriptHistory,
   } = useRoomMessageStore({
     roomId: decodedId,
@@ -1436,9 +1433,16 @@ export function BuzzChatSurface({
     enabled: Boolean(cacheViewerPubkey),
     initialVisibleCount: isCorner ? INITIAL_CORNER_MESSAGE_WINDOW : INITIAL_MESSAGE_WINDOW,
   });
-  // The loaded server rows, read by actions that patch one row by id.
-  const serverRowsRef = useRef({ tail: roomSurface?.messages, history: historyRows });
-  serverRowsRef.current = { tail: roomSurface?.messages, history: historyRows };
+  // The tail and history are windows; each row's content comes from the
+  // Room's one record for that message id.
+  const [tailRows, historyRows] = useRoomMessageRecords(decodedId, [
+    serverTailRows,
+    serverHistoryRows,
+  ]);
+  const cachedMessages = useMemo(
+    () => (cacheViewerPubkey ? roomMessageProjector.project(tailRows, cacheViewerPubkey) : []),
+    [cacheViewerPubkey, roomMessageProjector, tailRows],
+  );
   const committedMessageIds = useMemo(
     () => new Set(cachedMessages.map((message) => message.id)),
     [cachedMessages],
@@ -1480,7 +1484,6 @@ export function BuzzChatSurface({
     },
     restoreOutboxMessages: addMessages,
     dismissOptimisticMessage: removeOptimistic,
-    patchMessage: patchTranscriptHistory,
     // A newly indexed working lease can be newer than the screen's prior
     // clock. Re-evaluate it at RoomView application time, as this screen did
     // before the surface lifecycle moved into useRoomSurfaceSession.
@@ -3763,10 +3766,7 @@ export function BuzzChatSurface({
           messageId,
           bookmarked,
         });
-        const { tail, history } = serverRowsRef.current;
-        const row =
-          tail?.find((candidate) => candidate.id === messageId) ??
-          history.find((candidate) => candidate.id === messageId);
+        const row = roomMessageRecord(decodedId, messageId);
         // The server value now lives on its row; the overlay only bridged the wait.
         if (row) applyRoomMessageResult({ ...row, bookmarked: result.bookmarked });
         setOptimisticBookmarks((current) => {

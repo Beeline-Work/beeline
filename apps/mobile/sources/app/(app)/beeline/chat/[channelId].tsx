@@ -21,7 +21,6 @@ export default function BuzzChat() {
     resetTranscript: () => undefined,
     restoreOutboxMessages: () => undefined,
     dismissOptimisticMessage: () => undefined,
-    patchMessage: () => undefined,
     observeRoomSurface: () => undefined,
   });
 

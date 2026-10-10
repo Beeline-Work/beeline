@@ -636,34 +636,6 @@ export function useRoomMessageStore({
     if (status === 'loading' || status === 'ready') setJump(null);
   }, [setJump]);
 
-  /**
-   * A live delta or a mutation result for a row the window already holds.
-   * The row is replaced by id wherever it is loaded: an older page, or a
-   * detached window and its buffered rows. A row the window does not hold
-   * is left to the tail, so the store stays bounded to loaded rows.
-   */
-  const patch = useCallback(
-    (message: RoomViewMessage) => {
-      const swap = (rows: readonly RoomViewMessage[]) => {
-        const index = rows.findIndex((row) => row.id === message.id);
-        if (index < 0 || rows[index] === message) return rows;
-        const next = [...rows];
-        next[index] = message;
-        return next;
-      };
-      const pages = olderPagesRef.current;
-      const nextPages = pages.map(swap);
-      if (nextPages.some((page, index) => page !== pages[index])) setOlder(nextPages);
-      const current = detachedRef.current;
-      if (!current) return;
-      const rows = swap(current.rows);
-      const buffered = swap(current.buffered);
-      if (rows !== current.rows || buffered !== current.buffered)
-        setDetached({ ...current, rows, buffered });
-    },
-    [setDetached, setOlder],
-  );
-
   const rows = useMemo(
     () => (detached ? detached.rows : (addRoomPage({ pages: olderPages }, []).pages[0] ?? [])),
     [detached, olderPages],
@@ -697,7 +669,6 @@ export function useRoomMessageStore({
     jumpTo,
     endJump,
     revealThrough: reveal,
-    patch,
     reset,
   };
 }

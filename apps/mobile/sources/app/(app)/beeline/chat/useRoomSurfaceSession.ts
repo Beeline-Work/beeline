@@ -34,6 +34,7 @@ import {
   reconcileRoomTurnDelta,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
+import { writeRoomMessage } from '@/buzz/room-message-records';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { ReadCursorAdvancer } from '@/buzz/read-cursor-advance';
 import { liveDraftRowId } from '@/buzz/draft-settle';
@@ -213,8 +214,6 @@ export interface RoomSurfaceSessionBindings {
   resetTranscript(): void;
   restoreOutboxMessages(messages: readonly ChatDisplayMessage[]): void;
   dismissOptimisticMessage(eventId: string): void;
-  /** A server row for this Room: replace it wherever the loaded history holds it. */
-  patchMessage(message: RoomViewMessage): void;
   /** Refresh render-time lease evaluation whenever a RoomView is applied. */
   observeRoomSurface(): void;
 }
@@ -322,7 +321,8 @@ export function useRoomSurfaceSession({
     });
   }, []);
   const applyRoomMessageResult = useCallback((message: RoomViewMessage) => {
-    bindingsRef.current.patchMessage(message);
+    // The record first: a row older than the tail lives only in loaded history.
+    writeRoomMessage(channelIdRef.current, message);
     setRoomSurface((current) => {
       if (!current) return current;
       const next = reconcileRoomMessageDelta(current, message);
@@ -823,7 +823,7 @@ export function useRoomSurfaceSession({
               else {
                 messageDeltasDuringRead?.push(live.message);
                 // A row older than the tail lives only in loaded history.
-                bindingsRef.current.patchMessage(live.message);
+                writeRoomMessage(channelId, live.message);
               }
               const current = reconciledViewRef.current;
               if (!current) {

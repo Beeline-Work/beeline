@@ -135,7 +135,6 @@ function Harness({ capture }: { capture(result: UseRoomSurfaceSessionResult): vo
     resetTranscript: vi.fn(),
     restoreOutboxMessages: vi.fn(),
     dismissOptimisticMessage: vi.fn(),
-    patchMessage: vi.fn(),
     observeRoomSurface: vi.fn(),
   });
   capture(useRoomSurfaceSession({ channelId: 'experiments', bindingsRef }));

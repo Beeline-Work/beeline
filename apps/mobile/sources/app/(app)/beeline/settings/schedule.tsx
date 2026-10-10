@@ -21,7 +21,7 @@ function first(value: string | string[] | undefined): string | undefined {
 
 /**
  * One prompt schedule, laid out like a workflow run page: Schedules and
- * Webhooks over Schedule, the Runs, Agent and Where rows, the full prompt on
+ * subscriptions over Schedule, the Runs, Agent and Where rows, the full prompt on
  * the run page's summary rail, how often it has fired, then Stop.
  */
 export default function PromptSchedule() {
@@ -54,8 +54,8 @@ export default function PromptSchedule() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <PageHeader
-        backAccessibilityLabel="Back to Schedules and Webhooks"
-        eyebrow="Schedules and Webhooks"
+        backAccessibilityLabel="Back to Schedules and subscriptions"
+        eyebrow="Schedules and subscriptions"
         onBack={() => router.back()}
         testID="schedule-header"
         title="Schedule"

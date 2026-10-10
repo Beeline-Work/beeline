@@ -8,7 +8,7 @@ const operation = vi.hoisted(() => vi.fn(async (name: string, _input?: unknown) 
   { id: 'daily', roomId: 'room', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Morning summary', nextRunAt: 1790000000, runCount: 14 },
   { id: 'video', roomId: 'corner-1', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 1440 }, message: 'Start the workflow', nextRunAt: 1790000000, runCount: 2, workflowSlug: 'post_youtube_video', corner: { id: 'corner-1', name: 'video' } },
 ] }
-  : name === 'readRoomWebhooks' ? { sources: [{ id: 'hook', source: 'price-feed', signed: false, revoked: false, agents: ['Niglet'] }], requests: [], deliveries: [] } : {}));
+  : name === 'listRoomSubscriptions' ? { subscriptions: [{ id: 'sub', roomId: 'room', agentId: 'agent-1', source: 'repository', event: 'issue.opened', repository: 'owner/widgets' }] } : {}));
 const params = vi.hoisted(() => ({ value: { roomId: 'room', workspaceId: 'ws' } as Record<string, string> }));
 const router = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 vi.mock('expo-router', () => ({ router, useLocalSearchParams: () => params.value, useFocusEffect: (effect: any) => React.useEffect(effect, [effect]) }));
@@ -33,7 +33,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({ RoomViewClient: class { ro
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: operation }));
 import ScheduledWork from './schedules';
 import PromptSchedule from './schedule';
-import Webhook from './webhook';
+import Subscription from './subscription';
 
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -61,14 +61,14 @@ it('lists every entry as one row in the shared grammar, each opening its own pag
     expect(row('scheduled-work-video').props).toMatchObject({ title: 'post_youtube_video workflow · Every day', description: '@Hoots · #video' });
     expect(row('scheduled-work-video').props.leading).toBeTruthy();
     expect(row('scheduled-work-daily').props.leading).toBeUndefined();
-    expect(row('webhook-hook').props).toMatchObject({ title: 'price-feed event payload · On each price-feed delivery', description: '@Niglet · this Room' });
+    expect(row('subscription-sub').props).toMatchObject({ title: 'issue.opened · When received', description: '@Hoots · this Room' });
     act(() => row('scheduled-work-daily').props.onPress());
     act(() => row('scheduled-work-video').props.onPress());
-    act(() => row('webhook-hook').props.onPress());
+    act(() => row('subscription-sub').props.onPress());
     expect(router.push.mock.calls.map(([href]) => href)).toEqual([
       { pathname: '/beeline/settings/schedule', params: { roomId: 'room', scheduleId: 'daily' } },
       { pathname: '/beeline/workflow', params: { roomId: 'corner-1', name: 'post_youtube_video', scheduleId: 'video', parentRoomId: 'room' } },
-      { pathname: '/beeline/settings/webhook', params: { roomId: 'room', webhookId: 'hook' } },
+      { pathname: '/beeline/settings/subscription', params: { roomId: 'room', subscriptionId: 'sub' } },
     ]);
     // No stop control and no delivery timestamps on the list.
     expect(tree.root.findAll((node: any) => /stop|revoke/i.test(String(node.props?.testID ?? ''))).length).toBe(0);
@@ -89,18 +89,15 @@ it('stops a prompt schedule from its page only after the confirm step', async ()
   } finally { await act(async () => tree.unmount()); }
 });
 
-it('stops a webhook from its page only after the same confirm step', async () => {
-  params.value = { roomId: 'room', webhookId: 'hook' };
-  const tree = await render(<Webhook />);
+it('stops a subscription from its page only after the same confirm step', async () => {
+  params.value = { roomId: 'room', subscriptionId: 'sub' };
+  const tree = await render(<Subscription />);
   try {
-    expect(tree.root.findByProps({ testID: 'webhook-trigger' }).props.children).toBe(
-      "Fires when price-feed sends a request to this webhook's URL. The sender's own webhook settings choose which events it sends. Any request to the URL is accepted.",
-    );
-    expect(tree.root.findAllByProps({ testID: 'webhook-reason' })).toHaveLength(0);
-    await act(async () => press(tree, 'stop-webhook'));
-    expect(operation.mock.calls.filter(([name]) => name === 'manageRoomWebhook')).toHaveLength(0);
-    await act(async () => press(tree, 'stop-webhook-confirm'));
-    expect(operation).toHaveBeenCalledWith('manageRoomWebhook', { roomId: 'room', action: 'revoke', webhookId: 'hook' });
+    expect(tree.root.findByProps({ testID: 'subscription-trigger' }).props.children).toBe('issue.opened from owner/widgets.');
+    await act(async () => press(tree, 'stop-subscription'));
+    expect(operation.mock.calls.filter(([name]) => name === 'deleteRoomSubscription')).toHaveLength(0);
+    await act(async () => press(tree, 'stop-subscription-confirm'));
+    expect(operation).toHaveBeenCalledWith('deleteRoomSubscription', { roomId: 'room', subscriptionId: 'sub' });
     expect(router.back).toHaveBeenCalled();
   } finally { await act(async () => tree.unmount()); }
 });

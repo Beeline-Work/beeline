@@ -1,4 +1,4 @@
-import { RoomWebhooks, webhookPromptBody } from './room-webhooks.js';
+import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription, subscriptionPromptBody } from './agent-subscriptions.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
 import { activeCornerHolds, setCornerHold } from './corner-holds.js';
 import { visibleChatMessageSql } from './read-cursor.js';
@@ -455,7 +455,8 @@ export class DaemonService {
       'reviseCornerBrief',
       'postRoomEvent',
       'requestAgentGrant',
-      'requestWebhook',
+      'createAgentSubscription',
+      'deleteAgentSubscription',
       'authorizeSquireCall',
       'authorizeResourceCall',
       'authorizeRepositoryCall',
@@ -1013,19 +1014,12 @@ export class DaemonService {
           authenticatedAgentId,
         )) as Output<Name>;
       case 'claimAgentCommand': {
-        const webhookResult = await this.database.transaction(async (db) => {
-          const command = await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
+        await this.database.transaction(async (db) => {
+          await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
             String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '');
-          if (command.action !== 'resume') return undefined;
-          const source = await db.query<{ system_event: SystemEvent | null }>(
-            `SELECT system_event FROM messages WHERE id=$1`, [command.source_message_id]);
-          const event = source.rows[0]?.system_event;
-          if (event?.kind !== 'webhook-request-decided' || !event.object?.id) return undefined;
-          const result = await new RoomWebhooks(db).takeUrl(scopedRoom!, authenticatedAgentId, event.object.id);
-          return result.url ? { url: result.url, ...(result.signingSecret ? { signingSecret: result.signingSecret } : {}) } : undefined;
         });
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
-        return { ...this.writeResult(), ...(webhookResult ? { webhookResult } : {}) } as Output<Name>;
+        return this.writeResult() as Output<Name>;
       }
       case 'acknowledgeAgentCommand': {
         const acknowledged = await this.database.query(
@@ -1094,12 +1088,17 @@ export class DaemonService {
           input as Input<'createAgentSchedule'>,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'requestWebhook': {
-        const i = input as Input<'requestWebhook'>;
-        return await new RoomWebhooks(this.database).request(i.roomId, authenticatedAgentId, i.source, i.reason, this.authorizedCommand!.turn_request_id) as Output<Name>;
+      case 'createAgentSubscription':
+        return await createAgentSubscription(this.database, authenticatedAgentId,
+          input as Input<'createAgentSubscription'>) as Output<Name>;
+      case 'listAgentSubscriptions':
+        return await listAgentSubscriptions(this.database,
+          (input as Input<'listAgentSubscriptions'>).roomId, authenticatedAgentId) as Output<Name>;
+      case 'deleteAgentSubscription': {
+        const i = input as Input<'deleteAgentSubscription'>;
+        await deleteAgentSubscription(this.database, i.roomId, authenticatedAgentId, i.subscriptionId);
+        return this.writeResult() as Output<Name>;
       }
-      case 'listRoomWebhooks':
-        return await new RoomWebhooks(this.database).list((input as Input<'listRoomWebhooks'>).roomId, authenticatedAgentId) as Output<Name>;
       case 'setEventSubscriptions':
         return (await this.setEventSubscriptions(
           input as Input<'setEventSubscriptions'>,
@@ -2818,7 +2817,7 @@ export class DaemonService {
         authorId: row.author_id,
         createdAt: seconds(row.created_at),
         type: row.presentation,
-        body: webhookPromptBody(row.text, row.system_event),
+        body: subscriptionPromptBody(row.text, row.system_event),
         ...(row.corner_ask_id ? { cornerAskId: row.corner_ask_id } : {}),
         ...(row.agent_author ? { agentAuthor: true } : {}),
         ...(row.reply_to_message_id ? { replyToMessageId: row.reply_to_message_id } : {}),
@@ -7934,8 +7933,9 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listAgentToolSchedules: true,
   createAgentSchedule: true,
   setEventSubscriptions: true,
-  requestWebhook: true,
-  listRoomWebhooks: true,
+  createAgentSubscription: true,
+  listAgentSubscriptions: true,
+  deleteAgentSubscription: true,
   watchCorner: true,
   listEventSubscriptions: true,
   postRoomEvent: true,

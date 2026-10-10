@@ -1,12 +1,11 @@
 import { useCallback, useState } from 'react';
 import { router, useFocusEffect, type Href } from 'expo-router';
-import type { RoomScheduleView, RoomWebhooksResult } from '@beeline/api-contract/phone';
+import type { RoomScheduleView, RoomSubscriptionView } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
-export type RoomWebhookView = RoomWebhooksResult['sources'][number];
 
 const NEXT_RUN = new Intl.DateTimeFormat(undefined, {
   month: 'short',
@@ -50,52 +49,34 @@ export function scheduleRuns(schedule: RoomScheduleView): string {
   )}`;
 }
 
-export function handles(names: readonly string[]): string {
-  return names.length ? names.map((name) => `@${name}`).join(', ') : 'No agent subscribed';
+export function subscriptionTitle(subscription: RoomSubscriptionView): string {
+  return `${subscription.event} · When received`;
 }
 
-/** Line 1 of a webhook row: what it runs · when it runs. */
-export function webhookTitle(hook: RoomWebhookView): string {
-  return `${hook.source} event payload · ${webhookCadence(hook)}`;
+export function subscriptionSource(subscription: RoomSubscriptionView): string {
+  return subscription.source === 'repository' ? subscription.repository ?? 'Repository' : 'Room activity';
 }
 
-export function webhookCadence(hook: RoomWebhookView): string {
-  return `On each ${hook.source} delivery`;
+export function subscriptionWhere(subscription: RoomSubscriptionView): string {
+  return subscription.corner ? `#${subscription.corner.name}` : 'this Room';
 }
 
-export function webhookRuns(hook: RoomWebhookView): string {
-  return hook.signed ? `${webhookCadence(hook)} · signed` : webhookCadence(hook);
-}
-
-/** What makes the webhook fire: Beeline stores only its source and signing. */
-export function webhookTrigger(hook: RoomWebhookView): string {
-  return [
-    `Fires when ${hook.source} sends a request to this webhook's URL.`,
-    "The sender's own webhook settings choose which events it sends.",
-    hook.signed
-      ? 'Only requests signed with the shared secret are accepted.'
-      : 'Any request to the URL is accepted.',
-  ].join(' ');
-}
-
-export function webhookPayload(hook: RoomWebhookView): string {
-  if (!hook.agents.length) return 'No agent is subscribed, so a delivery wakes nobody.';
-  const names = hook.agents.map((name) => `@${name}`);
-  const who =
-    names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
-  return `Each delivery wakes ${who} with the event payload.`;
+export function subscriptionRuns(subscription: RoomSubscriptionView): string {
+  return subscription.lastFiredAt
+    ? `When received · last ${NEXT_RUN.format(new Date(subscription.lastFiredAt * 1_000))}`
+    : 'When received · waiting for first event';
 }
 
 export type ScheduledWork = {
   roomName: string | null;
   agentNames: ReadonlyMap<string, string>;
   schedules: readonly RoomScheduleView[];
-  webhooks: readonly RoomWebhookView[];
+  subscriptions: readonly RoomSubscriptionView[];
 };
 
 /**
- * One read of a Room's schedules and live webhooks, with the Room's name and
- * agent names, for the Schedules and Webhooks list and each entry's page.
+ * One read of a Room's schedules and subscriptions, with the Room's name and
+ * agent names, for the Schedules and subscriptions list and each entry's page.
  * Room managers only; reloads when the page regains focus.
  */
 export function useScheduledWork(roomId: string | undefined) {
@@ -118,9 +99,9 @@ export function useScheduledWork(roomId: string | undefined) {
       const relayUrl = await getEffectiveRelayUrl();
       const room = await new RoomViewClient({ baseUrl: relayUrl, identity }).room(roomId);
       if (!room.viewer.permissions.manage) throw new Error('Room manager required');
-      const [listed, hooks] = await Promise.all([
+      const [listed, subscribed] = await Promise.all([
         monolithPhoneOperation('listRoomSchedules', { roomId }),
-        monolithPhoneOperation('readRoomWebhooks', { roomId }),
+        monolithPhoneOperation('listRoomSubscriptions', { roomId }),
       ]);
       setWork({
         roomName: room.room.name,
@@ -130,11 +111,11 @@ export function useScheduledWork(roomId: string | undefined) {
             .map((member) => [member.identity.pubkey, member.identity.name] as const),
         ),
         schedules: listed.schedules,
-        webhooks: hooks.sources.filter((hook) => !hook.revoked),
+        subscriptions: subscribed.subscriptions,
       });
       setError(null);
     } catch (caught) {
-      setError(`Could not load schedules and webhooks: ${String(caught)}`);
+      setError(`Could not load schedules and subscriptions: ${String(caught)}`);
     } finally {
       setLoading(false);
     }
@@ -159,6 +140,6 @@ export async function stopSchedule(roomId: string, scheduleId: string): Promise<
   await monolithPhoneOperation('deleteRoomSchedule', { roomId, scheduleId });
 }
 
-export async function stopWebhook(roomId: string, webhookId: string): Promise<void> {
-  await monolithPhoneOperation('manageRoomWebhook', { roomId, action: 'revoke', webhookId });
+export async function stopSubscription(roomId: string, subscriptionId: string): Promise<void> {
+  await monolithPhoneOperation('deleteRoomSubscription', { roomId, subscriptionId });
 }

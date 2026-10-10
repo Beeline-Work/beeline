@@ -5,15 +5,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import type { RoomScheduleView } from '@beeline/api-contract/phone';
+import type { RoomScheduleView, RoomSubscriptionView } from '@beeline/api-contract/phone';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import {
-  handles,
   scheduleTitle,
   scheduleWhere,
+  subscriptionTitle,
+  subscriptionWhere,
   useScheduledWork,
-  webhookTitle,
-  type RoomWebhookView,
 } from '@/buzz/scheduled-work';
 import { CORNER_META_SIZE } from '@/components/buzz/CornerGlyph';
 import { PageHeader } from '@/components/buzz/PageHeader';
@@ -27,10 +26,10 @@ function first(value: string | string[] | undefined): string | undefined {
 
 /**
  * Everything that wakes the Room's agents without a human tag: timers and
- * webhooks. Agents set both up. Each entry is one settings row in the same
+ * subscriptions. Agents set both up. Each entry is one settings row in the same
  * grammar — what it runs · when it runs, over who · where — and opens its own
  * page: a workflow schedule the workflow's page, a prompt schedule its full
- * prompt, a webhook what makes it fire. Stopping happens on those pages.
+ * prompt, a subscription what makes it fire. Stopping happens on those pages.
  */
 export default function ScheduledWork() {
   useLatencyRouteFrame('/beeline/settings/schedules');
@@ -46,7 +45,7 @@ export default function ScheduledWork() {
   );
   useLatencyRouteFrame('/beeline/settings/schedules', !loading, true);
   const schedules = work?.schedules ?? [];
-  const liveWebhooks = work?.webhooks ?? [];
+  const subscriptions = work?.subscriptions ?? [];
 
   const openSchedule = (schedule: RoomScheduleView) =>
     router.push(
@@ -82,19 +81,19 @@ export default function ScheduledWork() {
     />
   );
 
-  const renderWebhook = (hook: RoomWebhookView) => (
+  const renderSubscription = (subscription: RoomSubscriptionView) => (
     <SettingsRow
       chevron="right"
-      description={`${handles(hook.agents)} · this Room`}
-      key={hook.id}
+      description={`@${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
+      key={subscription.id}
       onPress={() =>
         router.push({
-          pathname: '/beeline/settings/webhook',
-          params: { roomId: roomId!, webhookId: hook.id },
+          pathname: '/beeline/settings/subscription',
+          params: { roomId: roomId!, subscriptionId: subscription.id },
         })
       }
-      testID={`webhook-${hook.id}`}
-      title={webhookTitle(hook)}
+      testID={`subscription-${subscription.id}`}
+      title={subscriptionTitle(subscription)}
     />
   );
 
@@ -105,7 +104,7 @@ export default function ScheduledWork() {
         eyebrow={displayRoomIndexTitle(work?.roomName ?? undefined) ?? 'Room'}
         onBack={() => router.back()}
         testID="scheduled-work-header"
-        title="Schedules and Webhooks"
+        title="Schedules and subscriptions"
       />
       {error && (
         <Pressable
@@ -126,20 +125,20 @@ export default function ScheduledWork() {
           keyboardShouldPersistTaps="handled"
           testID="scheduled-work-list"
         >
-          {schedules.length === 0 && liveWebhooks.length === 0 ? (
+          {schedules.length === 0 && subscriptions.length === 0 ? (
             <View style={styles.emptyBlock} testID="scheduled-work-empty">
               <Ionicons color={styles.emptyIcon.color} name="time-outline" size={22} />
               <Text style={styles.emptyTitle}>Nothing wakes agents here yet</Text>
               <Text style={styles.empty}>
-                Agents set up schedules and webhooks. Ask an agent in this Room to add one.
+                Agents set up schedules and subscriptions. Ask an agent in this Room to add one.
               </Text>
             </View>
           ) : (
             <>
               {schedules.length > 0 && <Text style={styles.section}>SCHEDULES</Text>}
               <View style={styles.rows}>{schedules.map(renderSchedule)}</View>
-              {liveWebhooks.length > 0 && <Text style={styles.section}>WEBHOOKS</Text>}
-              <View style={styles.rows}>{liveWebhooks.map(renderWebhook)}</View>
+              {subscriptions.length > 0 && <Text style={styles.section}>SUBSCRIPTIONS</Text>}
+              <View style={styles.rows}>{subscriptions.map(renderSubscription)}</View>
             </>
           )}
         </ScrollView>

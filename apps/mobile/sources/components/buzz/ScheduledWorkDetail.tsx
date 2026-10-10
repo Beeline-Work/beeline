@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SettingsRow } from './SettingsRow';
 
 /**
- * The parts a schedule's or webhook's own page is built from, cut from the
+ * The parts a schedule's or subscription's own page is built from, cut from the
  * workflow run page (`workflow-run.tsx`) so the three read as one family: its
  * hairline section head (as "Steps" is drawn), its summary rail line, and the
  * settings rows every detail page shares — Runs, Agent(s), Where, then Stop.
@@ -64,7 +64,7 @@ export function ScheduledWorkFacts({
 }
 
 /**
- * "Stop schedule" or "Stop webhook": one tap asks, a second confirms, the
+ * "Stop schedule" or "Stop subscription": one tap asks, a second confirms, the
  * same two steps the schedule list's STOP took.
  */
 export function StopScheduledWork({

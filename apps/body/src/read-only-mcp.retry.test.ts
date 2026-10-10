@@ -38,7 +38,7 @@ describe('daemon network-failure classification', () => {
 describe('daemonOperationIsSafeToRepeat', () => {
   it('repeats reads', () => {
     expect(daemonOperationIsSafeToRepeat('getPrChecksStatus', {})).toBe(true);
-    expect(daemonOperationIsSafeToRepeat('listRoomWebhooks', {})).toBe(true);
+    expect(daemonOperationIsSafeToRepeat('listAgentSubscriptions', {})).toBe(true);
   });
 
   it('never repeats an ordinary write', () => {
@@ -59,10 +59,10 @@ describe('daemon tool-call network retry', () => {
     vi.stubGlobal('fetch', async () => {
       calls += 1;
       if (calls === 1) throw bareFetchFailed();
-      return Response.json({ sources: [] });
+      return Response.json({ subscriptions: [] });
     });
-    await expect(callAgentTool('list_webhooks', {}, 'call-1')).resolves.toBe(
-      JSON.stringify({ sources: [] }),
+    await expect(callAgentTool('list_subscriptions', {}, 'call-1')).resolves.toBe(
+      JSON.stringify({ subscriptions: [] }),
     );
     expect(calls).toBe(2);
   });
@@ -75,10 +75,10 @@ describe('daemon tool-call network retry', () => {
         throw new TypeError('fetch failed', {
           cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
         });
-      return Response.json({ sources: [] });
+      return Response.json({ subscriptions: [] });
     });
-    await expect(callAgentTool('list_webhooks', {}, 'call-1')).resolves.toBe(
-      JSON.stringify({ sources: [] }),
+    await expect(callAgentTool('list_subscriptions', {}, 'call-1')).resolves.toBe(
+      JSON.stringify({ subscriptions: [] }),
     );
     expect(calls).toBe(2);
   });
@@ -89,8 +89,8 @@ describe('daemon tool-call network retry', () => {
       calls += 1;
       throw bareFetchFailed();
     });
-    await expect(callAgentTool('list_webhooks', {}, 'call-1')).rejects.toThrow(
-      'daemon operation listRoomWebhooks failed with a network error after 3 attempts',
+    await expect(callAgentTool('list_subscriptions', {}, 'call-1')).rejects.toThrow(
+      'daemon operation listAgentSubscriptions failed with a network error after 3 attempts',
     );
     expect(calls).toBe(3);
   });
@@ -104,8 +104,8 @@ describe('daemon tool-call network retry', () => {
         headers: { 'content-type': 'application/json' },
       });
     });
-    await expect(callAgentTool('list_webhooks', {}, 'call-1')).rejects.toThrow(
-      'daemon operation listRoomWebhooks failed (500: boom)',
+    await expect(callAgentTool('list_subscriptions', {}, 'call-1')).rejects.toThrow(
+      'daemon operation listAgentSubscriptions failed (500: boom)',
     );
     expect(calls).toBe(1);
   });

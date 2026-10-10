@@ -222,7 +222,7 @@ export function composeSystemLine(phrase: SystemPhrase): { text: string; event: 
     ...(consequence ? { consequence } : {}),
     ...(phrase.kind ? { kind: phrase.kind } : {}),
     ...(phrase.scheduleId ? { scheduleId: phrase.scheduleId } : {}),
-    ...(phrase.kind?.startsWith('webhook:') ? { payload: phrase.payload } : {}),
+    ...(phrase.kind === 'subscription-fired' ? { payload: phrase.payload } : {}),
   };
   // The kind never reaches the text: `formatSystemLine` reads subject, verb,
   // object and consequence, so a line's wording is exactly what it was before
@@ -343,11 +343,14 @@ async function subscribers(
   if (!kind || !isSubscribableEventKind(kind)) return [];
   try {
     const rows = await database.query<{ identity_id: string }>(
-      `SELECT member.identity_id FROM memberships member
+      `SELECT DISTINCT member.identity_id FROM memberships member
        JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
        WHERE member.room_id=$1 AND member.removed_at IS NULL
-         AND member.event_subscriptions @> $2::jsonb`,
-      [roomId, JSON.stringify([kind])],
+         AND (member.event_subscriptions @> $2::jsonb OR EXISTS (
+           SELECT 1 FROM agent_subscriptions subscription
+           WHERE subscription.room_id=member.room_id AND subscription.agent_id=member.identity_id
+             AND subscription.source='room' AND subscription.event=$3))`,
+      [roomId, JSON.stringify([kind]), kind],
     );
     return rows.rows.map((row) => row.identity_id);
   } catch (error) {
@@ -525,7 +528,10 @@ export async function systemLine(
              -- The parent Room gets its own merge card; a member subscribed to
              -- merged there is woken by that card, so the watch stays quiet.
              AND NOT ($2::jsonb='["merged"]'::jsonb AND w.watcher_room_id=corner.parent_id
-               AND m.event_subscriptions @> $2::jsonb)
+               AND (m.event_subscriptions @> $2::jsonb OR EXISTS (
+                 SELECT 1 FROM agent_subscriptions subscription
+                 WHERE subscription.room_id=m.room_id AND subscription.agent_id=m.identity_id
+                   AND subscription.source='room' AND subscription.event='merged')))
            FOR SHARE OF w,m,watcher`,
               [input.roomId, JSON.stringify([input.kind])],
             )

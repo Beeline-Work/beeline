@@ -33,6 +33,7 @@ import {
 } from './agent-command.js';
 import { recordInstitutionalCornerOutcome } from './institutional-memory-shadow.js';
 import { reviewerList, roomAgentHealth } from './agent-health.js';
+import { fireRepositorySubscriptions } from './agent-subscriptions.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -1057,7 +1058,7 @@ export class GitHubOperations {
     };
   }
 
-  async processWebhook(event: string, payload: unknown) {
+  async processWebhook(event: string, payload: unknown, deliveryId?: string) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
     const body = payload as Record<string, unknown>;
     // The authenticated phone route uses this internal signal after a human message commits.
@@ -1069,6 +1070,10 @@ export class GitHubOperations {
     if (!installation || typeof installation !== 'object' || Array.isArray(installation)) return;
     const install = installation as Record<string, unknown>;
     if (typeof install.id !== 'number') return;
+    if (deliveryId) {
+      const changed = await fireRepositorySubscriptions(this.database, install.id, event, body, deliveryId);
+      for (const roomId of new Set(changed)) this.onRoomChanged?.(roomId);
+    }
     if (
       event === 'push' ||
       event === 'issues' ||

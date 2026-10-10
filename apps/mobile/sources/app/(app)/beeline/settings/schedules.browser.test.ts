@@ -21,16 +21,12 @@ function shims(mobile: string): Record<string, string> {
     export const monolithPhoneOperation = async (name, input) => {
       (globalThis.__operations ??= []).push(name);
       (globalThis.__inputs ??= []).push([name, input]);
-      if (name === 'readRoomWebhooks') return {
-        sources: [
-          { id: 'hook-1', source: 'github', signed: true, revoked: false, agents: ['Speedy', 'Ruby'],
-            reason: 'Wake reviewers when a PR opens on beeline.', requestedBy: 'Speedy' },
-          { id: 'hook-2', source: 'old-feed', signed: false, revoked: true, agents: [] },
-        ],
-        requests: [],
-        deliveries: [{ id: 'd-1', source: 'github', receivedAt: ${NEXT_RUN}, delivered: 1 }],
+      if (name === 'listRoomSubscriptions') return {
+        subscriptions: [{ id: 'sub-1', roomId: 'room-1', agentId: 'agent-2',
+          source: 'repository', event: 'pull_request.opened', repository: 'owner/widgets',
+          createdAt: 0, lastFiredAt: ${NEXT_RUN} }],
       };
-      if (name === 'manageRoomWebhook' || name === 'deleteRoomSchedule') return {};
+      if (name === 'deleteRoomSubscription' || name === 'deleteRoomSchedule') return {};
       if (name === 'readWorkflowDefinition') return { contract: ${contract}, runs: [] };
       if (name !== 'listRoomSchedules') throw new Error('unexpected ' + name);
       if (new URLSearchParams(location.search).has('failScheduleRead') && !globalThis.__failedScheduleRead) {
@@ -109,11 +105,11 @@ const stopped = (page: Page, operation: string) => {
   expect(page.back).toBe(1);
 };
 
-describe.skipIf(!existsSync(CHROME))('Schedules and Webhooks pages in a browser', () => {
+describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a browser', () => {
   it('lists each entry in one grammar and opens its own page', async () => {
     const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1');
     // The corner and workflow-run pages' header: small Room name over a bodyStrong title.
-    expect(page.text.slice(0, 2)).toEqual(['#beeline', 'Schedules and Webhooks']);
+    expect(page.text.slice(0, 2)).toEqual(['#beeline', 'Schedules and subscriptions']);
     expect(page).toMatchObject({
       eyebrowFont: '13px SpaceGrotesk-Regular',
       titleFont: '16px SpaceGrotesk-SemiBold',
@@ -125,26 +121,26 @@ describe.skipIf(!existsSync(CHROME))('Schedules and Webhooks pages in a browser'
       '@Hoots · this Room',
       'feedback-triage workflow · Daily at 14:00 America/New_York',
       '@Ruby · #issues-triage',
-      'WEBHOOKS',
-      'github event payload · On each github delivery',
-      '@Speedy, @Ruby · this Room',
+      'SUBSCRIPTIONS',
+      'pull_request.opened · When received',
+      '@Ruby · this Room',
     ]);
-    // Only the workflow schedule wears a glyph; revoked webhooks stay hidden.
+    // Only the workflow schedule wears a glyph.
     expect(page.glyphs).toEqual(['scheduled-work-glyph-video']);
-    expect(page.text.join(' ')).not.toMatch(/LAST|NEVER FIRED|STOP|REVOKE|old-feed/);
+    expect(page.text.join(' ')).not.toMatch(/LAST|NEVER FIRED|STOP|REVOKE/);
     expect(page.pushed).toEqual([
       { pathname: '/beeline/settings/schedule', params: { roomId: 'room-1', scheduleId: 'daily' } },
       {
         pathname: '/beeline/workflow',
         params: { roomId: 'corner-1', name: 'feedback-triage', scheduleId: 'video', parentRoomId: 'room-1' },
       },
-      { pathname: '/beeline/settings/webhook', params: { roomId: 'room-1', webhookId: 'hook-1' } },
+      { pathname: '/beeline/settings/subscription', params: { roomId: 'room-1', subscriptionId: 'sub-1' } },
     ]);
   }, 120_000);
 
   it('opens a prompt schedule: Runs, Agent, Where, the full prompt, its run count, then Stop', async () => {
     const page = await proof('?page=schedule&roomId=room-1&scheduleId=daily');
-    expect(page.text[0]).toBe('Schedules and Webhooks');
+    expect(page.text[0]).toBe('Schedules and subscriptions');
     expect(page.text[1]).toBe('Schedule');
     expect(page.text.slice(2)).toEqual([
       'Runs',
@@ -164,28 +160,27 @@ describe.skipIf(!existsSync(CHROME))('Schedules and Webhooks pages in a browser'
     expect(page.inputs).toContainEqual(['deleteRoomSchedule', { roomId: 'room-1', scheduleId: 'daily' }]);
   }, 120_000);
 
-  it('opens a webhook: what makes it fire and what a delivery does, with no delivery log', async () => {
-    const page = await proof('?page=webhook&roomId=room-1&webhookId=hook-1');
-    expect(page.text.slice(0, 2)).toEqual(['Schedules and Webhooks', 'github webhook']);
+  it('opens a subscription: its event and source, with the same stop control', async () => {
+    const page = await proof('?page=subscription&roomId=room-1&subscriptionId=sub-1');
+    expect(page.text.slice(0, 2)).toEqual(['Schedules and subscriptions', 'Subscription']);
     expect(page.text.slice(2)).toEqual([
       'Runs',
-      'On each github delivery · signed',
-      'Agents',
-      '@Speedy, @Ruby',
+      expect.stringMatching(/^When received · last /),
+      'Agent',
+      '@Ruby',
       'Where',
       'this Room',
       'Trigger',
-      "Fires when github sends a request to this webhook's URL. The sender's own webhook settings choose which events it sends. Only requests signed with the shared secret are accepted.",
-      'Why: "Wake reviewers when a PR opens on beeline." @Speedy',
-      'Payload',
-      'Each delivery wakes @Speedy and @Ruby with the event payload.',
-      'Stop webhook',
+      'pull_request.opened from owner/widgets.',
+      'Event',
+      'When this event arrives, the agent wakes with its details.',
+      'Stop subscription',
     ]);
-    expect(page.afterStop.slice(-2)).toEqual(['Confirm: Stop webhook', 'Cancel']);
-    stopped(page, 'manageRoomWebhook');
+    expect(page.afterStop.slice(-2)).toEqual(['Confirm: Stop subscription', 'Cancel']);
+    stopped(page, 'deleteRoomSubscription');
     expect(page.inputs).toContainEqual([
-      'manageRoomWebhook',
-      { roomId: 'room-1', action: 'revoke', webhookId: 'hook-1' },
+      'deleteRoomSubscription',
+      { roomId: 'room-1', subscriptionId: 'sub-1' },
     ]);
   }, 120_000);
 

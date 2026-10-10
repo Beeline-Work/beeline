@@ -32,33 +32,40 @@ const row = (id: string, text: string, version?: number): RoomViewMessage =>
     ...(version === undefined ? {} : { version }),
   }) as RoomViewMessage;
 
+type Groups = readonly (readonly RoomViewMessage[])[];
+
 function View({
   roomId,
-  rows,
+  groups,
   capture,
 }: {
   roomId: string;
-  rows: readonly RoomViewMessage[];
-  capture(rows: readonly RoomViewMessage[]): void;
+  groups: Groups;
+  capture(groups: Groups): void;
 }) {
-  const [selected] = useRoomMessageRecords(roomId, [rows]);
-  capture(selected);
+  capture(useRoomMessageRecords(roomId, groups));
   return null;
 }
 
-function mount(roomId: string, rows: readonly RoomViewMessage[]) {
-  let current: readonly RoomViewMessage[] = [];
+function mountGroups(roomId: string, groups: Groups) {
+  let current: Groups = [];
   let renderer!: { update(element: React.ReactElement): void; unmount(): void };
-  const capture = (selected: readonly RoomViewMessage[]) => (current = selected);
+  const capture = (selected: Groups) => (current = selected);
   act(() => {
-    renderer = create(React.createElement(View, { roomId, rows, capture }));
+    renderer = create(React.createElement(View, { roomId, groups, capture }));
   });
   return {
-    texts: () => current.map((message) => message.text),
-    update: (next: readonly RoomViewMessage[]) =>
-      act(() => renderer.update(React.createElement(View, { roomId, rows: next, capture }))),
+    groupTexts: () => current.map((rows) => rows.map((message) => message.text)),
+    texts: () => (current[0] ?? []).map((message) => message.text),
+    updateGroups: (next: Groups) =>
+      act(() => renderer.update(React.createElement(View, { roomId, groups: next, capture }))),
     unmount: () => act(() => renderer.unmount()),
   };
+}
+
+function mount(roomId: string, rows: readonly RoomViewMessage[]) {
+  const view = mountGroups(roomId, [rows]);
+  return { ...view, update: (next: readonly RoomViewMessage[]) => view.updateGroups([next]) };
 }
 
 describe('room message records', () => {
@@ -109,5 +116,47 @@ describe('room message records', () => {
     expect(roomMessageRecord('room-e', 'm1')).toBeUndefined();
     transcript.unmount();
     expect(roomMessageRecord('room-e', 'm2')).toBeUndefined();
+  });
+
+  // One view holding the same id in two windows (tail and history, or the
+  // inspector's history, tail and tool rows) keeps a separate row object in
+  // each. Re-rendering those unchanged copies must not undo a newer record.
+  it('a view re-rendering overlapping old copies does not undo a live edit', () => {
+    const tail = [row('m1', 'before'), row('m2', 'other')];
+    const history = [row('m0', 'oldest'), row('m1', 'before')];
+    const view = mountGroups('room-f', [tail, history]);
+    act(() => writeRoomMessage('room-f', row('m1', 'after')));
+    expect(view.groupTexts()).toEqual([
+      ['after', 'other'],
+      ['oldest', 'after'],
+    ]);
+    view.updateGroups([tail, history]);
+    expect(view.groupTexts()).toEqual([
+      ['after', 'other'],
+      ['oldest', 'after'],
+    ]);
+    view.unmount();
+  });
+
+  it('a view re-rendering overlapping old copies does not undo a deletion', () => {
+    const tail = [row('m1', 'secret')];
+    const history = [row('m1', 'secret')];
+    const tools = [row('m1', 'secret')];
+    const view = mountGroups('room-g', [history, tail, tools]);
+    act(() => writeRoomMessage('room-g', { ...row('m1', ''), deleted: true }));
+    view.updateGroups([history, tail, tools]);
+    view.updateGroups([history, tail, tools]);
+    expect(view.groupTexts()).toEqual([[''], [''], ['']]);
+    expect(roomMessageRecord('room-g', 'm1')?.deleted).toBe(true);
+    view.unmount();
+  });
+
+  it('a fresh copy in one overlapping window still replaces the record', () => {
+    const tail = [row('m1', 'before')];
+    const history = [row('m1', 'before')];
+    const view = mountGroups('room-h', [tail, history]);
+    view.updateGroups([[row('m1', 'reread')], history]);
+    expect(view.groupTexts()).toEqual([['reread'], ['reread']]);
+    view.unmount();
   });
 });

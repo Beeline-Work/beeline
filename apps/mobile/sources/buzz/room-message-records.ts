@@ -18,8 +18,9 @@ type VersionedMessage = RoomViewMessage & { readonly version?: number };
 
 type RoomRecords = {
   readonly records: Map<string, RoomViewMessage>;
-  /** The rows each view last offered, by view key. */
-  readonly views: Map<string, Map<string, RoomViewMessage>>;
+  /** The row objects each view last offered, by view key, then message id.
+   *  One view can hold an id in more than one window (tail and history). */
+  readonly views: Map<string, Map<string, Set<RoomViewMessage>>>;
   readonly listeners: Set<() => void>;
   revision: number;
 };
@@ -96,12 +97,14 @@ function offer(
 ): boolean {
   const room = roomRecords(roomId);
   const previous = room.views.get(viewKey);
-  const next = new Map<string, RoomViewMessage>();
+  const next = new Map<string, Set<RoomViewMessage>>();
   let changed = false;
   for (const rows of groups) {
     for (const row of rows) {
-      next.set(row.id, row);
-      if (previous?.get(row.id) === row && room.records.has(row.id)) continue;
+      let offered = next.get(row.id);
+      if (!offered) next.set(row.id, (offered = new Set()));
+      offered.add(row);
+      if (previous?.get(row.id)?.has(row) && room.records.has(row.id)) continue;
       if (supersedes(room.records.get(row.id), row)) {
         if (room.records.get(row.id) !== row) changed = true;
         room.records.set(row.id, row);

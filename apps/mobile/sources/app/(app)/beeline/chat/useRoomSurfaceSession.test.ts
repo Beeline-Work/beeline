@@ -239,7 +239,7 @@ import { cornerDisplayFromRoomView } from '@/buzz/corner-display-state';
 import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
-import { useRoomMessageRecords } from '@/buzz/room-message-records';
+import { roomMessageRecord, useRoomMessageRecords } from '@/buzz/room-message-records';
 import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
 import {
   LIVE_TRACE_STORAGE_KEY,
@@ -2175,6 +2175,7 @@ describe('Room history follows live row changes', () => {
     session: UseRoomSurfaceSessionResult;
     history: ReturnType<typeof useRoomMessageStore>;
     historyRows: readonly RoomViewMessage[];
+    tailRows: readonly RoomViewMessage[];
   };
 
   // The chat screen's wiring: history rows read through the Room's message records.
@@ -2195,8 +2196,12 @@ describe('Room history follows live row changes', () => {
       enabled: true,
       initialVisibleCount: 30,
     });
-    const [historyRows] = useRoomMessageRecords('room-a', [history.rows]);
-    capture({ session, history, historyRows });
+    // The same groups the chat screen passes: the tail and the history rows.
+    const [tailRows, historyRows] = useRoomMessageRecords('room-a', [
+      session.roomSurface?.messages ?? [],
+      history.rows,
+    ]);
+    capture({ session, history, historyRows, tailRows });
     return React.createElement('room-surface');
   }
 
@@ -2212,7 +2217,7 @@ describe('Room history follows live row changes', () => {
     await flushEffects();
     await act(async () => current.history.loadOlder(30));
     await flushEffects();
-    expect(current.historyRows.map((message) => message.text)).toEqual(['before']);
+    expect(current.historyRows.find((message) => message.id === 'old-row')?.text).toBe('before');
     return { current: () => current, renderer };
   }
 
@@ -2227,7 +2232,7 @@ describe('Room history follows live row changes', () => {
         },
       }),
     );
-    expect(current().historyRows.map((message) => message.text)).toEqual(['after']);
+    expect(current().historyRows.find((message) => message.id === 'old-row')?.text).toBe('after');
     expect(current().session.roomSurface?.messages.map((message) => message.id)).toEqual(
       tail.map((message) => message.id),
     );
@@ -2239,7 +2244,61 @@ describe('Room history follows live row changes', () => {
     await act(async () =>
       current().session.applyRoomMessageResult({ ...old, text: '', deleted: true }),
     );
-    expect(current().historyRows.map((message) => message.deleted)).toEqual([true]);
+    expect(current().historyRows.find((message) => message.id === 'old-row')?.deleted).toBe(true);
+    await act(async () => renderer.unmount());
+  });
+
+  // A later unrelated delta re-renders every window with its old row objects.
+  async function emitUnrelatedDelta(id: string) {
+    await act(async () =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'message-delta', roomId: 'room-a', message: row(id, 300) },
+      }),
+    );
+  }
+  const byId = (rows: readonly RoomViewMessage[], id: string) =>
+    rows.find((message) => message.id === id);
+
+  it('keeps a live edit on a tail row after the windows re-render', async () => {
+    const { current, renderer } = await openWithHistory();
+    await act(async () =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'message-delta',
+          roomId: 'room-a',
+          message: { ...tail[29]!, text: 'edited' },
+        },
+      }),
+    );
+    await emitUnrelatedDelta('later-1');
+    await emitUnrelatedDelta('later-2');
+    expect(byId(current().tailRows, 'tail-29')?.text).toBe('edited');
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps a delete on an older row after the windows re-render', async () => {
+    const { current, renderer } = await openWithHistory();
+    await act(async () =>
+      current().session.applyRoomMessageResult({ ...old, text: '', deleted: true }),
+    );
+    await emitUnrelatedDelta('later-1');
+    await emitUnrelatedDelta('later-2');
+    expect(byId(current().historyRows, 'old-row')?.deleted).toBe(true);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps the server bookmark on an older row after the windows re-render', async () => {
+    const { current, renderer } = await openWithHistory();
+    // The chat screen's bookmark settlement: the server value onto the record.
+    await act(async () =>
+      current().session.applyRoomMessageResult({
+        ...roomMessageRecord('room-a', 'old-row')!,
+        bookmarked: true,
+      }),
+    );
+    await emitUnrelatedDelta('later-1');
+    await emitUnrelatedDelta('later-2');
+    expect(byId(current().historyRows, 'old-row')?.bookmarked).toBe(true);
     await act(async () => renderer.unmount());
   });
 

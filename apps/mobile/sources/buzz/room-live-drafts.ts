@@ -28,7 +28,12 @@ export function useRoomLiveDrafts(roomId: string | undefined): ReadonlyMap<strin
         if (!active || !('monolithLive' in event)) return;
         const live = event.monolithLive;
         if (!('roomId' in live) || live.roomId !== roomId) return;
-        if (live.type === 'draft' && live.latestChunk !== undefined)
+        // A subscribe that did not resume lived through a gap: a retract or
+        // turn end may be lost. The server's snapshot that follows re-sends
+        // every draft still open, so start from none.
+        if (live.type === 'subscribed') {
+          if (!live.resumed) setDrafts((current) => (current.size ? new Map() : current));
+        } else if (live.type === 'draft' && live.latestChunk !== undefined)
           setDrafts((current) => {
             const next = new Map(current);
             const key = `${live.agentId}:${live.turnId}`;

@@ -912,6 +912,87 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+  // G9-R7: read notifications delivered hours before the read must still
+  // clear. The one-hour claim cleanup keeps an iOS device's delivered claims
+  // until a read-clear push names them; other claims still expire.
+  it('clears read notifications delivered more than an hour before the read', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        ios = 'c0ffee'.repeat(10) + 'abcd',
+        android = 'android-token';
+      const readIds = Array.from({ length: READ_CLEAR_MAX_MESSAGE_IDS + 2 }, (_, index) =>
+        index.toString(16).padStart(64, '0'),
+      );
+      const unread = 'f'.repeat(64);
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES($1,$3,'ios','physical',now()-interval '3 hours'),
+               ($2,$3,'android','physical',now()-interval '3 hours')`,
+        [ios, android, human],
+      );
+      for (const [index, id] of [...readIds, unread].entries()) {
+        await db.query(
+          `INSERT INTO messages(id,room_id,author_id,text,created_at)
+           VALUES($1,$2,$3,'hi',now()-interval '2 hours'+$4*interval '1 second')`,
+          [id, room, agent, index],
+        );
+        await db.query(
+          `INSERT INTO push_delivery_claims(message_id,device_token,status,claimed_at,completed_at)
+           VALUES($1,$2,'delivered',now()-interval '2 hours',now()-interval '2 hours'),
+                 ($1,$3,'delivered',now()-interval '2 hours',now()-interval '2 hours')`,
+          [id, ios, android],
+        );
+      }
+      await db.query(
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
+         SELECT room_id,$2,created_at,id,clock_timestamp() FROM messages WHERE id=$1`,
+        [readIds.at(-1), human],
+      );
+      const clearRead = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(
+        db,
+        undefined,
+        { send: vi.fn().mockResolvedValue(undefined), clearRead },
+      );
+      for (let pass = 0; pass < 5; pass += 1) {
+        await loop.runOnce();
+        await db.query(
+          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+        );
+      }
+      const dismissed = new Set(
+        clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
+          reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
+        ),
+      );
+      expect([...dismissed].sort()).toEqual([...readIds].sort());
+      expect(dismissed.has(unread)).toBe(false);
+      expect(
+        (
+          await db.query<{ count: number }>(
+            `SELECT count(*)::int count FROM push_delivery_claims WHERE device_token=$1`,
+            [android],
+          )
+        ).rows[0]?.count,
+      ).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
   it('retries an APNs timeout durably and records acceptance on the same message claim', async () => {
     const db = new PgliteDatabase();
     try {

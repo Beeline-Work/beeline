@@ -263,7 +263,6 @@ export class PushDeliveryLoop {
                  JOIN messages message ON message.id=claim.message_id
                  WHERE claim.device_token=device.token AND claim.status='delivered'
                    AND claim.read_cleared_at IS NULL
-                   AND claim.claimed_at>now()-interval '1 day'
                    AND message.room_id=mark.room_id
                    AND (message.created_at,message.id)<(mark.message_created_at,mark.message_id)
                  ORDER BY message.created_at DESC,message.id DESC
@@ -272,16 +271,16 @@ export class PushDeliveryLoop {
              ),'[]'::jsonb) read_ids
            FROM room_read_marks mark
            WHERE mark.identity_id=device.identity_id
-             AND mark.read_at>GREATEST(device.registered_at,now()-interval '1 day')
-             AND ((mark.read_at,mark.room_id::text)
-               >(COALESCE(clear.cleared_through,'-infinity'::timestamptz),
-                 COALESCE(clear.cleared_through_room,''))
+             AND mark.read_at>device.registered_at
+             AND ((mark.read_at>now()-interval '1 day'
+                 AND (mark.read_at,mark.room_id::text)
+                   >(COALESCE(clear.cleared_through,'-infinity'::timestamptz),
+                     COALESCE(clear.cleared_through_room,'')))
                OR EXISTS (
                  SELECT 1 FROM push_delivery_claims claim
                  JOIN messages message ON message.id=claim.message_id
                  WHERE claim.device_token=device.token AND claim.status='delivered'
                    AND claim.read_cleared_at IS NULL
-                   AND claim.claimed_at>now()-interval '1 day'
                    AND message.room_id=mark.room_id
                    AND (message.created_at,message.id)<(mark.message_created_at,mark.message_id)))
            ORDER BY mark.read_at,mark.room_id::text
@@ -350,11 +349,16 @@ export class PushDeliveryLoop {
     );
     // Candidate messages expire after an hour. A terminal claim outside that
     // window cannot suppress a future push, except an explicit release catchup.
+    // An iOS delivered claim stays until a read-clear push names it, so a read
+    // hours after delivery still clears that notification (sendReadClears).
     await this.database.query(`DELETE FROM push_delivery_claims claim
       WHERE (claim.message_id,claim.device_token) IN (
         SELECT old.message_id,old.device_token FROM push_delivery_claims old
         WHERE old.status IN ('delivered','suppressed','failed')
           AND old.completed_at<now()-interval '1 hour'
+          AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
+            AND EXISTS (SELECT 1 FROM push_devices device
+              WHERE device.token=old.device_token AND device.platform='ios'))
           AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
             WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
         ORDER BY old.completed_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);

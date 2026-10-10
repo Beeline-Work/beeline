@@ -3287,6 +3287,9 @@ export async function compactPushClaims(database: SqlDatabase): Promise<void> {
        SELECT old.message_id,old.device_token FROM push_delivery_claims old
        WHERE old.status IN ('delivered','suppressed','failed')
          AND old.completed_at<now()-interval '1 hour'
+         AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
+           AND EXISTS (SELECT 1 FROM push_devices device
+             WHERE device.token=old.device_token AND device.platform='ios'))
          AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
            WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
        ORDER BY old.completed_at LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);

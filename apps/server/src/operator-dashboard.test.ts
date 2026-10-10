@@ -313,4 +313,22 @@ describe('private operator dashboard', () => {
       p95Ms: 6001, failureRate: 0.1,
     });
   });
+
+  it('stores a bounded Room read network residual on the existing page observation', async () => {
+    const endpoint = `${base}/v1/phone/observations/page-load`;
+    const headers = { authorization: 'Bearer phone-key-for-dashboard-test' };
+    const accepted = await fetch(endpoint, { method: 'POST', headers,
+      body: JSON.stringify({ durationMs: 120, failed: false,
+        network: { requestToFirstByteMs: 94.5, serverProcessingMs: 13.2 } }),
+    });
+    expect(accepted.status).toBe(204);
+    expect((await db.query<{ network_rtt_residual_ms: number }>(
+      `SELECT network_rtt_residual_ms FROM operator_function_events WHERE function_name='page_load'`,
+    )).rows[0]?.network_rtt_residual_ms).toBe(81);
+    const rejected = await fetch(endpoint, { method: 'POST', headers,
+      body: JSON.stringify({ durationMs: 120, failed: false,
+        network: { requestToFirstByteMs: 10, serverProcessingMs: 11 } }),
+    });
+    expect(rejected.status).toBe(400);
+  });
 });

@@ -24,6 +24,7 @@ vi.mock('@/auth/monolith-session', () => {
   return {
     MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
     MonolithRequestTimeoutError,
+    monolithResponseTiming: () => null,
     monolithSession: {
       noteStalled: vi.fn(),
       fetch: vi.fn(async () => {

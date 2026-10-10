@@ -33,9 +33,11 @@ import {
 } from '@beeline/api-contract/phone';
 import {
   monolithSession,
+  monolithResponseTiming,
   MonolithRequestTimeoutError,
   MONOLITH_REQUEST_TIMEOUT_MS,
 } from '@/auth/monolith-session';
+import { recordRoomReadNetworkTiming } from '@/buzz/room-open-trace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { liveFrameEpoch } from './live-frame-epoch';
 
@@ -290,6 +292,24 @@ class MonolithRoomViewClient {
         if (typeof value.error === 'string') code = value.error;
       } catch {}
       throw new RoomViewHttpError(response.status, code);
+    }
+    const roomMatch = /^\/v1\/phone\/rooms\/([^/]+)$/.exec(path);
+    if (roomMatch) {
+      const timing = monolithResponseTiming(response);
+      const serverTiming = /^app;dur=(\d+(?:\.\d+)?)$/.exec(
+        response.headers.get('server-timing') ?? '',
+      );
+      if (timing && serverTiming) {
+        const requestToFirstByteMs = timing.firstByteMs - timing.requestStartMs;
+        const serverProcessingMs = Number(serverTiming[1]);
+        if (requestToFirstByteMs >= serverProcessingMs &&
+            requestToFirstByteMs < 15_000 && serverProcessingMs >= 0) {
+          recordRoomReadNetworkTiming(decodeURIComponent(roomMatch[1]!), {
+            requestToFirstByteMs,
+            serverProcessingMs,
+          });
+        }
+      }
     }
     return response;
   }

@@ -33,6 +33,17 @@ let currentRun: TraceMark[] = [];
 let listeners: Array<(run: readonly TraceMark[]) => void> = [];
 let pageStartedAt: number | null = null;
 let pageReported = false;
+let pageRoomId: string | undefined;
+let roomReadNetwork: { requestToFirstByteMs: number; serverProcessingMs: number } | undefined;
+
+/** The successful Room GET's wire timing, kept locally until the existing page observation. */
+export function recordRoomReadNetworkTiming(
+  roomId: string,
+  timing: { requestToFirstByteMs: number; serverProcessingMs: number },
+): void {
+  if (pageStartedAt !== null && !pageReported && pageRoomId === roomId)
+    roomReadNetwork = timing;
+}
 
 /** The first mark of an open. Everything after it belongs to the same run. */
 const RUN_START_PHASE = 'nav-dispatch';
@@ -65,13 +76,19 @@ export function markRoomOpen(phase: string, detail?: string): void {
   if (phase === RUN_START_PHASE || (phase === 'route-mount' && (pageStartedAt === null || pageReported))) {
     pageStartedAt = performance.now();
     pageReported = false;
+    pageRoomId = detail;
+    roomReadNetwork = undefined;
   } else if ((phase === 'newest-frame' || phase === 'room-read-error') &&
              pageStartedAt !== null && !pageReported) {
     pageReported = true;
     const durationMs = Math.max(0, Math.min(600_000, Math.round(performance.now() - pageStartedAt)));
     if (typeof process === 'undefined' || (process.env.NODE_ENV !== 'test' && !process.env.VITEST)) {
+      const network = roomReadNetwork;
       void import('./room-page-observation').then(({ reportRoomPageObservation }) =>
-        reportRoomPageObservation(durationMs, phase === 'room-read-error'), () => undefined);
+        network
+          ? reportRoomPageObservation(durationMs, phase === 'room-read-error', network)
+          : reportRoomPageObservation(durationMs, phase === 'room-read-error'),
+      () => undefined);
     }
   }
   if (tracingOff()) return;

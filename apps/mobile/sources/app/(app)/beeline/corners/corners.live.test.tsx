@@ -30,6 +30,7 @@ vi.mock('react-native', async () => {
       OS: 'ios',
       select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
     },
+    Pressable: host('Pressable'),
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
@@ -42,6 +43,11 @@ function hostModule(...names: string[]) {
   );
 }
 vi.mock('@/components/buzz/Button', () => hostModule('Button'));
+vi.mock('@/components/buzz/CornerGlyph', () => ({
+  ...hostModule('CornerGlyph'),
+  CORNER_META_SIZE: 12,
+}));
+vi.mock('@/components/buzz/CornerWaitingPulse', () => hostModule('CornerWaitingPulse'));
 vi.mock('@/components/buzz/SurfaceGlyphLoader', () => hostModule('SurfaceGlyphLoader'));
 vi.mock('@/components/buzz/RoomCornersHeader', () => hostModule('RoomCornersHeader'));
 vi.mock('@/components/buzz/RoomCornersList', () => hostModule('RoomCornersList'));
@@ -113,7 +119,12 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 import BuzzCorners from './[roomId]';
 import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { cornerOpenEnded } from '@/buzz/corner-open-status';
-import { resetRoomCornerStore } from '@/buzz/room-corner-store';
+import {
+  applyChatListCorners,
+  cornerStoreClock,
+  resetRoomCornerStore,
+} from '@/buzz/room-corner-store';
+import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { LiveConnection } from '@/sync/transport/live-connection';
 import { router } from 'expo-router';
 import { cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
@@ -558,5 +569,34 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     expect(headerText(unknown)).toBe('RUBY');
     const closed = await mountHeader({ cornerId: 'corner-elsewhere', archived: true });
     expect(headerText(closed)).toBe('RUBY · archived');
+  });
+
+  it('Reproduction G3-R2: the Room list dropdown, Corners list and header agree after a read', async () => {
+    // The Room list read saw corner-1 waiting.
+    const chat = {
+      room: { id: 'room-a', name: 'general' },
+      cornerCount: 1,
+      waitingCornerCount: 1,
+      openCorners: [{ id: 'corner-1', name: 'corner-1', state: 'waiting' as const, mine: true as const }],
+    } as unknown as import('@beeline/buzz-client').ChatListItem;
+    applyChatListCorners([chat], cornerStoreClock());
+    let dropdown!: ReactTestRenderer;
+    await act(async () => {
+      dropdown = create(React.createElement(DesktopRoomCorners, { item: chat, onOpen: () => undefined }));
+    });
+    const dropdownStates = () => dropdown.root
+      .findAll((node: { type: unknown }) => node.type === 'Pressable')
+      .map((node: { props: { accessibilityLabel: string } }) => node.props.accessibilityLabel);
+    expect(dropdownStates()).toEqual(['Open corner corner-1, waiting']);
+    // The corner went idle; the Corners read carries that row.
+    list.state = 'idle';
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:idle']));
+    const header = await mountHeader({ cornerId: 'corner-1' });
+    expect(headerText(header)).toBe('RUBY · idle');
+    expect(dropdownStates()).toEqual(['Open corner corner-1, idle']);
   });
 });

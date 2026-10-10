@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { monolithSession } from '@/auth/monolith-session';
+import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
@@ -10,7 +10,7 @@ export type NeedsYouLiveDelta = { readonly workspaceId: string; readonly sourceR
   readonly count: number; readonly items: readonly NeedsYouItemView[] };
 
 /**
- * One viewer's Needs-you projection for one Workspace. The tray list and the
+ * One viewer's Needs-you projection for one relay and Workspace. The tray list and the
  * badge both read it, so the badge is always the list's length once a list is
  * known. Before that (the tray never read), the badge shows the server count,
  * which starts no clock.
@@ -33,14 +33,11 @@ const readsInFlight = new Map<string, Set<NeedsYouLiveDelta[]>>();
 /** Mounted trays per Workspace. A gap with no tray drops the list back to a count. */
 const listHolders = new Map<string, number>();
 const storeListeners = new Set<() => void>();
-/** `undefined` until resolved; `''` when no identity is stored. */
+/** The relay and identity the entries belong to; `undefined` until resolved. */
 let viewer: string | undefined;
 let viewerRead: Promise<string> | undefined;
-/** Bumped on identity change; work started under an older epoch writes nothing. */
-let epoch = 0;
 let liveStop: (() => void) | undefined;
 let liveStarting = false;
-let identityHooked = false;
 
 function entryKey(viewerId: string, workspaceId: string): string {
   return `${viewerId}\u0000${workspaceId}`;
@@ -69,9 +66,12 @@ function applyNeedsSlice(
   return sortNeeds([...current.filter((item) => item.roomId !== delta.sourceRoomId), ...delta.items]);
 }
 
-/** Forget every viewer's entries: the account changed or signed out. */
-export function resetNeedsYou(): void {
-  epoch += 1;
+/**
+ * An identity or relay change forgets every entry, every in-flight count and
+ * the live registration. Work started before it carries an older
+ * `clientResetGeneration()` and writes nothing.
+ */
+subscribeClientReset(() => {
   entries.clear();
   versions.clear();
   readsInFlight.clear();
@@ -81,22 +81,20 @@ export function resetNeedsYou(): void {
   liveStop?.();
   liveStop = undefined;
   notify();
-}
+});
 
-function hookIdentity(): void {
-  if (identityHooked) return;
-  identityHooked = true;
-  monolithSession.subscribeIdentityChange(resetNeedsYou);
+async function readViewer(): Promise<string> {
+  const [relay, identity] = await Promise.all([getEffectiveRelayUrl(), loadBuzzIdentity()]);
+  return `${relay}\u0000${identity?.publicKey ?? ''}`;
 }
 
 function resolveViewer(): Promise<string> {
-  hookIdentity();
   if (viewer !== undefined) return Promise.resolve(viewer);
-  const at = epoch;
-  viewerRead ??= loadBuzzIdentity()
-    .then((identity) => identity?.publicKey ?? '', () => '')
+  const at = clientResetGeneration();
+  viewerRead ??= readViewer()
+    .catch(() => '')
     .then((resolved) => {
-      if (at !== epoch) return resolved;
+      if (at !== clientResetGeneration()) return resolved;
       viewer = resolved;
       startLive();
       notify();
@@ -107,13 +105,13 @@ function resolveViewer(): Promise<string> {
 
 /**
  * The store's own roomless registration: deltas and gap signals reach it
- * whether or not a tray or badge is mounted. The live connection closes it on
- * identity change; the next viewer resolution registers again.
+ * whether or not a tray or badge is mounted. A client reset closes it; the
+ * next viewer resolution registers again.
  */
 function startLive(): void {
   if (liveStop || liveStarting) return;
   liveStarting = true;
-  const at = epoch;
+  const at = clientResetGeneration();
   void sharedLiveConnection().register([], (event) => {
     if (!('monolithLive' in event)) return;
     const live = (event as MonolithSurfaceEvent).monolithLive;
@@ -123,7 +121,7 @@ function startLive(): void {
       invalidateNeedsYou();
   }).then((stop) => {
     liveStarting = false;
-    if (at === epoch) {
+    if (at === clientResetGeneration()) {
       liveStop = stop;
       return;
     }
@@ -167,8 +165,8 @@ export function needsYouVersion(workspaceId: string): number {
 
 /** Read the list (this starts first-paint clocks) and store it with any deltas heard meanwhile. */
 export async function loadNeedsYouList(workspaceId: string): Promise<readonly NeedsYouItemView[]> {
+  const at = clientResetGeneration();
   const viewerId = await resolveViewer();
-  const at = epoch;
   const key = entryKey(viewerId, workspaceId);
   const heard: NeedsYouLiveDelta[] = [];
   const reads = readsInFlight.get(key) ?? new Set();
@@ -177,7 +175,7 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
   try {
     const result = await monolithPhoneOperation('readNeedsYou', { workspaceId });
     const items = heard.reduce(applyNeedsSlice, sortNeeds([...result.items]));
-    if (at === epoch && viewer === viewerId)
+    if (at === clientResetGeneration() && viewer === viewerId)
       write(workspaceId, (entry) => ({ ...entry, items, count: null }));
     return items;
   } finally {
@@ -277,6 +275,8 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
   const entry = useNeedsYouEntry(workspaceId);
   const listed = entry.items !== null;
   const countKnown = entry.count !== null;
+  // A reset while a count is in flight leaves the entry looking unchanged; ask again.
+  const generation = useSyncExternalStore(subscribeClientReset, clientResetGeneration);
   const countedFor = useRef<unknown>(undefined);
   useEffect(() => {
     // A caller with nothing read yet has nothing to count against.
@@ -285,15 +285,15 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
     countedFor.current = refreshKey;
     let cancelled = false;
     void (async () => {
+      const at = clientResetGeneration();
       const viewerId = await resolveViewer();
       if (cancelled) return;
-      const at = epoch;
       const key = entryKey(viewerId, workspaceId);
       const version = versions.get(key) ?? 0;
       try {
         const next = await countNeedsYou(key, workspaceId);
         // A delta heard meanwhile already carried a newer count.
-        if (at !== epoch || viewer !== viewerId || version !== (versions.get(key) ?? 0)) return;
+        if (at !== clientResetGeneration() || viewer !== viewerId || version !== (versions.get(key) ?? 0)) return;
         write(workspaceId, (current) => current.items ? current : { ...current, count: next });
       } catch {
         // A failed count keeps the last one.
@@ -302,7 +302,7 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, refreshKey, listed, countKnown]);
+  }, [workspaceId, refreshKey, listed, countKnown, generation]);
   const items = visible(entry);
   return items ? items.length : entry.count ?? 0;
 }

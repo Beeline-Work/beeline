@@ -104,17 +104,7 @@ vi.mock('@expo/vector-icons', async () => {
   const ReactModule = await import('react');
   return { Ionicons: (props: any) => ReactModule.createElement('Ionicons', props) };
 });
-const identityListeners = vi.hoisted(() => new Set<() => void>());
-
 vi.mock('@/auth/buzz-identity-storage', () => auth);
-vi.mock('@/auth/monolith-session', () => ({
-  monolithSession: {
-    subscribeIdentityChange: (listener: () => void) => {
-      identityListeners.add(listener);
-      return () => identityListeners.delete(listener);
-    },
-  },
-}));
 vi.mock('@/buzz/surface-storage', () => ({
   surfaceAddress: (_relay: string, _viewer: string, endpoint: string) => endpoint,
   mobileSurfaceCache: {
@@ -163,7 +153,8 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 });
 
 import TrayScreen from './tray';
-import { applyNeedsYouLiveDelta, resetNeedsYou, useNeedsYouCount } from '@/buzz/needs-you-store';
+import { applyNeedsYouLiveDelta, useNeedsYouCount } from '@/buzz/needs-you-store';
+import { resetClientState } from '@/sync/client-reset';
 
 const person = {
   pubkey: 'person-1',
@@ -296,7 +287,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   liveRegistrations.clear();
-  resetNeedsYou();
+  resetClientState();
   auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'viewer' }));
   layout.os = 'web';
   layout.width = 1200;
@@ -803,12 +794,30 @@ describe('Needs-you badge and tray', () => {
       : Promise.resolve(undefined));
     auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'other-viewer' }));
     await act(async () => {
-      for (const listener of [...identityListeners]) listener();
+      resetClientState();
     });
     await act(async () => undefined);
     expect(badge(tree)).toBe(0);
     await act(async () => answerCount({ count: 0 }));
     expect(badge(tree)).toBe(0);
+  });
+
+  it('a count read for the previous account writes nothing after a client reset', async () => {
+    const answers: Array<(value: { count: number }) => void> = [];
+    phoneOperation.mockImplementation((name: string) => name === 'countNeedsYou'
+      ? new Promise((resolve) => { answers.push(resolve); })
+      : Promise.resolve(undefined));
+    const tree = await render(false);
+    expect(answers).toHaveLength(1);
+    auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'other-viewer' }));
+    await act(async () => resetClientState());
+    await act(async () => undefined);
+    // The reset dropped the shared request, so the new account asks on its own.
+    expect(answers).toHaveLength(2);
+    await act(async () => answers[0]!({ count: 7 }));
+    expect(badge(tree)).toBe(0);
+    await act(async () => answers[1]!({ count: 1 }));
+    expect(badge(tree)).toBe(1);
   });
 });
 
@@ -1313,7 +1322,6 @@ it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN â
       '@/sync/transport/live-connection':
         'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
       '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
-      '@/auth/monolith-session': 'export const monolithSession = { subscribeIdentityChange: () => () => undefined };',
       '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
       'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
       '@expo/vector-icons': "import React from 'react'; export const Ionicons = () => React.createElement('span');",
@@ -1346,7 +1354,6 @@ function clearProofShims(mobile: string) {
     '@/sync/transport/live-connection':
       'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
     '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
-    '@/auth/monolith-session': 'export const monolithSession = { subscribeIdentityChange: () => () => undefined };',
     '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
     'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
     '@expo/vector-icons': "import React from 'react'; export const Ionicons = () => React.createElement('span');",

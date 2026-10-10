@@ -23,6 +23,7 @@ export type CommittedMessageLiveRow = {
   card: Record<string, unknown> | null;
   system_event: NonNullable<RoomViewMessage['systemEvent']> | null;
   created_at: Date;
+  version?: number;
   author_kind: 'human' | 'agent';
   author_name: string;
   author_handle: string | null;
@@ -359,7 +360,7 @@ export class LiveHub {
   subscribeReplay(
     roomId: string,
     cursor: { epoch: string; base: number; seen: readonly number[] } | undefined,
-    listener: (event: LiveEvent, sequence?: number) => void,
+    listener: (event: LiveEvent, sequence?: number, epoch?: string) => void,
   ): { release: () => void; epoch: string; sequence: number; resumed: boolean;
        replay: readonly { event: LiveEvent; sequence: number }[] } {
     const history = this.#history.get(roomId) ?? {
@@ -379,9 +380,13 @@ export class LiveHub {
       ? history.entries.filter((entry) => entry.sequence > cursor!.base && !seen.has(entry.sequence))
         .map(({ event, sequence: itemSequence }) => ({ event, sequence: itemSequence }))
       : [];
-    const release = this.subscribe(roomId, (event) => listener(
-      event, event.type === 'invalidate' && event.reason === 'resync'
-        ? undefined : this.#history.get(roomId)?.sequence));
+    // An evicted history restarts its sequence under a new epoch, so a
+    // sequence orders frames only together with its epoch.
+    const release = this.subscribe(roomId, (event) => {
+      const current = event.type === 'invalidate' && event.reason === 'resync'
+        ? undefined : this.#history.get(roomId);
+      listener(event, current?.sequence, current?.epoch);
+    });
     return { release, epoch: history.epoch, sequence, resumed, replay };
   }
 

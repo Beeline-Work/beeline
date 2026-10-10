@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
+import { CornerOwedExpiry } from './corner-owed-expiry.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import {
   announceAgentLifecycle,
@@ -66,6 +67,12 @@ async function eventually(predicate: () => boolean | Promise<boolean>): Promise<
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   expect(await predicate()).toBe(true);
+}
+
+/** Wait until every earlier notification has reached the parent, then forget them. */
+async function settle(parent: LiveEvent[]): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  parent.length = 0;
 }
 
 describe('Postgres live fanout', () => {
@@ -743,8 +750,7 @@ describe('Postgres live fanout', () => {
     );
     const nudges = () =>
       parent.filter((event) => event.type === 'invalidate' && event.reason === 'corner-status');
-    await eventually(() => nudges().length === 1);
-    parent.length = 0;
+    await settle(parent);
 
     await database.query(
       `INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'r1',$2,'working')`,
@@ -793,6 +799,177 @@ describe('Postgres live fanout', () => {
     expect(nudges()).toEqual(
       Array(5).fill({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' }),
     );
+  });
+
+  it('nudges the parent Room for workflow, owed, follow, name, archive and membership changes', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const parent: LiveEvent[] = [];
+    live.subscribe(ROOM, (event) => parent.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    const nudges = () =>
+      parent.filter((event) => event.type === 'invalidate' && event.reason === 'corner-status');
+
+    const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const agent = 'e'.repeat(64);
+    const reader = 'f'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Reader')`, [reader]);
+    // A new corner is a new row in its parent's list.
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    await eventually(() => nudges().length >= 1);
+    await database.query(
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'fix it')`,
+      [corner, agent],
+    );
+    await settle(parent);
+
+    const expectNudge = async (write: () => Promise<unknown>) => {
+      await settle(parent);
+      await write();
+      await eventually(() => nudges().length >= 1);
+    };
+    // A review verdict or ask_human moves only the workflow columns.
+    await expectNudge(() => database.query(
+      `UPDATE corner_facts SET workflow_state='review' WHERE corner_id=$1`, [corner]));
+    await expectNudge(() => database.query(
+      `UPDATE corner_facts SET workflow_outcome='ask_human' WHERE corner_id=$1`, [corner]));
+    await expectNudge(() => database.query(
+      `INSERT INTO corner_follows(corner_id,identity_id) VALUES($1,$2)`, [corner, reader]));
+    await expectNudge(() => database.query(
+      `DELETE FROM corner_follows WHERE corner_id=$1 AND identity_id=$2`, [corner, reader]));
+    await expectNudge(() => database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, corner, reader]));
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('owed-1',$1,$2,'question')`,
+      [corner, agent]);
+    await expectNudge(() => database.query(
+      `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable)
+       VALUES($1,$2,'owed-1',now(),now()+interval '1 hour',true)
+       ON CONFLICT (message_id,person_id) DO UPDATE SET expires_at=EXCLUDED.expires_at`,
+      [corner, reader]));
+    await expectNudge(() => database.query(`UPDATE rooms SET name='renamed' WHERE id=$1`, [corner]));
+    await expectNudge(() => database.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [corner, reader]));
+    await expectNudge(() => database.query(
+      `UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]));
+
+    // A write that changes no corner-list input stays off the parent.
+    await settle(parent);
+    await database.query(`UPDATE corner_facts SET objective='still fix it' WHERE corner_id=$1`, [corner]);
+    await database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(nudges()).toEqual([]);
+  });
+
+  it('nudges the parent Room on every server machine, whichever one wrote', async () => {
+    const machines = [new LiveHub(), new LiveHub()];
+    const parents: LiveEvent[][] = [[], []];
+    for (const [index, live] of machines.entries()) {
+      const client = new PgliteListenClient(database);
+      const listener = new PostgresLiveListener(database, live, () => client, 1);
+      listeners.push(listener);
+      live.subscribe(ROOM, (event) => parents[index]!.push(event));
+      void listener.run();
+      await eventually(() => client.listenerCount('notification') === 1);
+    }
+    const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccf';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    await settle(parents[0]!);
+    await settle(parents[1]!);
+    // Neither machine publishes in-process: only the committed rename runs.
+    await database.query(`UPDATE rooms SET name='renamed' WHERE id=$1`, [corner]);
+    for (const parent of parents)
+      await eventually(() => parent.some((event) =>
+        event.type === 'invalidate' && event.reason === 'corner-status'));
+  });
+
+  it('delivers one parent nudge for an owed refresh that rewrites many rows', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccd';
+    const agent = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    for (const id of ['owed-a', 'owed-b', 'owed-c'])
+      await database.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'question')`,
+        [id, corner, agent]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    client.payloads.length = 0;
+    await database.transaction(async (db) => {
+      await db.query(`DELETE FROM corner_owed WHERE corner_id=$1`, [corner]);
+      for (const id of ['owed-a', 'owed-b', 'owed-c'])
+        await db.query(
+          `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,answerable)
+           VALUES($1,$2,$3,now(),true)`,
+          [corner, AUTHOR, id]);
+    });
+    await eventually(() => client.payloads.some((raw) => raw.includes('"corner_owed"')));
+    expect(client.payloads.filter((raw) => raw.includes('"corner_owed"'))).toHaveLength(1);
+  });
+
+  it('nudges the parent Room on every machine when the leader sees an owed item expire', async () => {
+    const machines = [new LiveHub(), new LiveHub()];
+    const parents: LiveEvent[][] = [[], []];
+    const wakes = [0, 0];
+    for (const [index, live] of machines.entries()) {
+      const client = new PgliteListenClient(database);
+      const listener = new PostgresLiveListener(database, live, () => client, 1);
+      listener.setOwedWake(() => { wakes[index]! += 1; });
+      listeners.push(listener);
+      live.subscribe(ROOM, (event) => parents[index]!.push(event));
+      void listener.run();
+      await eventually(() => client.listenerCount('notification') === 1);
+    }
+    const corner = 'cccccccc-cccc-4ccc-8ccc-ccccccccccce';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('owed-x',$1,$2,'question')`,
+      [corner, AUTHOR]);
+    const expiresAt = new Date(Date.now() + 60_000);
+    await database.query(
+      `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable)
+       VALUES($1,$2,'owed-x',now(),$3,true)
+       ON CONFLICT (message_id,person_id) DO UPDATE SET expires_at=EXCLUDED.expires_at`,
+      [corner, AUTHOR, expiresAt]);
+    // A new owed row wakes the leader so it can re-arm for the new deadline.
+    await eventually(() => wakes.every((count) => count >= 1));
+    const expiry = new CornerOwedExpiry(database);
+    expect(await expiry.nextDueAt(new Date(expiresAt.getTime() - 1))).toEqual(expiresAt);
+    expect(await expiry.runOnce(new Date(expiresAt.getTime() - 1), true)).toBe(0);
+    await settle(parents[0]!);
+    await settle(parents[1]!);
+
+    // No write happens at expiry: only the leader's job announces it.
+    expect(await expiry.runOnce(expiresAt)).toBe(1);
+    for (const parent of parents)
+      await eventually(() => parent.some((event) =>
+        event.type === 'invalidate' && event.reason === 'corner-status'));
+    // The same expiry is announced once per leader.
+    expect(await expiry.runOnce(new Date(expiresAt.getTime() + 1_000))).toBe(0);
+    expect(await expiry.nextDueAt(expiresAt)).toBeNull();
   });
 
   it('leaves a top-level Room membership without a corner opener', async () => {

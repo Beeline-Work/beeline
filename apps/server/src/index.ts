@@ -19,6 +19,7 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
+import { CornerOwedExpiry } from './corner-owed-expiry.js';
 import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
 import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { ConnectionPresence } from './connection-presence.js';
@@ -270,6 +271,7 @@ async function main() {
       })
     : new MediaExpiryLoop(jobsDatabase);
   const choiceExpiry = new ChoiceExpiryLoop(jobsDatabase);
+  const owedExpiry = new CornerOwedExpiry(jobsDatabase);
   const sendPushTest = pushSender || webPushSender
     ? createPushTestSender(database, pushSender, apnsPushSender, webPushSender)
     : undefined;
@@ -399,6 +401,7 @@ async function main() {
       }
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
+      await backgroundJobs.run('corner-owed-expiry', () => owedExpiry.runOnce(new Date(), newLeader));
       await backgroundJobs.run('webhook-expiry', () => new RoomWebhooks(jobsDatabase).expireRequests());
       // Recovery scans run once per leadership tenure. Normal writes and
       // webhooks drive their own transitions; failures retry on the next cycle.
@@ -438,15 +441,17 @@ async function main() {
           }));
       }
       const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
+      const nextOwed = await backgroundJobs.run('corner-owed-next-due', () => owedExpiry.nextDueAt());
       return Math.min(
         reconciliationMs,
-        ...(nextDue.ok && nextDue.value
-          ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
+        ...[nextDue, nextOwed].flatMap((due) => due.ok && due.value
+          ? [Math.max(0, due.value.getTime() - Date.now())] : []),
       );
     },
     reconciliationMs,
   );
   if (push) liveListener.setPushWake(() => { pushPending = true; leader.wake(); });
+  liveListener.setOwedWake(() => leader.wake());
   const stopBackgroundWake = live.subscribeAll((event) => {
     if (
       event.type === 'invalidate' &&

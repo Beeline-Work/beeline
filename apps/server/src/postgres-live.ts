@@ -158,7 +158,13 @@ BEGIN
           IS DISTINCT FROM
           ROW(OLD.repository_key,OLD.repository_remote,OLD.repository_target_branch,
               OLD.repository_resolution,OLD.github_installation_id)
-          ELSE false END
+          ELSE false END,
+        -- A corner's name and archive state are rows in its parent's corner list.
+        'cornerParentId', CASE WHEN TG_OP <> 'UPDATE'
+            OR NEW.name IS DISTINCT FROM OLD.name
+            OR NEW.archived_at IS DISTINCT FROM OLD.archived_at
+            OR NEW.parent_id IS DISTINCT FROM OLD.parent_id
+          THEN COALESCE(NEW.parent_id, OLD.parent_id) END
       );
     WHEN 'github_installations' THEN
       payload = jsonb_build_object(
@@ -208,6 +214,9 @@ BEGIN
       ) || COALESCE((
         SELECT jsonb_build_object(
           'parentRoomId', room.parent_id,
+          'cornerParentId', CASE WHEN TG_OP <> 'UPDATE'
+              OR NEW.removed_at IS DISTINCT FROM OLD.removed_at
+            THEN room.parent_id END,
           'archived', room.archived_at IS NOT NULL,
           'openedBy', CASE WHEN room.parent_id IS NOT NULL THEN COALESCE(
             (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
@@ -225,7 +234,20 @@ BEGIN
         'cornerParentId', CASE WHEN TG_OP <> 'UPDATE'
             OR NEW.lifecycle IS DISTINCT FROM OLD.lifecycle
             OR NEW.close_requested IS DISTINCT FROM OLD.close_requested
+            OR NEW.workflow_state IS DISTINCT FROM OLD.workflow_state
+            OR NEW.workflow_outcome IS DISTINCT FROM OLD.workflow_outcome
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
+      );
+    WHEN 'corner_owed', 'corner_follows' THEN
+      -- Only the parent's corner list reads these rows. One owed refresh
+      -- deletes and reinserts many rows; a fixed operation and a per-
+      -- transaction trace make every row's payload equal, so PostgreSQL
+      -- delivers one notification per corner and transaction.
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', 'UPDATE',
+        'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
+        'cornerParentId', (SELECT parent_id FROM rooms
+          WHERE id = COALESCE(NEW.corner_id, OLD.corner_id))
       );
     WHEN 'permission_authority' THEN
       payload = jsonb_build_object(
@@ -264,7 +286,7 @@ BEGIN
   END CASE;
   -- A section clear can touch hundreds of marks in one transaction. Equal
   -- room/reader payloads let PostgreSQL collapse them into one notification.
-  IF TG_TABLE_NAME = 'needs_you_marks' THEN
+  IF TG_TABLE_NAME IN ('needs_you_marks', 'corner_owed', 'corner_follows') THEN
     payload = payload || jsonb_build_object(
       'traceId', md5(txid_current()::text || payload::text),
       'databaseAt', floor(extract(epoch FROM transaction_timestamp()) * 1000)::bigint
@@ -299,7 +321,8 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
-    'corner_facts', 'permission_authority', 'room_read_marks', 'message_bookmarks',
+    'corner_facts', 'corner_owed', 'corner_follows',
+    'permission_authority', 'room_read_marks', 'message_bookmarks',
     'needs_you_marks',
     'agent_grants', 'agent_schedules', 'agent_commands',
     'github_installations', 'github_repositories',
@@ -367,7 +390,7 @@ interface LiveNotificationPayload {
   archived?: boolean;
   removed?: boolean;
   closeRequested?: boolean;
-  /** Parent Room of a corner whose list status inputs (turn status, lifecycle, close) changed. */
+  /** Parent Room of a corner whose corner-list row inputs changed. */
   cornerParentId?: string;
   pending?: boolean;
   /** An agent_commands row left `claimed`. */
@@ -460,6 +483,8 @@ export class PostgresLiveListener {
   private pushWake?: () => void;
 
   setPushWake(wake: () => void): void { this.pushWake = wake; }
+  private owedWake?: () => void;
+  setOwedWake(wake: () => void): void { this.owedWake = wake; }
   private stopped = false;
   private active?: LivePgClient;
   private connected = false;
@@ -575,6 +600,9 @@ export class PostgresLiveListener {
     const key = (payload.table === 'agent_config' || payload.table === 'connector_assignment') &&
         payload.agentId
       ? `${payload.table}:${payload.agentId}`
+      : (payload.table === 'corner_owed' || payload.table === 'corner_follows') &&
+          payload.cornerParentId
+        ? `corner-status:${payload.cornerParentId}`
       : (payload.table === 'github_installations' && payload.installationId) ||
           (payload.table === 'github_repositories' && payload.repositoryId)
         ? `${payload.table}:${payload.installationId ?? payload.repositoryId}`
@@ -807,6 +835,14 @@ export class PostgresLiveListener {
         }
         this.scheduleRegistryDue();
       }
+      return;
+    }
+    if (payload.table === 'corner_owed' || payload.table === 'corner_follows') {
+      if (payload.cornerParentId)
+        this.live.publish({ type: 'invalidate', roomId: payload.cornerParentId,
+          reason: 'corner-status' });
+      // A new owed item may expire before the leader's next cycle.
+      if (payload.table === 'corner_owed') this.owedWake?.();
       return;
     }
     if (payload.table === 'github_installations' || payload.table === 'github_repositories') {

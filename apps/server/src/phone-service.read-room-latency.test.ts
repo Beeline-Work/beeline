@@ -384,6 +384,30 @@ describe('PhoneService.readRoom latency', () => {
       expect(p50).toBeLessThan(900);
       expect(p95).toBeLessThan(1_200);
     }, 20_000);
+
+    it('decorates committed message attachments exactly like the authorized row read', async () => {
+      const phone = new PhoneService(database, 'https://server.usebeeline.app');
+      const row = (
+        await database.query<CommittedMessageLiveRow>(
+          `SELECT message.*,author.kind author_kind,author.name author_name,
+             author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
+             ${taggedIdentityIdsSql('message')} tagged_ids
+           FROM messages message JOIN identities author ON author.id=message.author_id
+           WHERE message.room_id=$1 AND message.id='corner-message-60'`,
+          [CORNER],
+        )
+      ).rows[0]!;
+      const committed = await phone.projectCommittedLiveDelta(CORNER, { type: 'message', row });
+      const read = await phone.readLiveDelta(CORNER, VIEWER, {
+        type: 'message', messageId: 'corner-message-60',
+      });
+      expect(read?.type === 'message-delta' && read.message.attachments)
+        .toEqual([
+          expect.objectContaining({ kind: 'artifact', title: 'Evidence' }),
+          expect.objectContaining({ expired: true }),
+        ]);
+      expect(committed).toEqual(read);
+    });
   });
 
   it('projects the same production-shaped Room with concurrent bounded enrichment', async () => {
@@ -530,7 +554,8 @@ describe('PhoneService.readRoom latency', () => {
     const room = view?.chats.find((chat) => chat.room.id === ROOM);
 
     expect(room).toBeDefined();
-    expect(room?.unread).toBe(false);
+    // Unknown is absent, never false.
+    expect(room && 'unread' in room).toBe(false);
     // Unknown, not empty: the phone keeps the dots and counts it last knew.
     expect(view?.unavailable).toEqual(['unread', 'corners']);
     expect(room && 'cornerCount' in room).toBe(false);
@@ -641,6 +666,22 @@ describe('PhoneService.readRoom latency', () => {
     }
   });
 
+  it('carries a message version that grows with every committed change', async () => {
+    const phone = new PhoneService(database, 'https://server.usebeeline.app');
+    const read = async () => {
+      const delta = await phone.readLiveDelta(ROOM, VIEWER, {
+        type: 'message', messageId: 'reply-message' });
+      return delta?.type === 'message-delta' ? delta.version : undefined;
+    };
+    const before = await read();
+    expect(typeof before).toBe('number');
+    await database.query(`UPDATE messages SET reactions='{"👍":["${VIEWER}"]}'::jsonb
+      WHERE id='reply-message'`);
+    expect(await read()).toBe(before! + 1);
+    await database.query(`UPDATE messages SET reactions='{}'::jsonb WHERE id='reply-message'`);
+    expect(await read()).toBe(before! + 2);
+  });
+
   it('projects committed message and turn rows exactly like the authorized row reads', async () => {
     const phone = new PhoneService(database, 'https://server.usebeeline.app');
     const messageRow = (
@@ -665,7 +706,7 @@ describe('PhoneService.readRoom latency', () => {
       )
     ).rows[0]!;
 
-    expect(phone.projectCommittedLiveDelta(ROOM, { type: 'message', row: messageRow })).toEqual(
+    expect(await phone.projectCommittedLiveDelta(ROOM, { type: 'message', row: messageRow })).toEqual(
       await phone.readLiveDelta(ROOM, VIEWER, {
         type: 'message',
         messageId: 'reply-message',
@@ -675,15 +716,15 @@ describe('PhoneService.readRoom latency', () => {
       type: 'turn', agentId: '0'.repeat(64), requestId: 'message-179',
     });
     expect(persistedTurn?.type).toBe('turn-delta');
-    expect(phone.projectCommittedLiveDelta(ROOM, { type: 'turn', row: turnRow })).toMatchObject({
+    expect(await phone.projectCommittedLiveDelta(ROOM, { type: 'turn', row: turnRow })).toMatchObject({
       type: 'turn-delta', roomId: ROOM,
       turn: persistedTurn?.type === 'turn-delta' ? persistedTurn.turn : undefined,
     });
     expect(
-      phone.projectCommittedLiveDelta('cross-room', { type: 'message', row: messageRow }),
+      await phone.projectCommittedLiveDelta('cross-room', { type: 'message', row: messageRow }),
     ).toBeNull();
     expect(
-      phone.projectCommittedLiveDelta('cross-room', { type: 'turn', row: turnRow }),
+      await phone.projectCommittedLiveDelta('cross-room', { type: 'turn', row: turnRow }),
     ).toBeNull();
   });
 });

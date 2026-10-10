@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
-import type { NeedsYouItemView } from '@beeline/api-contract/phone';
+import type { NeedsYouItemView, NeedsYouListResult } from '@beeline/api-contract/phone';
 
 export type NeedsYouLiveDelta = { readonly workspaceId: string; readonly sourceRoomId: string;
   readonly count: number; readonly items: readonly NeedsYouItemView[] };
@@ -24,46 +25,118 @@ export type NeedsYouEntry = {
   readonly held: ReadonlySet<string>;
 };
 
+/** The relay and identity a slot belongs to. */
+type Viewer = { readonly key: string; readonly relay: string; readonly pubkey: string };
+
+/** An optimistic clear. Until `settled`, a read may answer from before it. */
+type Clear = { readonly ids: ReadonlySet<string>; readonly items: readonly NeedsYouItemView[]; settled?: number };
+
+/** A change a list read started earlier may not include yet. */
+type Operation =
+  | { readonly at: number; readonly delta: NeedsYouLiveDelta }
+  | { readonly clear: Clear };
+
+/**
+ * One viewer and Workspace. Every change bumps `revision`, the one freshness
+ * rule: a read replays the logged changes newer than its start, a read applies
+ * only when it started after the last applied read, and a count or disk copy
+ * applies only when nothing changed while it was out.
+ */
+type Slot = {
+  readonly viewer: Viewer;
+  readonly workspaceId: string;
+  entry: NeedsYouEntry;
+  revision: number;
+  /** Start revision of the newest applied read. */
+  readAt: number;
+  /** Start revisions of reads in flight. */
+  readonly reads: Set<number>;
+  log: Operation[];
+  /** The list came from the server, so its disk copy is kept current. */
+  persist: boolean;
+};
+
 const EMPTY: NeedsYouEntry = { items: null, count: null, held: new Set() };
-const entries = new Map<string, NeedsYouEntry>();
-/** Bumped by every live delta, so an older read cannot overwrite a newer slice. */
-const versions = new Map<string, number>();
-/**
- * Each list read in flight: live deltas heard meanwhile, replayed onto its
- * result, and cells cleared meanwhile, left out of it.
- */
-type ReadInFlight = { readonly deltas: NeedsYouLiveDelta[]; readonly cleared: Set<string> };
-const readsInFlight = new Map<string, Set<ReadInFlight>>();
-/**
- * Cells whose clear the server has not answered yet, counted per clear. A read
- * that starts meanwhile may answer from before the clear, so it leaves them out.
- */
-const pendingClears = new Map<string, Map<string, number>>();
-/** Start order of list reads; a read never overwrites one that started after it. */
-let readsStarted = 0;
-const newestRead = new Map<string, number>();
+const NEEDS_YOU_ENDPOINT = '/workspace/:id/needs-you';
+/** Live signals after which the Needs-you list may have missed changes. */
+export const NEEDS_YOU_GAP_REASONS: ReadonlySet<string> =
+  new Set(['needs-you-gap', 'reconnect', 'postgres:memberships']);
+
+const slots = new Map<string, Slot>();
 /** Mounted trays per Workspace. A gap with no tray drops the list back to a count. */
 const listHolders = new Map<string, number>();
 const storeListeners = new Set<() => void>();
 /** The relay and identity the entries belong to; `undefined` until resolved. */
-let viewer: string | undefined;
-let viewerRead: Promise<string> | undefined;
+let viewer: Viewer | undefined;
+let viewerRead: Promise<Viewer> | undefined;
 let liveStop: (() => void) | undefined;
 let liveStarting = false;
 
-function entryKey(viewerId: string, workspaceId: string): string {
-  return `${viewerId}\u0000${workspaceId}`;
+function slotKey(viewerKey: string, workspaceId: string): string {
+  return `${viewerKey}\u0000${workspaceId}`;
+}
+
+/**
+ * The slot for the viewer the caller resolved. A viewer a client reset
+ * replaced gets a detached slot, so the caller's writes go nowhere.
+ */
+function slotFor(owner: Viewer, workspaceId: string): Slot {
+  const key = slotKey(owner.key, workspaceId);
+  const existing = slots.get(key);
+  if (existing && owner === viewer) return existing;
+  const slot: Slot = { viewer: owner, workspaceId, entry: EMPTY, revision: 0, readAt: 0,
+    reads: new Set(), log: [], persist: false };
+  if (owner === viewer) slots.set(key, slot);
+  return slot;
+}
+
+/** The current viewer's slot, or none before the viewer resolves. */
+function currentSlot(workspaceId: string): Slot | undefined {
+  return viewer === undefined ? undefined : slotFor(viewer, workspaceId);
+}
+
+/** A slot dropped by a client reset takes no more writes. */
+function live(slot: Slot): boolean {
+  return slots.get(slotKey(slot.viewer.key, slot.workspaceId)) === slot;
 }
 
 function notify(): void {
   for (const listener of storeListeners) listener();
 }
 
-function write(workspaceId: string, change: (entry: NeedsYouEntry) => NeedsYouEntry): void {
-  if (viewer === undefined) return;
-  const key = entryKey(viewer, workspaceId);
-  entries.set(key, change(entries.get(key) ?? EMPTY));
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isNeedsYouList(value: unknown): value is NeedsYouListResult {
+  return isRecord(value) && Array.isArray(value.items) && value.items.every((item: unknown) =>
+    isRecord(item) && typeof item.messageId === 'string' && typeof item.workspaceId === 'string' &&
+    typeof item.roomId === 'string' && typeof item.roomName === 'string' && typeof item.text === 'string' &&
+    typeof item.createdAt === 'number');
+}
+
+function diskAddress(slot: Slot) {
+  return surfaceAddress(slot.viewer.relay, slot.viewer.pubkey, NEEDS_YOU_ENDPOINT, { workspaceId: slot.workspaceId });
+}
+
+/** Change one slot's entry, and keep its disk copy current once the server supplied the list. */
+function write(slot: Slot, change: (entry: NeedsYouEntry) => NeedsYouEntry): void {
+  if (!live(slot)) return;
+  const previous = slot.entry;
+  slot.entry = change(previous);
+  if (slot.entry === previous) return;
+  if (slot.persist && slot.entry.items && slot.entry.items !== previous.items && slot.viewer.pubkey)
+    void mobileSurfaceCache.write(diskAddress(slot), { items: [...slot.entry.items] }, isNeedsYouList)
+      .catch(() => undefined);
   notify();
+}
+
+/** Drop logged changes that no read in flight can still be missing. */
+function trim(slot: Slot): void {
+  const oldest = Math.min(...slot.reads);
+  slot.log = slot.log.filter((operation) => 'clear' in operation
+    ? operation.clear.settled === undefined || operation.clear.settled > oldest
+    : operation.at > oldest);
 }
 
 function sortNeeds(items: NeedsYouItemView[]): NeedsYouItemView[] {
@@ -79,16 +152,11 @@ function applyNeedsSlice(
 }
 
 /**
- * An identity or relay change forgets every entry, every in-flight count and
- * the live registration. Work started before it carries an older
- * `clientResetGeneration()` and writes nothing.
+ * An identity or relay change forgets every slot, every in-flight count and
+ * the live registration. Work holding a dropped slot writes nothing.
  */
 subscribeClientReset(() => {
-  entries.clear();
-  versions.clear();
-  readsInFlight.clear();
-  pendingClears.clear();
-  newestRead.clear();
+  slots.clear();
   countsInFlight.clear();
   viewer = undefined;
   viewerRead = undefined;
@@ -97,16 +165,17 @@ subscribeClientReset(() => {
   notify();
 });
 
-async function readViewer(): Promise<string> {
+async function readViewer(): Promise<Viewer> {
   const [relay, identity] = await Promise.all([getEffectiveRelayUrl(), loadBuzzIdentity()]);
-  return `${relay}\u0000${identity?.publicKey ?? ''}`;
+  const pubkey = identity?.publicKey ?? '';
+  return { key: `${relay}\u0000${pubkey}`, relay, pubkey };
 }
 
-function resolveViewer(): Promise<string> {
+function resolveViewer(): Promise<Viewer> {
   if (viewer !== undefined) return Promise.resolve(viewer);
   const at = clientResetGeneration();
   viewerRead ??= readViewer()
-    .catch(() => '')
+    .catch((): Viewer => ({ key: '', relay: '', pubkey: '' }))
     .then((resolved) => {
       if (at !== clientResetGeneration()) return resolved;
       viewer = resolved;
@@ -128,30 +197,24 @@ function startLive(): void {
   const at = clientResetGeneration();
   void sharedLiveConnection().register([], (event) => {
     if (!('monolithLive' in event)) return;
-    const live = (event as MonolithSurfaceEvent).monolithLive;
-    if (live.type === 'needs-you-delta') applyNeedsYouLiveDelta(live);
-    else if (live.type === 'invalidate' && (live.reason === 'needs-you-gap' ||
-        live.reason === 'reconnect' || live.reason === 'postgres:memberships'))
-      invalidateNeedsYou();
+    const signal = (event as MonolithSurfaceEvent).monolithLive;
+    if (signal.type === 'needs-you-delta') applyNeedsYouLiveDelta(signal);
+    else if (signal.type === 'invalidate' && NEEDS_YOU_GAP_REASONS.has(signal.reason)) invalidateNeedsYou();
   }).then((stop) => {
     liveStarting = false;
-    if (at === clientResetGeneration()) {
-      liveStop = stop;
-      return;
-    }
-    stop();
-    if (viewer !== undefined) startLive();
+    if (at === clientResetGeneration()) liveStop = stop;
+    else stop();
   }, () => {
     liveStarting = false;
   });
 }
 
 export function applyNeedsYouLiveDelta(delta: NeedsYouLiveDelta): void {
-  if (viewer === undefined) return;
-  const key = entryKey(viewer, delta.workspaceId);
-  versions.set(key, (versions.get(key) ?? 0) + 1);
-  for (const read of readsInFlight.get(key) ?? []) read.deltas.push(delta);
-  write(delta.workspaceId, (entry) => entry.items
+  const slot = currentSlot(delta.workspaceId);
+  if (!slot) return;
+  slot.revision += 1;
+  if (slot.reads.size) slot.log.push({ at: slot.revision, delta });
+  write(slot, (entry) => entry.items
     ? { ...entry, items: applyNeedsSlice(entry.items, delta) }
     : { ...entry, count: delta.count });
 }
@@ -162,109 +225,117 @@ export function applyNeedsYouLiveDelta(delta: NeedsYouLiveDelta): void {
  */
 function invalidateNeedsYou(): void {
   if (viewer === undefined) return;
-  const prefix = entryKey(viewer, '');
-  let changed = false;
-  for (const [key, entry] of entries) {
-    if (!key.startsWith(prefix) || listHolders.get(key.slice(prefix.length))) continue;
-    entries.set(key, { ...entry, items: null, count: null });
-    changed = true;
+  for (const slot of slots.values()) {
+    if (slot.viewer !== viewer || listHolders.get(slot.workspaceId)) continue;
+    slot.revision += 1;
+    write(slot, (entry) => ({ ...entry, items: null, count: null }));
   }
-  if (changed) notify();
 }
 
-/** Live delta version for a Workspace; a disk copy read across a change must not paint. */
-export function needsYouVersion(workspaceId: string): number {
-  return viewer === undefined ? 0 : versions.get(entryKey(viewer, workspaceId)) ?? 0;
-}
-
-/** Read the list (this starts first-paint clocks) and store it with any deltas heard meanwhile. */
+/** Read the list (this starts first-paint clocks) and store it with the changes heard meanwhile. */
 export async function loadNeedsYouList(workspaceId: string): Promise<readonly NeedsYouItemView[]> {
-  const at = clientResetGeneration();
-  const viewerId = await resolveViewer();
-  const key = entryKey(viewerId, workspaceId);
-  const started = ++readsStarted;
-  const read: ReadInFlight = { deltas: [], cleared: new Set(pendingClears.get(key)?.keys()) };
-  const reads = readsInFlight.get(key) ?? new Set();
-  reads.add(read);
-  readsInFlight.set(key, reads);
+  const slot = slotFor(await resolveViewer(), workspaceId);
+  const from = ++slot.revision;
+  slot.reads.add(from);
   try {
     const result = await monolithPhoneOperation('readNeedsYou', { workspaceId });
-    const items = read.deltas.reduce(applyNeedsSlice, sortNeeds([...result.items]))
-      .filter((item) => !read.cleared.has(item.messageId));
-    if (at === clientResetGeneration() && viewer === viewerId && started > (newestRead.get(key) ?? 0)) {
-      newestRead.set(key, started);
-      write(workspaceId, (entry) => ({ ...entry, items, count: null }));
+    let items = sortNeeds([...result.items]);
+    for (const operation of slot.log) {
+      if ('clear' in operation) {
+        const { ids, settled } = operation.clear;
+        if ((settled ?? Infinity) > from) items = items.filter((item) => !ids.has(item.messageId));
+      } else if (operation.at > from) {
+        items = applyNeedsSlice(items, operation.delta);
+      }
+    }
+    if (from > slot.readAt && live(slot)) {
+      slot.readAt = from;
+      slot.persist = true;
+      write(slot, (entry) => ({ ...entry, items, count: null }));
     }
     return items;
   } finally {
-    readsInFlight.get(key)?.delete(read);
+    slot.reads.delete(from);
+    trim(slot);
   }
-}
-
-/** Paint a disk copy only while no read or delta has supplied the list. */
-export function seedNeedsYouList(workspaceId: string, items: readonly NeedsYouItemView[]): void {
-  write(workspaceId, (entry) => entry.items ? entry : { ...entry, items: sortNeeds([...items]) });
-}
-
-/** Replace the list outright, e.g. empty once Workspace membership is lost. */
-export function setNeedsYouList(workspaceId: string, items: readonly NeedsYouItemView[]): void {
-  write(workspaceId, (entry) => ({ ...entry, items: sortNeeds([...items]), count: null }));
-}
-
-/** Every list read in flight for this viewer and Workspace. */
-function pendingReads(workspaceId: string): Iterable<ReadInFlight> {
-  return viewer === undefined ? [] : readsInFlight.get(entryKey(viewer, workspaceId)) ?? [];
 }
 
 /**
- * An optimistic clear: the cells leave the list and the badge together. A read
- * in flight, or one that starts before the server answers the clear, may answer
- * from before it, so it leaves them out too. Call the returned function once
- * the server answers, before any restore; after a client reset it does nothing.
+ * Paint the disk copy while no read or change has supplied the list. Resolves
+ * whether a disk copy exists.
  */
-export function removeNeedsYou(workspaceId: string, messageIds: Iterable<string>): () => void {
-  const ids = new Set(messageIds);
-  for (const read of pendingReads(workspaceId)) for (const id of ids) read.cleared.add(id);
-  const pending = viewer === undefined ? undefined : entryKey(viewer, workspaceId);
-  if (pending !== undefined) {
-    const counts = pendingClears.get(pending) ?? new Map<string, number>();
-    for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + 1);
-    pendingClears.set(pending, counts);
-  }
-  write(workspaceId, (entry) => entry.items
-    ? { ...entry, items: entry.items.filter((item) => !ids.has(item.messageId)) }
-    : entry);
-  const at = clientResetGeneration();
-  let settled = false;
-  return () => {
-    if (settled || pending === undefined || at !== clientResetGeneration()) return;
-    settled = true;
-    const counts = pendingClears.get(pending);
-    if (!counts) return;
-    for (const id of ids) {
-      const left = (counts.get(id) ?? 1) - 1;
-      if (left) counts.set(id, left);
-      else counts.delete(id);
-    }
-    if (!counts.size) pendingClears.delete(pending);
-  };
+export async function seedNeedsYouList(workspaceId: string): Promise<boolean> {
+  const slot = slotFor(await resolveViewer(), workspaceId);
+  if (!slot.viewer.pubkey) return false;
+  const at = slot.revision;
+  const saved = await mobileSurfaceCache.read(diskAddress(slot), isNeedsYouList).catch(() => null);
+  if (!saved) return false;
+  if (slot.revision === at && !slot.entry.items)
+    write(slot, (entry) => ({ ...entry, items: sortNeeds([...saved.items]) }));
+  return true;
 }
 
-/** A failed clear puts its cells back in the list and the badge together. */
-export function restoreNeedsYou(workspaceId: string, items: readonly NeedsYouItemView[]): void {
-  for (const read of pendingReads(workspaceId))
-    for (const item of items) read.cleared.delete(item.messageId);
-  write(workspaceId, (entry) => {
-    if (!entry.items) return entry;
-    const present = new Set(entry.items.map((item) => item.messageId));
-    return { ...entry, items: sortNeeds([...entry.items,
-      ...items.filter((item) => !present.has(item.messageId))]) };
-  });
+/** Membership was lost: the list is empty and its disk copy is removed. */
+export function forgetNeedsYouList(workspaceId: string): void {
+  const slot = currentSlot(workspaceId);
+  if (!slot) return;
+  slot.revision += 1;
+  slot.persist = false;
+  write(slot, (entry) => ({ ...entry, items: [], count: null }));
+  if (slot.viewer.pubkey) void mobileSurfaceCache.remove(diskAddress(slot)).catch(() => undefined);
+}
+
+export type NeedsYouRemoval = {
+  /** The server applied the clear; a read that starts from now on includes it. */
+  readonly settle: () => void;
+  /** The server refused the clear: the cells come back. False after a client reset. */
+  readonly restore: () => boolean;
+};
+
+/**
+ * An optimistic clear: the cells leave the list and the badge together. Until
+ * it settles, every read leaves them out, since the server may answer from
+ * before the clear. Both returned calls act once, and only on this viewer.
+ */
+export function removeNeedsYou(workspaceId: string, messageIds: Iterable<string>): NeedsYouRemoval {
+  const slot = currentSlot(workspaceId);
+  if (!slot) return { settle: () => undefined, restore: () => false };
+  const ids = new Set(messageIds);
+  const clear: Clear = { ids, items: slot.entry.items?.filter((item) => ids.has(item.messageId)) ?? [] };
+  const operation = { clear };
+  slot.revision += 1;
+  slot.log.push(operation);
+  write(slot, (entry) => entry.items
+    ? { ...entry, items: entry.items.filter((item) => !ids.has(item.messageId)) }
+    : entry);
+  let done = false;
+  return {
+    settle: () => {
+      if (done || !live(slot)) return;
+      done = true;
+      clear.settled = ++slot.revision;
+      trim(slot);
+    },
+    restore: () => {
+      if (done || !live(slot)) return false;
+      done = true;
+      slot.revision += 1;
+      slot.log = slot.log.filter((logged) => logged !== operation);
+      write(slot, (entry) => {
+        if (!entry.items) return entry;
+        const present = new Set(entry.items.map((item) => item.messageId));
+        return { ...entry, items: sortNeeds([...entry.items,
+          ...clear.items.filter((item) => !present.has(item.messageId))]) };
+      });
+      return true;
+    },
+  };
 }
 
 /** Hide exactly these cells (an empty list shows them all again). */
 export function holdNeedsYou(workspaceId: string, messageIds: readonly string[]): void {
-  write(workspaceId, (entry) => ({ ...entry, held: new Set(messageIds) }));
+  const slot = currentSlot(workspaceId);
+  if (slot) write(slot, (entry) => ({ ...entry, held: new Set(messageIds) }));
 }
 
 function subscribeStore(listener: () => void): () => void {
@@ -275,7 +346,7 @@ function subscribeStore(listener: () => void): () => void {
 function useNeedsYouEntry(workspaceId: string | null | undefined): NeedsYouEntry {
   useEffect(() => { void resolveViewer(); }, []);
   return useSyncExternalStore(subscribeStore, () =>
-    workspaceId && viewer !== undefined ? entries.get(entryKey(viewer, workspaceId)) ?? EMPTY : EMPTY);
+    workspaceId && viewer !== undefined ? slots.get(slotKey(viewer.key, workspaceId))?.entry ?? EMPTY : EMPTY);
 }
 
 function visible(entry: NeedsYouEntry): readonly NeedsYouItemView[] | null {
@@ -336,16 +407,14 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
     countedFor.current = refreshKey;
     let cancelled = false;
     void (async () => {
-      const at = clientResetGeneration();
-      const viewerId = await resolveViewer();
+      const slot = slotFor(await resolveViewer(), workspaceId);
       if (cancelled) return;
-      const key = entryKey(viewerId, workspaceId);
-      const version = versions.get(key) ?? 0;
+      const at = slot.revision;
       try {
-        const next = await countNeedsYou(key, workspaceId);
-        // A delta heard meanwhile already carried a newer count.
-        if (at !== clientResetGeneration() || viewer !== viewerId || version !== (versions.get(key) ?? 0)) return;
-        write(workspaceId, (current) => current.items ? current : { ...current, count: next });
+        const next = await countNeedsYou(slotKey(slot.viewer.key, workspaceId), workspaceId);
+        // A change heard meanwhile already carried a newer count.
+        if (slot.revision === at)
+          write(slot, (current) => current.items ? current : { ...current, count: next });
       } catch {
         // A failed count keeps the last one.
       }

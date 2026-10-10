@@ -30,6 +30,24 @@ import { tagsKnownIdentitySql } from './message-mentions.js';
 export const NEEDS_YOU_TRIGGER_WORDS = ['please', 'approve', 'feedback'] as const;
 /** A cell's life, counted from the first time the person saw it in the tray. */
 export const NEEDS_YOU_EXPIRY_HOURS = 24;
+/** A card's `expiresAt` in epoch milliseconds, or NULL; `messages_needs_you_expiry_idx` indexes it. */
+export function cardExpiresAtSql(card = 'card'): string {
+  return `(CASE WHEN ${card}->>'expiresAt' ~ '^[0-9]{1,15}$' THEN (${card}->>'expiresAt')::bigint END)`;
+}
+/** The approval cards whose only exit is their `expiresAt`. */
+export const EXPIRING_CARD_TYPES = `card_type IN ('squire-approval','agent-sign-in')`;
+/**
+ * An expiring approval card `m` that waits on `identity`: any member of its
+ * Room for a Squire approval, the card's owner for an agent sign-in. The
+ * projection shows it until its `expiresAt`; the expiry sweep announces that
+ * deadline to the same people.
+ */
+export function expiringCardForSql(m: string, identity: string): string {
+  return `(${m}.${EXPIRING_CARD_TYPES} AND ${m}.deleted_at IS NULL
+    AND (${m}.card_type='squire-approval' OR ${m}.card->>'ownerId'=${identity}))`;
+}
+/** Now, in the epoch milliseconds `cardExpiresAtSql` returns. */
+const NOW_MS = `(extract(epoch FROM now())*1000)::bigint`;
 /**
  * How far back a tagged message is considered at all — a deliberate bound for
  * launch and backfill, not part of the approved expiry rule. The 24-hour clock
@@ -330,8 +348,7 @@ const APPROVAL_BRANCHES: readonly string[] = [
   // A sign-in only its owner can finish, while it still waits on them.
   `${APPROVAL_FROM(
      'sign-in',
-     `CASE WHEN m.card->>'expiresAt' ~ '^[0-9]+$'
-       THEN to_timestamp((m.card->>'expiresAt')::bigint/1000.0) END`,
+     `to_timestamp(${cardExpiresAtSql('m.card')}/1000.0)`,
      `(SELECT signing_in.name FROM identities signing_in WHERE signing_in.id=m.card->>'agentId')`,
    )}
    JOIN messages m ON m.room_id=room.id
@@ -339,20 +356,19 @@ const APPROVAL_BRANCHES: readonly string[] = [
    ${APPROVAL_JOINS}
    WHERE m.deleted_at IS NULL AND m.card->>'ownerId'=$2
      AND CASE m.card_type
-       WHEN 'agent-sign-in' THEN m.card->>'status' IN ('starting','pending')
-         AND (m.card->>'expiresAt' IS NULL
-           OR to_timestamp((m.card->>'expiresAt')::bigint/1000.0)>now())
+       WHEN 'agent-sign-in' THEN ${expiringCardForSql('m', '$2')}
+         AND m.card->>'status' IN ('starting','pending')
+         AND (${cardExpiresAtSql('m.card')} IS NULL OR ${cardExpiresAtSql('m.card')}>${NOW_MS})
        ELSE m.card->>'status'='pending'
      END`,
   // A Trusty Squire approval in the owner's connector DM. Squire decides it;
   // the decision (or Squire's expiry) lands in the Room the paused turn ran in.
-  `${APPROVAL_FROM('squire', `to_timestamp((m.card->>'expiresAt')::bigint/1000.0)`)}
+  `${APPROVAL_FROM('squire', `to_timestamp(${cardExpiresAtSql('m.card')}/1000.0)`)}
    JOIN messages m ON m.room_id=room.id AND m.card_type='squire-approval'
    ${APPROVAL_JOINS}
-   WHERE m.deleted_at IS NULL AND m.card->>'approvalId' IS NOT NULL
+   WHERE ${expiringCardForSql('m', '$2')} AND m.card->>'approvalId' IS NOT NULL
      AND m.card->>'status' IS DISTINCT FROM 'expired'
-     AND m.card->>'expiresAt' ~ '^[0-9]+$'
-     AND to_timestamp((m.card->>'expiresAt')::bigint/1000.0)>now()
+     AND ${cardExpiresAtSql('m.card')}>${NOW_MS}
      AND m.card->>'sourceRoomId' ~ '^[0-9a-f-]{36}$'
      AND NOT EXISTS (
        SELECT 1 FROM messages decision

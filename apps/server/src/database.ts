@@ -37,7 +37,7 @@ import {
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
-import { cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you-expiry.js';
+import { cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
 import { cancelArchivedCornerAssignments } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';

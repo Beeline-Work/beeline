@@ -4,7 +4,6 @@ export type SurfaceCacheStorage = {
   readonly get: (key: string) => Promise<string | null>;
   readonly set: (key: string, value: string) => Promise<void>;
   readonly remove: (key: string) => Promise<void>;
-  readonly keys?: () => Promise<readonly string[]>;
 };
 
 export type SurfaceCacheAddress = {
@@ -64,18 +63,5 @@ export class SurfaceResponseCache {
 
   async remove(address: SurfaceCacheAddress): Promise<void> {
     await this.storage.remove(surfaceCacheKey(address));
-  }
-
-  async evictViewer(relayOrigin: string, viewerPubkey: string): Promise<void> {
-    if (!this.storage.keys) return;
-    const origin = new URL(relayOrigin).origin;
-    for (const key of await this.storage.keys()) {
-      try {
-        const parsed = JSON.parse(key) as unknown[];
-        if (parsed[0] === CONTRACT_VERSION && parsed[1] === origin && parsed[2] === viewerPubkey) {
-          await this.storage.remove(key);
-        }
-      } catch {}
-    }
   }
 }

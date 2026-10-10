@@ -17,14 +17,12 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: async () => ({ publicKey: 'test-viewer', secretKey: new Uint8Array(32) }),
   getEffectiveRelayUrl: async () => 'https://test.invalid',
 }));
-vi.mock('@/auth/monolith-session', () => ({
-  monolithSession: {
-    subscribeIdentityChange: (listener: () => void) => {
-      fixture.identityChange = listener;
-      return () => {
-        fixture.identityChange = null;
-      };
-    },
+vi.mock('@/sync/client-reset', () => ({
+  subscribeClientReset: (listener: () => void) => {
+    fixture.identityChange = listener;
+    return () => {
+      fixture.identityChange = null;
+    };
   },
 }));
 vi.mock('@/buzz/open-room-tracker', () => ({ getOpenBuzzChannelId: () => null }));

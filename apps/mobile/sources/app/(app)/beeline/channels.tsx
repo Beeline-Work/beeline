@@ -1123,7 +1123,7 @@ export default function BuzzChannels() {
                       }
                       testID={`room-${item.room.id}`}
                     />
-                    {!item.directMessage && (item.cornerCount ?? 0) > 0 && cornersExpanded && (
+                    {!item.directMessage && cornersExpanded && (
                       <DesktopRoomCorners
                         item={item}
                         mobile

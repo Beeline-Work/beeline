@@ -22,7 +22,7 @@ import {
 } from '@/buzz/workflow-run-copy';
 import { identityPalette, isGeneratedAgentAvatarUrl } from '@/buzz/identity-mark';
 import { previewHandle } from '@/buzz/room-list-row';
-import { roomOpenCornerRows, useRoomCornerRecord } from '@/buzz/room-corner-store';
+import { findRoomCornerRow, useRoomCornerRecord } from '@/buzz/room-corner-store';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import { IdentityMark } from './IdentityMark';
@@ -255,10 +255,7 @@ function OpenedCorner({
   onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
 }) {
   const record = useRoomCornerRecord(corner.parentRoomId);
-  const row = record
-    ? [...roomOpenCornerRows(record), ...(record.archived?.corners ?? [])]
-        .find((item) => item.corner.id === corner.id)
-    : undefined;
+  const row = record ? findRoomCornerRow(record, corner.id) : undefined;
   const named = row ? { ...corner, name: row.corner.name } : corner;
   return (
     <Pressable

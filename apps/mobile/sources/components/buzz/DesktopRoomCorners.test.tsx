@@ -15,6 +15,7 @@ vi.mock('./CornerWaitingPulse', () => ({
 
 import { DesktopRoomCorners } from './DesktopRoomCorners';
 import { beelineThemes } from '@/buzz/groknight';
+import { applyChatListCorners } from '@/buzz/room-corner-store';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -24,8 +25,10 @@ describe('DesktopRoomCorners', () => {
   it('marks each corner name with the brass # every other corner name carries', () => {
     const item = {
       room: { id: 'room', name: 'alpha', updatedAt: 1 },
+      cornerCount: 1,
       openCorners: [{ id: 'c1', name: 'Docs refresh', state: 'working', mine: true }],
     } as unknown as ChatListItem;
+    applyChatListCorners([item], -1);
     let tree!: ReturnType<typeof create>;
     act(() => {
       tree = create(

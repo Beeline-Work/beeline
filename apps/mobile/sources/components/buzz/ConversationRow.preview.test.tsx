@@ -4,6 +4,7 @@ import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatListItem } from '@beeline/buzz-client';
 import { ConversationRow } from './ConversationRow';
+import { applyChatListCorners, resetRoomCornerStore } from '@/buzz/room-corner-store';
 
 vi.mock('react-native', () => {
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
@@ -49,6 +50,9 @@ function renderRow(
     latestMessage,
     ...changes,
   } as ChatListItem;
+  // The row reads its corners from the corner store, as the Room list store fills it.
+  resetRoomCornerStore();
+  applyChatListCorners([item], -1);
   let tree: ReturnType<typeof create>;
   act(() => {
     tree = create(

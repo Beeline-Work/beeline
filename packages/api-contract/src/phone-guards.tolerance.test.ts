@@ -586,6 +586,21 @@ describe('phone surface readers', () => {
     ]);
   });
 
+  it('reads the corners page summary whole, or not at all', () => {
+    const cornerId = '44444444-4444-4444-8444-444444444444';
+    const base = { room: header, corners: [], viewer, watchFilters: [] };
+    const summary = {
+      cornerCount: 2, waitingCornerCount: 1, mineCornerCount: 1,
+      openCorners: [{ id: cornerId, name: 'Mine', state: 'waiting', mine: true,
+        waitingSince: 5, attention: true }],
+    };
+    expect(readCornerListView({ ...base, summary })?.summary).toEqual(summary);
+    expect(readCornerListView({ ...base, summary: { ...summary, cornerCount: -1 } }))
+      .not.toHaveProperty('summary');
+    expect(readCornerListView({ ...base, summary: { ...summary, openCorners: 'none' } }))
+      .not.toHaveProperty('summary');
+  });
+
   it('keeps exact viewer-attention facts and ignores malformed reasons', () => {
     const latest = {
       id: 'a'.repeat(64),

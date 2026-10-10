@@ -6,6 +6,8 @@ import {
   chatWatchFiltersKey,
   keepUnavailableChatFacts,
   roomsMissedByLive,
+  withCornerFacts,
+  withoutCornerFacts,
 } from './chat-list-delta';
 
 const agent = { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' };
@@ -42,30 +44,46 @@ function message(id: string, createdAt: number, extra: Partial<RoomViewMessage> 
 }
 
 describe('chat list deltas', () => {
-  it('applies a parent corner status without a deck read', () => {
-    const view = deck(item('a', 20), item('b', 10, {
-      cornerCount: 0, waitingCornerCount: 0, agentState: 'working',
-    }));
+  it('applies a parent corner status without a deck read, ordered by the corner store', () => {
+    const view = deck(item('a', 20), item('b', 10, { agentState: 'working' }));
+    const openCorners = [{ id: 'corner', name: 'Fix', state: 'waiting' as const,
+      mine: true as const, waitingSince: 30 }];
     const delta = { type: 'corner-status' as const, roomId: 'b',
-      cornerCount: 1, waitingCornerCount: 1,
-      openCorners: [{ id: 'corner', name: 'Fix', state: 'waiting' as const,
-        mine: true as const, waitingSince: 30 }],
+      cornerCount: 1, waitingCornerCount: 1, openCorners,
       agentState: 'needs-you' as const };
     expect(chatListDeltaNeedsRead(view, delta)).toBe(false);
-    const next = applyChatListDelta(view, delta);
+    // The corner store holds the frame's summary before the list folds it.
+    const next = applyChatListDelta(view, delta, {
+      openCorners: (roomId) => (roomId === 'b' ? openCorners : undefined),
+    });
     expect(next.chats.map((chat) => chat.room.id)).toEqual(['b', 'a']);
-    expect(next.chats[0]).toMatchObject({ cornerCount: 1, waitingCornerCount: 1,
-      agentState: 'needs-you', openCorners: [{ id: 'corner', state: 'waiting' }] });
+    expect(next.chats[0]).toMatchObject({ agentState: 'needs-you' });
+    expect(next.chats[0]).not.toHaveProperty('openCorners');
+    expect(next.chats[0]).not.toHaveProperty('cornerCount');
   });
 
-  it('keeps the approval actor and Mine count a live update names', () => {
+  it('keeps corner facts only on the saved copy', () => {
+    const facts = { cornerCount: 1, waitingCornerCount: 0, mineCornerCount: 1,
+      openCorners: [{ id: 'corner', name: 'Fix', state: 'working' as const, mine: true as const }] };
+    const read = deck(item('a', 20, facts), item('b', 10));
+    const held = withoutCornerFacts(read);
+    expect(held.chats.map((chat) => 'cornerCount' in chat || 'openCorners' in chat))
+      .toEqual([false, false]);
+    expect(withoutCornerFacts(held)).toBe(held);
+    const saved = withCornerFacts(held, (roomId) => (roomId === 'a'
+      ? { cornerCount: 1, openCorners: facts.openCorners } : undefined));
+    expect(saved.chats[0]).toMatchObject({ cornerCount: 1, openCorners: facts.openCorners });
+    expect(saved.chats[1]).not.toHaveProperty('cornerCount');
+  });
+
+  it('keeps the approval actor a live update names', () => {
     const view = deck(item('b', 10, {
       agentState: 'needs-you', attentionReason: { kind: 'approval', actor: 'Bot' },
     }));
     const status = applyChatListDelta(view, { type: 'corner-status', roomId: 'b',
       cornerCount: 2, waitingCornerCount: 0, mineCornerCount: 1, openCorners: [],
       agentState: 'needs-you', attentionReason: { kind: 'approval', actor: 'Bot' } });
-    expect(status.chats[0]).toMatchObject({ mineCornerCount: 1,
+    expect(status.chats[0]).toMatchObject({
       attentionReason: { kind: 'approval', actor: 'Bot' } });
     const turn = applyChatListDelta(view, { type: 'turn-delta', roomId: 'b',
       turn: { status: 'complete' } as never,
@@ -249,7 +267,7 @@ describe('keepUnavailableChatFacts', () => {
     const kept = keepUnavailableChatFacts(held, read);
     const { unread: _unread, ...unknown } = item('room-b', 5);
     expect(kept.chats[0]).toEqual(unknown);
-    expect(kept.unavailable).toEqual(['unread', 'corners']);
+    expect(kept.unavailable).toEqual(['unread']);
   });
 
   it('keeps the held value when a row omits unread', () => {
@@ -264,7 +282,7 @@ describe('keepUnavailableChatFacts', () => {
     const first = keepUnavailableChatFacts(held, read);
     const second = keepUnavailableChatFacts(first, { ...read, chats: [item('room-b', 6)] });
     expect('unread' in second.chats[0]!).toBe(false);
-    expect(second.unavailable).toEqual(['unread', 'corners']);
+    expect(second.unavailable).toEqual(['unread']);
   });
 
   it('keeps a cold read with no held copy unknown, then takes the next complete read', () => {

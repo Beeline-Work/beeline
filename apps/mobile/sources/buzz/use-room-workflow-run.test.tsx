@@ -6,8 +6,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 const read = vi.hoisted(() => vi.fn(async () => ({ workflows: [] })));
 vi.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => React.useEffect(effect, [effect]) }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: read }));
-const wire = vi.hoisted(() => ({ listener: undefined as any }));
-vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { wire.listener = listener; return () => undefined; } }) }));
+const wire = vi.hoisted(() => ({ listener: undefined as any, fail: false }));
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { if (wire.fail) throw new Error('socket refused'); wire.listener = listener; return () => undefined; } }) }));
 afterEach(() => { read.mockReset(); read.mockResolvedValue({ workflows: [] }); });
 import { liveRoomRuns, pickRoomWorkflowRun, useRoomWorkflowRun, useRoomWorkflowRuns } from './use-room-workflow-run';
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
@@ -139,7 +139,7 @@ it('re-reads a parent Room\'s runs when a corner handoff changes that corner\'s 
     state,
   }) as any;
   const frame = (sequence: number, state: string) => ({
-    roomId: 'parent-room', sequence, cornerCount: 1, waitingCornerCount: 0, openCorners: [],
+    roomId: 'parent-room', sequence, cornerCount: 1, openCorners: [],
     corners: [row(state)],
   });
   function Parent() { useRoomWorkflowRuns('parent-room'); return null; }
@@ -156,4 +156,29 @@ it('re-reads a parent Room\'s runs when a corner handoff changes that corner\'s 
     await act(async () => { store.acceptCornerStatusFrame(frame(3, 'review')); });
     expect(read).toHaveBeenCalledTimes(2);
   } finally { await act(async () => tree.unmount()); }
+});
+
+it('leaves no corner listener behind when the Room lane fails to register', async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  const store = await import('./room-corner-store');
+  store.resetRoomCornerStore();
+  const frame = (sequence: number, state: string) => ({
+    roomId: 'failed-room', sequence, cornerCount: 1, openCorners: [],
+    corners: [{ corner: { id: 'corner-a', name: 'a' },
+      lifecycle: { lifecycle: 'unknown', checks: 'unknown' }, state } as any],
+  });
+  function Parent() { useRoomWorkflowRuns('failed-room'); return null; }
+  let tree: any;
+  wire.fail = true;
+  try {
+    store.noteCornerLaneSubscribed('failed-room', false);
+    store.acceptCornerStatusFrame(frame(1, 'working'));
+    await act(async () => { tree = create(<Parent />); });
+    const reads = read.mock.calls.length;
+    await act(async () => { store.acceptCornerStatusFrame(frame(2, 'review')); });
+    expect(read).toHaveBeenCalledTimes(reads);
+  } finally {
+    wire.fail = false;
+    await act(async () => tree.unmount());
+  }
 });

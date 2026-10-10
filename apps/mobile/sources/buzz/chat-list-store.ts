@@ -12,6 +12,8 @@ import {
   chatWatchFiltersKey,
   keepUnavailableChatFacts,
   roomsMissedByLive,
+  withCornerFacts,
+  withoutCornerFacts,
   type ChatListDelta,
   type ChatListDeltaContext,
 } from './chat-list-delta';
@@ -20,7 +22,11 @@ import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { isDraftFrame } from '@/sync/transport/live-frames';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
-import { applyChatListCorners, cornerStoreClock } from './room-corner-store';
+import {
+  applyChatListCorners,
+  cornerStoreClock,
+  getRoomCornerSummary,
+} from './room-corner-store';
 import { subscribeClientReset } from '@/sync/client-reset';
 
 /**
@@ -85,7 +91,8 @@ function watchedRoomIds(filters: Filters): Set<string> {
  * The one client copy of a Workspace's Room list. It owns the live watch on
  * every Room in the list, folds deltas into one value, writes that value
  * through to disk, and makes the covering reads. The deck, the Sidebar, the
- * Room screen and the DM header all read this value.
+ * Room screen and the DM header all read this value. Each row's corner facts
+ * go to the corner store, which owns them; only the saved copy carries them.
  */
 class ChatListStore {
   private value: ChatListView | null = null;
@@ -114,6 +121,7 @@ class ChatListStore {
   private durableTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly deltaContext: ChatListDeltaContext = {
     viewing: (roomId) => sharedLiveConnection().isViewing(roomId),
+    openCorners: (roomId) => getRoomCornerSummary(roomId)?.openCorners,
   };
 
   constructor(
@@ -122,7 +130,7 @@ class ChatListStore {
   ) {
     this.address = chatListAddress(key);
     // A copy another screen published paints on the first frame.
-    this.value = mobileSurfaceCache.peek(this.address, isChatListView);
+    this.value = this.restored(mobileSurfaceCache.peek(this.address, isChatListView));
     this.scheduler = new SurfaceRefreshScheduler({
       fetch: async () => {
         this.deltasDuringRead = [];
@@ -230,7 +238,22 @@ class ChatListStore {
   private flushDurableWrite(): void {
     if (this.durableTimer) clearTimeout(this.durableTimer);
     this.durableTimer = undefined;
-    if (this.value) void mobileSurfaceCache.write(this.address, this.value, isChatListView);
+    if (this.value) void mobileSurfaceCache.write(this.address, this.saved(this.value), isChatListView);
+  }
+
+  /** A saved copy hands its corner facts to the corner store, never over a newer summary. */
+  private restored(saved: ChatListView | null): ChatListView | null {
+    if (!saved) return null;
+    applyChatListCorners(saved.chats, -1);
+    return withoutCornerFacts(saved);
+  }
+
+  /** The saved copy carries each Room's corner summary, so a cold start paints it. */
+  private saved(value: ChatListView): ChatListView {
+    return withCornerFacts(value, (roomId) => {
+      const summary = getRoomCornerSummary(roomId);
+      return summary && { cornerCount: summary.cornerCount, openCorners: summary.openCorners };
+    });
   }
 
   private applyRead(read: ChatListView): void {
@@ -241,16 +264,16 @@ class ChatListStore {
       this.readFromServer && held !== null && roomsMissedByLive(held, read, this.heardRooms).length > 0;
     this.heardRooms.clear();
     this.coveredRooms = this.readWatchedRooms;
+    if (!read.unavailable?.includes('corners')) applyChatListCorners(read.chats, this.readClock);
     const value = this.deltasDuringRead.reduce(
       (view, delta) => applyChatListDelta(view, delta, this.deltaContext),
-      keepUnavailableChatFacts(held, read),
+      withoutCornerFacts(keepUnavailableChatFacts(held, read)),
     );
     this.readFromServer = true;
     this.value = value;
-    if (!read.unavailable?.includes('corners')) applyChatListCorners(read.chats, this.readClock);
     if (this.durableTimer) clearTimeout(this.durableTimer);
     this.durableTimer = undefined;
-    void mobileSurfaceCache.write(this.address, value, isChatListView);
+    void mobileSurfaceCache.write(this.address, this.saved(value), isChatListView);
     this.notify();
     for (const consumer of this.consumers) consumer.onRead?.();
     if (missedLive) sharedLiveConnection().reconnect();
@@ -263,7 +286,7 @@ class ChatListStore {
     if (this.closed) return;
     // A server read or delta can land before storage answers.
     if (stored && !this.value) {
-      this.value = stored;
+      this.value = this.restored(stored);
       this.notify();
     }
     const filters = this.value?.watchFilters ?? [];

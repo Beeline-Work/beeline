@@ -16,12 +16,12 @@ import {
   applyCornerListRead,
   applyOpenCornerPage,
   cornerReadMark,
-  cornerStoreClock,
   findRoomCornerRow,
   getRoomCorners,
   hydrateRoomCorners,
   noteCornerReadStarted,
   roomCornerListView,
+  roomOpenCornerRows,
   useRoomCornerRecord,
   type RoomCorners,
 } from '@/buzz/room-corner-store';
@@ -38,7 +38,10 @@ type Reader = {
 };
 
 /** One first-page read per Room in flight, shared by every reader. */
-const firstPageReads = new Map<string, { again: boolean; done: Promise<void> }>();
+const firstPageReads = new Map<
+  string,
+  { again: boolean; generation: number; done: Promise<void> }
+>();
 
 async function roomReader(roomId: string, client: CornersClient | undefined): Promise<Reader> {
   const identity = (await loadBuzzIdentity()) as Identity | null;
@@ -59,50 +62,62 @@ async function roomReader(roomId: string, client: CornersClient | undefined): Pr
  * reads once more.
  */
 function readFirstPage(roomId: string, reader: Reader, force: boolean): Promise<void> {
+  const { generation } = cornerReadMark(roomId);
   const running = firstPageReads.get(roomId);
-  if (running) {
+  // A read started before a store reset belongs to the previous account.
+  if (running?.generation === generation) {
     if (force) running.again = true;
     return running.done;
   }
-  const flight = { again: false, done: Promise.resolve() };
+  const flight = { again: false, generation, done: Promise.resolve() };
   flight.done = (async () => {
     try {
       do {
         flight.again = false;
         noteCornerReadStarted(roomId);
         const mark = cornerReadMark(roomId);
+        if (mark.generation !== generation) return;
         const view = await reader.client.corners(roomId);
         applyCornerListRead(roomId, view, mark);
+        if (cornerReadMark(roomId).generation !== generation) return;
         const held = roomCornerListView(getRoomCorners(roomId));
         if (held && reader.address)
           void mobileSurfaceCache.write(reader.address, held, isCornerListView);
       } while (flight.again || getRoomCorners(roomId).wantsRead);
     } finally {
-      firstPageReads.delete(roomId);
+      if (firstPageReads.get(roomId) === flight) firstPageReads.delete(roomId);
     }
   })();
   firstPageReads.set(roomId, flight);
   return flight.done;
 }
 
-/** Read open pages after the first until they hold as many rows as before. */
+/**
+ * Read open pages after the first until they hold as many rows as before,
+ * again while a frame that landed mid-read left them unproven.
+ */
 async function rereadOpenPages(roomId: string, reader: Reader): Promise<void> {
-  const held = getRoomCorners(roomId);
-  const target = held.openMore.length;
-  let next = held.firstPageNext;
-  const rows: CornerListItem[] = [];
-  while (next && rows.length < target) {
-    const page = await reader.client.corners(roomId, { openBefore: next });
-    rows.push(...page.corners);
-    next = page.nextOpen;
-  }
-  applyOpenCornerPage(roomId, rows, next, true);
+  const { generation } = cornerReadMark(roomId);
+  do {
+    const mark = cornerReadMark(roomId);
+    if (mark.generation !== generation) return;
+    const held = getRoomCorners(roomId);
+    const target = held.openMore.length;
+    let next = held.firstPageNext;
+    const rows: CornerListItem[] = [];
+    while (next && rows.length < target) {
+      const page = await reader.client.corners(roomId, { openBefore: next });
+      rows.push(...page.corners);
+      next = page.nextOpen;
+    }
+    applyOpenCornerPage(roomId, rows, next, mark, true);
+  } while (getRoomCorners(roomId).openMoreStale && getRoomCorners(roomId).openMore.length > 0);
 }
 
 /** Read archived pages until they hold as many rows as before. */
 async function rereadArchivedPages(roomId: string, reader: Reader): Promise<void> {
   const target = Math.max(1, getRoomCorners(roomId).archived?.corners.length ?? 0);
-  const startedAt = cornerStoreClock();
+  const mark = cornerReadMark(roomId);
   let next: string | undefined;
   const rows: CornerListItem[] = [];
   do {
@@ -113,11 +128,13 @@ async function rereadArchivedPages(roomId: string, reader: Reader): Promise<void
     rows.push(...page.corners);
     next = page.nextArchived;
   } while (next && rows.length < target);
-  applyArchivedCorners(roomId, rows, next, false, startedAt);
+  applyArchivedCorners(roomId, rows, next, false, mark);
 }
 
-export type RoomCornersHandle = {
+type RoomCornersHandle = {
   readonly record: RoomCorners | undefined;
+  /** The first page and the held pages after it, as one list. */
+  readonly openRows: readonly CornerListItem[];
   /** The first page with its Room and viewer, once both are held. */
   readonly view: CornerListView | undefined;
   readonly error: string | null;
@@ -181,7 +198,7 @@ export function useRoomCorners(
         if (cancelled) return;
         readyRef.current = true;
         const now = getRoomCorners(roomId);
-        if (!now.current || !now.header || now.wantsRead) await read(false);
+        if (!now.current || !now.headerRead || now.wantsRead) await read(false);
       } catch (reason) {
         if (!cancelled) setError(phoneOperationFailureReason(reason));
       }
@@ -216,27 +233,30 @@ export function useRoomCorners(
     if (!roomId) return;
     const cursor = getRoomCorners(roomId).nextOpen;
     if (!cursor) return;
+    const mark = cornerReadMark(roomId);
     const page = await (await reader()).client.corners(roomId, { openBefore: cursor });
     // A frame or another page may have moved the cursor while this one read.
     if (getRoomCorners(roomId).nextOpen !== cursor) return;
-    applyOpenCornerPage(roomId, page.corners, page.nextOpen);
+    applyOpenCornerPage(roomId, page.corners, page.nextOpen, mark);
   }, [reader, roomId]);
 
   const loadArchived = useCallback(async (more: boolean) => {
     if (!roomId) return;
     const before = more ? getRoomCorners(roomId).archived?.next : undefined;
     if (more && !before) return;
-    const startedAt = cornerStoreClock();
+    const mark = cornerReadMark(roomId);
     const page = await (await reader()).client.corners(roomId, {
       archived: true,
       ...(before ? { before } : {}),
     });
-    applyArchivedCorners(roomId, page.corners, page.nextArchived, more, startedAt);
+    applyArchivedCorners(roomId, page.corners, page.nextArchived, more, mark);
   }, [reader, roomId]);
 
   const view = useMemo(() => (record ? roomCornerListView(record) : undefined), [record]);
+  const openRows = useMemo(() => (record ? roomOpenCornerRows(record) : []), [record]);
   return {
     record,
+    openRows,
     view,
     error,
     refresh,
@@ -252,7 +272,7 @@ export function useRoomCorners(
 export function useCornerHeaderItem(
   parentId: string | undefined,
   cornerId: string,
-  archived: boolean | undefined,
+  archived: boolean,
   client?: CornersClient | null,
 ): CornerDisplayItem | undefined {
   const { record } = useRoomCorners(parentId, client);

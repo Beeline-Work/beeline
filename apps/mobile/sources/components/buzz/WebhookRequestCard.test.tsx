@@ -80,4 +80,15 @@ describe('webhook request card status', () => {
     card.update(request('denied'));
     expect(card.subline()).toBe('denied');
   });
+
+  it('keeps a newer server status when the decision response arrives late', async () => {
+    let resolve!: (value: { status: string }) => void;
+    operation.monolithPhoneOperation.mockReturnValue(new Promise((done) => { resolve = done; }));
+    const card = render(request('pending'));
+    act(() => card.press('webhook-approve'));
+    // The server row moves on while the decision is still in flight.
+    card.update(request('expired'));
+    await act(async () => resolve({ status: 'approved' }));
+    expect(card.subline()).toBe('expired');
+  });
 });

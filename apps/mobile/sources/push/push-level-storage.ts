@@ -24,3 +24,26 @@ export function subscribeStoredPushLevel(
     pushLevelListeners.delete(listener);
   };
 }
+
+/** A mounted reader's level: the device copy first, then every later save for `pubkey`. */
+export function watchStoredPushLevel(
+  pubkey: string,
+  listener: (level: PushLevel) => void,
+): () => void {
+  let heard = false;
+  let stopped = false;
+  const stop = subscribeStoredPushLevel((changed, level) => {
+    if (changed !== pubkey) return;
+    heard = true;
+    listener(level);
+  });
+  void loadStoredPushLevel(pubkey)
+    .catch(() => DEFAULT_PUSH_LEVEL)
+    .then((level) => {
+      if (!heard && !stopped) listener(level);
+    });
+  return () => {
+    stopped = true;
+    stop();
+  };
+}

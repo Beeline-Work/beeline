@@ -109,7 +109,6 @@ vi.mock('@/buzz/community-storage', () => ({
   }),
 }));
 vi.mock('@/buzz/avatar-upload', () => ({ pickAndUploadAvatar: vi.fn() }));
-vi.mock('@/buzz/nip05-verification', () => ({ useVerifiedNip05Status: () => 'unverified' }));
 vi.mock('@/buzz/person-name', () => ({
   ensurePersonNameForWorkspace: vi.fn(async () => ({ name: 'Captain' })),
   loadPreferredPersonName: vi.fn(async () => 'Captain'),
@@ -203,10 +202,18 @@ vi.mock('@/sync/storage', () => ({
   useLocalSettingMutable: (name: string) => [name === 'appearance' ? 'dark' : 'medium', vi.fn()],
 }));
 vi.mock('@/push/buzz-push-registration', () => pushModule);
-vi.mock('@/push/push-level-storage', () => ({
-  saveStoredPushLevel: vi.fn(async () => undefined),
-  subscribeStoredPushLevel: () => () => undefined,
-}));
+vi.mock('@/push/push-level-storage', () => {
+  const listeners = new Set<(level: string) => void>();
+  return {
+    saveStoredPushLevel: vi.fn(async (_pubkey: string, level: string) => {
+      listeners.forEach((listener) => listener(level));
+    }),
+    watchStoredPushLevel: (_pubkey: string, listener: (level: string) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+});
 vi.mock('@/buzz/identity-live', () => ({ subscribeOwnIdentityChange: () => () => undefined }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);

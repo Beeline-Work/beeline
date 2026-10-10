@@ -71,4 +71,27 @@ describe('shared mobile surface registry', () => {
     expect(await pending).toBeNull();
     expect(cache.peek(address, isCount)).toBeNull();
   });
+
+  it('keeps a live publish when an older fetch resolves after it', async () => {
+    const { cache, rows } = registry();
+    let respond!: (value: { count: number }) => void;
+    const pending = cache.fetch(address, isCount, () => new Promise((resolve) => { respond = resolve; }));
+    cache.publish(address, { count: 5 }, isCount);
+    respond({ count: 4 });
+    expect(await pending).toEqual({ count: 5 });
+    expect(cache.peek(address, isCount)).toEqual({ count: 5 });
+    expect(rows.size).toBe(0);
+  });
+
+  it('keeps an address evicted when a fetch started before the eviction resolves', async () => {
+    const { cache, rows } = registry();
+    cache.publish(address, { count: 1 }, isCount);
+    let respond!: (value: { count: number }) => void;
+    const pending = cache.fetch(address, isCount, () => new Promise((resolve) => { respond = resolve; }));
+    await cache.remove(address);
+    respond({ count: 2 });
+    await pending;
+    expect(cache.peek(address, isCount)).toBeNull();
+    expect(rows.size).toBe(0);
+  });
 });

@@ -292,7 +292,7 @@ describe('first-silence notice', () => {
         requestId: '7'.repeat(64),
         reason: 'resource_limit: ACP session exceeded its 8192 MiB memory limit',
         reasonKind: 'resource-limit' as const,
-        text: '@candy could not answer · the session exceeded its memory limit. Run fewer tools at once or split the task.',
+        text: '@candy could not answer · the session likely hit its memory limit. Run fewer tools at once or split the task.',
         silence: 'resource-limit',
       },
     ];

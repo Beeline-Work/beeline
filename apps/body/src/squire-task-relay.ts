@@ -299,9 +299,9 @@ export class SquireTaskRelay {
     const scheduleId = this.activeScheduleId;
     if (!scheduleId) return task.client;
     const owner = squireSessionOwner(borrowed[0]!);
-    if (!owner ||
-        !squireSessionInheritable(borrowed[0]!, this.agentId, this.roomId, scheduleId) ||
-        !borrowed.every((id) => squireSessionOwner(id)?.client === owner.client))
+    if (!owner || !borrowed.every((id) =>
+      squireSessionOwner(id)?.client === owner.client &&
+      squireSessionInheritable(id, this.agentId, this.roomId, scheduleId)))
       return task.client;
     return owner.client;
   }
@@ -389,8 +389,14 @@ export class SquireTaskRelay {
       this.log('call-refused', task, { reason: 'connection-died' });
       throw new Error('Squire MCP connection died and its browser session is gone; call operate_start');
     }
+    // A scheduled turn must also pass schedule provenance for every session,
+    // including ones this relay owns, so a second schedule in the same
+    // conversation cannot drive a session another schedule claimed.
+    const scheduleId = this.activeScheduleId;
     if (input.method === 'tools/call' && (!safeToolName ||
-        (usingOwnConnection && requestedIds.some((id) => !task.sessions.has(id))))) {
+        (usingOwnConnection && requestedIds.some((id) => !task.sessions.has(id))) ||
+        (scheduleId && requestedIds.some((id) =>
+          !squireSessionInheritable(id, this.agentId, this.roomId, scheduleId))))) {
       this.log('call-refused', task, { reason: 'session-not-owned' });
       throw new Error('Squire browser session is no longer owned by this conversation; call operate_start');
     }

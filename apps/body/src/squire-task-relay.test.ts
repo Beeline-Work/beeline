@@ -638,7 +638,8 @@ describe('scheduled runs inherit a live Squire session', () => {
     };
   }
 
-  function relayFor(roomId: string, agentId: string, sessionId: string) {
+  function relayFor(roomId: string, agentId: string, ...sessions: string[]) {
+    let started = 0;
     const relay = new SquireTaskRelay(agentId, roomId, '/tmp/context', async () => true, homedir(),
       () => ({
         pid: 4000,
@@ -646,7 +647,8 @@ describe('scheduled runs inherit a live Squire session', () => {
           method === 'tools/list'
             ? { tools: [{ name: 'operate_start' }, { name: 'operate_observe' }] }
             : params.name === 'operate_start'
-              ? { content: [{ type: 'text', text: JSON.stringify({ sessionId }) }] }
+              ? { content: [{ type: 'text', text: JSON.stringify({
+                sessionId: sessions[Math.min(started++, sessions.length - 1)] }) }] }
               : { content: [{ type: 'text', text: 'page observed' }] }),
         close: () => {},
       } as unknown as StdioSquireMcpClient));
@@ -731,6 +733,37 @@ describe('scheduled runs inherit a live Squire session', () => {
     otherAgent.activate(scheduled('room', 'agent-2', 'o4', 't-agent', 'sched-1'), 'generation');
     expect((await call(otherAgent, 'room', 'o4', 't-agent', 'tools/call', {
       name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(400);
+  });
+
+  it('refuses a second schedule on the owning relay a session another schedule claimed', async () => {
+    const owner = relayFor('room', 'agent', 'browser-1');
+    owner.activate(scheduled('room', 'agent', 'root', 'turn-one', 'sched-1'), 'generation');
+    await call(owner, 'room', 'root', 'turn-one', 'tools/call', { name: 'operate_start' });
+
+    owner.activate(scheduled('room', 'agent', 'root-2', 'turn-two', 'sched-2'), 'generation');
+    expect((await call(owner, 'room', 'root-2', 'turn-two', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(400);
+
+    owner.activate(scheduled('room', 'agent', 'root-3', 'turn-three', 'sched-1'), 'generation');
+    expect((await call(owner, 'room', 'root-3', 'turn-three', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(200);
+  });
+
+  it('checks schedule provenance for every borrowed session that shares a client', async () => {
+    const owner = relayFor('room-a', 'agent', 'browser-a1', 'browser-a2');
+    owner.activate(scheduled('room-a', 'agent', 'root-a', 'turn-a', 'sched-1'), 'generation');
+    await call(owner, 'room-a', 'root-a', 'turn-a', 'tools/call', { name: 'operate_start' });
+    // The same owning connection also opens a session for another schedule.
+    owner.activate(scheduled('room-a', 'agent', 'root-a2', 'turn-a2', 'sched-2'), 'generation');
+    await call(owner, 'room-a', 'root-a2', 'turn-a2', 'tools/call', { name: 'operate_start' });
+
+    const borrower = relayFor('room-b', 'agent', 'browser-b1');
+    borrower.activate(scheduled('room-b', 'agent', 'root-b', 'turn-b', 'sched-1'), 'generation');
+    expect((await call(borrower, 'room-b', 'root-b', 'turn-b', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-a1', target: { sessionId: 'browser-a2' } },
     })).status).toBe(400);
   });
 });

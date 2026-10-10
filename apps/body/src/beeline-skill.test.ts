@@ -69,7 +69,6 @@ describe('using-beeline Room guidance', () => {
       'start_workflow',
       'search_history',
       'report_memory_used',
-      'load_workspace_skill',
       'search_memory',
       'list_credentials',
       'workbench_status',
@@ -78,9 +77,10 @@ describe('using-beeline Room guidance', () => {
       expect(memory, tool).toContain(tool);
     }
     expect(memory).toContain('No background reviewer exists');
-    // The task-start lookup lives in the turn prompt, which knows the
-    // Workspace's own procedure list; a static skill cannot.
-    expect(memory).not.toContain('At task start, call load_workspace_skill');
+    // The workspace-core lookup lives in the turn prompt, which knows the
+    // Workspace's own procedure list; a static skill cannot, so this section
+    // must not name load_workspace_skill at all.
+    expect(memory).not.toContain('load_workspace_skill');
     expect(memory).toContain('`workspace-core`');
     expect(memory).toContain('Never save "X is impossible".');
     expect(memory).toContain('at most 2,200 characters');

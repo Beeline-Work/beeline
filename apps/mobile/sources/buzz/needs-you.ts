@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import type { NeedsYouItemView } from '@beeline/api-contract/phone';
+import { subscribeClientReset } from '@/sync/client-reset';
 
 export type NeedsYouLiveDelta = { readonly workspaceId: string; readonly sourceRoomId: string;
   readonly count: number; readonly items: readonly NeedsYouItemView[] };
@@ -38,6 +39,12 @@ function countNeedsYou(workspaceId: string): Promise<number> {
   countsInFlight.set(workspaceId, request);
   return request;
 }
+
+subscribeClientReset(() => {
+  liveCounts.clear();
+  liveVersions.clear();
+  countsInFlight.clear();
+});
 
 /**
  * The tray badge follows exact live counts. A covering Room-list read supplies

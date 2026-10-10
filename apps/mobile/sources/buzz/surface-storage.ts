@@ -11,10 +11,12 @@ import {
 import { stripRetiredAgentNotices } from './retired-agent-notices';
 import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
 import { SurfaceRegistry } from './surface-registry';
+import { webRuntimeStorage } from '@/utils/web-storage';
 
-const browserStorage = typeof window !== 'undefined' && typeof localStorage !== 'undefined' ? localStorage : undefined;
-const responses = browserStorage ? webStringStorage(browserStorage, 'beeline.surface.') : new MMKV({ id: 'buzz-surface-responses' });
-const mutations = browserStorage ? webStringStorage(browserStorage, 'beeline.outbox.') : new MMKV({ id: 'buzz-surface-outbox' });
+const web = webRuntimeStorage();
+const RESPONSE_NAMESPACE = 'beeline.surface.';
+const responses = web ? webStringStorage(web.storage, RESPONSE_NAMESPACE) : new MMKV({ id: 'buzz-surface-responses' });
+const mutations = web ? webStringStorage(web.storage, 'beeline.outbox.') : new MMKV({ id: 'buzz-surface-outbox' });
 const RESPONSE_PREFIX = 'surface.';
 const OUTBOX_PREFIX = 'outbox.';
 
@@ -50,6 +52,17 @@ const durableSurfaceCache = new SurfaceResponseCache(
 );
 export const mobileSurfaceCache = new SurfaceRegistry(durableSurfaceCache, stripRetiredAgentNotices);
 
+// Another tab's sign-out removes the shared responses; drop this tab's hot
+// copies so it neither shows nor writes them back.
+if (web?.storage && typeof window.addEventListener === 'function') {
+  const shared = web.storage;
+  window.addEventListener('storage', (event) => {
+    if (event.storageArea !== shared) return;
+    if (event.key === null || (event.newValue === null && event.key.startsWith(RESPONSE_NAMESPACE)))
+      mobileSurfaceCache.clear();
+  });
+}
+
 export function surfaceAddress(
   relayOrigin: string,
   viewerPubkey: string,
@@ -59,17 +72,46 @@ export function surfaceAddress(
   return { relayOrigin, viewerPubkey, endpoint, ...(params ? { params } : {}) };
 }
 
-function outboxKey(viewerPubkey: string, roomId: string): string {
+function relayScope(relayOrigin: string): string {
+  try {
+    return encodeURIComponent(new URL(relayOrigin).origin);
+  } catch {
+    return encodeURIComponent(relayOrigin);
+  }
+}
+
+function outboxKey(relayOrigin: string, viewerPubkey: string, roomId: string): string {
+  return `${OUTBOX_PREFIX}${relayScope(relayOrigin)}.${viewerPubkey}.${encodeURIComponent(roomId)}`;
+}
+
+/** The key before outboxes were scoped to a relay. */
+function unscopedOutboxKey(viewerPubkey: string, roomId: string): string {
   return `${OUTBOX_PREFIX}${viewerPubkey}.${encodeURIComponent(roomId)}`;
 }
 
 /** One mutation-lifetime owner per mounted composer. It stores exact prepared frames only. */
-export function createRoomOutbox(identity: Pick<Identity, 'publicKey'>, roomId: string) {
-  const key = outboxKey(identity.publicKey, roomId);
+export function createRoomOutbox(
+  relayOrigin: string,
+  identity: Pick<Identity, 'publicKey'>,
+  roomId: string,
+) {
+  const key = outboxKey(relayOrigin, identity.publicKey, roomId);
+  const unscopedKey = unscopedOutboxKey(identity.publicKey, roomId);
   return new SignedEventOutbox(
     {
       load: async () => {
-        const encoded = mutations.getString(key);
+        let encoded = mutations.getString(key);
+        if (!encoded) {
+          // Unsent messages from before the relay scope move to the relay that
+          // first opens their Room, as they did before.
+          encoded = mutations.getString(unscopedKey);
+          if (encoded) {
+            mutations.set(key, encoded);
+            // A full or denied storage drops the write; the legacy copy then
+            // stays the only durable one.
+            if (mutations.getString(key) === encoded) mutations.delete(unscopedKey);
+          }
+        }
         if (!encoded) return [];
         try {
           return JSON.parse(encoded) as SignedOutboxRecord[];
@@ -79,21 +121,17 @@ export function createRoomOutbox(identity: Pick<Identity, 'publicKey'>, roomId: 
         }
       },
       save: async (records) => {
-        if (records.length === 0) mutations.delete(key);
-        else mutations.set(key, JSON.stringify(records));
+        const encoded = records.length === 0 ? undefined : JSON.stringify(records);
+        if (encoded === undefined) mutations.delete(key);
+        else mutations.set(key, encoded);
+        // The records include any legacy ones, so a stored save replaces them.
+        if (mutations.getString(key) === encoded) mutations.delete(unscopedKey);
       },
     },
     {
       acceptUnsignedEvent: isUnsignedMonolithMessage,
     },
   );
-}
-
-export async function evictMobileSurfaceViewer(relayOrigin: string, viewerPubkey: string) {
-  await mobileSurfaceCache.evictViewer(relayOrigin, viewerPubkey);
-  for (const key of mutations.getAllKeys()) {
-    if (key.startsWith(`${OUTBOX_PREFIX}${viewerPubkey}.`)) mutations.delete(key);
-  }
 }
 
 export function clearMobileSurfaceStorage(): void {

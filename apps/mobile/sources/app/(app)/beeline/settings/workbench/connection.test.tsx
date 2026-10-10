@@ -119,7 +119,7 @@ describe('Connection detail screen', () => {
   it('draws the shared page header: small Workbench over the key name', async () => {
     const renderer = await render();
     const header = renderer.root.findByProps({ testID: 'connection-header' });
-    expect(header.props.eyebrow).toBe('Workbench');
+    expect(header.props.eyebrow).toBe('Connectors');
     expect(header.props.title).toBe('vercel');
     expect(header.props.onBack).toBeTypeOf('function');
   });

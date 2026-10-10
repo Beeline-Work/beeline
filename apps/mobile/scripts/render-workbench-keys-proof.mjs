@@ -120,6 +120,14 @@ await build({
           path: 'reanimated-shim',
           namespace: 'workbench-keys-proof',
         }));
+        buildApi.onResolve({ filter: /^react-native-keyboard-controller$/ }, () => ({
+          path: 'keyboard-controller-shim',
+          namespace: 'workbench-keys-proof',
+        }));
+        buildApi.onResolve({ filter: /^react-native-safe-area-context$/ }, () => ({
+          path: 'safe-area-shim',
+          namespace: 'workbench-keys-proof',
+        }));
         buildApi.onResolve({ filter: /^expo-haptics$/ }, () => ({
           path: 'haptics-shim',
           namespace: 'workbench-keys-proof',
@@ -140,6 +148,12 @@ await build({
               loader: 'ts',
             };
           }
+          if (args.path === 'keyboard-controller-shim') {
+            return { contents: "import React from 'react'; import {View} from 'react-native'; export const KeyboardProvider = ({children}) => children; export const KeyboardAvoidingView = ({children,...props}) => React.createElement(View,props,children); export const useKeyboardHandler = () => undefined;", loader: 'tsx', resolveDir: mobileRoot };
+          }
+          if (args.path === 'safe-area-shim') {
+            return { contents: 'export const useSafeAreaInsets = () => ({top: 0, right: 0, bottom: 0, left: 0}); export const SafeAreaProvider = ({children}) => children;', loader: 'tsx' };
+          }
           return undefined;
         });
         buildApi.onResolve({ filter: /^@\// }, (args) => ({
@@ -153,14 +167,22 @@ await build({
 await writeFile(
   htmlPath,
   `<!doctype html><html><head><meta charset="utf-8"><title>${proofName}</title>` +
-    '<style>html,body{margin:0;height:100%;background:#14091A}#root{height:100vh}</style>' +
+    '<style>@font-face{font-family:SpaceGrotesk-Regular;src:url(/fonts/SpaceGrotesk-Regular.ttf)}' +
+    '@font-face{font-family:SpaceGrotesk-Medium;src:url(/fonts/SpaceGrotesk-Medium.ttf)}' +
+    '@font-face{font-family:SpaceGrotesk-SemiBold;src:url(/fonts/SpaceGrotesk-SemiBold.ttf)}' +
+    '@font-face{font-family:IBMPlexMono-Regular;src:url(/fonts/IBMPlexMono-Regular.ttf)}' +
+    'html,body{margin:0;height:100%;background:#14091A}#root{height:100vh}</style>' +
     '</head><body><div id="root"></div><script src="bundle.js"></script></body></html>',
 );
 
 const server = createServer((request, response) => {
   const route = (request.url ?? '').split('?')[0];
-  const filePath = route === '/bundle.js' ? bundlePath : htmlPath;
-  response.setHeader('Content-Type', filePath.endsWith('.js') ? 'text/javascript' : 'text/html');
+  const fontName = route.startsWith('/fonts/') ? route.slice('/fonts/'.length) : '';
+  const fontPath = /^[A-Za-z0-9-]+\.ttf$/.test(fontName)
+    ? path.join(mobileRoot, 'sources/assets/fonts', fontName)
+    : undefined;
+  const filePath = fontPath && isFile(fontPath) ? fontPath : route === '/bundle.js' ? bundlePath : htmlPath;
+  response.setHeader('Content-Type', filePath.endsWith('.js') ? 'text/javascript' : filePath.endsWith('.ttf') ? 'font/ttf' : 'text/html');
   createReadStream(filePath).pipe(response);
 });
 server.listen(port, '127.0.0.1', () => {

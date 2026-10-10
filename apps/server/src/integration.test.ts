@@ -11979,7 +11979,7 @@ describe('monolith integration', () => {
     expect(card.card.agent.pubkey).toBe(AGENT);
     expect(card.card.addressee.pubkey).toBe(zeke.id);
     // The consequence and the standing boundary, together, in one server-owned line.
-    expect(card.card.consequence).toMatch(/^This changes your Workbench\./);
+    expect(card.card.consequence).toMatch(/^This changes your Connectors\./);
     expect(card.card.consequence).toContain('still no raw key in chat');
     expect(card.card.consequence).toContain('provision the 1inch API key into its vault');
     // The offer is linked to the turn it paused, so the accept can resume it.

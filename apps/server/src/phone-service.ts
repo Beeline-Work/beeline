@@ -192,7 +192,15 @@ import type {
   ConnectorStatus,
   ConnectorStep,
 } from '@beeline/api-contract/workbench';
-import { connectApp, disconnectApp, readOwnerApps } from './app-connections.js';
+import {
+  armRegistryConnector,
+  backfillRegistryApps,
+  connectApp,
+  disconnectApp,
+  hasExistingAppRoute,
+  OFFICIAL_REGISTRY_APPS,
+  readOwnerApps,
+} from './app-connections.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import {
   APP_INPUT_MAX_LENGTH,
@@ -200,6 +208,7 @@ import {
   connectorAdapter,
   connectorRequesterRole,
   faviconDomain,
+  uniqueVaultConnections,
 } from '@beeline/api-contract/workbench';
 import type {
   GrantWalletDelegationInput,
@@ -8424,11 +8433,17 @@ export class PhoneService {
     viewerId: string,
   ): Promise<Output<'searchWorkbenchApps'>> {
     await this.viewerWorkbenchWorkspace(viewerId);
-    if (!this.composio) throw new Error('App search is unavailable');
     const query = typeof input.query === 'string' ? input.query.trim() : '';
     if (query.length > 80) throw new Error('App search is too long');
-    const rows = await this.composio.searchToolkits(query);
-    return rows.flatMap((row) => {
+    const key = appIdentity(query)?.key;
+    const officialName = key ? OFFICIAL_REGISTRY_APPS[key] : undefined;
+    const official = officialName
+      ? (await this.mcpRegistry.search(key!)).find((row) =>
+          row.name === officialName && row.remotes.some((remote) => remote.type === 'streamable-http') &&
+          row.secretInputNames.length === 0)
+      : undefined;
+    const rows = this.composio ? await this.composio.searchToolkits(query) : [];
+    const composioResults = rows.flatMap((row) => {
       const identity = appIdentity(row.name);
       if (!identity || composioToolkitForApp(identity.key) !== row.slug) return [];
       const domain = row.appUrl ? new URL(row.appUrl).hostname : undefined;
@@ -8442,6 +8457,14 @@ export class PhoneService {
         },
       ];
     });
+    if (official && key) return [{
+      appKey: key,
+      name: key === 'stripe' ? 'Stripe' : 'Linear',
+      domain: key === 'stripe' ? 'stripe.com' : 'linear.app',
+      registryServerName: official.name,
+      registryVersion: official.version,
+    }, ...composioResults];
+    return composioResults;
   }
 
   private async decorateAppSignInCards(messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
@@ -8644,7 +8667,10 @@ export class PhoneService {
       )
     ).rows;
 
-    const apps = await readOwnerApps(this.database, viewerId, this.composio);
+    // Squire API rows point at vault credentials. They remain installed for
+    // agent use, but the person's Connectors page presents them under Keys.
+    const apps = (await readOwnerApps(this.database, viewerId, this.composio))
+      .filter((app) => app.transport !== 'squire-api');
     const catalogKeys = new Set([
       'gmail',
       'googlecalendar',
@@ -8664,6 +8690,7 @@ export class PhoneService {
     ]);
     const appCatalog = await this.readAppCatalog(catalogKeys);
     const appMetadata = new Map(appCatalog.map((item) => [item.appKey, item]));
+    const uniqueConnections = uniqueVaultConnections(connections);
     const walletRow = (
       await this.database.query<{
         created_at: Date;
@@ -8730,7 +8757,10 @@ export class PhoneService {
         ...(row.connected_at ? { connectedAt: seconds(row.connected_at) } : {}),
         createdAt: seconds(row.created_at),
       })),
-      connections: connections.map((row) => ({
+      // One Squire vault entry is reported once by every paired helper that
+      // can see it. Keep the newest owner's row as the detail anchor; neither
+      // duplicate rows nor connector installations are deleted.
+      connections: uniqueConnections.map((row) => ({
         connectionId: row.id,
         connectorId: row.connector_id,
         reference: row.reference,
@@ -8838,11 +8868,57 @@ export class PhoneService {
     await this.viewerWorkbenchWorkspace(viewerId);
     const identity = appIdentity(app);
     if (!identity) throw new Error('Select an app from search results');
+    // An existing route belongs to the person. Search can offer a direct
+    // official sign-in to new connections, but it must not migrate an
+    // existing Composio or Squire connection implicitly.
+    const hasRoute = await hasExistingAppRoute(this.database, viewerId, identity.key);
+    if ((input.registryServerName || input.registryVersion) && !hasRoute) {
+      const expected = OFFICIAL_REGISTRY_APPS[identity.key];
+      if (!expected || input.registryServerName !== expected || !input.registryVersion)
+        throw new Error('Select the official sign-in from search results');
+      const manifest = await this.mcpRegistry.exact(expected, input.registryVersion);
+      if (!manifest || !manifest.remotes.some((remote) => remote.type === 'streamable-http') ||
+          manifest.secretInputNames.length > 0)
+        throw new Error('The official sign-in is unavailable');
+      const { matched, machineId, ws } = await this.resolveViewerHelper(
+        input.helperAgentId, viewerId,
+      );
+      const dm = await this.resolveDirectMessage(
+        { workspaceId: ws.workspace_id, participantId: matched.agent_id }, viewerId,
+      );
+      const row = await this.database.transaction((database) =>
+        armRegistryConnector(database, {
+          workspaceId: ws.workspace_id,
+          ownerId: viewerId,
+          machineId,
+          helperAgentId: matched.agent_id,
+          manifest,
+          installRoomId: dm.id,
+          installCommandId: null,
+        }),
+      );
+      if (row.versionConflict) throw new Error('This sign-in needs an update before reconnecting');
+      await backfillRegistryApps(this.database, row.id);
+      if (row.created) await notifyConnectorHelper(this.database, row.id);
+      const installed = (await this.database.query<{ id: string }>(
+        `SELECT id FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2
+           AND transport='registry-mcp' AND connector_id=$3::uuid`,
+        [viewerId, identity.key, row.id],
+      )).rows[0];
+      if (!installed) throw new Error('The official sign-in could not be attached');
+      return {
+        appId: installed.id,
+        status: row.status === 'connected' ? 'connected' : 'connecting',
+        transport: 'registry-mcp',
+        route: 'registry-mcp',
+        ...(row.sign_in?.url ? { authorizationUrl: row.sign_in.url } : {}),
+      };
+    }
     const existing = await this.database.query(
       `SELECT 1 FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2`,
       [viewerId, identity.key],
     );
-    if (existing.rows.length === 0) {
+    if (existing.rows.length === 0 && !hasRoute && input.preferredRoute !== 'squire-api') {
       if (!this.composio) throw new Error('Select an app from search results');
       let catalogEntry;
       try {
@@ -8874,6 +8950,7 @@ export class PhoneService {
       requestedBy: viewerId,
       app,
       reconnect: input.reconnect === true,
+      ...(input.preferredRoute ? { preferredRoute: input.preferredRoute } : {}),
       installRoomId: dm.id,
       installCommandId: null,
       ...(this.composio ? { composio: this.composio } : {}),
@@ -8894,7 +8971,7 @@ export class PhoneService {
       await this.sendMessage(
         {
           roomId: dm.id,
-          text: `${agent?.handle ? `@${agent.handle} ` : ''}${verb} ${outcome.name ?? app} to my Workbench.`,
+          text: `${agent?.handle ? `@${agent.handle} ` : ''}${verb} ${outcome.name ?? app} in my Connectors.`,
         },
         viewerId,
       );

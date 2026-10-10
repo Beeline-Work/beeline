@@ -135,8 +135,8 @@ export default function WalletScreen() {
 
   const header = (
     <PageHeader
-      backAccessibilityLabel="Back to Workbench"
-      eyebrow="Workbench"
+      backAccessibilityLabel="Back to Connectors"
+      eyebrow="Connectors"
       prominent
       onBack={() => router.back()}
       testID="wallet-header"

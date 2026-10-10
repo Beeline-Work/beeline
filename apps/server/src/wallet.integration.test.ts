@@ -409,7 +409,7 @@ describe('wallet over the fake CDP seam', () => {
       connectorType: 'wallet',
       status: 'pending',
       consequence:
-        'This changes your Workbench. Once it is added, I can pay the hosting invoice — you can revoke permission any time',
+        'This changes your Connectors. Once it is added, I can pay the hosting invoice — you can revoke permission any time',
     });
 
     // A Workspace admin who is not the addressee cannot grant someone else's wallet.

@@ -111,6 +111,17 @@ describe('the app route order', () => {
     ).resolves.toMatchObject({ kind: 'route', route: 'squire-api', transport: 'squire-api' });
   });
 
+  it('lets a person explicitly select an alternative only for a new connection', async () => {
+    const p = probes({ composio: vi.fn(async () => 'supported' as const) });
+    await expect(resolveAppRoute({ reconnect: false, noApi: false,
+      preferredRoute: 'squire-api' }, p)).resolves.toMatchObject({ transport: 'squire-api' });
+    expect(p.composio).not.toHaveBeenCalled();
+    await expect(resolveAppRoute({ existing: { transport: 'squire-api', state: 'active',
+      hasCredential: true }, reconnect: false, noApi: false, preferredRoute: 'composio' }, p))
+      .resolves.toEqual({ kind: 'keep', transport: 'squire-api' });
+    expect(p.composio).not.toHaveBeenCalled();
+  });
+
 
 
 
@@ -126,14 +137,12 @@ describe('the app route order', () => {
     await expect(
       resolveAppRoute({ existing, reconnect: false, noApi: true }, p),
     ).resolves.toMatchObject({ kind: 'keep', transport: 'registry-mcp' });
-    // A reconnect starts from the top again.
+    // A retry keeps the person's existing route too. Priority applies only
+    // to a new connection, even if another route is now available.
     await expect(
       resolveAppRoute({ existing, reconnect: true, noApi: false }, p),
-    ).resolves.toMatchObject({
-      kind: 'route',
-      route: 'squire-api',
-    });
-    expect(p.workbench).toHaveBeenCalledTimes(1);
+    ).resolves.toEqual({ kind: 'keep', transport: 'registry-mcp' });
+    expect(p.workbench).not.toHaveBeenCalled();
   });
 
   it('reaches the browser only from the API route, on the fact of no API', async () => {
@@ -259,6 +268,20 @@ describe('connect_app', () => {
         `SELECT route,transport FROM workspace_app_routes ORDER BY created_at, id`,
       )
     ).rows;
+
+  it('installs the official Linear Registry MCP for a new agent connection', async () => {
+    const registry = fakeRegistry([linearServer]);
+    const provider = fakeComposio();
+    const result = await daemonWith(registry.client, provider).execute('connectApp',
+      { ...turn, app: 'Linear', reason: 'manage issues' }, HELPER);
+    expect(result).toMatchObject({ transport: 'registry-mcp', appKey: 'linear' });
+    expect(provider.supportsOAuth).not.toHaveBeenCalled();
+    const row = (await database.query<{ registry_server_name: string; status: string }>(
+      `SELECT registry_server_name,status FROM workspace_connectors
+       WHERE owner_identity_id=$1 AND connector_type='registry-mcp'`, [OWNER],
+    )).rows[0];
+    expect(row).toEqual({ registry_server_name: 'app.linear/linear', status: 'installing' });
+  });
 
   it('posts one route-neutral Room card and resumes the original request after sign-in', async () => {
     const provider = fakeComposio();
@@ -791,7 +814,7 @@ describe('connect_app', () => {
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     await expect(phone.execute('beginAppSignIn', { appId: connected.appId! }, OTHER))
-      .rejects.toThrow(/no longer in your Workbench/);
+      .rejects.toThrow(/no longer in your Connectors/);
     await phone.execute('beginAppSignIn', { appId: connected.appId! }, OWNER);
     await expect(phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: connected.appId! }, OTHER))
       .rejects.toThrow(/no longer pending/);
@@ -926,8 +949,35 @@ describe('connect_app', () => {
     });
   });
 
+  it('shows one key for a vault reference reported by three Squire connectors', async () => {
+    const first = await connectSquire();
+    const otherWorkspaces = [
+      ['55555555-5555-4555-8555-555555555555', '66666666-6666-4666-8666-666666666666'],
+      ['77777777-7777-4777-8777-777777777777', '88888888-8888-4888-8888-888888888888'],
+    ] as const;
+    for (const [workspaceId, connectorId] of otherWorkspaces) {
+      await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [workspaceId]);
+      await database.query(
+        `INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,connector_type,
+           helper_agent_id,machine_id,status,connected_at)
+         VALUES($1,$2,$3,'trusty-squire',$4,'machine-one','connected',now())`,
+        [connectorId, workspaceId, OWNER, HELPER],
+      );
+    }
+    const key = { reference: 'vault://openrouter/default', service: 'openrouter', label: 'default',
+      fieldNames: ['api_key'], allowedHosts: ['openrouter.ai'], createdAt: 1, stale: false,
+      state: 'active' as const };
+    for (const id of [first, ...otherWorkspaces.map(([, connectorId]) => connectorId)])
+      await applyVaultList(database, { id, owner_identity_id: OWNER }, [key]);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client);
+    const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(view.connections.map((connection) => connection.reference)).toEqual([key.reference]);
+  });
+
   it('reuses an existing Workbench key without searching the Registry', async () => {
-    const registry = fakeRegistry([]);
+    const registry = fakeRegistry([{ name: 'com.stripe/mcp', version: '0.2.4',
+      remotes: [{ type: 'streamable-http', url: 'https://mcp.stripe.com' }] }]);
     const squireId = await connectSquire();
     await applyVaultList(database, { id: squireId, owner_identity_id: OWNER }, [
       {
@@ -1183,6 +1233,36 @@ describe('connect_app', () => {
     expect((await database.query('SELECT id FROM workspace_apps')).rows).toEqual([]);
   });
 
+  it('puts official Stripe sign-in first and keeps its other sign-in available', async () => {
+    const provider = fakeComposio();
+    provider.searchToolkits = vi.fn(async () => [{ slug: 'stripe', name: 'Stripe',
+      appUrl: 'https://stripe.com' }]);
+    const registry = fakeRegistry([{ name: 'com.stripe/mcp', version: '0.2.4',
+      remotes: [{ type: 'streamable-http', url: 'https://mcp.stripe.com' }] }]);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client, provider);
+    const results = await phone.execute('searchWorkbenchApps', { query: 'Stripe' }, OWNER);
+    expect(results).toEqual([
+      expect.objectContaining({ appKey: 'stripe', registryServerName: 'com.stripe/mcp' }),
+      expect.objectContaining({ appKey: 'stripe', name: 'Stripe' }),
+    ]);
+  });
+
+  it('offers TikTok through its configured custom Composio sign-in', async () => {
+    const provider = fakeComposio();
+    provider.searchToolkits = vi.fn(async () => [{ slug: 'tiktok', name: 'TikTok',
+      appUrl: 'https://tiktok.com' }]);
+    provider.supportsOAuth.mockImplementation(async (toolkit: string) => toolkit === 'tiktok');
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    await expect(phone.execute('searchWorkbenchApps', { query: 'tiktok' }, OWNER))
+      .resolves.toContainEqual(expect.objectContaining({ appKey: 'tiktok', name: 'TikTok' }));
+    await expect(phone.execute('connectWorkbenchApp', {
+      app: 'TikTok', helperAgentId: 'machine-one', preferredRoute: 'composio',
+    }, OWNER)).resolves.toMatchObject({ transport: 'composio' });
+    expect(provider.supportsOAuth).toHaveBeenCalledWith('tiktok');
+  });
+
   it('Reproduction R1: retries an existing Squire app absent from the Composio catalog', async () => {
     await connectSquire();
     const provider = fakeComposio();
@@ -1204,11 +1284,11 @@ describe('connect_app', () => {
     expect((await database.query('SELECT id FROM workspace_apps')).rows)
       .toEqual([{ id: started.appId }]);
     const requests = await database.query<{ text: string }>(
-      `SELECT text FROM messages WHERE author_id=$1 AND text LIKE '%Hetzner to my Workbench.'`,
+      `SELECT text FROM messages WHERE author_id=$1 AND text LIKE '%Hetzner in my Connectors.'`,
       [OWNER],
     );
     expect(requests.rows.map((row) => row.text))
-      .toEqual(['@bee Reconnect Hetzner to my Workbench.']);
+      .toEqual(['@bee Reconnect Hetzner in my Connectors.']);
     await expect(phone.execute('connectWorkbenchApp', {
       app: 'fuckface', helperAgentId: 'machine-one', reconnect: true,
     }, OWNER)).rejects.toThrow('Select an app from search results');
@@ -1227,16 +1307,16 @@ describe('connect_app', () => {
     try { await phone.execute('beginAppSignIn', { appId: first.appId }, OWNER); }
     catch (error) { wrongResult = (error as Error).message; }
     console.log(`Reproduction RUNWAY-1: Connect Runway → ${first.transport}; browser retry → ${wrongResult}`);
-    expect(wrongResult).toBe('This app connects through Trusty Squire. Reconnect it from Workbench.');
+    expect(wrongResult).toBe('This app connects through Trusty Squire. Reconnect it from Connectors.');
     expect(provider.link).not.toHaveBeenCalled();
     await phone.execute('connectWorkbenchApp', {
       workspaceId: WORKSPACE, app: 'Runway', helperAgentId: 'machine-one', reconnect: true,
     }, OWNER);
     const requests = await database.query<{ text: string }>(
-      `SELECT text FROM messages WHERE author_id=$1 AND text LIKE '%Runway to my Workbench.' ORDER BY created_at`, [OWNER],
+      `SELECT text FROM messages WHERE author_id=$1 AND text LIKE '%Runway in my Connectors.' ORDER BY created_at`, [OWNER],
     );
     expect(requests.rows.map(row => row.text)).toEqual([
-      '@bee Connect Runway to my Workbench.', '@bee Reconnect Runway to my Workbench.',
+      '@bee Connect Runway in my Connectors.', '@bee Reconnect Runway in my Connectors.',
     ]);
     console.log('RUNWAY-1 demonstrated: retry sent Reconnect Runway to the helper; no browser sign-in link requested');
   });
@@ -1273,16 +1353,16 @@ describe('connect_app', () => {
       [OWNER],
     );
     expect(asked.rows).toEqual([
-      { text: '@bee Connect Resend to my Workbench.', author_id: OWNER },
+      { text: '@bee Connect Resend in my Connectors.', author_id: OWNER },
     ]);
     const command = await database.query<{ agent_id: string; state: string }>(
       `SELECT agent_id,state FROM agent_commands WHERE source_message_id<>'app-source'`,
     );
     expect(command.rows).toEqual([{ agent_id: HELPER, state: 'pending' }]);
     const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
-    expect(view.apps).toEqual([
-      expect.objectContaining({ appKey: 'resend', name: 'Resend', status: 'connecting' }),
-    ]);
+    expect(view.apps).toEqual([]);
+    expect((await database.query(`SELECT app_key FROM workspace_apps WHERE owner_identity_id=$1`, [OWNER])).rows)
+      .toEqual([{ app_key: 'resend' }]);
   });
 
   it('treats a missing upstream account as not connected so reconnect issues a fresh link', async () => {

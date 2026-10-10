@@ -578,10 +578,10 @@ describe('workbenchSummary', () => {
       VIEWER_A,
     );
 
-  it('pluralises tools and keys', () => {
-    expect(summary([], 0).value).toBe('0 tools · 0 keys');
+  it('pluralises connections and distinct keys', () => {
+    expect(summary([], 0).value).toBe('0 connections · 0 keys');
     expect(summary([tool('trusty-squire', 'Trusty Squire', 'connected')], 1).value).toBe(
-      '1 tool · 1 key',
+      '1 connection · 1 key',
     );
     expect(
       summary(
@@ -591,11 +591,11 @@ describe('workbenchSummary', () => {
         ],
         57,
       ).value,
-    ).toBe('2 tools · 57 keys');
+    ).toBe('2 connections · 57 keys');
   });
 
-  it('counts the four google connectors as one Google Workspace tool', () => {
-    expect(summary(google('connected')).value).toBe('1 tool · 0 keys');
+  it('counts the four legacy Google connectors as one connection', () => {
+    expect(summary(google('connected')).value).toBe('1 connection · 0 keys');
   });
 
   it('counts only connected, available rows', () => {
@@ -606,10 +606,10 @@ describe('workbenchSummary', () => {
         tool('tailscale', 'Tailscale', 'connected', false),
         ...google('disconnected'),
       ]).value,
-    ).toBe('0 tools · 0 keys');
+    ).toBe('0 connections · 0 keys');
   });
 
-  it('excludes apps from the tool count', () => {
+  it('counts signed-in apps with connectors', () => {
     const app = {
       id: 'app-1',
       key: 'linear',
@@ -618,7 +618,7 @@ describe('workbenchSummary', () => {
       status: 'connected' as const,
       useCount: 0,
     };
-    expect(summary([], 0, [app]).value).toBe('0 tools · 0 keys');
+    expect(summary([], 0, [app]).value).toBe('1 connection · 0 keys');
   });
 
   it('has no attention line when nothing is in error', () => {
@@ -630,13 +630,13 @@ describe('workbenchSummary', () => {
   it('names the one broken tool, folding Google into Google Workspace', () => {
     expect(
       summary([tool('trusty-squire', 'Trusty Squire', 'connected'), ...google('error')], 57),
-    ).toEqual({ value: '1 tool · 57 keys', attention: 'Google Workspace needs attention' });
+    ).toEqual({ value: '1 connection · 57 keys', attention: 'Google Workspace needs attention' });
     expect(summary([tool('wallet', 'Wallet', 'error')]).attention).toBe('Wallet needs attention');
   });
 
   it('counts two or more broken tools', () => {
     expect(
       summary([tool('trusty-squire', 'Trusty Squire', 'error'), ...google('error')]).attention,
-    ).toBe('2 tools need attention');
+    ).toBe('2 connections need attention');
   });
 });

@@ -174,7 +174,7 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     const renderer = await render(WalletScreen);
     const header = renderer.root.findByProps({ testID: 'wallet-header' });
     expect(header.props.title).toBe('Wallet');
-    expect(header.props.eyebrow).toBe('Workbench');
+    expect(header.props.eyebrow).toBe('Connectors');
     expect(header.props.meta).toBeUndefined();
     expect(header.props.onBack).toBeTypeOf('function');
   });

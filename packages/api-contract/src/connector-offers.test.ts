@@ -29,7 +29,7 @@ describe('connector offers (R5)', () => {
 
   it('states the consequence and the standing boundary in one server-owned line', () => {
     const squire = connectorOfferConsequence('trusty-squire');
-    expect(squire).toMatch(/^This changes your Workbench\./);
+    expect(squire).toMatch(/^This changes your Connectors\./);
     expect(squire).toContain('still no raw key in chat');
     // The agent's reason is woven into that one line; the boundary stays fixed.
     const withReason = connectorOfferConsequence(
@@ -37,13 +37,13 @@ describe('connector offers (R5)', () => {
       'provision the 1inch API key into its vault',
     );
     expect(withReason).toBe(
-      'This changes your Workbench. Once it is added, I can provision the 1inch API key into its vault — still no raw key in chat',
+      'This changes your Connectors. Once it is added, I can provision the 1inch API key into its vault — still no raw key in chat',
     );
     expect(connectorOfferConsequence('wallet')).toBe(
-      'This changes your Workbench. Once it is added, I can pay from your wallet — you can revoke permission any time',
+      'This changes your Connectors. Once it is added, I can pay from your wallet — you can revoke permission any time',
     );
     const google = connectorOfferConsequence('google-gmail');
-    expect(google).toMatch(/^This changes your Workbench\./);
+    expect(google).toMatch(/^This changes your Connectors\./);
     expect(google).toContain('never see your password');
     expect(connectorOfferTitle('Trusty Squire')).toBe('Add Trusty Squire as a tool?');
     expect(connectorOfferActionLabel('Trusty Squire')).toBe('Add Trusty Squire');

@@ -60,7 +60,7 @@ const COPY = [
   },
   {
     title: 'All your tools, ready for your agents',
-    body: 'Connect an app once in Workbench. Agents can also ask you to connect an app from a conversation when they need one.',
+    body: 'Connect an app once in Connectors. Agents can also ask you to connect an app from a conversation when they need one.',
   },
 ] as const;
 

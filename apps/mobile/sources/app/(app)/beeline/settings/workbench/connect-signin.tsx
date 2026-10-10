@@ -78,7 +78,7 @@ function ConnectorSignInOverlay() {
   return <View style={styles.scrim} testID="signin-overlay">
     <AnimatedBlurBackdrop interactive={false} blurIntensity={48} />
     <View style={[styles.card, { marginTop: insets.top + 24, marginBottom: insets.bottom + 24 }]} testID="signin-card">
-      <PageHeader backAccessibilityLabel="Close sign-in" eyebrow="Workbench" prominent onBack={() => router.back()} testID="signin-header" title={`Sign in to ${connectorName}`} />
+      <PageHeader backAccessibilityLabel="Close sign-in" eyebrow="Connectors" prominent onBack={() => router.back()} testID="signin-header" title={`Sign in to ${connectorName}`} />
       {observed.error ? <TouchableOpacity accessibilityRole="button" onPress={observed.installMissing ? () => router.back() : observed.retry} testID="signin-retry"><Text accessibilityRole="alert" style={styles.error}>{observed.error} · Retry</Text></TouchableOpacity> : null}
       {signIn.method === 'oauth' ? <View style={styles.centered} testID="signin-oauth-browser">
         <Text style={styles.note}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>

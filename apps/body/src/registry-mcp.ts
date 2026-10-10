@@ -672,7 +672,7 @@ export const REGISTRY_MCP_APPROVAL_REFUSAL =
   'Resource access requires approval from its owner for this requester, or the resource is unavailable.';
 
 export const REGISTRY_MCP_UNAVAILABLE =
-  'Registry MCP provider is unavailable; reconnect it in Workbench.';
+  'Registry MCP provider is unavailable; reconnect it in Connectors.';
 
 class RegistryMcpRefusal extends Error {
   constructor() {

@@ -8,8 +8,11 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { AppMark } from '@/components/buzz/AppMark';
-import { Button } from '@/components/buzz/Button';
-import { AppPageHeader } from '@/components/buzz/AppPageHeader';
+import { PageHeader } from '@/components/buzz/PageHeader';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { ServiceMark } from '@/components/buzz/ServiceMark';
+import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { keyServiceGroups, type KeyServiceGroup } from '@/buzz/connectors-model';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import type { WorkbenchAppSearchResult } from '@beeline/api-contract/workbench';
 import type { WorkbenchApp, WorkbenchHelper } from '@/buzz/workbench';
@@ -22,22 +25,24 @@ function first(value: string | string[] | undefined): string | undefined { retur
 
 export default function ConnectAppScreen() {
   useLatencyRouteFrame('/beeline/settings/workbench/connect-app');
-  const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[] }>();
+  const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[]; query?: string | string[] }>();
   const workspaceId = first(params.workspaceId) ?? '';
   const viewerId = first(params.viewerId) ?? '';
   const insets = useSafeAreaInsets();
-  const [query, setQuery] = useTextDraft(`app-search:${workspaceId}`, '', viewerId);
+  const [query, setQuery] = useTextDraft(`app-search:${workspaceId}`, first(params.query) ?? '', viewerId);
   const [apps, setApps] = useState<readonly WorkbenchApp[]>([]);
+  const [keyGroups, setKeyGroups] = useState<readonly KeyServiceGroup[]>([]);
   const [searchResults, setSearchResults] = useState<WorkbenchAppSearchResult>([]);
   const [resultsQuery, setResultsQuery] = useState<string | null>(null);
   const [helpers, setHelpers] = useState<readonly WorkbenchHelper[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showOther, setShowOther] = useState(false);
 
   useEffect(() => {
     let live = true;
     void getWorkbenchSource().readWorkbench({ workspaceId, viewerId }).then(view => {
-      if (live) { setApps(view.apps); setHelpers(view.helpers); }
+      if (live) { setApps(view.apps); setHelpers(view.helpers); setKeyGroups(keyServiceGroups(view, viewerId)); }
     }).catch(() => { if (live) setError('Apps are unavailable right now'); });
     return () => { live = false; };
   }, [viewerId, workspaceId]);
@@ -55,57 +60,71 @@ export default function ConnectAppScreen() {
     return () => { live = false; clearTimeout(timer); };
   }, [searchQuery]);
   const filtered = resultsQuery === searchQuery ? searchResults : [];
+  const byKey = new Map<string, WorkbenchAppSearchResult[number][]>();
+  for (const result of filtered) byKey.set(result.appKey, [...(byKey.get(result.appKey) ?? []), result]);
+  const recommendations = [...byKey.values()].map(options =>
+    options.find(option => option.registryServerName) ?? options[0]!).filter(Boolean);
+  const matchingKey = searchQuery ? keyGroups.find(group => group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    group.key.includes(searchQuery.toLowerCase())) : undefined;
+  if (matchingKey && !byKey.has(matchingKey.key)) recommendations.unshift({ appKey: matchingKey.key,
+    name: matchingKey.name, ...(matchingKey.domain ? { domain: matchingKey.domain } : {}) });
 
-  const connect = async (selected: WorkbenchAppSearchResult[number]) => {
+  const connect = async (selected: WorkbenchAppSearchResult[number], preferredRoute?: 'composio' | 'squire-api') => {
     if (busy) return;
     const name = selected.name;
     const existing = apps.find(app => app.key === selected.appKey);
-    if (existing?.status === 'connected') return;
+    const existingKey = keyGroups.find(group => group.key === selected.appKey);
+    if (existingKey) { router.push({ pathname: '/beeline/settings/workbench/service', params: { workspaceId, viewerId, service: existingKey.key } }); return; }
+    if (existing) { router.push({ pathname: '/beeline/settings/workbench/app', params: { workspaceId, viewerId, appId: existing.id } }); return; }
     const helper = helpers.find(item => item.online);
     if (!helper) { setError('Connect a helper to use this app'); return; }
     setBusy(name);
     setError(null);
     try {
-      const started = await getWorkbenchSource().connectApp({ workspaceId, app: name, helperId: helper.id, ...(existing?.status === 'error' ? { reconnect: true } : {}) });
+      const started = await getWorkbenchSource().connectApp({ workspaceId, app: name, helperId: helper.id,
+        ...(!preferredRoute && selected.registryServerName ? { registryServerName: selected.registryServerName } : {}),
+        ...(!preferredRoute && selected.registryVersion ? { registryVersion: selected.registryVersion } : {}),
+        ...(preferredRoute ? { preferredRoute } : {}) });
       if (started.authorizationUrl) await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId, appId: started.appId });
       else router.back();
     } catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Connecting failed')); }
     finally { setBusy(null); }
   };
 
-  const disconnect = async (app: WorkbenchApp) => {
-    if (busy) return;
-    setBusy(app.name);
-    setError(null);
-    try {
-      await getWorkbenchSource().disconnectApp({ workspaceId, appId: app.id });
-      setApps(current => current.filter(item => item.id !== app.id));
-    } catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Could not disconnect app')); }
-    finally { setBusy(null); }
-  };
-
   return <View style={[styles.screen, { paddingTop: insets.top }]} testID="connect-app-screen">
-    <AppPageHeader eyebrow="Workbench" title="Connect an app" backLabel="Back to Workbench" testID="connect-app-header" onBack={() => router.back()} />
+    <PageHeader eyebrow="Connectors" prominent title="Search" backAccessibilityLabel="Back to Connectors" testID="connect-app-header" onBack={() => router.back()} />
     <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom }} keyboardShouldPersistTaps="handled" testID="connect-app-scroll">
       <View style={styles.searchWrap}>
         <View style={styles.search}>
           <Svg width={18} height={18} viewBox="0 0 24 24" fill="none"><Circle cx={11} cy={11} r={7} stroke={styles.placeholder.color} strokeWidth={2} /><Path d="M20 20l-3.5-3.5" stroke={styles.placeholder.color} strokeWidth={2} strokeLinecap="round" /></Svg>
-          <TextInput accessibilityLabel="Search apps" testID="connect-app-input" autoCapitalize="none" autoCorrect={false} placeholder="Search 1,500+ apps" placeholderTextColor={styles.placeholder.color} value={query} onChangeText={setQuery} style={styles.input} />
+          <TextInput accessibilityLabel="Search connections" testID="connect-app-input" autoCapitalize="none" autoCorrect={false} placeholder="Search apps, keys, and websites" placeholderTextColor={styles.placeholder.color} value={query} onChangeText={setQuery} style={styles.input} />
         </View>
       </View>
-      <Text style={styles.section}>{searchQuery ? 'RESULTS' : 'POPULAR'}</Text>
+      <Text style={styles.section}>{searchQuery ? `RECOMMENDED FOR ${searchQuery.toUpperCase()}` : 'RECOMMENDED'}</Text>
       <View style={styles.list}>
-        {filtered.map(app => {
+        {recommendations.map(app => {
           const existing = apps.find(item => item.key === app.appKey);
-          const key = app.appKey;
-          return <View key={app.name} style={styles.row} testID={`connect-app-${app.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}>
-            <AppMark name={app.name} domain={app.domain} logo={app.logo ?? existing?.logo} size={34} />
-            <View style={styles.name}><Text style={styles.nameText} numberOfLines={1}>{app.name}</Text>{key === 'instagram' ? <Text style={styles.description}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : app.description ? <Text style={styles.description} numberOfLines={2}>{app.description}</Text> : null}</View>
-            {existing?.status === 'connected' ? <Text style={styles.connected}>connected</Text> : <Button disabled={busy !== null} label={busy === app.name ? 'Connecting' : existing?.status === 'error' ? 'Retry' : 'Connect'} onPress={() => void connect(app)} />}
-            {existing ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Disconnect ${app.name}`} disabled={busy !== null} onPress={() => void disconnect(existing)} testID={`disconnect-app-${app.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}><Text style={styles.connected}>Disconnect</Text></TouchableOpacity> : null}
-          </View>;
+          const connected = existing || keyGroups.some(group => group.key === app.appKey);
+          return <TouchableOpacity accessibilityRole="button" key={app.appKey} onPress={() => void connect(app)} style={styles.recommendation} testID={`connect-app-${app.appKey}`}>
+            <ServiceMark company={app.name} domain={app.domain} />
+            <View style={styles.name}><Text style={styles.nameText}>{connected ? app.name : `Sign in to ${app.name}`}</Text>
+              <Text style={styles.description}>{connected ? 'Connected' : app.appKey === 'instagram' ? INSTAGRAM_SIGN_IN_REQUIREMENT : 'Review and approve access'}</Text></View>
+            <ChevronGlyph direction="right" size={18} color={styles.connected.color} />
+          </TouchableOpacity>;
         })}
-        {resultsQuery === searchQuery && searchQuery && filtered.length === 0 ? <Text style={styles.description}>No apps found</Text> : null}
+        {resultsQuery === searchQuery && searchQuery && recommendations.length === 0 ? <Text style={styles.description}>No connections found. Trusty Squire can connect to a website for you.</Text> : null}
+        {searchQuery && recommendations.length > 0 && !apps.some(app => app.key === recommendations[0]?.appKey) && !matchingKey ? <>
+          <TouchableOpacity accessibilityRole="button" onPress={() => setShowOther(open => !open)} style={styles.otherWays} testID="connectors-other-ways">
+            <Text style={styles.otherWaysLabel}>Other sign-in or Trusty Squire</Text>
+            <Text style={styles.otherWaysCount}>{recommendations[0]?.registryServerName && byKey.get(recommendations[0].appKey)?.some(option => !option.registryServerName) ? '2 ways' : '1 way'}</Text>
+            <ChevronGlyph direction={showOther ? 'up' : 'down'} size={18} color={styles.connected.color} />
+          </TouchableOpacity>
+          {showOther ? <>
+            {byKey.get(recommendations[0]!.appKey)?.some(option => !option.registryServerName) && recommendations[0]?.registryServerName ?
+              <SettingsRow chevron="right" title="Sign in another way" onPress={() => void connect(recommendations[0]!, 'composio')} /> : null}
+            <SettingsRow chevron="right" title="Use Trusty Squire" onPress={() => void connect(recommendations[0]!, 'squire-api')} />
+          </> : null}
+        </> : null}
       </View>
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
     </ScrollView>
@@ -124,10 +143,17 @@ const styles = StyleSheet.create(theme => {
   section: { ...Typography.default(), ...hull.type.sectionHead, paddingHorizontal: hull.space.lg, paddingTop: hull.space.md, paddingBottom: 4, color: board.quiet },
   list: { paddingHorizontal: hull.space.lg },
   row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: hull.space.md, paddingVertical: hull.space.sm, borderBottomWidth: 1, borderBottomColor: board.border },
+  recommendation: { minHeight: 88, flexDirection: 'row', alignItems: 'center', gap: hull.space.md,
+    borderWidth: 1, borderColor: board.strongBorder, borderRadius: 12, backgroundColor: board.card,
+    paddingHorizontal: hull.space.md, marginBottom: hull.space.md },
   name: { flex: 1 },
   nameText: { ...Typography.ledger(), ...hull.type.body, color: board.ink },
   description: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
   connected: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
+  otherWays: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: hull.space.sm,
+    borderBottomWidth: 1, borderBottomColor: board.border, paddingHorizontal: hull.space.sm },
+  otherWaysLabel: { ...Typography.ledger(), ...hull.type.meta, color: board.ink, flex: 1 },
+  otherWaysCount: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
   error: { ...Typography.default(), margin: hull.space.lg, color: theme.buzz.dialogDanger },
   };
 });

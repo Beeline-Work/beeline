@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { faviconDomain } from './workbench.js';
+import { faviconDomain, uniqueVaultConnections } from './workbench.js';
+
+describe('uniqueVaultConnections', () => {
+  it('keeps the newest row for one vault reference across helper workspaces', () => {
+    const rows = [
+      { reference: 'vault://stripe', connectorId: 'new' },
+      { reference: 'vault://openrouter', connectorId: 'new' },
+      { reference: 'vault://stripe', connectorId: 'old' },
+    ];
+    expect(uniqueVaultConnections(rows)).toEqual(rows.slice(0, 2));
+  });
+});
 
 describe('faviconDomain', () => {
   it('reduces an API subdomain to the registrable domain', () => {

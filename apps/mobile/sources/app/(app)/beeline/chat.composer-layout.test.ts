@@ -34,8 +34,12 @@ describe('Room composer status layout', () => {
     composerSource.indexOf('  sendButton: {'),
   );
 
-  it('lets iOS use native line metrics for long composer text', () => {
-    expect(inputStyle).toContain('...Platform.select({ ios: {}, default: { lineHeight: 20 } })');
+  it('lets iOS and Android use native line metrics for long composer text', () => {
+    // Android: a fixed line height on the input gives the text after an
+    // inline tag a mid-line span that breaks partial relayout (composer jitter).
+    expect(inputStyle).toContain(
+      '...Platform.select({ ios: {}, android: {}, default: { lineHeight: 20 } })',
+    );
     expect(inputStyle).not.toMatch(/^\s*lineHeight:\s*20,/m);
   });
 

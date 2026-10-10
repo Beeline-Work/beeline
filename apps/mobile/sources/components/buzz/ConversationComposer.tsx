@@ -898,10 +898,14 @@ const styles = StyleSheet.create((theme) => ({
     // its controlled height above; iOS remains intrinsic.
     minWidth: 0,
     // Not the body role's lineHeight: kept below Space Grotesk's real glyph
-    // bounds at this size on Android/web so centering never removes native
-    // font padding in a way that could crop accents or descenders
-    // (`chat.composer-layout.test.ts`).
-    ...Platform.select({ ios: {}, default: { lineHeight: 20 } }),
+    // bounds at this size on web so centering never removes native font
+    // padding in a way that could crop accents or descenders
+    // (`chat.composer-layout.test.ts`). Android sets none: React Native marks
+    // each styled span with its own line height, and an inline tag starts the
+    // text span mid-line. Android's partial relayout then drops the tag's
+    // line from the measured height on alternate keystrokes, so the
+    // transcript above the composer jitters.
+    ...Platform.select({ ios: {}, android: {}, default: { lineHeight: 20 } }),
     color: theme.buzz.textSecondary,
     minHeight: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
     maxHeight: COMPOSER_MAX_INPUT_HEIGHT,

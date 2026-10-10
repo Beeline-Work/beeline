@@ -9,7 +9,6 @@ import {
   commandInbox,
   createAgentCommand,
   nextAgentDepth,
-  queueCornerWorkerAfterReview,
   readAgentCommands,
   routeAgentResult,
   routeSystemCommand,
@@ -733,18 +732,6 @@ export class DaemonService {
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
           await scoped.postCornerQuestionReport(command, message.id, authenticatedAgentId);
-          // Every reviewer verdict lands here, tagged or not. `db` is the
-          // transaction that inserts the reply and completes its command, so a
-          // handoff that throws takes the verdict down with it and the retry
-          // writes both — rather than leaving a durable verdict nobody was
-          // woken for, which no retry could repair.
-          if (cornerReviewer)
-            await queueCornerWorkerAfterReview(db, {
-              roomId: scopedRoom,
-              reviewerAgentId: authenticatedAgentId,
-              turnRequestId: command.turn_request_id,
-              verdictMessageId: message.id,
-            });
         } else if (name === 'postAgentTurnReceipt') {
           if (candidate.status === 'working')
             await db.query(

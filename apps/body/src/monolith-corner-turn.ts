@@ -1482,7 +1482,7 @@ export class MonolithCornerTurnLoop {
                   }),
                   this.roster(),
                   api.execute('getCornerRestoreState', { cornerId }),
-                  reviewTurn ? this.activeReviewerInstruction() : undefined,
+                  this.activeReviewerInstruction(),
                   awaitInstitutionalContext(institutionalContextFetch, (message) =>
                     console.warn(`[thin-core] corner ${cornerId}: ${message}`),
                   ),

@@ -695,6 +695,15 @@ describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its cor
     }
     // No verdict on the first pass: the one bounded second pass is the reviewer target again.
     expect(prompts[1]).toContain(`Checks are green on PR #7 at ${head}`);
+
+    // A chat message to the reviewer (here the implementer's tag) still names
+    // the green head, so the reviewer can PASS it; only a green wake gets the
+    // second pass.
+    prompts.length = 0;
+    await turn('implementer-tag', '@ruby the replay recipe is attached; please look again');
+    expect(prompts[0]).toContain(`Checks are green on PR #7 at ${head}`);
+    expect(prompts[0]).toContain(`call the approve_merge tool for ${head}`);
+    expect(prompts).toHaveLength(1);
     await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
   }, 30_000);
 });

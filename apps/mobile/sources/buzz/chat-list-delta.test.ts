@@ -232,15 +232,31 @@ describe('keepUnavailableChatFacts', () => {
   it('shows no dot for a Room it never held and keeps that fact unknown', () => {
     const read = { ...deck(item('room-b', 5)), unavailable: ['unread' as const, 'corners' as const] };
     const kept = keepUnavailableChatFacts(held, read);
-    expect(kept.chats[0]).toEqual(item('room-b', 5));
+    const { unread: _unread, ...unknown } = item('room-b', 5);
+    expect(kept.chats[0]).toEqual(unknown);
     expect(kept.unavailable).toEqual(['unread', 'corners']);
+  });
+
+  it('keeps the held value when a row omits unread', () => {
+    const { unread: _unread, ...omitted } = item('room-a', 12);
+    const kept = keepUnavailableChatFacts(held, deck(omitted));
+    expect(kept.chats[0]?.unread).toBe(true);
+    expect('unavailable' in kept).toBe(false);
+  });
+
+  it('keeps a Room unknown across a second incomplete read', () => {
+    const read = { ...deck(item('room-b', 5)), unavailable: ['unread' as const, 'corners' as const] };
+    const first = keepUnavailableChatFacts(held, read);
+    const second = keepUnavailableChatFacts(first, { ...read, chats: [item('room-b', 6)] });
+    expect('unread' in second.chats[0]!).toBe(false);
+    expect(second.unavailable).toEqual(['unread', 'corners']);
   });
 
   it('keeps a cold read with no held copy unknown, then takes the next complete read', () => {
     const cold = keepUnavailableChatFacts(null, {
       ...deck(item('room-a', 10)), unavailable: ['unread' as const],
     });
-    expect(cold.chats[0]?.unread).toBe(false);
+    expect('unread' in cold.chats[0]!).toBe(false);
     expect(cold.unavailable).toEqual(['unread']);
     const complete = deck(item('room-a', 10, { unread: true }));
     expect(keepUnavailableChatFacts(cold, complete)).toBe(complete);

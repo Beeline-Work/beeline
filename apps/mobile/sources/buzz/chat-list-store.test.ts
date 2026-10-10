@@ -1,3 +1,6 @@
+import * as React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatListItem, ChatListView } from '@beeline/buzz-client';
 
@@ -50,7 +53,7 @@ vi.mock('@/sync/transport/live-connection', () => ({
   }),
 }));
 
-import { acquireChatList, liveChatList, resetChatListStoresForTest } from './chat-list-store';
+import { acquireChatList, liveChatList, resetChatListStoresForTest, useChatList } from './chat-list-store';
 
 const key = { relayUrl: 'https://relay.test', viewerPubkey: 'viewer', workspaceId: 'workspace' };
 const agent = { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' };
@@ -249,7 +252,7 @@ describe('unread follows the server read cursor in every arrival order', () => {
     const chats = vi.fn(async () => server);
     const handle = acquireChatList(key, { chats }, visible);
     await vi.advanceTimersByTimeAsync(10);
-    const seen: boolean[] = [];
+    const seen: Array<boolean | undefined> = [];
     handle.subscribe(() => seen.push(handle.current()!.chats[0]!.unread));
 
     emit(agentMessage('room-a', 'm2', 20));
@@ -274,7 +277,7 @@ describe('unread follows the server read cursor in every arrival order', () => {
       id: 'm2', text: 'm2', createdAt: 20, author: agent } })]);
     emit(readMark('room-a'));
     await vi.advanceTimersByTimeAsync(2_000);
-    const seen: boolean[] = [];
+    const seen: Array<boolean | undefined> = [];
     handle.subscribe(() => seen.push(handle.current()!.chats[0]!.unread));
     emit(agentMessage('room-a', 'm2', 20));
     expect(handle.current()?.chats[0]?.unread).toBe(false);
@@ -312,7 +315,7 @@ describe('unread follows the server read cursor in every arrival order', () => {
     const handle = acquireChatList(key, { chats }, visible);
     await vi.advanceTimersByTimeAsync(10);
     live.viewing.add('room-b');
-    const seen: boolean[] = [];
+    const seen: Array<boolean | undefined> = [];
     handle.subscribe(() => seen.push(
       handle.current()!.chats.find((item) => item.room.id === 'room-b')!.unread));
     emit(agentMessage('room-b', 'm-open', 20));
@@ -321,5 +324,80 @@ describe('unread follows the server read cursor in every arrival order', () => {
     expect(seen.length).toBeGreaterThan(0);
     expect(seen.every((unread) => !unread)).toBe(true);
     handle.release();
+  });
+});
+
+describe('a read that cannot say unread', () => {
+  const address = '/workspace/:id/chats:workspace';
+
+  function omitted(id: string, latestAt: number): ChatListItem {
+    const { unread: _unread, ...item } = row(id, latestAt);
+    return item;
+  }
+
+  it('keeps the held value in memory and on disk when a row omits unread', async () => {
+    const reads = [listOf([row('room-a', 10, { unread: true })]), listOf([omitted('room-a', 12)])];
+    const chats = vi.fn(async () => reads.shift()!);
+    const handle = acquireChatList(key, { chats }, visible);
+    await vi.advanceTimersByTimeAsync(10);
+    handle.force();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(chats).toHaveBeenCalledTimes(2);
+    expect(handle.current()?.chats[0]).toMatchObject({ unread: true, latestMessage: { createdAt: 12 } });
+    expect((disk.rows.get(address) as ChatListView).chats[0]?.unread).toBe(true);
+    handle.release();
+  });
+
+  it('keeps a Room unknown across a second incomplete read, in memory and on disk', async () => {
+    const incomplete = (latestAt: number): ChatListView => ({
+      ...listOf([row('room-a', latestAt)]), unavailable: ['unread'],
+    });
+    const reads = [incomplete(10), incomplete(12)];
+    const chats = vi.fn(async () => reads.shift()!);
+    const handle = acquireChatList(key, { chats }, visible);
+    await vi.advanceTimersByTimeAsync(10);
+    handle.force();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(chats).toHaveBeenCalledTimes(2);
+    const stored = disk.rows.get(address) as ChatListView;
+    for (const view of [handle.current()!, stored]) {
+      expect('unread' in view.chats[0]!).toBe(false);
+      expect(view.unavailable).toEqual(['unread']);
+    }
+    handle.release();
+  });
+});
+
+describe('the Room screen reads the live list', () => {
+  it('gives the repository-change warning the current open-corner count', async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const chats = vi.fn(async () => listOf([row('room-a', 10, { cornerCount: 0 })]));
+    const source = { chats };
+    const counts: number[] = [];
+    // The same lookup the Room screen's repository-change guard makes.
+    function RoomScreen() {
+      const list = useChatList(key, source);
+      counts.push(list?.chats.find((item) => item.room.id === 'room-a')?.cornerCount ?? 0);
+      return null;
+    }
+    let renderer!: { unmount(): void };
+    await act(async () => {
+      renderer = create(React.createElement(RoomScreen));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    expect(counts.at(-1)).toBe(0);
+    await act(async () => {
+      emit({
+        monolithLive: {
+          type: 'corner-status', roomId: 'room-a', cornerCount: 2, waitingCornerCount: 0,
+          openCorners: [], agentState: 'working',
+        },
+      });
+    });
+    expect(counts.at(-1)).toBe(2);
+    expect(chats).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
   });
 });

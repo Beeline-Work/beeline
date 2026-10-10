@@ -63,8 +63,9 @@ function applyMessage(
   // device, proves nothing about older messages past the cursor: it keeps the
   // held value, and the read-mark frame's read decides.
   const next: ChatListItem = incoming
-    ? { ...open, latestMessage: preview,
-        unread: context.viewing?.(item.room.id) ? item.unread : true }
+    ? context.viewing?.(item.room.id)
+      ? { ...open, latestMessage: preview }
+      : { ...open, latestMessage: preview, unread: true }
     : { ...item, latestMessage: preview };
   const rest = view.chats.filter((_, position) => position !== index);
   const at = rest.findIndex((candidate) => chatActivityAt(candidate) <= chatActivityAt(next));
@@ -166,30 +167,36 @@ export function roomsMissedByLive(
 /**
  * A read whose unread or corner lookup timed out on the server says nothing
  * about those facts. Carry each row's last known values instead of painting
- * every dot and corner count away until the next read. A row with no last
- * known value shows the read's empty value, and the result keeps that fact
- * listed as unavailable, so neither memory nor disk holds it as known.
+ * every dot and corner count away until the next read. A row whose unread is
+ * unknown and has no last known value keeps `unread` absent, so neither
+ * memory nor disk holds it as known and a later incomplete read still sees
+ * it as unknown. The result lists each fact that some row still lacks.
  */
 export function keepUnavailableChatFacts(
   held: ChatListView | null,
   read: ChatListView,
 ): ChatListView {
   const { unavailable, ...view } = read;
-  if (!unavailable?.length) return read;
+  if (!unavailable?.length && read.chats.every((item) => typeof item.unread === 'boolean')) return read;
+  const keepUnread = unavailable?.includes('unread') ?? false;
+  const keepCorners = unavailable?.includes('corners') ?? false;
   const heldById = new Map(held?.chats.map((item) => [item.room.id, item]) ?? []);
-  const keepUnread = unavailable.includes('unread');
-  const keepCorners = unavailable.includes('corners');
-  const unknown = new Set<ChatListUnavailable>();
+  // Rows a previous incomplete read left without corner facts stay unknown.
+  let cornersUnknown = keepCorners && (held?.unavailable?.includes('corners') ?? false);
   const chats = read.chats.map((item) => {
     const before = heldById.get(item.room.id);
-    if (!before) {
-      for (const fact of unavailable) unknown.add(fact);
-      return item;
-    }
+    const { unread, ...rest } = item;
+    const knownUnread =
+      !keepUnread && typeof unread === 'boolean'
+        ? unread
+        : typeof before?.unread === 'boolean'
+          ? before.unread
+          : undefined;
+    if (keepCorners && !before) cornersUnknown = true;
     return {
-      ...item,
-      ...(keepUnread ? { unread: before.unread } : {}),
-      ...(keepCorners
+      ...rest,
+      ...(knownUnread !== undefined ? { unread: knownUnread } : {}),
+      ...(keepCorners && before
         ? {
             ...(before.cornerCount !== undefined ? { cornerCount: before.cornerCount } : {}),
             ...(before.waitingCornerCount !== undefined
@@ -200,7 +207,11 @@ export function keepUnavailableChatFacts(
         : {}),
     };
   });
-  return { ...view, chats, ...(unknown.size ? { unavailable: [...unknown] } : {}) };
+  const unknown: ChatListUnavailable[] = [
+    ...(chats.some((item) => item.unread === undefined) ? ['unread' as const] : []),
+    ...(cornersUnknown ? ['corners' as const] : []),
+  ];
+  return { ...view, chats, ...(unknown.length ? { unavailable: unknown } : {}) };
 }
 
 /**

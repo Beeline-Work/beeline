@@ -793,8 +793,11 @@ export type ChatListItem = {
    * them from the chat list alone, with no per-Room corners read.
    */
   readonly openCorners?: readonly ChatListCorner[];
-  /** Server-owned, cross-device read state. Every accepted list response carries it. */
-  readonly unread: boolean;
+  /**
+   * Server-owned, cross-device read state. Absent when the server could not
+   * read it for this row: the value is unknown, not false.
+   */
+  readonly unread?: boolean;
   readonly repositoryName?: string;
   /**
    * Max-severity rollup of this Room's own conversational turn and every one

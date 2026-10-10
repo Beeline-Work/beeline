@@ -544,7 +544,7 @@ describe('phone surface readers', () => {
     expect(view?.chats).toHaveLength(1);
     expect(view?.chats[0]?.memberCount).toBeUndefined();
     expect(view?.chats[0]?.cornerCount).toBeUndefined();
-    expect(view?.chats[0]?.unread).toBe(false);
+    expect(view?.chats[0]?.unread).toBeUndefined();
   });
 
   it('preserves the last-manager deletion warning on Room and deck reads', () => {

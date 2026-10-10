@@ -2,7 +2,7 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NostrEvent, RoomView } from '@beeline/buzz-client';
+import type { ChatListView, NostrEvent, RoomView } from '@beeline/buzz-client';
 import { visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
@@ -43,6 +43,8 @@ const controls = vi.hoisted(() => ({
   roomResponse: null as RoomView | null,
   roomReads: 0,
   roomError: null as unknown,
+  liveList: null as ChatListView | null,
+  liveListKeys: [] as unknown[],
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -119,6 +121,13 @@ vi.mock('@/buzz/surface-storage', () => ({
     remove: vi.fn(async () => undefined),
     get: controls.outboxGet,
   })),
+}));
+
+vi.mock('@/buzz/chat-list-store', () => ({
+  liveChatList: (key: unknown) => {
+    controls.liveListKeys.push(key);
+    return controls.liveList;
+  },
 }));
 
 vi.mock('@/sync/transport', () => ({
@@ -389,9 +398,55 @@ beforeEach(() => {
   controls.roomResponse = null;
   controls.roomReads = 0;
   controls.roomError = null;
+  controls.liveList = null;
+  controls.liveListKeys.length = 0;
   controls.outboxFail.mockClear();
   controls.outboxGet.mockClear();
   vi.clearAllMocks();
+});
+
+describe('reopening a dismissed Room', () => {
+  function chatList(closed: boolean): ChatListView {
+    return {
+      workspace: { id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 },
+      chats: [{ room: roomView('room-a').room, unread: false, ...(closed ? { closed: true } : {}) }],
+      viewer: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
+      truncated: false,
+      watchFilters: [{ '#h': ['room-a'] }],
+    };
+  }
+
+  async function openRoom(): Promise<void> {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }));
+    });
+    await flushEffects();
+    await act(async () => controls.schedulers[0]!.apply(roomView('room-a')));
+    await flushEffects();
+    await act(async () => renderer.unmount());
+  }
+
+  it('reopens a Room the live Room list shows dismissed', async () => {
+    controls.liveList = chatList(true);
+    await openRoom();
+    expect(controls.liveListKeys).toEqual([
+      { relayUrl: 'https://relay.test', viewerPubkey: 'viewer', workspaceId: 'workspace' },
+    ]);
+    expect(controls.reopenChat).toHaveBeenCalledWith('room-a');
+  });
+
+  it('lets the server decide when no live Room list is held', async () => {
+    controls.liveList = null;
+    await openRoom();
+    expect(controls.reopenChat).toHaveBeenCalledWith('room-a');
+  });
+
+  it('skips the reopen call for a Room the live list shows open', async () => {
+    controls.liveList = chatList(false);
+    await openRoom();
+    expect(controls.reopenChat).not.toHaveBeenCalled();
+  });
 });
 
 describe('useRoomSurfaceSession', () => {

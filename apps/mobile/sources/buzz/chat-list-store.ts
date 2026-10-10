@@ -19,6 +19,7 @@ import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { isDraftFrame } from '@/sync/transport/live-frames';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { applyChatListCorners, cornerStoreClock } from './room-corner-store';
 import { subscribeClientReset } from '@/sync/client-reset';
 
 /**
@@ -99,10 +100,11 @@ class ChatListStore {
   private closed = false;
   private missed = false;
   private readInFlight = false;
+  /** The corner store clock when the running read started. */
+  private readClock = 0;
   private deltasDuringRead: ChatListDelta[] = [];
   // Rooms the socket delivered any frame for since the last applied read.
   private readonly heardRooms = new Set<string>();
-  private readonly cornerStatusSequence = new Map<string, number>();
   private opened = false;
   private durableTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly deltaContext: ChatListDeltaContext = {
@@ -124,6 +126,7 @@ class ChatListStore {
       fetch: async () => {
         this.deltasDuringRead = [];
         this.readInFlight = true;
+        this.readClock = cornerStoreClock();
         try {
           return await mobileSurfaceCache.fetch(this.address, isChatListView, this.source.chats);
         } finally {
@@ -236,6 +239,7 @@ class ChatListStore {
     );
     this.readFromServer = true;
     this.value = value;
+    if (!read.unavailable?.includes('corners')) applyChatListCorners(read.chats, this.readClock);
     if (this.durableTimer) clearTimeout(this.durableTimer);
     this.durableTimer = undefined;
     void mobileSurfaceCache.write(this.address, value, isChatListView);
@@ -293,11 +297,6 @@ class ChatListStore {
     if (this.closed) return;
     const live = 'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
     if (live && 'roomId' in live) this.heardRooms.add(live.roomId);
-    if (live?.type === 'subscribed' && !live.resumed) this.cornerStatusSequence.delete(live.roomId);
-    if (live?.type === 'corner-status' && live.sequence !== undefined) {
-      if (live.sequence <= (this.cornerStatusSequence.get(live.roomId) ?? -1)) return;
-      this.cornerStatusSequence.set(live.roomId, live.sequence);
-    }
     if (live?.type === 'message-delta' || live?.type === 'turn-delta' || live?.type === 'corner-status') {
       // Deltas that land while a read is in flight: the read may predate them,
       // and no later read comes to correct it.

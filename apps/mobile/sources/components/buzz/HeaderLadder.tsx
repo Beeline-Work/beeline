@@ -51,12 +51,12 @@ export function CornerHeaderAgentText({
   style,
 }: {
   name: string;
-  stateWord: string;
+  stateWord?: string;
   style?: StyleProp<TextStyle>;
 }) {
   return (
     <Text numberOfLines={1} style={[styles.metaCaps, style]}>
-      {name.toUpperCase()} · {stateWord}
+      {stateWord ? `${name.toUpperCase()} · ${stateWord}` : name.toUpperCase()}
     </Text>
   );
 }

@@ -1120,12 +1120,9 @@ export default function BuzzChannels() {
                       <DesktopRoomCorners
                         item={item}
                         mobile
-                        onOpen={(cornerId) => {
+                        onOpen={(cornerId, name) => {
                           if (!roomListGestures.canInteract()) return;
-                          const corner = item.openCorners?.find((open) => open.id === cornerId);
-                          router.push(
-                            cornerHref(cornerId, item.room.id, corner?.name, 'room-list'),
-                          );
+                          router.push(cornerHref(cornerId, item.room.id, name, 'room-list'));
                         }}
                       />
                     )}

@@ -360,7 +360,7 @@ describe('approve_merge with a reviewer list', () => {
 });
 
 describe('the end of a fallback reviewer\'s review', () => {
-  it('hands a changes-requested head back to the implementer through the workflow', async () => {
+  it('leaves a head without a PASS in review and hands nothing back', async () => {
     await reportPresence(REVIEWER_A, 'offline');
     await setReviewers(REVIEWER_A, REVIEWER_B);
     await greenCheck();
@@ -371,12 +371,11 @@ describe('the end of a fallback reviewer\'s review', () => {
       { roomId: C, requestId: review!.turnRequestId, generationId: 'g1', text: 'Please fix the race.' },
       review!.agentId,
     );
-    const handbacks = (await commands(OWNER_AGENT)).filter((c) => c.reason === 'corner_review');
-    expect(handbacks).toHaveLength(1);
+    expect(await commands(OWNER_AGENT)).toEqual([]);
     const state = await db.query<{ workflow_state: string; workflow_outcome: string }>(
       `SELECT workflow_state,workflow_outcome FROM corner_facts WHERE corner_id=$1`,
       [C],
     );
-    expect(state.rows[0]).toEqual({ workflow_state: 'implement', workflow_outcome: 'changes_requested' });
+    expect(state.rows[0]).toEqual({ workflow_state: 'review', workflow_outcome: 'passing' });
   });
 });

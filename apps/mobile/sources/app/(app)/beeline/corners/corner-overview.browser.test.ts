@@ -37,7 +37,7 @@ function shims(mobile: string): Record<string, string> {
         return { workflows: globalThis.overviewWorkflows };
       };`,
     '@/sync/transport/live-connection':
-      'export const sharedLiveConnection = () => ({ register: () => () => undefined });',
+      'export const sharedLiveConnection = () => ({ register: async () => () => undefined, whenSubscribed: async () => undefined });',
     '@/components/buzz/corner-brief-viewer':
       'export const openCornerBriefViewer = (brief) => globalThis.overviewBriefOpened(brief);',
   };

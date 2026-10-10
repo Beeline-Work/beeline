@@ -7,7 +7,6 @@ import type { SqlDatabase } from './database.js';
 import {
   CORNER_CHECKS_BLOCKED_CARD_TYPE,
   CORNER_MERGE_YES_CARD_TYPE,
-  CORNER_REVIEW_DEADLOCK_CARD_TYPE,
   createAgentCommand,
   repairReviewerCornerMembership,
   type CommandRow,
@@ -39,7 +38,7 @@ import { workflowRunLockKey } from './workflow-runs.js';
  * checks passed/failed, review verdict, merge refusal, merge webhook, brief
  * revision and close. The callers (`createCorner`, `createHumanCorner`, the
  * GitHub webhook handlers, `routeSystemCommand`, `approveCornerMerge`,
- * `queueCornerWorkerAfterReview`, `closeCornerState`, and the merge in
+ * `closeCornerState`, and the merge in
  * `GitHubOperations.landCorner`) only REPORT their event. Under the run lock,
  * `advanceCorner` reads the run's current state, validates the edge against
  * `CORNER_LIFECYCLE_CONTRACT`, applies the contract's loop caps, writes the
@@ -111,25 +110,22 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
     },
     // Waiting for a yes on the current head. A reviewer's PASS
     // (`approve_merge`) takes `approved` and wakes the implementer to call
-    // `merge_corner`; a person's order lands at once. The end of a review
-    // turn with no yes for the current head hands back to the implementer;
-    // the handback cap is counted per head and reset by a push
-    // (`corner_facts.review_handback_head/count`). The merge webhook takes the
-    // implicit edge to `landed`; GitHub refusing the merge returns to the
-    // implementer.
+    // `merge_corner`; a person's order lands at once. A reviewer turn that
+    // ends without a PASS changes nothing: the reviewer's own message carries
+    // any requested change to the implementer, whose next push restarts
+    // checks. The merge webhook takes the implicit edge to `landed`; GitHub
+    // refusing the merge returns to the implementer.
     review: { does: 'Wait for a yes on the current head.',
       role: 'reviewer',
       roleBinding: 'live:parent.reviewer_agent_id',
       requires: [],
       on: {
         approved: 'review',
-        changes_requested: 'implement',
         pushed: 'checks',
         rechecked: 'checks',
         merge_refused: 'implement',
         merge_unconfirmed: 'ask_human',
       },
-      loop: { onEdge: 'changes_requested', cap: 3, onExceeded: 'ask_human' },
     },
     // A loop cap was reached. The corner names the commissioning human and
     // waits; a new push starts the next round.
@@ -145,8 +141,6 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
   externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused'],
 };
 
-/** The review handback cap, read from the contract. */
-export const REVIEW_HANDBACK_LIMIT = loopCap('review');
 /** The failing-checks cap, read from the contract. */
 export const CHECKS_FAILING_LIMIT = loopCap('checks');
 
@@ -172,7 +166,6 @@ export type CornerEvent =
   | { kind: 'checks-pending' }
   /** A yes on this head: a reviewer's PASS wakes the implementer to merge; a person's order is landed by the caller. */
   | { kind: 'approval'; headSha: string; by: 'reviewer' | 'person' }
-  | { kind: 'review-ended'; review: CommandRow; verdictMessageId: string }
   | { kind: 'merge-unconfirmed'; number: number; error: string }
   | { kind: 'merge-refused'; headSha: string; reason: string }
   | { kind: 'merged'; contents: Record<string, unknown> }
@@ -626,8 +619,6 @@ async function applyEvent(
     }
     case 'approval':
       return approvalRecorded(db, cornerId, corner, transition, event);
-    case 'review-ended':
-      return reviewEnded(db, cornerId, corner, transition, event);
     case 'merge-unconfirmed':
       if (!transition.allows('merge_unconfirmed')) return no('merge recovery already escalated');
       await transition.take('merge_unconfirmed');
@@ -807,7 +798,12 @@ async function noteReviewDispatchFailure(
   });
 }
 
-/** Repair a green review state whose reviewer command is missing or spent. */
+/**
+ * Repair a green review state whose reviewer wake is missing or failed. Any
+ * reviewer turn since the run's newest card (the one that entered review on
+ * this head) counts, whatever woke it and whether or not it gave a PASS: the
+ * reviewer has had its turn on this head, and only a push wakes it again.
+ */
 async function ensureReviewDispatch(
   db: SqlDatabase,
   cornerId: string,
@@ -826,24 +822,19 @@ async function ensureReviewDispatch(
   }
   const outstanding = await db.query(
     `SELECT 1 FROM agent_commands command
-     JOIN messages source ON source.id=command.source_message_id
      JOIN rooms corner ON corner.id=command.room_id
      JOIN rooms parent ON parent.id=corner.parent_id
-     JOIN corner_facts fact ON fact.corner_id=corner.id
-     WHERE command.room_id=$1 AND command.state IN ('pending','claimed')
+     LEFT JOIN agent_turns turn ON turn.room_id=command.room_id
+       AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
+     WHERE command.room_id=$1 AND command.action='input'
        AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
-       AND command.action='input'
-       AND (command.reason='corner_review_dispatch'
-            OR (command.reason='subscribed_event' AND
-              (source.system_event->>'kind'='check-passed'
-                OR source.author_id=${cornerImplementerSql('fact', 'corner')}))
-            OR (command.reason='agent_tag' AND source.author_id=${cornerImplementerSql('fact', 'corner')}))
-       AND (source.system_event->'object'->>'headSha' IS NULL
-            OR source.system_event->'object'->>'headSha'=$2)
-       AND (source.card->'contents'->>'headSha' IS NULL
-            OR source.card->'contents'->>'headSha'=$2)
+       AND (command.state IN ('pending','claimed')
+            OR (command.state='complete' AND turn.status IS DISTINCT FROM 'failed'))
+       AND command.created_at>=(
+         SELECT created_at FROM messages WHERE room_id=$1 AND card_type=$2
+           AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1)
      LIMIT 1`,
-    [cornerId, pr.headSha],
+    [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
   );
   if (outstanding.rowCount) return OK;
   const sourceId = transition.lastCardId ?? (
@@ -1066,71 +1057,6 @@ async function wakeToLand(
 ): Promise<void> {
   if (corner.worker_agent_id && transition.lastCardId)
     await wake(db, cornerId, corner.worker_agent_id, transition.lastCardId, 'corner_land');
-}
-
-/**
- * The reviewer's turn ended without a PASS for the current head: a rejection,
- * a stale-head refusal and a silent turn are one state, so the handback
- * carries the reviewer's closing text for the implementer to read. It fires
- * only while checks are green — a reviewer that ended its turn to wait for CI
- * has not finished. Handbacks are counted per head, a push resetting them.
- */
-async function reviewEnded(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: CornerRow,
-  transition: Transition,
-  event: Extract<CornerEvent, { kind: 'review-ended' }>,
-): Promise<Applied> {
-  const headSha = corner.lifecycle.pr?.headSha;
-  if (!headSha) return no('no pull request head');
-  if (corner.lifecycle.checks !== 'passing') return no('checks are not green');
-  if (await approvedCurrentHead(db, cornerId, corner)) return no('the current head has a yes');
-  if (transition.state === 'implement' && transition.run.outcome === 'changes_requested')
-    await transition.take('rereview');
-  if (transition.state !== 'review') return no('not in review');
-  const handbacks =
-    (
-      await db.query<{ review_handback_count: number }>(
-        `UPDATE corner_facts SET
-           review_handback_head=$2,
-           review_handback_count=CASE
-             WHEN review_handback_head IS NOT DISTINCT FROM $2 THEN review_handback_count+1
-             ELSE 1 END
-         WHERE corner_id=$1
-         RETURNING review_handback_count`,
-        [cornerId, headSha],
-      )
-    ).rows[0]?.review_handback_count ?? 1;
-  const toState = await transition.take(
-    'changes_requested',
-    { verdict: 'changes_requested', headSha },
-    handbacks,
-  );
-  if (toState === 'ask_human') {
-    console.error(`[corner-lifecycle] ${cornerId}: review handback limit reached on ${headSha}; the commissioning human must step in`);
-    await askHuman(db, cornerId, corner, {
-      key: `review-handback-limit:${headSha}`,
-      consequence: `review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
-      cardType: CORNER_REVIEW_DEADLOCK_CARD_TYPE,
-      afterMessageId: event.verdictMessageId,
-    });
-    return OK;
-  }
-  if (corner.worker_agent_id)
-    await createAgentCommand(db, {
-      roomId: cornerId,
-      agentId: corner.worker_agent_id,
-      sourceMessageId: event.verdictMessageId,
-      parent: event.review,
-      // Handing the branch back is a lifecycle transfer, not one agent
-      // delegating to another, so it keeps the chain's depth. Otherwise the
-      // review loop dies on COMMAND_MAX_DEPTH before the cap can reach the
-      // person who could settle it.
-      retainDepth: true,
-      reason: 'corner_review',
-    });
-  return OK;
 }
 
 async function mergeRefused(

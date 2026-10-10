@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate, type SqlDatabase } from './database.js';
+import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -7,10 +7,9 @@ import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
-import { advanceCorner, REVIEW_HANDBACK_LIMIT } from './corner-lifecycle.js';
+import { advanceCorner } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
-import type { QueryResultRow } from 'pg';
 const H = 'a'.repeat(64),
   A = 'b'.repeat(64),
   B = 'c'.repeat(64);
@@ -99,29 +98,6 @@ beforeEach(async () => {
     [H],
   );
 });
-
-/** Fails the first query whose SQL matches, inside a transaction or out of one. */
-class FailOnce implements SqlDatabase {
-  fired = false;
-  constructor(
-    private readonly inner: SqlDatabase,
-    private readonly match: RegExp,
-    private readonly shared?: FailOnce,
-  ) {}
-  private get owner(): FailOnce {
-    return this.shared ?? this;
-  }
-  async query<Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]) {
-    if (!this.owner.fired && this.match.test(sql)) {
-      this.owner.fired = true;
-      throw new Error('injected handoff failure');
-    }
-    return this.inner.query<Row>(sql, values);
-  }
-  transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    return this.inner.transaction((inner) => work(new FailOnce(inner, this.match, this.owner)));
-  }
-}
 
 /** Put the corner in the state a green transition leaves it in. */
 async function greenHead(number: number, headSha: string, checks = 'passing') {
@@ -268,36 +244,18 @@ describe('corner message attribution', () => {
     expect(rows[0]!.author_id).toBe(B);
   });
 
-  // Reproduction REVIEW-HANDOFF-1: the reviewer's verdict named nobody, so the
-  // corner's worker was never woken and the corner stopped on a finished review.
-  // Nothing records a FAIL, so both verdicts below are the same state to the
-  // server — no approval row for this head — and both must hand the corner on.
-  for (const verdict of [
-    'Review complete: the reproduction is missing. Fix that and push.',
-    `Review complete: PASS at ${'1'.repeat(40)}. Approved, merge it.`,
-  ])
-    it(`wakes the corner's worker when a review ending "${verdict.slice(19, 32)}" tags nobody`, async () => {
-      await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-      await greenHead(11, '1'.repeat(40));
-      const [review] = await commands(B, C);
-      await claim(review!);
-      await result(review!, verdict);
-      const handoff = await commands(A, C);
-      expect(handoff.map((command) => command.reason)).toEqual(['corner_review']);
-      // The worker reads which verdict it was; the server never classified it.
-      expect(handoff[0]!.source.body).toBe(verdict);
-    });
-
-  it('wakes the worker when the verdict tags a person instead of it', async () => {
+  // Only the reviewer's PASS moves review; a verdict that tags nobody (or a
+  // person) is an ordinary message and wakes no agent.
+  it('wakes nobody and stays in review when a review without a PASS tags no agent', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await greenHead(13, '1'.repeat(40));
+    await greenHead(11, '1'.repeat(40));
     const [review] = await commands(B, C);
     await claim(review!);
-    // A typed mention takes the routed write path, but it reaches a person by
-    // push and highlight — it hands the branch to nobody.
-    await result(review!, '@human the findings are confirmed, this one fails.');
-    const handoff = await commands(A, C);
-    expect(handoff.map((command) => command.reason)).toEqual(['corner_review']);
+    await result(review!, '@human the reproduction is missing. Fix that and push.');
+    expect(await commands(A, C)).toEqual([]);
+    expect((await db.query<{ workflow_state: string }>(
+      `SELECT workflow_state FROM corner_facts WHERE corner_id=$1`, [C],
+    )).rows[0]?.workflow_state).toBe('review');
   });
 
   it('leaves the reviewer a single turn when its verdict tags the worker itself', async () => {
@@ -337,11 +295,10 @@ describe('corner message attribution', () => {
     await greenHead(21, '7'.repeat(40));
     const [review] = await commands(B, C);
     await claim(review!);
-    // The reviewer ends the turn without a PASS, so the corner hands back.
+    // The reviewer ends the turn without a PASS; nothing is handed back.
     await result(review!, 'Review complete: this head needs a fix.');
-    expect((await commands(A, C)).map((command) => command.reason)).toEqual(['corner_review']);
+    expect(await commands(A, C)).toEqual([]);
     // The same head's green verdict is re-reported (a CI re-run or a redelivery).
-    await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, B]);
     await greenHead(21, '7'.repeat(40));
     const reviewerWakes = (await commands(B, C)).filter(
       (command) => command.reason === 'subscribed_event',
@@ -374,56 +331,41 @@ describe('corner message attribution', () => {
     expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
   });
 
-  it('Reproduction REVIEW-READY-2: a FAIL returns to review after the worker answers on the unchanged green head', async () => {
+  it('Reproduction REVIEW-READY-2: a FAIL and the worker reply trade tags on the unchanged green head without a server handback', async () => {
     const head = 'b'.repeat(40);
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(27, head);
     const [firstReview] = await commands(B, C);
     await claim(firstReview!);
-    const findings = `FAIL on ${head}: the PR description lacks demonstration evidence.`;
+    const findings = `@hoots FAIL on ${head}: the PR description lacks demonstration evidence.`;
     await result(firstReview!, findings);
-    const [repair] = (await commands(A, C)).filter((command) => command.reason === 'corner_review');
+    const [repair] = await commands(A, C);
+    expect(repair?.reason).toBe('agent_tag');
     expect(repair?.source.body).toBe(findings);
-    expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
     await claim(repair!);
-    const reply = 'Added both demonstrations to the PR description; the code and head are unchanged.';
+    const reply = '@goosy Added both demonstrations to the PR description; the code and head are unchanged.';
     await result(repair!, reply);
-    expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(1);
+    // The worker's tag wakes the reviewer; the sweep adds no second wake.
     const [rereview] = await commands(B, C);
-    expect(rereview?.reason).toBe('corner_review_dispatch');
-    expect((await db.query<{ workflow_state: string; review_handback_count: number; lifecycle: { pr: { headSha: string } } }>(
-      `SELECT workflow_state,review_handback_count,lifecycle FROM corner_facts WHERE corner_id=$1`, [C],
-    )).rows[0]).toMatchObject({ workflow_state: 'review', review_handback_count: 1, lifecycle: { pr: { headSha: head } } });
-    expect((await db.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND text IN ($2,$3) ORDER BY text`, [C, findings, reply],
-    )).rows).toHaveLength(2);
-  });
-
-  it('counts green same-head reconciled reviews toward the handback limit', async () => {
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await greenHead(28, 'c'.repeat(40));
-    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT + 1; round += 1) {
-      const [review] = await commands(B, C);
-      expect(review).toBeDefined();
-      await claim(review!, `r${round}`);
-      await result(review!, `FAIL round ${round}: demonstration is missing.`, `r${round}`);
-      const [repair] = (await commands(A, C)).filter((command) => command.reason === 'corner_review');
-      if (round <= REVIEW_HANDBACK_LIMIT) {
-        expect(repair).toBeDefined();
-        await claim(repair!, `w${round}`);
-        await result(repair!, `Demonstration updated after round ${round}.`, `w${round}`);
-        expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(1);
-      } else {
-        expect(repair).toBeUndefined();
-      }
-    }
+    expect(rereview?.reason).toBe('agent_tag');
+    expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
     expect((await db.query<{ workflow_state: string; review_handback_count: number }>(
       `SELECT workflow_state,review_handback_count FROM corner_facts WHERE corner_id=$1`, [C],
-    )).rows[0]).toEqual({ workflow_state: 'ask_human', review_handback_count: REVIEW_HANDBACK_LIMIT + 1 });
-    expect((await db.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND card_type='corner-review-deadlock'`, [C],
-    )).rows[0]?.text).toContain('may need to step in');
-    expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
+    )).rows[0]).toEqual({ workflow_state: 'review', review_handback_count: 0 });
+  });
+
+  it('never re-wakes a reviewer that already ended a turn on the green head', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(28, 'c'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await result(review!, 'FAIL: demonstration is missing.');
+    for (let sweep = 1; sweep <= 3; sweep += 1)
+      expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
+    expect(await commands(B, C)).toEqual([]);
+    // A new head is a new review.
+    await greenHead(28, 'd'.repeat(40));
+    expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
   });
 
   it('names the human who must act when a green review loses its configured reviewer', async () => {
@@ -482,43 +424,6 @@ describe('corner message attribution', () => {
     }
   });
 
-  it('commits the verdict and the handoff together, or neither', async () => {
-    // The stall this whole corner removes is a durable verdict nobody was
-    // woken for. A handoff written AFTER the verdict commits can produce
-    // exactly that and no retry can repair it: the reply is already stored and
-    // its command output authority is spent. So make the handoff fail and
-    // check that the verdict went with it.
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await greenHead(17, '9'.repeat(40));
-    const [review] = await commands(B, C);
-    await claim(review!);
-    const verdict = 'Review complete: the findings stand, fix them.';
-    const failing = new FailOnce(db, /worker_agent_id/);
-    await expect(
-      new DaemonService(failing, new LiveHub()).execute(
-        'postRoomMessage',
-        { roomId: C, requestId: review!.turnRequestId, generationId: 'g1', text: verdict },
-        B,
-      ),
-    ).rejects.toThrow('injected handoff failure');
-    expect(failing.fired).toBe(true);
-    const stored = async (text: string) =>
-      (await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text=$2`, [C, text])).rowCount;
-    expect(await stored(verdict)).toBe(0);
-    expect(
-      (
-        await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [
-          review!.id,
-        ])
-      ).rows[0]?.state,
-    ).toBe('claimed');
-    expect(await commands(A, C)).toEqual([]);
-    // The reviewer's daemon retries the same reply, and this time both land.
-    await result(review!, verdict);
-    expect(await stored(verdict)).toBe(1);
-    expect((await commands(A, C)).map((command) => command.reason)).toEqual(['corner_review']);
-  });
-
   it('hands a brief mismatch to the author, then reviews the repaired head', async () => {
     await db.query(
       `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
@@ -531,9 +436,9 @@ describe('corner message attribution', () => {
     await claim(firstReview!);
     await result(
       firstReview!,
-      'F1: A1 is unmet; the agreed label is missing. Repair it and rerun affected checks.',
+      '@hoots F1: A1 is unmet; the agreed label is missing. Repair it and rerun affected checks.',
     );
-    const [repair] = (await commands(A, C)).filter((command) => command.reason === 'corner_review');
+    const [repair] = await commands(A, C);
     expect(repair).toBeDefined();
     await claim(repair!);
     await result(repair!, 'Fixed F1; the agreed label is present and the affected check passed.');
@@ -563,60 +468,6 @@ describe('corner message attribution', () => {
         )
       ).rows,
     ).toEqual([{ head_sha: '2'.repeat(40) }]);
-  });
-
-  /**
-   * Round 1 comes from the green transition; every round after it comes from
-   * the worker disagreeing and tagging the reviewer straight back. That is the
-   * loop with no new commit and no new check in it — the one that has to stop.
-   */
-  async function reviewRound(round: number, previous?: AgentCommand): Promise<AgentCommand[]> {
-    const review = previous ?? (await commands(B, C))[0]!;
-    await claim(review, `r${round}`);
-    await result(review, `Round ${round}: still not fixed.`, `r${round}`);
-    const handbacks = (await commands(A, C)).filter(
-      (command) => command.reason === 'corner_review',
-    );
-    for (const handback of handbacks) {
-      await claim(handback, `w${round}`);
-      await result(handback, '@goosy I disagree, the code is right. Look again.', `w${round}`);
-    }
-    return handbacks;
-  }
-
-  it('stops waking the worker at the handback limit and names the requester instead', async () => {
-    await db.query(
-      `INSERT INTO push_devices(token,identity_id,platform,environment)
-       VALUES('human-device-token-123456789012345678901',$1,'android','physical')`,
-      [H],
-    );
-    const send = vi.fn().mockResolvedValue(undefined);
-    const push = new PushDeliveryLoop(db, { send });
-    await push.runOnce();
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await greenHead(15, '5'.repeat(40));
-    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT + 1; round += 1) {
-      const handbacks = await reviewRound(round);
-      // The worker claims each handback, so what is pending is what this round
-      // produced: one, until the limit stops them.
-      expect(handbacks).toHaveLength(round <= REVIEW_HANDBACK_LIMIT ? 1 : 0);
-    }
-    expect(
-      (
-        await db.query<{ text: string }>(
-          `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%step in%'`,
-          [C],
-        )
-      ).rows.map((row) => row.text),
-    ).toEqual([
-      `@human may need to step in · review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
-    ]);
-    // The requester's phone hears it, with no agent tag needed.
-    await push.runOnce();
-    await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
-    expect(send.mock.calls.map(([, message]) => message.text)).toContain(
-      `@human may need to step in · review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
-    );
   });
 
   it('tells the requester when failing checks outlast the fix turn with nothing pushed', async () => {
@@ -757,53 +608,6 @@ describe('corner message attribution', () => {
   // Reproduction REVIEW-HANDBACK-NULL: a corner an agent opened off its own
   // root message records no requester, so the cap stopped the handbacks and
   // said nothing — the transcript ended on the reviewer's last round.
-  it('posts the deadlock line to the corner when no requester is recorded', async () => {
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await db.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [C]);
-    await greenHead(18, '8'.repeat(40));
-    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT + 1; round += 1)
-      expect(await reviewRound(round)).toHaveLength(round <= REVIEW_HANDBACK_LIMIT ? 1 : 0);
-    const lines = (
-      await db.query<{ text: string; author_id: string }>(
-        `SELECT text,author_id FROM messages WHERE room_id=$1 AND text LIKE '%step in%'`,
-        [C],
-      )
-    ).rows;
-    // Nobody to name, so the line names nobody — and it is still one line per
-    // head, however many further reviews end on this commit.
-    expect(lines.map((row) => row.text)).toEqual([
-      `Somebody may need to step in · review and fix have passed ${REVIEW_HANDBACK_LIMIT} times over this head with nothing new pushed`,
-    ]);
-    expect(lines[0]!.author_id).toBe(SYSTEM_IDENTITY_ID);
-  });
-
-  it('resets the handback count when the worker pushes a new head', async () => {
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await greenHead(16, '6'.repeat(40));
-    for (let round = 1; round <= REVIEW_HANDBACK_LIMIT; round += 1)
-      expect(await reviewRound(round)).toHaveLength(1);
-    // The worker pushes: a new head, a new green check, and the count starts over
-    // rather than the fourth review hitting the limit.
-    await greenHead(16, '7'.repeat(40));
-    expect(await reviewRound(REVIEW_HANDBACK_LIMIT + 1)).toHaveLength(1);
-    expect(
-      (
-        await db.query<{ review_handback_count: number }>(
-          `SELECT review_handback_count FROM corner_facts WHERE corner_id=$1`,
-          [C],
-        )
-      ).rows[0]?.review_handback_count,
-    ).toBe(1);
-    expect(
-      (
-        await db.query<{ count: number }>(
-          `SELECT count(*)::int count FROM messages WHERE room_id=$1 AND text LIKE '%step in%'`,
-          [C],
-        )
-      ).rows[0]?.count,
-    ).toBe(0);
-  });
-
   it('keeps a configured reviewer as the review target even when it is not a corner member', async () => {
     // Remove Goosy (B) from the CORNER (it stays a parent-Room member and the
     // configured reviewer). The check passes. Where does the review command go?

@@ -806,62 +806,6 @@ export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
  */
 export const CORNER_CHECK_STUCK_AFTER = '1 hour';
 
-/**
- * Reports a review turn ending to the corner lifecycle (`advanceCorner`).
- *
- * "The review" is read structurally, never from the verdict's wording: this
- * agent is the configured reviewer on the corner's parent Room (the reviewer or
- * one of its fallbacks, per `isCornerReviewer`), and the turn it
- * just ended belongs to the review loop — dispatched either from a
- * `check-passed` fact (the green transition and reconciliation both cite one)
- * or from the worker's own message handing the branch back. A turn the reviewer
- * ran because a person asked it something in the corner is neither, and
- * reports nothing. What the end of the review leads to — a handback, the
- * handback cap, or nothing because the head is approved or checks are not
- * green — is the transition's decision.
- *
- * Both of `DaemonService`'s reply paths reach this for a configured reviewer,
- * inside the reply's own transaction, so the verdict and the handoff commit
- * together or not at all.
- */
-export async function queueCornerWorkerAfterReview(
-  db: SqlDatabase,
-  input: {
-    roomId: string;
-    reviewerAgentId: string;
-    turnRequestId: string;
-    verdictMessageId: string;
-  },
-): Promise<void> {
-  const review = (
-    await db.query<CommandRow & { parent_room_id: string; workspace_id: string }>(
-      `SELECT command.*,parent.id parent_room_id,parent.workspace_id
-       FROM agent_commands command
-       JOIN rooms corner ON corner.id=command.room_id
-       JOIN rooms parent ON parent.id=corner.parent_id
-       JOIN corner_facts fact ON fact.corner_id=corner.id
-       JOIN messages dispatch ON dispatch.id=command.source_message_id
-       JOIN identities worker ON worker.id=${cornerImplementerSql('fact', 'corner')}
-         AND worker.kind='agent'
-       WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
-         AND command.action IN ('input','resume')
-         AND (command.reason='corner_review_dispatch'
-              OR dispatch.system_event->>'kind'='check-passed'
-              OR dispatch.author_id=${cornerImplementerSql('fact', 'corner')})
-         AND ${cornerImplementerSql('fact', 'corner')}<>command.agent_id
-       ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
-      [input.roomId, input.reviewerAgentId, input.turnRequestId],
-    )
-  ).rows[0];
-  // The reviewer and a fallback reviewer hold the post the same way.
-  if (!review || !(await isCornerReviewer(db, input.roomId, review.agent_id))) return;
-  await advanceCorner(db, input.roomId, {
-    kind: 'review-ended',
-    review,
-    verdictMessageId: input.verdictMessageId,
-  });
-}
-
 export async function claimAgentCommand(
   db: SqlDatabase,
   roomId: string,

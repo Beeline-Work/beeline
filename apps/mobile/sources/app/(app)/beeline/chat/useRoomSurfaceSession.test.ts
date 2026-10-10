@@ -244,7 +244,6 @@ vi.mock('@beeline/buzz-client', async () => {
 });
 
 import { RoomViewHttpError } from '@beeline/buzz-client';
-import { cornerDisplayFromRoomView } from '@/buzz/corner-display-state';
 import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
@@ -327,27 +326,6 @@ function stubFrameScheduler(): {
     },
   );
   return { queued, receivers };
-}
-
-function LiveCornerHarness({ channelId }: { channelId: string }) {
-  const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
-    resetTranscript: vi.fn(),
-    restoreOutboxMessages: vi.fn(),
-    dismissOptimisticMessage: vi.fn(),
-    observeRoomSurface: vi.fn(),
-  });
-  const { roomSurface } = useRoomSurfaceSession({ channelId, bindingsRef });
-  const working =
-    roomSurface?.parent && cornerDisplayFromRoomView(roomSurface).state === 'working'
-      ? [roomSurface.room.id]
-      : [];
-  return React.createElement(
-    'corner-states',
-    { testID: 'corner-states' },
-    ...working.map((id) =>
-      React.createElement('corner-state', { key: id, testID: `corner-working-${id}` }),
-    ),
-  );
 }
 
 async function flushMicrotasks() {
@@ -1628,35 +1606,6 @@ describe('useRoomSurfaceSession', () => {
     expect(stored).toContain('"id":"trace-turn"');
     expect(stored).not.toContain('room-a');
     info.mockRestore();
-    await act(async () => renderer.unmount());
-  });
-
-  it('reports a corner viewing itself as working from its own turn, over a stale review card', async () => {
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(LiveCornerHarness, { channelId: 'corner-a' }));
-    });
-    await flushEffects();
-
-    const applied = roomView('corner-a');
-    const stateAt = Math.floor(Date.now() / 1_000);
-    await act(async () => {
-      controls.schedulers[0]!.apply({
-        ...applied,
-        parent: { ...applied.room, id: 'room-a', name: 'Room room-a' },
-        latestAgentTurns: [
-          { requestId: 'request-a', agentPubkey: 'agent-a', status: 'working', createdAt: stateAt },
-        ],
-        // The review card remains mounted during steering. The canonical
-        // daemon state still has to read through as working.
-        cornerLifecycle: { lifecycle: 'in-review', checks: 'unknown' },
-      });
-      await Promise.resolve();
-    });
-
-    expect(
-      renderer.root.findAllByProps({ testID: 'corner-working-corner-a' }).length,
-    ).toBeGreaterThan(0);
     await act(async () => renderer.unmount());
   });
 

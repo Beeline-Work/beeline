@@ -8,6 +8,7 @@ const fixture = vi.hoisted(() => ({
   identityChange: null as null | (() => void),
   workspacesCalls: 0,
   acquired: [] as string[],
+  roomName: 'Test room',
   forced: 0,
   released: 0,
 }));
@@ -69,7 +70,7 @@ vi.mock('@/buzz/chat-list-store', () => ({
       current: () => ({
         chats: [
           {
-            room: { id: 'room-1', name: 'Test room' },
+            room: { id: 'room-1', name: fixture.roomName },
             directMessage: {
               peer: { pubkey: 'other', name: 'Test sender', handle: 'tester@example.com' },
             },
@@ -103,6 +104,7 @@ afterEach(() => {
   fixture.send.mockClear();
   fixture.workspacesCalls = 0;
   fixture.acquired = [];
+  fixture.roomName = 'Test room';
   fixture.forced = 0;
   fixture.released = 0;
   vi.unstubAllGlobals();
@@ -162,6 +164,35 @@ describe('signed-in desktop native notification delivery', () => {
       expect(fixture.send).toHaveBeenCalledWith({
         // The in-app corner title, composed with its parent Room.
         title: '#Test room/Test corner',
+        body: 'Test sender: Review this',
+      }),
+    );
+    stop();
+  });
+
+  it('titles a corner with its parent Room name as the store holds it now', async () => {
+    vi.stubGlobal('document', { hasFocus: () => false });
+    const stop = startDesktopNotifications();
+    await vi.waitFor(() => expect(fixture.roomListener).toBeTypeOf('function'));
+    // The parent is renamed; its corner count is unchanged, so no corner read follows.
+    fixture.roomName = 'Renamed room';
+    fixture.roomListener?.({
+      monolithLive: {
+        type: 'message-delta',
+        roomId: 'corner-1',
+        message: {
+          id: 'safe-renamed-parent-message',
+          text: 'Review this',
+          createdAt: Date.now() / 1000,
+          author: { pubkey: 'other', name: 'Test sender' },
+          presentation: 'message',
+          mentionPubkeys: ['test-viewer'],
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(fixture.send).toHaveBeenCalledWith({
+        title: '#Renamed room/Test corner',
         body: 'Test sender: Review this',
       }),
     );

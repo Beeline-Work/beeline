@@ -62,7 +62,8 @@ export function startDesktopNotifications(): () => void {
     // owns their watch and covering reads. Corners are read here.
     const lists = new Map<string, { handle: ChatListHandle; stop: () => void }>();
     let corners = new Map<string, ChatListItem>();
-    let cornerParentNames = new Map<string, string>();
+    // Each corner's parent Room id; its name is taken from the store when shown.
+    let cornerParentIds = new Map<string, string>();
     let cornerKey = '';
     let watchKey = '';
     let refreshing = false;
@@ -83,6 +84,11 @@ export function startDesktopNotifications(): () => void {
         if (item) return item;
       }
       return corners.get(roomId);
+    }
+
+    function parentNameOf(roomId: string): string | undefined {
+      const parentId = cornerParentIds.get(roomId);
+      return parentId === undefined ? undefined : roomFor(parentId)?.room.name;
     }
     const seen = new Set<string>();
     const startedAt = Date.now();
@@ -137,7 +143,7 @@ export function startDesktopNotifications(): () => void {
       const notification = await import('@tauri-apps/plugin-notification');
       if (!(await notification.isPermissionGranted()) || disposed || current !== generation) return;
       notification.sendNotification({
-        title: desktopNotificationTitle(room, cornerParentNames.get(roomId)),
+        title: desktopNotificationTitle(room, parentNameOf(roomId)),
         body: (room.directMessage ? message.text : `${message.author.name}: ${message.text}`).slice(
           0,
           240,
@@ -219,13 +225,13 @@ export function startDesktopNotifications(): () => void {
             result.status === 'fulfilled'
               ? result.value.corners.map((item) => ({
                   item,
-                  parentName: cornerParents[index]!.room.name,
+                  parentId: cornerParents[index]!.room.id,
                 }))
               : [],
           );
           cornerKey = nextCornerKey;
-          cornerParentNames = new Map(
-            cornerReadsWithParent.map(({ item, parentName }) => [item.corner.id, parentName]),
+          cornerParentIds = new Map(
+            cornerReadsWithParent.map(({ item, parentId }) => [item.corner.id, parentId]),
           );
           corners = new Map(
             cornerReadsWithParent.map(({ item }) =>

@@ -360,6 +360,10 @@ export type RoomScheduleView = {
   readonly createdAt: number;
   /** Present when the schedule runs in a child corner of the Room being listed. */
   readonly corner?: { readonly id: string; readonly name: string };
+  /** The saved workflow each firing starts, when the schedule runs one. */
+  readonly workflowSlug?: string;
+  /** How many times the schedule has fired. */
+  readonly runCount: number;
 };
 export type RoomScheduleListResult = { readonly schedules: readonly RoomScheduleView[] };
 export type DeleteRoomScheduleInput = RoomInput & { readonly scheduleId: string };

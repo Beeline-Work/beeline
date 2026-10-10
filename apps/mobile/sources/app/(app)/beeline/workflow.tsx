@@ -8,16 +8,34 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { workflowDisplayName } from '@/buzz/workflow-graph';
 import { workflowStarterLine } from '@/buzz/workflow-run-copy';
+import { scheduleRuns, scheduleWhere, stopSchedule, useScheduledWork } from '@/buzz/scheduled-work';
 import { PageHeader } from '@/components/buzz/PageHeader';
+import { DetailSection, ScheduledWorkFacts, StopScheduledWork } from '@/components/buzz/ScheduledWorkDetail';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { WorkflowRunLine } from '@/components/buzz/WorkflowRunLine';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
-/** One workflow's runs, reached from a run's "All runs" link. */
+/**
+ * One workflow: its steps on the run page's rail (every step pending, as no
+ * run is open here) and its runs, reached from a run's "All runs" link or
+ * from a schedule. Opened from a schedule (`scheduleId`, listed under
+ * `parentRoomId`), it also shows that schedule's Runs, Agent and Where rows
+ * and its Stop.
+ */
 export default function Workflow() {
   useLatencyRouteFrame('/beeline/workflow');
-  const params = useLocalSearchParams<{ roomId: string; name: string }>();
+  const params = useLocalSearchParams<{
+    roomId: string;
+    name: string;
+    scheduleId?: string;
+    parentRoomId?: string;
+  }>();
   const roomId = Array.isArray(params.roomId) ? params.roomId[0] : params.roomId;
   const name = Array.isArray(params.name) ? params.name[0] : params.name;
+  const scheduleId = Array.isArray(params.scheduleId) ? params.scheduleId[0] : params.scheduleId;
+  const parentRoomId = Array.isArray(params.parentRoomId)
+    ? params.parentRoomId[0]
+    : params.parentRoomId;
   const insets = useSafeAreaInsets();
   const [detail, setDetail] = useState<
     PhoneOperationMap['readWorkflowDefinition']['output'] | null
@@ -37,6 +55,21 @@ export default function Workflow() {
       void reload();
     }, [reload]),
   );
+  const scheduled = useScheduledWork(scheduleId ? parentRoomId : undefined);
+  const schedule = scheduled.work?.schedules.find((candidate) => candidate.id === scheduleId);
+  const [stopping, setStopping] = useState(false);
+  const stop = async () => {
+    if (!parentRoomId || !schedule) return;
+    setStopping(true);
+    try {
+      await stopSchedule(parentRoomId, schedule.id);
+      router.back();
+    } catch (caught) {
+      setError(`Could not stop the schedule: ${String(caught)}`);
+    } finally {
+      setStopping(false);
+    }
+  };
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <PageHeader
@@ -58,7 +91,21 @@ export default function Workflow() {
           <Text style={styles.description}>
             {detail.contract.summary ?? detail.contract.description}
           </Text>
-          <Text style={styles.heading}>Runs</Text>
+          {schedule ? (
+            <ScheduledWorkFacts
+              agents={[scheduled.work?.agentNames.get(schedule.agentId) ?? 'Agent']}
+              runs={scheduleRuns(schedule)}
+              where={scheduleWhere(schedule)}
+            />
+          ) : null}
+          <DetailSection testID="workflow-steps-header" title="Steps" />
+          <WorkflowRunLine
+            detail={{ contract: detail.contract, roleHolders: {} }}
+            now={0}
+            onOpenCorner={() => undefined}
+            testID="workflow-steps"
+          />
+          <Text style={styles.heading}>History</Text>
           {detail.runs.map((run) => (
             <Pressable
               key={run.runId}
@@ -78,6 +125,14 @@ export default function Workflow() {
             </Pressable>
           ))}
           {!detail.runs.length ? <Text style={styles.description}>No runs yet.</Text> : null}
+          {schedule ? (
+            <StopScheduledWork
+              label="Stop schedule"
+              onStop={() => void stop()}
+              testID="stop-workflow-schedule"
+              working={stopping}
+            />
+          ) : null}
         </ScrollView>
       ) : null}
     </View>

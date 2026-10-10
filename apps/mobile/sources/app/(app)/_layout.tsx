@@ -115,6 +115,8 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
+        <Stack.Screen name="beeline/settings/schedule" options={{ headerShown: false }} />
+        <Stack.Screen name="beeline/settings/webhook" options={{ headerShown: false }} />
         {/* A workflow run's state graph draws the shared PageHeader (corner over workflow). */}
         <Stack.Screen name="beeline/workflow-run" options={{ headerShown: false }} />
         <Stack.Screen name="beeline/workflow" options={{ headerShown: false }} />

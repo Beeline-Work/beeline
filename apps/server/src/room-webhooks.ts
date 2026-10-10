@@ -235,17 +235,28 @@ export class RoomWebhooks {
     return this.db.transaction(async (db) => {
       await this.member(db, roomId, identityId, false);
       await this.expire(db, roomId);
-      const sources = await db.query<RoomWebhooksResult['sources'][number]>(
+      const sources = await db.query<Omit<RoomWebhooksResult['sources'][number], 'reason' | 'requestedBy'> & {
+        reason: string | null; requestedBy: string | null;
+      }>(
         `SELECT w.id,w.source,(w.signing_secret_enc IS NOT NULL) signed,(w.revoked_at IS NOT NULL) revoked,
           ARRAY(SELECT i.name FROM memberships m JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
             WHERE m.room_id=w.room_id AND m.removed_at IS NULL AND m.event_subscriptions @> jsonb_build_array('webhook:'||w.source)
-            ORDER BY 1) agents
-         FROM room_webhooks w WHERE w.room_id=$1 ORDER BY w.source`, [roomId]);
+            ORDER BY 1) agents,
+          request.reason,request.agent_name "requestedBy"
+         FROM room_webhooks w
+         LEFT JOIN LATERAL (SELECT q.reason,i.name agent_name FROM room_webhook_requests q JOIN identities i ON i.id=q.agent_id
+           WHERE q.room_id=w.room_id AND q.source=w.source AND q.status='approved' ORDER BY q.created_at DESC LIMIT 1) request ON true
+         WHERE w.room_id=$1 ORDER BY w.source`, [roomId]);
       const requests = await db.query<WebhookRequestCard>(
         `SELECT q.id "requestId",q.agent_id "agentId",i.name "agentName",q.source,q.reason,q.status,floor(extract(epoch FROM q.expires_at))::int "expiresAt" FROM room_webhook_requests q JOIN identities i ON i.id=q.agent_id WHERE q.room_id=$1 AND q.status='pending' ORDER BY q.created_at`, [roomId]);
       const deliveries = await db.query<RoomWebhooksResult['deliveries'][number]>(
         `SELECT d.id,w.source,floor(extract(epoch FROM d.received_at))::int "receivedAt",d.delivered FROM room_webhook_deliveries d JOIN room_webhooks w ON w.id=d.webhook_id WHERE w.room_id=$1 ORDER BY d.received_at DESC LIMIT 200`, [roomId]);
-      return { sources: sources.rows, requests: requests.rows, deliveries: deliveries.rows };
+      return {
+        sources: sources.rows.map(({ reason, requestedBy, ...hook }) => ({
+          ...hook, ...(reason ? { reason } : {}), ...(requestedBy ? { requestedBy } : {}),
+        })),
+        requests: requests.rows, deliveries: deliveries.rows,
+      };
     });
   }
   async receive(token: string, raw: Buffer, timestamp: string | undefined, signature: string | undefined,

@@ -6,8 +6,15 @@ export type WebhookRequestCard = {
   requestId: string; agentId: string; agentName: string; source: string; reason: string;
   status: 'pending' | 'approved' | 'denied' | 'expired'; expiresAt: number;
 };
-/** `agents` are the names of Room agents subscribed to `webhook:<source>`. */
-export type RoomWebhookView = { id: string; source: string; signed: boolean; revoked: boolean; agents: string[] };
+/**
+ * `agents` are the names of Room agents subscribed to `webhook:<source>`.
+ * `reason` and `requestedBy` come from the latest approved request for the
+ * Room and source; a webhook an admin created by hand has neither.
+ */
+export type RoomWebhookView = {
+  id: string; source: string; signed: boolean; revoked: boolean; agents: string[];
+  reason?: string; requestedBy?: string;
+};
 export type WebhookDeliveryView = { id: string; source: string; receivedAt: number; delivered: number };
 export type RoomWebhooksResult = {
   sources: RoomWebhookView[]; requests: WebhookRequestCard[]; deliveries: WebhookDeliveryView[];

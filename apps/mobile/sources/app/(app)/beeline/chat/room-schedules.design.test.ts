@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest';
 const chat = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 const screen = readFileSync(new URL('../settings/schedules.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../../_layout.tsx', import.meta.url), 'utf8');
+const schedule = readFileSync(new URL('../settings/schedule.tsx', import.meta.url), 'utf8');
+const webhook = readFileSync(new URL('../settings/webhook.tsx', import.meta.url), 'utf8');
+const workflow = readFileSync(new URL('../workflow.tsx', import.meta.url), 'utf8');
+const work = readFileSync(new URL('../../../../buzz/scheduled-work.ts', import.meta.url), 'utf8');
 
 describe('scheduled Agent work', () => {
   it('exposes manager-only scheduled-work controls from the monolith Room action sheet', () => {
@@ -15,32 +19,37 @@ describe('scheduled Agent work', () => {
   });
 
   it('allows managers to inspect and stop existing work without scheduling it', () => {
-    expect(screen).toContain("monolithPhoneOperation('listRoomSchedules'");
-    expect(screen).toContain("monolithPhoneOperation('deleteRoomSchedule'");
-    expect(screen).not.toContain("monolithPhoneOperation('createRoomSchedule'");
+    expect(work).toContain("monolithPhoneOperation('listRoomSchedules'");
+    expect(work).toContain("monolithPhoneOperation('deleteRoomSchedule'");
+    expect(work).not.toContain("'createRoomSchedule'");
     // No explainer paragraph stands above the list (DESIGN.md).
     expect(screen).not.toContain('AGENT-MANAGED SCHEDULES');
     expect(screen).not.toContain('repository notifications');
-    expect(screen).toContain('CONFIRM STOP');
     expect(screen).not.toContain('Alert.alert');
-    // Webhooks are read-only beside schedules: revoke is the one action.
-    expect(screen).toContain("monolithPhoneOperation('readRoomWebhooks'");
-    expect(screen).toContain("action: 'revoke'");
-    expect(screen).not.toContain('CONFIRM REVOKE');
-    expect(screen).not.toMatch(/action: '(create|rotate|secret)'/);
+    // Webhooks are read-only beside schedules: stopping (revoke) is the one action.
+    expect(work).toContain("monolithPhoneOperation('readRoomWebhooks'");
+    expect(work).toContain("action: 'revoke'");
+    expect(work).not.toMatch(/action: '(create|rotate|secret)'/);
+    // Both Stop actions live on the entry's own page, behind one confirm step.
+    expect(schedule).toContain('<StopScheduledWork');
+    expect(webhook).toContain('<StopScheduledWork');
+    expect(workflow).toContain('<StopScheduledWork');
   });
 
-  it('labels corner schedules and opens their corner from the parent Room list', () => {
-    expect(screen).toContain("import { cornerHref } from '@/buzz/corner-navigation'");
-    expect(screen).toContain('<CornerGlyph size={CORNER_META_SIZE} />');
-    expect(screen).toContain('router.push(cornerHref(corner.id, roomId!, corner.name))');
-    expect(screen).toContain('testID={`open-scheduled-work-${schedule.id}`}');
+  it('draws each entry as a settings row in one grammar, with no timestamp log', () => {
+    expect(screen).toContain('<SettingsRow');
+    expect(screen).toContain('chevron="right"');
+    expect(screen).toContain('<WorkflowGlyph');
+    expect(screen).not.toMatch(/LAST |NEVER FIRED|deliveries/);
+    expect(webhook).not.toContain('deliveries');
+    expect(layout).toMatch(/name="beeline\/settings\/schedule"\s*options=\{\{\s*headerShown: false/);
+    expect(layout).toMatch(/name="beeline\/settings\/webhook"\s*options=\{\{\s*headerShown: false/);
   });
 
   it('draws the shared PageHeader, Room over Schedules and Webhooks, and no stack header', () => {
     expect(screen).toContain('<PageHeader');
     expect(screen).toContain('title="Schedules and Webhooks"');
-    expect(screen).toContain("eyebrow={displayRoomIndexTitle(roomName ?? undefined) ?? 'Room'}");
+    expect(screen).toContain("eyebrow={displayRoomIndexTitle(work?.roomName ?? undefined) ?? 'Room'}");
     expect(screen).toContain('onBack={() => router.back()}');
     expect(layout).toMatch(
       /name="beeline\/settings\/schedules"\s*options=\{\{\s*headerShown: false/,
@@ -48,8 +57,9 @@ describe('scheduled Agent work', () => {
   });
 
   it('says a cadence in words, never as a raw cron expression', () => {
-    expect(screen).toContain('scheduleCadenceLabel(schedule.cadence)');
+    expect(work).toContain('scheduleCadenceLabel(schedule.cadence)');
     expect(screen).not.toContain('cadence.expression');
+    expect(work).not.toContain('cadence.expression');
   });
 
   it('offers no Room switch for repository activity', () => {

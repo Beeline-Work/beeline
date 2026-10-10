@@ -155,6 +155,12 @@ it('denied and expired requests mint no tokens; direct creation and explicitly s
   const shared = await op('daemon', 'requestWebhook', { ...await turn(), source: 'shared', reason: 'testing' });
   expect((await op('phone', 'decideWebhookRequest', { roomId: ROOM, webhookRequestId: shared.body.requestId, approve: true, signingSecret: 'shared-secret', revealSecret: true })).status).toBe(200);
   expect(await new RoomWebhooks(db).takeUrl(ROOM, AGENT, shared.body.requestId)).toMatchObject({ signingSecret: 'shared-secret' });
+  // The page says why a webhook exists from the approved request; a hand-made one has no reason.
+  const listed = (await op('phone', 'readRoomWebhooks', { roomId: ROOM })).body.sources;
+  const agentName = (await db.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [AGENT])).rows[0]!.name;
+  expect(listed.find((row: any) => row.source === 'shared')).toMatchObject({ reason: 'testing', requestedBy: agentName });
+  expect(listed.find((row: any) => row.source === 'direct')).not.toHaveProperty('reason');
+  expect(listed.find((row: any) => row.source === 'direct')).not.toHaveProperty('requestedBy');
 });
 
 it('requires human admin authority, accepts a Room admin without a Workspace role, and refuses agent-forged webhook events', async () => {

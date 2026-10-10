@@ -510,6 +510,8 @@ interface RoomScheduleRow {
   created_at: Date;
   surface_parent_id?: string | null;
   surface_name?: string;
+  workflow_slug: string | null;
+  run_count: number;
 }
 
 function hash(value: string): string {
@@ -945,6 +947,8 @@ function roomSchedule(row: RoomScheduleRow): RoomScheduleView {
     ...(row.surface_parent_id && row.surface_name
       ? { corner: { id: row.room_id, name: row.surface_name } }
       : {}),
+    ...(row.workflow_slug ? { workflowSlug: row.workflow_slug } : {}),
+    runCount: row.run_count,
   };
 }
 
@@ -4760,7 +4764,8 @@ export class PhoneService {
     const schedules = await this.database.query<RoomScheduleRow>(
       `SELECT schedule.id,schedule.workspace_id,schedule.room_id,schedule.agent_id,
               schedule.creator_id,schedule.cadence,schedule.message,schedule.next_run_at,
-              schedule.created_at,surface.parent_id surface_parent_id,surface.name surface_name
+              schedule.created_at,schedule.workflow_slug,schedule.run_count,
+              surface.parent_id surface_parent_id,surface.name surface_name
        FROM agent_schedules schedule
        JOIN rooms surface ON surface.id=schedule.room_id
        WHERE (surface.id=$1 OR surface.parent_id=$1) AND schedule.workflow_run IS NULL

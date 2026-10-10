@@ -28,8 +28,12 @@ const EMPTY: NeedsYouEntry = { items: null, count: null, held: new Set() };
 const entries = new Map<string, NeedsYouEntry>();
 /** Bumped by every live delta, so an older read cannot overwrite a newer slice. */
 const versions = new Map<string, number>();
-/** Live deltas heard while a list read is in flight, replayed onto its result. */
-const readsInFlight = new Map<string, Set<NeedsYouLiveDelta[]>>();
+/**
+ * Each list read in flight: live deltas heard meanwhile, replayed onto its
+ * result, and cells cleared meanwhile, left out of it.
+ */
+type ReadInFlight = { readonly deltas: NeedsYouLiveDelta[]; readonly cleared: Set<string> };
+const readsInFlight = new Map<string, Set<ReadInFlight>>();
 /** Start order of list reads; a read never overwrites one that started after it. */
 let readsStarted = 0;
 const newestRead = new Map<string, number>();
@@ -140,7 +144,7 @@ export function applyNeedsYouLiveDelta(delta: NeedsYouLiveDelta): void {
   if (viewer === undefined) return;
   const key = entryKey(viewer, delta.workspaceId);
   versions.set(key, (versions.get(key) ?? 0) + 1);
-  for (const heard of readsInFlight.get(key) ?? []) heard.push(delta);
+  for (const read of readsInFlight.get(key) ?? []) read.deltas.push(delta);
   write(delta.workspaceId, (entry) => entry.items
     ? { ...entry, items: applyNeedsSlice(entry.items, delta) }
     : { ...entry, count: delta.count });
@@ -173,20 +177,21 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
   const viewerId = await resolveViewer();
   const key = entryKey(viewerId, workspaceId);
   const started = ++readsStarted;
-  const heard: NeedsYouLiveDelta[] = [];
+  const read: ReadInFlight = { deltas: [], cleared: new Set() };
   const reads = readsInFlight.get(key) ?? new Set();
-  reads.add(heard);
+  reads.add(read);
   readsInFlight.set(key, reads);
   try {
     const result = await monolithPhoneOperation('readNeedsYou', { workspaceId });
-    const items = heard.reduce(applyNeedsSlice, sortNeeds([...result.items]));
+    const items = read.deltas.reduce(applyNeedsSlice, sortNeeds([...result.items]))
+      .filter((item) => !read.cleared.has(item.messageId));
     if (at === clientResetGeneration() && viewer === viewerId && started > (newestRead.get(key) ?? 0)) {
       newestRead.set(key, started);
       write(workspaceId, (entry) => ({ ...entry, items, count: null }));
     }
     return items;
   } finally {
-    readsInFlight.get(key)?.delete(heard);
+    readsInFlight.get(key)?.delete(read);
   }
 }
 
@@ -200,9 +205,18 @@ export function setNeedsYouList(workspaceId: string, items: readonly NeedsYouIte
   write(workspaceId, (entry) => ({ ...entry, items: sortNeeds([...items]), count: null }));
 }
 
-/** An optimistic clear: the cells leave the list and the badge together. */
+/** Every list read in flight for this viewer and Workspace. */
+function pendingReads(workspaceId: string): Iterable<ReadInFlight> {
+  return viewer === undefined ? [] : readsInFlight.get(entryKey(viewer, workspaceId)) ?? [];
+}
+
+/**
+ * An optimistic clear: the cells leave the list and the badge together. A read
+ * already in flight may answer from before the clear, so it leaves them out too.
+ */
 export function removeNeedsYou(workspaceId: string, messageIds: Iterable<string>): void {
   const ids = new Set(messageIds);
+  for (const read of pendingReads(workspaceId)) for (const id of ids) read.cleared.add(id);
   write(workspaceId, (entry) => entry.items
     ? { ...entry, items: entry.items.filter((item) => !ids.has(item.messageId)) }
     : entry);
@@ -210,6 +224,8 @@ export function removeNeedsYou(workspaceId: string, messageIds: Iterable<string>
 
 /** A failed clear puts its cells back in the list and the badge together. */
 export function restoreNeedsYou(workspaceId: string, items: readonly NeedsYouItemView[]): void {
+  for (const read of pendingReads(workspaceId))
+    for (const item of items) read.cleared.delete(item.messageId);
   write(workspaceId, (entry) => {
     if (!entry.items) return entry;
     const present = new Set(entry.items.map((item) => item.messageId));

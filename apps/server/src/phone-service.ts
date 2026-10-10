@@ -131,9 +131,17 @@ import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub 
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
-import { deriveCornerState } from './corner-state.js';
 import { advanceCorner } from './corner-lifecycle.js';
-import { chatCornerCounts } from './chat-corner-counts.js';
+import {
+  chatCornerCounts,
+  cornerRowMine,
+  cornerRowState,
+  openCornerFactsSql,
+  roomAttentionActorSql,
+  roomNeedsYouSql,
+  roomWorkingSql,
+  type OpenCornerFactsRow,
+} from './chat-corner-counts.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
@@ -424,6 +432,8 @@ interface CornerRow extends RoomRow {
   owed_viewer: boolean | null;
   attention: boolean | null;
   follows_viewer: boolean | null;
+  /** `corner_facts.commissioned_by` is the viewer. */
+  commissioned_viewer: boolean;
   /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
   archived_us: string | null;
   created_us: string;
@@ -438,6 +448,13 @@ interface CornerRow extends RoomRow {
   app_manifest: unknown | null;
   /** The corner's latest brief revision; null when it has no brief. */
   brief_revision: number | null;
+}
+/** The parent Room row's corner facts, read with its corner list. */
+interface DeckCornerFacts {
+  needs_you: boolean;
+  working: boolean;
+  attention_actor: string | null;
+  corner_rows: OpenCornerFactsRow[];
 }
 interface RoomReadRow {
   room: RoomRow & {
@@ -1085,6 +1102,7 @@ export class PhoneService {
         await database.query<AgentTurnRow & {
           authorized_viewers: string[];
           deck_needs_you: boolean;
+          deck_attention_actor: string | null;
           deck_working: boolean;
         }>(
           `WITH authorized AS (
@@ -1100,12 +1118,9 @@ export class PhoneService {
            SELECT turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
              requester.id requested_by,
              ARRAY(SELECT identity_id FROM authorized) authorized_viewers,
-             EXISTS(SELECT 1 FROM permission_authority p
-               WHERE p.status='pending' AND (p.room_id=room.id OR p.room_id IN
-                 (SELECT id FROM rooms WHERE parent_id=room.id))) deck_needs_you,
-             EXISTS(SELECT 1 FROM agent_turns active
-               WHERE active.status='working' AND (active.room_id=room.id OR active.room_id IN
-                 (SELECT id FROM rooms WHERE parent_id=room.id AND archived_at IS NULL))) deck_working
+             ${roomNeedsYouSql('room')} deck_needs_you,
+             ${roomWorkingSql('room')} deck_working,
+             ${roomAttentionActorSql('room')} deck_attention_actor
            FROM rooms room
            JOIN agent_turns turn ON turn.room_id=room.id AND turn.agent_id=$3
            LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('turn')}
@@ -1120,6 +1135,8 @@ export class PhoneService {
       const delta: RoomLiveDelta = {
         type: 'turn-delta', roomId, turn: this.projectAgentTurns([row])[0]!,
         agentState: row.deck_needs_you ? 'needs-you' : row.deck_working ? 'working' : null,
+        ...(row.deck_needs_you ? { attentionReason: { kind: 'approval' as const,
+          ...(row.deck_attention_actor ? { actor: row.deck_attention_actor } : {}) } } : {}),
       };
       for (const viewer of row.authorized_viewers) deltas.set(viewer, delta);
       return deltas;
@@ -1580,65 +1597,25 @@ export class PhoneService {
   ): Promise<{
     cornerCount: number;
     waitingCornerCount: number;
+    mineCornerCount: number;
     openCorners: ChatListCorner[];
     agentState: 'needs-you' | 'working' | null;
+    attentionReason?: NonNullable<ChatListItem['attentionReason']>;
     corners: CornerListView['corners'];
     nextOpen?: string;
   } | null> {
-    const view = await this.readCorners(parentRoomId, viewerId);
-    if (!view) return null;
-    const parent = await this.database.query<{
-      needs_you: boolean;
-      working: boolean;
-      corner_rows: Array<{
-        id: string; name: string; parent_id: string; archived_at: Date | null;
-        lifecycle: CornerLifecycleView | null; workflow_state: string | null;
-        workflow_outcome: string | null; latest_turn_status: string | null;
-        follows_viewer: boolean | null; latest_created_at: Date | null;
-        owed: boolean; owed_viewer: boolean; attention: boolean;
-      }>;
-    }>(
-      `SELECT
-         EXISTS(SELECT 1 FROM permission_authority p
-           WHERE (p.room_id=r.id OR p.room_id IN
-             (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you,
-         EXISTS(SELECT 1 FROM agent_turns t
-           WHERE (t.room_id=r.id OR t.room_id IN
-             (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL))
-             AND t.status='working') working,
-         COALESCE((SELECT jsonb_agg(to_jsonb(corners) ORDER BY corners.created_at DESC,corners.id)
-           FROM (SELECT c.id,c.name,c.parent_id,c.created_at,c.archived_at,
-             f.lifecycle,f.workflow_state,f.workflow_outcome,
-             turn.status latest_turn_status,
-             ${followsCornerSql('c', '$2')} follows_viewer,
-             lm.created_at latest_created_at,
-             owed.owed,owed.owed_viewer,owed.attention
-           FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
-           LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id
-             AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
-           LEFT JOIN LATERAL (SELECT status FROM agent_turns WHERE room_id=c.id
-             ORDER BY created_at DESC LIMIT 1) turn ON true
-           ${cornerOwedLookupSql('c', '$2')}
-           WHERE c.parent_id=r.id AND c.archived_at IS NULL AND EXISTS (
-             SELECT 1 FROM memberships child_member WHERE child_member.room_id=c.id
-               AND child_member.identity_id=$2 AND child_member.removed_at IS NULL)
-           ) corners),'[]'::jsonb) corner_rows
-       FROM rooms r JOIN memberships member ON member.room_id=r.id
-         AND member.identity_id=$2 AND member.removed_at IS NULL
-       JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
-         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
-         AND workspace_member.removed_at IS NULL
-       WHERE r.id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL`,
-      [parentRoomId, viewerId],
-    );
-    if (!parent.rows[0]) return null;
-    const counts = chatCornerCounts(parent.rows[0].corner_rows.map((corner) =>
+    const loaded = await this.loadCorners(parentRoomId, viewerId, false, false,
+      undefined, undefined, true);
+    if (!loaded?.deck) return null;
+    const { view, deck } = loaded;
+    const counts = chatCornerCounts(deck.corner_rows.map((corner) =>
       reviveDates(corner, ['archived_at', 'latest_created_at']))).get(parentRoomId) ?? {
-      cornerCount: 0, waitingCornerCount: 0, openCorners: [],
+      cornerCount: 0, waitingCornerCount: 0, mineCornerCount: 0, openCorners: [],
     };
     return { ...counts,
-      agentState: parent.rows[0].needs_you ? 'needs-you'
-        : parent.rows[0].working ? 'working' : null,
+      agentState: deck.needs_you ? 'needs-you' : deck.working ? 'working' : null,
+      ...(deck.needs_you ? { attentionReason: { kind: 'approval' as const,
+        ...(deck.attention_actor ? { actor: deck.attention_actor } : {}) } } : {}),
       corners: view.corners,
       ...(view.nextOpen ? { nextOpen: view.nextOpen } : {}),
     };
@@ -1706,13 +1683,13 @@ export class PhoneService {
         lm.id latest_id,lm.text latest_text,lm.attachments latest_attachments,lm.created_at latest_created_at,lm.author_id latest_author_id,
         $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,
         li.kind latest_author_kind,li.name latest_author_name,li.handle latest_author_handle,li.avatar latest_author_avatar,li.face_id latest_author_face,
-        attention_actor.name attention_actor_name,
+        ${roomAttentionActorSql('r')} attention_actor_name,
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
         NULL::jsonb peer_presence_body,NULL::timestamptz peer_presence_updated_at,
         NULL::timestamptz peer_activity_at,false unread,
         false agents_offline,
-        EXISTS(SELECT 1 FROM agent_turns t WHERE (t.room_id=r.id OR t.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL)) AND t.status='working') working,
-        EXISTS(SELECT 1 FROM permission_authority p WHERE (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you,
+        ${roomWorkingSql('r')} working,
+        ${roomNeedsYouSql('r')} needs_you,
         (r.direct_participants IS NOT NULL AND EXISTS(
           SELECT 1 FROM chat_dismissals dismissal
           WHERE dismissal.room_id=r.id AND dismissal.identity_id=$2
@@ -1732,22 +1709,6 @@ export class PhoneService {
         ORDER BY created_at DESC,id DESC LIMIT 1
       ) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
-      LEFT JOIN LATERAL (
-        SELECT agent.name
-        FROM permission_authority permission
-        LEFT JOIN LATERAL (
-          SELECT message.card FROM messages message
-          WHERE message.room_id=permission.room_id AND message.card_type='permission'
-            AND message.card->>'permissionId'=permission.permission_id
-          ORDER BY message.created_at DESC,message.id DESC LIMIT 1
-        ) permission_card ON true
-        LEFT JOIN identities agent ON agent.id=permission_card.card->'agent'->>'pubkey'
-        WHERE permission.status='pending'
-          AND (permission.room_id=r.id OR permission.room_id IN (
-            SELECT id FROM rooms WHERE parent_id=r.id
-          ))
-        ORDER BY permission.updated_at DESC LIMIT 1
-      ) attention_actor ON true
       LEFT JOIN identities peer ON jsonb_typeof(r.direct_participants)='array'
         AND peer.id=(SELECT p FROM jsonb_array_elements_text(
           CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
@@ -1779,10 +1740,7 @@ export class PhoneService {
         presence: Array<{ room_id: string; peer_presence_body: Record<string, unknown> | null;
           peer_presence_updated_at: Date | null; peer_activity_at: Date | null; agents_offline: boolean }>;
         cursors: Array<{ room_id: string; unread: boolean }>;
-        corner_summaries: Array<{ parent_id: string; corner_count: number;
-          waiting_count: number; preview: Array<{ id: string; name: string; state: ChatListCorner['state'];
-            follows_viewer: boolean; owed_viewer: boolean; attention: boolean;
-            latest_created_at: string | null }> }>;
+        corner_rows: OpenCornerFactsRow[];
       }>(`WITH presence AS (
           SELECT room.id room_id,presence.body peer_presence_body,
             presence.updated_at peer_presence_updated_at,
@@ -1835,72 +1793,11 @@ export class PhoneService {
             ORDER BY message.created_at DESC,message.id DESC LIMIT 1
           ) latest ON true
           WHERE room.id=ANY($1::uuid[])
-        ), corner_candidates AS (
-          SELECT c.id,c.name,c.parent_id,c.created_at,
-            ${followsCornerSql('c', '$2')} follows_viewer,
-            lm.created_at latest_created_at,
-            owed.owed,owed.owed_viewer,owed.attention,
-            turn.status latest_turn_status,
-            COALESCE(f.workflow_state,CASE
-              WHEN NULLIF(f.lifecycle#>>'{pr,mergedAt}','') IS NOT NULL
-                OR f.lifecycle->>'outcome'='landed'
-                OR lower(btrim(f.lifecycle->>'lifecycle'))='merged' THEN 'landed'
-              WHEN c.archived_at IS NOT NULL OR f.lifecycle->>'outcome'='abandoned'
-                OR lower(btrim(f.lifecycle->>'lifecycle')) IN
-                  ('done','concluded','closed','abandoned','cleaned') THEN 'closed'
-              WHEN jsonb_typeof(f.lifecycle->'pr')='object' THEN CASE
-                WHEN COALESCE(f.lifecycle#>>'{checksSummary,status}',f.lifecycle->>'checks')='failing'
-                  THEN 'implement'
-                WHEN COALESCE(f.lifecycle#>>'{checksSummary,status}',f.lifecycle->>'checks')='passing'
-                  THEN 'review' ELSE 'checks' END
-              WHEN lower(btrim(f.lifecycle->>'reason'))='question'
-                OR lower(btrim(f.lifecycle->>'lifecycle'))='question' THEN 'ask_human'
-              ELSE 'implement' END) run_state,
-            COALESCE(f.workflow_outcome,CASE
-              WHEN jsonb_typeof(f.lifecycle->'pr')='object' AND
-                COALESCE(f.lifecycle#>>'{checksSummary,status}',f.lifecycle->>'checks')='failing'
-                THEN 'failing'
-              WHEN lower(btrim(f.lifecycle->>'reason')) IN ('failure','failed')
-                OR lower(btrim(f.lifecycle->>'lifecycle')) IN ('failure','failed')
-                THEN 'failed' END) run_outcome
-          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
-          LEFT JOIN LATERAL (SELECT created_at FROM messages WHERE room_id=c.id
-            AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
-          LEFT JOIN LATERAL (SELECT status FROM agent_turns WHERE room_id=c.id
-            ORDER BY created_at DESC LIMIT 1) turn ON true
-          ${cornerOwedLookupSql('c', '$2')}
-          WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
-            SELECT 1 FROM memberships member WHERE member.room_id=c.id
-              AND member.identity_id=$2 AND member.removed_at IS NULL
-          )
-        ), corner_states AS (
-          SELECT corner_candidates.*,CASE
-            WHEN run_state IN ('landed','closed') THEN 'archived'
-            WHEN latest_turn_status='working' THEN 'working'
-            WHEN run_state IN ('checks','review') OR
-              (run_state='implement' AND run_outcome='failing') THEN 'review'
-            WHEN run_state='ask_human' OR
-              (run_state='implement' AND run_outcome='failed') THEN 'waiting'
-            WHEN owed=false THEN 'idle' ELSE 'waiting' END state
-          FROM corner_candidates
-        ), corner_ranked AS (
-          SELECT corner_states.*,row_number() OVER (
-            PARTITION BY parent_id ORDER BY (state<>'archived') DESC,created_at DESC,id DESC
-          ) rn FROM corner_states
-        ), corner_summaries AS (
-          SELECT parent_id,
-            count(*) FILTER (WHERE state<>'archived')::int corner_count,
-            count(*) FILTER (WHERE state='waiting')::int waiting_count,
-            COALESCE(jsonb_agg(jsonb_build_object('id',id,'name',name,'state',state,
-              'follows_viewer',follows_viewer,'owed_viewer',owed_viewer,
-              'attention',attention,'latest_created_at',latest_created_at)
-              ORDER BY created_at DESC,id DESC)
-              FILTER (WHERE rn<=8 AND state<>'archived'),'[]'::jsonb) preview
-          FROM corner_ranked GROUP BY parent_id
-        )
+        ), corner_rows AS (${openCornerFactsSql('=ANY($1::uuid[])', '$2')})
         SELECT COALESCE((SELECT jsonb_agg(to_jsonb(p)) FROM presence p),'[]'::jsonb) presence,
           COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM cursors c),'[]'::jsonb) cursors,
-          COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM corner_summaries c),'[]'::jsonb) corner_summaries`,
+          COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.created_at DESC,c.id DESC)
+            FROM corner_rows c),'[]'::jsonb) corner_rows`,
         [roomIds, viewerId, new Date(Date.now() - AGENT_REACHABLE_HORIZON_MS)],
       ),
     );
@@ -1908,27 +1805,15 @@ export class PhoneService {
     const presence = enrichmentRow ? { rows: enrichmentRow.presence.map((row) =>
       reviveDates(row, ['peer_presence_updated_at', 'peer_activity_at'])) } : undefined;
     const cursors = enrichmentRow ? { rows: enrichmentRow.cursors } : undefined;
-    const cornerSummaries = enrichmentRow?.corner_summaries;
+    const cornerRows = enrichmentRow?.corner_rows;
     // A timed-out enrichment is unknown, not empty. Omitting its fields (and
     // naming unread, which old phones require) lets the phone keep what it
     // last knew instead of painting no corners and no unread dot.
-    const countsByRoom = cornerSummaries ? new Map(cornerSummaries.map((summary) => [
-      summary.parent_id,
-      {
-        cornerCount: summary.corner_count,
-        waitingCornerCount: summary.waiting_count,
-        openCorners: summary.preview.map((corner): ChatListCorner => ({
-          id: corner.id,name: corner.name,state: corner.state,
-          ...(corner.follows_viewer || corner.owed_viewer ? { mine: true } : {}),
-          ...(corner.state === 'waiting' && (corner.follows_viewer || corner.owed_viewer) &&
-            corner.latest_created_at ? { waitingSince: unix(new Date(corner.latest_created_at)) } : {}),
-          ...(corner.state === 'waiting' && corner.attention ? { attention: true } : {}),
-        })),
-      },
-    ])) : undefined;
+    const countsByRoom = cornerRows ? chatCornerCounts(cornerRows.map((corner) =>
+      reviveDates(corner, ['archived_at', 'latest_created_at']))) : undefined;
     const unavailable = [
       ...(cursors ? [] : ['unread' as const]),
-      ...(cornerSummaries ? [] : ['corners' as const]),
+      ...(cornerRows ? [] : ['corners' as const]),
     ];
     const presenceByRoom = new Map(presence?.rows.map((item) => [item.room_id, item]) ?? []);
     const cursorByRoom = new Map(cursors?.rows.map((item) => [item.room_id, item]) ?? []);
@@ -1961,7 +1846,7 @@ export class PhoneService {
           ...(row.closed ? { closed: true } : {}),
           memberCount: Number(row.member_count),
           ...(countsByRoom
-            ? (countsByRoom.get(row.id) ?? { cornerCount: 0, waitingCornerCount: 0 })
+            ? (countsByRoom.get(row.id) ?? { cornerCount: 0, waitingCornerCount: 0, mineCornerCount: 0 })
             : {}),
           ...(row.latest_id &&
           row.latest_created_at &&
@@ -2668,6 +2553,24 @@ export class PhoneService {
     archivedBefore?: ArchivedCornerCursor,
     openBefore?: ArchivedCornerCursor,
   ): Promise<CornerListView | null> {
+    return (await this.loadCorners(roomId, viewerId, roomViewFamilyOrder, archived,
+      archivedBefore, openBefore))?.view ?? null;
+  }
+
+  /**
+   * `readCorners`, and with `deck` the parent Room row's corner facts from the
+   * same statement, so a live frame's list and counts share one snapshot.
+   * `deck` is null when the Room is a corner or archived.
+   */
+  private async loadCorners(
+    roomId: string,
+    viewerId: string,
+    roomViewFamilyOrder = false,
+    archived = false,
+    archivedBefore?: ArchivedCornerCursor,
+    openBefore?: ArchivedCornerCursor,
+    deck = false,
+  ): Promise<{ view: CornerListView; deck: DeckCornerFacts | null } | null> {
     const cornerQuery = this.cornerRowsSql(roomViewFamilyOrder, archived, archivedBefore ?? openBefore);
     const result = await this.database.query<{
       room_row: RoomRow & {
@@ -2677,6 +2580,7 @@ export class PhoneService {
       corner_rows: CornerRow[];
       viewer_row: IdentityRow;
       app_rows: Array<{ id: string; manifest: unknown }>;
+      deck: DeckCornerFacts | null;
     }>(`WITH authorized AS (
         SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
         FROM rooms r JOIN memberships m ON m.room_id=r.id
@@ -2693,7 +2597,16 @@ export class PhoneService {
           'handle',viewer.handle,'avatar',viewer.avatar,'face_id',viewer.face_id) viewer_row,
         COALESCE((SELECT jsonb_agg(jsonb_build_object('id',app.id,'manifest',app.manifest)
           ORDER BY app.connected_at DESC,app.id)
-          FROM corner_app_installations app WHERE app.workspace_id=authorized.workspace_id),'[]'::jsonb) app_rows
+          FROM corner_app_installations app WHERE app.workspace_id=authorized.workspace_id),'[]'::jsonb) app_rows,
+        ${deck ? `CASE WHEN authorized.parent_id IS NULL AND authorized.archived_at IS NULL
+          THEN jsonb_build_object(
+            'needs_you',${roomNeedsYouSql('authorized')},
+            'working',${roomWorkingSql('authorized')},
+            'attention_actor',${roomAttentionActorSql('authorized')},
+            'corner_rows',COALESCE((SELECT jsonb_agg(to_jsonb(deck_corner)
+              ORDER BY deck_corner.created_at DESC,deck_corner.id DESC)
+              FROM (${openCornerFactsSql('=authorized.id', '$2')}) deck_corner),'[]'::jsonb))
+          END` : 'NULL::jsonb'} deck
       FROM authorized JOIN identities viewer ON viewer.id=$2`,
       (archivedBefore ?? openBefore)
         ? [roomId, viewerId, (archivedBefore ?? openBefore)!.micros, (archivedBefore ?? openBefore)!.id]
@@ -2714,7 +2627,7 @@ export class PhoneService {
     const more = fetched.length > pageSize;
     const rows = more ? fetched.slice(0, pageSize) : fetched;
     const last = rows.at(-1);
-    return {
+    const view: CornerListView = {
       room: roomHeader(room, this.publicOrigin),
       corners: this.projectCorners(rows),
       ...(archived && more && last?.archived_us ? { nextArchived: `${last.archived_us},${last.id}` } : {}),
@@ -2733,6 +2646,7 @@ export class PhoneService {
       },
       watchFilters: [],
     };
+    return { view, deck: loaded.deck };
   }
 
   private async roomRows(roomId: string, viewerId: string): Promise<RoomReadRow | undefined> {
@@ -3152,13 +3066,16 @@ export class PhoneService {
         app_binding.instance_id app_instance_id,app_installation.manifest app_manifest,
         ${archived ? 'NULL::boolean owed,NULL::boolean owed_viewer,NULL::boolean attention' : 'owed.owed,owed.owed_viewer,owed.attention'},
         ${archived ? 'NULL::boolean' : followsCornerSql('c', '$2')} follows_viewer,
+        (f.commissioned_by IS NOT NULL AND f.commissioned_by=$2) commissioned_viewer,
         ${archivedMicros}::text archived_us,
         ${createdMicros}::text created_us,
         (SELECT max(brief.revision) FROM corner_brief_revisions brief WHERE brief.corner_id=c.id) brief_revision
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
       LEFT JOIN identities initiator
         ON initiator.id=f.commissioned_by AND initiator.kind='human'
-      LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+      LEFT JOIN LATERAL (SELECT * FROM messages message WHERE message.room_id=c.id
+        AND message.presentation IN ('message','system') AND ${visibleChatMessageSql('message')}
+        ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN LATERAL (
         SELECT i.id identity_id,
@@ -3189,15 +3106,7 @@ export class PhoneService {
         checks: 'unknown',
       };
       const hasLiveWorkingTurn = corner.latest_turn_status === 'working';
-      const derived = deriveCornerState({
-        archived: Boolean(corner.archived_at),
-        turnRunning: hasLiveWorkingTurn,
-        ...(corner.workflow_state
-          ? { run: { state: corner.workflow_state, outcome: corner.workflow_outcome ?? undefined } }
-          : {}),
-        lifecycle,
-        ...(corner.owed !== null ? { owed: corner.owed } : {}),
-      });
+      const derived = cornerRowState({ ...corner, lifecycle });
       const header = roomHeader(corner, this.publicOrigin);
       const about = header.about ?? (corner.objective?.trim() || undefined);
       const appManifest = readCornerAppManifest(corner.app_manifest);
@@ -3219,6 +3128,7 @@ export class PhoneService {
           ? { awaitsViewer: true as const }
           : {}),
         ...(corner.follows_viewer ? { followsViewer: true as const } : {}),
+        ...(cornerRowMine(corner) ? { mine: true as const } : {}),
         ...(corner.initiator_id && corner.initiator_name
           ? {
               initiator: {

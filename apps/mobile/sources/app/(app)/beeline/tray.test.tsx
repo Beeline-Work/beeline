@@ -12,7 +12,7 @@ const appState = vi.hoisted(() => ({
   listeners: new Set<(state: string) => void>(),
 }));
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
-const route = vi.hoisted(() => ({ params: { communityId: 'ws' } as { communityId?: string } }));
+const route = vi.hoisted(() => ({ params: { communityId: 'ws', workspaceName: 'Clover Workspace' } as { communityId?: string; workspaceName?: string } }));
 const workspaceSet = vi.hoisted(() => ({
   active: null as string | null,
   workspaces: [] as { id: string }[],
@@ -104,6 +104,14 @@ vi.mock('@expo/vector-icons', async () => {
   return { Ionicons: (props: any) => ReactModule.createElement('Ionicons', props) };
 });
 vi.mock('@/auth/buzz-identity-storage', () => auth);
+vi.mock('@/buzz/surface-storage', () => ({
+  surfaceAddress: (_relay: string, _viewer: string, endpoint: string) => endpoint,
+  mobileSurfaceCache: {
+    read: vi.fn(async () => null),
+    write: vi.fn(async () => undefined),
+    remove: vi.fn(async () => undefined),
+  },
+}));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/push/push-room-prefetch', () => ({ prefetchPushRoom: prefetchRoom }));
 vi.mock('@/sync/transport/room-view-client', () => ({
@@ -275,7 +283,7 @@ beforeEach(() => {
   navigation.back.mockReset();
   navigation.push.mockReset();
   navigation.replace.mockReset();
-  route.params = { communityId: 'ws' };
+  route.params = { communityId: 'ws', workspaceName: 'Clover Workspace' };
   workspaceSet.active = null;
   workspaceSet.workspaces = [];
   phoneOperation.mockReset();

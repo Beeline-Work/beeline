@@ -23,6 +23,8 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { Modal } from '@/modal/ModalManager';
 import { navigateToRoom } from '@/buzz/corner-navigation';
 import { displayModel } from '@/buzz/model-display';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { isWorkspaceView } from '@beeline/buzz-client';
 
 export function HumanProfile({
   workspaceId,
@@ -50,15 +52,21 @@ export function HumanProfile({
   const mutation = useRef(false);
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setMember(null);
-    setViewer(undefined);
+    if (!member) setLoading(true);
     setError(null);
     setEditing(false);
     void (async () => {
-      const identity = await loadBuzzIdentity();
+      const [identity, baseUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
       if (!identity) throw new Error('Sign in to view this profile.');
-      const baseUrl = await getEffectiveRelayUrl();
+      const workspace = await mobileSurfaceCache.read(
+        surfaceAddress(baseUrl, identity.publicKey, '/workspace/:id', { workspaceId }), isWorkspaceView);
+      const cachedPerson = workspace?.members.find((entry) => entry.identity.pubkey === memberId);
+      if (cachedPerson && !cancelled) {
+        setMember(cachedPerson);
+        setRole(cachedPerson.role);
+        setViewer(workspace?.viewer);
+        setLoading(false);
+      }
       const client = new RoomViewClient({ identity, baseUrl });
       const [page, owned] = await Promise.all([
         client.workspaceMembers(workspaceId, { memberId }),

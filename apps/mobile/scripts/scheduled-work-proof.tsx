@@ -36,6 +36,12 @@ async function run() {
   const Page = PAGES[page];
   createRoot(document.getElementById('root')!).render(<Page />);
   for (let i = 0; i < 8; i += 1) await pause();
+  // A failed schedule read shows its error; Retry reads it again.
+  const beforeRetry = leaves().map((node) => node.textContent);
+  if (document.querySelector('[data-testid="workflow-schedule-error"]')) {
+    click('workflow-schedule-error');
+    for (let i = 0; i < 4; i += 1) await pause();
+  }
   const nodes = leaves();
   const text = nodes.map((node) => node.textContent);
   const find = (value: string) => nodes.find((node) => node.textContent === value);
@@ -57,6 +63,7 @@ async function run() {
   for (let i = 0; i < 3; i += 1) await pause();
   report(
     JSON.stringify({
+      beforeRetry,
       text,
       eyebrowFont: font(eyebrow),
       titleFont: font(title),

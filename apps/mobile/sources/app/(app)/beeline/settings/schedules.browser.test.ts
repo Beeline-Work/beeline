@@ -33,6 +33,10 @@ function shims(mobile: string): Record<string, string> {
       if (name === 'manageRoomWebhook' || name === 'deleteRoomSchedule') return {};
       if (name === 'readWorkflowDefinition') return { contract: ${contract}, runs: [] };
       if (name !== 'listRoomSchedules') throw new Error('unexpected ' + name);
+      if (new URLSearchParams(location.search).has('failScheduleRead') && !globalThis.__failedScheduleRead) {
+        globalThis.__failedScheduleRead = true;
+        throw new Error('schedule read unavailable');
+      }
       return {
       schedules: [
         { id: 'daily', workspaceId: 'workspace-1', roomId: 'room-1', agentId: 'agent-1',
@@ -66,6 +70,7 @@ function shims(mobile: string): Record<string, string> {
 }
 
 type Page = {
+  beforeRetry: string[];
   text: string[];
   eyebrowFont: string | null;
   titleFont: string | null;
@@ -212,5 +217,21 @@ describe.skipIf(!existsSync(CHROME))('Schedules and Webhooks pages in a browser'
     expect(page.inputs).toContainEqual(['readWorkflowDefinition', { roomId: 'corner-1', name: 'feedback-triage' }]);
     stopped(page, 'deleteRoomSchedule');
     expect(page.inputs).toContainEqual(['deleteRoomSchedule', { roomId: 'room-1', scheduleId: 'video' }]);
+  }, 120_000);
+
+  it('shows a failed schedule read on the workflow page, and Retry restores its rows and Stop', async () => {
+    const page = await proof(
+      '?page=workflow&roomId=corner-1&name=feedback-triage&scheduleId=video&parentRoomId=room-1&failScheduleRead=1',
+    );
+    expect(page.beforeRetry).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^Could not load schedules and webhooks: .*schedule read unavailable · Retry$/),
+        'Steps',
+      ]),
+    );
+    expect(page.beforeRetry).not.toContain('Stop schedule');
+    expect(page.text).toEqual(expect.arrayContaining(['Agent', '@Ruby', '#issues-triage', 'Stop schedule']));
+    expect(page.text.some((line) => line.includes('Could not load'))).toBe(false);
+    stopped(page, 'deleteRoomSchedule');
   }, 120_000);
 });

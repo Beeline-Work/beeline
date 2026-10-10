@@ -85,6 +85,13 @@ export default function Workflow() {
           </Text>
         </Pressable>
       ) : null}
+      {scheduleId && scheduled.error ? (
+        <Pressable onPress={scheduled.retry} testID="workflow-schedule-error">
+          <Text accessibilityRole="alert" style={styles.error}>
+            {scheduled.error} · Retry
+          </Text>
+        </Pressable>
+      ) : null}
       {!detail && !error ? <SurfaceGlyphLoader /> : null}
       {detail ? (
         <ScrollView contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}>

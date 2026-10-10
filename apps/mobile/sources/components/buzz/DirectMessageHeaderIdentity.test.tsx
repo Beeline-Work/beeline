@@ -10,8 +10,6 @@ vi.mock('./HeaderLadder', () => ({
 }));
 vi.mock('./IdentityMark', () => ({
   IdentityMark: (props: any) => React.createElement('IdentityMark', props),
-  isConnectorLogoUrl: (url: string | undefined) =>
-    Boolean(url && /\/v1\/connectors\/logo\/[a-z0-9-]+\.svg(?:\?|$)/.test(url)),
 }));
 
 import { DirectMessageHeaderIdentity } from './DirectMessageHeaderIdentity';

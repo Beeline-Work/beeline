@@ -1,8 +1,4 @@
-import {
-  cornerShortTitle,
-  type CornerState,
-  type CornerStateReason,
-} from '@beeline/api-contract/phone';
+import type { CornerState, CornerStateReason } from '@beeline/api-contract/phone';
 
 export type CornerSuperState = 'working' | 'needs-human' | 'finished';
 
@@ -71,14 +67,6 @@ export function resolveCornerLifecycleStatus(
   confirmedArchived: boolean,
 ): CornerState {
   return confirmedArchived ? 'archived' : known;
-}
-
-/**
- * A corner is titled by its stored NAME, which is continuous (no whitespace).
- * An empty or `sub-` name falls back to an id slug.
- */
-export function cornerName(name: string | undefined, id: string): string {
-  return cornerShortTitle(undefined, name, id);
 }
 
 /**

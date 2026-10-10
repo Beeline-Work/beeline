@@ -1,6 +1,10 @@
 import { useCallback, useState } from 'react';
 import { router, useFocusEffect, type Href } from 'expo-router';
-import type { RoomScheduleView, RoomWebhooksResult } from '@beeline/api-contract/phone';
+import {
+  cornerTitle,
+  type RoomScheduleView,
+  type RoomWebhooksResult,
+} from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -32,7 +36,9 @@ export function promptLead(message: string): string {
 
 /** `#corner` for a schedule in a child corner, otherwise this Room. */
 export function scheduleWhere(schedule: Pick<RoomScheduleView, 'corner'>): string {
-  return schedule.corner ? `#${schedule.corner.name}` : 'this Room';
+  return schedule.corner
+    ? cornerTitle(undefined, schedule.corner.name, schedule.corner.id)
+    : 'this Room';
 }
 
 /** Line 1 of a schedule row: what it runs · when it runs. */

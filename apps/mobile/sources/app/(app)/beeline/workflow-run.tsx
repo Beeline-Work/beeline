@@ -5,11 +5,14 @@ import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
-import type { WorkflowRunDetailView, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+import {
+  identityHandle,
+  type WorkflowRunDetailView,
+  type WorkflowRunSummaryView,
+} from '@beeline/api-contract/phone';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { cornerHref, messageJumpHref } from '@/buzz/corner-navigation';
 import { useRoomLiveDrafts } from '@/buzz/room-live-drafts';
-import { previewHandle } from '@/buzz/room-list-row';
 import { liveRoomRuns, useRoomWorkflowRuns } from '@/buzz/use-room-workflow-run';
 import { workflowDisplayName, workflowStateLabel } from '@/buzz/workflow-graph';
 import { formatRunDuration, runDayLabel, workflowRunHeadline, workflowRunHref, workflowStarterLine } from '@/buzz/workflow-run-copy';
@@ -195,7 +198,7 @@ function AlsoRunning({ roomId, current, now }: { roomId: string; current: Workfl
               {`${workflowDisplayName(other.workflowSlug)} · ${workflowStateLabel(other.state)}`}
             </Text>
             {other.holder ? (
-              <Text numberOfLines={1} style={styles.alsoRunningHolder}>{`@${previewHandle(other.holder)}`}</Text>
+              <Text numberOfLines={1} style={styles.alsoRunningHolder}>{`@${identityHandle(other.holder)}`}</Text>
             ) : null}
           </View>
           <Text style={styles.statusMeta}>{formatRunDuration(now - other.startedAt)}</Text>

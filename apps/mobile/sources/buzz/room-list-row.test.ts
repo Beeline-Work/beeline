@@ -23,15 +23,13 @@ vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 import type { CornerSummary } from './corners';
-import type { CornerState } from '@beeline/api-contract/phone';
+import { identityHandle, type CornerState } from '@beeline/api-contract/phone';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import {
   roomRowShowsCornerMark,
-  displayRoomIndexTitle,
   expandedCornerRefreshAction,
   isRoomAlive,
   NO_ACTIVITY_PREVIEW,
-  previewHandle,
   roomRowName,
   roomRowAttentionReason,
   roomRowNeedsAttention,
@@ -734,20 +732,6 @@ describe('Room row presentation', () => {
     );
     expect(clustered.map(({ item }) => item.id)).toEqual(['read-needs-you', 'unread-idle']);
   });
-
-  describe('displayRoomIndexTitle (the # channel-mark teaching cue)', () => {
-    it('adds exactly one # to a stored Room name, presentation only', () => {
-      expect(displayRoomIndexTitle('Roadmap')).toBe('#Roadmap');
-      // Idempotent: a name already carrying the mark is not double-prefixed.
-      expect(displayRoomIndexTitle('#Roadmap')).toBe('#Roadmap');
-    });
-
-    it('never decorates a fabricated placeholder', () => {
-      expect(displayRoomIndexTitle(undefined)).toBeUndefined();
-      expect(displayRoomIndexTitle('')).toBeUndefined();
-      expect(displayRoomIndexTitle('   ')).toBeUndefined();
-    });
-  });
 });
 
 // ── The Speakeasy index row (captain decision 2026-09-03) ────────────────────
@@ -821,9 +805,9 @@ describe('roomRowName — the sigil is the name’s first glyph', () => {
   });
 });
 
-describe('previewHandle', () => {
+describe('identityHandle in the Room list', () => {
   it('uses the connector name instead of its machine handle', () => {
-    expect(previewHandle(squire)).toBe('Trusty Squire');
+    expect(identityHandle(squire)).toBe('Trusty Squire');
     expect(roomRowName({ room, directMessage: { peer: squire } })).toEqual({
       sigil: '@',
       name: 'Trusty Squire',
@@ -836,7 +820,7 @@ describe('previewHandle', () => {
       ['Google Calendar', 'google-calendar'],
     ]) {
       const peer = { name, handle, avatar: `https://server.test/v1/connectors/logo/${handle}.svg` };
-      expect(previewHandle(peer)).toBe(name);
+      expect(identityHandle(peer)).toBe(name);
       expect(
         roomRowName({ room, directMessage: { peer: { ...peer, pubkey: handle, kind: 'human' } } })
           .name,
@@ -844,11 +828,11 @@ describe('previewHandle', () => {
     }
   });
   it('uses the local part of a nip05 handle, stripping any leading @', () => {
-    expect(previewHandle({ name: 'Ada', handle: '@ada@usebeeline.app' })).toBe('ada');
+    expect(identityHandle({ name: 'Ada', handle: '@ada@usebeeline.app' })).toBe('ada');
   });
 
   it('falls back to the display name without a handle', () => {
-    expect(previewHandle(beebee)).toBe('Beebee');
+    expect(identityHandle(beebee)).toBe('Beebee');
   });
 });
 

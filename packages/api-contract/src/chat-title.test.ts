@@ -4,6 +4,7 @@ import {
   cornerTitle,
   directMessageTitle,
   identityHandle,
+  isConnectorLogoUrl,
   roomTitle,
 } from './chat-title.js';
 import { readClearPushData, readClearReads } from './push-actions.js';
@@ -83,6 +84,12 @@ describe('directMessageTitle', () => {
         avatar: 'https://x/v1/connectors/logo/github.svg',
       }),
     ).toBe('@GitHub');
+  });
+
+  it('recognises only a connector logo path as a connector logo', () => {
+    expect(isConnectorLogoUrl('https://x/v1/connectors/logo/google-drive.svg?v=2')).toBe(true);
+    expect(isConnectorLogoUrl('https://x/v1/connectors/logo/github.png')).toBe(false);
+    expect(isConnectorLogoUrl(undefined)).toBe(false);
   });
 });
 

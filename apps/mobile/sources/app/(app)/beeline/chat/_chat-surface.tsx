@@ -72,7 +72,9 @@ import {
 } from '@beeline/buzz-client';
 import {
   cornerDisplayName,
+  cornerShortTitle,
   directMessageTitle,
+  roomTitle,
   type AgentComposerCommand,
   type WorkflowRunSummaryView,
   type WorkspaceView,
@@ -114,7 +116,6 @@ import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { cornerProposalDecision } from '@/buzz/corner-proposal';
-import { cornerName } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { buildSpeechLexicon } from '@/buzz/speech-lexicon';
 import {
@@ -173,7 +174,7 @@ import {
   roomViewParentId,
 } from '@/buzz/corner-display-state';
 import {
-  directMessageHeaderName,
+  directMessageHeaderIdentity,
   fallbackMemberHandle,
   fallbackMemberName,
   personIdentityLabel,
@@ -2386,12 +2387,14 @@ export function BuzzChatSurface({
     if (!dmPeerPubkey) return roomName;
     // One title rule with the Room list row: `@<handle>` from the peer.
     if (dmPeerAgentDisplay) return directMessageTitle(dmPeerIdentity ?? dmPeerAgentDisplay);
-    return directMessageHeaderName(
-      dmPeerIdentity,
-      dmPeerProfile,
-      dmPeerPubkey,
-      isReadOnlyDirectMessage,
-      dmAnnouncementAuthor,
+    return directMessageTitle(
+      directMessageHeaderIdentity(
+        dmPeerIdentity,
+        dmPeerProfile,
+        dmPeerPubkey,
+        isReadOnlyDirectMessage,
+        dmAnnouncementAuthor,
+      ),
     );
   }, [
     dmAnnouncementAuthor,
@@ -4780,7 +4783,7 @@ export function BuzzChatSurface({
           if (!confirmed) return;
           await transport.deleteRoom(decodedId);
         } else {
-          const title = displayRoomName.startsWith('#') ? displayRoomName : `#${displayRoomName}`;
+          const title = roomTitle(displayRoomName) ?? displayRoomName;
           const left = await leaveRoomWithConfirmation(
             title,
             roomSurface?.leaveDeletesRoom === true,
@@ -5308,7 +5311,7 @@ export function BuzzChatSurface({
       return (
         <View key={marker.id}>
           <CornerOpenedMarker
-            title={cornerName(fact.name ?? cornerDisplayName(fact.objective), fact.cornerId)}
+            title={cornerShortTitle(undefined, fact.name ?? cornerDisplayName(fact.objective), fact.cornerId)}
             closed={fact.type === 'corner-complete' || fact.type === 'worktree-cleaned'}
             onOpen={() => openCorner(fact.cornerId)}
             testID={`corner-opened-marker-${fact.cornerId}`}

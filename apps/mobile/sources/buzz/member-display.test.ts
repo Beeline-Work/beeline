@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { directMessageTitle } from '@beeline/api-contract/phone';
 import { roomRowName } from './room-list-row';
 import {
-  directMessageHeaderName,
+  directMessageHeaderIdentity,
   directMessagePeer,
   fallbackMemberHandle,
   fallbackMemberName,
@@ -10,11 +10,13 @@ import {
 } from './member-display';
 
 const pubkey = 'a'.repeat(64);
+const headerTitle = (...args: Parameters<typeof directMessageHeaderIdentity>) =>
+  directMessageTitle(directMessageHeaderIdentity(...args));
 
 describe('direct-message member display', () => {
   it('titles a grant DM header with the shared connector title', () => {
     expect(
-      directMessageHeaderName(
+      headerTitle(
         { pubkey: 's'.repeat(64), kind: 'human', name: 'Trusty Squire', handle: 'trusty-squire' },
         undefined,
         's'.repeat(64),
@@ -24,7 +26,7 @@ describe('direct-message member display', () => {
   });
   it('uses the server connector identity over an older Lena profile', () => {
     expect(
-      directMessageHeaderName(
+      headerTitle(
         { pubkey: 's'.repeat(64), kind: 'human', name: 'Trusty Squire', handle: 'trusty-squire' },
         { name: 'Lena', handle: 'lena', nip05: 'lena@example.com' },
         's'.repeat(64),
@@ -34,7 +36,7 @@ describe('direct-message member display', () => {
   });
   it('uses another server connector name without hardcoding it', () => {
     expect(
-      directMessageHeaderName(
+      headerTitle(
         {
           pubkey: 'g'.repeat(64),
           kind: 'human',
@@ -50,7 +52,7 @@ describe('direct-message member display', () => {
   });
   it('titles an ordinary DM from the same peer identity as the Room list row', () => {
     expect(
-      directMessageHeaderName(
+      headerTitle(
         { pubkey, kind: 'human', name: 'Ada', handle: 'ada' },
         { name: 'Lena', handle: 'lena' },
         pubkey,
@@ -67,15 +69,15 @@ describe('direct-message member display', () => {
       name: 'Trusty Squire',
       handle: 'trusty-squire',
     };
-    expect(directMessageHeaderName(peer, undefined, peer.pubkey, false)).toBe(
+    expect(headerTitle(peer, undefined, peer.pubkey, false)).toBe(
       directMessageTitle(peer),
     );
   });
   // G9-R4: the header showed `@alice@host` while the shared title is `@alice`.
   it('uses the shared title rules for a domain handle', () => {
     const peer = { pubkey, kind: 'human' as const, name: 'Alice', handle: 'alice@host' };
-    expect(directMessageHeaderName(peer, undefined, pubkey, false)).toBe(directMessageTitle(peer));
-    expect(directMessageHeaderName(peer, undefined, pubkey, false)).toBe('@alice');
+    expect(headerTitle(peer, undefined, pubkey, false)).toBe(directMessageTitle(peer));
+    expect(headerTitle(peer, undefined, pubkey, false)).toBe('@alice');
     expect(roomRowName({ room: { id: 'dm' }, directMessage: { peer } } as never)).toEqual({
       sigil: '@',
       name: 'alice',
@@ -83,15 +85,15 @@ describe('direct-message member display', () => {
   });
   it('falls back to the profile, then a friendly name', () => {
     expect(
-      directMessageHeaderName(undefined, { name: 'Lena', handle: 'lena' }, pubkey, false),
+      headerTitle(undefined, { name: 'Lena', handle: 'lena' }, pubkey, false),
     ).toBe('@lena');
-    expect(directMessageHeaderName(undefined, undefined, pubkey, false)).toBe(
-      fallbackMemberName(pubkey),
+    expect(headerTitle(undefined, undefined, pubkey, false)).toBe(
+      `@${fallbackMemberName(pubkey)}`,
     );
   });
   it('titles an announcements-only DM header from its System peer', () => {
     expect(
-      directMessageHeaderName(
+      headerTitle(
         { pubkey: 's'.repeat(64), kind: 'human', name: 'System', handle: 'system' },
         undefined,
         's'.repeat(64),
@@ -102,7 +104,7 @@ describe('direct-message member display', () => {
 
   it('uses the indexed announcement author when the hidden System peer is absent', () => {
     expect(
-      directMessageHeaderName(undefined, undefined, 's'.repeat(64), true, {
+      headerTitle(undefined, undefined, 's'.repeat(64), true, {
         pubkey: 's'.repeat(64),
         kind: 'human',
         name: 'System',

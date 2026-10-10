@@ -2,7 +2,12 @@ import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
-import type { NeedsYouItemView } from '@beeline/api-contract/phone';
+import {
+  cornerTitle,
+  directMessageTitle,
+  roomTitle,
+  type NeedsYouItemView,
+} from '@beeline/api-contract/phone';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { needsYouExpiryLabel } from '@/buzz/needs-you';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
@@ -14,20 +19,21 @@ const SWIPE_RAIL_WIDTH = 96;
 /** An age older than this reads in the warning tone. */
 const STALE_SECONDS = 24 * 60 * 60;
 
-function sourceLabel(item: NeedsYouItemView): string {
-  const name = item.roomName.replace(/^#/, '');
-  return item.roomKind === 'corner'
-    ? `corner ${name}`
-    : item.roomKind === 'room'
-      ? `#${name}`
-      : name;
+/** Where the ask sits, titled like every other surface names it. */
+function sourceTitle(item: NeedsYouItemView): string {
+  if (item.roomKind === 'corner') return cornerTitle(item.parentRoomName, item.roomName, item.roomId);
+  if (item.roomKind === 'room') return roomTitle(item.roomName) ?? item.roomName;
+  return directMessageTitle({ name: item.roomName });
 }
 
-/** Where the ask sits: a corner reads `parent / corner`, a DM its peer. */
+function sourceLabel(item: NeedsYouItemView): string {
+  return item.roomKind === 'corner' ? `corner ${sourceTitle(item)}` : sourceTitle(item);
+}
+
+/** The meta line draws a Room's or corner's mark as a glyph, so its title drops the `#`. */
 function sourcePath(item: NeedsYouItemView): string {
-  const name = item.roomName.replace(/^#/, '');
-  const parent = item.parentRoomName?.replace(/^#/, '');
-  return item.roomKind === 'corner' && parent ? `${parent} / ${name}` : name;
+  const title = sourceTitle(item);
+  return item.roomKind === 'direct' ? title : title.replace(/^#/, '');
 }
 
 /**

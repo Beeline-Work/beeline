@@ -49,7 +49,7 @@ describe('scheduled Agent work', () => {
   it('draws the shared PageHeader, Room over Schedules and Webhooks, and no stack header', () => {
     expect(screen).toContain('<PageHeader');
     expect(screen).toContain('title="Schedules and Webhooks"');
-    expect(screen).toContain("eyebrow={displayRoomIndexTitle(work?.roomName ?? undefined) ?? 'Room'}");
+    expect(screen).toContain("eyebrow={roomTitle(work?.roomName) ?? 'Room'}");
     expect(screen).toContain('onBack={() => router.back()}');
     expect(layout).toMatch(
       /name="beeline\/settings\/schedules"\s*options=\{\{\s*headerShown: false/,

@@ -5,8 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import type { RoomScheduleView } from '@beeline/api-contract/phone';
-import { displayRoomIndexTitle } from '@/buzz/room-list-row';
+import { roomTitle, type RoomScheduleView } from '@beeline/api-contract/phone';
 import {
   handles,
   scheduleTitle,
@@ -102,7 +101,7 @@ export default function ScheduledWork() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back to Room"
-        eyebrow={displayRoomIndexTitle(work?.roomName ?? undefined) ?? 'Room'}
+        eyebrow={roomTitle(work?.roomName) ?? 'Room'}
         onBack={() => router.back()}
         testID="scheduled-work-header"
         title="Schedules and Webhooks"

@@ -66,10 +66,15 @@ export type ChatTitleIdentity = {
   avatar?: string | null;
 };
 
+/** A connector's fixed logo, served at `/v1/connectors/logo/<type>.svg`. */
+export function isConnectorLogoUrl(url: string | null | undefined): boolean {
+  return Boolean(url && /\/v1\/connectors\/logo\/[a-z0-9-]+\.svg(?:\?|$)/.test(url));
+}
+
 /** Connector DMs (and Trusty Squire) are named by display name, not handle. */
 export function isConnectorIdentity(identity: ChatTitleIdentity): boolean {
   return Boolean(
-    (identity.avatar && /\/v1\/connectors\/logo\/[a-z0-9-]+\.svg(?:\?|$)/.test(identity.avatar)) ||
+    isConnectorLogoUrl(identity.avatar) ||
     (identity.name === 'Trusty Squire' && identity.handle?.replace(/^@/, '') === 'trusty-squire'),
   );
 }

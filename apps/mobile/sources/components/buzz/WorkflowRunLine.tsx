@@ -2,10 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { Linking, Pressable, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { StyleSheet } from 'react-native-unistyles';
-import type {
-  WorkflowActorView,
-  WorkflowOpenedCornerView,
-  WorkflowRunDetailView,
+import {
+  identityHandle,
+  type WorkflowActorView,
+  type WorkflowOpenedCornerView,
+  type WorkflowRunDetailView,
 } from '@beeline/api-contract/phone';
 import {
   workflowPlanLine,
@@ -21,7 +22,6 @@ import {
   workflowStepMeta,
 } from '@/buzz/workflow-run-copy';
 import { identityPalette, isGeneratedAgentAvatarUrl } from '@/buzz/identity-mark';
-import { previewHandle } from '@/buzz/room-list-row';
 import { roomOpenCornerRows, useRoomCornerRecord } from '@/buzz/room-corner-store';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
@@ -218,7 +218,7 @@ function Assignee({
         testID={`${testID}-assignee-mark`}
       />
       <Text numberOfLines={1} style={[styles.handle, hue]} testID={`${testID}-assignee-handle`}>
-        {`@${previewHandle(actor)}`}
+        {`@${identityHandle(actor)}`}
       </Text>
     </View>
   );

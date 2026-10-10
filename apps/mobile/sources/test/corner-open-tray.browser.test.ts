@@ -31,9 +31,9 @@ const FRAMES = {
     'corner-app-screen': "Corner AppCould not load this app. Couldn't reach Beeline.",
   },
   tray: {
-    'tray-approval-grant': 'BBC asks to run2dgit push --force-with-leasePush ledger fixes to feat/ledger.for Johnny · experiments / sec-filing-desk',
-    'tray-approval-squire': 'Ruby needs your passkey for40mReveal GROQ_API_KEYWrite it into the Fly secret for push-gateway.Trusty Squire · expires in 20m',
-    'tray-approval-choice': 'Candy asks you to choose1hShip the OTA tonight?Ship now · Wait for #2238 voice fixbeeline / release-corner · closes in 6h',
+    'tray-approval-grant': 'BBC asks to run2dgit push --force-with-leasePush ledger fixes to feat/ledger.for Johnny · experiments/sec-filing-desk',
+    'tray-approval-squire': 'Ruby needs your passkey for40mReveal GROQ_API_KEYWrite it into the Fly secret for push-gateway.@Trusty Squire · expires in 20m',
+    'tray-approval-choice': 'Candy asks you to choose1hShip the OTA tonight?Ship now · Wait for #2238 voice fixbeeline/release-corner · closes in 6h',
   },
 } as const;
 

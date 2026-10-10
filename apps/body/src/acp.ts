@@ -138,7 +138,7 @@ export class AcpRuntimeExitedError extends Error {
 export class AcpResourceLimitError extends Error {
   override readonly cause = 'resource_limit';
   constructor(memoryMaxBytes: number) {
-    super(`resource_limit: ACP session exceeded its ${Math.floor(memoryMaxBytes / 1024 / 1024)} MiB memory limit`);
+    super(`resource_limit: ACP session likely hit its ${Math.floor(memoryMaxBytes / 1024 / 1024)} MiB memory limit (exit 137 or signal 9)`);
     this.name = 'AcpResourceLimitError';
   }
 }
@@ -928,9 +928,9 @@ export class AcpClient extends EventEmitter {
 
   /**
    * One child exit: reject every in-flight request so the turn fails and is
-   * reported instead of hanging, then publish the exit. A scoped exit reads
-   * that scope's result; an unscoped SIGKILL uses the daemon cgroup's OOM
-   * counter so the rejection can name the cause instead of a bare signal.
+   * reported instead of hanging, then publish the exit. A scoped SIGKILL/137
+   * is a likely memory-limit hit, while an unscoped SIGKILL uses the daemon
+   * cgroup's OOM counter to distinguish it from a deliberate kill.
    */
   private async handleChildExit(
     code: number | null,
@@ -942,10 +942,10 @@ export class AcpClient extends EventEmitter {
     // a backstop timeout or keep an already-dead runtime's turn hanging.
     for (const p of this.pending.values()) this.clearTimer(p);
     const scope = this.resourceScope;
-    const memoryLimited = scope && !this.stopping
-      ? await scope.exceededMemoryLimit() : false;
+    const memoryLimitLikely = Boolean(scope && !this.stopping &&
+      (signal === 'SIGKILL' || code === 137));
     let oomKilled = false;
-    if (!memoryLimited && signal === 'SIGKILL' && !this.stopping) {
+    if (!scope && signal === 'SIGKILL' && !this.stopping) {
       let diagnosticTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         oomKilled = await Promise.race([
@@ -965,7 +965,7 @@ export class AcpClient extends EventEmitter {
     const stderrSuffix = meaningful ? `: ${meaningful}` : '';
     for (const [, p] of this.pending) {
       this.clearTimer(p);
-      p.reject(memoryLimited
+      p.reject(memoryLimitLikely
         ? new AcpResourceLimitError(scope!.memoryMaxBytes)
         : new AcpRuntimeExitedError(`${exitText}${stderrSuffix}`));
     }

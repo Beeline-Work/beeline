@@ -16,8 +16,10 @@ describe('turn silence classification', () => {
     expect(classifyTurnSilence(reason, 'resource-limit')).toEqual({ kind: 'resource-limit' });
     expect(shouldRestartHiccup('resource-limit', 1)).toBe(false);
     expect(shouldCompletePendingFailedCommand('resource-limit')).toBe(true);
+    expect(classifyTurnSilence('resource_limit: ACP session likely hit its 8192 MiB memory limit'))
+      .toEqual({ kind: 'resource-limit' });
     expect(phraseTurnSilence('Bee', { kind: 'resource-limit' }).consequence)
-      .toContain('exceeded its memory limit');
+      .toContain('likely hit its memory limit');
   });
 
   it('names a context-window overflow and never restarts it as a hiccup', () => {

@@ -8,7 +8,7 @@ describe('distillTurnFailureReason', () => {
   it('keeps a cgroup memory failure as a terminal resource limit receipt', () => {
     const reason = distillTurnFailureReason(new AcpResourceLimitError(128 * 1024 * 1024));
     expect(reason).toEqual({
-      text: 'resource_limit: ACP session exceeded its 128 MiB memory limit',
+      text: 'resource_limit: ACP session likely hit its 128 MiB memory limit (exit 137 or signal 9)',
       kind: 'resource-limit',
     });
   });

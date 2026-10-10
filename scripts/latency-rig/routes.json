@@ -1,0 +1,197 @@
+[
+  {
+    "path": "/",
+    "coldHttpMax": 0,
+    "coldDepthMax": 0
+  },
+  {
+    "path": "/artifact-viewer",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/agent-profile",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/agents",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/channels",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/chat/[channelId]",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/community",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/corner-app/[slug]",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/corners/[roomId]",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/create-workspace",
+    "coldHttpMax": 0,
+    "coldDepthMax": 0
+  },
+  {
+    "path": "/beeline/github-callback",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/github-installation",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/human-profile",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/members",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/onboarding",
+    "coldHttpMax": 0,
+    "coldDepthMax": 0
+  },
+  {
+    "path": "/beeline/settings",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/identity",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/schedules",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workbench",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workbench/app",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workbench/connect",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workbench/connect-app",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workbench/connect-signin",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workbench/connection",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workbench/wallet",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workbench/wallet-receive",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workbench/wallet-send",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workflows",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workspace",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/tray",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/workflow",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/workflow-run",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/buzz/github-callback",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/buzz/github-installation",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/changelog",
+    "coldHttpMax": 0,
+    "coldDepthMax": 0
+  },
+  {
+    "path": "/join/[token]",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/review/[secret]",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/settings",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/text-selection",
+    "coldHttpMax": 0,
+    "coldDepthMax": 0
+  }
+]

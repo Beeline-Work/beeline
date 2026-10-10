@@ -1,0 +1,4 @@
+local-*.ndjson
+*.apk
+*.log
+.local/

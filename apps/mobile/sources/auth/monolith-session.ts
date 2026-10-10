@@ -1,6 +1,8 @@
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { monolithSecureStorage, type MonolithSecureStorage } from '@/auth/monolith-secure-storage';
 import { isDesktopShell } from '@/utils/isDesktopShell';
+import { webRuntimeStorage } from '@/utils/web-storage';
+import { resetClientState } from '@/sync/client-reset';
 
 const REFRESH_KEY = 'buzzy.monolith.refresh.v1';
 const IDENTITY_KEY = 'buzzy.monolith.identity.v1';
@@ -206,6 +208,22 @@ export class MonolithSession {
         // Optional consumers cannot turn an accepted sign-in into a failure.
       }
     }
+  }
+
+  /**
+   * Browser tabs of one origin share the session in localStorage. When another
+   * tab signs in or out, this tab forgets its own copy and reads the shared one.
+   */
+  watchOtherTabs(target: Pick<Window, 'addEventListener'>, storage: Storage): void {
+    target.addEventListener('storage', (event) => {
+      if (event.storageArea !== storage || (event.key !== null && event.key !== IDENTITY_KEY)) return;
+      this.credentialRevision += 1;
+      this.access = undefined;
+      this.refreshToken = undefined;
+      this.accessRestoreAttempted = false;
+      this.accessRestoreInFlight = undefined;
+      this.identityChanged();
+    });
   }
 
   async clear(): Promise<void> {
@@ -492,3 +510,8 @@ export class MonolithSession {
 }
 
 export const monolithSession = new MonolithSession();
+monolithSession.subscribeIdentityChange(resetClientState);
+
+const sharedSessionStorage = isDesktopShell() ? undefined : webRuntimeStorage()?.storage;
+if (sharedSessionStorage && typeof window.addEventListener === 'function')
+  monolithSession.watchOtherTabs(window, sharedSessionStorage);

@@ -1,6 +1,7 @@
 import { RoomWebhooks, WebhookError } from './room-webhooks.js';
 import { WEBHOOK_MAX_BYTES } from '@beeline/api-contract/phone';
 import { WorkflowAuthorizationError } from './workflow-admin.js';
+import { WorkspaceSkillNotFoundError } from './institutional-skills.js';
 import { GitHubHttpError } from '@beeline/auth/github';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -576,7 +577,8 @@ export function createBeelineServer(options: ServerOptions): Server {
       let status =
         error instanceof WorkflowAuthorizationError ||
         error instanceof WebhookError ||
-        error instanceof RelayRefusalError
+        error instanceof RelayRefusalError ||
+        error instanceof WorkspaceSkillNotFoundError
           ? error.status
           : institutionalMemoryErrorStatus(message) ??
             ((message.startsWith('corner brief attachment ') &&

@@ -9,6 +9,7 @@ import {
 } from './institutional-memory-shadow.js';
 import {
   WORKSPACE_SKILL_ACTIVE_MAX,
+  WorkspaceSkillNotFoundError,
   applyWorkspaceSkillProposal,
   deleteSkill,
   loadWorkspaceSkill,
@@ -223,7 +224,7 @@ describe('merge-derived restricted Workspace procedures', () => {
         roomId: ROOM,
         slug: 'safe-release-migrations',
       }),
-    ).rejects.toThrow(/unavailable/);
+    ).rejects.toThrow('workspace skill safe-release-migrations not found');
     expect(
       (
         await database.query<{ markdown: string; source_deleted_at: Date | null }>(
@@ -361,6 +362,35 @@ describe('merge-derived restricted Workspace procedures', () => {
         ])
       ).rows[0]?.state,
     ).toBe('stale');
+  });
+});
+
+describe('load_workspace_skill', () => {
+  const load = (slug: string) =>
+    loadWorkspaceSkill(database, command, { agentId: OTHER_AGENT, roomId: ROOM, slug });
+
+  it('answers a slug with no authorized row with a not-found error that names it', async () => {
+    await expect(load('never-saved-procedure')).rejects.toThrow(
+      new WorkspaceSkillNotFoundError('never-saved-procedure'),
+    );
+  });
+
+  it('names the slug the same way whether it is absent or simply unauthorized', async () => {
+    await saveSkill(database, command, {
+      slug: 'private-procedure',
+      description: 'Private procedure',
+      markdown: 'body',
+    });
+    await database.query(
+      `UPDATE memberships SET removed_at=now() WHERE room_id IS NULL AND identity_id=$1`,
+      [OTHER_AGENT],
+    );
+    const unauthorized = await load('private-procedure').catch((error: unknown) => error);
+    const missing = await load('never-saved-procedure').catch((error: unknown) => error);
+    expect(unauthorized).toBeInstanceOf(WorkspaceSkillNotFoundError);
+    expect(missing).toBeInstanceOf(WorkspaceSkillNotFoundError);
+    expect((unauthorized as Error).message).toBe('workspace skill private-procedure not found');
+    expect((missing as Error).message).toBe('workspace skill never-saved-procedure not found');
   });
 });
 
@@ -729,7 +759,7 @@ describe('delete_skill', () => {
       sourceMessageIds: [ROOT],
     });
     expect(deleted).toEqual({ slug: 'cartoon-short-video', kind: 'procedure', version: 2, deleted: true });
-    await expect(load()).rejects.toThrow('workspace skill is unavailable');
+    await expect(load()).rejects.toThrow('workspace skill cartoon-short-video not found');
     const context = await getInstitutionalContext(database, { ...command, turn_request_id: 'after-delete' });
     expect(context.text).not.toContain('cartoon-short-video');
     const row = (

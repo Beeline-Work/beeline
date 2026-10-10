@@ -141,19 +141,28 @@ function withoutRows(
 /**
  * The summary with each corner a read just carried brought up to its row. A
  * summary corner leaves the waiting state with its `waitingSince` and
- * `attention`, which the server sends only on waiting corners. When the read
- * holds every open corner, a summary corner it does not hold has closed and
- * leaves. The counts and the preview cap stay the server's.
+ * `attention`, which the server sends only on waiting corners. The server
+ * lists every Mine corner, so a Mine row the summary lacks joins it, in the
+ * read's order. When the read holds every open corner, a summary corner it
+ * does not hold has closed and leaves. Other rows stay out, and the counts
+ * and the preview cap stay the server's.
  */
 function summaryWithRows(
   summary: readonly ChatListCorner[] | undefined,
   rows: readonly CornerListItem[],
   complete: boolean,
+  fresh: boolean,
 ): readonly ChatListCorner[] | undefined {
   if (!summary) return summary;
   const byId = new Map(rows.map((item) => [item.corner.id, item]));
-  let changed = false;
-  const next = summary.flatMap((corner) => {
+  const held = new Set(summary.map((corner) => corner.id));
+  const added: ChatListCorner[] = fresh
+    ? rows.flatMap((row) => row.mine && row.state !== 'archived' && !held.has(row.corner.id)
+      ? [{ id: row.corner.id, name: row.corner.name, state: row.state, mine: true as const }]
+      : [])
+    : [];
+  let changed = added.length > 0;
+  const kept = summary.flatMap((corner) => {
     const row = byId.get(corner.id);
     if (complete && (!row || row.state === 'archived')) {
       changed = true;
@@ -161,7 +170,6 @@ function summaryWithRows(
     }
     if (!row || row.state === 'archived') return [corner];
     if (row.state === corner.state && row.corner.name === corner.name) return [corner];
-    if (row.state === corner.state && row.corner.name === corner.name) return corner;
     changed = true;
     const { waitingSince, attention, ...rest } = corner;
     return [{
@@ -172,7 +180,14 @@ function summaryWithRows(
       ...(row.state === 'waiting' && attention ? { attention } : {}),
     }];
   });
-  return changed ? next : summary;
+  if (!changed) return summary;
+  if (!added.length) return kept;
+  // A complete read holds every kept corner, so its order is the server's.
+  if (complete) {
+    const order = new Map(rows.map((item, index) => [item.corner.id, index]));
+    return [...kept, ...added].sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+  }
+  return [...added, ...kept];
 }
 
 function cursor(value: string | undefined): { nextOpen?: string } {
@@ -374,11 +389,12 @@ export function applyCornerListRead(
   const next = withRows(current, corners, nextOpen);
   const changed = Boolean(current.rows) && rowsFacts(current.rows) !== rowsFacts(corners);
   // A frame since the read started holds a newer summary; keep it. A Room
-  // list read since then may name a corner opened after this read started.
+  // list read since then may name a corner opened after this read started,
+  // or leave out one that closed after it.
+  const fresh = (current.summaryListAt ?? 0) <= mark.clock;
   const openCorners = current.changedAt > mark.clock
     ? current.openCorners
-    : summaryWithRows(current.openCorners, corners,
-      !nextOpen && (current.summaryListAt ?? 0) <= mark.clock);
+    : summaryWithRows(current.openCorners, corners, !nextOpen && fresh, fresh);
   if (openCorners !== current.openCorners) clock += 1;
   write(roomId, {
     ...next,

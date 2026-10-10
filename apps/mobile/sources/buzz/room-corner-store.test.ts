@@ -262,6 +262,39 @@ describe('room corner store', () => {
     ]);
   });
 
+  it('Reproduction G3-R2: a corners read adds a Mine corner the summary lacks, keeping counts', () => {
+    applyChatListCorners([{
+      room: { id: ROOM } as never,
+      cornerCount: 1,
+      waitingCornerCount: 1,
+      openCorners: [{ id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true }],
+    }], cornerStoreClock());
+    const mine = { ...row('corner-new'), mine: true } as CornerListItem;
+    applyCornerListRead(ROOM, view([mine, row('other'), row('corner-1', 'waiting')]),
+      cornerReadMark(ROOM));
+    expect(getRoomCorners(ROOM)).toMatchObject({ cornerCount: 1, waitingCornerCount: 1 });
+    expect(getRoomCorners(ROOM).openCorners).toEqual([
+      { id: 'corner-new', name: 'corner-new', state: 'working', mine: true },
+      { id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true },
+    ]);
+    // A partial read adds its Mine rows too, and drops nothing it does not hold.
+    const later = { ...row('corner-later'), mine: true } as CornerListItem;
+    applyCornerListRead(ROOM, view([later], 'next'), cornerReadMark(ROOM));
+    expect(getRoomCorners(ROOM).openCorners?.map((item) => item.id))
+      .toEqual(['corner-later', 'corner-new', 'corner-1']);
+  });
+
+  it('adds no Mine row from a corners read older than the Room list summary', () => {
+    const mark = cornerReadMark(ROOM);
+    applyChatListCorners([{
+      room: { id: ROOM } as never,
+      openCorners: [{ id: 'corner-1', name: 'corner-1', state: 'working', mine: true }],
+    }], cornerStoreClock());
+    const closedSince = { ...row('closed-since'), mine: true } as CornerListItem;
+    applyCornerListRead(ROOM, view([closedSince, row('corner-1')]), mark);
+    expect(getRoomCorners(ROOM).openCorners?.map((item) => item.id)).toEqual(['corner-1']);
+  });
+
   it('keeps a summary corner a Room list read named after the corners read started', () => {
     const mark = cornerReadMark(ROOM);
     applyChatListCorners([{

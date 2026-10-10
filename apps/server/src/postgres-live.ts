@@ -250,6 +250,19 @@ BEGIN
         'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
         'scheduleId', COALESCE(NEW.id, OLD.id)
       );
+    WHEN 'workspaces' THEN
+      -- Only the header every rail, list and settings page paints.
+      IF TG_OP = 'UPDATE' AND ROW(NEW.name,NEW.avatar) IS DISTINCT FROM ROW(OLD.name,OLD.avatar) THEN
+        payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
+          'roomId', '', 'workspaceId', NEW.id);
+      END IF;
+    WHEN 'identities' THEN
+      -- The public identity (name, handle, picture, face) and the owner's push level.
+      IF TG_OP = 'UPDATE' AND ROW(NEW.name,NEW.handle,NEW.avatar,NEW.face_id,NEW.push_level)
+          IS DISTINCT FROM ROW(OLD.name,OLD.handle,OLD.avatar,OLD.face_id,OLD.push_level) THEN
+        payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
+          'roomId', '', 'identityId', NEW.id);
+      END IF;
     WHEN 'push_devices' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '');
     WHEN 'workspace_join_notifications' THEN
@@ -306,7 +319,7 @@ BEGIN
     'workspace_connectors', 'workspace_connections', 'agents', 'agent_avatars',
     'registry_mcp_oauth_attempts', 'push_devices',
     'workspace_join_notifications', 'push_release_catchups',
-    'helper_release_notifications'
+    'helper_release_notifications', 'workspaces', 'identities'
   ] LOOP
     IF NOT EXISTS (
       SELECT 1 FROM pg_trigger
@@ -819,6 +832,17 @@ export class PostgresLiveListener {
       for (const room of rooms.rows)
         this.live.publish({ type: 'invalidate', roomId: room.id,
           reason: 'postgres:rooms', repositoryChanged: true });
+      return;
+    }
+    if (payload.table === 'workspaces' || payload.table === 'identities') {
+      // ID-only: each phone socket reads the change once and only a viewer
+      // who shares that Workspace, or a Workspace or Room with that person, hears it.
+      if (payload.table === 'workspaces' && payload.workspaceId)
+        this.live.publish({ type: 'invalidate', roomId: '',
+          reason: 'postgres:workspaces', workspaceId: payload.workspaceId });
+      if (payload.table === 'identities' && payload.identityId)
+        this.live.publish({ type: 'invalidate', roomId: '',
+          reason: 'postgres:identities', personId: payload.identityId });
       return;
     }
     if (payload.table === 'message_bookmarks' && payload.identityId &&

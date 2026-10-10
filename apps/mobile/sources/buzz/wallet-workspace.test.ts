@@ -37,4 +37,10 @@ describe('Wallet Workspace selection', () => {
     state.workspaces = [];
     expect(await resolveWalletWorkspaceId('workspace-stranger')).toBeNull();
   });
+
+  it('follows the current Workspace a caller passes instead of re-reading storage', async () => {
+    expect(await resolveWalletWorkspaceId(undefined, 'workspace-other')).toBe('workspace-other');
+    expect(await resolveWalletWorkspaceId('workspace-current', 'workspace-other')).toBe('workspace-current');
+    expect(await resolveWalletWorkspaceId(undefined, null)).toBe('workspace-current');
+  });
 });

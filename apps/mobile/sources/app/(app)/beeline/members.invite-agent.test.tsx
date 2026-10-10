@@ -105,6 +105,8 @@ vi.mock('@/buzz/surface-storage', () => ({
     read: vi.fn(async () => null),
     write: vi.fn(async () => undefined),
     fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
+    subscribe: vi.fn(() => () => undefined),
+    peek: vi.fn(() => null),
   },
   surfaceAddress: vi.fn(() => 'surface-address'),
 }));

@@ -20,6 +20,7 @@ import {
   savePersonalCommunityId,
   saveLastViewedChannel,
   subscribeActiveCommunityId,
+  watchActiveCommunityId,
 } from './community-storage';
 
 describe('community navigation storage', () => {
@@ -67,6 +68,31 @@ describe('community navigation storage', () => {
     subscribeActiveCommunityId('late-subscriber', listener);
 
     expect(listener).toHaveBeenCalledWith('community-new');
+  });
+
+  it('seeds the current Workspace from storage, then follows a later Room open', async () => {
+    asyncStorage.getItem.mockResolvedValueOnce('community-stored');
+    const listener = vi.fn();
+    const stop = watchActiveCommunityId('watch-seed', listener);
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledWith('community-stored'));
+    await saveActiveCommunityId('watch-seed', 'community-opened');
+    expect(listener.mock.calls).toEqual([['community-stored'], ['community-opened']]);
+    stop();
+    await saveActiveCommunityId('watch-seed', 'community-later');
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('never lets a slower storage seed overwrite a Room opened meanwhile', async () => {
+    let release!: (value: string | null) => void;
+    asyncStorage.getItem.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+    const listener = vi.fn();
+    const stop = watchActiveCommunityId('watch-race', listener);
+    await saveActiveCommunityId('watch-race', 'community-opened');
+    release('community-stale');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(listener.mock.calls).toEqual([['community-opened']]);
+    stop();
   });
 
   it('keeps the last channel independently for each community', async () => {

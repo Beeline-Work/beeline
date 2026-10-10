@@ -2,13 +2,19 @@ import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-sto
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 
-/** Resolve against the signed-in viewer's current memberships, including personal Settings entry. */
-export async function resolveWalletWorkspaceId(routeWorkspaceId?: string): Promise<string | null> {
+/**
+ * Resolve against the signed-in viewer's current memberships, including personal Settings entry.
+ * Pass the followed current Workspace (useActiveCommunityId) once known; omitted, storage seeds it.
+ */
+export async function resolveWalletWorkspaceId(
+  routeWorkspaceId?: string,
+  currentWorkspaceId?: string | null,
+): Promise<string | null> {
   const identity = await loadBuzzIdentity();
   if (!identity) return null;
   const [relayUrl, activeId] = await Promise.all([
     getEffectiveRelayUrl(),
-    loadActiveCommunityId(identity.publicKey),
+    currentWorkspaceId === undefined ? loadActiveCommunityId(identity.publicKey) : currentWorkspaceId,
   ]);
   const list = await new RoomViewClient({ baseUrl: relayUrl, identity }).workspaces();
   const ids = new Set(list.workspaces.map((workspace) => workspace.id));

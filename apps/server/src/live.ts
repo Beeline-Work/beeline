@@ -79,6 +79,8 @@ export type LiveEvent =
       /** A read-cursor change belongs only to this reader's devices. */
       readerId?: string;
       workspaceId?: string;
+      /** The identity whose public name, handle, picture, face or push level changed. */
+      personId?: string;
       sourceRoomId?: string;
       needsYouCandidate?: boolean;
       messageId?: string;

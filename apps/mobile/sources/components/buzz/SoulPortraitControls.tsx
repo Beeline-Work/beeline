@@ -4,7 +4,12 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { AgentDetailView } from '@beeline/buzz-client';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal/ModalManager';
-import { runAvatarGeneration, useAvatarGeneration } from '@/buzz/avatar-generation';
+import {
+  avatarGenerationShowsPending,
+  noteServerAvatarGeneration,
+  runAvatarGeneration,
+  useAvatarGeneration,
+} from '@/buzz/avatar-generation';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { SettingsRow } from './SettingsRow';
 
@@ -23,11 +28,12 @@ export function SoulPortraitControls({
 }) {
   const agentId = detail.agent.identity.pubkey;
   const job = useAvatarGeneration(agentId);
-  const pending = job.pending || detail.avatarGenerationPending === true;
+  const pending = avatarGenerationShowsPending(job, detail);
   const error = job.error;
   const generation = useRef(0);
   const requestActive = useRef(false);
   const cancelWaitRef = useRef<(() => void) | null>(null);
+  const judgeRef = useRef<((next: AgentDetailView) => void) | null>(null);
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
   useEffect(
@@ -37,6 +43,13 @@ export function SoulPortraitControls({
     },
     [],
   );
+
+  useEffect(() => {
+    if (!job.pending) return;
+    noteServerAvatarGeneration(agentId, detail);
+    // A server answer that ended the bridge also ends the client job.
+    if (!avatarGenerationShowsPending(job, detail)) judgeRef.current?.(detail);
+  }, [agentId, detail, job]);
 
   useEffect(() => {
     if (!detail.avatarGenerationPending || job.pending) return;
@@ -61,7 +74,7 @@ export function SoulPortraitControls({
     requestActive.current = true;
     const attempt = generation.current;
     try {
-      await runAvatarGeneration(agentId, async () => {
+      await runAvatarGeneration(agentId, detail.avatarGenerationId, async () => {
         const confirmed = await Modal.confirm(
           'Generate avatar from soul?',
           'This sends the current soul text to the agent. Unsaved soul edits are not saved by this action.',
@@ -81,15 +94,17 @@ export function SoulPortraitControls({
           fail = reject;
         });
         cancelWaitRef.current = () => settle?.();
+        const judge = (next: AgentDetailView) => {
+          if (next.avatarGenerationId && next.avatarGenerationId !== previous) settle?.();
+          else if (next.avatarGenerationPending === false)
+            fail?.(new Error('The avatar job ended without saving a new avatar. Check the agent’s DM and retry.'));
+        };
+        judgeRef.current = judge;
         const check = () => {
           if (attempt !== generation.current) return;
           if (reading) { queued = true; return; }
           reading = true;
-          void refreshRef.current().then((next) => {
-            if (next.avatarGenerationId && next.avatarGenerationId !== previous) settle?.();
-            else if (next.avatarGenerationPending === false)
-              fail?.(new Error('The avatar job ended without saving a new avatar. Check the agent’s DM and retry.'));
-          }).catch(() => undefined).finally(() => {
+          void refreshRef.current().then(judge).catch(() => undefined).finally(() => {
             reading = false;
             if (queued) { queued = false; check(); }
           });
@@ -111,6 +126,7 @@ export function SoulPortraitControls({
           await completed;
         } finally {
           cancelWaitRef.current = null;
+          judgeRef.current = null;
           stop?.();
         }
       });

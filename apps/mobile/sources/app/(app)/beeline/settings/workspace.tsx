@@ -206,6 +206,7 @@ export default function WorkspaceSettings() {
     useCallback(() => {
       let cancelled = false;
       let unsubscribe: (() => void) | undefined;
+      let stopWorkspaceEntry: (() => void) | undefined;
       let workspaceScheduler: SurfaceRefreshScheduler<WorkspaceView> | undefined;
       let chatsScheduler: SurfaceRefreshScheduler<ChatListView> | undefined;
       if (paintedWorkspaceId.current !== communityId) {
@@ -225,12 +226,22 @@ export default function WorkspaceSettings() {
           const [currentIdentity, currentRelayUrl] = await Promise.all([
             loadBuzzIdentity(), getEffectiveRelayUrl(),
           ]);
+          if (cancelled) return;
           if (!currentIdentity) {
             router.replace('/beeline/onboarding');
             return;
           }
           const workspaceAddress = surfaceAddress(currentRelayUrl, currentIdentity.publicKey, '/workspace/:id', { workspaceId: communityId });
           const chatsAddress = surfaceAddress(currentRelayUrl, currentIdentity.publicKey, '/workspace/:id/chats', { workspaceId: communityId });
+          // Paint the shared entry, so a `workspace-changed` frame from another
+          // session repaints the open page without another read.
+          stopWorkspaceEntry = mobileSurfaceCache.subscribe(workspaceAddress, () => {
+            const next = mobileSurfaceCache.peek(workspaceAddress, isWorkspaceView);
+            if (!next) return;
+            setWorkspaceView(next);
+            workspaceDraft.initialize(next.workspace.name);
+            setLoading(false);
+          });
           const [cachedWorkspace, cachedChats] = await Promise.all([
             mobileSurfaceCache.read(workspaceAddress, isWorkspaceView),
             mobileSurfaceCache.read(chatsAddress, isChatListView),
@@ -291,6 +302,7 @@ export default function WorkspaceSettings() {
       return () => {
         cancelled = true;
         unsubscribe?.();
+        stopWorkspaceEntry?.();
         workspaceScheduler?.dispose();
         chatsScheduler?.dispose();
         workspaceSchedulerRef.current = null;

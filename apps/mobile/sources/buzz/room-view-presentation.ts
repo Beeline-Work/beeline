@@ -523,32 +523,20 @@ export function displayRoomMessage(
 
 /**
  * One identity source for Room and corner composers/transcripts.
- * Message authorship refreshes membership labels from the current server
- * view. Member artwork stays authoritative because older transcript pages can
- * come from disk with the face or generated avatar an agent wore previously.
+ * A current member's identity comes from the fresh member list; a cached
+ * message's author snapshot only names someone who is no longer a member.
  */
 export function conversationIdentityByPubkey(
   members: readonly RoomViewMember[],
   messages: readonly ChatDisplayMessage[],
 ): Map<string, RoomViewIdentity> {
-  const identities = new Map(members.map((member) => [member.identity.pubkey, member.identity]));
+  const identities = new Map<string, RoomViewIdentity>();
   for (const message of messages) {
     if (message.authorIdentity) {
       identities.set(message.authorIdentity.pubkey, message.authorIdentity);
     }
   }
-  for (const member of members) {
-    const indexed = identities.get(member.identity.pubkey);
-    if (!indexed) continue;
-    identities.set(member.identity.pubkey, {
-      pubkey: indexed.pubkey,
-      kind: indexed.kind,
-      name: indexed.name,
-      ...(indexed.handle ? { handle: indexed.handle } : {}),
-      ...(member.identity.avatar ? { avatar: member.identity.avatar } : {}),
-      ...(member.identity.face ? { face: member.identity.face } : {}),
-    });
-  }
+  for (const member of members) identities.set(member.identity.pubkey, member.identity);
   return identities;
 }
 

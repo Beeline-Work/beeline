@@ -532,7 +532,8 @@ export class LiveConnection {
     if (!('roomId' in live)) return;
     if (live.roomId === '' &&
         (live.type === 'bookmark-delta' || live.type === 'needs-you-delta' ||
-          live.type === 'resource-change' || live.type === 'invalidate')) {
+          live.type === 'resource-change' || live.type === 'invalidate' ||
+          live.type === 'workspace-changed' || live.type === 'person-changed')) {
       for (const registration of this.registrations.values()) {
         if (!registration.closed && registration.roomIds.size === 0)
           registration.listener({ monolithLive: live });

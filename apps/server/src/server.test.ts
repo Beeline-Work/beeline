@@ -1216,6 +1216,7 @@ describe('phone committed-row live delivery', () => {
     readLiveDeltas?: PhoneService['readLiveDeltas'],
     readLiveBookmark?: PhoneService['readLiveBookmark'],
     liveNeedsYou?: PhoneService['liveNeedsYou'],
+    phoneReads: Partial<PhoneService> = {},
   ) {
     const roomId = 'room-live';
     const live = new LiveHub();
@@ -1233,6 +1234,7 @@ describe('phone committed-row live delivery', () => {
         liveNeedsYou,
         projectCommittedLiveDelta,
         liveChatCornerStatus,
+        ...phoneReads,
       } as unknown as PhoneService,
       daemon: {} as DaemonService,
       live,
@@ -1316,6 +1318,53 @@ describe('phone committed-row live delivery', () => {
     const noLeak = expectNoSocketMessage(socket, 100);
     live.publish({ type: 'resource-change', roomId: '', ownerId: 'other',
       resource: 'agent', resourceId: 'other-agent' });
+    await noLeak;
+  });
+
+  it('sends a Workspace header change only to its members, reading it once', async () => {
+    const liveWorkspaceChange = vi.fn()
+      .mockResolvedValueOnce({ workspace: { id: 'workspace', name: 'Renamed' },
+        viewers: new Set(['viewer']) })
+      .mockResolvedValueOnce({ workspace: { id: 'other', name: 'Theirs' },
+        viewers: new Set(['someone-else']) });
+    const { live, socket } = await connect(
+      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,
+      undefined, undefined, undefined, undefined, undefined,
+      { liveWorkspaceChange } as Partial<PhoneService>);
+    const frame = nextSocketMessage(socket, 'workspace-changed');
+    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:workspaces',
+      workspaceId: 'workspace' });
+    await expect(frame).resolves.toEqual({ type: 'workspace-changed', roomId: '',
+      workspace: { id: 'workspace', name: 'Renamed' } });
+    const noLeak = expectNoSocketMessage(socket, 100);
+    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:workspaces',
+      workspaceId: 'other' });
+    await noLeak;
+    expect(liveWorkspaceChange).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends a person change to who shares a scope, and the push level only to its owner', async () => {
+    const person = { pubkey: 'mate', kind: 'human' as const, name: 'Mate Renamed' };
+    const self = { pubkey: 'viewer', kind: 'human' as const, name: 'Viewer' };
+    const livePersonChange = vi.fn().mockImplementation(async (personId: string) =>
+      personId === 'mate' ? { person, pushLevel: 'all', viewers: new Set(['mate', 'viewer']) }
+        : personId === 'viewer' ? { person: self, pushLevel: 'off', viewers: new Set(['viewer']) }
+          : { person: { ...person, pubkey: 'stranger' }, pushLevel: 'mine',
+            viewers: new Set(['stranger']) });
+    const { live, socket } = await connect(
+      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,
+      undefined, undefined, undefined, undefined, undefined,
+      { livePersonChange } as Partial<PhoneService>);
+    const mate = nextSocketMessage(socket, 'person-changed');
+    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:identities', personId: 'mate' });
+    await expect(mate).resolves.toEqual({ type: 'person-changed', roomId: '', person });
+    const own = nextSocketMessage(socket, 'person-changed');
+    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:identities', personId: 'viewer' });
+    await expect(own).resolves.toEqual({ type: 'person-changed', roomId: '', person: self,
+      pushLevel: 'off' });
+    const noLeak = expectNoSocketMessage(socket, 100);
+    live.publish({ type: 'invalidate', roomId: '', reason: 'postgres:identities',
+      personId: 'stranger' });
     await noLeak;
   });
 

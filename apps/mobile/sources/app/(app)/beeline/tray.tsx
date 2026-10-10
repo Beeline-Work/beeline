@@ -16,7 +16,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { MessageBookmarkListResult, MessageBookmarkView, NeedsYouItemView, NeedsYouListResult } from '@beeline/api-contract/phone';
 import { isWorkspaceListView, isWorkspaceView, type RoomView } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { loadActiveCommunityId } from '@/buzz/community-storage';
+import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { cornerHref } from '@/buzz/corner-navigation';
@@ -148,6 +148,7 @@ export default function TrayScreen() {
   // A link without a Workspace id opens the Workspace the Rooms list treats
   // as active. `undefined` while resolving; `null` when there is none.
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null | undefined>(undefined);
+  const currentWorkspaceId = useActiveCommunityId();
   const workspaceId = routeWorkspaceId || activeWorkspaceId || '';
   // A Workspace the person is no longer a member of: its items open nothing.
   const [lostWorkspaceId, setLostWorkspaceId] = useState<string | null>(null);
@@ -355,7 +356,7 @@ export default function TrayScreen() {
   );
 
   useEffect(() => {
-    if (routeWorkspaceId) return;
+    if (routeWorkspaceId || currentWorkspaceId === undefined) return;
     let cancelled = false;
     void (async () => {
       const identity = await loadBuzzIdentity();
@@ -363,17 +364,14 @@ export default function TrayScreen() {
         if (!cancelled) setActiveWorkspaceId(null);
         return;
       }
-      const [relayUrl, stored] = await Promise.all([
-        getEffectiveRelayUrl(),
-        loadActiveCommunityId(identity.publicKey),
-      ]);
+      const relayUrl = await getEffectiveRelayUrl();
       const list = await mobileSurfaceCache.read(
         surfaceAddress(relayUrl, identity.publicKey, '/workspaces'), isWorkspaceListView);
       if (cancelled) return;
       setActiveWorkspaceId(
-        list?.workspaces.some((workspace) => workspace.id === stored)
-          ? stored
-          : (list?.workspaces[0]?.id ?? stored),
+        list?.workspaces.some((workspace) => workspace.id === currentWorkspaceId)
+          ? currentWorkspaceId
+          : (list?.workspaces[0]?.id ?? currentWorkspaceId),
       );
     })().catch(() => {
       if (!cancelled) setActiveWorkspaceId(null);
@@ -381,7 +379,7 @@ export default function TrayScreen() {
     return () => {
       cancelled = true;
     };
-  }, [routeWorkspaceId]);
+  }, [currentWorkspaceId, routeWorkspaceId]);
 
   useEffect(() => {
     if (!removed) return;

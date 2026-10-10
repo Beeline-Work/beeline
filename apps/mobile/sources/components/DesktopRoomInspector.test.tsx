@@ -11,7 +11,12 @@ function create(element: React.ReactElement) {
 }
 afterEach(async () => { await act(async () => mounted.splice(0).forEach(tree => tree.unmount())); });
 const roomWire = vi.hoisted(() => ({ listener: undefined as any }));
-vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { roomWire.listener = listener; return () => undefined; } }) }));
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { roomWire.listener = listener; return () => undefined; }, whenSubscribed: async () => undefined }) }));
+vi.mock('@/sync/transport/room-view-client', () => ({ RoomViewClient: class {} }));
+vi.mock('@/buzz/surface-storage', () => ({
+  mobileSurfaceCache: { read: async () => null, write: async () => undefined },
+  surfaceAddress: () => 'surface-address',
+}));
 
 const phoneOperation = vi.hoisted(() => vi.fn());
 const publishMessage = vi.hoisted(() => vi.fn<(event: { text: string }) => Promise<unknown>>());
@@ -149,7 +154,7 @@ vi.mock('@/sync/transport', () => ({
     }
   },
 }));
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation, phoneOperationFailureReason: (reason: unknown) => String(reason) }));
 vi.mock('@/modal', () => ({ Modal: { confirm: modalConfirm } }));
 vi.mock('@/components/buzz/corner-brief-viewer', () => ({ openCornerBriefViewer }));
 vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
@@ -161,6 +166,7 @@ vi.mock('@/buzz/desktop-workbench-state', async (importOriginal) => ({
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { textDraftKey } from '@/buzz/text-draft-store';
+import { acceptCornerStatusFrame, resetRoomCornerStore } from '@/buzz/room-corner-store';
 import { DesktopRoomInspector } from './DesktopRoomInspector';
 import { buildChannelReferenceIndex } from '@/buzz/channel-reference';
 
@@ -291,6 +297,7 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
+  resetRoomCornerStore();
   phoneOperation.mockReset();
   publishMessage.mockReset().mockResolvedValue({});
   modalConfirm.mockReset();
@@ -319,6 +326,23 @@ function nodeText(node: { findAllByType(type: unknown): any[] }): string {
 }
 
 describe('DesktopRoomInspector work pane', () => {
+  it('follows a corner rename from the Room\'s corner record without another read', async () => {
+    const options = props({ client: { room: vi.fn(async () => { throw new Error('offline'); }) } });
+    const tree = await render(options);
+    await act(async () => { await Promise.resolve(); });
+    expect(text(tree)).toContain('Fix fixture');
+    const reads = (options.client as unknown as { corners: ReturnType<typeof vi.fn> }).corners;
+    expect(reads).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      acceptCornerStatusFrame({ roomId: 'room', sequence: 1, cornerCount: 2,
+        waitingCornerCount: 0, openCorners: [],
+        corners: [{ ...corners[0], corner: { ...corners[0].corner, name: 'Fix fixture again' } },
+          corners[1]] });
+    });
+    expect(text(tree)).toContain('Fix fixture again');
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
+
   it('Reproduction R9c: failed selection never shows the previous corner', async () => {
     const detail = { ...room(), room: corners[0].corner, parent: room().room };
     const client = { room: vi.fn(async (id: string) => {

@@ -61,14 +61,14 @@ it('Demonstration draft-send-R1: browser composer retains and submits only appen
         'const theme = { buzz: beelineThemes.obsidian, colors: { groupped: { background: "#14091a" }, divider: "#333", text: "#fff", textSecondary: "#aaa", textLink: "#b08a4a", surface: "#190e21" } };',
       ),
       '@/auth/buzz-identity-storage':
-        'export const loadBuzzIdentity = async () => ({ publicKey: "browser-viewer" });',
+        'export const loadBuzzIdentity = async () => ({ publicKey: "browser-viewer" }); export const getEffectiveRelayUrl = async () => "https://relay.test";',
       '@/sync/transport': `export class BuzzRigTransport {
         async composeMessage({ text }) { return { id: 'message', text }; }
         async publishPreparedMessage(event) { globalThis.sent.push(event.text);
           if (globalThis.sent.length === 1) return new Promise(resolve => { globalThis.finish = resolve; }); return {}; }
       }`,
       '@/sync/transport/monolith-operation':
-        'export const monolithPhoneOperation = async () => ({});',
+        'export const monolithPhoneOperation = async () => ({}); export const phoneOperationFailureReason = (reason) => String(reason);',
       '@/components/buzz/ConversationComposer': `import React from 'react';
         export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26; export const COMPOSER_MAX_INPUT_HEIGHT = 115;
         export const ConversationComposer = props => <div><textarea value={props.value} onInput={event => props.onChangeText(event.currentTarget.value)} /><button id="send" onClick={() => props.onSend()}>Send</button></div>;`,

@@ -95,6 +95,7 @@ vi.mock('@/components/buzz/DesktopArtifactPane', () => ({ DesktopArtifactPane: (
 vi.mock('@/components/buzz/SurfaceGlyphLoader', () => ({ SurfaceGlyphLoader: () => null }));
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: vi.fn(async () => null) }));
 vi.mock('@/sync/transport', () => ({ BuzzRigTransport: class {} }));
+vi.mock('@/buzz/use-room-corners', () => ({ useRoomCorners: () => ({ record: undefined }) }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));
 vi.mock('@/modal', () => ({ Modal: { confirm: vi.fn() } }));
 vi.mock('@/components/buzz/corner-brief-viewer', () => ({ openCornerBriefViewer: vi.fn() }));

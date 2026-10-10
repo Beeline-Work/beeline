@@ -1,23 +1,23 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CornerListItem, CornerListView } from '@beeline/buzz-client';
-import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 
 const list = vi.hoisted(() => ({
-  reads: 0,
+  reads: [] as Array<{ options: unknown; settle?: () => void }>,
+  /** The rows each read answers with, by state. */
   state: 'waiting' as string,
+  /** Extra open corners the first page carries. */
+  extra: [] as string[],
+  /** When set, a read waits on this gate before it answers. */
+  readGate: null as Promise<void> | null,
+  archived: [] as string[],
   cached: null as unknown,
   createCalls: [] as unknown[][],
   createGate: null as Promise<void> | null,
   createFailure: null as Error | null,
-  /** When set, the screen's watch goes through this shared socket instead. */
   live: null as null | import('@/sync/transport/live-connection').LiveConnection,
-  subscriptions: [] as Array<{
-    filters: readonly { readonly '#h'?: readonly string[] }[];
-    emit(event: MonolithSurfaceEvent): void;
-  }>,
 }));
 
 vi.mock('react-native', async () => {
@@ -25,6 +25,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
     Platform: {
       OS: 'ios',
       select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
@@ -78,6 +79,10 @@ vi.mock('@/buzz/surface-storage', () => ({
 vi.mock('@/sync/transport/monolith-operation', () => ({
   phoneOperationFailureReason: (reason: unknown) => String(reason),
 }));
+vi.mock('@/sync/transport/live-connection', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/sync/transport/live-connection')>()),
+  sharedLiveConnection: () => list.live,
+}));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     async createHumanCorner(...args: unknown[]) {
@@ -86,25 +91,21 @@ vi.mock('@/sync/transport', () => ({
       if (list.createFailure) throw list.createFailure;
       return 'corner-created';
     }
-    async ensureClient() {
-      return {
-        surfaceSubscribe: async (
-          filters: readonly { readonly '#h'?: readonly string[] }[],
-          listener: (event: MonolithSurfaceEvent) => void,
-        ) => {
-          if (list.live) return list.live.register(filters, listener as (event: unknown) => void);
-          list.subscriptions.push({ filters, emit: listener });
-          return () => undefined;
-        },
-      };
-    }
   },
 }));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
-    async corners(): Promise<CornerListView> {
-      list.reads += 1;
-      return cornerList(list.state);
+    async corners(_id: string, options?: { archived?: boolean }): Promise<CornerListView> {
+      const read: { options: unknown; settle?: () => void } = { options };
+      list.reads.push(read);
+      const state = list.state;
+      const extra = [...list.extra];
+      const archived = [...list.archived];
+      await list.readGate;
+      if (options?.archived) {
+        return { ...cornerList(state), corners: archived.map((id) => corner(id, 'archived')) };
+      }
+      return cornerList(state, extra);
     }
   },
 }));
@@ -112,11 +113,30 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 import BuzzCorners from './[roomId]';
 import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { cornerOpenEnded } from '@/buzz/corner-open-status';
+import { resetRoomCornerStore } from '@/buzz/room-corner-store';
+import { LiveConnection } from '@/sync/transport/live-connection';
 import { router } from 'expo-router';
 
 const viewer = { pubkey: 'viewer', kind: 'human' as const, name: 'Captain' };
 
-function cornerList(state: string): CornerListView {
+function corner(id: string, state: string): CornerListItem {
+  return {
+    corner: {
+      id,
+      workspaceId: 'workspace',
+      parentId: 'room-a',
+      name: id,
+      archived: state === 'archived',
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
+    state,
+    stateAt: 1,
+  } as unknown as CornerListItem;
+}
+
+function cornerList(state: string, extra: readonly string[] = []): CornerListView {
   return {
     room: {
       id: 'room-a',
@@ -126,22 +146,7 @@ function cornerList(state: string): CornerListView {
       createdAt: 1,
       updatedAt: 1,
     },
-    corners: [
-      {
-        corner: {
-          id: 'corner-1',
-          workspaceId: 'workspace',
-          parentId: 'room-a',
-          name: 'fix login',
-          archived: false,
-          createdAt: 1,
-          updatedAt: 1,
-        },
-        lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
-        state,
-        stateAt: 1,
-      } as unknown as CornerListItem,
-    ],
+    corners: [...extra.map((id) => corner(id, 'working')), corner('corner-1', state)],
     viewer: {
       identity: viewer,
       role: 'member',
@@ -152,9 +157,50 @@ function cornerList(state: string): CornerListView {
   } as unknown as CornerListView;
 }
 
-function paintedStates(renderer: ReactTestRenderer): string[] {
+type TestSocket = {
+  readyState: number;
+  sent: string[];
+  onopen?: () => void;
+  onmessage?: (event: { data: string }) => void;
+  onclose?: () => void;
+};
+
+/** The phone server's side of the one live socket. */
+const server = {
+  sockets: [] as TestSocket[],
+  socket(): TestSocket {
+    const socket = server.sockets.at(-1);
+    if (!socket) throw new Error('no live socket');
+    return socket;
+  },
+  open() {
+    const socket = server.socket();
+    socket.readyState = 1;
+    socket.onopen?.();
+  },
+  emit(frame: unknown) {
+    server.socket().onmessage?.({ data: JSON.stringify(frame) });
+  },
+  subscribed(resumed = false, epoch = 'epoch') {
+    server.emit({ type: 'subscribed', roomId: 'room-a', epoch, cursor: 0, resumed });
+  },
+  status(sequence: number, rows: readonly CornerListItem[], nextOpen?: string) {
+    server.emit({
+      type: 'corner-status', roomId: 'room-a', sequence, cornerCount: rows.length,
+      waitingCornerCount: 0, openCorners: [], agentState: null, corners: rows,
+      ...(nextOpen ? { nextOpen } : {}),
+    });
+  },
+};
+
+function painted(renderer: ReactTestRenderer): string[] {
   const rows = renderer.root.find((node: { type: unknown }) => node.type === 'RoomCornersList');
-  return (rows.props.corners as CornerListItem[]).map((item) => item.state);
+  return (rows.props.corners as CornerListItem[]).map((item) => `${item.corner.id}:${item.state}`);
+}
+
+function openReads(): number {
+  return list.reads.filter((read) => !(read.options as { archived?: boolean } | undefined)?.archived
+    && !(read.options as { openBefore?: string } | undefined)?.openBefore).length;
 }
 
 function textOf(node: { children: unknown[] }): string {
@@ -163,18 +209,18 @@ function textOf(node: { children: unknown[] }): string {
     .join('');
 }
 
-function parentWatch() {
-  const watch = list.subscriptions.find((entry) =>
-    entry.filters.some((filter) => filter['#h']?.includes('room-a')),
-  );
-  if (!watch) throw new Error('the corner list is not watching its parent Room');
-  return watch;
+const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+/** Another screen, such as the Room list, holds the parent Room lane. */
+async function holdLaneElsewhere(): Promise<() => void> {
+  const stop = await list.live!.register([{ '#h': ['room-a'] }], () => undefined);
+  await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+  server.open();
+  server.subscribed();
+  return stop;
 }
 
-/** Longer than the scheduler's 500 ms floor and 1 s dirty ceiling. */
-const quiet = () => act(() => new Promise((resolve) => setTimeout(resolve, 1_100)));
-
-async function mountList(): Promise<ReactTestRenderer> {
+async function openCorners(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
     // The app layout mounts the toast over every screen.
@@ -184,86 +230,166 @@ async function mountList(): Promise<ReactTestRenderer> {
         React.createElement(CornerOpenToast)),
     );
   });
-  await vi.waitFor(() => expect(() => parentWatch()).not.toThrow());
-  await quiet();
-  parentWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
-  await quiet();
+  await settle();
+  return renderer;
+}
+
+/** Open Corners with nothing else holding the lane; the first read paints it. */
+async function mountList(): Promise<ReactTestRenderer> {
+  const renderer = await openCorners();
+  await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+  server.open();
+  server.subscribed();
+  await settle();
+  await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:waiting']));
   return renderer;
 }
 
 beforeEach(() => {
-  list.reads = 0;
+  list.reads.length = 0;
   list.state = 'waiting';
+  list.extra = [];
+  list.readGate = null;
+  list.archived = [];
   list.cached = null;
   list.createCalls.length = 0;
   list.createGate = null;
   list.createFailure = null;
-  list.live = null;
   cornerOpenEnded();
   vi.mocked(router.push).mockClear();
-  list.subscriptions.length = 0;
+  server.sockets.length = 0;
+  vi.stubGlobal('WebSocket', class {
+    readyState = 0;
+    sent: string[] = [];
+    onopen?: () => void;
+    onmessage?: (event: { data: string }) => void;
+    onclose?: () => void;
+    constructor() { server.sockets.push(this as unknown as TestSocket); }
+    send(value: string) { this.sent.push(value); }
+    close() { this.readyState = 3; }
+  });
+  resetRoomCornerStore();
+  list.live = new LiveConnection({
+    authorization: async () => 'phone-session',
+    liveUrl: () => 'wss://server.example/v1/phone/live',
+    subscribeIdentityChange: () => () => undefined,
+    subscribeForeground: () => () => undefined,
+  });
+});
+
+afterEach(() => {
+  list.live?.dispose();
+  list.live = null;
+  vi.unstubAllGlobals();
 });
 
 describe('Corner list live path', () => {
-  it('paints a held list and applies an ordered frame without a GET on a resumed lane', async () => {
-    list.cached = cornerList('working');
-    let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(<BuzzCorners />); });
-    await vi.waitFor(() => expect(() => parentWatch()).not.toThrow());
-    parentWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a',
-      epoch: 'epoch', cursor: 1, resumed: true } });
-    await quiet();
-    expect(list.reads).toBe(0);
-    expect(paintedStates(renderer)).toEqual(['working']);
-    parentWatch().emit({ monolithLive: { type: 'corner-status', roomId: 'room-a',
-      cornerCount: 1, waitingCornerCount: 1, openCorners: [], agentState: null,
-      corners: cornerList('waiting').corners, nextOpen: 'older-corners' } });
-    await quiet();
-    expect(paintedStates(renderer)).toEqual(['waiting']);
-    expect(renderer.root.findByType('RoomCornersList').props.moreOpen).toBe(true);
-    expect(list.reads).toBe(0);
+  it('shows corners the Room lane heard while Corners was closed, with no read', async () => {
+    // The Room list holds the parent lane. While Corners is closed, two
+    // corners open and the server sends their rows.
+    await holdLaneElsewhere();
+    server.status(1, [corner('corner-new', 'working'), corner('corner-1', 'waiting')]);
+    server.status(2, [corner('corner-newer', 'working'), corner('corner-new', 'working'),
+      corner('corner-1', 'waiting')]);
+    // Corners saved an older list the last time it was open.
+    list.cached = cornerList('waiting');
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(
+      ['corner-newer:working', 'corner-new:working', 'corner-1:waiting']));
+    expect(openReads()).toBe(0);
   });
-  it('paints the status the parent Room lane already heard when Corners opens from it', async () => {
-    const { LiveConnection } = await import('@/sync/transport/live-connection');
-    const sockets: Array<{ onopen?: () => void; onmessage?: (event: { data: string }) => void;
-      readyState: number }> = [];
-    vi.stubGlobal('WebSocket', class {
-      readyState = 0;
-      onopen?: () => void;
-      onmessage?: (event: { data: string }) => void;
-      constructor() { sockets.push(this); }
-      send() {}
-      close() { this.readyState = 3; }
-    });
-    const connection = new LiveConnection({
-      authorization: async () => 'phone-session',
-      liveUrl: () => 'wss://server.example/v1/phone/live',
-      subscribeIdentityChange: () => () => undefined,
-      subscribeForeground: () => () => undefined,
-    });
-    const emit = (frame: unknown) => sockets[0]!.onmessage?.({ data: JSON.stringify(frame) });
-    try {
-      // The Room screen holds the lane and hears a corner start working.
-      await connection.register([{ '#h': ['room-a'] }], () => undefined);
-      await vi.waitFor(() => expect(sockets).toHaveLength(1));
-      sockets[0]!.readyState = 1;
-      sockets[0]!.onopen?.();
-      emit({ type: 'subscribed', roomId: 'room-a', epoch: 'epoch', cursor: 1, resumed: false });
-      emit({ type: 'corner-status', roomId: 'room-a', cornerCount: 1, waitingCornerCount: 0,
-        openCorners: [], agentState: 'working', corners: cornerList('working').corners });
-      // Corners opens from it with an older saved list.
-      list.cached = cornerList('waiting');
-      list.live = connection;
-      let renderer!: ReactTestRenderer;
-      await act(async () => { renderer = create(<BuzzCorners />); });
-      await quiet();
-      expect(paintedStates(renderer)).toEqual(['working']);
-      expect(list.reads).toBe(0);
-    } finally {
-      connection.dispose();
-      vi.unstubAllGlobals();
-    }
+
+  it('Reproduction G3-3.1: reads once when the Room list holds the lane but nothing proved the saved list', async () => {
+    // The Room list holds the parent lane after app start; no corner changed
+    // since, so no frame came. The late join still reports the lane resumed.
+    await holdLaneElsewhere();
+    list.cached = cornerList('waiting');
+    list.state = 'working';
+    const renderer = await openCorners();
+    // The saved copy paints at once; the read replaces it.
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:working']));
+    expect(openReads()).toBe(1);
   });
+
+  it('keeps a frame that lands while the first read is in flight', async () => {
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => (release = resolve));
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(openReads()).toBe(1));
+    server.status(1, [corner('corner-new', 'working'), corner('corner-1', 'working')]);
+    await act(async () => release());
+    await settle();
+    expect(painted(renderer)).toEqual(['corner-new:working', 'corner-1:working']);
+  });
+
+  it('drops a frame older than one the lane already applied', async () => {
+    const renderer = await mountList();
+    server.status(5, [corner('corner-1', 'review')]);
+    server.status(4, [corner('corner-1', 'working')]);
+    await settle();
+    expect(painted(renderer)).toEqual(['corner-1:review']);
+  });
+
+  it('never repeats a corner a frame moved from a later page to the first', async () => {
+    const renderer = await mountList();
+    server.status(1, [corner('corner-1', 'waiting')], 'older');
+    await settle();
+    // The next page holds corner-old, and repeats corner-1 from the first.
+    list.extra = ['corner-old'];
+    await act(async () => renderer.root.findByType('RoomCornersList').props.onMoreOpen());
+    await settle();
+    expect(painted(renderer)).toEqual(['corner-1:waiting', 'corner-old:working']);
+    server.status(2, [corner('corner-old', 'review'), corner('corner-1', 'waiting')]);
+    await settle();
+    expect(painted(renderer)).toEqual(['corner-old:review', 'corner-1:waiting']);
+  });
+
+  it('re-reads the archived list when a corner leaves the open list', async () => {
+    const renderer = await mountList();
+    server.status(1, [corner('corner-2', 'working'), corner('corner-1', 'waiting')]);
+    await settle();
+    await act(async () => renderer.root.findByType('RoomCornersList').props.onShowArchived());
+    await settle();
+    expect(renderer.root.findByType('RoomCornersList').props.archived.corners).toEqual([]);
+    list.archived = ['corner-2'];
+    server.status(2, [corner('corner-1', 'waiting')]);
+    await settle();
+    await vi.waitFor(() => expect(
+      renderer.root.findByType('RoomCornersList').props.archived.corners
+        .map((item: CornerListItem) => item.corner.id),
+    ).toEqual(['corner-2']));
+    expect(painted(renderer)).toEqual(['corner-1:waiting']);
+  });
+
+  it('Reproduction G3-R1: re-reads the archived list when a corner closes during its first read', async () => {
+    const renderer = await mountList();
+    server.status(1, [corner('corner-2', 'working'), corner('corner-1', 'waiting')]);
+    await settle();
+    // The first archived read starts while corner-2 is still open, so its
+    // answer is empty.
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => (release = resolve));
+    let shown!: Promise<void>;
+    await act(async () => {
+      shown = renderer.root.findByType('RoomCornersList').props.onShowArchived();
+    });
+    await vi.waitFor(() => expect(list.reads.at(-1)?.options).toEqual({ archived: true }));
+    // corner-2 closes before that read lands.
+    list.archived = ['corner-2'];
+    server.status(2, [corner('corner-1', 'waiting')]);
+    await settle();
+    list.readGate = null;
+    await act(async () => { release(); await shown; });
+    await settle();
+    await vi.waitFor(() => expect(
+      renderer.root.findByType('RoomCornersList').props.archived.corners
+        .map((item: CornerListItem) => item.corner.id),
+    ).toEqual(['corner-2']));
+  });
+
   it('creates and opens a randomly named corner from the plus button', async () => {
     const renderer = await mountList();
     const header = renderer.root.findByType('RoomCornersHeader');
@@ -344,50 +470,26 @@ describe('Corner list live path', () => {
     expect(renderer.root.findAllByProps({ testID: 'corner-open-failed' })).toHaveLength(0);
   });
 
-  it('repaints a corner status from the parent Room nudge, without re-entering', async () => {
+  it('reads when the parent Room names a corner change without its rows', async () => {
     const renderer = await mountList();
-    expect(paintedStates(renderer)).toEqual(['waiting']);
-    expect(list.reads).toBe(1);
-
+    expect(openReads()).toBe(1);
     list.state = 'working';
-    await act(async () => {
-      parentWatch().emit({
-        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'corner-status' },
-      });
-    });
-    await quiet();
-
-    expect(list.reads).toBe(2);
-    expect(paintedStates(renderer)).toEqual(['working']);
+    server.emit({ type: 'invalidate', roomId: 'room-a', reason: 'corner-status' });
+    await settle();
+    expect(openReads()).toBe(2);
+    expect(painted(renderer)).toEqual(['corner-1:working']);
   });
 
-  it('still watches the parent Room when the cached list carries no watch filters', async () => {
-    list.cached = cornerList('waiting');
-    await mountList();
-    expect(parentWatch().filters).toEqual([{ '#h': ['room-a'] }]);
-  });
-
-  it('does not re-read for parent chat traffic, only for a reconnect', async () => {
+  it('does not re-read for parent chat traffic, only for a fresh lane', async () => {
     const renderer = await mountList();
-    await act(async () => {
-      parentWatch().emit({
-        monolithLive: {
-          type: 'invalidate',
-          roomId: 'room-a',
-          reason: 'postgres:messages',
-          messageId: 'm1',
-        },
-      });
-    });
-    await quiet();
-    expect(list.reads).toBe(1);
+    server.emit({ type: 'invalidate', roomId: 'room-a', reason: 'postgres:messages', messageId: 'm1' });
+    await settle();
+    expect(openReads()).toBe(1);
 
     list.state = 'working';
-    await act(async () => {
-      parentWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
-    });
-    await quiet();
-    expect(list.reads).toBe(2);
-    expect(paintedStates(renderer)).toEqual(['working']);
+    server.subscribed(false, 'epoch-2');
+    await settle();
+    expect(openReads()).toBe(2);
+    expect(painted(renderer)).toEqual(['corner-1:working']);
   });
 });

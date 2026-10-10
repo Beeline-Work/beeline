@@ -28,6 +28,8 @@ import { useRoomMessageStore } from '@/buzz/room-message-store';
 import { buildChannelReferenceIndex, type ChannelReferenceIndex, type ChannelReferenceTarget } from '@/buzz/channel-reference';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { useRoomCorners } from '@/buzz/use-room-corners';
+import { roomOpenCornerRows } from '@/buzz/room-corner-store';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
@@ -117,34 +119,17 @@ export function DesktopRoomInspector({
   focusMessageId,
 }: Props) {
   const selectedCornerId = content.kind === 'corner' ? content.cornerId : null;
-  const [corners, setCorners] = React.useState<readonly CornerListItem[]>([]);
+  // The Room's one corner record, the same rows its Corners screen and Room
+  // list dropdown paint; frames keep it current while the inspector is open.
+  const cornerRecord = useRoomCorners(client ? room.room.id : undefined, client).record;
+  const corners = React.useMemo(
+    () => (cornerRecord ? roomOpenCornerRows(cornerRecord) : []),
+    [cornerRecord],
+  );
   const [width, setWidth] = React.useState(DESKTOP_INSPECTOR_DEFAULT_WIDTH);
   const dragStart = React.useRef(width);
 
   React.useEffect(() => void loadDesktopPaneWidth('inspector').then(setWidth), []);
-  React.useEffect(() => {
-    setCorners([]);
-  }, [room.room.id]);
-
-  React.useEffect(() => {
-    if (!client) {
-      setCorners([]);
-      return;
-    }
-    let cancelled = false;
-    void client
-      .corners(room.room.id)
-      .then((view) => {
-        if (!cancelled) setCorners(view.corners);
-      })
-      .catch(() => {
-        if (!cancelled) setCorners([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, room.room.id]);
-
   const observed = useObservedResource<RoomView>(
     client && selectedCornerId ? `inspector:${selectedCornerId}` : undefined,
     {

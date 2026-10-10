@@ -4,15 +4,9 @@ import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  SurfaceRefreshScheduler,
-  isCornerListView,
-  type CornerListView,
-  type Identity,
-} from '@beeline/buzz-client';
+import type { Identity } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Button } from '@/components/buzz/Button';
@@ -21,7 +15,6 @@ import { RoomCornersHeader } from '@/components/buzz/RoomCornersHeader';
 import { RoomCornersList } from '@/components/buzz/RoomCornersList';
 import { CornerOpenRow } from '@/components/buzz/CornerOpenToast';
 import { BuzzRigTransport } from '@/sync/transport';
-import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { cornerHref } from '@/buzz/corner-navigation';
@@ -34,166 +27,82 @@ import { useIsDesktop } from '@/utils/responsive';
 import { liveRoomRuns, useRoomWorkflowRuns } from '@/buzz/use-room-workflow-run';
 import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
+import { useRoomCorners } from '@/buzz/use-room-corners';
+import { roomOpenCornerRows } from '@/buzz/room-corner-store';
 
-/** Parent-Room hints that change this list: a corner's status, a corner
- *  opened, renamed, or closed, and the server's own resync. */
-const CORNER_LIST_REASONS = new Set(['corner-status', 'corner', 'resync']);
+/** The footer's read status; the archived rows themselves live in the corner record. */
+type ArchivedFooter =
+  | { readonly status: 'idle' }
+  | { readonly status: 'loading' }
+  | {
+      readonly status: 'ready';
+      readonly more?:
+        | { readonly status: 'loading' }
+        | { readonly status: 'error'; readonly reason: string };
+    }
+  | { readonly status: 'error'; readonly reason: string };
 
 export default function BuzzCorners() {
   useLatencyRouteFrame('/beeline/corners/[roomId]');
   const { roomId } = useLocalSearchParams<{ roomId: string }>();
   const decodedId = roomId ? decodeURIComponent(roomId) : '';
   const insets = useSafeAreaInsets();
-  const [surface, setSurface] = useState<CornerListView | null>(null);
-  const [openMore, setOpenMore] = useState<CornerListView['corners']>([]);
-  const [nextOpen, setNextOpen] = useState<string | undefined>();
-  const loadingOpen = useRef(false);
-  const openPageGeneration = useRef(0);
+  // The Room's one corner record: rows the Room lane already heard paint with
+  // no read, whichever screen held the lane when they arrived.
+  const corners = useRoomCorners(decodedId || undefined);
+  const surface = corners.view ?? null;
   useLatencyRouteFrame('/beeline/corners/[roomId]', surface !== null, true);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const error = actionError ?? corners.error;
   const [refreshing, setRefreshing] = useState(false);
-  const [retryGeneration, setRetryGeneration] = useState(0);
+  const loadingOpen = useRef(false);
   const creatingRef = useRef(false);
   const [creating, setCreating] = useState(false);
-  const [archived, setArchived] = useState<ArchivedCornersState>({ status: 'idle' });
-  const schedulerRef = useRef<SurfaceRefreshScheduler<CornerListView> | null>(null);
+  const [archivedStatus, setArchivedStatus] = useState<ArchivedFooter>({ status: 'idle' });
   const desktop = useIsDesktop();
   // Desktop cells name each corner's live workflow; one read covers the Room.
   const workflows = useRoomWorkflowRuns(desktop && decodedId ? decodedId : undefined);
-
   useEffect(() => {
-    if (!decodedId) return;
-    let cancelled = false;
-    let unsubscribe: (() => void) | undefined;
-    let scheduler: SurfaceRefreshScheduler<CornerListView> | undefined;
-    void (async () => {
-      const identity = (await loadBuzzIdentity()) as Identity | null;
-      if (!identity) {
-        router.replace('/beeline/onboarding');
-        return;
-      }
-      const relayUrl = await getEffectiveRelayUrl();
-      const address = surfaceAddress(relayUrl, identity.publicKey, '/room/:id/corners', {
-        roomId: decodedId,
-      });
-      const cached = await mobileSurfaceCache.read(address, isCornerListView);
-      const hadCached = Boolean(cached);
-      if (cancelled) return;
-      if (cached) {
-        setSurface(cached);
-        setNextOpen(cached.nextOpen);
-      }
-      const http = new RoomViewClient({ baseUrl: relayUrl, identity });
-      scheduler = new SurfaceRefreshScheduler({
-        fetch: () => http.corners(decodedId),
-        apply: (value) => {
-          openPageGeneration.current += 1;
-          setSurface(value);
-          setOpenMore([]);
-          setNextOpen(value.nextOpen);
-          setError(null);
-          setRefreshing(false);
-          void mobileSurfaceCache.write(address, value, isCornerListView);
-        },
-        onError: (reason) => {
-          setError(String(reason));
-          setRefreshing(false);
-        },
-      });
-      schedulerRef.current = scheduler;
-      const transport = new BuzzRigTransport(identity);
-      const relay = await transport.ensureClient();
-      // The corner list payload carries no watch filters, so the parent Room is
-      // always the lane: the server nudges it whenever a corner's status
-      // inputs change. Chat traffic in the parent does not touch this list.
-      let handshakeSeen = false;
-      unsubscribe = await relay.surfaceSubscribe([{ '#h': [decodedId] }], (event) => {
-        if (!('monolithLive' in event)) return;
-        const live = (event as MonolithSurfaceEvent).monolithLive;
-        if (live.type === 'subscribed') {
-          // The first frame opens this watch; a later one is a reconnect, and
-          // one read closes a gap. A resumed lane proves the cached list is
-          // continuous, so it needs no opening HTTP request.
-          if ((handshakeSeen || hadCached) && !live.resumed) scheduler?.force();
-          handshakeSeen = true;
-          return;
-        }
-        if (live.type === 'corner-status' && live.corners) {
-          setNextOpen(live.nextOpen);
-          setSurface((current) => {
-            if (!current) return current;
-            const next = { ...current, corners: live.corners!, nextOpen: live.nextOpen };
-            void mobileSurfaceCache.write(address, next, isCornerListView);
-            return next;
-          });
-          return;
-        }
-        if (live.type === 'corner-status') {
-          scheduler?.signal();
-          return;
-        }
-        if (live.type === 'invalidate' && CORNER_LIST_REASONS.has(live.reason)) {
-          scheduler?.signal();
-        }
-      });
-      if (cancelled) return unsubscribe();
-      if (!hadCached) await scheduler.startAfter(Promise.resolve());
-    })().catch((reason) => {
-      if (!cancelled) setError(String(reason));
+    void loadBuzzIdentity().then((identity) => {
+      if (!identity) router.replace('/beeline/onboarding');
     });
-    return () => {
-      cancelled = true;
-      unsubscribe?.();
-      scheduler?.dispose();
-      schedulerRef.current = null;
-    };
-  }, [decodedId, retryGeneration]);
+  }, []);
+  const archivedRows = corners.record?.archived;
+  const archived = useMemo<ArchivedCornersState>(
+    () =>
+      archivedStatus.status === 'ready' && archivedRows
+        ? {
+            status: 'ready',
+            corners: archivedCornersByClosure(archivedRows.corners),
+            ...(archivedRows.next ? { next: archivedRows.next } : {}),
+            ...(archivedStatus.more ? { more: archivedStatus.more } : {}),
+          }
+        : archivedStatus.status === 'ready'
+          ? { status: 'loading' }
+          : archivedStatus,
+    [archivedRows, archivedStatus],
+  );
 
   const title = useMemo(
     () => (surface ? (displayRoomIndexTitle(surface.room.name) ?? surface.room.name) : 'Room'),
     [surface],
   );
+  const refresh = async () => {
+    setActionError(null);
+    await corners.refresh();
+  };
   const loadMoreOpen = async () => {
-    if (!nextOpen || loadingOpen.current) return;
+    if (loadingOpen.current) return;
     loadingOpen.current = true;
-    const cursor = nextOpen;
-    const generation = openPageGeneration.current;
     try {
-      const identity = (await loadBuzzIdentity()) as Identity | null;
-      if (!identity) return;
-      const relayUrl = await getEffectiveRelayUrl();
-      const page = await new RoomViewClient({ baseUrl: relayUrl, identity }).corners(decodedId, {
-        openBefore: cursor,
-      });
-      if (generation !== openPageGeneration.current) return;
-      setOpenMore((current) => {
-        const seen = new Set([...(surface?.corners ?? []), ...current].map((item) => item.corner.id));
-        return [...current, ...page.corners.filter((item) => !seen.has(item.corner.id))];
-      });
-      setNextOpen(page.nextOpen);
+      await corners.loadMoreOpen();
     } catch (reason) {
-      setError(phoneOperationFailureReason(reason));
+      setActionError(phoneOperationFailureReason(reason));
     } finally {
       loadingOpen.current = false;
     }
   };
 
-  /**
-   * Closed corners are not in the live surface, so the archived footer pays
-   * for its own read the first time it is tapped. A read already in flight or
-   * already landed is not repeated; a failed one is, because the footer offers
-   * the retry in its own label. The server sends ten at a time; `before` reads
-   * the page after the one ending at that cursor.
-   */
-  const readArchived = async (before?: string) => {
-    const identity = (await loadBuzzIdentity()) as Identity | null;
-    if (!identity) throw new Error('Beeline identity is unavailable');
-    const relayUrl = await getEffectiveRelayUrl();
-    return new RoomViewClient({ baseUrl: relayUrl, identity }).corners(decodedId, {
-      archived: true,
-      ...(before ? { before } : {}),
-    });
-  };
   /** The list knows only that a brief exists; its text comes with the corner's own view. */
   const openBrief = async (cornerId: string) => {
     try {
@@ -207,36 +116,34 @@ export default function BuzzCorners() {
       Modal.alert('Could not open the brief', phoneOperationFailureReason(reason));
     }
   };
+  /**
+   * Closed corners are not in the live surface, so the archived footer pays
+   * for its own read the first time it is tapped. A read already in flight or
+   * already landed is not repeated; a failed one is, because the footer offers
+   * the retry in its own label. The server sends ten at a time. The rows live
+   * in the Room's corner record, which re-reads them when a corner closes.
+   */
   const loadArchived = async () => {
-    if (archived.status === 'loading' || archived.status === 'ready') return;
-    setArchived({ status: 'loading' });
+    if (archivedStatus.status === 'loading' || archivedStatus.status === 'ready') return;
+    setArchivedStatus({ status: 'loading' });
     try {
-      const view = await readArchived();
-      setArchived({
-        status: 'ready',
-        corners: archivedCornersByClosure(view.corners),
-        ...(view.nextArchived ? { next: view.nextArchived } : {}),
-      });
+      await corners.loadArchived(false);
+      setArchivedStatus({ status: 'ready' });
     } catch (reason) {
-      setArchived({ status: 'error', reason: phoneOperationFailureReason(reason) });
+      setArchivedStatus({ status: 'error', reason: phoneOperationFailureReason(reason) });
     }
   };
   const loadMoreArchived = async () => {
     if (archived.status !== 'ready' || !archived.next || archived.more?.status === 'loading') {
       return;
     }
-    const landed = archived;
-    setArchived({ ...landed, more: { status: 'loading' } });
+    setArchivedStatus({ status: 'ready', more: { status: 'loading' } });
     try {
-      const view = await readArchived(landed.next);
-      setArchived({
-        status: 'ready',
-        corners: archivedCornersByClosure([...landed.corners, ...view.corners]),
-        ...(view.nextArchived ? { next: view.nextArchived } : {}),
-      });
+      await corners.loadArchived(true);
+      setArchivedStatus({ status: 'ready' });
     } catch (reason) {
-      setArchived({
-        ...landed,
+      setArchivedStatus({
+        status: 'ready',
         more: { status: 'error', reason: phoneOperationFailureReason(reason) },
       });
     }
@@ -285,7 +192,7 @@ export default function BuzzCorners() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <Text style={[styles.error, styles.errorCentered]}>{error}</Text>
-        <Button label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
+        <Button label="RETRY" onPress={() => void refresh()} />
       </View>
     );
   }
@@ -323,7 +230,7 @@ export default function BuzzCorners() {
           <TouchableOpacity
             accessibilityLabel={`${error}. Retry`}
             accessibilityRole="button"
-            onPress={() => schedulerRef.current?.force()}
+            onPress={() => void refresh()}
             style={styles.errorPanel}
           >
             <Text style={styles.error}>! {error}</Text>
@@ -331,9 +238,9 @@ export default function BuzzCorners() {
         )}
         <CornerOpenRow roomId={decodedId} />
         <RoomCornersList
-          corners={[...surface.corners, ...openMore]}
+          corners={corners.record ? roomOpenCornerRows(corners.record) : surface.corners}
           onMoreOpen={() => void loadMoreOpen()}
-          moreOpen={!!nextOpen}
+          moreOpen={!!corners.record?.nextOpen}
           parentRoomId={decodedId}
           parentRoomName={title}
           refreshing={refreshing}
@@ -350,7 +257,7 @@ export default function BuzzCorners() {
           onOpenBrief={(item) => void openBrief(item.corner.id)}
           onRefresh={() => {
             setRefreshing(true);
-            schedulerRef.current?.force();
+            void refresh().finally(() => setRefreshing(false));
           }}
         />
       </View>

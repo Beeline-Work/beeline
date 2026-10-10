@@ -5,6 +5,7 @@ import type { ChatListItem } from '@beeline/buzz-client';
 import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
 import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
 import { CornerWaitingPulse } from './CornerWaitingPulse';
+import { useRoomOpenCorners } from '@/buzz/room-corner-store';
 
 /** The viewer's open corners in one Room: ones they follow (started, posted,
  * steered or were tagged in) or that owe them something, waiting first. Everyone else's corners stay off the rail. The
@@ -15,11 +16,12 @@ export function DesktopRoomCorners({
   mobile = false,
 }: {
   item: ChatListItem;
-  onOpen: (cornerId: string) => void;
+  onOpen: (cornerId: string, name: string) => void;
   mobile?: boolean;
 }) {
-  // The chat list carries each Room's open corners; no per-Room corners read.
-  const corners = (item.openCorners ?? [])
+  // The Room's corner record holds the newest summary of its open corners,
+  // seeded by the chat list read; no per-Room corners read.
+  const corners = (useRoomOpenCorners(item.room.id, item.openCorners) ?? [])
     .filter((corner) => corner.mine)
     .sort((a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting'));
   if (corners.length === 0) return null;
@@ -33,7 +35,7 @@ export function DesktopRoomCorners({
         return (
           <Pressable
             key={corner.id}
-            onPress={() => onOpen(corner.id)}
+            onPress={() => onOpen(corner.id, corner.name)}
             accessibilityRole="button"
             accessibilityLabel={`Open corner ${corner.name}, ${corner.state}`}
             style={styles.corner}

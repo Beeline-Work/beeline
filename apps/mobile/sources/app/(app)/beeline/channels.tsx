@@ -65,6 +65,7 @@ import { MessageSearchResults } from '@/components/buzz/MessageSearchResults';
 import { messageSearchHref, useMessageSearch } from '@/buzz/use-message-search';
 import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
 import { WelcomeCards } from '@/components/buzz/WelcomeCards';
+import { applyChatListCorners, cornerStoreClock } from '@/buzz/room-corner-store';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -518,7 +519,8 @@ export default function BuzzChannels() {
         let coverageDecided = false;
         const resumedRooms = new Set<string>();
         let deltasDuringRead: ChatListDelta[] = [];
-        const cornerStatusSequence = new Map<string, number>();
+        // The corner store's clock when the running Room list read started.
+        let chatReadClock = 0;
         // Rooms the socket delivered any frame for since the last applied read.
         const heardRooms = new Set<string>();
         let liveReadApplied = false;
@@ -540,13 +542,8 @@ export default function BuzzChannels() {
               'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
             if (live && 'roomId' in live) heardRooms.add(live.roomId);
             if (live?.type === 'subscribed') {
-              if (!live.resumed) cornerStatusSequence.delete(live.roomId);
               if (live.resumed) resumedRooms.add(live.roomId);
               else resumedRooms.delete(live.roomId);
-            }
-            if (live?.type === 'corner-status' && live.sequence !== undefined) {
-              if (live.sequence <= (cornerStatusSequence.get(live.roomId) ?? -1)) return;
-              cornerStatusSequence.set(live.roomId, live.sequence);
             }
             if (live?.type === 'message-delta' || live?.type === 'turn-delta' ||
                 live?.type === 'corner-status') {
@@ -579,6 +576,7 @@ export default function BuzzChannels() {
           fetch: async () => {
             deltasDuringRead = [];
             readInFlight = true;
+            chatReadClock = cornerStoreClock();
             try {
               return await mobileSurfaceCache.fetch(chatCacheAddress, isChatListView, () => http.chats(selectedId));
             } finally {
@@ -598,6 +596,7 @@ export default function BuzzChannels() {
               keepUnavailableChatFacts(heldChats, read),
             );
             paintChats(value);
+            if (!read.unavailable?.includes('corners')) applyChatListCorners(read.chats, chatReadClock);
             setNeedsYouSignal((signal) => signal + 1);
             if (missedLive) nextTransport.reconnectLive();
             setRefreshing(false);
@@ -1246,12 +1245,9 @@ export default function BuzzChannels() {
                       <DesktopRoomCorners
                         item={item}
                         mobile
-                        onOpen={(cornerId) => {
+                        onOpen={(cornerId, name) => {
                           if (!roomListGestures.canInteract()) return;
-                          const corner = item.openCorners?.find((open) => open.id === cornerId);
-                          router.push(
-                            cornerHref(cornerId, item.room.id, corner?.name, 'room-list'),
-                          );
+                          router.push(cornerHref(cornerId, item.room.id, name, 'room-list'));
                         }}
                       />
                     )}

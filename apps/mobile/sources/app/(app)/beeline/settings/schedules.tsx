@@ -10,7 +10,6 @@ import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import {
   scheduleTitle,
   scheduleWhere,
-  subscriptionSource,
   subscriptionTitle,
   subscriptionWhere,
   useScheduledWork,
@@ -85,7 +84,7 @@ export default function ScheduledWork() {
   const renderSubscription = (subscription: RoomSubscriptionView) => (
     <SettingsRow
       chevron="right"
-      description={`@${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscription.source === 'repository' ? subscriptionSource(subscription) : subscriptionWhere(subscription)}`}
+      description={`@${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
       key={subscription.id}
       onPress={() =>
         router.push({

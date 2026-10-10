@@ -61,7 +61,7 @@ it('lists every entry as one row in the shared grammar, each opening its own pag
     expect(row('scheduled-work-video').props).toMatchObject({ title: 'post_youtube_video workflow · Every day', description: '@Hoots · #video' });
     expect(row('scheduled-work-video').props.leading).toBeTruthy();
     expect(row('scheduled-work-daily').props.leading).toBeUndefined();
-    expect(row('subscription-sub').props).toMatchObject({ title: 'issue.opened · When received', description: '@Hoots · owner/widgets' });
+    expect(row('subscription-sub').props).toMatchObject({ title: 'New issue in owner/widgets', description: '@Hoots · this Room' });
     act(() => row('scheduled-work-daily').props.onPress());
     act(() => row('scheduled-work-video').props.onPress());
     act(() => row('subscription-sub').props.onPress());
@@ -93,7 +93,7 @@ it('stops a subscription from its page only after the same confirm step', async 
   params.value = { roomId: 'room', subscriptionId: 'sub' };
   const tree = await render(<Subscription />);
   try {
-    expect(tree.root.findByProps({ testID: 'subscription-trigger' }).props.children).toBe('issue.opened from owner/widgets.');
+    expect(tree.root.findByProps({ testID: 'subscription-trigger' }).props.children).toBe('New issue in owner/widgets.');
     await act(async () => press(tree, 'stop-subscription'));
     expect(operation.mock.calls.filter(([name]) => name === 'deleteRoomSubscription')).toHaveLength(0);
     await act(async () => press(tree, 'stop-subscription-confirm'));

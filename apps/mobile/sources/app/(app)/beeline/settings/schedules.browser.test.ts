@@ -122,8 +122,8 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       'feedback-triage workflow · Daily at 14:00 America/New_York',
       '@Ruby · #issues-triage',
       'SUBSCRIPTIONS',
-      'pull_request.opened · When received',
-      '@Ruby · owner/widgets',
+      'New pull request in owner/widgets',
+      '@Ruby · this Room',
     ]);
     // Only the workflow schedule wears a glyph.
     expect(page.glyphs).toEqual(['scheduled-work-glyph-video']);
@@ -164,14 +164,14 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     const page = await proof('?page=subscription&roomId=room-1&subscriptionId=sub-1');
     expect(page.text.slice(0, 2)).toEqual(['Schedules and subscriptions', 'Subscription']);
     expect(page.text.slice(2)).toEqual([
-      'Runs',
-      expect.stringMatching(/^When received · last /),
+      'Activity',
+      expect.stringMatching(/^Last event /),
       'Agent',
       '@Ruby',
       'Where',
       'this Room',
       'Trigger',
-      'pull_request.opened from owner/widgets.',
+      'New pull request in owner/widgets.',
       'Event',
       'When this event arrives, the agent wakes with its details.',
       'Stop subscription',

@@ -59,6 +59,6 @@ void build({
   } }],
 }).then(() => {
   writeFileSync(path.join(output, 'frame.html'),
-    '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;background:#131515}</style><div id="root"></div><script src="frame.js"></script>');
+    '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;height:100%}#root{display:flex;flex-direction:column;min-height:100%}</style><div id="root"></div><script src="frame.js"></script>');
   console.log(path.join(output, 'frame.html'));
 });

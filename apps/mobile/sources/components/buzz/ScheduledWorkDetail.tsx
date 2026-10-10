@@ -41,18 +41,20 @@ export function DetailCopy({ children, testID }: { children: React.ReactNode; te
 /** Runs, Agent or Agents, and Where: the same three rows on every detail page. */
 export function ScheduledWorkFacts({
   runs,
+  runsLabel = 'Runs',
   agents,
   where,
   testID = 'scheduled-work-facts',
 }: {
   runs: string;
+  runsLabel?: string;
   agents: readonly string[];
   where: string;
   testID?: string;
 }) {
   return (
     <View style={styles.facts} testID={testID}>
-      <SettingsRow description={runs} testID={`${testID}-runs`} title="Runs" />
+      <SettingsRow description={runs} testID={`${testID}-runs`} title={runsLabel} />
       <SettingsRow
         description={agents.length ? agents.map((name) => `@${name}`).join(', ') : 'None'}
         testID={`${testID}-agents`}

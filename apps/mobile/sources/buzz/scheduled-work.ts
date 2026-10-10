@@ -50,11 +50,30 @@ export function scheduleRuns(schedule: RoomScheduleView): string {
 }
 
 export function subscriptionTitle(subscription: RoomSubscriptionView): string {
-  return `${subscription.event} · When received`;
-}
-
-export function subscriptionSource(subscription: RoomSubscriptionView): string {
-  return subscription.source === 'repository' ? subscription.repository ?? 'Repository' : 'Room activity';
+  if (subscription.source === 'repository') {
+    const repository = subscription.repository ?? 'this repository';
+    const action: Record<string, string> = {
+      'issue.opened': `New issue in ${repository}`,
+      'issue.closed': `Issue closes in ${repository}`,
+      'issue.reopened': `Issue reopens in ${repository}`,
+      'pull_request.opened': `New pull request in ${repository}`,
+      'pull_request.closed': `Pull request closes in ${repository}`,
+      'pull_request.reopened': `Pull request reopens in ${repository}`,
+      'star.created': `Someone stars ${repository}`,
+      'star.deleted': `Someone removes a star from ${repository}`,
+    };
+    return action[subscription.event] ?? `An event arrives in ${repository}`;
+  }
+  const action: Record<string, string> = {
+    joined: 'Someone joins this Room',
+    'schedule-ran': 'A schedule runs in this Room',
+    'corner-opened': 'A corner opens in this Room',
+    'check-passed': 'Corner checks pass',
+    'check-failed': 'Corner checks fail',
+    merged: 'A corner merges',
+    'workflow-handoff': 'A workflow moves to its next step',
+  };
+  return action[subscription.event] ?? 'An event arrives in this Room';
 }
 
 export function subscriptionWhere(subscription: RoomSubscriptionView): string {
@@ -63,8 +82,8 @@ export function subscriptionWhere(subscription: RoomSubscriptionView): string {
 
 export function subscriptionRuns(subscription: RoomSubscriptionView): string {
   return subscription.lastFiredAt
-    ? `When received · last ${NEXT_RUN.format(new Date(subscription.lastFiredAt * 1_000))}`
-    : 'When received · waiting for first event';
+    ? `Last event ${NEXT_RUN.format(new Date(subscription.lastFiredAt * 1_000))}`
+    : 'Waiting for first event';
 }
 
 export type ScheduledWork = {

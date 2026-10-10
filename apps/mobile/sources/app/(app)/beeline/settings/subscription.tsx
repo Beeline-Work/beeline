@@ -7,7 +7,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import {
   stopSubscription,
   subscriptionRuns,
-  subscriptionSource,
+  subscriptionTitle,
   subscriptionWhere,
   useScheduledWork,
 } from '@/buzz/scheduled-work';
@@ -65,11 +65,12 @@ export default function Subscription() {
           <ScheduledWorkFacts
             agents={[work?.agentNames.get(subscription.agentId) ?? 'Agent']}
             runs={subscriptionRuns(subscription)}
+            runsLabel="Activity"
             where={subscriptionWhere(subscription)}
           />
           <DetailSection testID="subscription-trigger-header" title="Trigger" />
           <DetailCopy testID="subscription-trigger">
-            {`${subscription.event} from ${subscriptionSource(subscription)}.`}
+            {`${subscriptionTitle(subscription)}.`}
           </DetailCopy>
           <DetailSection testID="subscription-payload-header" title="Event" />
           <DetailCopy testID="subscription-payload">

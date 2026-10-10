@@ -14,10 +14,13 @@ export type ChatListDelta =
   | { readonly type: 'message-delta'; readonly roomId: string; readonly message: RoomViewMessage;
       readonly deckPreview?: ChatListItem['latestMessage'] | null }
   | { readonly type: 'turn-delta'; readonly roomId: string; readonly turn: RoomViewAgentTurn;
-      readonly agentState?: 'needs-you' | 'working' | null }
+      readonly agentState?: 'needs-you' | 'working' | null;
+      readonly attentionReason?: ChatListItem['attentionReason'] }
   | { readonly type: 'corner-status'; readonly roomId: string; readonly cornerCount: number;
-      readonly waitingCornerCount: number; readonly openCorners: readonly ChatListCorner[];
-      readonly agentState: 'needs-you' | 'working' | null };
+      readonly waitingCornerCount: number; readonly mineCornerCount?: number;
+      readonly openCorners: readonly ChatListCorner[];
+      readonly agentState: 'needs-you' | 'working' | null;
+      readonly attentionReason?: ChatListItem['attentionReason'] };
 
 /** The presentations the server's deck preview reads its latest message from. */
 const PREVIEW_PRESENTATIONS: ReadonlySet<RoomViewMessage['presentation']> = new Set([
@@ -99,13 +102,16 @@ export function applyChatListDelta(
     return applyMessage(view, index, delta.message, context);
   }
   if (delta.type === 'corner-status') {
-    const { agentState: _oldState, attentionReason: _oldReason, ...rest } = item;
+    const { agentState: _oldState, attentionReason: _oldReason, mineCornerCount: _oldMine,
+      ...rest } = item;
     const next: ChatListItem = { ...rest,
       cornerCount: delta.cornerCount,
       waitingCornerCount: delta.waitingCornerCount,
+      ...(delta.mineCornerCount !== undefined ? { mineCornerCount: delta.mineCornerCount } : {}),
       openCorners: delta.openCorners,
       ...(delta.agentState ? { agentState: delta.agentState } : {}),
-      ...(delta.agentState === 'needs-you' ? { attentionReason: { kind: 'approval' } } : {}),
+      ...(delta.agentState === 'needs-you'
+        ? { attentionReason: delta.attentionReason ?? { kind: 'approval' } } : {}),
     };
     const chats = view.chats.filter((_, position) => position !== index);
     const at = chats.findIndex((candidate) => chatActivityAt(candidate) <= chatActivityAt(next));
@@ -118,7 +124,7 @@ export function applyChatListDelta(
     chats[index] = { ...rest,
       ...(delta.agentState ? { agentState: delta.agentState } : {}),
       ...(delta.agentState === 'needs-you'
-        ? { attentionReason: { kind: 'approval' as const } } : {}),
+        ? { attentionReason: delta.attentionReason ?? { kind: 'approval' as const } } : {}),
     };
     return { ...view, chats };
   }
@@ -201,6 +207,9 @@ export function keepUnavailableChatFacts(
             ...(before.cornerCount !== undefined ? { cornerCount: before.cornerCount } : {}),
             ...(before.waitingCornerCount !== undefined
               ? { waitingCornerCount: before.waitingCornerCount }
+              : {}),
+            ...(before.mineCornerCount !== undefined
+              ? { mineCornerCount: before.mineCornerCount }
               : {}),
             ...(before.openCorners ? { openCorners: before.openCorners } : {}),
           }

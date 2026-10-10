@@ -1,8 +1,6 @@
 import {
-  isWorkspaceListView,
   isWorkspaceView,
   type AgentDetailView,
-  type ChatListWorkspace,
   type WorkspaceView,
 } from '@beeline/buzz-client';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
@@ -62,26 +60,3 @@ export async function patchWorkspaceAgent(
   await mobileSurfaceCache.write(address, next, isWorkspaceView);
 }
 
-/** Copy a fresh Workspace header into the `/workspaces` entry the rail paints. */
-export async function syncWorkspaceListEntry(
-  relayUrl: string,
-  viewerPubkey: string,
-  workspace: ChatListWorkspace,
-): Promise<void> {
-  const address = surfaceAddress(relayUrl, viewerPubkey, '/workspaces');
-  const current = await mobileSurfaceCache.read(address, isWorkspaceListView);
-  const listed = current?.workspaces.find((item) => item.id === workspace.id);
-  if (!current || !listed) return;
-  if (listed.name === workspace.name && listed.avatar === workspace.avatar) return;
-  const { avatar: _avatar, ...rest } = listed;
-  const entry: ChatListWorkspace = {
-    ...rest,
-    name: workspace.name,
-    ...(workspace.avatar ? { avatar: workspace.avatar } : {}),
-  };
-  await mobileSurfaceCache.write(
-    address,
-    { ...current, workspaces: current.workspaces.map((item) => (item.id === workspace.id ? entry : item)) },
-    isWorkspaceListView,
-  );
-}

@@ -119,6 +119,29 @@ export class SurfaceRegistry {
     return pending;
   }
 
+  /** Rewrite every hot projection of one viewer that `patch` changes, then persist it. */
+  async patchViewer(
+    relayOrigin: string,
+    viewerPubkey: string,
+    patch: (value: unknown) => unknown,
+  ): Promise<void> {
+    const origin = new URL(relayOrigin).origin;
+    const writes: Promise<void>[] = [];
+    for (const [key, value] of [...this.values]) {
+      const parts = JSON.parse(key) as [string, string, string, string, [string, string | number][]];
+      if (parts[1] !== origin || parts[2] !== viewerPubkey) continue;
+      const next = patch(value);
+      if (next === value) continue;
+      this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
+      this.values.set(key, next);
+      this.notify(key);
+      const address = { relayOrigin: origin, viewerPubkey, endpoint: parts[3],
+        params: Object.fromEntries(parts[4]) };
+      writes.push(this.durable.write(address, next, (_value): _value is unknown => true));
+    }
+    await Promise.all(writes);
+  }
+
   async remove(address: SurfaceCacheAddress): Promise<void> {
     const key = surfaceCacheKey(address);
     this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);

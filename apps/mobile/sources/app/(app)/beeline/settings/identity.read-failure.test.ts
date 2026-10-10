@@ -210,7 +210,11 @@ vi.mock('@/sync/storage', () => ({
   useLocalSettingMutable: (name: string) => [name === 'appearance' ? 'dark' : 'medium', vi.fn()],
 }));
 vi.mock('@/push/buzz-push-registration', () => pushModule);
-vi.mock('@/push/push-level-storage', () => ({ saveStoredPushLevel: vi.fn(async () => undefined) }));
+vi.mock('@/push/push-level-storage', () => ({
+  saveStoredPushLevel: vi.fn(async () => undefined),
+  subscribeStoredPushLevel: () => () => undefined,
+}));
+vi.mock('@/buzz/identity-live', () => ({ subscribeOwnIdentityChange: () => () => undefined }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
 vi.mock('@/buzz/surface-storage', () => ({

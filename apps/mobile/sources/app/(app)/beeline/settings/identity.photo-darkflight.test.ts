@@ -198,7 +198,9 @@ vi.mock('@/sync/transport', () => ({
 vi.mock('@/push/buzz-push-registration', () => pushModule);
 vi.mock('@/push/push-level-storage', () => ({
   saveStoredPushLevel: vi.fn(async () => undefined),
+  subscribeStoredPushLevel: () => () => undefined,
 }));
+vi.mock('@/buzz/identity-live', () => ({ subscribeOwnIdentityChange: () => () => undefined }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
 vi.mock('@/buzz/surface-storage', () => ({
   clearMobileSurfaceStorage: vi.fn(),

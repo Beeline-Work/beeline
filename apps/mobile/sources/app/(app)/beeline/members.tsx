@@ -55,7 +55,15 @@ import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
-import { patchWorkspaceAgent, workspaceAgentFromDetail } from '@/buzz/workspace-surface';
+import { patchWorkspaceAgent } from '@/buzz/workspace-surface';
+import {
+  currentWorkspaceRows,
+  recordAgentDetail,
+  recordWorkspaceRemoval,
+  recordWorkspaceRows,
+  useWorkspaceRecords,
+  workspaceRecordScope,
+} from '@/buzz/workspace-records';
 import {
   AGENT_MODEL_PICKER_VISIBLE_ROWS,
   effortConfigAxis,
@@ -285,6 +293,10 @@ export default function BuzzMembers({
   latestConfigVersionRef.current = selectedAgent?.configVersion;
   const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
   const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
+  const recordScope = identity && relayUrl && workspaceId
+    ? workspaceRecordScope(relayUrl, identity.publicKey, workspaceId)
+    : null;
+  useWorkspaceRecords(recordScope);
   const selectedAgentOwnerByline = selectedAgent?.owner
     ? ownerByline(selectedAgent.owner)
     : undefined;
@@ -323,6 +335,7 @@ export default function BuzzMembers({
       void patchWorkspaceAgent(relayUrl, identity.publicKey, workspaceId,
         value.agent.identity.pubkey, value).catch(() => undefined);
     }
+    if (recordScope) recordAgentDetail(recordScope, value);
   };
 
   const finishConfigWrite = (agentId: string) => {
@@ -391,6 +404,7 @@ export default function BuzzMembers({
     kind: 'human' | 'agent' | undefined,
     append: { people: WorkspaceView['members']; agents: WorkspaceView['agents'] } | false,
   ) => {
+    if (recordScope) recordWorkspaceRows(recordScope, [...page.members, ...page.agents]);
     setRosterPeopleTotal(page.peopleTotal ?? null);
     setRosterAgentTotal(page.agentTotal ?? null);
     if (kind !== 'agent') {
@@ -439,31 +453,12 @@ export default function BuzzMembers({
       setRelayUrl(nextRelayUrl);
       if (cached) setSurface(cached);
       // Every Members instance (the list under an agent profile included)
-      // paints the one shared entry, so a receipt patched there reaches all.
-      let painted = cached;
+      // paints the one shared entry; paged rows read the shared records.
       stopSurface = mobileSurfaceCache.subscribe(address, () => {
         const next = mobileSurfaceCache.peek(address, isWorkspaceView);
-        if (cancelled || !next) return;
-        const previous = painted;
-        painted = next;
-        setSurface(next);
-        const fresh = new Map(next.agents.map((agent) => [agent.identity.pubkey, agent]));
-        // A shrinking total is a removal; a page that merely reorders is not.
-        const shrank = previous?.agentTotal !== undefined && next.agentTotal !== undefined &&
-          next.agentTotal < previous.agentTotal;
-        const dropped = new Set(shrank
-          ? (previous?.agents ?? []).map((agent) => agent.identity.pubkey)
-            .filter((pubkey) => !fresh.has(pubkey))
-          : []);
-        setRosterAgents((current) => {
-          if (!current) return current;
-          const kept = current.filter((agent) => !dropped.has(agent.identity.pubkey));
-          const removed = current.length - kept.length;
-          if (removed > 0)
-            setRosterAgentTotal((total) => (total === null ? total : Math.max(0, total - removed)));
-          return kept.map((agent) => fresh.get(agent.identity.pubkey) ?? agent);
-        });
+        if (!cancelled && next) setSurface(next);
       });
+      const recordScopeForRead = workspaceRecordScope(nextRelayUrl, nextIdentity.publicKey, workspaceId);
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
       const relay = await new BuzzRigTransport(nextIdentity).ensureClient();
       const bootstrapFilters: WorkspaceView['watchFilters'] = [
@@ -493,6 +488,7 @@ export default function BuzzMembers({
       scheduler = new SurfaceRefreshScheduler({
         fetch: () => mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
         apply: (value) => {
+          recordWorkspaceRows(recordScopeForRead, [...value.members, ...value.agents]);
           setSurface(value);
           setWorkspaceError(null);
           // The bootstrap subscription cannot name an agent paired after the
@@ -808,15 +804,6 @@ export default function BuzzMembers({
       applyAgentReceipt(receipt as unknown as AgentDetailView);
       clearName();
       clearSoul();
-      setRosterAgents((current) =>
-        current
-          ? current.map((member) =>
-              member.identity.pubkey === pubkey
-                ? workspaceAgentFromDetail(member, receipt as unknown as AgentDetailView)
-                : member,
-            )
-          : current,
-      );
       setEditingAgentSoul(false);
     } catch (reason) {
       setError(`Could not save agent settings: ${String(reason)}`);
@@ -989,10 +976,7 @@ export default function BuzzMembers({
       if (identity && relayUrl)
         void patchWorkspaceAgent(relayUrl, identity.publicKey, workspaceId, pubkey, null)
           .catch(() => undefined);
-      setRosterAgents((current) =>
-        current ? current.filter((member) => member.identity.pubkey !== pubkey) : current,
-      );
-      setRosterAgentTotal((current) => (current === null ? current : Math.max(0, current - 1)));
+      if (recordScope) recordWorkspaceRemoval(recordScope, pubkey);
       closeAgentSettings();
       if (profileAgentId) (onClose ?? (() => router.back()))();
       setOpenModelAxis(null);
@@ -1325,10 +1309,17 @@ export default function BuzzMembers({
   }
 
   const canManage = surface.viewer.permissions.manage;
-  const people = rosterPeople ?? surface.members;
-  const agents = rosterAgents ?? surface.agents;
-  const peopleTotal = rosterPeopleTotal ?? surface.peopleTotal;
-  const agentTotal = rosterAgentTotal ?? surface.agentTotal;
+  const pagePeople = rosterPeople ?? surface.members;
+  const pageAgents = rosterAgents ?? surface.agents;
+  const people = currentWorkspaceRows(recordScope, pagePeople);
+  const agents = currentWorkspaceRows(recordScope, pageAgents);
+  // A removal recorded after this page was read leaves its total one high.
+  const withoutRemoved = (total: number | undefined | null, listed: number, current: number) =>
+    total === undefined || total === null ? total ?? undefined : Math.max(0, total - (listed - current));
+  const peopleTotal = withoutRemoved(rosterPeopleTotal ?? surface.peopleTotal,
+    pagePeople.length, people.length);
+  const agentTotal = withoutRemoved(rosterAgentTotal ?? surface.agentTotal,
+    pageAgents.length, agents.length);
   const canLoadMorePeople =
     (rosterPeople !== null ? peopleHasMore : surface.membersTruncated) && !rosterLoading;
   const canLoadMoreAgents =

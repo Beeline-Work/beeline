@@ -89,6 +89,7 @@ import {
   type PhoneOperationMap,
   type WelcomeCardsView,
   isPushLevel,
+  type PushLevel,
   type ArtifactAttachment,
   type AgentSignInCardView,
 } from '@beeline/api-contract/phone';
@@ -1283,6 +1284,61 @@ export class PhoneService {
             name: row.author_name, handle: row.author_handle,
             avatar: row.author_avatar, face_id: row.author_face }, this.publicOrigin) }
         : {}),
+    };
+  }
+
+  /** A Workspace's rail header after a rename or picture change, and the
+   * current Workspace members who may hear it. */
+  async liveWorkspaceChange(workspaceId: string): Promise<{
+    workspace: { id: string; name: string; avatar?: string };
+    viewers: ReadonlySet<string>;
+  } | null> {
+    const rows = (await this.database.query<{
+      id: string; name: string; avatar: string | null; viewer: string | null;
+    }>(`SELECT workspace.id,workspace.name,workspace.avatar,member.identity_id viewer
+        FROM workspaces workspace
+        LEFT JOIN memberships member ON member.workspace_id=workspace.id
+          AND member.room_id IS NULL AND member.removed_at IS NULL
+        WHERE workspace.id=$1`, [workspaceId])).rows;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      workspace: {
+        id: row.id, name: row.name,
+        ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
+      },
+      viewers: new Set(rows.flatMap((candidate) => candidate.viewer ? [candidate.viewer] : [])),
+    };
+  }
+
+  /** A person's or agent's public identity after a change, plus the owner's
+   * push level. Only the identity itself and viewers who share a Workspace
+   * or a Room with it may hear it. */
+  async livePersonChange(personId: string): Promise<{
+    person: RoomViewIdentity;
+    pushLevel?: PushLevel;
+    viewers: ReadonlySet<string>;
+  } | null> {
+    const row = (await this.database.query<IdentityRow & { push_level: string }>(
+      `SELECT id,kind,name,handle,avatar,face_id,push_level FROM identities WHERE id=$1`,
+      [personId],
+    )).rows[0];
+    if (!row) return null;
+    const viewers = await this.database.query<{ id: string }>(
+      `SELECT other.identity_id id FROM memberships mine
+       JOIN memberships other ON other.workspace_id=mine.workspace_id
+         AND other.room_id IS NULL AND other.removed_at IS NULL
+       WHERE mine.identity_id=$1 AND mine.room_id IS NULL AND mine.removed_at IS NULL
+       UNION
+       SELECT other.identity_id FROM memberships mine
+       JOIN memberships other ON other.room_id=mine.room_id AND other.removed_at IS NULL
+       WHERE mine.identity_id=$1 AND mine.room_id IS NOT NULL AND mine.removed_at IS NULL`,
+      [personId],
+    );
+    return {
+      person: identity(row, this.publicOrigin),
+      ...(row.kind === 'human' && isPushLevel(row.push_level) ? { pushLevel: row.push_level } : {}),
+      viewers: new Set([personId, ...viewers.rows.map((viewer) => viewer.id)]),
     };
   }
 

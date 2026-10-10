@@ -74,7 +74,9 @@ function seatShims(mobile: string): Record<string, string> {
     export const setBuzzPushEnabled = async () => ({ registered: true });`,
     '@/push/buzz-push-status': `export const buzzPushPhaseDetail = () => null;
     export const pushSwitchValue = () => true;`,
-    '@/push/push-level-storage': `export const saveStoredPushLevel = async () => undefined;`,
+    '@/push/push-level-storage': `export const saveStoredPushLevel = async () => undefined;
+      export const subscribeStoredPushLevel = () => () => undefined;`,
+    '@/buzz/identity-live': `export const subscribeOwnIdentityChange = () => () => undefined;`,
     '@/push/presented-notifications': `export const reconcilePresentedNotificationBadge = async () => undefined;`,
     '@/sync/pushRegistration': `export const getPushPermissionInfo = async () => ({ status: 'granted', granted: true, canAskAgain: true });`,
     '@/utils/open-external-url': `export const openExternalUrl = async () => undefined;`,

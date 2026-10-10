@@ -338,6 +338,27 @@ export function createBeelineServer(options: ServerOptions): Server {
     result: Promise<ReadonlyMap<string, RoomLiveDelta>>;
   }>();
   const bookmarkReads = new WeakMap<LiveEvent, Promise<MessageBookmarkView | null>>();
+  // One read per Workspace or identity change, shared by every phone socket.
+  const workspaceChangeReads = new WeakMap<LiveEvent,
+    ReturnType<PhoneService['liveWorkspaceChange']>>();
+  const personChangeReads = new WeakMap<LiveEvent,
+    ReturnType<PhoneService['livePersonChange']>>();
+  const readWorkspaceChange = (event: LiveEvent, workspaceId: string) => {
+    let read = workspaceChangeReads.get(event);
+    if (!read) {
+      read = withLiveDbTask(() => options.phone.liveWorkspaceChange(workspaceId));
+      workspaceChangeReads.set(event, read);
+    }
+    return read;
+  };
+  const readPersonChange = (event: LiveEvent, personId: string) => {
+    let read = personChangeReads.get(event);
+    if (!read) {
+      read = withLiveDbTask(() => options.phone.livePersonChange(personId));
+      personChangeReads.set(event, read);
+    }
+    return read;
+  };
   const cornerStatusReads = new WeakMap<LiveEvent, Map<string,
     ReturnType<PhoneService['liveChatCornerStatus']>>>();
   const readCornerStatusForViewer = (event: LiveEvent, roomId: string, viewerId: string) => {
@@ -807,6 +828,8 @@ export function createBeelineServer(options: ServerOptions): Server {
       // Workspace membership notifications survive the deletion cascade and
       // reach the affected identity without requiring a readable Room.
       let needsYouDelivery = Promise.resolve();
+      // Workspace and identity changes keep their commit order on this socket.
+      let identityDelivery = Promise.resolve();
       const sendNeedsYouDelta = (event: LiveEvent, roomId: string) => {
         if (!options.phone.liveNeedsYou) return;
         // A later projection must not overtake an earlier one and then be
@@ -846,6 +869,26 @@ export function createBeelineServer(options: ServerOptions): Server {
                 (message.mentionPubkeys?.includes(principal.identityId) &&
                   isNeedsYouAsk(message.text))) sendNeedsYouDelta(event, event.roomId);
           }).catch(() => undefined);
+          return;
+        }
+        if (event.reason === 'postgres:workspaces' && event.workspaceId) {
+          const read = readWorkspaceChange(event, event.workspaceId);
+          identityDelivery = identityDelivery.then(() => read.then((change) => {
+            if (!change?.viewers.has(principal.identityId)) return;
+            sendLive(JSON.stringify({ type: 'workspace-changed', roomId: '',
+              workspace: change.workspace }));
+          })).catch(() => undefined);
+          return;
+        }
+        if (event.reason === 'postgres:identities' && event.personId) {
+          const read = readPersonChange(event, event.personId);
+          identityDelivery = identityDelivery.then(() => read.then((change) => {
+            if (!change?.viewers.has(principal.identityId)) return;
+            // The push level is the owner's own setting; no other viewer hears it.
+            sendLive(JSON.stringify({ type: 'person-changed', roomId: '', person: change.person,
+              ...(change.person.pubkey === principal.identityId && change.pushLevel
+                ? { pushLevel: change.pushLevel } : {}) }));
+          })).catch(() => undefined);
           return;
         }
         if (event.readerId !== principal.identityId) return;

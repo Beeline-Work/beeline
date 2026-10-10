@@ -58,7 +58,8 @@ import { roomOpenTraceEnabled } from '@/buzz/room-open-trace';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { monolithSession } from '@/auth/monolith-session';
 import { clearMobileSurfaceStorage, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { saveStoredPushLevel } from '@/push/push-level-storage';
+import { saveStoredPushLevel, subscribeStoredPushLevel } from '@/push/push-level-storage';
+import { subscribeOwnIdentityChange } from '@/buzz/identity-live';
 import { reconcilePresentedNotificationBadge } from '@/push/presented-notifications';
 import { loadAppConfig } from '@/sync/appConfig';
 import { openExternalUrl } from '@/utils/open-external-url';
@@ -123,6 +124,26 @@ export default function BuzzIdentitySettings() {
       setGitHubNotice('Could not reconnect GitHub. Try again.');
   }, [githubReconnect]);
   const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
+  useEffect(() => {
+    // A change on another device reaches this mounted page through the
+    // server's identity subscription, which also refreshes the device copies.
+    if (!profilePubkey) return;
+    const stopLevel = subscribeStoredPushLevel((pubkey, level) => {
+      if (pubkey === profilePubkey) setPushLevel(level);
+    });
+    const stopIdentity = subscribeOwnIdentityChange((person) => {
+      setProfileName(person.name);
+      setFace(person.face ?? null);
+      setManagedIdentity((current) =>
+        current && person.handle
+          ? { ...current, handle: person.handle, displayName: person.name }
+          : current);
+    });
+    return () => {
+      stopLevel();
+      stopIdentity();
+    };
+  }, [profilePubkey]);
 
   const signOut = useCallback(async () => {
     await Promise.all([

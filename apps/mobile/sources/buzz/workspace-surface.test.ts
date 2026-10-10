@@ -1,13 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  isWorkspaceListView,
   isWorkspaceView,
   type AgentDetailView,
-  type WorkspaceListView,
   type WorkspaceView,
 } from '@beeline/buzz-client';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
-import { patchWorkspaceAgent, syncWorkspaceListEntry } from './workspace-surface';
+import { patchWorkspaceAgent } from './workspace-surface';
 
 vi.mock('react-native-mmkv', () => ({
   MMKV: class {
@@ -87,21 +85,4 @@ describe('shared Workspace surface', () => {
     expect(next?.agentTotal).toBe(0);
   });
 
-  it('copies a renamed Workspace into the rail list', async () => {
-    const listAddress = surfaceAddress(relay, viewer, '/workspaces');
-    const list = {
-      workspaces: [{ id: workspace.id, name: 'Studio', role: 'owner', updatedAt: 1 }],
-      viewer: viewerIdentity,
-      truncated: false,
-      watchFilters: [],
-    } as unknown as WorkspaceListView;
-    await mobileSurfaceCache.write(listAddress, list, isWorkspaceListView);
-    let painted: string | undefined;
-    const stop = mobileSurfaceCache.subscribe(listAddress, () => {
-      painted = mobileSurfaceCache.peek(listAddress, isWorkspaceListView)?.workspaces[0]?.name;
-    });
-    await syncWorkspaceListEntry(relay, viewer, { ...workspace, name: 'Atelier' });
-    stop();
-    expect(painted).toBe('Atelier');
-  });
 });

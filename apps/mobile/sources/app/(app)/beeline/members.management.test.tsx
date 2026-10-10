@@ -1695,6 +1695,55 @@ describe('Members workspace management', () => {
     expect(roomView.workspace.mock.calls.length).toBe(workspaceReads);
   });
 
+  it('patches a paged agent row under its profile on rename and removal (J26)', async () => {
+    const PAGED = 'f'.repeat(64);
+    const paged = {
+      identity: { pubkey: PAGED, kind: 'agent', name: 'Pip', handle: 'pip' },
+      role: 'member',
+      model: 'Sonnet',
+      owner: { pubkey: VIEWER, kind: 'human', name: 'Viewer', handle: 'viewer' },
+    };
+    state.workspace = { ...baseWorkspace(), agentTotal: 2, agentsTruncated: true };
+    state.agent = {
+      ...baseAgent(),
+      agent: { identity: paged.identity, role: 'member' },
+      soul: { name: 'Pip', instructions: 'Keep the tests green.', avatarSeed: PAGED },
+    };
+    roomView.workspaceMembers.mockImplementation(async (_workspaceId: string, query: any = {}) => ({
+      viewer: state.workspace.viewer,
+      members: query.kind === 'agent' ? [] : state.workspace.members,
+      agents: Number(query.offset ?? 0) > 0 ? [paged] : state.workspace.agents,
+      peopleTotal: state.workspace.peopleTotal,
+      agentTotal: 2,
+      membersTruncated: false,
+      agentsTruncated: false,
+    }));
+    const list = await render();
+    await press(list, 'members-load-more-agents');
+    const pagedName = () => list.root.findAllByProps({ testID: `agent-${PAGED}-identity` })
+      .find((node: any) => typeof node.props.name === 'string')?.props.name;
+    expect(pagedName()).toBe('Pip');
+
+    let profile!: ReactTestRenderer;
+    await act(async () => {
+      profile = create(<MembersScreen profileAgentId={PAGED} workspaceIdOverride={WORKSPACE} />);
+    });
+    await press(profile, 'edit-agent-soul');
+    await act(async () => {
+      profile.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
+    });
+    await press(profile, 'save-agent-soul');
+    expect(pagedName()).toBe('Scout');
+
+    await press(profile, 'edit-agent-soul');
+    await press(profile, 'remove-agent');
+    expect(list.root.findAllByProps({ testID: `agent-${PAGED}-identity` })).toHaveLength(0);
+    expect(list.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
+      'Agents ',
+      1,
+    ]);
+  });
+
   it('drops an agent removed from its profile out of the Members list underneath', async () => {
     const list = await render();
     let profile!: ReactTestRenderer;

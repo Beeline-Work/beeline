@@ -80,6 +80,7 @@ import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
 import { startDesktopNotifications } from '@/push/desktop-notifications';
+import { startIdentityLive } from '@/buzz/identity-live';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { latencyFrameTraceEnabled, markLatencyRouteNavigation, markLatencyTouch } from '@/buzz/latency-frame-trace';
 
@@ -266,6 +267,7 @@ async function loadFonts() {
 
 export default function RootLayout() {
   React.useEffect(startDesktopNotifications, []);
+  React.useEffect(startIdentityLive, []);
   const isDesktop = useIsDesktop();
   React.useEffect(() => {
     // The server's push level wins: it is read once per launch, and every

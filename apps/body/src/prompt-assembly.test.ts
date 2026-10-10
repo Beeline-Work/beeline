@@ -517,10 +517,10 @@ describe('prompt assembly guards', () => {
     expect(skill).toContain('reviewed head SHA');
   });
 
-  it('documents Workbench discovery and connection in every agent turn', () => {
+  it('documents Connectors discovery and connection in every agent turn', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
-      expect(text, name).toContain('workbench_status');
+      expect(text, name).toContain('connectors_status');
       expect(text, name).toContain('connect_app');
       if (context.surface.includes('corner'))
         expect(text, name).toContain('connect_app starts sign-in here');

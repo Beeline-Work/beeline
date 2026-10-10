@@ -130,6 +130,11 @@
     "coldDepthMax": 1
   },
   {
+    "path": "/beeline/settings/workbench/service",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
     "path": "/beeline/settings/workbench/wallet",
     "coldHttpMax": 1,
     "coldDepthMax": 1
@@ -141,6 +146,11 @@
   },
   {
     "path": "/beeline/settings/workbench/wallet-send",
+    "coldHttpMax": 1,
+    "coldDepthMax": 1
+  },
+  {
+    "path": "/beeline/settings/workbench/wallet-service",
     "coldHttpMax": 1,
     "coldDepthMax": 1
   },

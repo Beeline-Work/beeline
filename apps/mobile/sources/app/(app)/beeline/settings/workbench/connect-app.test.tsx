@@ -137,11 +137,11 @@ async function search(renderer: ReactTestRenderer, query: string): Promise<void>
 }
 
 describe('Connect an app', () => {
-  it('Reproduction 9e6bb32e: shows No apps found and no Connect action for the screenshot query', async () => {
+  it('Reproduction 9e6bb32e: shows an empty search and no Connect action for the screenshot query', async () => {
     const renderer = await render();
     await search(renderer, 'fuckface');
     expect(renderer.root.findAllByProps({ testID: 'connect-app-fuckface' })).toHaveLength(0);
-    expect(JSON.stringify(renderer.toJSON())).toContain('No apps found');
+    expect(JSON.stringify(renderer.toJSON())).toContain('No connections found');
     expect(renderer.root.findAllByProps({ label: 'Connect' })).toHaveLength(0);
     expect(source.appRequests).toHaveLength(0);
   });
@@ -165,14 +165,12 @@ describe('Connect an app', () => {
     }
   });
 
-  it('shows provider metadata on the Gmail connect row', async () => {
+  it('shows the Gmail recommendation with its provider mark', async () => {
     source.setAppCatalog([{ appKey: 'gmail', description: 'Read and send Gmail messages.',
       logo: 'https://cdn.composio.dev/gmail.png' }]);
     const renderer = await render();
-    expect(JSON.stringify(renderer.toJSON())).toContain('Read and send Gmail messages.');
-    // The bundled Gmail mark wins over the provider's logo URL, so the row
-    // renders the local asset and never a remote favicon.
-    expect(JSON.stringify(renderer.toJSON())).toContain('/assets/app-logos/gmail.png');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Sign in to Gmail');
+    expect(JSON.stringify(renderer.toJSON())).toContain('gmail.com');
   });
 
   it('warns about Instagram account requirements before connecting a searched app', async () => {
@@ -182,12 +180,12 @@ describe('Connect an app', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain('Business or Creator account linked to a Facebook Page');
   });
 
-  it('shows a searchable Popular picker with connected state and ink Connect buttons', async () => {
+  it('shows a searchable recommendation list with connected state', async () => {
     source.setApps([{ id: 'app-gmail', key: 'gmail', name: 'Gmail', domain: 'gmail.com', transport: 'composio', status: 'connected', useCount: 0 }]);
     const renderer = await render();
     const header = renderer.root.findByProps({ testID: 'connect-app-header' });
-    expect(header.props.eyebrow).toBe('Workbench');
-    expect(header.props.title).toBe('Connect an app');
+    expect(header.props.eyebrow).toBe('Connectors');
+    expect(header.props.title).toBe('Search');
     expect(renderer.root.findAllByType('TextInput' as never)).toHaveLength(1);
     expect(renderer.root.findByProps({ testID: 'connect-app-gmail' }).findAllByType('TouchableOpacity' as never)).toHaveLength(1);
     expect(renderer.root.findByProps({ testID: 'connect-app-slack' }).findAllByType('TouchableOpacity' as never)).toHaveLength(1);
@@ -220,10 +218,11 @@ describe('Connect an app', () => {
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Monolith');
   });
 
-  it('disconnects a connected app from the list', async () => {
+  it('opens the detail for a connected app from search', async () => {
     source.setApps([{ id: 'app-gmail', key: 'gmail', name: 'Gmail', transport: 'composio', status: 'connected', useCount: 0 }]);
     const renderer = await render();
-    await act(async () => { renderer.root.findByProps({ testID: 'disconnect-app-gmail' }).props.onPress(); await Promise.resolve(); });
-    expect((await source.readWorkbench({ workspaceId: 'workspace-1', viewerId: 'human-dani' })).apps).toHaveLength(0);
+    await act(async () => { renderer.root.findByProps({ testID: 'connect-app-gmail' }).props.onPress(); await Promise.resolve(); });
+    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/app',
+      params: { workspaceId: 'workspace-1', viewerId: 'human-dani', appId: 'app-gmail' } });
   });
 });

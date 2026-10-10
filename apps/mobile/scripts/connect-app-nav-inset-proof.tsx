@@ -10,7 +10,7 @@ import { MockWorkbenchSource } from '../sources/buzz/workbench-source.mock';
  * the bottom `insets.bottom` pixels of the screen and takes every tap there.
  * This paints the real Connect an app screen at phone size with a 48px bottom
  * inset, lays an opaque 48px bar over the bottom of the page in its place,
- * scrolls to the end, and taps the last app's Connect button where a finger
+ * scrolls to the end, and taps the last recommendation where a finger
  * would.
  */
 const NAV_BAR = 48;
@@ -40,9 +40,10 @@ async function read() {
   scroll.scrollTop = scroll.scrollHeight;
   await pause();
 
-  const rows = Array.from(scroll.querySelectorAll<HTMLElement>('[data-testid^="connect-app-"]'));
-  const last = rows.at(-1)!;
-  const button = last.querySelector<HTMLElement>('[role="button"]')!;
+  const rows = Array.from(scroll.querySelectorAll<HTMLElement>('[data-testid^="connect-app-"]:not([data-testid="connect-app-scroll"]):not([data-testid="connect-app-screen"]):not([data-testid="connect-app-header"]):not([data-testid="connect-app-input"])'));
+  const last = rows.at(-1);
+  if (!last) return report('FAIL Connectors search painted no recommendations');
+  const button = last;
   const barTop = window.innerHeight - NAV_BAR;
   const rect = button.getBoundingClientRect();
   const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -54,9 +55,9 @@ async function read() {
     `viewport=${window.innerHeight}`,
     `navBarTop=${barTop}`,
     `lastRow=${last.dataset.testid}`,
-    `connectButtonBottom=${Math.round(rect.bottom)}`,
+    `recommendationBottom=${Math.round(rect.bottom)}`,
     `fullyAboveNavBar=${rect.bottom <= barTop}`,
-    `tapHits=${tappable ? 'connect-button' : (hit as HTMLElement | null)?.id || hit?.tagName}`,
+    `tapHits=${tappable ? 'recommendation' : (hit as HTMLElement | null)?.id || hit?.tagName}`,
     `connectRequests=${JSON.stringify(source.appRequests.map((request) => request.app))}`,
   ].join(' ');
   const pass = rect.bottom <= barTop && tappable && source.appRequests.length === 1;

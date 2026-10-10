@@ -17,7 +17,7 @@ describe('workbench tool tap in the desktop web renderer', () => {
       await writeFile(
         entry,
         `import React from 'react'; import { createRoot } from 'react-dom/client';
-        Promise.all([import('@/app/(app)/beeline/settings/workbench'), import('@/app/(app)/beeline/settings/workbench/wallet')])
+        Promise.all([import('@/app/(app)/beeline/settings/workbench'), import('@/app/(app)/beeline/settings/workbench/wallet-service')])
           .then(([{ default: Workbench }, { default: Wallet }]) => run(Workbench, Wallet))
           .catch(error => { document.getElementById('result').textContent = 'load error: ' + (error?.stack ?? error); });
         function run(Workbench, Wallet) {
@@ -29,17 +29,17 @@ describe('workbench tool tap in the desktop web renderer', () => {
         const root = createRoot(document.getElementById('root'));
         root.render(<Workbench />);
         setTimeout(() => {
-          output.row = text('workbench-connector-wallet');
-          document.querySelector('[data-testid="workbench-connector-wallet-head"]').click();
-          setTimeout(() => { output.detailsAfterTap = has('workbench-connector-wallet-details'); }, 0);
+          output.row = text('connectors-wallet');
+          document.querySelector('[data-testid="connectors-wallet"]').click();
+          setTimeout(() => { output.detailsAfterTap = has('connectors-wallet-details'); }, 0);
         }, 1200);
         setTimeout(() => {
-          output.detailsLater = has('workbench-connector-wallet-details');
+          output.detailsLater = has('connectors-wallet-details');
           output.pushes = globalThis.__pushes;
           root.render(<Wallet />);
         }, 1800);
         setTimeout(() => {
-          output.explainer = text('wallet-explainer');
+          output.explainer = text('wallet-service-screen');
           document.getElementById('result').textContent = JSON.stringify(output);
         }, 3000);
         }`,
@@ -81,11 +81,11 @@ describe('workbench tool tap in the desktop web renderer', () => {
       expect(result.status, result.stderr).toBe(0);
       console.log('Workbench tool tap desktop web:', result.result);
       const proof = JSON.parse(result.result);
-      expect(proof.row).toContain('connected');
-      expect(proof.pushes).toEqual(['/beeline/settings/workbench/wallet']);
+      expect(proof.row).toContain('Connected');
+      expect(proof.pushes).toEqual(['/beeline/settings/workbench/wallet-service']);
       expect(proof.detailsAfterTap).toBe(false);
       expect(proof.detailsLater).toBe(false);
-      expect(proof.explainer).toContain("Coinbase's non-custodial wallet API");
+      expect(proof.explainer).toContain('Your agents can prepare wallet actions');
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

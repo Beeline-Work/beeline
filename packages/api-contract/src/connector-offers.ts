@@ -71,19 +71,19 @@ export function isOfferableConnectorKind(value: unknown): value is ConnectorKind
 export function connectorOfferConsequence(kind: ConnectorKind, reason?: string): string {
   const clause = reason?.trim().replace(/[.]+$/u, '');
   const boundary = connectorOfferBoundary(kind);
-  if (clause) return `This changes your Workbench. Once it is added, I can ${clause} — ${boundary}`;
+  if (clause) return `This changes your Connectors. Once it is added, I can ${clause} — ${boundary}`;
   switch (kind) {
     case 'trusty-squire':
-      return `This changes your Workbench. Once it is added, I can provision keys into its vault and use them from there — ${CONNECTOR_OFFER_KEY_BOUNDARY}`;
+      return `This changes your Connectors. Once it is added, I can sign up and sign in to websites for you and use keys its vault holds — ${CONNECTOR_OFFER_KEY_BOUNDARY}`;
     case 'google-gmail':
     case 'google-calendar':
     case 'google-drive':
     case 'google-youtube':
-      return 'This changes your Workbench. Once it is added, you sign in to Google yourself and I work through that sign-in — I never see your password';
+      return 'This changes your Connectors. Once it is added, you sign in to Google yourself and I work through that sign-in — I never see your password';
     case 'wallet':
-      return `This changes your Workbench. Once it is added, I can pay from your wallet — ${boundary}`;
+      return `This changes your Connectors. Once it is added, I can pay from your wallet — ${boundary}`;
     default:
-      return `This changes your Workbench. Once it is added, I can use the tool from there — ${boundary}`;
+      return `This changes your Connectors. Once it is added, I can use the tool from there — ${boundary}`;
   }
 }
 
@@ -140,9 +140,9 @@ export function connectorPurpose(kind: ConnectorKind): string {
     case 'link':
       return 'The owner approves a specific purchase in Link, then I can use its one-time payment credential.';
     case 'trusty-squire':
-      return 'A credential vault and browser broker on this machine: it signs up for services, provisions API keys into its vault, and lets me use them without a raw key ever reaching chat.';
+      return 'Signs up and signs in to websites for you hands-off on this machine; its vault holds keys when needed without a raw key reaching chat.';
     case 'wallet':
-      return 'An on-chain wallet bound to a person; it connects when that person grants agents permission to sign, from the Workbench or an offer card.';
+      return 'An on-chain wallet bound to a person; it connects when that person grants agents permission to sign, from Connectors or an offer card.';
     case 'tailscale':
       return 'Private network access between connected machines, including the Tailscale CLI, tailnet services, and Taildrop file exchange.';
     case 'google-gmail':

@@ -6992,7 +6992,7 @@ export class DaemonService {
       );
       if (!bound.rowCount)
         throw new Error(
-          `connector offer is invalid: ${context.addressee.name} has no connected ${connectorName} on this machine to switch; check workbench_status`,
+          `connector offer is invalid: ${context.addressee.name} has no connected ${connectorName} on this machine to switch; check connectors_status`,
         );
     }
     // The wallet has no connector row: it is connected while its owner's
@@ -7014,7 +7014,7 @@ export class DaemonService {
           ).rows[0];
     if (already)
       throw new Error(
-        `connector offer conflict: ${context.addressee.name} already has ${connectorName} (${already.status}); check workbench_status`,
+        `connector offer conflict: ${context.addressee.name} already has ${connectorName} (${already.status}); check connectors_status`,
       );
     const result = await this.database.transaction(async (database) => {
       // One open offer per Room+connector, even when two agents race: lock

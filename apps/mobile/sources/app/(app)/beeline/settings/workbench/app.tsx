@@ -6,8 +6,9 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { AppMark } from '@/components/buzz/AppMark';
-import { Button } from '@/components/buzz/Button';
-import { AppPageHeader } from '@/components/buzz/AppPageHeader';
+import { PageHeader } from '@/components/buzz/PageHeader';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import type { WorkbenchApp } from '@/buzz/workbench';
@@ -29,8 +30,9 @@ export default function AppDetailScreen() {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<string | null>(null);
+  const [statusOpen, setStatusOpen] = useState(false);
   const needsSquire = app?.transport.startsWith('squire-') &&
-    app.errorMessage === 'Connect Trusty Squire in Workbench first';
+    app.errorMessage === 'Connect Trusty Squire in Connectors first';
 
   useFocusEffect(useCallback(() => {
     let live = true;
@@ -71,7 +73,7 @@ export default function AppDetailScreen() {
         const helper = helpers.find(item => item.online && (!app.helperId || item.id === app.helperId));
         if (!helper) throw new Error(app.helperName
           ? `Bring ${app.helperName} online, then retry ${app.name}.`
-          : `Connect a helper in Workbench, then retry ${app.name}.`);
+          : `Connect a helper in Connectors, then retry ${app.name}.`);
         const started = await source.connectApp({ workspaceId, app: app.name, helperId: helper.id,
           ...(app.status === 'error' ? { reconnect: true } : {}) });
         if (started.authorizationUrl) {
@@ -105,23 +107,26 @@ export default function AppDetailScreen() {
       : null;
 
   return <View style={[styles.screen, { paddingTop: insets.top }]} testID="app-detail-screen">
-    <AppPageHeader eyebrow="Workbench" title={app?.name ?? 'App'} backLabel="Back to Workbench" onBack={() => router.back()} />
+    <PageHeader eyebrow="Connectors" prominent title={app?.name ?? 'App'} backAccessibilityLabel="Back to Connectors" onBack={() => router.back()} />
     <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]} testID="app-detail-scroll">
       {app ? <>
-        <View style={styles.identity}>
-          <AppMark name={app.name} domain={app.domain} logo={app.logo} size={48} />
-          <View style={styles.identityCopy}>
-            <Text style={styles.status}>{app.status === 'connected' ? 'Connected' : app.status === 'connecting' ? 'Connecting' : 'Connection failed'}</Text>
-            {app.accountLabel ? <Text style={styles.account}>{app.accountLabel}{app.workspaceName ? ` · ${app.workspaceName} workspace` : ''}</Text> : null}
-          </View>
+        <View style={styles.identity}><AppMark name={app.name} domain={app.domain} logo={app.logo} size={36} />
+          <Text style={styles.account}>{app.status === 'connected' ? app.key === 'gmail' ? 'Signed in · Google' : 'Signed in' : app.status === 'connecting' ? 'Connecting' : 'Offline'}</Text>
+        </View>
+        <SettingsRow title="Status" value={app.status === 'connected' ? 'Connected' : app.status === 'connecting' ? 'Connecting' : 'Offline'}
+          statusGlyph={app.status === 'connected' ? 'live' : app.status === 'connecting' ? 'pulse' : 'failed'}
+          valueTone={app.status === 'error' ? 'danger' : undefined}
+          trailingPress={{ accessibilityLabel: 'Change connection', onPress: () => setStatusOpen(true) }} />
+        <View><Text style={styles.sectionLabel}>WHAT YOUR AGENTS CAN DO</Text>
+          <Text style={styles.permission}>{app.key === 'gmail' ? 'Let agents work with your mail when you ask them to.' :
+            `Let agents use ${app.name} when you ask them to.`}</Text>
+          {(app.key === 'gmail' ? ['Find the latest invoice', 'Draft a reply to Alex', 'Send the reply I approved'] :
+            [`Use ${app.name} for this task`]).map(example => <Text key={example} style={styles.example}>“{example}”</Text>)}
         </View>
         {description ? <Text style={styles.permission}>{description}</Text> : null}
         {app.key === 'instagram' && app.status !== 'connected' ? <Text style={styles.permission}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : null}
-        <Text style={styles.permission}>Your agents can use {app.name} as you. Other people’s agents ask you first.</Text>
         <Text style={styles.lastUsed}>{lastUsed}</Text>
         {connectionNotice ? <Text accessibilityLiveRegion="polite" style={styles.permission} testID="app-detail-connection-notice">{connectionNotice}</Text> : null}
-        {app.status !== 'connected' ? <Button disabled={working} label={working ? 'Connecting' : needsSquire ? 'Connect Trusty Squire' : app.status === 'error' ? `Retry ${app.name}` : `Connect ${app.name}`} onPress={() => void reconnect()} style={styles.action} testID="app-detail-connect" /> : null}
-        <Button disabled={working} label={working ? 'Disconnecting' : 'Disconnect'} onPress={() => void disconnect()} style={styles.action} testID="app-detail-disconnect" variant="secondary" />
       </> : null}
       {error || app?.status === 'error' && app.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{error ?? (app && needsSquire
         ? `${app.name} connects through Trusty Squire. Connect Trusty Squire, then return here to connect ${app.name}.`
@@ -129,6 +134,11 @@ export default function AppDetailScreen() {
           ? `${app.name} connects through your helper. Retry to ask your helper to finish connecting it.`
           : appErrorCopy(app?.errorMessage ?? ''))}</Text> : null}
     </ScrollView>
+    <HullActionSheetModal visible={statusOpen} title={app?.name} onClose={() => setStatusOpen(false)}>
+      {app?.status !== 'connected' ? <HullActionSheetRow label={needsSquire ? 'Reconnect Trusty Squire' : 'Reconnect'} disabled={working} onPress={() => { setStatusOpen(false); void reconnect(); }} /> : null}
+      <HullActionSheetRow label="Disconnect" destructive disabled={working} onPress={() => { setStatusOpen(false); void disconnect(); }} />
+      <HullActionSheetCancel onPress={() => setStatusOpen(false)} />
+    </HullActionSheetModal>
   </View>;
 }
 
@@ -139,6 +149,9 @@ const styles = StyleSheet.create(theme => {
   screen: { flex: 1, backgroundColor: board.canvas },
   content: { paddingHorizontal: hull.space.lg, paddingVertical: 24, gap: hull.space.md },
   identity: { flexDirection: 'row', alignItems: 'center', gap: hull.space.md },
+  sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: board.quiet, marginBottom: hull.space.sm },
+  example: { ...Typography.ledger(), ...hull.type.body, color: board.ink, borderLeftWidth: 2, borderLeftColor: board.brass,
+    paddingLeft: hull.space.md, paddingVertical: hull.space.sm },
   identityCopy: { gap: hull.space.xs },
   status: { ...Typography.ledger(), ...hull.type.body, color: board.ink },
   account: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },

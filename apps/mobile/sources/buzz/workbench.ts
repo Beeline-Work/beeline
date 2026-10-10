@@ -431,9 +431,9 @@ export function connectionsForViewer(
   return view.connections.filter((connection) => connection.ownerId === viewerId);
 }
 
-/** What the Settings "Tools and keys" row states about the Workbench. */
+/** What the Settings Connectors row states about the person's connections. */
 export type WorkbenchSummary = {
-  /** `<T> tool(s) · <K> key(s)` — connected Tools rows and the viewer's keys. */
+  /** Connected services and distinct vault entries. */
   value: string;
   /** The danger subtitle naming Tools rows in error; absent when none are. */
   attention?: string;
@@ -451,22 +451,24 @@ function plural(count: number, noun: string): string {
  */
 export function workbenchSummary(view: WorkbenchView, viewerId: string): WorkbenchSummary {
   const google = googleEntryConnector(view.connectors);
-  const rows = [
-    ...view.connectors.filter((connector) => !isGoogleToolConnectorId(connector.id)),
-    ...(google ? [google] : []),
+  const shown = [
+    ...view.connectors.filter((row) => row.available &&
+      (row.id === 'trusty-squire' || row.id === 'tailscale' || row.id === 'wallet')),
+    ...(google && !view.apps.some((app) => app.key === 'gmail') ? [google] : []),
   ];
-  const shown = rows.filter((row) => row.available);
-  const connected = shown.filter((row) => row.status === 'connected').length;
+  const connected = shown.filter((row) => row.status === 'connected').length +
+    view.apps.filter((app) => app.transport !== 'squire-api' && app.status === 'connected').length +
+    (view.linkAccount?.connected ? 1 : 0);
   const broken = shown.filter((row) => row.status === 'error');
-  const keys = connectionsForViewer(view, viewerId).length;
-  const value = `${plural(connected, 'tool')} · ${plural(keys, 'key')}`;
+  const keys = new Set(connectionsForViewer(view, viewerId).map((key) => key.ref)).size;
+  const value = `${plural(connected, 'connection')} · ${plural(keys, 'key')}`;
   if (broken.length === 0) return { value };
   return {
     value,
     attention:
       broken.length === 1
         ? `${broken[0].name} needs attention`
-        : `${broken.length} tools need attention`,
+        : `${broken.length} connections need attention`,
   };
 }
 
@@ -704,17 +706,6 @@ export function ledgerBytes(bytes: number): string | undefined {
   return `${(bytes / 1024).toFixed(1)} kB`;
 }
 
-/** How an app row's trailing state reads: the word beside its dot. */
-export function appInstrument(status: WorkbenchApp['status']): {
-  value: 'connected' | 'connecting' | 'error';
-  glyph: 'live' | 'pulse' | 'failed';
-  valueTone?: 'danger' | 'accent';
-} {
-  if (status === 'connected') return { value: 'connected', glyph: 'live' };
-  if (status === 'connecting') return { value: 'connecting', glyph: 'pulse', valueTone: 'accent' };
-  return { value: 'error', glyph: 'failed', valueTone: 'danger' };
-}
-
 /** What serves the app, in the words the row states it. */
 function appRouteLabel(transport: WorkbenchApp['transport']): string {
   switch (transport) {
@@ -742,15 +733,4 @@ export function appDetailLine(app: WorkbenchApp): string {
   ]
     .filter(Boolean)
     .join(' · ');
-}
-
-/** Keys an app row already holds are shown on that row, never listed twice. */
-export function keysOutsideApps(
-  view: Pick<WorkbenchView, 'apps'>,
-  connections: readonly WorkbenchConnection[],
-): readonly WorkbenchConnection[] {
-  const held = new Set(
-    view.apps.flatMap((app) => (app.connectionReference ? [app.connectionReference] : [])),
-  );
-  return connections.filter((connection) => !held.has(connection.ref));
 }

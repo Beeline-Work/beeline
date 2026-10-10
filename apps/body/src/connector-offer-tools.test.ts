@@ -23,7 +23,7 @@ function deps(
   };
 }
 
-describe('beeline-agent workbench_status + offer_connector (R5)', () => {
+describe('beeline-agent connectors_status + offer_connector (R5)', () => {
   it('uses the shared Workbench state when no Squire route is granted', async () => {
     vi.stubEnv('BEELINE_DAEMON_ROOM_ID', 'room-1');
     vi.stubEnv('BEELINE_SQUIRE_RELAY_URL', '');
@@ -41,21 +41,21 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
   it('mounts discovery in every turn while connector offers stay in Rooms and DMs', () => {
     for (const directMessage of [false, true]) {
       const names = agentToolsFor(true, directMessage).map((tool) => tool.name);
+      expect(names).toContain('connectors_status');
       expect(names).toContain('workbench_status');
       expect(names).toContain('offer_connector');
     }
     const corner = agentToolsFor(true, false, true).map((tool) => tool.name);
-    expect(corner).toContain('workbench_status');
+    expect(corner).toContain('connectors_status');
     expect(corner).not.toContain('offer_connector');
     expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('offer_connector');
   });
 
-  it('describes workbench_status as this machine and owner, with one failure sentence', () => {
-    const tool = agentToolsFor(true, false).find((entry) => entry.name === 'workbench_status')!;
+  it('describes connectors_status as this machine and owner, with one failure sentence', () => {
+    const tool = agentToolsFor(true, false).find((entry) => entry.name === 'connectors_status')!;
     expect(tool.description).toContain('machine and owner you actually run on');
-    expect(tool.description).toContain(
-      "I can/can't reach X on this machine because Y; to fix it, Z.",
-    );
+    expect(tool.description).toContain('vaulted keys by service and label only, never a value');
+    expect(tool.description).toContain('Free to call; it changes nothing');
   });
 
   it('offer_connector accepts only offerable kinds, the wallet included', () => {
@@ -125,14 +125,14 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
       ),
     );
     expect(ops).toEqual([{ name: 'readAgentWorkbench', input: { roomId: 'room-1' } }]);
-    expect(text).toContain('Workbench for @moonscanner');
-    expect(text).not.toContain('Workbench for @zeke');
+    expect(text).toContain('Connectors for @moonscanner');
+    expect(text).not.toContain('Connectors for @zeke');
     expect(text).toContain('on otter-laptop');
     expect(text).toContain(
       '- trusty-squire (Trusty Squire): not added — you may offer it with offer_connector. A credential vault.',
     );
     expect(text).toContain('- google-gmail (Gmail): connected on otter-laptop (your machine). Mail.');
-    expect(text).toContain('- wallet (Wallet): not added — added only from the Workbench page.');
+    expect(text).toContain('- wallet (Wallet): not added — added only from the Connectors page.');
     expect(text).toContain(
       '- tailscale (Tailscale): not added — you may offer it with offer_connector. Network.',
     );
@@ -201,7 +201,7 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
       ),
     );
     expect(ensured).toEqual([true]);
-    expect(text).toContain('Workbench for @moonscanner');
+    expect(text).toContain('Connectors for @moonscanner');
     expect(text).toContain(
       "I can't reach Tailscale on this machine because the CLI is not installed; to fix it, the connector will install it and send the owner a login link.",
     );
@@ -225,7 +225,7 @@ describe('beeline-agent workbench_status + offer_connector (R5)', () => {
     ]);
     expect(reply).toMatch(/^pending, card posted: add trusty-squire \[offer o-1\]/);
     expect(reply).toContain('your turn is paused on this offer');
-    expect(reply).toContain('Do not ask them to open Settings or the Workbench page');
+    expect(reply).toContain('Do not ask them to open Settings or the Connectors page');
     // The room turn recognises that reply as a pause, exactly like a grant card.
     expect(pendingGrantToolCall({ title: 'beeline-agent.offer_connector', content: reply })).toBe(true);
     const joined = await offerConnector(

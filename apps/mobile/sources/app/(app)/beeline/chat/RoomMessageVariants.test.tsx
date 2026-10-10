@@ -2692,7 +2692,7 @@ describe('Room message variant components', () => {
     const agent = { pubkey: 'otter', kind: 'agent' as const, name: 'Otter', handle: 'otter' };
     const zeke = { pubkey: 'zeke', kind: 'human' as const, name: 'Zeke', handle: 'zeke' };
     const consequence =
-      'This changes your Workbench. Once it is added, I can provision keys into its vault and use them from there — still no raw key in chat.';
+      'This changes your Connectors. Once it is added, I can sign up and sign in to websites for you and use keys its vault holds — still no raw key in chat.';
     const pending = message({
       connectorOffer: {
         offerId: 'offer-1',

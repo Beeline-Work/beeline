@@ -17,23 +17,23 @@ describe('Workbench title hierarchy', () => {
   it('puts small Settings over large Workbench on the list', () => {
     expect(workbench).toContain('<PageHeader');
     expect(workbench).toContain('eyebrow="Settings"');
-    expect(workbench).toContain('title="Workbench"');
+    expect(workbench).toContain('title="Connectors"');
     expect(workbench).not.toMatch(/desktop \? <PageHeader/);
   });
 
   it('puts small Workbench over the tool or key name on every child page', () => {
-    expect(connect).toContain('eyebrow="Workbench"');
+    expect(connect).toContain('eyebrow="Connectors"');
     expect(connect).toContain('title={connectorName}');
     expect(connect).not.toContain('Connect {connectorName}');
-    expect(wallet).toContain('eyebrow="Workbench"');
+    expect(wallet).toContain('eyebrow="Connectors"');
     expect(wallet).toContain('title="Wallet"');
-    expect(connection).toContain('eyebrow="Workbench"');
+    expect(connection).toContain('eyebrow="Connectors"');
     expect(connection).toContain('testID="connection-header"');
     expect(walletSend).toContain('eyebrow="Wallet"');
     expect(walletSend).toContain('title="Send"');
     expect(walletReceive).toContain('eyebrow="Wallet"');
     expect(walletReceive).toContain('title="Receive"');
-    expect(signIn).toContain('eyebrow="Workbench"');
+    expect(signIn).toContain('eyebrow="Connectors"');
     expect(signIn).toContain('title={`Sign in to ${connectorName}`}');
     expect(signIn).not.toContain('width: 40, height: 40');
   });

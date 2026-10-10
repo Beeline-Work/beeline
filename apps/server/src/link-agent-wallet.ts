@@ -129,7 +129,7 @@ export class LinkAgentWallet {
       const row = (await database.query<{ sealed_grant: string; ineligible: boolean }>(
         `SELECT sealed_grant,ineligible FROM link_oauth_accounts WHERE owner_identity_id=$1 FOR UPDATE`,
         [ownerId])).rows[0];
-      if (!row?.sealed_grant) throw new Error('Connect Link in Workbench first.');
+      if (!row?.sealed_grant) throw new Error('Connect Link in Connectors first.');
       if (row.ineligible) throw new Error(INELIGIBLE);
       let grant = this.open(row.sealed_grant);
       if (grant.expiresAt < Date.now() + 60_000) {
@@ -137,7 +137,7 @@ export class LinkAgentWallet {
           client_id: this.clientId, client_secret: this.clientSecret,
           refresh_token: grant.refreshToken }));
         if (!refreshed?.access_token || !refreshed.refresh_token)
-          throw new Error('Link connection expired. Reconnect it in Workbench.');
+          throw new Error('Link connection expired. Reconnect it in Connectors.');
         grant = { accessToken: refreshed.access_token, refreshToken: refreshed.refresh_token,
           expiresAt: Date.now() + (refreshed.expires_in ?? 3600) * 1000,
           scopes: refreshed.scope?.split(' ').filter(Boolean) ?? grant.scopes };

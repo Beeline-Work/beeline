@@ -413,7 +413,7 @@ describe('Settings groups', () => {
     });
     const renderer = await renderScreen();
     const texts = headings(renderer);
-    expect(texts).toContain('Workbench');
+    expect(texts).toContain('Connectors');
     expect(texts).toContain('Device');
     expect(texts).toContain('Account');
   });

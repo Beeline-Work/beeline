@@ -41,7 +41,7 @@ describe('the one page header', () => {
     expect(bookmarks).not.toContain('styles.header');
     expect(workbench).toContain('<PageHeader');
     expect(workbench).toContain('eyebrow="Settings"');
-    expect(workbench).toContain('title="Workbench"');
+    expect(workbench).toContain('title="Connectors"');
   });
 
   it('lets Workbench and its tool pages draw the shared header instead of the stack title', () => {

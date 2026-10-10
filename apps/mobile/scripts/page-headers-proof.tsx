@@ -26,7 +26,7 @@ const screens: Record<
   { Screen: React.ComponentType; title: string; eyebrow?: string; trailing?: string }
 > = {
   tray: { Screen: TrayScreen, title: 'Tray', eyebrow: 'Workspace' },
-  workbench: { Screen: WorkbenchScreen, title: 'Workbench', eyebrow: 'Settings' },
+  workbench: { Screen: WorkbenchScreen, title: 'Connectors', eyebrow: 'Settings' },
   corners: { Screen: BuzzCorners, title: 'Corners', eyebrow: '#alpha' },
   workspace: { Screen: WorkspaceSettings, title: 'Workspace' },
   changelog: { Screen: ChangelogScreen, title: "What's New" },

@@ -1590,9 +1590,14 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    name: 'workbench_status',
+    name: 'connectors_status',
     description:
-      "Read the Workbench of the machine and owner you actually run on: the connector catalog (each tool, what it is for, whether it can be added today and whether you may offer it from here), which of those tools this owner already has on this machine, and the connections (provisioned keys) they hold — by service and label only, never a value. Call this BEFORE you tell anyone a tool is missing and before offer_connector: a tool they already have is used, not offered again. When you cannot use a tool, answer in one sentence: I can/can't reach X on this machine because Y; to fix it, Z. Free to call; it changes nothing.",
+      "Read Connectors for the machine and owner you actually run on: the connector catalog, installed tools, connected apps, and vaulted keys by service and label only, never a value. Trusty Squire signs up and signs in to websites hands-off and holds keys when needed. Call this before you say a tool is missing or offer_connector. Free to call; it changes nothing.",
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'workbench_status',
+    description: 'Legacy alias for connectors_status. New turns should call connectors_status.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -1616,7 +1621,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'connect_app',
     description:
-      'Connect an app after workbench_status shows it is missing. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses managed OAuth when supported and posts the card to the owner. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool. Only when the provider reports managed OAuth unsupported does the server choose Trusty Squire. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
+      'Connect an app after connectors_status shows it is missing. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses a direct integration or official Registry sign-in first, then Composio, then Trusty Squire. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool where applicable. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
     inputSchema: {
       type: 'object',
       required: ['app', 'reason'],
@@ -1647,7 +1652,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'list_app_tools',
-    description: 'List the tools of one connected app shown via composio, by its app ID from workbench_status or connect_app. Apps via squire-api, squire-browser or registry-mcp do not use app tools; the error names their route. Discovery returns no credentials. An unavailable account or empty provider tool list reports a cause.',
+    description: 'List the tools of one connected app shown via composio, by its app ID from connectors_status or connect_app. Apps via squire-api, squire-browser or registry-mcp do not use app tools; the error names their route. Discovery returns no credentials. An unavailable account or empty provider tool list reports a cause.',
     inputSchema: { type: 'object', required: ['appId'], properties: {
       appId: { type: 'string', format: 'uuid' },
       query: { type: 'string', maxLength: 120 },
@@ -1666,7 +1671,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'offer_connector',
     description:
-      'Offer to add ONE Workbench tool (connector) you need for the work in front of you, at the moment you need it. A card goes into this Room, spoken by you and addressed to the person you are answering; it carries your reason, a fixed line naming the consequence and the safety boundary, and ONE affirmative action. Only that person or a Workspace admin can accept; accepting pairs the tool on YOUR machine, and the sign-in or keys are theirs, never in chat. The wallet is the exception: only that person can accept, and accepting is their own grant letting agents sign from their wallet. Your turn pauses on the card: say in prose what you found out about the tool and what you are waiting for, then end the turn — you are woken when someone accepts. Never offer a tool you have not looked into: if you do not already know what it is, research it first and say so in your reply BEFORE calling this. This is setup, not authority: it never replaces a grant, write permission, target-branch confirmation or the merge gate. With intent "switch" (trusty-squire only, already connected) the card instead asks the person to sign in to Google again with a different account, replacing the one Trusty Squire uses now.',
+      'Offer to add ONE Connectors tool you need for the work in front of you, at the moment you need it. A card goes into this Room, spoken by you and addressed to the person you are answering; it carries your reason, a fixed line naming the consequence and the safety boundary, and ONE affirmative action. Only that person or a Workspace admin can accept; accepting pairs the tool on YOUR machine, and the sign-in or keys are theirs, never in chat. The wallet is the exception: only that person can accept, and accepting is their own grant letting agents sign from their wallet. Your turn pauses on the card: say in prose what you found out about the tool and what you are waiting for, then end the turn — you are woken when someone accepts. Never offer a tool you have not looked into: if you do not already know what it is, research it first and say so in your reply BEFORE calling this. This is setup, not authority: it never replaces a grant, write permission, target-branch confirmation or the merge gate. With intent "switch" (trusty-squire only, already connected) the card instead asks the person to sign in to Google again with a different account, replacing the one Trusty Squire uses now.',
     inputSchema: {
       type: 'object',
       required: ['connectorType', 'reason'],
@@ -1674,7 +1679,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
         connectorType: {
           type: 'string',
           enum: [...OFFERABLE_CONNECTOR_KINDS],
-          description: 'The catalog connectorType from workbench_status that is marked offerable.',
+          description: 'The catalog connectorType from connectors_status that is marked offerable.',
         },
         reason: {
           type: 'string',
@@ -3904,7 +3909,7 @@ export async function workbenchStatus(
         : (view.addressee?.name ?? 'the owner of this machine')));
   const machine = view.machine?.name ?? 'this machine';
   const lines = [
-    `Workbench for ${who} on ${machine} (this is the machine you run on; an accepted offer installs here).`,
+    `Connectors for ${who} on ${machine} (this is the machine you run on; an accepted offer installs here).`,
     '',
     'Catalog:',
   ];
@@ -3929,7 +3934,7 @@ export async function workbenchStatus(
         ? 'not available yet'
         : entry.offerable
           ? 'not added — you may offer it with offer_connector'
-          : 'not added — added only from the Workbench page';
+          : 'not added — added only from the Connectors page';
     lines.push(`- ${entry.connectorType} (${entry.name}): ${state}. ${entry.purpose}`);
   }
   lines.push('', 'Connections (keys already provisioned, by name only):');
@@ -3970,7 +3975,7 @@ export async function offerConnector(
   const connectorType = stringArg(args, 'connectorType');
   if (!isOfferableConnectorKind(connectorType)) {
     throw new Error(
-      `connectorType must be one of ${OFFERABLE_CONNECTOR_KINDS.join(', ')} (see workbench_status)`,
+      `connectorType must be one of ${OFFERABLE_CONNECTOR_KINDS.join(', ')} (see connectors_status)`,
     );
   }
   const reason = stringArg(args, 'reason')?.trim().replace(/\s+/g, ' ');
@@ -3996,7 +4001,7 @@ export async function offerConnector(
     `${joined ? 'already offered, card still open' : 'pending, card posted'}: add ${connectorType} [offer ${offerId}]. ` +
     'The person you addressed, or a Workspace admin, can accept it with the one action on the card; ' +
     'your turn is paused on this offer. In prose, say what you learned about the tool and that you are waiting for them to add it, then end your turn now; ' +
-    'you will be woken when it is added. Do not ask them to open Settings or the Workbench page — the card is the whole ask.'
+    'you will be woken when it is added. Do not ask them to open Settings or the Connectors page — the card is the whole ask.'
   );
 }
 
@@ -4756,6 +4761,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return listGrants();
     case 'store_secret':
       return storeSecret(args);
+    case 'connectors_status':
     case 'workbench_status':
       return workbenchStatus();
     case 'create_link_spend_request': {

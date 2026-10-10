@@ -92,6 +92,7 @@
         "scripts/design-proof.tsx",
         "scripts/connect-app-nav-inset-proof.tsx",
         "scripts/workbench-nav-inset-proof.tsx",
+        "scripts/connectors-restructure-frames.tsx",
         "scripts/star-prompt-proof.tsx",
         "scripts/push-sensitivity-proof.tsx",
         "scripts/wallet-dm-proof.tsx",

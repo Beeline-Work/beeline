@@ -10,7 +10,7 @@ const searchParams = vi.hoisted(() => ({
   params: { workspaceId: 'workspace-1', viewerId: 'human-dani' } as Record<string, string>,
 }));
 const workspace = vi.hoisted(() => ({
-  resolve: vi.fn(async (id?: string): Promise<string | null> => id || 'workspace-1'),
+  resolve: vi.fn(async (id?: string, activeId?: string): Promise<string | null> => id || activeId || null),
 }));
 vi.mock('@/buzz/wallet-workspace', () => ({ resolveWalletWorkspaceId: workspace.resolve }));
 vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'workspace-active' }));
@@ -99,6 +99,15 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
     SettingsRow: (props: any) => ReactModule.createElement('SettingsRow', props),
   };
 });
+vi.mock('@/components/buzz/HullActionSheet', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
+  return {
+    HullActionSheetModal: host('HullActionSheetModal'),
+    HullActionSheetRow: host('HullActionSheetRow'),
+    HullActionSheetCancel: host('HullActionSheetCancel'),
+  };
+});
 
 vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(async () => undefined),
@@ -143,7 +152,7 @@ beforeEach(() => {
   setWorkbenchSource(new MockWorkbenchSource());
   setWalletSource(new MockWalletSource());
   searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-dani' };
-  workspace.resolve.mockImplementation(async (id?: string) => id || 'workspace-1');
+  workspace.resolve.mockImplementation(async (id?: string, activeId?: string) => id || activeId || null);
 });
 
 async function render(): Promise<ReactTestRenderer> {
@@ -157,71 +166,121 @@ async function render(): Promise<ReactTestRenderer> {
   return renderer;
 }
 
-describe('Workbench settings screen', () => {
-  it('holds a stale vault for five minutes without another GET, then applies its commit notice', async () => {
-    vi.useFakeTimers();
-    const source = new MockWorkbenchSource();
-    const originalRead = source.readWorkbench.bind(source);
-    let stale = true;
-    const read = vi.fn(async (input: Parameters<typeof source.readWorkbench>[0]) => {
-      const view = await originalRead(input);
-      return { ...view, connections: view.connections.map((connection) =>
-        ({ ...connection, ...(stale ? { stale: true } : {}) })) };
+describe('Connectors settings screen', () => {
+  it('shows the shared Connectors header and search entry', async () => {
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'workbench-header' }).props).toMatchObject({
+      title: 'Connectors', eyebrow: 'Settings',
     });
-    source.readWorkbench = read;
+    act(() => renderer.root.findByProps({ testID: 'connectors-search' }).props.onPress());
+    expect(navigation.push.mock.calls.at(-1)?.[0]).toMatchObject({
+      pathname: '/beeline/settings/workbench/connect-app',
+      params: { workspaceId: 'workspace-1', viewerId: 'human-dani' },
+    });
+  });
+
+  it('groups one key service row per vault reference and opens its read-only page', async () => {
+    const source = new MockWorkbenchSource();
+    const read = source.readWorkbench.bind(source);
+    source.readWorkbench = async input => {
+      const view = await read(input);
+      return { ...view, connections: [...view.connections, view.connections[0]!] };
+    };
     setWorkbenchSource(source);
     const renderer = await render();
-    expect(read).toHaveBeenCalledTimes(1);
-    await act(async () => { vi.advanceTimersByTime(300_000); await Promise.resolve(); });
-    expect(read).toHaveBeenCalledTimes(1);
-    stale = false;
+    const rows = renderer.root.findAllByType('SettingsRow');
+    const vercel = rows.filter((row: any) => row.props.title === 'Vercel');
+    expect(vercel).toHaveLength(1);
+    expect(vercel[0]?.props.description).toBe('Key · Trusty Squire');
+    act(() => vercel[0]?.props.onPress());
+    expect(navigation.push.mock.calls.at(-1)?.[0]).toMatchObject({
+      pathname: '/beeline/settings/workbench/service',
+      params: { service: 'vercel' },
+    });
+  });
+
+  it('keeps a Squire-held app key in Keys while real sign-ins appear as connections', async () => {
+    const source = new MockWorkbenchSource();
+    source.setApps([
+      { id: 'app-rakuten', key: 'rakuten', name: 'Rakuten Ichiba', transport: 'squire-api', status: 'connected', connectionReference: 'cred_rakuten', useCount: 0 },
+      { id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio', status: 'connected', useCount: 0 },
+    ]);
+    const read = source.readWorkbench.bind(source);
+    source.readWorkbench = async input => {
+      const view = await read(input);
+      return { ...view, apps: view.apps.filter(app => app.transport !== 'squire-api'), connections: [...view.connections,
+        { connectionId: 'cred_rakuten', ref: 'cred_rakuten', name: 'Rakuten key', service: 'rakuten', hosts: [], state: 'active' as const, ownerId: 'human-dani' }] };
+    };
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const titles = renderer.root.findAllByType('SettingsRow').map((row: any) => row.props.title);
+    expect(titles).toContain('Rakuten Ichiba');
+    expect(titles).toContain('Slack');
+    expect(titles).not.toContain('Rakuten key');
+  });
+
+  it('offers Trusty Squire in recommendations when it has never connected', async () => {
+    searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-terra' };
+    const renderer = await render();
+    const hero = renderer.root.findByProps({ testID: 'connectors-squire-hero' });
+    act(() => hero.props.onAction());
+    expect(navigation.push.mock.calls.at(-1)?.[0]).toMatchObject({
+      pathname: '/beeline/settings/workbench/connect',
+      params: { connectorId: 'trusty-squire' },
+    });
+  });
+
+  it('refreshes vault metadata on focus and re-reads after a live workbench change', async () => {
+    const source = new MockWorkbenchSource();
+    const read = vi.spyOn(source, 'readWorkbench');
+    setWorkbenchSource(source);
+    await render();
+    expect(read).toHaveBeenCalledWith({ workspaceId: 'workspace-1', viewerId: 'human-dani', refreshVault: true });
     await act(async () => {
       for (const listener of liveListeners) listener({ monolithLive: {
         type: 'resource-change', roomId: '', resource: 'workbench',
       } });
       await Promise.resolve();
     });
-    expect(read).toHaveBeenCalledTimes(2);
-    expect(renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' })).toBeDefined();
+    expect(read).toHaveBeenLastCalledWith({ workspaceId: 'workspace-1', viewerId: 'human-dani' });
   });
 
-  it('pads the bottom of the scroll by the system navigation bar so the last app row can scroll above it', async () => {
-    // Android 3-button navigation reports a 48dp bottom inset; the screen draws
-    // edge to edge behind it, so the scroll content must end above that bar.
-    safeArea.bottom = 48;
+  it('connects the recommended wallet by creating it and granting delegation', async () => {
+    const wallet = new MockWalletSource();
+    const create = vi.spyOn(wallet, 'createWallet');
+    const grant = vi.spyOn(wallet, 'grantDelegation');
+    setWalletSource(wallet);
     const renderer = await render();
-    const scroll = renderer.root.findByProps({ testID: 'workbench-scroll' });
-    const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
-
-    expect(contentStyle.paddingBottom).toBe(48 + 48);
-    expect(scroll.findByProps({ testID: 'workbench-connect-app' })).toBeDefined();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'connectors-recommended-wallet' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(create).toHaveBeenCalledWith({ workspaceId: 'workspace-1' });
+    expect(grant).toHaveBeenCalledWith({ workspaceId: 'workspace-1' });
+    expect(navigation.push.mock.calls.at(-1)?.[0]).toMatchObject({
+      pathname: '/beeline/settings/workbench/wallet', params: { workspaceId: 'workspace-1' },
+    });
   });
 
-  it('shows Link as one TOOLS row and states non-US/Canada ineligibility on the collapsed row', async () => {
+  it('uses the active Workspace for wallet connect from personal Settings', async () => {
+    searchParams.params = { viewerId: 'human-dani' };
+    const wallet = new MockWalletSource();
+    const create = vi.spyOn(wallet, 'createWallet');
+    setWalletSource(wallet);
+    const renderer = await render();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'connectors-recommended-wallet' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(workspace.resolve).toHaveBeenCalledWith('', 'workspace-active');
+    expect(create).toHaveBeenCalledWith({ workspaceId: 'workspace-active' });
+  });
+
+  it('returns from Link sign-in to a connected row', async () => {
     const source = new MockWorkbenchSource();
     const originalRead = source.readWorkbench.bind(source);
-    source.readWorkbench = async (input) => ({ ...await originalRead(input),
-      linkAccount: { connected: false, pending: false, ineligible: true } });
-    setWorkbenchSource(source);
-    const renderer = await render();
-    // Link shares the TOOLS list with the other connectors; there is no
-    // separate Payment tools section.
-    expect(renderer.root.findAllByProps({ testID: 'workbench-payment-tools-head' })).toHaveLength(0);
-    const tools = renderer.root.findByProps({ testID: 'workbench-connectors' });
-    expect(tools.findByProps({ testID: 'workbench-tools-head' })).toBeDefined();
-    const link = tools.findByProps({ testID: 'workbench-link-head' });
-    expect(link.props.title).toBe('Link');
-    expect(link.props.description).toContain('US or Canada');
-    expect(link.props.trailingPress.testID).toBe('workbench-link-connect');
-  });
-
-  it('returns from the Link auth session to a connected payment row', async () => {
-    const source = new MockWorkbenchSource();
     let connected = false;
-    const originalRead = source.readWorkbench.bind(source);
-    source.beginLinkSignIn = vi.fn(async () => ({
-      authorizationUrl: 'https://login.link.com/auth?state=link-test-state',
-    }));
+    source.beginLinkSignIn = vi.fn(async () => ({ authorizationUrl: 'https://login.link.com/auth?state=link-test-state' }));
     source.readWorkbench = async input => ({ ...await originalRead(input),
       linkAccount: { connected, pending: false, ineligible: false } });
     vi.mocked(WebBrowser.openAuthSessionAsync).mockImplementation(async () => {
@@ -231,482 +290,29 @@ describe('Workbench settings screen', () => {
     setWorkbenchSource(source);
     const renderer = await render();
     await act(async () => {
-      renderer.root.findByProps({ testID: 'workbench-link-head' }).props.trailingPress.onPress();
-      await Promise.resolve();
+      renderer.root.findByProps({ testID: 'connectors-recommended-link' }).props.onPress();
       await Promise.resolve();
     });
     expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledWith(
       'https://login.link.com/auth?state=link-test-state',
       'beeline://beeline/settings/workbench', expect.anything());
-    expect(renderer.root.findByProps({ testID: 'workbench-link-head' }).props.value).toBe('connected');
-  });
-  it('refetches edited and deleted keys after focus and Squire-flow returns', async () => {
-    vi.useFakeTimers();
-    const data = new MockWorkbenchSource();
-    let vault = await data.readWorkbench({ workspaceId: 'workspace-1', viewerId: 'human-dani' });
-    let cached = vault;
-    let firstRead = true;
-    const source = new MockWorkbenchSource();
-    const reads: Array<{ refreshVault?: boolean }> = [];
-    source.readWorkbench = async (input) => {
-      reads.push(input);
-      if (input.refreshVault) {
-        if (firstRead) {
-          firstRead = false;
-          return cached;
-        }
-        return {
-          ...cached,
-          connections: cached.connections.map((connection) => ({ ...connection, stale: true })),
-        };
-      }
-      cached = vault;
-      return cached;
-    };
-    setWorkbenchSource(source);
-    const renderer = await render();
-
-    expect(reads.at(-1)?.refreshVault).toBe(true);
-    expect(
-      renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' }).props.title,
-    ).toBe('vercel');
-    vault = {
-      ...vault,
-      connections: vault.connections.map((connection) =>
-        connection.ref === 'cred_vercel'
-          ? {
-              ...connection,
-              service: 'vercel-renamed',
-              name: 'Vercel renamed',
-              hosts: ['api.vercel-renamed.example'],
-            }
-          : connection,
-      ),
-    };
-    await act(async () => {
-      appState.listener?.('active');
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-      await Promise.resolve();
-    });
-    await act(async () => {
-      for (const listener of liveListeners) listener({ monolithLive: {
-        type: 'resource-change', roomId: '', resource: 'workbench',
-      } });
-      await Promise.resolve();
-    });
-    const edited = renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' });
-    expect(edited.props.title).toBe('vercel-renamed');
-    expect(edited.props.description).toBe('api.vercel-renamed.example');
-
-    vault = {
-      ...vault,
-      connections: vault.connections.filter((entry) => entry.ref !== 'cred_vercel'),
-    };
-    await act(async () => {
-      focus.effect?.();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-      await Promise.resolve();
-    });
-    await act(async () => {
-      for (const listener of liveListeners) listener({ monolithLive: {
-        type: 'resource-change', roomId: '', resource: 'workbench',
-      } });
-      await Promise.resolve();
-    });
-    expect(
-      renderer.root.findAllByProps({ testID: 'workbench-connection-cred_vercel' }),
-    ).toHaveLength(0);
+    expect(renderer.root.findAllByType('SettingsRow').some((row: any) =>
+      row.props.title === 'Link' && row.props.value === 'Connected')).toBe(true);
   });
 
-  it('draws the shared page header on every surface: small Settings over large Workbench', async () => {
-    layout.desktop = true;
-    const desktopRenderer = await render();
-    const desktopHeader = desktopRenderer.root.findByProps({ testID: 'workbench-header' });
-    expect(desktopHeader.props.title).toBe('Workbench');
-    expect(desktopHeader.props.eyebrow).toBe('Settings');
-    expect(desktopHeader.props.onBack).toBeTypeOf('function');
-
-    layout.desktop = false;
-    const phoneRenderer = await render();
-    const phoneHeader = phoneRenderer.root.findByProps({ testID: 'workbench-header' });
-    expect(phoneHeader.props.title).toBe('Workbench');
-    expect(phoneHeader.props.eyebrow).toBe('Settings');
-    expect(phoneHeader.props.onBack).toBeTypeOf('function');
-  });
-
-  it('renders one state or action for each tool row', async () => {
-    const renderer = await render();
-    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
-    expect(squire.props.title).toBe('Trusty Squire');
-    expect(squire.props.leading.props.style).toBeTruthy();
-    expect(squire.props.value).toBeUndefined();
-    expect(squire.props.action).toBe('Connect');
-    expect(squire.props.trailingPress.testID).toBe('workbench-connector-trusty-squire-connect');
-    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
-    expect(wallet.props.leading.props.style).toBeTruthy();
-    expect(wallet.props.action).toBe('Connect');
-    expect(wallet.props.value).toBeUndefined();
-    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-tailscale-head' })).toHaveLength(0);
-  });
-
-  it('connects a tool from its row and keeps the accordion for the facts', async () => {
-    const renderer = await render();
-    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
-    act(() => {
-      squire.props.trailingPress.onPress();
-    });
-    expect(navigation.push).toHaveBeenCalledTimes(1);
-    expect(navigation.push.mock.calls[0][0].pathname).toBe('/beeline/settings/workbench/connect');
-    expect(navigation.push.mock.calls[0][0].params.connectorId).toBe('trusty-squire');
-    act(() => {
-      squire.props.onPress();
-    });
-    const details = renderer.root.findByProps({
-      testID: 'workbench-connector-trusty-squire-details',
-    });
-    const texts = details.findAll((node: any) => typeof node.props?.children === 'string');
-    const prose = texts.map((node: any) => node.props.children);
-    expect(prose).toContain(
-      'With Trusty Squire, just by linking your Google account, Beeline agents can sign up for software services for you without you having to be involved.',
-    );
-  });
-
-  it('removes the Google Workspace tool row; Google products connect as apps', async () => {
-    const renderer = await render();
-    expect(renderer.root.findAllByProps({ testID: 'google-entry-row' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-google-gmail-head' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'workbench-connect-app' })).toBeTruthy();
-  });
-
-  it('shows connected apps as rows before the one Connect an app action', async () => {
-    const source = new MockWorkbenchSource();
-    source.setApps([
-      { id: 'app-gmail', key: 'gmail', name: 'Gmail', domain: 'gmail.com', transport: 'composio', status: 'connected', useCount: 1 },
-      { id: 'app-slack', key: 'slack', name: 'Slack', domain: 'slack.com', transport: 'composio', status: 'connected', useCount: 2 },
-    ]);
-    setWorkbenchSource(source);
-    const renderer = await render();
-    const connect = renderer.root.findByProps({ testID: 'workbench-connect-app' });
-    const gmail = renderer.root.findByProps({ testID: 'workbench-app-gmail' });
-    const slack = renderer.root.findByProps({ testID: 'workbench-app-slack' });
-    expect(gmail.props.title).toBe('Gmail');
-    expect(slack.props.value).toBe('connected');
-    expect(connect.props.title).toBe('Connect an app');
-    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-composio' })).toHaveLength(0);
-    act(() => gmail.props.onPress());
-    expect(navigation.push.mock.calls.at(-1)![0]).toMatchObject({ pathname: '/beeline/settings/workbench/app', params: { appId: 'app-gmail' } });
-    act(() => connect.props.onPress());
-    expect(navigation.push.mock.calls.at(-1)![0].pathname).toBe('/beeline/settings/workbench/connect-app');
-  });
-
-  it('shows the five reported Android rows with app marks and the failed state', async () => {
-    const source = new MockWorkbenchSource();
-    source.setApps(['Neon', 'Notion', 'Linear', 'YouTube', 'Runway'].map((name, index) => ({
-      id: `app-${name.toLowerCase()}`, key: name.toLowerCase(), name,
-      logo: 'https://invalid.example/logo.png', transport: 'composio' as const,
-      status: index === 4 ? 'error' as const : 'connected' as const,
-      ...(index === 4 ? { errorMessage: 'App provider request failed (403)' } : {}),
-      useCount: 0,
-    })));
-    setWorkbenchSource(source);
-    const renderer = await render();
-    for (const name of ['Neon', 'Notion', 'Linear', 'YouTube', 'Runway']) {
-      const row = renderer.root.findByProps({ testID: `workbench-app-${name.toLowerCase()}` });
-      expect(row.findByType('Image').props.source.uri).toBeUndefined();
-      expect(row.findAllByType('Text').some((text: { props: { children: unknown } }) => text.props.children === name[0])).toBe(false);
-    }
-    expect(renderer.root.findByProps({ testID: 'workbench-app-runway' }).props.value).toBe('error');
-  });
-
-  it('falls back to a favicon for an unlisted Composio app and shows its failed connection', async () => {
-    const source = new MockWorkbenchSource();
-    source.setApps([{ id: 'app-example', key: 'example', name: 'Example App', domain: 'example.com',
-      logo: 'https://invalid.example/logo.png', transport: 'composio', status: 'error',
-      errorMessage: 'App provider request failed (403)', useCount: 0 }]);
-    setWorkbenchSource(source);
-    const renderer = await render();
-    const row = renderer.root.findByProps({ testID: 'workbench-app-example' });
-    expect(row.props.value).toBe('error');
-    const firstImage = row.findByType('Image');
-    expect(firstImage.props.source.uri).toBe('https://invalid.example/logo.png');
-    act(() => firstImage.props.onError());
-    expect(row.findByType('Image').props.source.uri).toContain('domain=example.com');
-  });
-
-  it('collapses an expanded cell on a second tap', async () => {
-    const renderer = await render();
-    const row = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
-    act(() => row.props.onPress());
-    expect(
-      renderer.root.findAllByProps({ testID: 'workbench-connector-trusty-squire-details' }).length,
-    ).toBeGreaterThan(0);
-    act(() =>
-      renderer.root
-        .findByProps({ testID: 'workbench-connector-trusty-squire-head' })
-        .props.onPress(),
-    );
-    expect(
-      renderer.root.findAllByProps({ testID: 'workbench-connector-trusty-squire-details' }),
-    ).toHaveLength(0);
-  });
-
-  it('heads the two lists Tools and Keys with their one-line descriptions', async () => {
-    const renderer = await render();
-    expect(renderer.root.findByProps({ testID: 'workbench-tools-head' }).props.children).toBe(
-      'TOOLS',
-    );
-    expect(renderer.root.findByProps({ testID: 'workbench-keys-head' }).props.children).toBe(
-      'KEYS',
-    );
-  });
-
-  it('titles a key row with its vault service and puts the domains under the name', async () => {
-    const renderer = await render();
-    const vercel = renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' });
-    expect(vercel.props.title).toBe('vercel');
-    expect(vercel.props.description).toBe('api.vercel.com');
-    expect(vercel.props.leading.props.company).toBe('vercel');
-    expect(vercel.props.leading.props.domain).toBe('vercel.com');
-    expect(vercel.props.leading.props.testID).toBe('workbench-connection-cred_vercel-mark');
-    // A key with no hosts draws no quiet line rather than a `—` placeholder.
-    // Its server-derived favicon domain is `null`, so the mark keeps its
-    // lettermark and fetches nothing.
-    const google = renderer.root.findByProps({ testID: 'workbench-connection-cred_google' });
-    expect(google.props.title).toBe('google');
-    expect(google.props.description).toBeUndefined();
-    expect(google.props.leading.props.company).toBe('google');
-    expect(google.props.leading.props.domain).toBeUndefined();
-  });
-
-  it('titles a key by its vault service, never the vault label', async () => {
-    const renderer = await render();
-    // `Work key`, no hosts, service `github`: the row names the SERVICE, not
-    // the label, and the mark reads `G` from that service.
-    const github = renderer.root.findByProps({ testID: 'workbench-connection-cred_github' });
-    expect(github.props.title).toBe('github');
-    expect(github.props.description).toBeUndefined();
-    expect(github.props.leading.props.company).toBe('github');
-    expect(github.props.leading.props.domain).toBeUndefined();
-  });
-
-  it('gives a key row the same state instrument the tool rows carry', async () => {
-    const renderer = await render();
-    const vercel = renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' });
-    expect(vercel.props.value).toBe('active');
-    expect(vercel.props.statusGlyph).toBe('live');
-    expect(vercel.props.valueTone).toBeUndefined();
-  });
-
-  it('shows the none-yet state with a short sovereignty note for a member with no connections', async () => {
-    searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-terra' };
-    const renderer = await render();
-    expect(renderer.root.findAllByProps({ testID: 'workbench-connections' })).toHaveLength(0);
-    expect(
-      renderer.root.findAllByProps({ testID: 'workbench-connection-cred_vercel' }),
-    ).toHaveLength(0);
-    expect(
-      renderer.root.findAllByProps({ testID: 'workbench-connection-cred_google' }),
-    ).toHaveLength(0);
-  });
-
-  it('shows the exact error and reuses Connect as recovery', async () => {
-    const source = new MockWorkbenchSource();
-    source.failNextPair('trusty-squire');
-    setWorkbenchSource(source);
-    const renderer = await render();
-    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
-    expect(squire.props.value).toBeUndefined();
-    expect(squire.props.action).toBe('Connect');
-    expect(squire.props.description).toBe(
-      'another Trusty Squire session is already using the browser — close it first',
-    );
-    expect(squire.props.descriptionTone).toBe('danger');
-  });
-
-  it('does not restore a Google Workspace row after a tool error', async () => {
-    const source = new MockWorkbenchSource();
-    source.failNextPair('trusty-squire');
-    source.failNextPair('google-gmail');
-    setWorkbenchSource(source);
-    const renderer = await render();
-    expect(renderer.root.findAllByProps({ testID: 'google-entry-row' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'workbench-connect-app' })).toBeTruthy();
-  });
-
-  it('creates a wallet and grants it from Connect, then opens the dashboard', async () => {
-    const source = new MockWalletSource();
-    const order: string[] = [];
-    const create = source.createWallet.bind(source);
-    source.createWallet = async () => {
-      order.push('create');
-      return create();
-    };
-    const grant = source.grantDelegation.bind(source);
-    source.grantDelegation = async () => {
-      order.push('grant');
-      return grant();
-    };
-    setWalletSource(source);
-    const renderer = await render();
-    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
-    await act(async () => {
-      await wallet.props.trailingPress.onPress();
-    });
-    expect(order).toEqual(['create', 'grant']);
-    expect(navigation.push.mock.calls.at(-1)![0]).toEqual({
-      pathname: '/beeline/settings/workbench/wallet',
-      params: { workspaceId: 'workspace-1' },
-    });
-  });
-
-  it('offers Reconnect, not connected, once the wallet grant has ended', async () => {
+  it('keeps the last loaded view when a later vault read fails', async () => {
     const source = new MockWorkbenchSource();
     const read = source.readWorkbench.bind(source);
-    source.readWorkbench = async (input) => {
-      const view = await read(input);
-      return {
-        ...view,
-        connectors: view.connectors.map((connector) =>
-          connector.id === 'wallet'
-            ? { ...connector, status: 'error' as const, errorMessage: WALLET_GRANT_ENDED_MESSAGE }
-            : connector,
-        ),
-      };
+    let fail = false;
+    source.readWorkbench = async input => {
+      if (fail) throw new Error('offline');
+      return read(input);
     };
     setWorkbenchSource(source);
     const renderer = await render();
-    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
-    expect(wallet.props.action).toBe('Reconnect');
-    expect(wallet.props.value).toBeUndefined();
-    expect(
-      renderer.root.findByProps({ testID: 'workbench-connector-wallet' }).props.errorText,
-    ).toBe(WALLET_GRANT_ENDED_MESSAGE);
-  });
-
-  it('resolves a Workspace for the personal Settings entry before opening Wallet', async () => {
-    searchParams.params = { viewerId: 'human-dani' };
-    const renderer = await render();
-    const wallet = renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' });
-    await act(async () => {
-      await wallet.props.trailingPress.onPress();
-    });
-    expect(workspace.resolve).toHaveBeenCalledWith('', 'workspace-active');
-    expect(navigation.push.mock.calls.at(-1)![0].params.workspaceId).toBe('workspace-1');
-  });
-
-  it('opens an already connected Wallet from a Workspace-bearing chat entry', async () => {
-    const source = new MockWorkbenchSource();
-    const read = source.readWorkbench.bind(source);
-    source.readWorkbench = async (input) => {
-      const view = await read(input);
-      return {
-        ...view,
-        connectors: view.connectors.map((connector) =>
-          connector.id === 'wallet' ? { ...connector, status: 'connected' as const } : connector,
-        ),
-      };
-    };
-    setWorkbenchSource(source);
-    const renderer = await render();
-    await act(async () => {
-      await renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' }).props.onPress();
-    });
-    expect(workspace.resolve).toHaveBeenCalledWith('workspace-1', 'workspace-active');
-    expect(navigation.push.mock.calls.at(-1)![0].params.workspaceId).toBe('workspace-1');
-  });
-
-  it('opens a connected Wallet without dropping its explainer under the row', async () => {
-    const source = new MockWorkbenchSource();
-    const read = source.readWorkbench.bind(source);
-    source.readWorkbench = async (input) => {
-      const view = await read(input);
-      return {
-        ...view,
-        connectors: view.connectors.map((connector) =>
-          connector.id === 'wallet' ? { ...connector, status: 'connected' as const } : connector,
-        ),
-      };
-    };
-    setWorkbenchSource(source);
-    const renderer = await render();
-    await act(async () => {
-      await renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' }).props.onPress();
-    });
-    expect(navigation.push.mock.calls.at(-1)![0].pathname).toBe('/beeline/settings/workbench/wallet');
-    expect(renderer.root.findAllByProps({ testID: 'workbench-connector-wallet-details' })).toHaveLength(0);
-  });
-
-  it('does not create or open Wallet when the viewer has no Workspace', async () => {
-    searchParams.params = { viewerId: 'human-dani' };
-    workspace.resolve.mockResolvedValue(null);
-    const source = new MockWalletSource();
-    const createWallet = vi.spyOn(source, 'createWallet');
-    setWalletSource(source);
-    const renderer = await render();
-    await act(async () => {
-      await renderer.root
-        .findByProps({ testID: 'workbench-connector-wallet-head' })
-        .props.trailingPress.onPress();
-    });
-    expect(createWallet).not.toHaveBeenCalled();
-    expect(navigation.push).not.toHaveBeenCalled();
-    expect(
-      renderer.root.findByProps({ testID: 'workbench-wallet-workspace-missing' }),
-    ).toBeTruthy();
-  });
-
-  it('opens a connection detail on a connection row', async () => {
-    const renderer = await render();
-    act(() => {
-      renderer.root.findByProps({ testID: 'workbench-connection-cred_vercel' }).props.onPress();
-    });
-    expect(navigation.push).toHaveBeenCalledTimes(1);
-    expect(navigation.push.mock.calls[0][0].pathname).toBe(
-      '/beeline/settings/workbench/connection',
-    );
-    expect(navigation.push.mock.calls[0][0].params.connectionId).toBe('cred_vercel');
-  });
-
-  it('offers adapter reconnect and disconnect on a connected Squire row', async () => {
-    const source = new MockWorkbenchSource();
-    await source.pairConnector({
-      workspaceId: 'workspace-1',
-      connectorId: 'trusty-squire',
-      helperId: 'helper-squire-box',
-    });
-    setWorkbenchSource(source);
-    const renderer = await render();
-    const squire = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
-    expect(squire.props.action).toBeUndefined();
-    expect(squire.props.value).toBe('connected');
-    act(() => squire.props.onPress());
-    expect(
-      renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-reconnect' }).props
-        .title,
-    ).toBe('Reconnect');
-    expect(
-      renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-disconnect' }).props
-        .title,
-    ).toBe('Disconnect');
-    await act(async () => {
-      renderer.root
-        .findByProps({
-          testID: 'workbench-connector-trusty-squire-disconnect',
-        })
-        .props.onPress();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    const after = renderer.root.findByProps({ testID: 'workbench-connector-trusty-squire-head' });
-    expect(after.props.action).toBe('Connect');
+    expect(renderer.root.findAllByType('SettingsRow').some((row: any) => row.props.title === 'Vercel')).toBe(true);
+    fail = true;
+    await act(async () => { focus.effect?.(); await Promise.resolve(); });
+    expect(renderer.root.findByProps({ testID: 'workbench-network-unavailable' })).toBeDefined();
   });
 });

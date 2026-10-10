@@ -398,8 +398,8 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: EVERYWHERE,
     render: ({ surface }) => surface === 'room' || surface === 'dm'
-      ? 'When you need a tool you do not have, call workbench_status; offer_connector the tool it lists, otherwise call connect_app for the app.'
-      : 'In corners, workbench_status discovers apps; connect_app starts sign-in here. Connector offers stay in Rooms and DMs.',
+      ? 'When you need a tool you do not have, call connectors_status; offer_connector the tool it lists, otherwise call connect_app for the app.'
+      : 'In corners, connectors_status discovers apps; connect_app starts sign-in here. Connector offers stay in Rooms and DMs.',
   },
   {
     id: 'surface.squire-drive',

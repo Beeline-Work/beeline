@@ -196,8 +196,8 @@ function ConnectToolFlow() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <PageHeader
-        backAccessibilityLabel="Back to Workbench"
-        eyebrow="Workbench"
+        backAccessibilityLabel="Back to Connectors"
+        eyebrow="Connectors"
         prominent
         onBack={() => router.back()}
         testID="connect-header"

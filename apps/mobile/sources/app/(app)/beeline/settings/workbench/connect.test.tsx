@@ -198,7 +198,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
   it('names the tool under a small Workbench eyebrow', async () => {
     const renderer = await render();
     const header = renderer.root.findByProps({ testID: 'connect-header' });
-    expect(header.props.eyebrow).toBe('Workbench');
+    expect(header.props.eyebrow).toBe('Connectors');
     expect(header.props.title).toBe('Trusty Squire');
   });
 

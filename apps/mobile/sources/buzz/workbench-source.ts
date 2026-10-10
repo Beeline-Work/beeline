@@ -74,6 +74,9 @@ export interface WorkbenchSource {
     app: string;
     helperId: string;
     reconnect?: boolean;
+    registryServerName?: string;
+    registryVersion?: string;
+    preferredRoute?: 'composio' | 'squire-api';
   }): Promise<{ appId: string; authorizationUrl?: string }>;
   beginAppSignIn(input: { appId: string }): Promise<{ authorizationUrl: string }>;
   completeAppSignIn(input: { sessionUri: string; appId: string }): Promise<{ appId: string }>;
@@ -235,6 +238,9 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
             name: entry.name,
             available: entry.available,
             row: dto.connectors.find(
+              (candidate) => candidate.connectorType === entry.connectorType &&
+                candidate.status.status === 'connected',
+            ) ?? dto.connectors.find(
               (candidate) => candidate.connectorType === entry.connectorType,
             ),
           });
@@ -406,12 +412,18 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     app: string;
     helperId: string;
     reconnect?: boolean;
+    registryServerName?: string;
+    registryVersion?: string;
+    preferredRoute?: 'composio' | 'squire-api';
   }): Promise<{ appId: string; authorizationUrl?: string }> {
     const result = await monolithPhoneOperation('connectWorkbenchApp', {
       workspaceId: input.workspaceId,
       app: input.app,
       helperAgentId: input.helperId,
       ...(input.reconnect ? { reconnect: true } : {}),
+      ...(input.registryServerName ? { registryServerName: input.registryServerName } : {}),
+      ...(input.registryVersion ? { registryVersion: input.registryVersion } : {}),
+      ...(input.preferredRoute ? { preferredRoute: input.preferredRoute } : {}),
     });
     return { appId: result.appId, ...(result.authorizationUrl ? { authorizationUrl: result.authorizationUrl } : {}) };
   }

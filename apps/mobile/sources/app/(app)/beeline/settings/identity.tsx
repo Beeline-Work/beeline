@@ -469,13 +469,13 @@ export default function BuzzIdentitySettings() {
 
         {monolithEnabled && (
           <View style={styles.section} testID="workbench-section">
-            <Text style={styles.sectionLabel}>Workbench</Text>
+            <Text style={styles.sectionLabel}>Connectors</Text>
             <SettingsRow
-              accessibilityLabel="Open your Workbench"
+              accessibilityLabel="Open your Connectors"
               chevron="right"
               onPress={() => router.push('/beeline/settings/workbench' as never)}
               testID="settings-workbench-row"
-              title="Tools and keys"
+              title="Your connections"
               value={workbench?.value}
               description={workbench?.attention}
               descriptionTone={workbench?.attention ? 'danger' : undefined}

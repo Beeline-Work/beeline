@@ -12,21 +12,19 @@ vi.mock('expo-router', () => ({ router: navigation, useLocalSearchParams: () => 
 vi.mock('@/buzz/app-sign-in', () => ({ openAppSignIn: signIn.open }));
 const safeArea = vi.hoisted(() => ({ bottom: 0 }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: safeArea.bottom, left: 0, right: 0 }) }));
-vi.mock('@/components/buzz/Button', async () => {
-  const R = await import('react');
-  // The one Button, as a host press target carrying its label.
-  return {
-    Button: ({ label, ...props }: any) =>
-      R.createElement('TouchableOpacity', { ...props, label }, R.createElement('Text', null, label)),
-  };
-});
 vi.mock('react-native', async () => {
   const R = await import('react');
   const host = (name: string) => (props: any) => R.createElement(name, props, props.children);
-  return { ScrollView: host('ScrollView'), Text: host('Text'), TouchableOpacity: host('TouchableOpacity'), View: host('View'), Platform: { OS: 'web', select: (values: Record<string, unknown>) => values.web ?? values.default } };
+  return { ScrollView: host('ScrollView'), Text: host('Text'), View: host('View'), Platform: { OS: 'web', select: (values: Record<string, unknown>) => values.web ?? values.default } };
 });
 vi.mock('@/components/buzz/AppMark', () => ({ AppMark: (props: any) => React.createElement('AppMark', props) }));
-vi.mock('@/components/buzz/AppPageHeader', () => ({ AppPageHeader: (props: any) => React.createElement('AppPageHeader', props) }));
+vi.mock('@/components/buzz/PageHeader', () => ({ PageHeader: (props: any) => React.createElement('PageHeader', props) }));
+vi.mock('@/components/buzz/SettingsRow', () => ({ SettingsRow: (props: any) => React.createElement('SettingsRow', props) }));
+vi.mock('@/components/buzz/HullActionSheet', () => ({
+  HullActionSheetModal: (props: any) => React.createElement('HullActionSheetModal', props, props.children),
+  HullActionSheetRow: (props: any) => React.createElement('HullActionSheetRow', props),
+  HullActionSheetCancel: (props: any) => React.createElement('HullActionSheetCancel', props),
+}));
 
 let source: MockWorkbenchSource;
 beforeEach(() => {
@@ -45,143 +43,57 @@ async function render(): Promise<ReactTestRenderer> {
   return renderer;
 }
 
+function openStatus(renderer: ReactTestRenderer) {
+  act(() => { renderer.root.findByType('SettingsRow' as never).props.trailingPress.onPress(); });
+  return renderer.root.findAllByType('HullActionSheetRow' as never);
+}
+
 describe('App detail', () => {
-  it.each(['squire-api', 'squire-browser', 'registry-mcp'] as const)('Reproduction RUNWAY-1: retries Runway through its %s route', async (transport) => {
-    source.setApps([{ id: 'app-slack', key: 'runway', name: 'Runway', transport,
-      status: 'error', errorMessage: 'App sign-in is unavailable for this person', useCount: 0 }]);
-    source.beginAppSignIn = vi.fn().mockRejectedValue(new Error('App sign-in is unavailable for this person'));
+  it('shows its status and agent use with controls in the status sheet', async () => {
     const renderer = await render();
-    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })[0].props.children)
-      .toBe('Runway connects through your helper. Retry to ask your helper to finish connecting it.');
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'app-detail-connect' }).props.onPress();
-    });
-    const notice = renderer.root.findByProps({ testID: 'app-detail-connection-notice' }).props.children;
-    expect(notice).toBe('Continue connecting Runway in your chat with squire-box.');
-    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })).toHaveLength(0);
-    console.log(`Reproduction RUNWAY-1 ${transport}: browser sign-in calls=${vi.mocked(source.beginAppSignIn).mock.calls.length}; helper requests=${source.appRequests.length}; visible=${notice}`);
-    expect(source.beginAppSignIn).not.toHaveBeenCalled();
-    expect(source.appRequests).toEqual([{ app: 'Runway', helperId: 'helper-squire-box', reconnect: true }]);
-    expect(signIn.open).not.toHaveBeenCalled();
+    const tree = JSON.stringify(renderer.toJSON());
+    expect(tree).toContain('Signed in');
+    expect(tree).toContain('Monarch in #launch');
+    expect(renderer.root.findByType('SettingsRow' as never).props.value).toBe('Connected');
+    expect(openStatus(renderer).map((row: { props: { label: string } }) => row.props.label)).toEqual(['Disconnect']);
   });
 
-  it('offers Trusty Squire setup when it is the missing prerequisite for Runway', async () => {
-    source.setApps([{ id: 'app-slack', key: 'runway', name: 'Runway', transport: 'squire-api',
-      status: 'error', errorMessage: 'Connect Trusty Squire in Workbench first', useCount: 0 }]);
-    source.beginAppSignIn = vi.fn();
+  it('disconnects the exact app from the status sheet', async () => {
     const renderer = await render();
-    const button = renderer.root.findByProps({ testID: 'app-detail-connect' });
-    expect(button.props.label).toBe('Connect Trusty Squire');
-    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })[0].props.children)
-      .toBe('Runway connects through Trusty Squire. Connect Trusty Squire, then return here to connect Runway.');
-    await act(async () => { button.props.onPress(); });
+    const [disconnect] = openStatus(renderer);
+    await act(async () => { disconnect.props.onPress(); await Promise.resolve(); });
+    expect((await source.readWorkbench({ workspaceId: 'ws', viewerId: 'human-dani' })).apps).toHaveLength(0);
+    expect(navigation.back).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a failed managed sign-in from the status sheet', async () => {
+    source.setApps([{ id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio', status: 'error', useCount: 0 }]);
+    source.beginAppSignIn = vi.fn().mockResolvedValue({ authorizationUrl: 'https://example.test/fresh' });
+    const renderer = await render();
+    const [reconnect] = openStatus(renderer);
+    expect(reconnect.props.label).toBe('Reconnect');
+    await act(async () => { reconnect.props.onPress(); await Promise.resolve(); });
+    expect(signIn.open).toHaveBeenCalledWith('https://example.test/fresh', { workspaceId: 'ws', viewerId: 'human-dani', appId: 'app-slack' });
+  });
+
+  it('routes a missing Trusty Squire prerequisite to setup', async () => {
+    source.setApps([{ id: 'app-slack', key: 'runway', name: 'Runway', transport: 'squire-api', status: 'error',
+      errorMessage: 'Connect Trusty Squire in Connectors first', useCount: 0 }]);
+    const renderer = await render();
+    const [reconnect] = openStatus(renderer);
+    expect(reconnect.props.label).toBe('Reconnect Trusty Squire');
+    await act(async () => { reconnect.props.onPress(); });
     expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
       params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'trusty-squire' } });
-    expect(source.appRequests).toHaveLength(0);
-    expect(source.beginAppSignIn).not.toHaveBeenCalled();
   });
 
-  it('asks for the assigned Runway helper to come online without switching machines', async () => {
-    source.setApps([{ id: 'app-slack', key: 'runway', name: 'Runway', transport: 'squire-api',
-      helperId: 'helper-office-mini', helperName: 'office-mini', status: 'error', useCount: 0 }]);
-    const renderer = await render();
-    await act(async () => { renderer.root.findByProps({ testID: 'app-detail-connect' }).props.onPress(); });
-    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })[0].props.children)
-      .toBe('Bring office-mini online, then retry Runway.');
-    expect(source.appRequests).toHaveLength(0);
-  });
-
-  it('uses a fresh browser link when the server resolves the explicit retry to managed sign-in', async () => {
-    source.setApps([{ id: 'app-slack', key: 'runway', name: 'Runway', transport: 'squire-api',
-      status: 'error', useCount: 0 }]);
-    source.connectApp = vi.fn().mockResolvedValue({ appId: 'app-slack', authorizationUrl: 'https://example.test/fresh' });
-    const renderer = await render();
-    await act(async () => { renderer.root.findByProps({ testID: 'app-detail-connect' }).props.onPress(); });
-    expect(signIn.open).toHaveBeenCalledWith('https://example.test/fresh', {
-      workspaceId: 'ws', viewerId: 'human-dani', appId: 'app-slack',
-    });
-  });
-  it('lets its last item scroll clear of the system navigation bar', async () => {
+  it('keeps the last row above the system navigation bar', async () => {
     safeArea.bottom = 48;
     try {
       const renderer = await render();
       const scroll = renderer.root.findByProps({ testID: 'app-detail-scroll' });
-      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
-      expect(contentStyle.paddingBottom).toBe(24 + 48);
-    } finally {
-      safeArea.bottom = 0;
-    }
-  });
-
-  it('shows the owner account, permission boundary, last use, and outlined Disconnect', async () => {
-    const renderer = await render();
-    const tree = JSON.stringify(renderer.toJSON());
-    expect(tree).toContain('lunchbox');
-    expect(tree).toContain(' · Tubing Crew workspace');
-    expect(tree).toContain('Other people’s agents ask you first.');
-    expect(tree).toContain('Monarch in #launch');
-    expect(renderer.root.findByProps({ testID: 'app-detail-disconnect' })).toBeTruthy();
-  });
-
-  it('shows provider description and logo on detail', async () => {
-    source.setApps([{ id: 'app-slack', key: 'slack', name: 'Slack',
-      description: 'Send messages to your team.', logo: 'https://cdn.composio.dev/slack.png',
-      transport: 'composio', status: 'connecting', useCount: 0 }]);
-    const renderer = await render();
-    expect(JSON.stringify(renderer.toJSON())).toContain('Send messages to your team.');
-    expect(renderer.root.findByType('AppMark' as never).props.logo).toBe('https://cdn.composio.dev/slack.png');
-    expect(renderer.root.findByProps({ testID: 'app-detail-disconnect' })).toBeTruthy();
-    await act(async () => { renderer.root.findByProps({ testID: 'app-detail-disconnect' }).props.onPress(); await Promise.resolve(); });
-    expect((await source.readWorkbench({ workspaceId: 'ws', viewerId: 'human-dani' })).apps).toHaveLength(0);
-  });
-
-  it('warns about Instagram account requirements before sign-in', async () => {
-    source.setApps([{ id: 'app-slack', key: 'instagram', name: 'Instagram',
-      transport: 'composio', status: 'error', errorMessage: 'Account rejected', useCount: 0 }]);
-    const renderer = await render();
-    const tree = JSON.stringify(renderer.toJSON());
-    expect(tree).toContain('Business or Creator account linked to a Facebook Page');
-    expect(tree).toContain('Account rejected');
-    expect(tree).toContain('Retry Instagram');
-  });
-
-  it('shows a product description on Neon detail when provider copy is missing or filler', async () => {
-    source.setApps([{ id: 'app-slack', key: 'neon', name: 'Neon',
-      description: 'Use neon tools.', transport: 'squire-api', status: 'connected', useCount: 0 }]);
-    const renderer = await render();
-    const tree = JSON.stringify(renderer.toJSON());
-    expect(tree).toContain('Neon provides serverless Postgres databases for applications.');
-    expect(tree).not.toContain('Use neon tools.');
-    expect(renderer.root.findByType('AppMark' as never).props.name).toBe('Neon');
-  });
-
-  it('shows a truthful never-used state', async () => {
-    source.setApps([{ id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio', status: 'connected', accountLabel: 'lunchbox', workspaceName: 'Tubing Crew', useCount: 0 }]);
-    const renderer = await render();
-    expect(JSON.stringify(renderer.toJSON())).toContain('Not used yet.');
-  });
-
-  it.each(['Slack', 'Example App'])('shows a failed %s retry as an error with another retry action', async (name) => {
-    source.setApps([{ id: 'app-slack', key: name.toLowerCase().replace(/\s/g, ''), name, transport: 'composio',
-      status: 'connecting', accountLabel: 'lunchbox', workspaceName: 'Tubing Crew', useCount: 0 }]);
-    source.beginAppSignIn = vi.fn().mockRejectedValue(new Error('App provider request failed (403)'));
-    const renderer = await render();
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'app-detail-connect' }).props.onPress();
-      await Promise.resolve();
-    });
-    const tree = JSON.stringify(renderer.toJSON());
-    expect(tree).toContain('Connection failed');
-    expect(tree).toContain(`Retry ${name}`);
-    expect(tree).toContain('The app provider refused this connection (403).');
-    expect(tree).not.toContain('Monolith');
-    expect(renderer.root.findByProps({ testID: 'app-detail-disconnect' })).toBeTruthy();
-  });
-
-  it('disconnects the exact app through the server source', async () => {
-    const renderer = await render();
-    await act(async () => { renderer.root.findByProps({ testID: 'app-detail-disconnect' }).props.onPress(); await Promise.resolve(); });
-    expect((await source.readWorkbench({ workspaceId: 'ws', viewerId: 'human-dani' })).apps).toHaveLength(0);
-    expect(navigation.back).toHaveBeenCalledTimes(1);
+      const style = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
+      expect(style.paddingBottom).toBe(72);
+    } finally { safeArea.bottom = 0; }
   });
 });

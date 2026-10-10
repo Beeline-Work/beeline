@@ -107,6 +107,18 @@ export type WorkbenchConnectionView = {
   readonly createdAt: number;
 };
 
+/** The same vault reference can be reported by several paired Squire helpers. */
+export function uniqueVaultConnections<T extends { readonly reference: string }>(
+  connections: readonly T[],
+): T[] {
+  const seen = new Set<string>();
+  return connections.filter((connection) => {
+    if (seen.has(connection.reference)) return false;
+    seen.add(connection.reference);
+    return true;
+  });
+}
+
 export type WorkbenchCatalogEntry = {
   readonly connectorType: ConnectorKind;
   readonly name: string;
@@ -115,8 +127,7 @@ export type WorkbenchCatalogEntry = {
 
 /**
  * One connected app: ONE row whatever route serves it (`app-connections.ts`).
- * The key it holds (a Squire route) is folded into this row, not listed again
- * under Keys.
+ * Squire API rows are projections of vault credentials and appear under Keys.
  */
 export type WorkbenchAppView = {
   readonly appId: string;
@@ -202,6 +213,9 @@ export type WorkbenchAppSearchResult = readonly {
   readonly domain?: string;
   readonly description?: string;
   readonly logo?: string;
+  /** The recommended direct Registry route, when this is an official OAuth server. */
+  readonly registryServerName?: string;
+  readonly registryVersion?: string;
 }[];
 export type PairConnectorInput = {
   readonly workspaceId: string;
@@ -231,6 +245,11 @@ export type ConnectWorkbenchAppInput = {
   readonly helperAgentId: string;
   /** Re-resolve an app in error from the top of the route order. */
   readonly reconnect?: boolean;
+  /** Exact coordinates selected from search, re-fetched by the server. */
+  readonly registryServerName?: string;
+  readonly registryVersion?: string;
+  /** Explicit choice from the folded alternative routes. Existing routes still win. */
+  readonly preferredRoute?: 'composio' | 'squire-api';
 };
 export type ConnectWorkbenchAppResult = {
   readonly appId: string;

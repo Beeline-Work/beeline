@@ -2165,6 +2165,9 @@ CREATE TABLE IF NOT EXISTS push_delivery_claims (
 );
 ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 1;
 ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS next_retry_at timestamptz;
+-- When a read-clear push named this delivered message (sendReadClears). Read
+-- messages a push left out stay NULL and go in a later push.
+ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS read_cleared_at timestamptz;
 -- Content-free observations written only when a real client operation ends.
 -- The dashboard reads a bounded recent window; no timer produces samples.
 CREATE TABLE IF NOT EXISTS operator_function_events (

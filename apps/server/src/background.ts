@@ -94,7 +94,7 @@ export interface PushSender {
 export const READ_CLEAR_INTERVAL_SECONDS = 30;
 /** Channel ids one read-clear push names; the newest reads win. */
 export const READ_CLEAR_MAX_CHANNELS = 50;
-/** Read message ids one channel names, newest first; older ones stay in the shade. */
+/** Read message ids one channel names, newest first; older ones go in a later push. */
 export const READ_CLEAR_MAX_MESSAGE_IDS = 20;
 
 const PUSH_TITLE_LENGTH = 40;
@@ -240,6 +240,8 @@ export class PushDeliveryLoop {
       // same mark as newer than the boundary forever. Each mark names the
       // messages at or before it that this device was pushed, in server
       // order, so the phone keeps notifications for messages after the read.
+      // A message is named until a sent push includes it: ids left out by the
+      // per-Room cap or the APNs size limit keep their Room pending.
       `SELECT device.token,batch.channel_ids,batch.read_at_texts,batch.read_ats,
          batch.message_ids,batch.read_message_ids
        FROM push_devices device
@@ -260,6 +262,7 @@ export class PushDeliveryLoop {
                  FROM push_delivery_claims claim
                  JOIN messages message ON message.id=claim.message_id
                  WHERE claim.device_token=device.token AND claim.status='delivered'
+                   AND claim.read_cleared_at IS NULL
                    AND claim.claimed_at>now()-interval '1 day'
                    AND message.room_id=mark.room_id
                    AND (message.created_at,message.id)<(mark.message_created_at,mark.message_id)
@@ -270,9 +273,17 @@ export class PushDeliveryLoop {
            FROM room_read_marks mark
            WHERE mark.identity_id=device.identity_id
              AND mark.read_at>GREATEST(device.registered_at,now()-interval '1 day')
-             AND (mark.read_at,mark.room_id::text)
+             AND ((mark.read_at,mark.room_id::text)
                >(COALESCE(clear.cleared_through,'-infinity'::timestamptz),
                  COALESCE(clear.cleared_through_room,''))
+               OR EXISTS (
+                 SELECT 1 FROM push_delivery_claims claim
+                 JOIN messages message ON message.id=claim.message_id
+                 WHERE claim.device_token=device.token AND claim.status='delivered'
+                   AND claim.read_cleared_at IS NULL
+                   AND claim.claimed_at>now()-interval '1 day'
+                   AND message.room_id=mark.room_id
+                   AND (message.created_at,message.id)<(mark.message_created_at,mark.message_id)))
            ORDER BY mark.read_at,mark.room_id::text
            LIMIT ${READ_CLEAR_MAX_CHANNELS}
          ) pending
@@ -295,11 +306,24 @@ export class PushDeliveryLoop {
       try {
         await sender.clearRead(row.token, reads);
         await this.database.query(
+          `UPDATE push_delivery_claims SET read_cleared_at=now()
+           WHERE device_token=$1 AND message_id=ANY($2::text[])`,
+          [row.token, reads.flatMap((read) => [read.messageId, ...read.readMessageIds])],
+        );
+        // A Room resent for left-out ids can sort before the boundary; the
+        // boundary never moves back.
+        await this.database.query(
           `INSERT INTO push_read_clears(device_token,cleared_through,cleared_through_room,sent_at)
            VALUES($1,$2::timestamptz,$3,now())
            ON CONFLICT(device_token) DO UPDATE
-             SET cleared_through=EXCLUDED.cleared_through,
-               cleared_through_room=EXCLUDED.cleared_through_room,sent_at=EXCLUDED.sent_at`,
+             SET (cleared_through,cleared_through_room)=(
+                 SELECT CASE WHEN (EXCLUDED.cleared_through,EXCLUDED.cleared_through_room)
+                     >(push_read_clears.cleared_through,push_read_clears.cleared_through_room)
+                   THEN EXCLUDED.cleared_through ELSE push_read_clears.cleared_through END,
+                   CASE WHEN (EXCLUDED.cleared_through,EXCLUDED.cleared_through_room)
+                     >(push_read_clears.cleared_through,push_read_clears.cleared_through_room)
+                   THEN EXCLUDED.cleared_through_room ELSE push_read_clears.cleared_through_room END),
+               sent_at=EXCLUDED.sent_at`,
           [row.token, row.read_at_texts[last], row.channel_ids[last]],
         );
       } catch (error) {

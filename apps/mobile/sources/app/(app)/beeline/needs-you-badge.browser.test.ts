@@ -58,7 +58,11 @@ function shims(mobile: string): Record<string, string> {
       async workspace() { return { workspace: { id: 'workspace-1', name: 'Clover Workspace' } }; }
     }`,
     '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
-    '@/buzz/community-storage': 'export const loadActiveCommunityId = async () => null;',
+    '@/buzz/community-storage': `export const loadActiveCommunityId = async () => null;
+    export const watchActiveCommunityId = (_pubkey, listener) => {
+      void Promise.resolve(null).then(listener);
+      return () => undefined;
+    };`,
     '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
     'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
     '@expo/vector-icons': `import React from 'react';

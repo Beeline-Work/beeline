@@ -71,7 +71,7 @@ describe('using-beeline Room guidance', () => {
       'report_memory_used',
       'search_memory',
       'list_credentials',
-      'workbench_status',
+      'connectors_status',
       'delete_skill',
     ]) {
       expect(memory, tool).toContain(tool);
@@ -236,11 +236,11 @@ describe('using-beeline Room guidance', () => {
     expect(sessionPrompt().turnPrefix).toBe('');
   });
 
-  it('points a missing tool at Workbench discovery without a forced check on every request', () => {
+  it('points a missing tool at Connectors discovery without a forced check on every request', () => {
     for (const surface of ['room', 'dm'] as const) {
       const context = sessionPrompt({ surface, agentCommand: 'codex-acp' });
       expect(context.systemPrompt).toContain(
-        'When you need a tool you do not have, call workbench_status; offer_connector the tool it lists, otherwise call connect_app for the app.',
+        'When you need a tool you do not have, call connectors_status; offer_connector the tool it lists, otherwise call connect_app for the app.',
       );
       expect(context.systemPrompt).not.toContain('For every user request');
       expect(context.systemPrompt).not.toContain('sign up for an account');
@@ -487,11 +487,11 @@ describe('beeline-spec planning skill', () => {
   });
 });
 
-describe('using-beeline "Tools and the Workbench" section', () => {
+describe('using-beeline "Tools and the Connectors" section', () => {
   const markdown = usingBeelineSkillMarkdown('test-release');
 
   it('requires live host inspection before answering about current state', () => {
-    const tools = markdown.split('## Tools and the Workbench\n')[1]?.split('\n## ')[0];
+    const tools = markdown.split('## Tools and the Connectors\n')[1]?.split('\n## ')[0];
     expect(tools).toContain('inspect its live state with the tools you have');
     expect(tools).toContain('processes, logs, local endpoints or service status');
     expect(tools).toContain('Say what you checked');
@@ -499,10 +499,10 @@ describe('using-beeline "Tools and the Workbench" section', () => {
   });
 
   it('uses available tools before asking for a value while preserving key and grant authority', () => {
-    const tools = markdown.split('## Tools and the Workbench\n')[1]?.split('\n## ')[0];
+    const tools = markdown.split('## Tools and the Connectors\n')[1]?.split('\n## ')[0];
     expect(tools).toContain('Before asking a person for a code, a status or a file');
     expect(tools).toContain(
-      'call workbench_status and check whether a tool or connected app you already have can get it, then use it',
+      'call connectors_status and check whether a tool or connected app you already have can get it, then use it',
     );
     expect(tools).toContain('an emailed verification code in an already-connected inbox');
     expect(tools).toContain('Ask only when none can, and say why');
@@ -512,11 +512,11 @@ describe('using-beeline "Tools and the Workbench" section', () => {
   });
 
   it('gives the agent the tool/key vocabulary and where to learn what each tool is FOR', () => {
-    expect(markdown).toContain('## Tools and the Workbench');
+    expect(markdown).toContain('## Tools and the Connectors');
     expect(markdown).toContain('A **tool** is something you can use once a human adds it');
     expect(markdown).toContain('a **key** is the credential that tool holds for that human');
-    expect(markdown).toContain('beeline-agent workbench_status');
-    expect(markdown).toContain('Trusty Squire is vaulted credentials plus a browser');
+    expect(markdown).toContain('beeline-agent connectors_status');
+    expect(markdown).toContain('Trusty Squire signs up and signs in to any website hands-off');
     expect(markdown).toContain(
       'operate_drive drives a whole flow, and flat steps (operate_click, operate_type, operate_select,',
     );
@@ -533,7 +533,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
   it('teaches WHEN to offer a tool from the Room instead of routing the person to a settings page', () => {
     expect(markdown).toContain('**Offer the tool at the moment you need it.**');
     expect(markdown).toContain('do not send them to a settings page');
-    expect(markdown).toContain('Call workbench_status first');
+    expect(markdown).toContain('Call connectors_status first');
     expect(markdown).toContain(
       'In a Room or DM, call offer_connector with the connectorType and one short reason',
     );
@@ -567,7 +567,7 @@ describe('using-beeline "Tools and the Workbench" section', () => {
       'You never pair a tool yourself and never ask anyone for a key value',
     );
     // The Workbench page survives as the place to MANAGE, reachable from Settings.
-    expect(markdown).toContain('(Settings → Workbench)');
+    expect(markdown).toContain('(Settings → Connectors)');
     expect(markdown).toContain('you point there to MANAGE what exists, not to add what you need');
   });
 
@@ -617,6 +617,7 @@ describe('using-beeline "Showing a photograph" section', () => {
 
   it('teaches the fetch_image recipe once, and the Squire route once', () => {
     expect(markdown.split('fetch_image').length - 1).toBe(1);
-    expect(markdown.split('Trusty Squire').length - 1).toBe(1);
+    const photograph = markdown.split('## Showing a photograph\n')[1]?.split('\n## ')[0];
+    expect(photograph).not.toContain('Trusty Squire');
   });
 });

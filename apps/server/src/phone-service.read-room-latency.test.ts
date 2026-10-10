@@ -14,7 +14,15 @@ const VIEWER = 'a'.repeat(64);
 const QUERY_DURATION_MS = 170;
 const POOL_MAX = 10;
 
-type Span = { sql: string; text: string; waitMs: number; durationMs: number; rows: number };
+type Span = {
+  sql: string;
+  text: string;
+  startedAt: number;
+  endedAt: number;
+  waitMs: number;
+  durationMs: number;
+  rows: number;
+};
 
 class RepresentativeDatabase implements SqlDatabase {
   readonly spans: Span[] = [];
@@ -40,6 +48,8 @@ class RepresentativeDatabase implements SqlDatabase {
       this.spans.push({
         sql: sql.trim().split(/\s+/).slice(0, 7).join(' '),
         text: sql,
+        startedAt,
+        endedAt: performance.now(),
         waitMs: startedAt - queuedAt,
         durationMs: performance.now() - startedAt,
         rows: result.rows.length,
@@ -164,11 +174,48 @@ describe('PhoneService.readRoom latency', () => {
         [CORNER, AGENT],
       );
       await database.query(
+        `UPDATE corner_facts SET lifecycle='{"lifecycle":"working","checks":"unknown"}'::jsonb
+         WHERE corner_id=$1`,
+        [CORNER],
+      );
+      await database.query(
+        `INSERT INTO corner_brief_revisions(corner_id,revision,spec,author_id,source_room_id)
+         VALUES($1,1,'## Intent\n\nShip the corner',$2,$3)`,
+        [CORNER, AGENT, ROOM],
+      );
+      await database.query(
         `INSERT INTO messages(id,room_id,author_id,text,created_at)
          SELECT 'corner-message-' || series,$1,$2,'Corner message ' || series,
            now() - interval '1 hour' + series * interval '1 millisecond'
          FROM generate_series(1,60) series`,
         [CORNER, VIEWER],
+      );
+      await database.query(
+        `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+         VALUES('44444444-4444-4444-8444-444444444444',$1,'artifact','corner-evidence',
+           'text/plain','Evidence',12,$2,'ready',now() + interval '1 day')`,
+        [VIEWER, 'b'.repeat(64)],
+      );
+      await database.query(
+        `INSERT INTO object_expirations(id) VALUES('55555555-5555-4555-8555-555555555555')`,
+      );
+      await database.query(
+        `UPDATE messages SET text='@agent-0 Corner message 60',attachments=$2::jsonb
+         WHERE id='corner-message-60' AND room_id=$1`,
+        [
+          CORNER,
+          JSON.stringify([
+            { url: '/v1/media/44444444-4444-4444-8444-444444444444', name: 'Evidence' },
+            { url: '/v1/media/55555555-5555-4555-8555-555555555555', name: 'Expired' },
+          ]),
+        ],
+      );
+      await database.query(
+        `INSERT INTO message_bookmarks(identity_id,workspace_id,room_id,message_id,
+           source_room_name,source_room_kind,message_created_at)
+         SELECT $1,$2,$3,id,'Corner','corner',created_at FROM messages
+         WHERE id='corner-message-60' AND room_id=$3`,
+        [VIEWER, WORKSPACE, CORNER],
       );
       // A long-running corner keeps every settled work row.
       await database.query(
@@ -192,7 +239,7 @@ describe('PhoneService.readRoom latency', () => {
       );
     }, 30_000);
 
-    it('reads its independent queries together, tags once, and bounds activity', async () => {
+    it('reads a corner in one core and one optional statement, with SQL caps', async () => {
       const representative = new RepresentativeDatabase(database);
       const enrichment = new RepresentativeDatabase(database);
       const phone = new PhoneService(
@@ -222,15 +269,120 @@ describe('PhoneService.readRoom latency', () => {
 
       expect(view?.parent?.id).toBe(ROOM);
       expect(view?.room.about).toBe('Ship it');
+      expect(view?.cornerBrief?.spec).toContain('Ship the corner');
+      expect(view?.cornerLifecycle?.lifecycle).toBe('working');
       expect(view?.messages.at(-1)?.id).toBe('corner-current-activity');
       expect(view?.messages.map((message) => message.id)).toContain('corner-message-60');
+      const marked = view?.messages.find((message) => message.id === 'corner-message-60');
+      expect(marked?.bookmarked).toBe(true);
+      expect(marked?.mentionPubkeys).toContain(AGENT);
+      expect(marked?.attachments?.[0]).toMatchObject({ kind: 'artifact', title: 'Evidence' });
+      expect(marked?.attachments?.[1]).toMatchObject({ expired: true });
       expect(view?.briefing?.map((message) => message.id)).toContain('reply-message');
-      // 170 ms a query: one serial trip each would be about 2.4 s.
-      expect(durationMs).toBeLessThan(1_200);
+      expect(representative.spans).toHaveLength(1);
+      expect(enrichment.spans).toHaveLength(1);
+      expect(enrichment.spans[0]!.startedAt).toBeGreaterThanOrEqual(
+        representative.spans[0]!.endedAt,
+      );
+      expect(durationMs).toBeLessThan(650);
       expect(enrichment.spans.filter((span) => /tagged_ids/.test(span.text))).toHaveLength(1);
-      // The settled rows never leave the database for a corner open; only
-      // the capped corner work rows do.
-      expect(largestRead).toBeLessThanOrEqual(ROOM_VIEW_TOOL_ROW_LIMIT);
+      expect(largestRead).toBe(1); // Both statements return one aggregate row.
+      expect(view?.messages.length).toBeLessThanOrEqual(30);
+      expect(view?.toolRows?.length).toBeLessThanOrEqual(ROOM_VIEW_TOOL_ROW_LIMIT);
+      expect(view?.members.length).toBeLessThanOrEqual(200);
+    }, 20_000);
+
+    it('keeps optional failure independent and an unbriefed corner at two statements', async () => {
+      const core = new RepresentativeDatabase(database, POOL_MAX, 0);
+      const optional: SqlDatabase = {
+        query: vi.fn().mockRejectedValue(new Error('optional read failed')),
+        transaction: vi.fn(),
+      };
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const phone = new PhoneService(
+        core,
+        'https://server.usebeeline.app',
+        undefined,
+        undefined,
+        undefined,
+        false,
+        optional,
+      );
+      const view = await phone.readRoom('33333333-3333-4333-8333-000000000001', VIEWER);
+      expect(view?.room.id).toBe('33333333-3333-4333-8333-000000000001');
+      expect(view?.cornerBrief).toBeUndefined();
+      expect(view?.members.every((member) => member.presence === undefined)).toBe(true);
+      expect(core.spans).toHaveLength(1);
+      expect(optional.query).toHaveBeenCalledTimes(1);
+      warning.mockRestore();
+    });
+
+    it('caps corner members in SQL while retaining the viewer', async () => {
+      const crowded = '33333333-3333-4333-8333-000000000001';
+      await database.query(
+        `INSERT INTO identities(id,kind,name,handle)
+         SELECT lpad(to_hex(series+1000),64,'0'),'agent','Extra ' || series,'extra-' || series
+         FROM generate_series(1,210) series`,
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         SELECT $1,$2,lpad(to_hex(series+1000),64,'0'),'member'
+         FROM generate_series(1,210) series`,
+        [WORKSPACE, crowded],
+      );
+      const core = new RepresentativeDatabase(database, POOL_MAX, 0);
+      const optional = new RepresentativeDatabase(database, POOL_MAX, 0);
+      const phone = new PhoneService(
+        core,
+        'https://server.usebeeline.app',
+        undefined,
+        undefined,
+        undefined,
+        false,
+        optional,
+      );
+      const view = await phone.readRoom(crowded, VIEWER);
+      expect(view?.members).toHaveLength(200);
+      expect(view?.viewer.identity.pubkey).toBe(VIEWER);
+      expect(core.spans).toHaveLength(1);
+      expect(optional.spans).toHaveLength(1);
+    });
+
+    it('holds two statements per corner at concurrency four', async () => {
+      const core = new RepresentativeDatabase(database);
+      const optional = new RepresentativeDatabase(database);
+      const phone = new PhoneService(
+        core,
+        'https://server.usebeeline.app',
+        undefined,
+        undefined,
+        undefined,
+        false,
+        optional,
+      );
+      const durations = await Promise.all(
+        Array.from({ length: 4 }, async () => {
+          const startedAt = performance.now();
+          const view = await phone.readRoom(CORNER, VIEWER);
+          expect(view?.messages.at(-1)?.id).toBe('corner-current-activity');
+          return performance.now() - startedAt;
+        }),
+      );
+      const sorted = durations.toSorted((left, right) => left - right);
+      const p50 = sorted[1]!;
+      const p95 = sorted[3]!;
+      console.info(
+        '[corner-open-concurrent]',
+        JSON.stringify({
+          p50Ms: Math.round(p50),
+          p95Ms: Math.round(p95),
+          queries: core.spans.length + optional.spans.length,
+        }),
+      );
+      expect(core.spans).toHaveLength(4);
+      expect(optional.spans).toHaveLength(4);
+      expect(p50).toBeLessThan(900);
+      expect(p95).toBeLessThan(1_200);
     }, 20_000);
   });
 
@@ -326,7 +478,7 @@ describe('PhoneService.readRoom latency', () => {
     const phone = new PhoneService(representative, 'https://server.usebeeline.app');
 
     expect(await phone.readRoom(ROOM, 'f'.repeat(64))).toBeNull();
-    expect(representative.spans).toHaveLength(2);
+    expect(representative.spans).toHaveLength(1);
   });
 
   it('still returns core messages when every optional enrichment fails', async () => {

@@ -140,8 +140,10 @@ function withoutRows(
 
 /**
  * The summary with each corner a read just carried brought up to its row. A
- * summary corner leaves the waiting state with its `waitingSince` and
- * `attention`, which the server sends only on waiting corners. The server
+ * summary corner takes the row's server Mine flag, and leaves the waiting
+ * state with its `attention`, which the server sends only on waiting corners.
+ * `waitingSince` goes too, as the server sends it only on Mine waiting
+ * corners. The server
  * lists every Mine corner, so a Mine row the summary lacks joins it, in the
  * read's order. When the read holds every open corner, a summary corner it
  * does not hold has closed and leaves. Other rows stay out, and the counts
@@ -169,14 +171,16 @@ function summaryWithRows(
       return [];
     }
     if (!row || row.state === 'archived') return [corner];
-    if (row.state === corner.state && row.corner.name === corner.name) return [corner];
+    if (row.state === corner.state && row.corner.name === corner.name &&
+        Boolean(row.mine) === Boolean(corner.mine)) return [corner];
     changed = true;
-    const { waitingSince, attention, ...rest } = corner;
+    const { waitingSince, attention, mine: _mine, ...rest } = corner;
     return [{
       ...rest,
       name: row.corner.name,
       state: row.state,
-      ...(row.state === 'waiting' && waitingSince !== undefined ? { waitingSince } : {}),
+      ...(row.mine ? { mine: true as const } : {}),
+      ...(row.state === 'waiting' && row.mine && waitingSince !== undefined ? { waitingSince } : {}),
       ...(row.state === 'waiting' && attention ? { attention } : {}),
     }];
   });

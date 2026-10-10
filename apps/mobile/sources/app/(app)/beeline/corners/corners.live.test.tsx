@@ -12,6 +12,8 @@ const list = vi.hoisted(() => ({
   extra: [] as string[],
   /** The server's Mine rule holds for every open row the read answers with. */
   mine: false,
+  /** Open rows the server's Mine rule holds for, when `mine` is off. */
+  mineIds: [] as string[],
   /** When set, a read waits on this gate before it answers. */
   readGate: null as Promise<void> | null,
   archived: [] as string[],
@@ -164,7 +166,7 @@ function cornerList(state: string, extra: readonly string[] = []): CornerListVie
       updatedAt: 1,
     },
     corners: [...extra.map((id) => corner(id, 'working')), corner('corner-1', state)]
-      .map((item) => (list.mine ? { ...item, mine: true } : item)),
+      .map((item) => (list.mine || list.mineIds.includes(item.corner.id) ? { ...item, mine: true } : item)),
     viewer: {
       identity: viewer,
       role: 'member',
@@ -301,6 +303,7 @@ beforeEach(() => {
   list.state = 'waiting';
   list.extra = [];
   list.mine = false;
+  list.mineIds = [];
   list.readGate = null;
   list.archived = [];
   list.cached = null;
@@ -594,6 +597,7 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     expect(dropdownStates()).toEqual(['Open corner corner-1, waiting']);
     // The corner went idle; the Corners read carries that row.
     list.state = 'idle';
+    list.mine = true;
     const renderer = await openCorners();
     await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
     server.open();
@@ -629,6 +633,7 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     ]);
     // The Corners read holds every open corner: corner-1 idle, no next page.
     list.state = 'idle';
+    list.mine = true;
     const renderer = await openCorners();
     await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
     server.open();
@@ -673,5 +678,38 @@ describe('Corner header reads the parent Room record (3.6)', () => {
       'Open corner corner-1, waiting',
       'Open corner corner-new, working',
     ]);
+  });
+
+  it('Reproduction G3-R2: the dropdown follows a corner whose server Mine flag changed', async () => {
+    // The Room list read saw corner-1 not Mine and corner-mine Mine.
+    const chat = {
+      room: { id: 'room-a', name: 'general' },
+      cornerCount: 2,
+      waitingCornerCount: 1,
+      openCorners: [
+        { id: 'corner-mine', name: 'corner-mine', state: 'working' as const, mine: true as const },
+        { id: 'corner-1', name: 'corner-1', state: 'waiting' as const },
+      ],
+    } as unknown as import('@beeline/buzz-client').ChatListItem;
+    applyChatListCorners([chat], cornerStoreClock());
+    let dropdown!: ReactTestRenderer;
+    await act(async () => {
+      dropdown = create(React.createElement(DesktopRoomCorners, { item: chat, onOpen: () => undefined }));
+    });
+    const dropdownStates = () => dropdown.root
+      .findAll((node: { type: unknown }) => node.type === 'Pressable')
+      .map((node: { props: { accessibilityLabel: string } }) => node.props.accessibilityLabel);
+    expect(dropdownStates()).toEqual(['Open corner corner-mine, working']);
+    // The viewer now follows corner-1 and no longer follows corner-mine.
+    list.extra = ['corner-mine'];
+    list.mineIds = ['corner-1'];
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-mine:working', 'corner-1:waiting']));
+    const followed = await mountHeader({ cornerId: 'corner-1' });
+    expect(headerText(followed)).toBe('RUBY · waiting');
+    expect(dropdownStates()).toEqual(['Open corner corner-1, waiting']);
   });
 });

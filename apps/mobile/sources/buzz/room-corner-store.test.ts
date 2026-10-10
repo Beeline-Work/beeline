@@ -29,6 +29,11 @@ function row(id: string, state = 'working'): CornerListItem {
   } as unknown as CornerListItem;
 }
 
+/** A row the server's Mine rule holds for. */
+function mineRow(id: string, state = 'working'): CornerListItem {
+  return { ...row(id, state), mine: true } as CornerListItem;
+}
+
 function view(rows: readonly CornerListItem[], nextOpen?: string): CornerListView {
   return {
     room: { id: ROOM, name: 'general' },
@@ -221,7 +226,7 @@ describe('room corner store', () => {
       ],
     }], started);
     // A first page with more after it: corner-2 may be on a later page.
-    applyCornerListRead(ROOM, view([row('corner-1', 'idle')], 'cursor'), cornerReadMark(ROOM));
+    applyCornerListRead(ROOM, view([mineRow('corner-1', 'idle')], 'cursor'), cornerReadMark(ROOM));
     expect(getRoomCorners(ROOM)).toMatchObject({
       summary: 'preview',
       cornerCount: 9,
@@ -251,7 +256,7 @@ describe('room corner store', () => {
         { id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true },
       ],
     }], cornerStoreClock());
-    applyCornerListRead(ROOM, view([row('corner-1', 'idle')]), cornerReadMark(ROOM));
+    applyCornerListRead(ROOM, view([mineRow('corner-1', 'idle')]), cornerReadMark(ROOM));
     expect(getRoomCorners(ROOM)).toMatchObject({
       summary: 'preview',
       cornerCount: 2,
@@ -269,8 +274,7 @@ describe('room corner store', () => {
       waitingCornerCount: 1,
       openCorners: [{ id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true }],
     }], cornerStoreClock());
-    const mine = { ...row('corner-new'), mine: true } as CornerListItem;
-    applyCornerListRead(ROOM, view([mine, row('other'), row('corner-1', 'waiting')]),
+    applyCornerListRead(ROOM, view([mineRow('corner-new'), row('other'), mineRow('corner-1', 'waiting')]),
       cornerReadMark(ROOM));
     expect(getRoomCorners(ROOM)).toMatchObject({ cornerCount: 1, waitingCornerCount: 1 });
     expect(getRoomCorners(ROOM).openCorners).toEqual([
@@ -278,10 +282,27 @@ describe('room corner store', () => {
       { id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true },
     ]);
     // A partial read adds its Mine rows too, and drops nothing it does not hold.
-    const later = { ...row('corner-later'), mine: true } as CornerListItem;
-    applyCornerListRead(ROOM, view([later], 'next'), cornerReadMark(ROOM));
+    applyCornerListRead(ROOM, view([mineRow('corner-later')], 'next'), cornerReadMark(ROOM));
     expect(getRoomCorners(ROOM).openCorners?.map((item) => item.id))
       .toEqual(['corner-later', 'corner-new', 'corner-1']);
+  });
+
+  it('Reproduction G3-R2: a corners read takes each summary row\'s server Mine flag', () => {
+    applyChatListCorners([{
+      room: { id: ROOM } as never,
+      cornerCount: 2,
+      openCorners: [
+        { id: 'followed', name: 'followed', state: 'waiting' },
+        { id: 'unfollowed', name: 'unfollowed', state: 'waiting', mine: true, waitingSince: 5 },
+      ],
+    }], cornerStoreClock());
+    applyCornerListRead(ROOM, view([mineRow('followed', 'waiting'), row('unfollowed', 'waiting')]),
+      cornerReadMark(ROOM));
+    expect(getRoomCorners(ROOM).cornerCount).toBe(2);
+    expect(getRoomCorners(ROOM).openCorners).toEqual([
+      { id: 'followed', name: 'followed', state: 'waiting', mine: true },
+      { id: 'unfollowed', name: 'unfollowed', state: 'waiting' },
+    ]);
   });
 
   it('adds no Mine row from a corners read older than the Room list summary', () => {
@@ -290,8 +311,7 @@ describe('room corner store', () => {
       room: { id: ROOM } as never,
       openCorners: [{ id: 'corner-1', name: 'corner-1', state: 'working', mine: true }],
     }], cornerStoreClock());
-    const closedSince = { ...row('closed-since'), mine: true } as CornerListItem;
-    applyCornerListRead(ROOM, view([closedSince, row('corner-1')]), mark);
+    applyCornerListRead(ROOM, view([mineRow('closed-since'), mineRow('corner-1')]), mark);
     expect(getRoomCorners(ROOM).openCorners?.map((item) => item.id)).toEqual(['corner-1']);
   });
 

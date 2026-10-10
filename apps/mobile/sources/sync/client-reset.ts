@@ -1,4 +1,5 @@
 const listeners = new Set<() => void>();
+let generation = 0;
 
 /**
  * Every client copy of account data registers here. An identity or relay
@@ -12,7 +13,16 @@ export function subscribeClientReset(listener: () => void): () => void {
   };
 }
 
+/**
+ * Async work saves this number when it starts and drops its result when the
+ * number has changed, because the result belongs to the previous account.
+ */
+export function clientResetGeneration(): number {
+  return generation;
+}
+
 export function resetClientState(): void {
+  generation += 1;
   for (const listener of [...listeners]) {
     try {
       listener();

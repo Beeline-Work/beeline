@@ -125,7 +125,7 @@ import {
 import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnBandSlot, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { useRoomCorners } from '@/buzz/use-room-corners';
-import { roomOpenCornerRows, useCurrentCornerRow } from '@/buzz/room-corner-store';
+import { roomOpenCornerRows } from '@/buzz/room-corner-store';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { openAppSignIn } from '@/buzz/app-sign-in';
@@ -2516,19 +2516,10 @@ export function BuzzChatSurface({
   const dismissComposerKeyboard = useCallback(() => {
     Keyboard.dismiss();
   }, []);
-  // The server's state for this corner, from its parent Room's corner record:
-  // the same row the Corners screen and Room list paint. Only before that
-  // record is current does the header fall back to this Room's own facts.
-  const parentCornerRow = useCurrentCornerRow(
-    isCorner ? (parentChannelId ?? undefined) : undefined,
-    isCorner ? decodedId : undefined,
-  );
   const canonicalCornerItem =
-    isCorner && parentCornerRow && !isArchived
-      ? parentCornerRow
-      : isCorner && roomSurface
-        ? cornerDisplayFromRoomView({ ...roomSurface, latestAgentTurns: activeAgentTurns })
-        : undefined;
+    isCorner && roomSurface
+      ? cornerDisplayFromRoomView({ ...roomSurface, latestAgentTurns: activeAgentTurns })
+      : undefined;
   const cornerHeaderDisplay = cornerDisplayState(
     canonicalCornerItem ?? {
       state: isArchived ? 'archived' : 'waiting',

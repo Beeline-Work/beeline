@@ -151,7 +151,42 @@ describe('room corner store', () => {
     applyChatListCorners(summary('read'), started);
     expect(getRoomCorners(ROOM).openCorners?.map((item) => item.id)).toEqual(['framed']);
     applyChatListCorners(summary('read'), cornerStoreClock());
-    expect(getRoomCorners(ROOM).openCorners?.map((item) => item.id)).toEqual(['read']);
+    expect(getRoomCorners(ROOM).openCorners?.map((item) => item.id)).toEqual(['framed']);
+  });
+
+  it('never lets a Room list preview replace a full summary while the lane is held', () => {
+    const preview = (id: string) => [{ room: { id: ROOM }, openCorners: [{ id, name: id,
+      state: 'working' as const }], cornerCount: 12, waitingCornerCount: 3 }] as never;
+    applyChatListCorners(preview('seed'), cornerStoreClock());
+    expect(getRoomCorners(ROOM)).toMatchObject({ summary: 'preview', cornerCount: 12,
+      waitingCornerCount: 3 });
+    noteCornerLaneSubscribed(ROOM, false);
+    acceptCornerStatusFrame({ ...frame(1, [row('framed')]), cornerCount: 9, waitingCornerCount: 2 });
+    expect(getRoomCorners(ROOM)).toMatchObject({ summary: 'full', cornerCount: 9,
+      waitingCornerCount: 2 });
+    applyChatListCorners(preview('later'), cornerStoreClock());
+    expect(getRoomCorners(ROOM)).toMatchObject({ summary: 'full', cornerCount: 9 });
+    expect(getRoomCorners(ROOM).openCorners?.map((item) => item.id)).toEqual(['framed']);
+    // A resumed lane carried every change, so the full summary holds.
+    noteCornerSocketDropped();
+    noteCornerLaneSubscribed(ROOM, true);
+    applyChatListCorners(preview('later'), cornerStoreClock());
+    expect(getRoomCorners(ROOM).summary).toBe('full');
+    // Once the lane is lost, the full summary is no longer tracked.
+    noteCornerLaneReleased(ROOM);
+    applyChatListCorners(preview('after-release'), cornerStoreClock());
+    expect(getRoomCorners(ROOM)).toMatchObject({ summary: 'preview', cornerCount: 12 });
+    expect(getRoomCorners(ROOM).openCorners?.map((item) => item.id)).toEqual(['after-release']);
+  });
+
+  it('lets a preview replace a full summary from a lane that restarted', () => {
+    noteCornerLaneSubscribed(ROOM, false);
+    acceptCornerStatusFrame(frame(1, [row('framed')]));
+    noteCornerLaneSubscribed(ROOM, false);
+    applyChatListCorners([{ room: { id: ROOM }, openCorners: [{ id: 'read', name: 'read',
+      state: 'working' as const }], cornerCount: 1, waitingCornerCount: 0 }] as never,
+      cornerStoreClock());
+    expect(getRoomCorners(ROOM).summary).toBe('preview');
   });
 
   it('asks for a read when the server names a change without rows', () => {

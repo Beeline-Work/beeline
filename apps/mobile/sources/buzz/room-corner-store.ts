@@ -43,8 +43,12 @@ export type RoomCorners = {
   readonly nextOpen?: string;
   /** The Room list's summary of the viewer's open corners. */
   readonly openCorners?: readonly ChatListCorner[];
+  /** The server's exact counts, never counted on the client. */
   readonly cornerCount?: number;
   readonly waitingCornerCount?: number;
+  /** `full` when a frame sent the summary; `preview` when the Room list read
+   *  sent its capped copy. A preview is never the complete list. */
+  readonly summary?: 'full' | 'preview';
   /** Closed corners, once a reader asked for them. */
   readonly archived?: { readonly corners: readonly CornerListItem[]; readonly next?: string };
   /** The Room lane carried every change since `rows` landed. Rows from disk,
@@ -64,6 +68,8 @@ type Entry = RoomCorners & {
   readonly changedAt: number;
   /** The last applied `corner-status` sequence on the current lane. */
   readonly sequence?: number;
+  /** The lane epoch whose frame sent the full summary. */
+  readonly summaryEpoch?: number;
   /** Bumped when the lane is lost or restarts, so a read across it is not current. */
   readonly laneEpoch: number;
   readonly laneHeld: boolean;
@@ -204,6 +210,8 @@ export function acceptCornerStatusFrame(frame: CornerStatusFrame): boolean {
     openCorners: frame.openCorners,
     cornerCount: frame.cornerCount,
     waitingCornerCount: frame.waitingCornerCount,
+    summary: 'full' as const,
+    summaryEpoch: current.laneEpoch,
     changedAt: clock,
     ...(frame.sequence !== undefined ? { sequence: frame.sequence } : {}),
   };
@@ -360,7 +368,11 @@ export function applyArchivedCorners(
   });
 }
 
-/** A Room list read landed: its corner summary applies where no frame came since it started. */
+/**
+ * A Room list read landed: its capped corner summary applies where no frame
+ * came since it started. It never replaces a frame's full summary while the
+ * lane that sent it is still held.
+ */
 export function applyChatListCorners(
   chats: readonly Pick<ChatListItem, 'room' | 'openCorners' | 'cornerCount' | 'waitingCornerCount'>[],
   readStartedAt: number,
@@ -369,8 +381,11 @@ export function applyChatListCorners(
     if (!item.openCorners) continue;
     const current = entry(item.room.id);
     if (current.changedAt > readStartedAt) continue;
+    if (current.summary === 'full' && current.laneHeld &&
+        current.summaryEpoch === current.laneEpoch) continue;
     write(item.room.id, {
       ...current,
+      summary: 'preview',
       openCorners: item.openCorners,
       ...(item.cornerCount !== undefined ? { cornerCount: item.cornerCount } : {}),
       ...(item.waitingCornerCount !== undefined
@@ -394,16 +409,6 @@ export function useRoomCornerRecord(roomId: string | undefined): RoomCorners | u
     [roomId],
   );
   return useSyncExternalStore(subscribe, () => (roomId ? getRoomCorners(roomId) : undefined));
-}
-
-/** The corner record's row for one corner, while the Room lane keeps it current. */
-export function useCurrentCornerRow(
-  parentRoomId: string | undefined,
-  cornerId: string | undefined,
-): CornerListItem | undefined {
-  const record = useRoomCornerRecord(parentRoomId);
-  if (!record?.current || !cornerId) return undefined;
-  return roomOpenCornerRows(record).find((item) => item.corner.id === cornerId);
 }
 
 /** The Room list summary of the viewer's open corners, or the Room list row's own copy. */

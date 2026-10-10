@@ -5,10 +5,8 @@ import { beforeEach, expect, it } from 'vitest';
 import type { CornerListItem } from '@beeline/api-contract/phone';
 import {
   acceptCornerStatusFrame,
-  noteCornerLaneReleased,
   noteCornerLaneSubscribed,
   resetRoomCornerStore,
-  useCurrentCornerRow,
   useRoomOpenCorners,
 } from './room-corner-store';
 
@@ -27,28 +25,6 @@ const frame = (sequence: number, state: string) => ({
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   resetRoomCornerStore();
-});
-
-it('gives a corner header its server row while the parent lane keeps it current', async () => {
-  let seen: CornerListItem | undefined;
-  function Header() {
-    seen = useCurrentCornerRow('parent', 'corner-a');
-    return null;
-  }
-  let tree: any;
-  await act(async () => { tree = create(<Header />); });
-  expect(seen).toBeUndefined();
-  await act(async () => {
-    noteCornerLaneSubscribed('parent', false);
-    acceptCornerStatusFrame(frame(1, 'working'));
-  });
-  expect(seen?.state).toBe('working');
-  await act(async () => { acceptCornerStatusFrame(frame(2, 'review')); });
-  expect(seen?.state).toBe('review');
-  // Once nothing holds the lane, the header falls back to its own facts.
-  await act(async () => { noteCornerLaneReleased('parent'); });
-  expect(seen).toBeUndefined();
-  await act(async () => tree.unmount());
 });
 
 it('gives the Room list dropdown the newest summary, or the chat row\'s own copy', async () => {

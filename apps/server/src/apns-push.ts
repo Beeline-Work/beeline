@@ -6,7 +6,7 @@ import {
   type OutgoingHttpHeaders,
 } from 'node:http2';
 import { createHash, createPrivateKey, sign } from 'node:crypto';
-import type { PushSender } from './background.js';
+import type { PushSender, ReadClearCursor } from './background.js';
 import { readClearPushData } from '@beeline/api-contract/phone';
 import { pushAlert, pushMessageData, type PushDeliveryMessage } from './firebase-push.js';
 
@@ -110,7 +110,7 @@ export function apnsPushRequest(
  */
 export function apnsReadClearRequest(
   token: string,
-  reads: readonly { channelId: string; readAt: number }[],
+  reads: readonly ReadClearCursor[],
   bundleId: string,
   providerToken: string,
 ): { headers: OutgoingHttpHeaders; payload: Record<string, unknown> } {
@@ -203,7 +203,7 @@ export class ApnsPushProvider implements PushSender {
 
   async clearRead(
     token: string,
-    reads: readonly { channelId: string; readAt: number }[],
+    reads: readonly ReadClearCursor[],
   ): Promise<void> {
     await this.#post(apnsReadClearRequest(token, reads, this.#bundleId, this.#token()));
   }

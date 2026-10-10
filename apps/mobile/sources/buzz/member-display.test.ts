@@ -12,7 +12,7 @@ import {
 const pubkey = 'a'.repeat(64);
 
 describe('direct-message member display', () => {
-  it('uses the cached Trusty Squire peer name for a grant DM header', () => {
+  it('titles a grant DM header with the shared connector title', () => {
     expect(
       directMessageHeaderName(
         { pubkey: 's'.repeat(64), kind: 'human', name: 'Trusty Squire', handle: 'trusty-squire' },
@@ -20,9 +20,9 @@ describe('direct-message member display', () => {
         's'.repeat(64),
         true,
       ),
-    ).toBe('Trusty Squire');
+    ).toBe('@Trusty Squire');
   });
-  it('uses the server connector name over an older Lena profile', () => {
+  it('uses the server connector identity over an older Lena profile', () => {
     expect(
       directMessageHeaderName(
         { pubkey: 's'.repeat(64), kind: 'human', name: 'Trusty Squire', handle: 'trusty-squire' },
@@ -30,17 +30,23 @@ describe('direct-message member display', () => {
         's'.repeat(64),
         false,
       ),
-    ).toBe('Trusty Squire');
+    ).toBe('@Trusty Squire');
   });
   it('uses another server connector name without hardcoding it', () => {
     expect(
       directMessageHeaderName(
-        { pubkey: 'g'.repeat(64), kind: 'human', name: 'Google Drive', handle: 'google-drive' },
+        {
+          pubkey: 'g'.repeat(64),
+          kind: 'human',
+          name: 'Google Drive',
+          handle: 'google-drive',
+          avatar: 'https://server.test/v1/connectors/logo/google-drive.svg',
+        },
         { name: 'Lena' },
         'g'.repeat(64),
         false,
       ),
-    ).toBe('Google Drive');
+    ).toBe('@Google Drive');
   });
   it('titles an ordinary DM from the same peer identity as the Room list row', () => {
     expect(
@@ -51,6 +57,19 @@ describe('direct-message member display', () => {
         false,
       ),
     ).toBe('@ada');
+  });
+  // G9-R4: a connector header showed `Trusty Squire` while its notification
+  // title is `@Trusty Squire`.
+  it('titles a connector header like its notification', () => {
+    const peer = {
+      pubkey: 'b'.repeat(64),
+      kind: 'human' as const,
+      name: 'Trusty Squire',
+      handle: 'trusty-squire',
+    };
+    expect(directMessageHeaderName(peer, undefined, peer.pubkey, false)).toBe(
+      directMessageTitle(peer),
+    );
   });
   // G9-R4: the header showed `@alice@host` while the shared title is `@alice`.
   it('uses the shared title rules for a domain handle', () => {
@@ -70,7 +89,7 @@ describe('direct-message member display', () => {
       fallbackMemberName(pubkey),
     );
   });
-  it('uses the indexed System name for an announcements-only DM header', () => {
+  it('titles an announcements-only DM header from its System peer', () => {
     expect(
       directMessageHeaderName(
         { pubkey: 's'.repeat(64), kind: 'human', name: 'System', handle: 'system' },
@@ -78,7 +97,7 @@ describe('direct-message member display', () => {
         's'.repeat(64),
         true,
       ),
-    ).toBe('System');
+    ).toBe('@system');
   });
 
   it('uses the indexed announcement author when the hidden System peer is absent', () => {
@@ -89,7 +108,7 @@ describe('direct-message member display', () => {
         name: 'System',
         handle: 'system',
       }),
-    ).toBe('System');
+    ).toBe('@system');
   });
 
   it('resolves the other participant', () => {

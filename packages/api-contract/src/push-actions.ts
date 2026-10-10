@@ -55,26 +55,35 @@ export function grantDecisionForPushAction(actionId: string): AgentGrantDecision
 /**
  * A silent iOS push: the recipient read these Rooms or corners on some
  * device, so the phone removes their notifications from the shade and
- * recounts its badge. It carries ids and read times only, never text.
+ * recounts its badge. It carries ids and read cursors only, never text.
  */
 export const READ_CLEAR_PUSH_TYPE = 'read-clear';
 
 /**
- * One Room or corner a read-clear push names. `readAt` is the read mark's
- * time in epoch milliseconds; a notification presented after it is newer
- * than the read and stays. `null` means the payload gave no time.
+ * One Room or corner a read-clear push names, with its server read cursor:
+ * the last read message's id and its creation time in epoch milliseconds.
+ * The phone keeps any notification newer than that message. A `null` cursor
+ * means the payload gave none.
  */
-export type ReadClear = { channelId: string; readAt: number | null };
+export type ReadClear = {
+  channelId: string;
+  messageId: string | null;
+  messageCreatedAt: number | null;
+};
 
-export function readClearPushData(reads: readonly { channelId: string; readAt: number }[]): {
+export function readClearPushData(
+  reads: readonly { channelId: string; messageId: string; messageCreatedAt: number }[],
+): {
   type: typeof READ_CLEAR_PUSH_TYPE;
   channelIds: string[];
-  readAts: number[];
+  messageIds: string[];
+  messageCreatedAts: number[];
 } {
   return {
     type: READ_CLEAR_PUSH_TYPE,
     channelIds: reads.map((read) => read.channelId),
-    readAts: reads.map((read) => read.readAt),
+    messageIds: reads.map((read) => read.messageId),
+    messageCreatedAts: reads.map((read) => read.messageCreatedAt),
   };
 }
 
@@ -92,11 +101,19 @@ export function readClearReads(payload: unknown, depth = 0): ReadClear[] | null 
       : typeof record.channelIds === 'string'
         ? record.channelIds.split(',')
         : [];
-    const readAts = Array.isArray(record.readAts) ? record.readAts : [];
+    const messageIds = Array.isArray(record.messageIds) ? record.messageIds : [];
+    const createdAts = Array.isArray(record.messageCreatedAts) ? record.messageCreatedAts : [];
     return ids.flatMap((id, index): ReadClear[] => {
       if (typeof id !== 'string' || id.trim() === '') return [];
-      const readAt = Number(readAts[index]);
-      return [{ channelId: id, readAt: Number.isFinite(readAt) && readAt > 0 ? readAt : null }];
+      const messageId = messageIds[index];
+      const createdAt = Number(createdAts[index]);
+      return [
+        {
+          channelId: id,
+          messageId: typeof messageId === 'string' && messageId ? messageId : null,
+          messageCreatedAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : null,
+        },
+      ];
     });
   }
   if (typeof record.dataString === 'string') {

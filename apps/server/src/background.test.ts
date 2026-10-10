@@ -582,7 +582,7 @@ describe('background advisory-lock ownership', () => {
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
-        { channelId: room, readAt: expect.any(Number) },
+        expect.objectContaining({ channelId: room }),
       ]);
 
       // Reads inside the interval wait and then go out together, once.
@@ -734,16 +734,24 @@ describe('background advisory-lock ownership', () => {
       await phone.markRead(room, second, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
-      // G9-R3: the push carries the read time, so the phone keeps any
-      // notification that arrived after this read.
-      const readAt = (
-        await db.query<{ ms: number }>(
-          `SELECT ceil(extract(epoch FROM read_at)*1000)::float8 ms FROM room_read_marks
-           WHERE room_id=$1 AND identity_id=$2`,
+      // G9-R3: the push carries the server read cursor, so the phone keeps
+      // notifications for messages after the read one.
+      const mark = (
+        await db.query<{ read_at: number; message_created_at: number }>(
+          `SELECT ceil(extract(epoch FROM read_at)*1000)::float8 read_at,
+             ceil(extract(epoch FROM message_created_at)*1000)::float8 message_created_at
+           FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`,
           [room, human],
         )
-      ).rows[0]!.ms;
-      expect(clearRead).toHaveBeenLastCalledWith(ios, [{ channelId: room, readAt }]);
+      ).rows[0]!;
+      expect(clearRead).toHaveBeenLastCalledWith(ios, [
+        {
+          channelId: room,
+          readAt: mark.read_at,
+          messageId: second,
+          messageCreatedAt: mark.message_created_at,
+        },
+      ]);
 
       await ageThrottle();
       await phone.markUnread(room, second, human);
@@ -756,7 +764,7 @@ describe('background advisory-lock ownership', () => {
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
-        { channelId: room, readAt: expect.any(Number) },
+        expect.objectContaining({ channelId: room }),
       ]);
     } finally {
       await db.close();

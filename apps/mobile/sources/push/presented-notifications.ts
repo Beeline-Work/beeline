@@ -112,30 +112,57 @@ function presentedAtMs(notification: PresentedNotification): number | null {
   return date < 1e11 ? date * 1000 : date;
 }
 
+function presentedMessageId(notification: PresentedNotification): string | null {
+  const data = notification.request.content?.data;
+  if (!data || typeof data !== 'object') return null;
+  const messageId = (data as Record<string, unknown>).messageId;
+  return typeof messageId === 'string' && messageId ? messageId : null;
+}
+
+type ChannelRead = {
+  channelId: string;
+  /** The server read cursor: the last read message. Absent = clear everything. */
+  messageId?: string | null;
+  messageCreatedAt?: number | null;
+};
+
 /**
  * Dismiss presented pushes for these Rooms or corners — the ones opened here,
  * or read on another device — and recount iOS's badge from the shade. With a
- * `readAt`, only notifications presented at or before that read go: a newer
- * message arrived after the read and is still unread.
+ * read cursor, only notifications up to the read message go: the cursor's own
+ * notification and any presented no later than it (or, when it is not in the
+ * shade, no later than its creation time). A newer message stays unread.
  */
 export async function dismissPresentedNotificationsForChannels(
-  reads: readonly { channelId: string; readAt?: number | null }[],
+  reads: readonly ChannelRead[],
   api: PresentedNotificationApi,
   platform: string,
 ): Promise<void> {
   const readChannels = reads.flatMap((read) => {
     const channelId = read.channelId.trim();
-    return channelId ? [{ channelId, readAt: read.readAt ?? null }] : [];
+    return channelId ? [{ ...read, channelId }] : [];
   });
   if (readChannels.length === 0) return;
 
   const presented = await api.getPresentedNotificationsAsync();
+  const cutoffs = readChannels.map((read) => {
+    if (!read.messageId && read.messageCreatedAt == null) return null;
+    const cursorNotification = presented.find(
+      (notification) =>
+        presentedNotificationMatchesChannel(notification, read.channelId) &&
+        presentedMessageId(notification) === read.messageId,
+    );
+    const cursorAt = cursorNotification ? presentedAtMs(cursorNotification) : null;
+    return { messageId: read.messageId ?? null, at: cursorAt ?? read.messageCreatedAt ?? null };
+  });
   const matchingIds = presented.flatMap((notification) =>
-    readChannels.some(({ channelId, readAt }) => {
-      if (!presentedNotificationMatchesChannel(notification, channelId)) return false;
-      if (readAt === null) return true;
+    readChannels.some((read, index) => {
+      if (!presentedNotificationMatchesChannel(notification, read.channelId)) return false;
+      const cutoff = cutoffs[index];
+      if (!cutoff) return true;
+      if (cutoff.messageId && presentedMessageId(notification) === cutoff.messageId) return true;
       const presentedAt = presentedAtMs(notification);
-      return presentedAt !== null && presentedAt <= readAt;
+      return cutoff.at !== null && presentedAt !== null && presentedAt <= cutoff.at;
     })
       ? [notification.request.identifier]
       : [],

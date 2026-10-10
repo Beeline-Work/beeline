@@ -6,13 +6,7 @@ import {
   type RoomViewIdentity,
 } from '@beeline/buzz-client';
 import type { Nip05VerificationStatus } from '@beeline/buzz-client';
-import { isConnectorKind } from '@beeline/api-contract/workbench';
 import { directMessageTitle } from '@beeline/api-contract/phone';
-
-/** Connector peer names come from the server, even when an old profile exists. */
-function isConnectorPeer(peer: RoomViewIdentity | undefined): boolean {
-  return peer?.kind === 'human' && isConnectorKind(peer.handle);
-}
 
 export function fallbackMemberName(pubkey: string): string {
   return fallbackPersonName(pubkey);
@@ -39,10 +33,11 @@ export function personIdentityLabel(
 }
 
 /**
- * A read-only announcement DM uses the server-owned peer name verbatim so its
- * header and message byline cannot disagree. Ordinary DMs use the shared
- * `@<handle>` title, from the same peer identity the Room list row reads, so
- * header and list never disagree; the profile is only a fallback.
+ * Every DM header — ordinary, connector or read-only announcement — uses the
+ * shared `@<handle>` title from the same peer identity the Room list row and
+ * the notification read, so the three never disagree. An announcement DM
+ * whose hidden peer is absent uses its indexed author; the profile is the last
+ * fallback.
  */
 export function directMessageHeaderName(
   peer: RoomViewIdentity | undefined,
@@ -51,11 +46,15 @@ export function directMessageHeaderName(
   announcementsOnly: boolean,
   announcementAuthor?: RoomViewIdentity,
 ): string {
-  if ((announcementsOnly || isConnectorPeer(peer)) && peer?.name.trim()) return peer.name.trim();
-  if (announcementsOnly && announcementAuthor?.name.trim()) return announcementAuthor.name.trim();
-  const identity = peer?.name.trim() || peer?.handle?.trim() ? peer : profile;
-  if (identity && (identity.name?.trim() || identity.handle?.trim()))
-    return directMessageTitle({ name: identity.name ?? '', handle: identity.handle });
+  const named = (identity: { name?: string; handle?: string | null } | undefined) =>
+    Boolean(identity?.name?.trim() || identity?.handle?.trim());
+  const identity = named(peer)
+    ? peer
+    : announcementsOnly && named(announcementAuthor)
+      ? announcementAuthor
+      : profile;
+  if (identity && named(identity))
+    return directMessageTitle({ ...identity, name: identity.name ?? '' });
   return fallbackMemberName(pubkey);
 }
 

@@ -43,6 +43,14 @@ function isRetryableApnsFailure(error: unknown): boolean {
 /** What a person can do from the notification itself; see `push-actions.ts`. */
 export type PushAction = PushActionPayload;
 
+/** One read Room or corner for a read-clear push, with its read cursor. */
+export type ReadClearCursor = {
+  channelId: string;
+  readAt: number;
+  messageId: string;
+  messageCreatedAt: number;
+};
+
 export interface PushSender {
   send(
     token: string,
@@ -75,7 +83,7 @@ export interface PushSender {
     ),
   ): Promise<void>;
   /** iOS only: a silent push that clears these conversations from the shade. */
-  clearRead?(token: string, reads: readonly { channelId: string; readAt: number }[]): Promise<void>;
+  clearRead?(token: string, reads: readonly ReadClearCursor[]): Promise<void>;
 }
 
 /** At most one read-clear push per device in this window; reads inside it batch. */
@@ -215,29 +223,35 @@ export class PushDeliveryLoop {
       cleared_through_room: string;
       channel_ids: string[];
       read_ats: number[];
+      message_ids: string[];
+      message_created_ats: number[];
     }>(
       // Each push takes the oldest READ_CLEAR_MAX_CHANNELS marks past the
       // device's (read_at, room_id) cursor and moves the cursor to the last
       // one sent, so overflow and marks tied on read_at go in later pushes.
       // read_at moves only on markRead, so marking a Room unread sends nothing.
       // Text, not a JS Date: a Date drops microseconds, and the next pass
-      // would see the same mark as newer than the boundary forever. read_ats
-      // (epoch ms, rounded up) let the phone keep notifications that arrived
-      // after the read.
+      // would see the same mark as newer than the boundary forever. Each
+      // mark's message cursor (id, created_at in epoch ms) lets the phone keep
+      // notifications for messages after the read one.
       `SELECT device.token,batch.cleared_through,batch.cleared_through_room,batch.channel_ids,
-         batch.read_ats
+         batch.read_ats,batch.message_ids,batch.message_created_ats
        FROM push_devices device
        LEFT JOIN push_read_clears clear ON clear.device_token=device.token
        CROSS JOIN LATERAL (
          SELECT array_agg(pending.room_id ORDER BY pending.read_at,pending.room_id) channel_ids,
            array_agg(ceil(extract(epoch FROM pending.read_at)*1000)::float8
              ORDER BY pending.read_at,pending.room_id) read_ats,
+           array_agg(pending.message_id ORDER BY pending.read_at,pending.room_id) message_ids,
+           array_agg(ceil(extract(epoch FROM pending.message_created_at)*1000)::float8
+             ORDER BY pending.read_at,pending.room_id) message_created_ats,
            (array_agg(pending.read_at::text
              ORDER BY pending.read_at DESC,pending.room_id DESC))[1] cleared_through,
            (array_agg(pending.room_id
              ORDER BY pending.read_at DESC,pending.room_id DESC))[1] cleared_through_room
          FROM (
-           SELECT mark.room_id::text room_id,mark.read_at FROM room_read_marks mark
+           SELECT mark.room_id::text room_id,mark.read_at,mark.message_id,mark.message_created_at
+           FROM room_read_marks mark
            WHERE mark.identity_id=device.identity_id
              AND mark.read_at>GREATEST(device.registered_at,now()-interval '1 day')
              AND (mark.read_at,mark.room_id::text)
@@ -259,6 +273,8 @@ export class PushDeliveryLoop {
           row.channel_ids.map((channelId, index) => ({
             channelId,
             readAt: Number(row.read_ats[index]),
+            messageId: row.message_ids[index]!,
+            messageCreatedAt: Number(row.message_created_ats[index]),
           })),
         );
         await this.database.query(

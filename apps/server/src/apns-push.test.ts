@@ -298,12 +298,12 @@ it('uses the same activity slot for APNs collapse and grouping, separate from at
 });
 
 describe('APNs read-clear request', () => {
-  it('is a low-priority background push carrying only channel ids and read times', () => {
+  it('is a low-priority background push carrying only channel ids and read cursors', () => {
     const request = apnsReadClearRequest(
       'device',
       [
-        { channelId: 'room-a', readAt: 1_760_000_000_000 },
-        { channelId: 'corner-b', readAt: 1_760_000_001_000 },
+        { channelId: 'room-a', readAt: 2, messageId: 'm1', messageCreatedAt: 1_760_000_000_000 },
+        { channelId: 'corner-b', readAt: 3, messageId: 'm2', messageCreatedAt: 1_760_000_001_000 },
       ],
       'app.bundle',
       'jwt',
@@ -318,7 +318,8 @@ describe('APNs read-clear request', () => {
       aps: { 'content-available': 1 },
       type: 'read-clear',
       channelIds: ['room-a', 'corner-b'],
-      readAts: [1_760_000_000_000, 1_760_000_001_000],
+      messageIds: ['m1', 'm2'],
+      messageCreatedAts: [1_760_000_000_000, 1_760_000_001_000],
     });
   });
 });

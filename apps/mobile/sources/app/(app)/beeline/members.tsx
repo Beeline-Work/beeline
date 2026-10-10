@@ -61,6 +61,7 @@ import {
   recordAgentDetail,
   recordWorkspaceRemoval,
   recordWorkspaceRows,
+  recordWorkspaceView,
   useWorkspaceRecords,
   workspaceRecordScope,
 } from '@/buzz/workspace-records';
@@ -488,7 +489,7 @@ export default function BuzzMembers({
       scheduler = new SurfaceRefreshScheduler({
         fetch: () => mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
         apply: (value) => {
-          recordWorkspaceRows(recordScopeForRead, [...value.members, ...value.agents]);
+          recordWorkspaceView(recordScopeForRead, value);
           setSurface(value);
           setWorkspaceError(null);
           // The bootstrap subscription cannot name an agent paired after the

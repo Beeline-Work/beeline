@@ -53,6 +53,29 @@ export function recordWorkspaceRows(scope: string, rows: readonly WorkspaceRecor
   if (changed) notify(scope);
 }
 
+/**
+ * Store a full Workspace read. A complete people or agent list is the whole
+ * roster, so a record of that kind it leaves out was removed; a truncated
+ * list only omits rows past its page and removes nothing.
+ */
+export function recordWorkspaceView(
+  scope: string,
+  view: Pick<WorkspaceView, 'members' | 'agents' | 'membersTruncated' | 'agentsTruncated'>,
+): void {
+  recordWorkspaceRows(scope, [...view.members, ...view.agents]);
+  const scoped = records(scope);
+  const listed = new Set([...view.members, ...view.agents].map((row) => row.identity.pubkey));
+  let changed = false;
+  for (const [pubkey, record] of scoped) {
+    if (!record || listed.has(pubkey)) continue;
+    const complete = record.identity.kind === 'agent' ? !view.agentsTruncated : !view.membersTruncated;
+    if (!complete) continue;
+    scoped.set(pubkey, null);
+    changed = true;
+  }
+  if (changed) notify(scope);
+}
+
 /** Apply an agent write receipt to the one record every page reads. */
 export function recordAgentDetail(scope: string, detail: AgentDetailView): void {
   const scoped = records(scope);

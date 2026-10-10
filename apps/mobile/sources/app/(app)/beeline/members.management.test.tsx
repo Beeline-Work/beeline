@@ -1761,6 +1761,42 @@ describe('Members workspace management', () => {
     expect(roomView.workspace.mock.calls.length).toBe(workspaceReads);
   });
 
+  it('drops an agent another session removed from a searched roster on the next Workspace refresh (G7-R2)', async () => {
+    const renderer = await render();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('Clara');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).not.toHaveLength(0);
+
+    // Another session removes Clara; the Workspace refresh no longer lists her.
+    state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 0 };
+    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
+      [unknown, () => void]
+    >;
+    await act(async () => subscriptions.at(-1)![1]());
+
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
+  });
+
+  it('keeps a searched agent a truncated Workspace refresh only leaves out', async () => {
+    const renderer = await render();
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('Clara');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 1, agentsTruncated: true };
+    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
+      [unknown, () => void]
+    >;
+    await act(async () => subscriptions.at(-1)![1]());
+
+    expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).not.toHaveLength(0);
+  });
+
   // The grants block was removed from this page: under yolo it read as an
   // approval queue, not the ledger it needed to be. Grants keep recording
   // server-side (agent_grants, including the auto marker) — see database.ts

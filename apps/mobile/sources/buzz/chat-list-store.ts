@@ -15,6 +15,7 @@ import {
   type ChatListDelta,
   type ChatListDeltaContext,
 } from './chat-list-delta';
+import { readChatListFromServer } from './chat-list-read';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { isDraftFrame } from '@/sync/transport/live-frames';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
@@ -27,23 +28,12 @@ import { subscribeClientReset } from '@/sync/client-reset';
  * Reading after the confirmation misses nothing, so no second read follows;
  * the stored list paints meanwhile.
  */
-export const CHAT_SUBSCRIBE_WAIT_MS = 1_500;
+const CHAT_SUBSCRIBE_WAIT_MS = 1_500;
 /** Live deltas reach disk at most this often, so an eviction restores the current list. */
 const DURABLE_WRITE_DELAY_MS = 1_000;
 
 type Filters = ChatListView['watchFilters'];
 type SurfaceEvent = Parameters<Parameters<ReturnType<typeof sharedLiveConnection>['register']>[1]>[0];
-
-export type ChatListSource = {
-  readonly chats: () => Promise<ChatListView>;
-  readonly subscribe?: (
-    filters: Filters,
-    listener: (event: SurfaceEvent) => void,
-  ) => Promise<() => void>;
-  readonly reconnect?: () => void;
-  /** Whether a Room is on screen. Defaults to the shared live connection's views. */
-  readonly viewing?: (roomId: string) => boolean;
-};
 
 export type ChatListConsumer = {
   /** Whether this screen is on view; a store with no visible consumer reads nothing. */
@@ -81,6 +71,16 @@ function storeKey(key: ChatListKey): string {
   return JSON.stringify([key.relayUrl, key.viewerPubkey, key.workspaceId]);
 }
 
+function chatListAddress(key: ChatListKey): SurfaceCacheAddress {
+  return surfaceAddress(key.relayUrl, key.viewerPubkey, '/workspace/:id/chats', {
+    workspaceId: key.workspaceId,
+  });
+}
+
+function watchedRoomIds(filters: Filters): Set<string> {
+  return new Set(filters.flatMap((filter) => filter['#h'] ?? []));
+}
+
 /**
  * The one client copy of a Workspace's Room list. It owns the live watch on
  * every Room in the list, folds deltas into one value, writes that value
@@ -103,23 +103,24 @@ class ChatListStore {
   /** The corner store clock when the running read started. */
   private readClock = 0;
   private deltasDuringRead: ChatListDelta[] = [];
+  // Rooms the installed watch covers. A read sees every delta for these.
+  private watchedRooms = new Set<string>();
+  private readWatchedRooms = new Set<string>();
+  // Rooms whose deltas the last applied read either covers or replayed.
+  private coveredRooms = new Set<string>();
   // Rooms the socket delivered any frame for since the last applied read.
   private readonly heardRooms = new Set<string>();
   private opened = false;
   private durableTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly deltaContext: ChatListDeltaContext = {
-    viewing: (roomId) =>
-      this.source.viewing ? this.source.viewing(roomId) : sharedLiveConnection().isViewing(roomId),
+    viewing: (roomId) => sharedLiveConnection().isViewing(roomId),
   };
 
   constructor(
     readonly key: ChatListKey,
-    private readonly source: ChatListSource,
     private readonly onClosed: () => void,
   ) {
-    this.address = surfaceAddress(key.relayUrl, key.viewerPubkey, '/workspace/:id/chats', {
-      workspaceId: key.workspaceId,
-    });
+    this.address = chatListAddress(key);
     // A copy another screen published paints on the first frame.
     this.value = mobileSurfaceCache.peek(this.address, isChatListView);
     this.scheduler = new SurfaceRefreshScheduler({
@@ -127,8 +128,11 @@ class ChatListStore {
         this.deltasDuringRead = [];
         this.readInFlight = true;
         this.readClock = cornerStoreClock();
+        this.readWatchedRooms = new Set(this.watchedRooms);
         try {
-          return await mobileSurfaceCache.fetch(this.address, isChatListView, this.source.chats);
+          // The raw read is never published: only applyRead's reconciled value
+          // reaches memory and disk.
+          return await readChatListFromServer(key.relayUrl, key.viewerPubkey, key.workspaceId);
         } finally {
           this.readInFlight = false;
         }
@@ -175,6 +179,9 @@ class ChatListStore {
   }
 
   async remove(): Promise<void> {
+    // The pending live write must not land after the removal.
+    if (this.durableTimer) clearTimeout(this.durableTimer);
+    this.durableTimer = undefined;
     this.close();
     this.value = null;
     this.notify();
@@ -233,6 +240,7 @@ class ChatListStore {
     const missedLive =
       this.readFromServer && held !== null && roomsMissedByLive(held, read, this.heardRooms).length > 0;
     this.heardRooms.clear();
+    this.coveredRooms = this.readWatchedRooms;
     const value = this.deltasDuringRead.reduce(
       (view, delta) => applyChatListDelta(view, delta, this.deltaContext),
       keepUnavailableChatFacts(held, read),
@@ -245,7 +253,7 @@ class ChatListStore {
     void mobileSurfaceCache.write(this.address, value, isChatListView);
     this.notify();
     for (const consumer of this.consumers) consumer.onRead?.();
-    if (missedLive) (this.source.reconnect ?? (() => sharedLiveConnection().reconnect()))();
+    if (missedLive) sharedLiveConnection().reconnect();
     if (chatWatchFiltersKey(value.watchFilters) !== this.watchKey)
       void this.installWatch(value.watchFilters);
   }
@@ -279,18 +287,22 @@ class ChatListStore {
     // #h — canReadRoom refuses it and live invalidation never lands.
     if (filters.length === 0) {
       previous?.();
+      this.watchedRooms = new Set();
       return;
     }
-    const subscribe = this.source.subscribe ??
-      ((next: Filters, listener: (event: SurfaceEvent) => void) =>
-        sharedLiveConnection().register(next, listener));
-    const stop = await subscribe(filters, (event) => this.onFrame(event));
+    const stop = await sharedLiveConnection().register(filters, (event) => this.onFrame(event));
     previous?.();
     if (this.closed || generation !== this.watchGeneration) {
       stop();
       return;
     }
     this.unsubscribe = stop;
+    this.watchedRooms = watchedRoomIds(filters);
+  }
+
+  /** Whether a read applied or in flight saw every delta for this Room. */
+  private covered(roomId: string): boolean {
+    return this.coveredRooms.has(roomId) || (this.readInFlight && this.readWatchedRooms.has(roomId));
   }
 
   private onFrame(event: SurfaceEvent): void {
@@ -308,9 +320,11 @@ class ChatListStore {
       return;
     }
     if (isDraftFrame(event)) return;
-    // The opening read covers the first subscription; a resumed one replays
-    // the lane this live list already folded.
-    if (live?.type === 'subscribed' && (live.resumed || !this.opened)) return;
+    // The opening read covers the first subscription. A resumed lane replays
+    // only what this list already folded, and only for a Room a read covered:
+    // a Room the watch gained after its read missed the deltas in between.
+    if (live?.type === 'subscribed' && (!this.opened || (live.resumed && this.covered(live.roomId))))
+      return;
     // A committed-row invalidation announces the delta that follows it.
     if (live?.type === 'invalidate' && live.deliveryId) return;
     this.requestRead();
@@ -335,18 +349,14 @@ subscribeClientReset(() => {
 });
 
 /**
- * Join the Workspace's Room list. The first consumer opens it with its source;
- * later consumers share that store and its one live watch.
+ * Join the Workspace's Room list. The first consumer opens it; later
+ * consumers share that store and its one live watch.
  */
-export function acquireChatList(
-  key: ChatListKey,
-  source: ChatListSource,
-  consumer: ChatListConsumer,
-): ChatListHandle {
+export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
   const id = storeKey(key);
   let store = stores.get(id);
   if (!store) {
-    const created: ChatListStore = new ChatListStore(key, source, () => {
+    const created: ChatListStore = new ChatListStore(key, () => {
       if (stores.get(id) === created) stores.delete(id);
     });
     store = created;
@@ -385,6 +395,14 @@ export function liveChatList(key: ChatListKey): ChatListView | null {
   return store?.confirmed() ? store.current() : null;
 }
 
+/**
+ * The list a screen may paint for a Workspace it does not hold open: the open
+ * store's value, else the copy that store last published this session.
+ */
+export function chatListSnapshot(key: ChatListKey): ChatListView | null {
+  return stores.get(storeKey(key))?.current() ?? mobileSurfaceCache.peek(chatListAddress(key), isChatListView);
+}
+
 /** Force a read of the live list, if a screen holds it open. */
 export function refreshChatList(key: ChatListKey): void {
   stores.get(storeKey(key))?.force();
@@ -396,25 +414,21 @@ export type UseChatListOptions = {
   readonly onError?: (reason: unknown) => void;
 };
 
-/** Read the Workspace's Room list from the shared store. A null key or source holds nothing. */
+/** Read the Workspace's Room list from the shared store. A null key holds nothing. */
 export function useChatList(
   key: ChatListKey | null,
-  source: ChatListSource | null,
   options: UseChatListOptions = {},
 ): ChatListView | null {
   const [value, setValue] = useState<ChatListView | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
-  const sourceRef = useRef(source);
-  sourceRef.current = source;
   const id = key ? storeKey(key) : null;
-  const ready = source !== null;
   useEffect(() => {
-    if (!key || !sourceRef.current) {
+    if (!key) {
       setValue(null);
       return;
     }
-    const handle = acquireChatList(key, sourceRef.current, {
+    const handle = acquireChatList(key, {
       visible: () => optionsRef.current.visible?.() ?? true,
       onError: (reason) => optionsRef.current.onError?.(reason),
     });
@@ -426,11 +440,12 @@ export function useChatList(
       handle.release();
     };
     // The key's fields are its identity; `id` carries them.
-  }, [id, ready]);
+  }, [id]);
   return value;
 }
 
-/** Test seam: drop every store between cases. */
+/** Test seam: close and drop every store between cases. */
 export function resetChatListStoresForTest(): void {
+  for (const store of [...stores.values()]) store.reset();
   stores.clear();
 }

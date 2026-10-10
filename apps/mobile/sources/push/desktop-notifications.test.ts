@@ -7,6 +7,9 @@ const fixture = vi.hoisted(() => ({
   permission: vi.fn(async () => true),
   identityChange: null as null | (() => void),
   workspacesCalls: 0,
+  acquired: [] as string[],
+  forced: 0,
+  released: 0,
 }));
 vi.mock('@/utils/isTauri', () => ({ isTauri: () => true }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
@@ -53,8 +56,17 @@ vi.mock('@/sync/transport', () => ({
       fixture.workspacesCalls += 1;
       return Promise.resolve({ workspaces: [{ id: 'workspace-1' }] });
     }
-    chats() {
-      return Promise.resolve({
+    corners() {
+      return Promise.resolve({ corners: [{ corner: { id: 'corner-1', name: 'Test corner' } }] });
+    }
+  },
+}));
+// The app-level Room list store hands the notifier each Workspace's Rooms.
+vi.mock('@/buzz/chat-list-store', () => ({
+  acquireChatList: (key: { workspaceId: string }) => {
+    fixture.acquired.push(key.workspaceId);
+    return {
+      current: () => ({
         chats: [
           {
             room: { id: 'room-1', name: 'Test room' },
@@ -66,11 +78,15 @@ vi.mock('@/sync/transport', () => ({
           },
         ],
         watchFilters: [{ '#h': ['room-1'] }],
-      });
-    }
-    corners() {
-      return Promise.resolve({ corners: [{ corner: { id: 'corner-1', name: 'Test corner' } }] });
-    }
+      }),
+      subscribe: () => () => undefined,
+      force: () => {
+        fixture.forced += 1;
+      },
+      release: () => {
+        fixture.released += 1;
+      },
+    };
   },
 }));
 vi.mock('@tauri-apps/plugin-notification', () => ({
@@ -86,6 +102,9 @@ afterEach(() => {
   fixture.connectedListener = null;
   fixture.send.mockClear();
   fixture.workspacesCalls = 0;
+  fixture.acquired = [];
+  fixture.forced = 0;
+  fixture.released = 0;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -175,7 +194,11 @@ describe('signed-in desktop native notification delivery', () => {
     // No burst: a reconnect signal read exactly once, not once per registration.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fixture.workspacesCalls).toBe(readsAfterStart + 1);
+    // The Workspace's Room list is the shared store, held once and read again.
+    expect(fixture.acquired).toEqual(['workspace-1']);
+    expect(fixture.forced).toBe(1);
 
     stop();
+    expect(fixture.released).toBe(1);
   });
 });

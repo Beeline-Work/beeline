@@ -90,7 +90,8 @@ describe('shared mobile surface registry', () => {
     const pending = cache.fetch(address, isCount, () => new Promise((resolve) => { respond = resolve; }));
     await cache.remove(address);
     respond({ count: 2 });
-    await pending;
+    // The stale response is not handed to the caller to paint.
+    expect(await pending).toBeNull();
     expect(cache.peek(address, isCount)).toBeNull();
     expect(rows.size).toBe(0);
   });

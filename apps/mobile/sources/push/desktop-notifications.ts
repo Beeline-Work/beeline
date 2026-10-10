@@ -10,6 +10,7 @@ import { RoomViewClient, BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { chatWatchFiltersKey } from '@/buzz/chat-list-delta';
+import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
 import { isTauri } from '@/utils/isTauri';
 
 /**
@@ -34,11 +35,14 @@ export function startDesktopNotifications(): () => void {
   let generation = 0;
   let stopSession: (() => void) | undefined;
   let stopRooms: (() => void) | undefined;
+  let stopLists: (() => void) | undefined;
   let stopWorkspaces: (() => void) | undefined;
   let stopConnected: (() => void) | undefined;
 
   async function startForIdentity() {
     const current = ++generation;
+    stopLists?.();
+    stopLists = undefined;
     stopRooms?.();
     stopWorkspaces?.();
     stopConnected?.();
@@ -51,12 +55,35 @@ export function startDesktopNotifications(): () => void {
     if (disposed || current !== generation) return;
     const transport = new BuzzRigTransport(identity);
     const relay = await transport.ensureClient();
-    const reader = new RoomViewClient({ baseUrl: await getEffectiveRelayUrl(), identity });
-    let rooms = new Map<string, ChatListItem>();
+    const relayUrl = await getEffectiveRelayUrl();
+    if (disposed || current !== generation) return;
+    const reader = new RoomViewClient({ baseUrl: relayUrl, identity });
+    // Each Workspace's Rooms come from the app-level Room list store, which
+    // owns their watch and covering reads. Corners are read here.
+    const lists = new Map<string, { handle: ChatListHandle; stop: () => void }>();
+    let corners = new Map<string, ChatListItem>();
     let cornerParentNames = new Map<string, string>();
+    let cornerKey = '';
     let watchKey = '';
     let refreshing = false;
     let pendingRefresh = false;
+    let following = false;
+    let pendingFollow = false;
+    stopLists = () => {
+      for (const list of lists.values()) {
+        list.stop();
+        list.handle.release();
+      }
+      lists.clear();
+    };
+
+    function roomFor(roomId: string): ChatListItem | undefined {
+      for (const { handle } of lists.values()) {
+        const item = handle.current()?.chats.find((chat) => chat.room.id === roomId);
+        if (item) return item;
+      }
+      return corners.get(roomId);
+    }
     const seen = new Set<string>();
     const startedAt = Date.now();
 
@@ -66,7 +93,7 @@ export function startDesktopNotifications(): () => void {
       if (seen.size > 1_000) seen.delete(seen.values().next().value!);
       // Replayed socket frames and edits must not turn old content into a new alert.
       if ((message.createdAtMs ?? message.createdAt * 1000) < startedAt) return;
-      const room = rooms.get(roomId);
+      const room = roomFor(roomId);
       if (!room) return;
       // Most live rows need no network or plugin work. In particular a
       // foreground message must never wait on the notification path.
@@ -118,6 +145,7 @@ export function startDesktopNotifications(): () => void {
       });
     }
 
+    /** Read the Workspace list, hold each Workspace's Room list, and read each once more. */
     async function refresh() {
       if (refreshing) {
         pendingRefresh = true;
@@ -126,43 +154,87 @@ export function startDesktopNotifications(): () => void {
       refreshing = true;
       try {
         const workspaces = await reader.workspaces();
-        const lists = await Promise.all(
-          workspaces.workspaces.map((workspace) => reader.chats(workspace.id)),
-        );
         if (disposed || current !== generation) return;
-        const parents = lists.flatMap((chats) => chats.chats);
+        const ids = new Set(workspaces.workspaces.map((workspace) => workspace.id));
+        for (const [id, list] of lists) {
+          if (ids.has(id)) continue;
+          list.stop();
+          list.handle.release();
+          lists.delete(id);
+        }
+        for (const id of ids) {
+          const held = lists.get(id);
+          if (held) {
+            held.handle.force();
+            continue;
+          }
+          const handle = acquireChatList(
+            { relayUrl, viewerPubkey: identity!.publicKey, workspaceId: id },
+            // Notifications need the list current whenever the app runs.
+            { visible: () => true, onError: report },
+          );
+          lists.set(id, { handle, stop: handle.subscribe(() => void follow()) });
+        }
+        // A covering refresh reads the corners again too.
+        cornerKey = '';
+        await follow();
+      } catch (error) {
+        report(error);
+      } finally {
+        refreshing = false;
+        if (pendingRefresh && !disposed && current === generation) {
+          pendingRefresh = false;
+          void refresh();
+        }
+      }
+    }
+
+    /** Follow the held Room lists: read the corners they name and watch every Room for messages. */
+    async function follow() {
+      if (following) {
+        pendingFollow = true;
+        return;
+      }
+      following = true;
+      try {
+        const views = [...lists.values()].flatMap(({ handle }) => {
+          const view = handle.current();
+          return view ? [view] : [];
+        });
+        const parents = views.flatMap((view) => view.chats);
         // A corner is its own Room and its messages do not ride the parent's
         // socket filter. Read each active parent with corners so the same
         // signed-in member can receive an exact tag there too.
         const cornerParents = parents.filter(
           (room) => (room.cornerCount ?? room.openCorners?.length ?? 0) > 0,
         );
-        const cornerReads = await Promise.allSettled(
-          cornerParents.map((room) => reader.corners(room.room.id)),
-        );
-        if (disposed || current !== generation) return;
-        const cornerReadsWithParent = cornerReads.flatMap((result, index) =>
-          result.status === 'fulfilled'
-            ? result.value.corners.map((item) => ({
-                item,
-                parentName: cornerParents[index]!.room.name,
-              }))
-            : [],
-        );
-        const corners = cornerReadsWithParent.map(({ item }) => item);
-        cornerParentNames = new Map(
-          cornerReadsWithParent.map(({ item, parentName }) => [item.corner.id, parentName]),
-        );
-        rooms = new Map([
-          ...parents.map((room) => [room.room.id, room] as const),
-          ...corners.map(
-            (item) =>
-              [item.corner.id, { room: item.corner, unread: false } as ChatListItem] as const,
-          ),
-        ]);
+        const nextCornerKey = JSON.stringify(cornerParents.map((room) =>
+          [room.room.id, room.cornerCount ?? room.openCorners?.length ?? 0]));
+        if (nextCornerKey !== cornerKey) {
+          const cornerReads = await Promise.allSettled(
+            cornerParents.map((room) => reader.corners(room.room.id)),
+          );
+          if (disposed || current !== generation) return;
+          const cornerReadsWithParent = cornerReads.flatMap((result, index) =>
+            result.status === 'fulfilled'
+              ? result.value.corners.map((item) => ({
+                  item,
+                  parentName: cornerParents[index]!.room.name,
+                }))
+              : [],
+          );
+          cornerKey = nextCornerKey;
+          cornerParentNames = new Map(
+            cornerReadsWithParent.map(({ item, parentName }) => [item.corner.id, parentName]),
+          );
+          corners = new Map(
+            cornerReadsWithParent.map(({ item }) =>
+              [item.corner.id, { room: item.corner, unread: false } as ChatListItem] as const),
+          );
+        }
         const filters = [
-          ...lists.flatMap((chats) => chats.watchFilters),
-          ...corners.map((item) => ({ '#h': [item.corner.id] })),
+          ...views.flatMap((view) => view.watchFilters),
+          ...[...corners.keys()].map((id) => ({ '#h': [id] })),
         ];
         const nextKey = chatWatchFiltersKey(filters);
         if (nextKey === watchKey) return;
@@ -172,7 +244,6 @@ export function startDesktopNotifications(): () => void {
                 'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
               if (live?.type === 'message-delta')
                 void display(live.roomId, live.message).catch(report);
-              if (live?.type === 'invalidate' && !live.messageId) void refresh().catch(report);
             })
           : undefined;
         if (disposed || current !== generation) {
@@ -185,10 +256,10 @@ export function startDesktopNotifications(): () => void {
       } catch (error) {
         report(error);
       } finally {
-        refreshing = false;
-        if (pendingRefresh && !disposed && current === generation) {
-          pendingRefresh = false;
-          void refresh();
+        following = false;
+        if (pendingFollow && !disposed && current === generation) {
+          pendingFollow = false;
+          void follow();
         }
       }
     }
@@ -227,6 +298,7 @@ export function startDesktopNotifications(): () => void {
     disposed = true;
     generation += 1;
     stopSession?.();
+    stopLists?.();
     stopRooms?.();
     stopWorkspaces?.();
     stopConnected?.();

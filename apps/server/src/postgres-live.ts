@@ -145,6 +145,24 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '',
         'installationId', COALESCE(NEW.installation_id,OLD.installation_id)
       );
+    WHEN 'workspace_connectors' THEN
+      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', '', 'ownerId', COALESCE(NEW.owner_identity_id,OLD.owner_identity_id),
+        'resourceId', COALESCE(NEW.id,OLD.id));
+    WHEN 'workspace_connections' THEN
+      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', '', 'ownerId', COALESCE(NEW.owner_identity_id,OLD.owner_identity_id));
+    WHEN 'agents' THEN
+      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', '', 'ownerId', COALESCE(NEW.owner_id,OLD.owner_id),
+        'resourceId', COALESCE(NEW.agent_id,OLD.agent_id),
+        'version', CASE WHEN TG_OP='DELETE' THEN NULL ELSE
+          floor(extract(epoch FROM NEW.updated_at)*1000000)::bigint::text END);
+    WHEN 'agent_avatars' THEN
+      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', '',
+        'ownerId', (SELECT owner_id FROM agents WHERE agent_id=COALESCE(NEW.agent_id,OLD.agent_id)),
+        'resourceId', COALESCE(NEW.agent_id,OLD.agent_id));
     WHEN 'github_repositories' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '',
@@ -231,6 +249,14 @@ BEGIN
   IF payload->>'roomId' IS NOT NULL THEN
     PERFORM pg_notify('${POSTGRES_LIVE_CHANNEL}', payload::text);
   END IF;
+  IF TG_TABLE_NAME='agent_commands' THEN
+    IF COALESCE(NEW.avatar_job,OLD.avatar_job,false) THEN
+      PERFORM pg_notify('${POSTGRES_LIVE_CHANNEL}', jsonb_build_object(
+        'table','avatar_job','operation',TG_OP,'roomId','',
+        'ownerId',(SELECT owner_id FROM agents WHERE agent_id=COALESCE(NEW.agent_id,OLD.agent_id)),
+        'resourceId',COALESCE(NEW.agent_id,OLD.agent_id))::text);
+    END IF;
+  END IF;
   IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
 END;
@@ -247,6 +273,7 @@ BEGIN
     'corner_facts', 'permission_authority', 'room_read_marks',
     'agent_grants', 'agent_schedules', 'agent_commands',
     'github_installations', 'github_repositories',
+    'workspace_connectors', 'workspace_connections', 'agents', 'agent_avatars',
     'registry_mcp_oauth_attempts', 'push_devices',
     'workspace_join_notifications', 'push_release_catchups',
     'helper_release_notifications'
@@ -287,6 +314,9 @@ interface LiveNotificationPayload {
   table: string;
   operation: string;
   roomId: string;
+  ownerId?: string;
+  resourceId?: string;
+  version?: string;
   messageId?: string;
   requestId?: string;
   agentId?: string;
@@ -336,6 +366,9 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       table: parsed.table,
       operation: parsed.operation,
       roomId: parsed.roomId,
+      ...(typeof parsed.ownerId === 'string' ? { ownerId: parsed.ownerId } : {}),
+      ...(typeof parsed.resourceId === 'string' ? { resourceId: parsed.resourceId } : {}),
+      ...(typeof parsed.version === 'string' ? { version: parsed.version } : {}),
       ...(typeof parsed.agentId === 'string' ? { agentId: parsed.agentId } : {}),
       ...(typeof parsed.identityId === 'string' ? { identityId: parsed.identityId } : {}),
       ...(typeof parsed.messageId === 'string' ? { messageId: parsed.messageId } : {}),
@@ -613,6 +646,16 @@ export class PostgresLiveListener {
   private async rebroadcast(raw: string | undefined): Promise<void> {
     const payload = decodePayload(raw);
     if (!payload) return;
+    if (payload.ownerId && (payload.table === 'workspace_connectors' ||
+      payload.table === 'workspace_connections' || payload.table === 'agents' ||
+      payload.table === 'agent_avatars' || payload.table === 'avatar_job')) {
+      this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,
+        resource: payload.table === 'workspace_connectors' ? 'install'
+          : payload.table === 'workspace_connections' ? 'workbench' : 'agent',
+        ...(payload.resourceId ? { resourceId: payload.resourceId } : {}),
+        ...(payload.version ? { version: payload.version } : {}) });
+      return;
+    }
     if (payload.table === 'live_outputs' && payload.agentId && payload.turnId) {
       if (payload.operation === 'DELETE') {
         if (payload.kind === 'draft' || payload.kind === 'thought') {

@@ -21,6 +21,7 @@ import { appBoardColors } from '@/buzz/app-board-style';
 import { TOOL_BRAND_MARKS } from '@/buzz/tool-brand-marks';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { authSessionOptions } from '@/auth/auth-session';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import {
   MonolithPhoneOperationError,
   phoneOperationFailureReason,
@@ -41,8 +42,6 @@ import {
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
-
-const VAULT_REFRESH_POLL_MS = 500;
 
 /**
  * Workbench — a settings section for every member (report §5, PR 3). Two
@@ -107,19 +106,23 @@ export default function WorkbenchScreen() {
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const refresh = async (requestVault: boolean) => {
-        const next = await load(requestVault);
-        if (cancelled || !next) return;
-        if (next.connections.some((connection) => connection.stale)) {
-          timer = setTimeout(() => void refresh(false), VAULT_REFRESH_POLL_MS);
-        }
-      };
+      let stop: (() => void) | undefined;
+      void sharedLiveConnection().register([], (event) => {
+        if (cancelled || !('monolithLive' in event)) return;
+        const live = event.monolithLive;
+        if ((live.type === 'resource-change' &&
+            (live.resource === 'workbench' || live.resource === 'install' || live.resource === 'agent')) ||
+            (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect'))
+          void load(false);
+      }).then((release) => {
+        if (cancelled) release();
+        else stop = release;
+      });
       void foregroundGeneration;
-      void refresh(true);
+      void load(true);
       return () => {
         cancelled = true;
-        if (timer !== undefined) clearTimeout(timer);
+        stop?.();
       };
     }, [foregroundGeneration, load]),
   );

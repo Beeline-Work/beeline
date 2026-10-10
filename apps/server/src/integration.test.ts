@@ -901,7 +901,10 @@ describe('monolith integration', () => {
       avatarSeed: AGENT,
       avatar: 'https://example.com/old-avatar.png',
     });
-    expect(soulSave.status).toBe(204);
+    expect(soulSave.status).toBe(200);
+    const committedSoul = await soulSave.json();
+    expect(isAgentDetailView(committedSoul)).toBe(true);
+    expect(committedSoul.agent.identity.avatar).toBe(url);
     expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.agent.identity.avatar).toBe(url);
     const context = await daemonOperation('getAgentAvatar', { roomId: ROOM });
     expect((await context.json()).drawing).toEqual(drawing);
@@ -6951,8 +6954,10 @@ describe('monolith integration', () => {
       instructions: 'Be precise and practical.',
       avatarSeed: 'honeybee-seed',
     });
-    expect(soul.status).toBe(204);
-    expect(await soul.text()).toBe('');
+    expect(soul.status).toBe(200);
+    expect(await soul.json()).toEqual(expect.objectContaining({
+      soul: expect.objectContaining({ name: 'Honeybee', avatarSeed: 'honeybee-seed' }),
+    }));
     expect(
       (await database.query(`SELECT name,handle FROM identities WHERE id=$1`, [AGENT])).rows,
     ).toEqual([{ name: 'Honeybee', handle: 'honeybee' }]);
@@ -6979,22 +6984,30 @@ describe('monolith integration', () => {
       model: 'gpt-5.6',
       effort: 'high',
     });
-    expect(model.status).toBe(204);
-    expect(await model.text()).toBe('');
+    expect(model.status).toBe(200);
+    expect(await model.json()).toEqual(expect.objectContaining({
+      selected: { model: 'gpt-5.6', effort: 'high' },
+    }));
 
     const effortOnly = await request('/v1/phone/operations/updateAgentModelSelection', 'POST', {
       workspaceId: WORKSPACE,
       agentId: AGENT,
       effort: 'max',
     });
-    expect(effortOnly.status).toBe(204);
+    expect(effortOnly.status).toBe(200);
+    expect(await effortOnly.json()).toEqual(expect.objectContaining({
+      selected: { model: 'gpt-5.6', effort: 'max' },
+    }));
 
     const modelAndClearEffort = await request(
       '/v1/phone/operations/updateAgentModelSelection',
       'POST',
       { workspaceId: WORKSPACE, agentId: AGENT, model: 'gpt-5.6-codex', effort: null },
     );
-    expect(modelAndClearEffort.status).toBe(204);
+    expect(modelAndClearEffort.status).toBe(200);
+    expect(await modelAndClearEffort.json()).toEqual(expect.objectContaining({
+      selected: { model: 'gpt-5.6-codex' },
+    }));
 
     const agent = await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`);
     expect(agent.status).toBe(200);
@@ -7199,7 +7212,10 @@ describe('monolith integration', () => {
       instructions: 'Keep handles unambiguous.',
       avatarSeed: 'goosy-seed',
     });
-    expect(renamed.status).toBe(204);
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toEqual(expect.objectContaining({
+      soul: expect.objectContaining({ name: 'Goosy', avatarSeed: 'goosy-seed' }),
+    }));
     expect(
       (await database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
     ).toEqual([{ handle: 'goosy_2' }]);
@@ -10834,7 +10850,10 @@ describe('monolith integration', () => {
       agentId: AGENT,
       enabled: true,
     });
-    expect(owner.status).toBe(204);
+    expect(owner.status).toBe(200);
+    expect(await owner.json()).toEqual(expect.objectContaining({
+      yolo: expect.objectContaining({ enabled: true }),
+    }));
     const on = (await (
       await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
     ).json()) as {
@@ -10891,7 +10910,7 @@ describe('monolith integration', () => {
           enabled: true,
         })
       ).status,
-    ).toBe(204);
+    ).toBe(200);
     expect(
       (
         await database.query(

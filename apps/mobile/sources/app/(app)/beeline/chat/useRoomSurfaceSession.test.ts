@@ -648,7 +648,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('confirms an acknowledged send from its delta, with one Room read only if it never comes', async () => {
+  it('paints a canonical send receipt without a timer or follow-up Room read', async () => {
     vi.useFakeTimers();
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;
@@ -665,7 +665,6 @@ describe('useRoomSurfaceSession', () => {
     const scheduler = controls.schedulers[0]!;
 
     // Its delta lands first: nothing is read.
-    current.outbox.scheduleConfirmation('delivered-message');
     await act(async () => {
       controls.subscriptions[0]!.emit({
         monolithLive: {
@@ -685,14 +684,17 @@ describe('useRoomSurfaceSession', () => {
     expect(scheduler.signalCalls).toBe(0);
     expect(scheduler.expectations).toEqual([]);
 
-    // No delta: one read after the grace, and the send is never failed for it.
-    current.outbox.scheduleConfirmation('accepted-message');
-    await act(async () => vi.advanceTimersByTimeAsync(3_999));
-    expect(scheduler.signalCalls).toBe(0);
-    await act(async () => vi.advanceTimersByTimeAsync(1));
-    expect(scheduler.signalCalls).toBe(1);
+    // The write receipt itself settles a send whose live delta was missed.
+    await act(async () => current.applyRoomMessageResult({
+      id: 'accepted-message',
+      text: 'accepted',
+      createdAt: 2,
+      author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
+      presentation: 'message',
+    }));
+    expect(current.roomSurface?.messages.some((message) => message.id === 'accepted-message')).toBe(true);
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
-    expect(scheduler.signalCalls).toBe(1);
+    expect(scheduler.signalCalls).toBe(0);
     expect(controls.outboxFail).not.toHaveBeenCalled();
     expect(current.outbox.failedIds).not.toContain('accepted-message');
     await act(async () => renderer.unmount());
@@ -1351,7 +1353,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('starts the opening Room read with the watch instead of after its subscribe', async () => {
+  it('starts the single opening Room read after its subscribe', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1361,15 +1363,20 @@ describe('useRoomSurfaceSession', () => {
     });
     await flushEffects();
 
-    // No subscribed frame yet: the read is already running beside the watch.
+    // No subscribed frame yet: the cache paints while the read waits for coverage.
     expect(controls.subscriptions).toHaveLength(1);
+    expect(controls.schedulers[0]!.started).toBe(false);
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(0);
+    expect(controls.schedulers[0]!.followUpCalls).toBe(0);
+    await act(async () => controls.subscriptions[0]!.emit({
+      monolithLive: { type: 'subscribed', roomId: 'room-a' },
+    }));
     expect(controls.schedulers[0]!.started).toBe(true);
     expect(controls.schedulers[0]!.refreshNowCalls).toBe(1);
-    expect(controls.schedulers[0]!.followUpCalls).toBe(0);
     await act(async () => renderer.unmount());
   });
 
-  it('covers the opening read once on its handshake, and rereads on a resubscribe', async () => {
+  it('reads once on its first handshake and rereads on an unresumed resubscribe', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1384,8 +1391,8 @@ describe('useRoomSurfaceSession', () => {
         monolithLive: { type: 'subscribed', roomId: 'room-a' },
       });
     });
-    // The opening read may predate the lane; it still paints, then one more.
-    expect(controls.schedulers[0]!.followUpCalls).toBe(1);
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(1);
+    expect(controls.schedulers[0]!.followUpCalls).toBe(0);
     expect(controls.schedulers[0]!.forceCalls).toBe(0);
 
     await act(async () => {
@@ -1393,7 +1400,7 @@ describe('useRoomSurfaceSession', () => {
         monolithLive: { type: 'subscribed', roomId: 'room-a' },
       });
     });
-    expect(controls.schedulers[0]!.followUpCalls).toBe(1);
+    expect(controls.schedulers[0]!.followUpCalls).toBe(0);
     expect(controls.schedulers[0]!.forceCalls).toBe(1);
     await act(async () => renderer.unmount());
   });
@@ -1408,7 +1415,7 @@ describe('useRoomSurfaceSession', () => {
       );
     });
     await flushEffects();
-    expect(controls.schedulers[0]!.started).toBe(true);
+    expect(controls.schedulers[0]!.started).toBe(false);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2_000);
@@ -1924,7 +1931,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('confirms a live message against RoomView instead of trusting one possibly stale refresh', async () => {
+  it('requests one reconciliation for a legacy live message', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1951,26 +1958,12 @@ describe('useRoomSurfaceSession', () => {
     };
     await act(async () => controls.subscriptions[0]!.emit(event));
 
-    const expectation = controls.schedulers[0]!.expectations[0]!;
-    expect(expectation(roomView('room-a'))).toBe(false);
-    expect(
-      expectation({
-        ...roomView('room-a'),
-        messages: [
-          {
-            id: event.id,
-            text: event.content,
-            createdAt: event.created_at,
-            author: { pubkey: event.pubkey, kind: 'agent', name: 'Agent' },
-            presentation: 'message',
-          },
-        ],
-      }),
-    ).toBe(true);
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
+    expect(controls.schedulers[0]!.expectations).toEqual([]);
     await act(async () => renderer.unmount());
   });
 
-  it('confirms turn receipts and parent lifecycle summaries against indexed Room state', async () => {
+  it('requests one reconciliation per legacy turn or lifecycle event', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1999,21 +1992,7 @@ describe('useRoomSurfaceSession', () => {
       sig: '0'.repeat(128),
     } satisfies NostrEvent;
     await act(async () => controls.subscriptions[0]!.emit(turn));
-    const turnExpectation = controls.schedulers[0]!.expectations[0]!;
-    expect(turnExpectation(roomView('room-a'))).toBe(false);
-    expect(
-      turnExpectation({
-        ...roomView('room-a'),
-        latestAgentTurns: [
-          {
-            requestId: '2'.repeat(64),
-            agentPubkey: turn.pubkey,
-            status: 'working',
-            createdAt: turn.created_at,
-          },
-        ],
-      }),
-    ).toBe(true);
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
 
     const landed = {
       ...turn,
@@ -2028,26 +2007,12 @@ describe('useRoomSurfaceSession', () => {
       content: 'Landed “Smoke lifecycle PR” into main.',
     } satisfies NostrEvent;
     await act(async () => controls.subscriptions[0]!.emit(landed));
-    const landedExpectation = controls.schedulers[0]!.expectations[1]!;
-    expect(landedExpectation(roomView('room-a'))).toBe(false);
-    expect(
-      landedExpectation({
-        ...roomView('room-a'),
-        messages: [
-          {
-            id: landed.id,
-            text: landed.content,
-            createdAt: landed.created_at,
-            author: { pubkey: landed.pubkey, kind: 'agent', name: 'Agent' },
-            presentation: 'system',
-          },
-        ],
-      }),
-    ).toBe(true);
+    expect(controls.schedulers[0]!.signalCalls).toBe(2);
+    expect(controls.schedulers[0]!.expectations).toEqual([]);
     await act(async () => renderer.unmount());
   });
 
-  it('keeps a fresh replayed working receipt alive until the opening Corner GET indexes it', async () => {
+  it('covers a fresh replayed working receipt with the opening Corner GET', async () => {
     controls.replayEvents.push({
       id: '4'.repeat(64),
       pubkey: 'a'.repeat(64),
@@ -2074,22 +2039,10 @@ describe('useRoomSurfaceSession', () => {
     });
     await flushEffects();
 
-    expect(controls.schedulers[0]!.expectations).toHaveLength(1);
-    const expectation = controls.schedulers[0]!.expectations[0]!;
-    expect(expectation(roomView('corner-a'))).toBe(false);
-    expect(
-      expectation({
-        ...roomView('corner-a'),
-        latestAgentTurns: [
-          {
-            requestId: '5'.repeat(64),
-            agentPubkey: 'a'.repeat(64),
-            status: 'working',
-            createdAt: Math.floor(Date.now() / 1_000),
-          },
-        ],
-      }),
-    ).toBe(true);
+    expect(controls.schedulers[0]!.expectations).toEqual([]);
+    // The replay marks the not-yet-started scheduler dirty. startAfter folds
+    // that signal into its single opening read.
+    expect(controls.schedulers[0]!.signalCalls).toBe(1);
     await act(async () => renderer.unmount());
   });
 

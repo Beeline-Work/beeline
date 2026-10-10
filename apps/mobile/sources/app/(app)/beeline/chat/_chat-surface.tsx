@@ -183,7 +183,7 @@ import {
 } from '@/buzz/community-invite';
 import { MemberPickerSheet, type MemberPickerCandidate } from '@/components/buzz/MemberPickerSheet';
 import { useVerifiedNip05Status } from '@/buzz/nip05-verification';
-import { confirmRoomRepositoryLink, normalizedRoomRole } from '@/buzz/room-management';
+import { normalizedRoomRole } from '@/buzz/room-management';
 import {
   looksLikeCornerOpenIntent,
   GITHUB_REPOSITORY_SELECTION_INSTRUCTION,
@@ -749,14 +749,18 @@ export function BuzzChatSurface({
   const [pushMuted, setPushMuted] = useState(false);
   const [pushMuteWorking, setPushMuteWorking] = useState(false);
   const togglePushMute = async () => {
+    if (pushMuteWorking) return;
+    const previous = pushMuted;
     setPushMuteWorking(true);
+    setPushMuted(!previous);
     try {
       const result = await monolithPhoneOperation('updateRoomPushState', {
         roomId: decodedId,
-        muted: !pushMuted,
+        muted: !previous,
       });
       setPushMuted(result.muted);
     } catch (error) {
+      setPushMuted(previous);
       setMembershipError(`Could not update Room notifications: ${String(error)}`);
     } finally {
       setPushMuteWorking(false);
@@ -808,6 +812,10 @@ export function BuzzChatSurface({
     adoptTransport: setSessionTransport,
     roomClient,
     roomSurface,
+    applyRoomRepositoryResult,
+    clearRoomRepository,
+    applyRoomMessageResult,
+    applyRoomName,
     firstUnreadMessageId,
     openingUnreadCounts,
     advanceReadCursor,
@@ -922,6 +930,9 @@ export function BuzzChatSurface({
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
+  const [optimisticReactions, setOptimisticReactions] = useState<Record<string, ChatDisplayMessage['reactions']>>({});
+  const [optimisticDeletes, setOptimisticDeletes] = useState<Record<string, true>>({});
+  const reactingRef = useRef(new Set<string>());
   // Messages this viewer reported here, marked before the next read carries
   // the server's `feedbackReported`.
   const [optimisticReports, setOptimisticReports] = useState<Record<string, true>>({});
@@ -1311,10 +1322,8 @@ export function BuzzChatSurface({
           resolved = found;
         }
         if (!resolved.channelId || resolved.channelId === decodedId) return;
-        // The list that made this token linkable can be stale after a leave,
-        // removal, or deletion. The Room read is the current authorization
-        // verdict; only a successful read earns navigation.
-        await roomClient.room(resolved.channelId);
+        // The destination's own Room read is the authorization verdict. A
+        // preflight here doubled the request for every successful open.
         if (resolved.kind === 'corner')
           openDesktopCorner(resolved.parentChannelId, resolved.channelId);
         else router.push(roomHref(resolved.channelId));
@@ -1454,6 +1463,7 @@ export function BuzzChatSurface({
   const {
     frame: roomSendFrame,
     append: addMessages,
+    reconcile: reconcileOptimistic,
     remove: removeOptimistic,
     clear: clearOptimistic,
   } = useRoomSendFrame(durableMessages, committedMessageIds);
@@ -2557,8 +2567,14 @@ export function BuzzChatSurface({
   const cornerHeaderWord = cornerHeaderAgentView.stateWord;
   const cornerOwnerWorking = cornerHeaderAgentView.ownerWorking;
   const visibleMessages = useMemo(
-    () => projectActiveTurnStream(messages, activeAgentTurns, isArchived),
-    [activeAgentTurns, isArchived, messages],
+    () => projectActiveTurnStream(messages, activeAgentTurns, isArchived).map((message) => {
+      const id = message.relayId ?? message.id;
+      if (optimisticDeletes[id])
+        return { ...message, text: 'Deleting message…', deleted: true, isSystemNotice: true };
+      const reactions = optimisticReactions[id];
+      return reactions ? { ...message, reactions } : message;
+    }),
+    [activeAgentTurns, isArchived, messages, optimisticDeletes, optimisticReactions],
   );
   // Run boundaries still control compact continuation spacing and machine-row
   // folding. Ordinary prose always renders its own byline, even inside a run,
@@ -3680,18 +3696,43 @@ export function BuzzChatSurface({
   const handleReactToMessage = useCallback(
     async (message: ChatDisplayMessage, emoji: MessageReactionEmoji) => {
       if (message.isAgentDraft) return;
+      const messageId = message.relayId ?? message.id;
+      if (reactingRef.current.has(messageId)) return;
+      reactingRef.current.add(messageId);
+      const previous = optimisticReactions[messageId] ?? message.reactions ?? [];
+      const existing = previous.find((reaction) => reaction.emoji === emoji);
+      const next = existing
+        ? previous.map((reaction) => reaction.emoji === emoji ? {
+            ...reaction,
+            count: Math.max(0, reaction.count + (reaction.reacted ? -1 : 1)),
+            reacted: !reaction.reacted,
+          } : reaction).filter((reaction) => reaction.count > 0)
+        : [...previous, { emoji, count: 1, reacted: true }];
+      setOptimisticReactions((current) => ({ ...current, [messageId]: next }));
       try {
-        await monolithPhoneOperation('reactToMessage', {
+        const canonical = await monolithPhoneOperation('reactToMessage', {
           roomId: decodedId,
-          messageId: message.relayId ?? message.id,
+          messageId,
           emoji,
         });
-        refreshSignal.force();
+        if (canonical) applyRoomMessageResult(canonical);
+        setOptimisticReactions((current) => {
+          const updated = { ...current };
+          delete updated[messageId];
+          return updated;
+        });
       } catch (error) {
+        setOptimisticReactions((current) => {
+          const updated = { ...current };
+          delete updated[messageId];
+          return updated;
+        });
         Modal.alert('Could not react', error instanceof Error ? error.message : String(error));
+      } finally {
+        reactingRef.current.delete(messageId);
       }
     },
-    [decodedId, refreshSignal],
+    [applyRoomMessageResult, decodedId, optimisticReactions],
   );
 
   const messageIsBookmarked = useCallback(
@@ -3711,12 +3752,12 @@ export function BuzzChatSurface({
         bookmarked ? 'Message bookmarked' : 'Bookmark removed',
       );
       try {
-        await monolithPhoneOperation('setMessageBookmark', {
+        const result = await monolithPhoneOperation('setMessageBookmark', {
           roomId: decodedId,
           messageId,
           bookmarked,
         });
-        refreshSignal.force();
+        setOptimisticBookmarks((current) => ({ ...current, [messageId]: result.bookmarked }));
       } catch (error) {
         setOptimisticBookmarks((current) => ({ ...current, [messageId]: previous }));
         AccessibilityInfo.announceForAccessibility('Bookmark change failed');
@@ -3726,7 +3767,7 @@ export function BuzzChatSurface({
         );
       }
     },
-    [activeCommunityId, decodedId, messageIsBookmarked, refreshSignal],
+    [activeCommunityId, decodedId, messageIsBookmarked],
   );
 
   const messageIsReported = useCallback(
@@ -3755,9 +3796,8 @@ export function BuzzChatSurface({
       const copy = reportIssueToastCopy(outcome.duplicate);
       showReportToast(copy);
       AccessibilityInfo.announceForAccessibility(copy);
-      refreshSignal.force();
     },
-    [decodedId, refreshSignal, showReportToast],
+    [decodedId, showReportToast],
   );
 
   const canDeleteMessage = useCallback(
@@ -3777,21 +3817,33 @@ export function BuzzChatSurface({
         { cancelText: 'Cancel', confirmText: 'Delete', destructive: true },
       );
       if (!confirmed) return;
+      const messageId = message.relayId ?? message.id;
+      setOptimisticDeletes((current) => ({ ...current, [messageId]: true }));
       try {
-        await monolithPhoneOperation('deleteRoomMessage', {
+        const canonical = await monolithPhoneOperation('deleteRoomMessage', {
           roomId: decodedId,
-          messageId: message.relayId ?? message.id,
+          messageId,
+        });
+        if (canonical) applyRoomMessageResult(canonical);
+        setOptimisticDeletes((current) => {
+          const updated = { ...current };
+          delete updated[messageId];
+          return updated;
         });
         AccessibilityInfo.announceForAccessibility('Message deleted');
-        refreshSignal.force();
       } catch (error) {
+        setOptimisticDeletes((current) => {
+          const updated = { ...current };
+          delete updated[messageId];
+          return updated;
+        });
         Modal.alert(
           'Could not delete message',
           error instanceof Error ? error.message : String(error),
         );
       }
     },
-    [canDeleteMessage, decodedId, refreshSignal],
+    [applyRoomMessageResult, canDeleteMessage, decodedId],
   );
   const openMessageActions = useCallback((message: ChatDisplayMessage) => {
     // A live draft is the turn still writing — it settles into the reply the
@@ -3868,7 +3920,6 @@ export function BuzzChatSurface({
   );
 
   const markOutboxFailed = outbox.markFailed;
-  const scheduleOutboxConfirmation = outbox.scheduleConfirmation;
   const retryOutboxMessage = outbox.retry;
   const dismissOutboxMessage = outbox.dismiss;
   const handleSend = useCallback(
@@ -3943,6 +3994,29 @@ export function BuzzChatSurface({
       sendInFlightRef.current = true;
       setSending(true);
       if (desktopExperience) setDesktopDeliveryState('sending');
+      // Text feedback lands in the local overlay in this same turn. Signing,
+      // transport startup and outbox persistence can all take longer than a
+      // frame on a cold Android device.
+      const provisionalId = activePendingAttachments.length === 0
+        ? `pending:${Date.now()}:${Math.random()}`
+        : null;
+      if (provisionalId) {
+        addMessages([{
+          id: provisionalId,
+          text,
+          isUser: true,
+          timestamp: Math.floor(Date.now() / 1_000),
+          authorIdentity: roomSurface?.viewer.identity ?? {
+            pubkey: userPubkey,
+            kind: 'human',
+            name: fallbackMemberName(userPubkey),
+          },
+          pubkey: userPubkey,
+          ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
+          ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
+        }]);
+        landAtOwnSend(provisionalId);
+      }
       let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
       let preparedTransport: BuzzRigTransport | undefined;
       try {
@@ -3962,14 +4036,17 @@ export function BuzzChatSurface({
         const dictationCancelled = () => {
           if (!dictated?.cancelled) return false;
           setPendingAck(null);
+          if (provisionalId) removeOptimistic(preparedEvent?.id ?? provisionalId);
           if (desktopExperience) setDesktopDeliveryState(null);
           return true;
         };
         if (dictationCancelled()) return;
-        const attachments = await attachmentUploader.uploadAll(
-          await sendTransport.ensureClient(),
-          activePendingAttachments,
-        );
+        const attachments = activePendingAttachments.length
+          ? await attachmentUploader.uploadAll(
+              await sendTransport.ensureClient(),
+              activePendingAttachments,
+            )
+          : [];
         if (dictationCancelled()) return;
         // Sign before append. The authoritative event id is the optimistic row
         // identity and the durable outbox key from its first frame onward.
@@ -3995,6 +4072,7 @@ export function BuzzChatSurface({
             current ? { ...current, requestId: preparedEvent!.id } : current,
           );
         }
+        if (provisionalId) reconcileOptimistic(provisionalId, preparedEvent.id);
         const optimistic = {
           id: preparedEvent.id,
           text,
@@ -4029,7 +4107,7 @@ export function BuzzChatSurface({
           ...(attachments.length ? { attachments } : {}),
         });
         landAtOwnSend(optimistic.id);
-        addMessages([optimistic]);
+        if (!provisionalId) addMessages([optimistic]);
         if (!sendShortcut) {
           const draftCleared = clearSubmittedDraft();
           if (activeComposerDraftRef.current === composerDraft) {
@@ -4052,6 +4130,7 @@ export function BuzzChatSurface({
         }
         await activeOutbox.attempted(preparedEvent.id);
         const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
+        if (writeResult.message) applyRoomMessageResult(writeResult.message);
         if (
           isCorner &&
           activeAgentTurn &&
@@ -4078,12 +4157,12 @@ export function BuzzChatSurface({
         );
         // The server moved our read mark with the send itself, so a message we
         // wrote never golds the Room list (room-list-row.ts) and the viewport
-        // has no mark left to write for it. Its own delta paints it; a
-        // confirmation reads the Room only if that delta never comes.
+        // has no mark left to write for it. The write receipt or live delta
+        // paints the canonical message without a confirmation GET.
         acknowledgeReadMark(preparedEvent.id);
-        scheduleOutboxConfirmation(preparedEvent.id);
       } catch (err) {
         console.warn('Send failed:', err);
+        if (provisionalId && !preparedEvent) removeOptimistic(provisionalId);
         if (desktopExperience) setDesktopDeliveryState('failed');
         // A publish failure already gets its own explicit modal below; the
         // local ack has nothing left to guess at and must not keep buzzing.
@@ -4118,6 +4197,8 @@ export function BuzzChatSurface({
       transport,
       decodedId,
       addMessages,
+      reconcileOptimistic,
+      removeOptimistic,
       isArchived,
       isCorner,
       activeAgentTurn,
@@ -4398,6 +4479,7 @@ export function BuzzChatSurface({
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         console.warn('Choice answer failed:', err);
+        Modal.alert('Could not answer', phoneOperationFailureReason(err));
       } finally {
         setChoiceActionId(null);
       }
@@ -4414,6 +4496,7 @@ export function BuzzChatSurface({
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       } catch (err) {
         console.warn('Choice skip failed:', err);
+        Modal.alert('Could not skip', phoneOperationFailureReason(err));
       } finally {
         setChoiceActionId(null);
       }
@@ -4525,8 +4608,8 @@ export function BuzzChatSurface({
       setTargetBranchActionId(proposal.proposalId);
       setTargetBranchNotice(null);
       try {
-        await transport.roomTargetBranchSet(decodedId, proposal.to);
-        refreshSignal.force();
+        const result = await transport.roomTargetBranchSet(decodedId, proposal.to);
+        applyRoomRepositoryResult(result);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         setTargetBranchNotice({
@@ -4538,7 +4621,7 @@ export function BuzzChatSurface({
         setTargetBranchActionId(null);
       }
     },
-    [canManageWorkspace, decodedId, targetBranchActionId, transport, viewerIsAgent],
+    [applyRoomRepositoryResult, canManageWorkspace, decodedId, targetBranchActionId, transport, viewerIsAgent],
   );
 
   const handleAddRoomMembers = useCallback(
@@ -4551,20 +4634,12 @@ export function BuzzChatSurface({
       if (chosen.length === 0) return;
       setAddingMembers(true);
       setMembershipError(null);
-      let current = chosen[0]!;
       try {
-        for (const candidate of chosen) {
-          current = candidate;
-          if (candidate.kind === 'agent') {
-            await transport.inviteAgentToChannel(decodedId, candidate.pubkey);
-          } else {
-            await transport.inviteWorkspaceMemberToChannel(decodedId, candidate.pubkey);
-          }
-        }
+        await transport.inviteRoomMembers(decodedId, chosen.map((candidate) => candidate.pubkey));
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setParticipantPickerVisible(false);
       } catch (err) {
-        setMembershipError(`Could not add @${current.name}: ${String(err)}`);
+        setMembershipError(`Could not add Room members: ${String(err)}`);
       } finally {
         setAddingMembers(false);
       }
@@ -4729,20 +4804,22 @@ export function BuzzChatSurface({
     setRenameBusy(true);
     setRenameError(null);
     const clearSubmitted = renameTextDraft.capture(false);
+    const previousName = roomSurface?.room.name;
+    applyRoomName(name);
     try {
       const client = await transport.ensureClient();
       await client.renameChannel(decodedId, name);
       clearSubmitted();
-      refreshSignal.force();
       setRenameEditing(false);
       setRoomActionsVisible(false);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
+      if (previousName) applyRoomName(previousName, name);
       setRenameError(`Could not rename ${kindLabel}: ${String(err)}`);
     } finally {
       setRenameBusy(false);
     }
-  }, [canRenameTitle, decodedId, isCorner, renameBusy, renameDraft, renameTextDraft, transport]);
+  }, [applyRoomName, canRenameTitle, decodedId, isCorner, renameBusy, renameDraft, renameTextDraft, roomSurface?.room.name, transport]);
 
   const startRenameFromTitle = useCallback(() => {
     if (!canRenameTitle) return;
@@ -4960,21 +5037,7 @@ export function BuzzChatSurface({
           ...(input.defaultBranch ? { targetBranch: input.defaultBranch } : {}),
           ...(activeCommunityId ? { communityId: activeCommunityId } : {}),
         });
-        const confirmation = roomClient
-          ? await confirmRoomRepositoryLink(() => roomClient.room(decodedId), {
-              key: published.binding.key,
-              updatedAt: published.updatedAt,
-            })
-          : 'pending';
-        if (confirmation === 'contradicted') {
-          throw new Error(
-            'A newer repository link replaced this selection. Refresh and try again.',
-          );
-        }
-        if (confirmation === 'pending') {
-          setRoomRepoNotice('Repo link accepted. The Room is still syncing.');
-        }
-        refreshSignal.force();
+        applyRoomRepositoryResult(published);
         setShowRoomRepoPicker(false);
         setCornerOpenRepoPrompt(false);
         setOwnerGrant(null);
@@ -4984,7 +5047,7 @@ export function BuzzChatSurface({
         setRoomRepoBusy(false);
       }
     },
-    [activeCommunityId, decodedId, roomClient, roomRepoBusy, transport],
+    [activeCommunityId, applyRoomRepositoryResult, decodedId, roomRepoBusy, transport],
   );
 
   // The pasted repository's owner is not among this viewer's installations:
@@ -5082,14 +5145,14 @@ export function BuzzChatSurface({
     setRoomRepoError(null);
     try {
       await transport.roomRepositoryRemove(decodedId);
-      refreshSignal.force();
+      clearRoomRepository();
       setShowRoomRepoPicker(false);
     } catch {
       setRoomRepoError('Could not unlink the repository.');
     } finally {
       setRoomRepoBusy(false);
     }
-  }, [decodedId, openCornerCount, roomRepoBusy, roomRepository, transport]);
+  }, [clearRoomRepository, decodedId, openCornerCount, roomRepoBusy, roomRepository, transport]);
 
   const roomRepoChoice = useRoomRepositoryChoice({
     visible: roomActionsVisible,
@@ -5175,7 +5238,9 @@ export function BuzzChatSurface({
     else router.replace('/beeline/channels');
   }, [cornerReturnTarget, liveDraftStore, navigation, parentChannelId]);
 
+  const [closingCorner, setClosingCorner] = useState(false);
   const handleCloseCorner = useCallback(async () => {
+    if (closingCorner) return;
     // `if (!transport) return` — the shape this replaces — made every press a
     // SILENT no-op until the screen had connected, and permanently if that
     // ever failed. The screen paints from cache, so the button is on screen
@@ -5191,6 +5256,7 @@ export function BuzzChatSurface({
       );
       return;
     }
+    setClosingCorner(true);
     try {
       await transport.closeCorner(decodedId);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -5199,8 +5265,10 @@ export function BuzzChatSurface({
       console.warn('Close corner failed:', err);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Modal.alert('Could not close corner', err instanceof Error ? err.message : String(err));
+    } finally {
+      setClosingCorner(false);
     }
-  }, [decodedId, handleBack, transport]);
+  }, [closingCorner, decodedId, handleBack, transport]);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -7269,7 +7337,8 @@ export function BuzzChatSurface({
 
       <HullActionSheetModal
         accessibilityLabel={`Close ${CORNER_LABEL} actions`}
-        onClose={() => setCornerActionsVisible(false)}
+        dismissOnBackdrop={!closingCorner}
+        onClose={() => { if (!closingCorner) setCornerActionsVisible(false); }}
         testID="corner-actions-sheet"
         title={headerTitle ?? cornerOwnerDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
@@ -7278,14 +7347,15 @@ export function BuzzChatSurface({
           accessibilityLabel={`Close ${CORNER_LABEL}`}
           description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}
           destructive
-          label={`Close ${CORNER_LABEL}`}
+          disabled={closingCorner}
+          label={closingCorner ? `Closing ${CORNER_LABEL}…` : `Close ${CORNER_LABEL}`}
           onPress={() => {
-            setCornerActionsVisible(false);
             void handleCloseCorner();
           }}
           testID="close-corner-action"
         />
         <HullActionSheetCancel
+          disabled={closingCorner}
           onPress={() => setCornerActionsVisible(false)}
           testID="corner-actions-close"
         />

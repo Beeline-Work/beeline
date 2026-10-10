@@ -4,7 +4,6 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { NostrEvent } from '@beeline/nostr';
 import type { LiveWireEvent, MonolithSurfaceEvent } from './monolith-rig-transport';
 import { noteLiveFrame } from './live-frame-epoch';
-import { applyNeedsYouLiveDelta } from '@/buzz/needs-you';
 
 type SurfaceFilters = readonly {
   readonly '#h'?: readonly string[];
@@ -488,7 +487,6 @@ export class LiveConnection {
       };
     }
     if (!('roomId' in live)) return;
-    if (live.type === 'needs-you-delta') applyNeedsYouLiveDelta(live);
     if (live.roomId === '' &&
         (live.type === 'bookmark-delta' || live.type === 'needs-you-delta' ||
           live.type === 'resource-change' || live.type === 'invalidate')) {

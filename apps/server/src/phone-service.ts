@@ -4926,7 +4926,22 @@ export class PhoneService {
     viewerId: string,
   ): Promise<void> {
     await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    // Approval cards are dismissed for this viewer only. Their decision and
+    // the paused agent's authority remain untouched.
+    const { items } = await needsYouItems(this.database, input.workspaceId, viewerId, (row) =>
+      identity(row, this.publicOrigin),
+    );
     await clearNeedsYouQuestions(this.database, input.workspaceId, viewerId);
+    const approvalIds = items.filter((item) => item.approval).map((item) => item.messageId);
+    if (approvalIds.length) {
+      await this.database.query(
+        `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at)
+         SELECT $1,id,$3,now() FROM unnest($2::text[]) id
+         ON CONFLICT(identity_id,message_id)
+           DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now())`,
+        [viewerId, approvalIds, input.workspaceId],
+      );
+    }
   }
 
   private async listMessageBookmarks(

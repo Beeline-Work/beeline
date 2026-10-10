@@ -83,7 +83,7 @@ type Props = {
   };
   onCancelReply?(): void;
   /**
-   * Room agent handles. A leading `@handle ` for one of them shows as a chip
+   * Room member handles. A leading `@handle ` for one of them shows as a chip
    * instead of typed text; the text itself, and so the send, is unchanged.
    */
   tagHandles?: ReadonlySet<string>;
@@ -187,7 +187,7 @@ export function ConversationComposer({
     onChangeText(nextValue);
   };
 
-  // Leading agent tags show as tinted words at the start of the text. On the
+  // Leading Room member tags show as tinted words at the start of the text. On the
   // web the input holds only the typed rest, and every edit is written back
   // with the tags' text in front of it; a native input holds the whole text.
   const tagSplit = splitComposerTags(value, tagHandles);

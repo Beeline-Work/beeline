@@ -2,7 +2,7 @@
  * Recipient chips in the composer.
  *
  * The composer text stays the one source of truth: a chip is a leading
- * `@handle ` token whose handle belongs to a Room agent. The composer shows
+ * `@handle ` token whose handle belongs to a Room member. The composer shows
  * those tokens as chips and the rest as typed text, so a send, a draft and a
  * reply still carry the exact `@handle ` prefix the server routes on.
  */
@@ -17,6 +17,11 @@ export type ComposerTagSplit = {
 };
 
 const LEADING_TAG = /^@([^\s@]+) +/;
+
+/** Only current Room members' handles can become leading composer chips. */
+export function roomComposerTagHandles(members: readonly { handle: string }[]): Set<string> {
+  return new Set(members.map((member) => member.handle).filter(Boolean));
+}
 
 export function splitComposerTags(text: string, handles: ReadonlySet<string>): ComposerTagSplit {
   const tags: string[] = [];

@@ -24,8 +24,8 @@ import { tagsKnownIdentitySql } from './message-mentions.js';
  * A question leaves the tray when the person taps or dismisses it
  * (`needs_you_marks.cleared_at`), replies anywhere in that Room or corner
  * after it, or 24 hours after they first saw it on any device
- * (`needs_you_marks.first_seen_at`). An approval leaves only when it is
- * decided, expires or closes; opening it does not clear it.
+ * (`needs_you_marks.first_seen_at`). An approval also leaves when dismissed
+ * from the tray, decided, expired or closed; opening it does not clear it.
  */
 export const NEEDS_YOU_TRIGGER_WORDS = ['please', 'approve', 'feedback'] as const;
 /** A cell's life, counted from the first time the person saw it in the tray. */
@@ -179,7 +179,7 @@ type Row = {
 };
 
 const ROW_COLUMNS = `
-  m.id message_id,m.room_id,m.text,m.card,m.created_at,mark.first_seen_at,
+  m.id message_id,m.room_id,m.text,m.card,m.created_at,mark.first_seen_at,mark.cleared_at,
   CASE WHEN room.direct_participants IS NOT NULL THEN COALESCE((
       SELECT peer.name FROM memberships peer_member
       JOIN identities peer ON peer.id=peer_member.identity_id
@@ -259,9 +259,9 @@ const APPROVAL_JOINS = `
 /**
  * One query per approval kind, each driven from that kind's pending rows and
  * filtered by the rule the decide operation itself enforces, so the tray
- * never offers a card the viewer cannot decide. Cards with no Beeline-side
- * state (sign-in, Trusty Squire) are read at any age through
- * `messages_needs_you_approval_idx`, so an undecided one never ages out.
+ * never offers a card the viewer cannot decide. Sign-in and Squire cards
+ * are read through `messages_needs_you_approval_idx`; Squire's stored expiry
+ * bounds their life even if a decision never arrives.
  */
 const APPROVAL_QUERIES: readonly string[] = [
   // Driven from the few pending grants rather than from the transcript, so
@@ -353,10 +353,13 @@ const APPROVAL_QUERIES: readonly string[] = [
   // A Trusty Squire approval in the owner's connector DM. Squire decides it;
   // the decision (or Squire's expiry) lands in the Room the paused turn ran in.
   `WITH ${VIEWER_ROOMS}
-   ${APPROVAL_FROM('squire')}
+   ${APPROVAL_FROM('squire', `to_timestamp((m.card->>'expiresAt')::bigint/1000.0)`)}
    JOIN messages m ON m.room_id=room.id AND m.card_type='squire-approval'
    ${APPROVAL_JOINS}
    WHERE m.deleted_at IS NULL AND m.card->>'approvalId' IS NOT NULL
+     AND m.card->>'status' IS DISTINCT FROM 'expired'
+     AND m.card->>'expiresAt' ~ '^[0-9]+$'
+     AND to_timestamp((m.card->>'expiresAt')::bigint/1000.0)>now()
      AND m.card->>'sourceRoomId' ~ '^[0-9a-f-]{36}$'
      AND NOT EXISTS (
        SELECT 1 FROM messages decision
@@ -422,7 +425,10 @@ export async function needsYouItems(
        LIMIT ${CANDIDATE_LIMIT}`,
       [workspaceId, viewerId],
     ),
-    ...APPROVAL_QUERIES.map((sql) => database.query<Row>(sql, [workspaceId, viewerId])),
+    ...APPROVAL_QUERIES.map((sql) => database.query<Row>(
+      `SELECT * FROM (${sql}) approval WHERE approval.cleared_at IS NULL`,
+      [workspaceId, viewerId],
+    )),
   ]);
   const built = [
     ...tagged.rows.filter((row) => isNeedsYouAsk(row.text)),
@@ -475,7 +481,7 @@ export async function needsYouItems(
   }));
   return {
     items,
-    // An approval has no clock: it stays until it is decided, expires or closes.
+    // Approval expiry comes from its card or state, never the question clock.
     unseen: built
       .filter(({ row }) => !row.approval_kind && !row.first_seen_at)
       .map(({ row }) => row.message_id),

@@ -1,6 +1,6 @@
 import { readWorkspaceListView } from '@beeline/api-contract/phone';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
+import { backfillSquireApprovalExpiry, migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
 import {
   askSql,
@@ -374,11 +374,14 @@ describe('PhoneService Needs-you tray', () => {
     });
     expect(item!.expiresAt).toBeUndefined();
 
-    // Opening it (the tray's tap) does not clear an approval.
+    // Dismissing it only hides the tray row; it does not decide the grant.
     await phone.execute('clearNeedsYou', { workspaceId: WORKSPACE, messageId: card }, VIEWER);
-    expect(await count()).toBe(1);
+    expect(await count()).toBe(0);
+    expect((await database.query<{ status: string }>(
+      `SELECT status FROM agent_grants WHERE id=$1`, [GRANT],
+    )).rows[0]?.status).toBe('pending');
     await phone.execute('clearNeedsYouSection', { workspaceId: WORKSPACE }, VIEWER);
-    expect(await count()).toBe(1);
+    expect(await count()).toBe(0);
 
     // A person who cannot decide it never sees it.
     expect((await phone.execute('countNeedsYou', { workspaceId: WORKSPACE }, PEER)).count).toBe(0);
@@ -558,6 +561,7 @@ describe('PhoneService Needs-you tray', () => {
       detail: 'Write it into the push gateway secret.',
       approvalUrl: 'https://squire.example/approve/1',
       approvalId: 'approval-1',
+      expiresAt: Date.now() + 10 * 60_000,
       linkKind: 'passkey',
       sourceRoomId: CORNER,
     });
@@ -578,7 +582,27 @@ describe('PhoneService Needs-you tray', () => {
     expect(await approvals()).toEqual([]);
   });
 
-  it('keeps an undecided sign-in and Trusty Squire approval in the tray past a week', async () => {
+  it('CLEAR dismisses questions and Squire approvals without sending a decision', async () => {
+    const approvalId = await card(ROOM, 'squire-approval', {
+      agent: hoots, tool: 'fetch_credential', title: 'Reveal key',
+      approvalUrl: 'https://squire.example/approve/clear',
+      approvalId: 'approval-clear', linkKind: 'passkey', sourceRoomId: CORNER,
+      expiresAt: Date.now() + 10 * 60_000,
+    });
+    await post(ROOM, PEER, '@ada please look?', 1);
+    expect(await count()).toBe(2);
+    await phone.execute('clearNeedsYouSection', { workspaceId: WORKSPACE }, VIEWER);
+    expect(await count()).toBe(0);
+    expect((await database.query<{ card_type: string }>(
+      `SELECT card_type FROM messages WHERE id=$1`, [approvalId],
+    )).rows[0]?.card_type).toBe('squire-approval');
+    expect((await database.query(
+      `SELECT 1 FROM messages WHERE card_type='squire-approval-decision'
+         AND card->>'approvalId'='approval-clear'`,
+    )).rowCount).toBe(0);
+  });
+
+  it('backfill expires old Squire approvals but keeps an undecided sign-in', async () => {
     const week = 8 * 24 * 60;
     await card(
       ROOM,
@@ -601,10 +625,24 @@ describe('PhoneService Needs-you tray', () => {
       },
       week,
     );
-    expect((await approvals()).map((approval) => approval.kind).sort()).toEqual([
-      'sign-in',
-      'squire',
-    ]);
+    expect(await backfillSquireApprovalExpiry(database)).toBe(1);
+    expect((await approvals()).map((approval) => approval.kind)).toEqual(['sign-in']);
+    const legacy = (await database.query<{ card: { status: string; expiresAt: number } }>(
+      `SELECT card FROM messages WHERE card_type='squire-approval'`,
+    )).rows[0]!.card;
+    expect(legacy.status).toBe('expired');
+    expect(legacy.expiresAt).toBeLessThan(Date.now());
+    expect(await backfillSquireApprovalExpiry(database)).toBe(0);
+  });
+
+  it('honors Squire expiry even when no decision arrives', async () => {
+    await card(ROOM, 'squire-approval', {
+      agent: hoots, tool: 'fetch_credential', title: 'Reveal key',
+      approvalUrl: 'https://squire.example/approve/expired',
+      approvalId: 'approval-expired', linkKind: 'passkey', sourceRoomId: CORNER,
+      expiresAt: Date.now() - 1_000,
+    });
+    expect(await approvals()).toEqual([]);
   });
 
   it('lists approvals before questions', async () => {

@@ -109,6 +109,17 @@ describe('resource MCP transport authorization', () => {
     });
   });
 
+  it('carries Squire expires_at from a structured MCP text result', () => {
+    const expiresAt = '2030-01-02T03:04:05.000Z';
+    expect(squireApprovalFromMcp(
+      { id: 7, method: 'tools/call', params: { name: 'fetch_credential', arguments: {} } },
+      { id: 7, result: { content: [{ type: 'text', text: JSON.stringify({
+        approval_url: 'https://trustysquire.ai/vault/fetch/example',
+        approval_id: 'expiry-test', expires_at: expiresAt,
+      }) }] } },
+    )).toMatchObject({ approvalId: 'expiry-test', expiresAt: Date.parse(expiresAt) });
+  });
+
   it('prefers an approval URL over unrelated operate_network URLs regardless of key order', () => {
     const approvalUrl = 'https://trustysquire.ai/vault/pay/purchase-7';
     const request = {

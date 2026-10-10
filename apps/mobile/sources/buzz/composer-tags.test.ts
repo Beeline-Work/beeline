@@ -3,6 +3,7 @@ import {
   composerFieldSelection,
   removeComposerTag,
   removeLastComposerTag,
+  roomComposerTagHandles,
   splitComposerTags,
   toggleComposerTag,
 } from './composer-tags';
@@ -10,6 +11,20 @@ import {
 const agents = new Set(['ruby', 'sol']);
 
 describe('composer tags', () => {
+  it('recognizes handles of every current Room member, including people', () => {
+    const handles = roomComposerTagHandles([
+      { kind: 'person', handle: 'bananaman614305' },
+      { kind: 'agent', handle: 'ruby' },
+    ]);
+    expect(splitComposerTags('@bananaman614305 ', handles)).toEqual({
+      tags: ['bananaman614305'],
+      prefix: '@bananaman614305 ',
+      rest: '',
+    });
+    expect(splitComposerTags('@bananaman614305 hello', handles).rest).toBe('hello');
+    expect(splitComposerTags('@outsider ', handles).tags).toEqual([]);
+  });
+
   it('reads leading agent tags as chips and keeps the typed rest', () => {
     expect(splitComposerTags('@ruby @sol make it smaller', agents)).toEqual({
       tags: ['ruby', 'sol'],

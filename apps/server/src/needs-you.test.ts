@@ -322,7 +322,15 @@ describe('PhoneService Needs-you tray', () => {
        SELECT $1,$2,$3,id,'Launch room','room',created_at FROM messages WHERE room_id=$3 LIMIT 1`,
       [PEER, WORKSPACE, ROOM],
     );
-    expect((await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, VIEWER)).bookmarks).toHaveLength(55);
+    const first = await phone.execute('listMessageBookmarks', { workspaceId: WORKSPACE }, VIEWER);
+    expect(first.bookmarks).toHaveLength(30);
+    expect(first.next).toBeDefined();
+    const second = await phone.execute('listMessageBookmarks', {
+      workspaceId: WORKSPACE, before: first.next,
+    }, VIEWER);
+    expect(second.bookmarks).toHaveLength(25);
+    expect(second.next).toBeUndefined();
+    expect(new Set([...first.bookmarks, ...second.bookmarks].map((item) => item.messageId)).size).toBe(55);
 
     await phone.execute('clearMessageBookmarks', { workspaceId: WORKSPACE }, VIEWER);
 

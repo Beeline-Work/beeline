@@ -1,7 +1,7 @@
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
@@ -153,9 +153,9 @@ it('shows the card on the first win after the 3rd reply and stars with the perso
       url: 'https://github.com/Beeline-Work/beeline',
     },
   });
-  expect(githubCalls).toEqual([
+  await vi.waitFor(() => expect(githubCalls).toEqual([
     `GET /user/starred/Beeline-Work/beeline Bearer ${USER_TOKEN}`,
-  ]);
+  ]));
 
   expect(await answer('star', 3)).toEqual({ outcome: 'starred' });
   expect(githubCalls.at(-1)).toBe(`PUT /user/starred/Beeline-Work/beeline Bearer ${USER_TOKEN}`);
@@ -214,7 +214,7 @@ it('waits for the next milestone after Not now and stops for good after close', 
   expect(await read()).toEqual({ prompt: null });
 });
 
-it('stays hidden mid-conversation, after a failed turn, and once already starred', async () => {
+it('stays hidden mid-conversation and after a failed turn, and persists one star check per milestone', async () => {
   await db.query(
     `INSERT INTO github_star_prompts(identity_id,replies,reached_milestone,reached_at,last_win_at)
      VALUES($1,3,3,now()-interval '1 hour',now())`,
@@ -234,10 +234,23 @@ it('stays hidden mid-conversation, after a failed turn, and once already starred
   expect(await read()).toEqual({ prompt: null });
   await db.query(`DELETE FROM agent_turns WHERE request_id='failed-turn'`);
 
+  await vi.waitFor(async () => {
+    const checked = (await db.query<{ checked_milestone: number }>(
+      `SELECT checked_milestone FROM github_star_prompts WHERE identity_id=$1`, [H],
+    )).rows[0]?.checked_milestone;
+    expect(checked).toBe(3);
+  });
   starred = true;
-  expect(await read()).toEqual({ prompt: null });
+  expect((await read()).prompt?.milestone).toBe(3);
+  await db.query(`UPDATE github_star_prompts SET reached_milestone=30,reached_at=now()-interval '1 minute',last_win_at=now() WHERE identity_id=$1`, [H]);
+  expect((await read()).prompt?.milestone).toBe(30);
+  await vi.waitFor(async () => {
+    expect((await db.query<{ closed: string | null }>(
+      `SELECT closed FROM github_star_prompts WHERE identity_id=$1`, [H],
+    )).rows[0]?.closed).toBe('starred');
+  });
   starred = false;
-  // GitHub said starred once: the card is closed for good.
+  // The GitHub result is saved; a later visit makes no remote request.
   expect(await read()).toEqual({ prompt: null });
 });
 

@@ -73,6 +73,7 @@ function sourceLabel(bookmark: MessageBookmarkView): string {
 }
 
 function clearedLabel(clear: PendingClear): string {
+  if (clear.kind === 'saved' && clear.more) return 'Cleared saved bookmarks';
   const count = clear.items.length;
   const noun = clear.kind === 'needs' ? 'item' : 'bookmark';
   return `Cleared ${count} ${noun}${count === 1 ? '' : 's'}`;
@@ -88,7 +89,7 @@ type Target = {
 /** A section clear held back until its own Undo window closes. */
 type PendingClear = { readonly id: number; readonly expiresAt: number; readonly workspaceId: string } & (
   | { readonly kind: 'needs'; readonly items: readonly NeedsYouItemView[] }
-  | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[] }
+  | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[]; readonly more: boolean }
 );
 
 type Row =
@@ -102,7 +103,8 @@ type Row =
   | { readonly key: string; readonly type: 'needs'; readonly item: NeedsYouItemView }
   | { readonly key: string; readonly type: 'needs-empty' }
   | { readonly key: string; readonly type: 'saved'; readonly bookmark: MessageBookmarkView }
-  | { readonly key: string; readonly type: 'saved-empty' };
+  | { readonly key: string; readonly type: 'saved-empty' }
+  | { readonly key: string; readonly type: 'saved-more' };
 
 /**
  * The tray: exactly two sections, Needs you then Saved. Needs you is the
@@ -127,6 +129,9 @@ export default function TrayScreen() {
   const noWorkspace = (!routeWorkspaceId && activeWorkspaceId === null) || workspaceLost;
   const [needs, setNeeds] = useState<readonly NeedsYouItemView[]>([]);
   const [bookmarks, setBookmarks] = useState<readonly MessageBookmarkView[]>([]);
+  const [savedNext, setSavedNext] = useState<string | undefined>();
+  const loadingSaved = useRef(false);
+  const savedScroll = useRef(false);
   const [selected, setSelected] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -145,6 +150,7 @@ export default function TrayScreen() {
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
+    savedScroll.current = false;
     if (loadedSections.current.workspaceId !== workspaceId)
       loadedSections.current = { workspaceId, needs: false, bookmarks: false };
     setError(null);
@@ -167,6 +173,7 @@ export default function TrayScreen() {
       loadedSections.current = { workspaceId, needs: true, bookmarks: true };
       setNeeds([]);
       setBookmarks([]);
+      setSavedNext(undefined);
       setSelected(null);
       setLoading(false);
       void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
@@ -185,6 +192,7 @@ export default function TrayScreen() {
     if (savedResult.status === 'fulfilled') {
       loadedSections.current.bookmarks = true;
       setBookmarks(savedResult.value.bookmarks);
+      setSavedNext(savedResult.value.next);
     }
     if (needsResult.status === 'fulfilled' || savedResult.status === 'fulfilled') {
       void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
@@ -201,6 +209,24 @@ export default function TrayScreen() {
     setLoading(false);
   }, [workspaceId]);
 
+  const loadMoreSaved = useCallback(async () => {
+    if (!workspaceId || !savedNext || loadingSaved.current) return;
+    loadingSaved.current = true;
+    try {
+      const page = await monolithPhoneOperation('listMessageBookmarks', {
+        workspaceId, before: savedNext,
+      });
+      setBookmarks((current) => {
+        const seen = new Set(current.map((item) => item.messageId));
+        return [...current, ...page.bookmarks.filter((item) => !seen.has(item.messageId))];
+      });
+      setSavedNext(page.next);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      loadingSaved.current = false;
+    }
+  }, [workspaceId, savedNext]);
   useEffect(() => {
     if (!workspaceId) return;
     if (loadedSections.current.workspaceId !== workspaceId)
@@ -217,7 +243,10 @@ export default function TrayScreen() {
       ]);
       if (cancelled) return;
       if (savedNeeds && !loadedSections.current.needs) setNeeds(savedNeeds.items);
-      if (savedBookmarks && !loadedSections.current.bookmarks) setBookmarks(savedBookmarks.bookmarks);
+      if (savedBookmarks && !loadedSections.current.bookmarks) {
+        setBookmarks(savedBookmarks.bookmarks);
+        setSavedNext(savedBookmarks.next);
+      }
       if (savedNeeds || savedBookmarks) setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -425,7 +454,8 @@ export default function TrayScreen() {
     setBookmarks((current) => current.filter((item) => !ids.has(item.messageId)));
     try {
       await monolithPhoneOperation('clearMessageBookmarks', { workspaceId: clear.workspaceId });
-      await load();
+      setBookmarks([]);
+      setSavedNext(undefined);
     } catch (cause) {
       setBookmarks((current) =>
         [...clear.items, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
@@ -485,13 +515,13 @@ export default function TrayScreen() {
       const clear: PendingClear =
         kind === 'needs'
           ? { ...held, kind, items: visibleNeeds }
-          : { ...held, kind, items: visibleBookmarks };
+          : { ...held, kind, items: visibleBookmarks, more: !!savedNext };
       if (!clear.items.length) return;
       pendingRef.current = [...pendingRef.current, clear];
       setPending(pendingRef.current);
       AccessibilityInfo.announceForAccessibility(`${clearedLabel(clear)}. Undo available.`);
     },
-    [visibleBookmarks, visibleNeeds, workspaceId],
+    [visibleBookmarks, visibleNeeds, workspaceId, savedNext],
   );
 
   /** Undo the newest held clear; an older one still in its window shows next. */
@@ -568,8 +598,9 @@ export default function TrayScreen() {
             bookmark,
           }))
         : [{ key: 'saved-empty', type: 'saved-empty' } as const]),
+      ...(savedNext ? [{ key: 'saved-more', type: 'saved-more' } as const] : []),
     ];
-  }, [loading, visibleBookmarks, visibleNeeds, workspaceLost]);
+  }, [loading, visibleBookmarks, visibleNeeds, workspaceLost, savedNext]);
 
   const renderSaved = (bookmark: MessageBookmarkView) => (
     <Pressable
@@ -653,6 +684,9 @@ export default function TrayScreen() {
 
   const list = (
     <FlatList
+      onScroll={(event) => { if (event.nativeEvent.contentOffset.y > 20) savedScroll.current = true; }}
+      onEndReached={() => { if (savedScroll.current) void loadMoreSaved(); }}
+      onEndReachedThreshold={0.5}
       contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
       data={rows}
       keyExtractor={(row) => row.key}
@@ -730,6 +764,11 @@ export default function TrayScreen() {
             );
           case 'saved':
             return renderSaved(row.bookmark);
+          case 'saved-more':
+            return <Pressable accessibilityRole="button" onPress={() => void loadMoreSaved()}
+              style={styles.emptyBlock} testID="bookmarks-more">
+              <Text style={styles.removeText}>LOAD MORE SAVED</Text>
+            </Pressable>;
           case 'saved-empty':
             return (
               <View style={styles.emptyBlock} testID="bookmarks-empty">

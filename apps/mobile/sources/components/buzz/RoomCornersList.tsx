@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router } from 'expo-router';
@@ -81,6 +81,8 @@ export function RoomCornersList({
   archived = { status: 'idle' },
   onShowArchived,
   onMoreArchived,
+  onMoreOpen,
+  moreOpen = false,
   viewerPubkey,
   nowMs,
   desktop = false,
@@ -100,6 +102,10 @@ export function RoomCornersList({
   onShowArchived?: () => void;
   /** Reads the next ten archived corners. */
   onMoreArchived?: () => void;
+  /** Reads the next page of open corners when the list reaches its end. */
+  onMoreOpen?: () => void;
+  /** A later open page exists, including when a desktop filter hides this page's rows. */
+  moreOpen?: boolean;
   /** Whose corners make up the Mine section. */
   viewerPubkey?: string;
   /** Clock for the closure stamps; defaults to now at paint. */
@@ -118,6 +124,7 @@ export function RoomCornersList({
   const [othersOpen, setOthersOpen] = useState<boolean | undefined>();
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [filter, setFilter] = useState<DesktopFilter>('all');
+  const scrolled = useRef(false);
   // FlatList compares `data` by identity, so it is rebuilt only when the
   // corners or a fold change, not on every parent render.
   const data = useMemo(() => {
@@ -314,6 +321,9 @@ export function RoomCornersList({
 
   return (
     <FlatList
+      onScroll={(event) => { if (event.nativeEvent.contentOffset.y > 20) scrolled.current = true; }}
+      onEndReached={() => { if (scrolled.current) onMoreOpen?.(); }}
+      onEndReachedThreshold={0.5}
       data={data}
       keyExtractor={(entry) => (entry.kind === 'fold' ? `fold-${entry.key}` : entry.item.corner.id)}
       refreshing={refreshing}
@@ -371,6 +381,8 @@ export function RoomCornersList({
       }
       ListFooterComponent={
         <View>
+          {moreOpen ? <Button label="MORE OPEN CORNERS" variant="secondary"
+            onPress={onMoreOpen} testID="room-corners-more-open" /> : null}
           {/* The fold for closed work, standing on every Room. The first
             open reads the first page; after that it only folds and unfolds.
             The archived rows hang off the footer rather than joining `data`

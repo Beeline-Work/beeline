@@ -51,6 +51,7 @@ const chats = vi.hoisted(() =>
             },
           ]
         : [],
+    watchFilters: workspaceId === 'workspace-a' ? [{ '#h': ['room-a', 'dm-a'] }] : [],
   })),
 );
 const workspaceSummary = vi.hoisted(() => ({ attention: true, roomCount: 3 }));
@@ -85,6 +86,19 @@ vi.mock('@/buzz/surface-storage', () => {
         notify(key);
         return value;
       },
+      publish: (key: string, value: unknown) => {
+        surfaceRows.set(key, value);
+        notify(key);
+        return value;
+      },
+      write: async (key: string, value: unknown) => {
+        surfaceRows.set(key, value);
+        notify(key);
+      },
+      remove: async (key: string) => {
+        surfaceRows.delete(key);
+        notify(key);
+      },
       subscribe: (key: string, listener: () => void) => {
         const listeners = surfaceListeners.get(key) ?? new Set<() => void>();
         listeners.add(listener);
@@ -94,6 +108,13 @@ vi.mock('@/buzz/surface-storage', () => {
     },
   };
 });
+vi.mock('@/sync/transport/live-connection', () => ({
+  sharedLiveConnection: () => ({
+    register: async () => () => undefined,
+    whenSubscribed: async () => undefined,
+    reconnect: () => undefined,
+  }),
+}));
 const windowListeners = new Map<string, (event: any) => void>();
 const viewport = vi.hoisted(() => ({ width: 1280 }));
 const desktopShell = vi.hoisted(() => ({ current: false }));
@@ -292,6 +313,7 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
 }));
 
 import { SidebarView } from './SidebarView';
+import { resetChatListStoresForTest } from '@/buzz/chat-list-store';
 let tree: ReactTestRenderer;
 function control(id: string) {
   const nodes = tree.root.findAll(
@@ -338,6 +360,7 @@ afterAll(() => {
 describe('desktop Workspace navigation', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    resetChatListStoresForTest();
     surfaceRows.clear();
     surfaceListeners.clear();
     workspaceLive.deleted = false;

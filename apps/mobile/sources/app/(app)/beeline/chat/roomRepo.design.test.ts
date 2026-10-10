@@ -122,32 +122,33 @@ describe('Room→repo write confirmation', () => {
 
 describe('Room→repo settings change', () => {
   it('confirms before re-binding a repo out from under a Room with open corners', () => {
-    const confirm = blockFrom(
-      chatSource,
-      'const confirmRoomRepoReplacement = useCallback(',
-      'confirmRoomRepoReplacement',
+    const guardSource = readFileSync(
+      new URL('../../../../buzz/room-repo-replacement.ts', import.meta.url),
+      'utf8',
     );
+    const confirm = blockFrom(
+      guardSource,
+      'const confirmReplacement = useCallback(',
+      'confirmReplacement',
+    );
+    expect(chatSource).toContain('useRoomRepoReplacementGuard(workspaceChats,');
     expect(confirm).toContain('openCornerCount');
     expect(confirm).toContain('Modal.confirm');
     expect(confirm).toContain('!roomRepository || !hasOpenCorners');
     expect(confirm).not.toContain('cornerLifecycle');
     expect(confirm).not.toContain('roomListCorners');
     // Link + Save and Create + Save both replace the repo, so both ask first.
-    const link = blockFrom(
-      chatSource,
-      'const handleSelectRoomRepoCandidate = useCallback(',
-      'handleSelectRoomRepoCandidate',
+    const link = blockFrom(guardSource, 'const selectCandidate = useCallback(', 'selectCandidate');
+    expect(link).toContain('confirmReplacement()');
+    const create = blockFrom(guardSource, 'const createRepository = useCallback(', 'createRepository');
+    expect(create.indexOf('await confirmReplacement()')).toBeGreaterThan(-1);
+    expect(create.indexOf('await confirmReplacement()')).toBeLessThan(
+      create.indexOf('create(installationId, name)'),
     );
-    expect(link).toContain('confirmRoomRepoReplacement()');
-    const create = blockFrom(
-      chatSource,
-      'const handleCreateRoomRepository = useCallback(',
-      'handleCreateRoomRepository',
-    );
-    expect(create.indexOf('await confirmRoomRepoReplacement()')).toBeGreaterThan(-1);
-    expect(create.indexOf('await confirmRoomRepoReplacement()')).toBeLessThan(
-      create.indexOf('handleCreateGitHubRepository(installationId, name)'),
-    );
+    expect(chatSource).toContain('selectCandidate: handleSelectRoomRepoCandidate,');
+    expect(chatSource).toContain('createRepository: handleCreateRoomRepository,');
+    expect(chatSource).toContain('link: applyRoomRepository,');
+    expect(chatSource).toContain('create: handleCreateGitHubRepository,');
     expect(chatSource).toContain('onCreate: handleCreateRoomRepository,');
   });
 

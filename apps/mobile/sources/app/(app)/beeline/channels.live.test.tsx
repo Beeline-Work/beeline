@@ -145,6 +145,7 @@ vi.mock('@/buzz/community-storage', () => ({
 }));
 vi.mock('@/buzz/surface-storage', () => {
   const cache = {
+    peek: vi.fn(() => null),
     read: vi.fn(async () => null),
     write: vi.fn(async (_address: unknown, _value: unknown, _guard: unknown) => undefined),
     remove: vi.fn(async () => undefined),
@@ -210,6 +211,7 @@ import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { cornerOpenEnded } from '@/buzz/corner-open-status';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
+import { resetChatListStoresForTest } from '@/buzz/chat-list-store';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -298,6 +300,8 @@ async function mountDeck(): Promise<ReactTestRenderer> {
 }
 
 beforeEach(() => {
+  // A case that never unmounts its deck must not hand its live list to the next.
+  resetChatListStoresForTest();
   deck.appState = 'active';
   deck.appStateListeners = [];
   deck.bottomInset = 0;
@@ -889,6 +893,27 @@ describe('Room deck live path', () => {
 
     expect(paintedRows(renderer).map((item) => item.room.id)).toEqual(['room-b', 'room-a']);
     expect(deck.subscriptions).toHaveLength(watches);
+    await act(async () => renderer.unmount());
+  });
+
+  it('makes the covering read on open even when every cached Room resumes its lane', async () => {
+    // Reproduction 4.3: a stored list whose Rooms all resume never read again.
+    vi.mocked(mobileSurfaceCache.read)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(chatList({ id: 'cached', text: 'stale', createdAt: 1 }) as never);
+    deck.chatsResponse = chatList({ id: 'm9', text: 'current', createdAt: 50 });
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(BuzzChannels));
+    });
+    await vi.waitFor(() => expect(() => roomWatch()).not.toThrow());
+    await act(async () =>
+      roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a', resumed: true } }),
+    );
+    await act(() => new Promise((resolve) => setTimeout(resolve, 1_700)));
+    await quiet();
+    expect(deck.chatsReads).toBe(1);
+    expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('current');
     await act(async () => renderer.unmount());
   });
 

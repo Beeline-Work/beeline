@@ -7,14 +7,7 @@ import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsE
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
-import {
-  applyChatListDelta,
-  chatListDeltaNeedsRead,
-  chatWatchFiltersKey,
-  keepUnavailableChatFacts,
-  roomsMissedByLive,
-  type ChatListDelta,
-} from '@/buzz/chat-list-delta';
+import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
 import {
   loadActiveCommunityId,
   saveActiveCommunityId,
@@ -68,13 +61,10 @@ import { WelcomeCards } from '@/components/buzz/WelcomeCards';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
-import { isDraftFrame } from '@/sync/transport/live-frames';
-import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { useIsDesktop } from '@/utils/responsive';
 import {
   SurfaceRefreshScheduler,
-  isChatListView,
   isWorkspaceListView,
   isWorkspaceView,
   type ChatListItem,
@@ -99,16 +89,9 @@ import {
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 
 const AGE_TICK_MS = 60_000;
-/**
- * How long the first Room-list read waits for its live watch to be confirmed.
- * Reading after the confirmation misses nothing, so no second read follows;
- * the cached list paints meanwhile.
- */
-const CHAT_SUBSCRIBE_WAIT_MS = 1_500;
 const COMPOSE_FAB_CLEARANCE = 80;
 const LOBBY_LIST_BOTTOM_SPACING = 24;
 const ROW_HEIGHT = 64;
@@ -234,7 +217,7 @@ export default function BuzzChannels() {
   const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const handledNewRoomRequest = useRef<string | null>(null);
-  const chatScheduler = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
+  const chatStore = useRef<ChatListHandle | null>(null);
   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView> | null>(null);
   // A deck under a pushed Room, or in a backgrounded app, reads nothing; its
   // focus and the foreground socket's resubscribe are the covering reads.
@@ -244,7 +227,7 @@ export default function BuzzChannels() {
     [],
   );
   /** Reads the hidden deck skipped; returning to it makes exactly those. */
-  const deckMissedRef = useRef({ chats: false, workspaces: false });
+  const deckMissedRef = useRef({ workspaces: false });
 
   const communities = useMemo(
     () => workspaceList?.workspaces.map(workspaceRailItem) ?? [],
@@ -345,7 +328,7 @@ export default function BuzzChannels() {
 
   const refreshNow = useCallback(() => {
     workspaceScheduler.current?.force();
-    chatScheduler.current?.force();
+    chatStore.current?.force();
   }, []);
 
   /**
@@ -354,10 +337,9 @@ export default function BuzzChannels() {
    * nothing here, because the replaced socket's resubscribe is that read.
    */
   const refreshMissed = useCallback(() => {
-    const missed = deckMissedRef.current;
-    if (missed.workspaces) workspaceScheduler.current?.force();
-    if (missed.chats) chatScheduler.current?.force();
-    deckMissedRef.current = { chats: false, workspaces: false };
+    if (deckMissedRef.current.workspaces) workspaceScheduler.current?.force();
+    chatStore.current?.catchUp();
+    deckMissedRef.current = { workspaces: false };
   }, []);
 
   const swipeableRefs = useRef<Map<string, Swipeable | null>>(new Map());
@@ -373,7 +355,7 @@ export default function BuzzChannels() {
       try {
         await transport.closeChat(item.room.id);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        chatScheduler.current?.force();
+        chatStore.current?.force();
       } catch (reason) {
         setError(`Could not close chat: ${String(reason)}`);
       }
@@ -398,7 +380,7 @@ export default function BuzzChannels() {
         );
         if (!left) return;
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        chatScheduler.current?.force();
+        chatStore.current?.force();
       } catch (reason) {
         setError(`Could not leave ${ROOM_LABEL}: ${String(reason)}`);
       }
@@ -411,7 +393,7 @@ export default function BuzzChannels() {
     let unsubscribeWorkspaces: (() => void) | undefined;
     let unsubscribeChats: (() => void) | undefined;
     let workspaceRefresh: SurfaceRefreshScheduler<WorkspaceListView> | undefined;
-    let chatsRefresh: SurfaceRefreshScheduler<ChatListView> | undefined;
+    let releaseChats: (() => void) | undefined;
     void (async () => {
       setError(null);
       const [nextIdentity, pendingInvite, nextRelayUrl] = await Promise.all([
@@ -450,26 +432,7 @@ export default function BuzzChannels() {
       if (cachedWorkspaces) setWorkspaceList(cachedWorkspaces);
       const selectedId =
         requestedWorkspaceId ?? storedWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
-      const chatCacheAddress = selectedId
-        ? surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id/chats', {
-            workspaceId: selectedId,
-          })
-        : null;
-      const cachedChats = chatCacheAddress
-        ? await mobileSurfaceCache.read(chatCacheAddress, isChatListView)
-        : null;
-      if (cancelled) return;
-      if (cachedChats) setChatList(cachedChats);
-      const relay = await relayPromise;
-      if (cancelled) return;
-      let heldChats = cachedChats;
       let selectedWorkspaceRemoved = false;
-      const paintChats = (value: ChatListView) => {
-        if (selectedWorkspaceRemoved) return;
-        heldChats = value;
-        setChatList(value);
-        if (chatCacheAddress) mobileSurfaceCache.publish(chatCacheAddress, value, isChatListView);
-      };
 
       workspaceRefresh = new SurfaceRefreshScheduler({
         fetch: () => mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () => http.workspaces()),
@@ -482,11 +445,10 @@ export default function BuzzChannels() {
           }
           if (!selectedId || !value.workspaces.some((workspace) => workspace.id === selectedId)) {
             selectedWorkspaceRemoved = true;
-            chatsRefresh?.dispose();
             unsubscribeChats?.();
             unsubscribeChats = undefined;
-            if (chatCacheAddress) void mobileSurfaceCache.remove(chatCacheAddress);
-            heldChats = null;
+            chatStore.current = null;
+            if (chats) void chats.remove();
             setChatList(null);
             setWorkspaceDetail(null);
             setMemberPickerVisible(false);
@@ -506,135 +468,50 @@ export default function BuzzChannels() {
       });
       workspaceScheduler.current = workspaceRefresh;
 
-      let chatListenReady: Promise<void> = Promise.resolve();
-      if (selectedId && chatCacheAddress) {
-        let chatWatchKey = '';
-        let chatWatchGeneration = 0;
-        // Deltas that landed while a chats read was in flight: the read may
-        // predate them, and no later read comes to correct it.
-        let readInFlight = false;
-        // Decide whether a cached list needs a covering read after all Room
-        // subscriptions report their resume cursors.
-        let coverageDecided = false;
-        const resumedRooms = new Set<string>();
-        let deltasDuringRead: ChatListDelta[] = [];
-        const cornerStatusSequence = new Map<string, number>();
-        // Rooms the socket delivered any frame for since the last applied read.
-        const heardRooms = new Set<string>();
-        let liveReadApplied = false;
-        const installChatWatch = async (filters: ChatListView['watchFilters']): Promise<void> => {
-          const generation = ++chatWatchGeneration;
-          chatWatchKey = chatWatchFiltersKey(filters);
-          // The previous watch stays live until its replacement is installed,
-          // so a frame for a Room in both sets is never dropped in between.
-          const previous = unsubscribeChats;
-          unsubscribeChats = undefined;
-          // Cold deck without Room ids must not subscribe the Workspace UUID as
-          // #h — canReadRoom refuses it and live invalidation never lands.
-          if (filters.length === 0) {
-            previous?.();
-            return;
-          }
-          const stop = await relay.surfaceSubscribe(filters, (event) => {
-            const live =
-              'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
-            if (live && 'roomId' in live) heardRooms.add(live.roomId);
-            if (live?.type === 'subscribed') {
-              if (!live.resumed) cornerStatusSequence.delete(live.roomId);
-              if (live.resumed) resumedRooms.add(live.roomId);
-              else resumedRooms.delete(live.roomId);
-            }
-            if (live?.type === 'corner-status' && live.sequence !== undefined) {
-              if (live.sequence <= (cornerStatusSequence.get(live.roomId) ?? -1)) return;
-              cornerStatusSequence.set(live.roomId, live.sequence);
-            }
-            if (live?.type === 'message-delta' || live?.type === 'turn-delta' ||
-                live?.type === 'corner-status') {
-              if (readInFlight) deltasDuringRead.push(live);
-              const needsRead = !heldChats || chatListDeltaNeedsRead(heldChats, live);
-              if (heldChats) paintChats(applyChatListDelta(heldChats, live));
-              if (needsRead) {
-                if (deckVisible()) chatsRefresh?.signal();
-                else deckMissedRef.current.chats = true;
-              }
-              return;
-            }
-            // A corner-status hint is a child corner's working/waiting change,
-            // which this deck's rows roll up; it falls through to a read.
-            if (isDraftFrame(event)) return;
-            if (live?.type === 'subscribed' && (live.resumed || !coverageDecided)) return;
-            // A committed-row invalidation announces the delta that follows it.
-            if (live?.type === 'invalidate' && live.deliveryId) return;
-            if (deckVisible()) chatsRefresh?.signal();
-            else deckMissedRef.current.chats = true;
-          });
-          previous?.();
-          if (cancelled || selectedWorkspaceRemoved || generation !== chatWatchGeneration) {
-            stop();
-            return;
-          }
-          unsubscribeChats = stop;
+      // The app-level Room list owns its live watch, covering reads and disk
+      // copy; the deck paints it and reports whether it is on view.
+      const chats = selectedId
+        ? acquireChatList(
+            { relayUrl: nextRelayUrl, viewerPubkey: nextIdentity.publicKey, workspaceId: selectedId },
+            {
+              chats: () => http.chats(selectedId),
+              subscribe: async (filters, listener) =>
+                (await relayPromise).surfaceSubscribe(filters, listener),
+              reconnect: () => nextTransport.reconnectLive(),
+            },
+            {
+              visible: deckVisible,
+              onRead: () => {
+                if (selectedWorkspaceRemoved) return;
+                setNeedsYouSignal((signal) => signal + 1);
+                setRefreshing(false);
+                setError(null);
+              },
+              onError: (reason) => {
+                if (selectedWorkspaceRemoved) return;
+                setRefreshing(false);
+                setError(String(reason));
+                // A deleted Workspace's old route may be restored from storage
+                // before the authoritative workspace read has reconciled it.
+                if (reason instanceof RoomViewHttpError && (reason.status === 403 || reason.status === 404))
+                  workspaceRefresh?.force();
+              },
+            },
+          )
+        : null;
+      releaseChats = () => chats?.release();
+      if (chats) {
+        chatStore.current = chats;
+        const paint = () => {
+          if (!selectedWorkspaceRemoved) setChatList(chats.current());
         };
-        chatsRefresh = new SurfaceRefreshScheduler({
-          fetch: async () => {
-            deltasDuringRead = [];
-            readInFlight = true;
-            try {
-              return await mobileSurfaceCache.fetch(chatCacheAddress, isChatListView, () => http.chats(selectedId));
-            } finally {
-              readInFlight = false;
-            }
-          },
-          apply: (read) => {
-            deckMissedRef.current.chats = false;
-            const missedLive =
-              liveReadApplied &&
-              heldChats !== null &&
-              roomsMissedByLive(heldChats, read, heardRooms).length > 0;
-            heardRooms.clear();
-            liveReadApplied = true;
-            const value = deltasDuringRead.reduce(
-              applyChatListDelta,
-              keepUnavailableChatFacts(heldChats, read),
-            );
-            paintChats(value);
-            setNeedsYouSignal((signal) => signal + 1);
-            if (missedLive) nextTransport.reconnectLive();
-            setRefreshing(false);
-            setError(null);
-            void mobileSurfaceCache.write(chatCacheAddress, value, isChatListView);
-            const nextWatchKey = chatWatchFiltersKey(value.watchFilters);
-            if (nextWatchKey !== chatWatchKey) void installChatWatch(value.watchFilters);
-          },
-          onError: (reason) => {
-            if (selectedWorkspaceRemoved) return;
-            setRefreshing(false);
-            setError(String(reason));
-            // A deleted Workspace's old route may be restored from storage
-            // before the authoritative workspace read has reconciled it.
-            if (reason instanceof RoomViewHttpError && (reason.status === 403 || reason.status === 404))
-              workspaceRefresh?.force();
-          },
-        });
-        chatScheduler.current = chatsRefresh;
-        // Seed from cache when present; otherwise the first chats GET apply
-        // reinstalls so the deck never watches a Workspace id.
-        const cachedFilters = cachedChats?.watchFilters ?? [];
-        const expectedRooms = [...new Set(cachedFilters.flatMap((filter) => [
-          ...(filter['#h'] ?? []),
-          ...(filter['#d'] ?? []).map((value) => value.split(':').at(-1) ?? ''),
-        ]).filter(Boolean))];
-        chatListenReady = installChatWatch(cachedFilters).then(() =>
-          sharedLiveConnection().whenSubscribed(cachedFilters, CHAT_SUBSCRIBE_WAIT_MS),
-        );
-        const openingChats = chatListenReady.then(async () => {
-          coverageDecided = true;
-          if (cachedChats && expectedRooms.length &&
-              expectedRooms.every((roomId) => resumedRooms.has(roomId))) return;
-          await chatsRefresh?.startAfter(Promise.resolve());
-        });
-        chatListenReady = openingChats;
+        paint();
+        // A store another screen already read is current: it seeds the badge.
+        if (chats.confirmed()) setNeedsYouSignal((signal) => signal + 1);
+        unsubscribeChats = chats.subscribe(paint);
       }
+      const relay = await relayPromise;
+      if (cancelled) return;
 
       const workspaceListenReady = relay
         .surfaceSubscribe(
@@ -650,10 +527,7 @@ export default function BuzzChannels() {
           if (cancelled) stop();
           else unsubscribeWorkspaces = stop;
         });
-      await Promise.all([
-        workspaceRefresh.startAfter(workspaceListenReady),
-        chatListenReady,
-      ]);
+      await workspaceRefresh.startAfter(workspaceListenReady);
     })().catch((reason) => {
       if (!cancelled) setError(String(reason));
     });
@@ -662,9 +536,9 @@ export default function BuzzChannels() {
       unsubscribeWorkspaces?.();
       unsubscribeChats?.();
       workspaceRefresh?.dispose();
-      chatsRefresh?.dispose();
+      releaseChats?.();
       workspaceScheduler.current = null;
-      chatScheduler.current = null;
+      chatStore.current = null;
     };
   }, [deckVisible, requestedWorkspaceId, retryGeneration]);
 
@@ -889,7 +763,7 @@ export default function BuzzChannels() {
           setPendingRepo(null);
           setShowRepoPicker(false);
           setShowCreateRoom(false);
-          chatScheduler.current?.force();
+          chatStore.current?.force();
         },
       });
       if (!publishAcknowledged) {
@@ -899,7 +773,7 @@ export default function BuzzChannels() {
         setShowRepoPicker(false);
         setShowCreateRoom(false);
       }
-      chatScheduler.current?.force();
+      chatStore.current?.force();
     } catch (reason) {
       setError(
         publishAcknowledged

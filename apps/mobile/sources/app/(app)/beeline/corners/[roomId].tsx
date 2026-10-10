@@ -314,6 +314,7 @@ export default function BuzzCorners() {
         <RoomCornersList
           corners={[...surface.corners, ...openMore]}
           onMoreOpen={() => void loadMoreOpen()}
+          moreOpen={!!nextOpen}
           parentRoomId={decodedId}
           parentRoomName={title}
           refreshing={refreshing}

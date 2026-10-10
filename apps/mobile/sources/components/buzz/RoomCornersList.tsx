@@ -82,6 +82,7 @@ export function RoomCornersList({
   onShowArchived,
   onMoreArchived,
   onMoreOpen,
+  moreOpen = false,
   viewerPubkey,
   nowMs,
   desktop = false,
@@ -103,6 +104,8 @@ export function RoomCornersList({
   onMoreArchived?: () => void;
   /** Reads the next page of open corners when the list reaches its end. */
   onMoreOpen?: () => void;
+  /** A later open page exists, including when a desktop filter hides this page's rows. */
+  moreOpen?: boolean;
   /** Whose corners make up the Mine section. */
   viewerPubkey?: string;
   /** Clock for the closure stamps; defaults to now at paint. */
@@ -378,6 +381,8 @@ export function RoomCornersList({
       }
       ListFooterComponent={
         <View>
+          {moreOpen ? <Button label="MORE OPEN CORNERS" variant="secondary"
+            onPress={onMoreOpen} testID="room-corners-more-open" /> : null}
           {/* The fold for closed work, standing on every Room. The first
             open reads the first page; after that it only folds and unfolds.
             The archived rows hang off the footer rather than joining `data`

@@ -54,6 +54,7 @@ function sourceLabel(bookmark: MessageBookmarkView): string {
 }
 
 function clearedLabel(clear: PendingClear): string {
+  if (clear.kind === 'saved') return 'Cleared saved bookmarks';
   const count = clear.items.length;
   const noun = clear.kind === 'needs' ? 'item' : 'bookmark';
   return `Cleared ${count} ${noun}${count === 1 ? '' : 's'}`;
@@ -83,7 +84,8 @@ type Row =
   | { readonly key: string; readonly type: 'needs'; readonly item: NeedsYouItemView }
   | { readonly key: string; readonly type: 'needs-empty' }
   | { readonly key: string; readonly type: 'saved'; readonly bookmark: MessageBookmarkView }
-  | { readonly key: string; readonly type: 'saved-empty' };
+  | { readonly key: string; readonly type: 'saved-empty' }
+  | { readonly key: string; readonly type: 'saved-more' };
 
 /**
  * The tray: exactly two sections, Needs you then Saved. Needs you is the
@@ -530,8 +532,9 @@ export default function TrayScreen() {
             bookmark,
           }))
         : [{ key: 'saved-empty', type: 'saved-empty' } as const]),
+      ...(savedNext ? [{ key: 'saved-more', type: 'saved-more' } as const] : []),
     ];
-  }, [loading, visibleBookmarks, visibleNeeds, workspaceLost]);
+  }, [loading, visibleBookmarks, visibleNeeds, workspaceLost, savedNext]);
 
   const renderSaved = (bookmark: MessageBookmarkView) => (
     <Pressable
@@ -695,6 +698,11 @@ export default function TrayScreen() {
             );
           case 'saved':
             return renderSaved(row.bookmark);
+          case 'saved-more':
+            return <Pressable accessibilityRole="button" onPress={() => void loadMoreSaved()}
+              style={styles.emptyBlock} testID="bookmarks-more">
+              <Text style={styles.removeText}>LOAD MORE SAVED</Text>
+            </Pressable>;
           case 'saved-empty':
             return (
               <View style={styles.emptyBlock} testID="bookmarks-empty">

@@ -415,12 +415,13 @@ export default function BuzzMembers({
     let subscribedFilters = '';
     let subscriptionChange = Promise.resolve();
     void (async () => {
-      const nextIdentity = await loadBuzzIdentity();
+      const [nextIdentity, nextRelayUrl] = await Promise.all([
+        loadBuzzIdentity(), getEffectiveRelayUrl(),
+      ]);
       if (!nextIdentity) {
         router.replace('/beeline/onboarding');
         return;
       }
-      const nextRelayUrl = await getEffectiveRelayUrl();
       const address = surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id', {
         workspaceId,
       });
@@ -456,11 +457,10 @@ export default function BuzzMembers({
         return subscriptionChange;
       };
       scheduler = new SurfaceRefreshScheduler({
-        fetch: () => http.workspace(workspaceId),
+        fetch: () => mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
         apply: (value) => {
           setSurface(value);
           setWorkspaceError(null);
-          void mobileSurfaceCache.write(address, value, isWorkspaceView);
           // The bootstrap subscription cannot name an agent paired after the
           // screen opened. The indexed Workspace response is authoritative for
           // the Room-scoped presence filters that can refresh its roster.

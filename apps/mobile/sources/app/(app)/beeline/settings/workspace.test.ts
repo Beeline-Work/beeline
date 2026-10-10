@@ -67,6 +67,13 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 vi.mock('@/auth/buzz-identity-storage', () => auth);
+vi.mock('@/buzz/surface-storage', () => ({
+  surfaceAddress: () => 'workspace-surface',
+  mobileSurfaceCache: {
+    read: vi.fn(async () => null),
+    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
+  },
+}));
 vi.mock('@/buzz/avatar-upload', () => avatarUpload);
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ monolithEnabled: runtime.monolithEnabled }),

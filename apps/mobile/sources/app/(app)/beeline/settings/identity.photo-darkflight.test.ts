@@ -87,6 +87,7 @@ vi.mock('@beeline/buzz-client', () => ({
   buildOidcBindEvent: vi.fn(),
   finishOidcBind: vi.fn(),
   fallbackPersonName: (pubkey: string) => `Person ${pubkey.slice(0, 4)}`,
+  isWorkspaceListView: () => true,
   lookupRecovery: identityApi.lookupRecovery,
   lookupManagedIdentity: identityApi.lookupManagedIdentity,
   normalizeNip05Identifier: (value: string) => value.trim().toLowerCase(),
@@ -193,7 +194,14 @@ vi.mock('@/push/push-level-storage', () => ({
   saveStoredPushLevel: vi.fn(async () => undefined),
 }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
-vi.mock('@/buzz/surface-storage', () => ({ clearMobileSurfaceStorage: vi.fn() }));
+vi.mock('@/buzz/surface-storage', () => ({
+  clearMobileSurfaceStorage: vi.fn(),
+  surfaceAddress: vi.fn(() => 'workspace-surface'),
+  mobileSurfaceCache: {
+    read: vi.fn(async () => null),
+    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
+  },
+}));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     create: (styles: unknown) =>

@@ -3,6 +3,7 @@ import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
+import { LiveHub } from './live.js';
 import {
   SYSTEM_IDENTITY_ID,
   composeReleaseNotice,
@@ -200,6 +201,33 @@ describe('notifyReleaseDelivered', () => {
     const offline: string[] = [];
     const stop = reconnect.subscribeHelperRelease(({ sha }) => offline.push(sha));
     await vi.waitFor(() => expect(offline).toContain('a'.repeat(40)));
+    stop();
+  });
+
+  it('does not query again during five idle minutes and reconciles once on reconnect', async () => {
+    const live = new LiveHub();
+    const query = vi.spyOn(database, 'query');
+    const notifier = new ReleaseNotifier(database, { live });
+    const received: string[] = [];
+    const stop = notifier.subscribeHelperRelease(({ sha }) => received.push(sha));
+    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1));
+    vi.useFakeTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(query).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    live.publish({ type: 'helper-release', roomId: '', agentId: '',
+      version: 'v0.0.128', sha: 'a'.repeat(40) });
+    expect(received).toEqual(['a'.repeat(40)]);
+    expect(query).toHaveBeenCalledTimes(1);
+    live.resync();
+    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
+    await database.query('SELECT 1'); // Drain the queued reconcile before closing PGlite.
+    const late = notifier.subscribeHelperRelease(() => {});
+    expect(query).toHaveBeenCalledTimes(3);
+    late();
     stop();
   });
 

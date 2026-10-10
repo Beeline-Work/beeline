@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 import * as React from 'react';
@@ -12,7 +12,7 @@ const appState = vi.hoisted(() => ({
   listeners: new Set<(state: string) => void>(),
 }));
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
-const route = vi.hoisted(() => ({ params: { communityId: 'ws' } as { communityId?: string } }));
+const route = vi.hoisted(() => ({ params: { communityId: 'ws', workspaceName: 'Clover Workspace' } as { communityId?: string; workspaceName?: string } }));
 const workspaceSet = vi.hoisted(() => ({
   active: null as string | null,
   workspaces: [] as { id: string }[],
@@ -104,6 +104,14 @@ vi.mock('@expo/vector-icons', async () => {
   return { Ionicons: (props: any) => ReactModule.createElement('Ionicons', props) };
 });
 vi.mock('@/auth/buzz-identity-storage', () => auth);
+vi.mock('@/buzz/surface-storage', () => ({
+  surfaceAddress: (_relay: string, _viewer: string, endpoint: string) => endpoint,
+  mobileSurfaceCache: {
+    read: vi.fn(async () => null),
+    write: vi.fn(async () => undefined),
+    remove: vi.fn(async () => undefined),
+  },
+}));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/push/push-room-prefetch', () => ({ prefetchPushRoom: prefetchRoom }));
 vi.mock('@/sync/transport/room-view-client', () => ({
@@ -229,7 +237,7 @@ function serve({
     if (name === 'readNeedsYou') return { items: needs };
     if (name === 'listMessageBookmarks') return { bookmarks };
     if (name === 'clearNeedsYouSection') {
-      needs = needs.filter((item: any) => item.approval);
+      needs = [];
       return undefined;
     }
     if (name === 'clearMessageBookmarks') {
@@ -275,7 +283,7 @@ beforeEach(() => {
   navigation.back.mockReset();
   navigation.push.mockReset();
   navigation.replace.mockReset();
-  route.params = { communityId: 'ws' };
+  route.params = { communityId: 'ws', workspaceName: 'Clover Workspace' };
   workspaceSet.active = null;
   workspaceSet.workspaces = [];
   phoneOperation.mockReset();
@@ -661,8 +669,8 @@ describe('Tray Needs you', () => {
       expect(textOf(tree)).toContain('for Johnny Â· experiments / sec-filing-desk');
       // Older than a day: the age takes the warning tone.
       expect(textOf(tree)).toContain('2d');
-      // An approval has no swipe; a decision is what clears it.
-      expect(tree.root.findAllByProps({ testID: 'needs-you-swipe-grant-1' })).toHaveLength(0);
+      // Opening an approval leaves it; a separate swipe can dismiss its tray row.
+      expect(tree.root.findAllByProps({ testID: 'needs-you-swipe-grant-1' }).length).toBeGreaterThan(0);
       await act(async () => {
         tree.root.findByProps({ testID: 'needs-you-grant-1' }).props.onPress();
       });
@@ -729,6 +737,33 @@ describe('Tray Needs you', () => {
     expect(cleared()).toHaveLength(1);
     expect(navigation.push).not.toHaveBeenCalled();
     expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' })).toHaveLength(0);
+  });
+
+  it('a phone swipe dismisses an approval without deciding it', async () => {
+    layout.os = 'ios';
+    layout.width = 390;
+    serve({ needs: [need({ messageId: 'grant-1', approval: {
+      kind: 'grant', actor: 'BBC', ask: 'asks to run', subject: 'git push', literal: true,
+    } })] });
+    const tree = await renderTray();
+    await act(async () => {
+      tree.root.findByProps({ testID: 'needs-you-swipe-grant-1' }).props.onSwipeableOpen('left');
+    });
+    expect(cleared()).toEqual([['clearNeedsYou', { workspaceId: 'ws', messageId: 'grant-1' }]]);
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
+  });
+
+  it('a desktop hover offers DISMISS for an approval', async () => {
+    serve({ needs: [need({ messageId: 'grant-1', approval: {
+      kind: 'grant', actor: 'BBC', ask: 'asks to run', subject: 'git push', literal: true,
+    } })] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'needs-you-grant-1' }).props.onHoverIn());
+    await act(async () => tree.root.findByProps({ testID: 'needs-you-dismiss-grant-1' })
+      .props.onPress({ stopPropagation: () => undefined }));
+    expect(cleared()).toEqual([['clearNeedsYou', { workspaceId: 'ws', messageId: 'grant-1' }]]);
+    expect(navigation.push).not.toHaveBeenCalled();
   });
 
   it('a desktop click clears the cell and keeps its message open in the pane', async () => {
@@ -829,22 +864,33 @@ describe('Tray section CLEAR', () => {
   it.each([
     { surface: 'desktop', os: 'web', width: 1200 },
     { surface: 'mobile', os: 'ios', width: 390 },
-  ])('clears every question on $surface, keeps approvals, and sends after the Undo window', async ({ os, width }) => {
+  ])('clears every question and approval on $surface after the Undo window', async ({ os, width }) => {
     layout.os = os;
     layout.width = width;
     serve({ needs: [approval(), need(), need({ messageId: 'ask-2' })] });
     const tree = await renderTray();
     await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
-    expect(ids(tree, /^needs-you-(grant|ask)-\d$/)).toEqual(['needs-you-grant-1']);
-    expect(textOf(tree)).toContain('Cleared 2 items');
+    expect(ids(tree, /^needs-you-(grant|ask)-\d$/)).toEqual([]);
+    expect(textOf(tree)).toContain('Cleared 3 items');
     expect(calls('clearNeedsYouSection')).toEqual([]);
     await act(async () => {
       vi.advanceTimersByTime(6_000);
     });
     expect(calls('clearNeedsYouSection')).toEqual([['clearNeedsYouSection', { workspaceId: 'ws' }]]);
     expect(tree.root.findAllByProps({ testID: 'tray-clear-undo' })).toHaveLength(0);
-    // Only an approval is left, and a decision clears that.
+    expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
     expect(tree.root.findAllByProps({ testID: 'tray-clear-needs' })).toHaveLength(0);
+  });
+
+  it('shows CLEAR with approvals alone and dismisses all of them', async () => {
+    serve({ needs: [approval(), need({ ...approval(), messageId: 'grant-2' })] });
+    const tree = await renderTray();
+    expect(tree.root.findByProps({ testID: 'tray-clear-needs' })).toBeDefined();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    expect(ids(tree, /^needs-you-grant-\d$/)).toEqual([]);
+    await act(async () => { vi.advanceTimersByTime(6_000); });
+    expect(calls('clearNeedsYouSection')).toHaveLength(1);
+    expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
   });
 
   it('UNDO brings every bookmark back and sends nothing', async () => {
@@ -1044,45 +1090,76 @@ it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN â
   console.log('R12a Demonstrated, Chrome 760px:', result);
 }, 90_000);
 
+function clearProofShims(mobile: string) {
+  return {
+    ...webProofShims(mobile),
+    'expo-router': `import React from 'react';
+      export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
+      export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });
+      export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
+    '@/sync/transport/monolith-operation': `const now = Math.floor(Date.now() / 1000);
+      const base = { workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'launch', roomKind: 'room', createdAt: now - 600, author: { name: 'Avery' } };
+      export const monolithPhoneOperation = async (name) => name === 'readNeedsYou' ? { items: [
+        { ...base, messageId: 'grant-1', text: 'BBC asks to run git push', approval: { kind: 'grant', actor: 'BBC', ask: 'asks to run', subject: 'git push', literal: true } },
+        ...(!location.search.includes('approvalOnly=1') ? [{ ...base, messageId: 'ask-1', text: 'can you confirm the review note?', expiresAt: now + 80000 }] : []),
+      ] } : name === 'listMessageBookmarks' ? { bookmarks: [{
+        messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'Room', roomKind: 'room',
+        messageCreatedAt: now - 7200, bookmarkedAt: now - 120, available: !location.search.includes('remove=1'), author: { name: 'Avery' }, text: 'Bookmarked line'
+      }] } : undefined;`,
+    '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
+    '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
+    '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
+    '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
+    'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
+    '@expo/vector-icons': "import React from 'react'; export const Ionicons = () => React.createElement('span');",
+  };
+}
+
 it.skipIf(!existsSync(CHROME)).each([
   { section: 'needs', surface: 'phone', width: 390 },
   { section: 'saved', surface: 'phone', width: 390 },
   { section: 'saved', surface: 'desktop', width: 1200 },
   { section: 'needs', surface: 'phone', width: 390, remove: true },
 ])(
-  'Demonstrated: Chrome $surface CLEAR on $section empties the section, keeps approvals, and offers Undo',
+  'Demonstrated: Chrome $surface CLEAR on $section empties the section and offers Undo',
   async ({ section, surface, width, remove }) => {
     const mobile = process.cwd();
     const { result, status, stderr } = await runBrowserProof({
       entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'), mobile, width, budgetMs: 3000,
       query: `?surface=${surface}&mode=clear&clear=${section}${remove ? '&remove=1' : ''}`,
-      shims: {
-        ...webProofShims(mobile),
-        'expo-router': `import React from 'react';
-          export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
-          export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });
-          export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
-        '@/sync/transport/monolith-operation': `const now = Math.floor(Date.now() / 1000);
-          const base = { workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'launch', roomKind: 'room', createdAt: now - 600, author: { name: 'Avery' } };
-          export const monolithPhoneOperation = async (name) => name === 'readNeedsYou' ? { items: [
-            { ...base, messageId: 'grant-1', text: 'BBC asks to run git push', approval: { kind: 'grant', actor: 'BBC', ask: 'asks to run', subject: 'git push', literal: true } },
-            { ...base, messageId: 'ask-1', text: 'can you confirm the review note?', expiresAt: now + 80000 },
-          ] } : name === 'listMessageBookmarks' ? { bookmarks: [{
-            messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'Room', roomKind: 'room',
-            messageCreatedAt: now - 7200, bookmarkedAt: now - 120, available: !location.search.includes('remove=1'), author: { name: 'Avery' }, text: 'Bookmarked line'
-          }] } : undefined;`,
-        '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
-        '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
-        '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
-        '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
-        'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
-        '@expo/vector-icons': "import React from 'react'; export const Ionicons = () => React.createElement('span');",
-      },
+      shims: clearProofShims(mobile),
     });
     expect(status, stderr).toBe(0);
     expect(result).toContain('PASS');
-    expect(result).toContain(section === 'needs' ? 'Cleared 1 item' : 'Cleared 1 bookmark');
+    expect(result).toContain(section === 'needs' ? 'Cleared 2 items' : 'Cleared 1 bookmark');
     console.log(`Demonstrated, Chrome ${width}px, CLEAR ${section}${remove ? ' then REMOVE' : ''}:`, result);
+  },
+  90_000,
+);
+
+it.skipIf(!existsSync(CHROME) || process.env.BEELINE_TRAY_FRAMES !== '1')(
+  'captures before and after tray frames for approval-only Needs you and Saved',
+  async () => {
+    const mobile = process.cwd();
+    const frames = path.resolve(mobile, '../../docs/proofs/tray-clear');
+    mkdirSync(frames, { recursive: true });
+    for (const section of ['needs', 'saved'] as const) {
+      for (const frame of ['before', 'after'] as const) {
+        const { result, status, stderr } = await runBrowserProof({
+          entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'),
+          mobile,
+          width: 390,
+          height: 520,
+          budgetMs: 3000,
+          head: '<style>#result{display:none}</style>',
+          query: `?surface=phone&mode=clear&clear=${section}&frame=${frame}&approvalOnly=1`,
+          screenshotPath: path.join(frames, `${section}-${frame}.png`),
+          shims: clearProofShims(mobile),
+        });
+        expect(status, stderr).toBe(0);
+        expect(result).toContain('PASS');
+      }
+    }
   },
   90_000,
 );

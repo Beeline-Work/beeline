@@ -20,7 +20,22 @@ vi.mock('react-native', async () => {
 });
 
 let reducedMotion = false;
-vi.mock('react-native-reanimated', () => ({ useReducedMotion: () => reducedMotion }));
+vi.mock('react-native-reanimated', async () => {
+  const ReactModule = await import('react');
+  return {
+    default: { View: (props: any) => ReactModule.createElement('AnimatedView', props, props.children) },
+    cancelAnimation: () => undefined,
+    Easing: { out: (fn: unknown) => fn, cubic: () => undefined },
+    runOnJS: (fn: (...args: any[]) => void) => fn,
+    useAnimatedStyle: (style: () => unknown) => style(),
+    useReducedMotion: () => reducedMotion,
+    useSharedValue: (value: number) => ReactModule.useRef({ value }).current,
+    withTiming: (value: number, config: { duration: number }, done?: (finished: boolean) => void) => {
+      if (done) setTimeout(() => done(true), config.duration);
+      return value;
+    },
+  };
+});
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));

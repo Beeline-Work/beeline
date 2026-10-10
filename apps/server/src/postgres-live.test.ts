@@ -144,6 +144,26 @@ describe('Postgres live fanout', () => {
     expect(wake).toHaveBeenCalledTimes(2);
   });
 
+  it('fans out one committed helper release without a follow-up read', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const events: LiveEvent[] = [];
+    live.subscribeAll((event) => events.push(event));
+    void listener.run();
+    await eventually(() => listener.projectionHealth().connected);
+    const query = vi.spyOn(database, 'query');
+    await database.query(`INSERT INTO helper_release_notifications(singleton,version,sha)
+      VALUES(true,'v0.0.128',$1)`, ['a'.repeat(40)]);
+    await eventually(() => events.some((event) => event.type === 'helper-release'));
+    expect(events.filter((event) => event.type === 'helper-release')).toEqual([{
+      type: 'helper-release', roomId: '', agentId: '',
+      version: 'v0.0.128', sha: 'a'.repeat(40),
+    }]);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
   it('delivers read-mark changes to the listener with the reader identity', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);

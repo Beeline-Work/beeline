@@ -33,6 +33,17 @@ let currentRun: TraceMark[] = [];
 let listeners: Array<(run: readonly TraceMark[]) => void> = [];
 let pageStartedAt: number | null = null;
 let pageReported = false;
+let successfulPagesSinceReport = 0;
+const SUCCESS_SAMPLE_RATE = 8;
+
+function observePage(durationMs: number, failed: boolean): void {
+  // The current endpoint accepts only one observation. Sample successful
+  // opens so their durations stay real measurements, and never sample errors.
+  if (!failed && ++successfulPagesSinceReport < SUCCESS_SAMPLE_RATE) return;
+  if (!failed) successfulPagesSinceReport = 0;
+  void import('./room-page-observation').then(({ reportRoomPageObservation }) =>
+    reportRoomPageObservation(durationMs, failed), () => undefined);
+}
 
 /** The first mark of an open. Everything after it belongs to the same run. */
 const RUN_START_PHASE = 'nav-dispatch';
@@ -70,8 +81,7 @@ export function markRoomOpen(phase: string, detail?: string): void {
     pageReported = true;
     const durationMs = Math.max(0, Math.min(600_000, Math.round(performance.now() - pageStartedAt)));
     if (typeof process === 'undefined' || (process.env.NODE_ENV !== 'test' && !process.env.VITEST)) {
-      void import('./room-page-observation').then(({ reportRoomPageObservation }) =>
-        reportRoomPageObservation(durationMs, phase === 'room-read-error'), () => undefined);
+      observePage(durationMs, phase === 'room-read-error');
     }
   }
   if (tracingOff()) return;

@@ -4,7 +4,6 @@ import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsE
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {
   loadActiveCommunityId,
-  loadLastViewedChannel,
   saveActiveCommunityId,
   subscribeActiveCommunityId,
 } from '@/buzz/community-storage';
@@ -23,6 +22,7 @@ import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
 import { roomListSections } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
@@ -44,6 +44,8 @@ import {
   type ChatListView,
   type RoomViewIdentity,
   type WorkspaceListView,
+  isChatListView,
+  isWorkspaceListView,
 } from '@beeline/buzz-client';
 import { Ionicons } from '@expo/vector-icons';
 import { useGlobalSearchParams, usePathname, useRouter, type Href } from 'expo-router';
@@ -181,6 +183,7 @@ export const SidebarView = React.memo(function SidebarView() {
   const searchRef = React.useRef<TextInput>(null);
   const workspaceIdRef = React.useRef<string | null>(null);
   const [client, setClient] = React.useState<RoomViewClient | null>(null);
+  const [relayUrl, setRelayUrl] = React.useState<string | null>(null);
   const [identityPubkey, setIdentityPubkey] = React.useState<string | null>(null);
   const [viewerIdentity, setViewerIdentity] = React.useState<RoomViewIdentity | null>(null);
   const [workspaces, setWorkspaces] = React.useState<WorkspaceListView['workspaces']>([]);
@@ -201,35 +204,35 @@ export const SidebarView = React.memo(function SidebarView() {
     void (async () => {
       const identity = await loadBuzzIdentity();
       if (!identity) return;
+      const [baseUrl, stored] = await Promise.all([
+        getEffectiveRelayUrl(),
+        loadActiveCommunityId(identity.publicKey),
+      ]);
+      const address = surfaceAddress(baseUrl, identity.publicKey, '/workspaces');
+      const cached = await mobileSurfaceCache.read(address, isWorkspaceListView);
+      if (cancelled) return;
+      const selected = cached?.workspaces.some((workspace) => workspace.id === routeWorkspaceId)
+        ? routeWorkspaceId!
+        : cached?.workspaces.some((workspace) => workspace.id === stored)
+          ? stored
+          : (cached?.workspaces[0]?.id ?? stored);
+      setClient(new RoomViewClient({ baseUrl, identity }));
+      setRelayUrl(baseUrl);
+      setIdentityPubkey(identity.publicKey);
+      if (cached) {
+        setViewerIdentity(cached.viewer);
+        setWorkspaces(cached.workspaces);
+      }
+      workspaceIdRef.current = selected;
+      setWorkspaceId(selected);
+      if (routeWorkspaceId && selected === routeWorkspaceId && selected !== stored)
+        void saveActiveCommunityId(identity.publicKey, selected);
       void new BuzzRigTransport(identity).surfaceSubscribe([], () => {
         if (!cancelled) setRefreshNonce((nonce) => nonce + 1);
       }).then((stop) => {
         if (cancelled) stop();
         else stopWorkspaces = stop;
       });
-      const http = new RoomViewClient({ baseUrl: await getEffectiveRelayUrl(), identity });
-      const list = await http.workspaces();
-      const stored = await loadActiveCommunityId(identity.publicKey);
-      const selected = list.workspaces.some((workspace) => workspace.id === stored)
-        ? stored
-        : (list.workspaces[0]?.id ?? null);
-      if (cancelled) return;
-      const selectionRemoved = [workspaceIdRef.current, stored, routeWorkspaceId].some(
-        (id) => id && !list.workspaces.some((workspace) => workspace.id === id),
-      );
-      if (workspaceIdRef.current !== selected) setSurface(null);
-      setClient(http);
-      setIdentityPubkey(identity.publicKey);
-      setViewerIdentity(list.viewer);
-      setWorkspaces(list.workspaces);
-      workspaceIdRef.current = selected;
-      setWorkspaceId(selected);
-      if (selectionRemoved) {
-        void saveActiveCommunityId(identity.publicKey, selected);
-        router.replace(selected
-          ? { pathname: '/beeline/channels', params: { communityId: selected } }
-          : '/beeline/community');
-      }
     })().catch(() => {
       if (!cancelled) setNavigationError(`Could not load ${WORKSPACE_LABEL.toLowerCase()}s.`);
     });
@@ -237,37 +240,68 @@ export const SidebarView = React.memo(function SidebarView() {
       cancelled = true;
       stopWorkspaces?.();
     };
-  }, [refreshNonce]);
+  }, []);
 
   React.useEffect(() => {
-    if (!client) return;
+    if (!client || !relayUrl || !identityPubkey) return;
     let cancelled = false;
-    void client.workspaces().then((list) => {
-      if (!cancelled) setWorkspaces(list.workspaces);
+    const address = surfaceAddress(relayUrl, identityPubkey, '/workspaces');
+    const stop = mobileSurfaceCache.subscribe(address, () => {
+      const cached = mobileSurfaceCache.peek(address, isWorkspaceListView);
+      if (!cancelled) {
+        setViewerIdentity(cached?.viewer ?? null);
+        setWorkspaces(cached?.workspaces ?? []);
+      }
+    });
+    // The mounted deck owns its subscription and covering read. Sidebar rows
+    // consume the same projection without starting a second request.
+    if (!pathname.startsWith('/beeline/channels'))
+      void mobileSurfaceCache.fetch(address, isWorkspaceListView, () => client.workspaces()).then((list) => {
+      if (cancelled) return;
+      const selected = workspaceIdRef.current;
+      if (selected && !list.workspaces.some((workspace) => workspace.id === selected)) {
+        const nextId = list.workspaces[0]?.id ?? null;
+        workspaceIdRef.current = nextId;
+        setWorkspaceId(nextId);
+        setSurface(null);
+        void saveActiveCommunityId(identityPubkey, nextId);
+        router.replace(nextId
+          ? { pathname: '/beeline/channels', params: { communityId: nextId } }
+          : '/beeline/community');
+      }
     }).catch(() => {
       if (!cancelled) setNavigationError(`Could not load ${WORKSPACE_LABEL.toLowerCase()}s.`);
-    });
+      });
     return () => {
       cancelled = true;
+      stop();
     };
-  }, [client, pathname]);
+  }, [client, identityPubkey, relayUrl, refreshNonce]);
 
   React.useEffect(() => {
-    if (!client || !workspaceId) return;
+    if (!client || !workspaceId || !relayUrl || !identityPubkey) return;
     let cancelled = false;
+    const address = surfaceAddress(relayUrl, identityPubkey, '/workspace/:id/chats', { workspaceId });
+    const paint = (initial = false) => {
+      const cached = mobileSurfaceCache.peek(address, isChatListView);
+      if (!cancelled) setSurface((current) => cached ?? (initial && current?.workspace.id === workspaceId ? current : null));
+    };
+    paint(true);
+    const stop = mobileSurfaceCache.subscribe(address, () => paint());
     setNavigationError(null);
-    void client
-      .chats(workspaceId)
-      .then((chats) => {
-        if (!cancelled) setSurface(chats);
-      })
+    if (!pathname.startsWith('/beeline/channels')) void (async () => {
+      await mobileSurfaceCache.read(address, isChatListView);
+      if (cancelled) return;
+      await mobileSurfaceCache.fetch(address, isChatListView, () => client.chats(workspaceId));
+    })()
       .catch(() => {
         if (!cancelled) setNavigationError(`Could not load ${ROOMS_LABEL.toLowerCase()}.`);
       });
     return () => {
       cancelled = true;
+      stop();
     };
-  }, [client, pathname, workspaceId]);
+  }, [client, workspaceId, relayUrl, identityPubkey, refreshNonce]);
 
   React.useEffect(() => {
     if (!identityPubkey) return;
@@ -291,9 +325,12 @@ export const SidebarView = React.memo(function SidebarView() {
       if (workspaceIdRef.current === nextWorkspaceId) return;
       workspaceIdRef.current = nextWorkspaceId;
       setWorkspaceId(nextWorkspaceId);
-      setSurface(null);
+      setSurface(relayUrl ? mobileSurfaceCache.peek(
+        surfaceAddress(relayUrl, identityPubkey, '/workspace/:id/chats', { workspaceId: nextWorkspaceId }),
+        isChatListView,
+      ) : null);
       });
-  }, [identityPubkey, workspaces]);
+  }, [identityPubkey, workspaces, relayUrl]);
 
   React.useEffect(() => {
     if (
@@ -305,9 +342,12 @@ export const SidebarView = React.memo(function SidebarView() {
     }
     workspaceIdRef.current = routeWorkspaceId;
     setWorkspaceId(routeWorkspaceId);
-    setSurface(null);
+    setSurface(relayUrl && identityPubkey ? mobileSurfaceCache.peek(
+      surfaceAddress(relayUrl, identityPubkey, '/workspace/:id/chats', { workspaceId: routeWorkspaceId }),
+      isChatListView,
+    ) : null);
     if (identityPubkey) void saveActiveCommunityId(identityPubkey, routeWorkspaceId);
-  }, [identityPubkey, routeWorkspaceId, workspaces]);
+  }, [identityPubkey, routeWorkspaceId, workspaces, relayUrl]);
 
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(identityPubkey, workspaceId);
   const counts = React.useMemo(
@@ -432,32 +472,15 @@ export const SidebarView = React.memo(function SidebarView() {
       if (nextId === workspaceIdRef.current) return;
       workspaceIdRef.current = nextId;
       setWorkspaceId(nextId);
-      setSurface(null);
+      const cached = relayUrl && identityPubkey ? mobileSurfaceCache.peek(
+        surfaceAddress(relayUrl, identityPubkey, '/workspace/:id/chats', { workspaceId: nextId }),
+        isChatListView,
+      ) : null;
+      setSurface(cached);
       if (identityPubkey) void saveActiveCommunityId(identityPubkey, nextId);
-      if (client) {
-        setNavigationError(null);
-        void Promise.all([
-          client.chats(nextId),
-          identityPubkey ? loadLastViewedChannel(identityPubkey, nextId) : Promise.resolve(null),
-        ])
-          .then(([chats, lastViewedRoomId]) => {
-            if (workspaceIdRef.current !== nextId) return;
-            setSurface(chats);
-            router.push(
-              desktopWorkspaceRoute(
-                nextId,
-                chats.chats.map((chat) => chat.room.id),
-                lastViewedRoomId,
-              ) as Href,
-            );
-          })
-          .catch(() => {
-            if (workspaceIdRef.current === nextId)
-              setNavigationError(`Could not load ${ROOMS_LABEL.toLowerCase()}.`);
-          });
-      }
+      router.push(desktopWorkspaceRoute(nextId, cached?.chats.map((chat) => chat.room.id) ?? [], null) as Href);
     },
-    [client, identityPubkey, router],
+    [identityPubkey, relayUrl, router],
   );
 
   return (
@@ -497,7 +520,7 @@ export const SidebarView = React.memo(function SidebarView() {
                     onTray={() =>
                       router.push({
                         pathname: '/beeline/tray',
-                        params: { communityId: workspaceId },
+                        params: { communityId: workspaceId, workspaceName: activeWorkspace?.name ?? '' },
                       } as Href)
                     }
                     onMembers={() =>
@@ -598,7 +621,7 @@ export const SidebarView = React.memo(function SidebarView() {
                 ? () =>
                     router.push({
                       pathname: '/beeline/tray',
-                      params: { communityId: workspaceId },
+                      params: { communityId: workspaceId, workspaceName: activeWorkspace?.name ?? '' },
                     } as Href)
                 : undefined
             }

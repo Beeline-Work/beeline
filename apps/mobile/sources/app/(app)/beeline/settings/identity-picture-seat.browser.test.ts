@@ -38,7 +38,12 @@ function seatShims(mobile: string): Record<string, string> {
     '@/buzz/runtime-config': `export const getBuzzRuntimeConfig = () => ({ monolithEnabled: true, relayUrl: 'https://relay.test' });`,
     '@/buzz/workbench': `export const workbenchSummary = () => ({ value: '0 tools · 0 keys' });`,
     '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readWorkbench: async () => ({ connections: [] }) });`,
-    '@/buzz/surface-storage': `export const clearMobileSurfaceStorage = async () => undefined;`,
+    '@/buzz/surface-storage': `export const clearMobileSurfaceStorage = async () => undefined;
+    export const surfaceAddress = () => 'workspace-surface';
+    export const mobileSurfaceCache = {
+      read: async () => null,
+      fetch: async (_address, _guard, request) => request(),
+    };`,
     '@/buzz/room-open-trace': `export const roomOpenTraceEnabled = () => false;`,
     '@/sync/appConfig': `export const loadAppConfig = () => ({ releaseVersion: 'development', releaseSha: null });`,
     '@/sync/storage': `export const useLocalSettingMutable = (name) => [name === 'appearance' ? 'dark' : 'medium', () => undefined];`,

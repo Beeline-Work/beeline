@@ -414,24 +414,25 @@ export default function BuzzChannels() {
     let chatsRefresh: SurfaceRefreshScheduler<ChatListView> | undefined;
     void (async () => {
       setError(null);
-      const nextIdentity = await loadBuzzIdentity();
+      const [nextIdentity, pendingInvite, nextRelayUrl] = await Promise.all([
+        loadBuzzIdentity(),
+        loadPendingInvite(),
+        getEffectiveRelayUrl(),
+      ]);
       if (!nextIdentity) {
         router.replace('/beeline/onboarding');
         return;
       }
       // An invite opened before sign-in outranks every other landing.
-      const pendingInvite = await loadPendingInvite();
       if (pendingInvite) {
         if (!cancelled)
           router.replace({ pathname: '/join/[token]', params: { token: pendingInvite } });
         return;
       }
-      const nextRelayUrl = await getEffectiveRelayUrl();
       if (cancelled) return;
       const nextTransport = new BuzzRigTransport(nextIdentity);
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
-      const relay = await nextTransport.ensureClient();
-      if (cancelled) return;
+      const relayPromise = nextTransport.ensureClient();
       setIdentity(nextIdentity);
       setRelayUrl(nextRelayUrl);
       setTransport(nextTransport);
@@ -441,11 +442,10 @@ export default function BuzzChannels() {
         nextIdentity.publicKey,
         '/workspaces',
       );
-      const storedWorkspaceId = await loadActiveCommunityId(nextIdentity.publicKey);
-      const cachedWorkspaces = await mobileSurfaceCache.read(
-        workspaceCacheAddress,
-        isWorkspaceListView,
-      );
+      const [storedWorkspaceId, cachedWorkspaces] = await Promise.all([
+        loadActiveCommunityId(nextIdentity.publicKey),
+        mobileSurfaceCache.read(workspaceCacheAddress, isWorkspaceListView),
+      ]);
       if (cancelled) return;
       if (cachedWorkspaces) setWorkspaceList(cachedWorkspaces);
       const selectedId =
@@ -460,21 +460,23 @@ export default function BuzzChannels() {
         : null;
       if (cancelled) return;
       if (cachedChats) setChatList(cachedChats);
+      const relay = await relayPromise;
+      if (cancelled) return;
       let heldChats = cachedChats;
       let selectedWorkspaceRemoved = false;
       const paintChats = (value: ChatListView) => {
         if (selectedWorkspaceRemoved) return;
         heldChats = value;
         setChatList(value);
+        if (chatCacheAddress) mobileSurfaceCache.publish(chatCacheAddress, value, isChatListView);
       };
 
       workspaceRefresh = new SurfaceRefreshScheduler({
-        fetch: () => http.workspaces(),
+        fetch: () => mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () => http.workspaces()),
         apply: (value) => {
           deckMissedRef.current.workspaces = false;
           setWorkspaceList(value);
           setWorkspacesConfirmed(true);
-          void mobileSurfaceCache.write(workspaceCacheAddress, value, isWorkspaceListView);
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
           }
@@ -583,7 +585,7 @@ export default function BuzzChannels() {
             deltasDuringRead = [];
             readInFlight = true;
             try {
-              return await http.chats(selectedId);
+              return await mobileSurfaceCache.fetch(chatCacheAddress, isChatListView, () => http.chats(selectedId));
             } finally {
               readInFlight = false;
             }
@@ -1048,7 +1050,7 @@ export default function BuzzChannels() {
                 ? () =>
                     router.push({
                       pathname: '/beeline/tray',
-                      params: { communityId: activeCommunityId },
+                      params: { communityId: activeCommunityId, workspaceName: chatList?.workspace.name ?? '' },
                     } as never)
                 : undefined
             }

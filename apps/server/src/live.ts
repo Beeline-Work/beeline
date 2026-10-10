@@ -118,6 +118,8 @@ export type LiveEvent =
   /** A server instance accepted a newer connection for this agent. Never sent
    *  to a socket; every instance drops its own older connection for the agent. */
   | { type: 'agent-connection'; roomId: ''; agentId: string; epoch: number }
+  /** Committed helper bundle; one row notification fans out to local sockets. */
+  | { type: 'helper-release'; roomId: ''; agentId: ''; version: string; sha: string }
   /** One `@agent /login` step (`agent-sign-in.ts`). Never sent to a phone
    *  socket: a helper session forwards only `start`/`code` for its own agent,
    *  and the owner's waiting request reads `link`/`result`. */

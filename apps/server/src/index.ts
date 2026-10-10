@@ -22,6 +22,7 @@ import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
 import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { ConnectionPresence } from './connection-presence.js';
+import { clearStalePhoneViews } from './phone-viewing.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createApnsPushSender } from './apns-push.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
@@ -323,6 +324,7 @@ async function main() {
   // confirmed delivered. Absent secret = the endpoint refuses like any wrong
   // secret, same as the Play review link above.
   const releaseNotify = new ReleaseNotifier(jobsDatabase, {
+    live,
     ...(process.env.BEELINE_RELEASE_NOTIFY_SECRET
       ? { secret: process.env.BEELINE_RELEASE_NOTIFY_SECRET }
       : {}),
@@ -369,10 +371,23 @@ async function main() {
   let lastReconciliationAt = Number.NEGATIVE_INFINITY;
   let pushPending = Boolean(push); // one leader-start reconciliation
   let repairedPromotedCorners = false;
+  let recoveredCornerMerges = false;
+  let reconciledCornerReviewers = false;
+  let reconciledMergeability = false;
+  let reconciledMergedCorners = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const leader = new BackgroundLeader(
     jobsDatabase,
-    async () => {
+    async (newLeader) => {
+      if (newLeader) {
+        lastReconciliationAt = Number.NEGATIVE_INFINITY;
+        pushPending = Boolean(push);
+        repairedPromotedCorners = false;
+        recoveredCornerMerges = false;
+        reconciledCornerReviewers = false;
+        reconciledMergeability = false;
+        reconciledMergedCorners = false;
+      }
       if (githubJobs && !repairedPromotedCorners) {
         const repair = await backgroundJobs.run('github-promoted-corner-repair', () =>
           githubJobs.repairPromotedCornerBranches());
@@ -385,9 +400,28 @@ async function main() {
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       await backgroundJobs.run('webhook-expiry', () => new RoomWebhooks(jobsDatabase).expireRequests());
-      // Corners merge only on the implementer's merge_corner or a human's
-      // order; this loop only recovers an attempt that never finished.
-      if (githubJobs) await backgroundJobs.run('corner-merge-recovery', () => githubJobs.recoverUnfinishedMergeClaims());
+      // Recovery scans run once per leadership tenure. Normal writes and
+      // webhooks drive their own transitions; failures retry on the next cycle.
+      if (githubJobs && !recoveredCornerMerges) {
+        const result = await backgroundJobs.run('corner-merge-recovery', () =>
+          githubJobs.recoverUnfinishedMergeClaims());
+        recoveredCornerMerges = result.ok;
+      }
+      if (!reconciledCornerReviewers) {
+        const result = await backgroundJobs.run('corner-reviewers', () =>
+          reconcileConfiguredCornerReviewers(jobsDatabase));
+        reconciledCornerReviewers = result.ok;
+      }
+      if (githubJobs && !reconciledMergeability) {
+        const result = await backgroundJobs.run('github-mergeability', () =>
+          githubJobs.refreshStaleMergeability());
+        reconciledMergeability = result.ok;
+      }
+      if (githubJobs && !reconciledMergedCorners) {
+        const result = await backgroundJobs.run('github-merged-corners', () =>
+          githubJobs.reconcileMergedCorners());
+        reconciledMergedCorners = result.ok;
+      }
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
         lastReconciliationAt = now;
@@ -397,17 +431,11 @@ async function main() {
           noteBlockedCornerChecks(jobsDatabase));
         await backgroundJobs.run('expired-command-leases', () =>
           reclaimExpiredCommandLeases(jobsDatabase, live));
-        await backgroundJobs.run('corner-reviewers', () =>
-          reconcileConfiguredCornerReviewers(jobsDatabase));
         await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
         await backgroundJobs.run('institutional-curator', () =>
           runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
             ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
           }));
-        if (githubJobs) {
-          await backgroundJobs.run('github-mergeability', () => githubJobs.refreshStaleMergeability());
-          await backgroundJobs.run('github-merged-corners', () => githubJobs.reconcileMergedCorners());
-        }
       }
       const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
       return Math.min(
@@ -426,10 +454,14 @@ async function main() {
     )
       leader.wake();
   });
-  void leader.run();
   const port = Number(process.env.PORT ?? '8080');
   const host = process.env.HOST ?? '127.0.0.1';
-  await listenAfterBestEffortRecovery(server, () => connectionPresence.start(), port, host);
+  await listenAfterBestEffortRecovery(server, async () => {
+    await clearStalePhoneViews(database, connectionPresence.instanceId);
+    await connectionPresence.renewLease();
+    await connectionPresence.start();
+  }, port, host);
+  void leader.run();
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
     leader.stop();

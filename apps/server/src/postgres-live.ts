@@ -236,6 +236,11 @@ BEGIN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '');
     WHEN 'push_release_catchups' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '');
+    WHEN 'helper_release_notifications' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '',
+        'releaseVersion', NEW.version, 'releaseSha', NEW.sha
+      );
   END CASE;
   payload = payload || jsonb_build_object(
     'traceId', md5(random()::text || clock_timestamp()::text || txid_current()::text),
@@ -270,7 +275,8 @@ BEGIN
     'github_installations', 'github_repositories',
     'workspace_connectors', 'workspace_connections', 'agents', 'agent_avatars',
     'registry_mcp_oauth_attempts', 'push_devices',
-    'workspace_join_notifications', 'push_release_catchups'
+    'workspace_join_notifications', 'push_release_catchups',
+    'helper_release_notifications'
   ] LOOP
     IF NOT EXISTS (
       SELECT 1 FROM pg_trigger
@@ -340,6 +346,8 @@ interface LiveNotificationPayload {
   registryState?: string;
   registryConnectorId?: string;
   registryDueAt?: number;
+  releaseVersion?: string;
+  releaseSha?: string;
   /** Connection epoch an instance accepted for `agentId` (table `agent_connection`). */
   epoch?: number;
 }
@@ -394,6 +402,8 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.registryState === 'string' ? { registryState: parsed.registryState } : {}),
       ...(typeof parsed.registryConnectorId === 'string' ? { registryConnectorId: parsed.registryConnectorId } : {}),
       ...(typeof parsed.registryDueAt === 'number' ? { registryDueAt: parsed.registryDueAt } : {}),
+      ...(typeof parsed.releaseVersion === 'string' ? { releaseVersion: parsed.releaseVersion } : {}),
+      ...(typeof parsed.releaseSha === 'string' ? { releaseSha: parsed.releaseSha } : {}),
     };
   } catch {
     return undefined;
@@ -511,6 +521,14 @@ export class PostgresLiveListener {
       // No database work: publish now, and never queue or log the payload.
       const event = decodeAgentSignInNotification(raw);
       if (event) this.live.publish(event);
+      return;
+    }
+    if (payload.table === 'helper_release_notifications' &&
+        payload.releaseVersion && payload.releaseSha) {
+      this.live.publish({
+        type: 'helper-release', roomId: '', agentId: '',
+        version: payload.releaseVersion, sha: payload.releaseSha,
+      });
       return;
     }
     // These notifications only ask a helper to refresh the latest state or

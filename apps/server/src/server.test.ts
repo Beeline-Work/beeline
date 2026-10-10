@@ -5,6 +5,7 @@ import type { Pool } from 'pg';
 import { PostgresDatabase, type SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { PhoneService } from './phone-service.js';
+import type { RoomLiveDelta } from '@beeline/api-contract/phone';
 import type { DaemonService } from './daemon-service.js';
 import { WorkspaceSkillNotFoundError } from './institutional-skills.js';
 import { LiveHub } from './live.js';
@@ -1208,7 +1209,7 @@ describe('phone committed-row live delivery', () => {
     readLiveDelta: PhoneService['readLiveDelta'],
     projectCommittedLiveDelta: PhoneService['projectCommittedLiveDelta'] = vi
       .fn()
-      .mockReturnValue(null),
+      .mockResolvedValue(null),
     canReadRoom = vi.fn().mockResolvedValue(true),
     livePaintDiagnostics = false,
     databaseQuery = vi.fn(),
@@ -1229,7 +1230,16 @@ describe('phone committed-row live delivery', () => {
         canReadRooms: canReadRoomsFrom(canReadRoom),
         liveDraftSnapshot,
         readLiveDelta,
-        readLiveDeltas,
+        // The server reads every row through the batch; by default it is the
+        // per-viewer read for each socket.
+        readLiveDeltas: readLiveDeltas ?? (async (room, viewers, target) => {
+          const deltas = new Map<string, RoomLiveDelta>();
+          for (const viewer of viewers) {
+            const delta = await readLiveDelta(room, viewer, target);
+            if (delta) deltas.set(viewer, delta);
+          }
+          return deltas;
+        }) satisfies PhoneService['readLiveDeltas'],
         readLiveBookmark,
         liveNeedsYou,
         projectCommittedLiveDelta,

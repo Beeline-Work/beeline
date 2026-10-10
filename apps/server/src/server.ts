@@ -89,6 +89,18 @@ const MAX_LIVE_SOCKET_QUEUED_BYTES = 2 * 1024 * 1024;
 const MAX_LIVE_ROOMS_PER_SOCKET = 8_192;
 const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
 /** A phone pings its open socket while foreground; any answer proves the path is alive. */
+/** Rows one socket remembers for `admitRow`; rows with a read in flight stay. */
+const SENT_ROW_LIMIT = 256;
+/** A message's version, or the live epoch and sequence a corner status was read for. */
+type RowOrder = { version: number } | { epoch?: string; sequence: number };
+type SentRow = { order?: RowOrder; fingerprint?: string; reads: number };
+
+/** Whether `next` is older than the frame already sent; unordered frames never are. */
+function rowOrderIsOlder(next: RowOrder | undefined, sent: RowOrder | undefined): boolean {
+  if (!next || !sent) return false;
+  if ('version' in next) return 'version' in sent && next.version < sent.version;
+  return !('version' in sent) && next.epoch === sent.epoch && next.sequence < sent.sequence;
+}
 const LIVE_PING_FRAME = JSON.stringify({ type: 'ping' });
 const LIVE_PONG_FRAME = JSON.stringify({ type: 'pong' });
 const ROOM_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -404,8 +416,6 @@ export function createBeelineServer(options: ServerOptions): Server {
     target: { type: 'message'; messageId: string } |
       { type: 'turn'; agentId: string; requestId: string },
   ): Promise<RoomLiveDelta | null> => {
-    if (typeof options.phone.readLiveDeltas !== 'function')
-      return options.phone.readLiveDelta(roomId, viewerId, target);
     let batch = liveRowBatches.get(event);
     if (!batch) {
       const viewers = new Set<string>();
@@ -926,16 +936,35 @@ export function createBeelineServer(options: ServerOptions): Server {
       // growing draft carries only its new suffix. A new subscription starts
       // with a full snapshot below.
       const draftWire = new Map<string, { text: string; revision: number }>();
-      // A writer also receives its own PostgreSQL NOTIFY. Compare the
-      // projected public row, rather than the NOTIFY origin, so a changed row
-      // still reaches this socket and identical local/PG copies do not.
-      const sentDeltas = new Map<string, string>();
-      const sentMessageVersions = new Map<string, number>();
-      // Reads still running per row. A row with a read in flight keeps its
-      // sent version, so the size bound never lets a delayed older read through.
-      const pendingRowReads = new Map<string, number>();
-      const sentCornerStatus = new Map<string,
-        { fingerprint: string; sequence: number; epoch?: string }>();
+      // One record per row this socket delivers. Reads run concurrently and
+      // finish out of order, and a writer also receives its own PostgreSQL
+      // NOTIFY. One rule covers both: drop a frame older than the last one
+      // sent for its row, else drop it when its projection is unchanged. A row
+      // with a read in flight is never evicted, so the bound cannot let a
+      // delayed older read through.
+      const sentRows = new Map<string, SentRow>();
+      const beginRowRead = (key: string) => {
+        const row = sentRows.get(key) ?? { reads: 0 };
+        row.reads += 1;
+        sentRows.set(key, row);
+      };
+      const endRowRead = (key: string) => {
+        const row = sentRows.get(key);
+        if (!row) return;
+        row.reads -= 1;
+        if (!row.reads && row.fingerprint === undefined) sentRows.delete(key);
+      };
+      const admitRow = (key: string, order: RowOrder | undefined, fingerprint: string) => {
+        const sent = sentRows.get(key) ?? { reads: 0 };
+        if (rowOrderIsOlder(order, sent.order) || sent.fingerprint === fingerprint) return false;
+        sentRows.delete(key);
+        sentRows.set(key, { order: order ?? sent.order, fingerprint, reads: sent.reads });
+        for (const [candidate, row] of sentRows) {
+          if (sentRows.size <= SENT_ROW_LIMIT) break;
+          if (!row.reads) sentRows.delete(candidate);
+        }
+        return true;
+      };
       const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>,
         sequence?: number) => {
         const key = `${event.roomId}:${event.agentId}:${event.turnId}:${event.type}`;
@@ -1155,21 +1184,21 @@ export function createBeelineServer(options: ServerOptions): Server {
                   if (!target) {
                     if ((event.reason === 'corner-status' || event.reason === 'corner') &&
                         typeof options.phone.liveChatCornerStatus === 'function') {
+                      const statusKey = `${roomId}:corner-status`;
+                      beginRowRead(statusKey);
                       void readCornerStatusForViewer(event, roomId, principal.identityId)
                         .then((status) => {
                           if (client.readyState !== client.OPEN) return;
                           if (!status) { sendFrame(wireEvent); return; }
-                          const fingerprint = JSON.stringify(status);
-                          const previous = sentCornerStatus.get(roomId);
-                          if (previous && ((sequence !== undefined && epoch === previous.epoch &&
-                              sequence <= previous.sequence) ||
-                              previous.fingerprint === fingerprint)) return;
-                          sentCornerStatus.set(roomId, { fingerprint, sequence: sequence ?? 0, epoch });
+                          if (!admitRow(statusKey,
+                            sequence !== undefined ? { epoch, sequence } : undefined,
+                            JSON.stringify(status))) return;
                           sendFrame({ type: 'corner-status', roomId, ...status });
                         })
                         .catch(() => {
                           if (client.readyState === client.OPEN) sendFrame(wireEvent);
-                        });
+                        })
+                        .finally(() => endRowRead(statusKey));
                       return;
                     }
                     if (client.readyState === client.OPEN)
@@ -1201,17 +1230,11 @@ export function createBeelineServer(options: ServerOptions): Server {
                   const rowKey = target.type === 'message'
                     ? `${roomId}:message:${target.messageId}`
                     : `${roomId}:turn:${target.agentId}:${target.requestId}`;
-                  pendingRowReads.set(rowKey, (pendingRowReads.get(rowKey) ?? 0) + 1);
-                  const pendingDelta = (
-                    committedRow &&
-                      (committedRow.type === 'message' || !options.phone.readLiveDeltas)
-                      ? (async () => (await options.phone.projectCommittedLiveDelta(
-                          roomId, committedRow, principal.identityId)) ??
-                          (committedRow.type === 'turn'
-                            ? readLiveRowForViewer(event, roomId, principal.identityId, target)
-                            : null))()
-                      : readLiveRowForViewer(event, roomId, principal.identityId, target)
-                  ).then(
+                  beginRowRead(rowKey);
+                  const pendingDelta = (async () => committedRow?.type === 'message'
+                    ? options.phone.projectCommittedLiveDelta(
+                      roomId, committedRow, principal.identityId)
+                    : readLiveRowForViewer(event, roomId, principal.identityId, target))().then(
                     (delta) => ({ delta }) as const,
                     (error: unknown) => ({ error }) as const,
                   );
@@ -1237,25 +1260,13 @@ export function createBeelineServer(options: ServerOptions): Server {
                       }
                       const publicDelta = { ...result.delta,
                         ...(workflowRuns ? { workflowRuns } : {}) };
-                      // Row reads run concurrently and can finish out of order.
                       // A projection older than one this socket already sent
                       // would roll the row back on the phone.
-                      if (publicDelta.type === 'message-delta' && publicDelta.version !== undefined) {
-                        const sentVersion = sentMessageVersions.get(rowKey);
-                        if (sentVersion !== undefined && publicDelta.version < sentVersion) return;
-                        sentMessageVersions.delete(rowKey);
-                        sentMessageVersions.set(rowKey, publicDelta.version);
-                        for (const key of sentMessageVersions.keys()) {
-                          if (sentMessageVersions.size <= 256) break;
-                          if (!pendingRowReads.has(key)) sentMessageVersions.delete(key);
-                        }
-                      }
-                      const fingerprint = createHash('sha256')
-                        .update(JSON.stringify(publicDelta)).digest('hex');
-                      if (sentDeltas.get(rowKey) === fingerprint) return;
-                      sentDeltas.delete(rowKey);
-                      sentDeltas.set(rowKey, fingerprint);
-                      if (sentDeltas.size > 256) sentDeltas.delete(sentDeltas.keys().next().value!);
+                      if (!admitRow(rowKey,
+                        publicDelta.type === 'message-delta' && publicDelta.version !== undefined
+                          ? { version: publicDelta.version } : undefined,
+                        createHash('sha256').update(JSON.stringify(publicDelta)).digest('hex')))
+                        return;
                       rememberPaintTrace(wireTrace, target.type);
                       sendFrame({ ...publicDelta,
                         ...(wireTrace ? { trace: wireTrace } : {}) });
@@ -1277,11 +1288,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                         sendFrame(fallback);
                       }
                     })
-                    .finally(() => {
-                      const reads = pendingRowReads.get(rowKey)! - 1;
-                      if (reads > 0) pendingRowReads.set(rowKey, reads);
-                      else pendingRowReads.delete(rowKey);
-                    });
+                    .finally(() => endRowRead(rowKey));
               };
               const subscription = options.live.subscribeReplay(roomId, resume, forwardEvent);
               releases.set(roomId, subscription.release);
@@ -1325,7 +1332,7 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
-            sentCornerStatus.delete(item.roomId);
+            sentRows.delete(`${item.roomId}:corner-status`);
             for (const key of draftWire.keys())
               if (key.startsWith(`${item.roomId}:`)) draftWire.delete(key);
           }
@@ -1379,7 +1386,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         for (const release of releases.values()) release();
         releases.clear();
         draftWire.clear();
-        sentDeltas.clear();
+        sentRows.clear();
       });
     },
   );

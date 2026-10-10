@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
+import type { QueryResultRow } from 'pg';
+import { migrate, type SqlDatabase } from './database.js';
 import { CornerOwedExpiry } from './corner-owed-expiry.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import {
@@ -76,6 +77,22 @@ async function settle(parent: LiveEvent[]): Promise<void> {
   parent.length = 0;
 }
 
+/** Reads the database clock shifted by `offsetMs`, as a skewed server would. */
+class SkewedClockDatabase implements SqlDatabase {
+  offsetMs = 0;
+
+  constructor(private readonly database: SqlDatabase) {}
+
+  query<Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]) {
+    return this.database.query<Row>(
+      sql.replaceAll('now()', `(now()+interval '${this.offsetMs} milliseconds')`), values);
+  }
+
+  transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
+    return work(this);
+  }
+}
+
 describe('Postgres live fanout', () => {
   let database: PgliteDatabase;
   const listeners: PostgresLiveListener[] = [];
@@ -98,6 +115,23 @@ describe('Postgres live fanout', () => {
     await database.close();
     vi.restoreAllMocks();
   });
+
+  /** Open a corner under ROOM with one owed item that expires at `expiresAt`. */
+  async function insertExpiringOwed(expiresAt: Date): Promise<void> {
+    const corner = 'cccccccc-cccc-4ccc-8ccc-ccccccccccce';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
+      [corner, WORKSPACE, ROOM, AUTHOR],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('owed-x',$1,$2,'question')`,
+      [corner, AUTHOR]);
+    await database.query(
+      `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable)
+       VALUES($1,$2,'owed-x',now(),$3,true)
+       ON CONFLICT (message_id,person_id) DO UPDATE SET expires_at=EXCLUDED.expires_at`,
+      [corner, AUTHOR, expiresAt]);
+  }
 
   it('publishes owner-scoped install, vault and agent commits without an idle read', async () => {
     const live = new LiveHub();
@@ -998,36 +1032,66 @@ describe('Postgres live fanout', () => {
       void listener.run();
       await eventually(() => client.listenerCount('notification') === 1);
     }
-    const corner = 'cccccccc-cccc-4ccc-8ccc-ccccccccccce';
-    await database.query(
-      `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
-      [corner, WORKSPACE, ROOM, AUTHOR],
-    );
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text) VALUES('owed-x',$1,$2,'question')`,
-      [corner, AUTHOR]);
     const expiresAt = new Date(Date.now() + 60_000);
-    await database.query(
-      `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable)
-       VALUES($1,$2,'owed-x',now(),$3,true)
-       ON CONFLICT (message_id,person_id) DO UPDATE SET expires_at=EXCLUDED.expires_at`,
-      [corner, AUTHOR, expiresAt]);
+    await insertExpiringOwed(expiresAt);
     // A new owed row wakes the leader so it can re-arm for the new deadline.
     await eventually(() => wakes.every((count) => count >= 1));
-    const expiry = new CornerOwedExpiry(database);
-    expect(await expiry.nextDueAt(new Date(expiresAt.getTime() - 1))).toEqual(expiresAt);
-    expect(await expiry.runOnce(new Date(expiresAt.getTime() - 1), true)).toBe(0);
+    const clock = new SkewedClockDatabase(database);
+    const expiry = new CornerOwedExpiry(clock);
+    expect(await expiry.msUntilNextDue()).toBeGreaterThan(50_000);
+    expect(await expiry.runOnce(true)).toBe(0);
     await settle(parents[0]!);
     await settle(parents[1]!);
 
     // No write happens at expiry: only the leader's job announces it.
-    expect(await expiry.runOnce(expiresAt)).toBe(1);
+    clock.offsetMs = 60_000;
+    expect(await expiry.runOnce()).toBe(1);
     for (const parent of parents)
       await eventually(() => parent.some((event) =>
         event.type === 'invalidate' && event.reason === 'corner-status'));
     // The same expiry is announced once per leader.
-    expect(await expiry.runOnce(new Date(expiresAt.getTime() + 1_000))).toBe(0);
-    expect(await expiry.nextDueAt(expiresAt)).toBeNull();
+    clock.offsetMs = 61_000;
+    expect(await expiry.runOnce()).toBe(0);
+    expect(await expiry.msUntilNextDue()).toBeNull();
+  });
+
+  it('decides an owed expiry by the database clock when the app clock runs ahead', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const parent: LiveEvent[] = [];
+    live.subscribe(ROOM, (event) => parent.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    const expiresAt = new Date(Date.now() + 60_000);
+    await insertExpiringOwed(expiresAt);
+    // PGlite reads the JS clock, so the database is held back to stay put
+    // while the app clock jumps ten minutes past the expiry.
+    const skewMs = 10 * 60_000;
+    const clock = new SkewedClockDatabase(database);
+    clock.offsetMs = -skewMs;
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+    try {
+      vi.setSystemTime(Date.now() + skewMs);
+      expect(Date.now()).toBeGreaterThan(expiresAt.getTime());
+      const expiry = new CornerOwedExpiry(clock);
+      expect(await expiry.runOnce(true)).toBe(0);
+      expect(await expiry.msUntilNextDue()).toBeGreaterThan(50_000);
+      await settle(parent);
+      expect(await expiry.runOnce()).toBe(0);
+
+      // The database reaches the expiry: announced once, then never again.
+      clock.offsetMs = -skewMs + 60_000;
+      expect(await expiry.runOnce()).toBe(1);
+      await eventually(() => parent.some((event) =>
+        event.type === 'invalidate' && event.reason === 'corner-status'));
+      clock.offsetMs = -skewMs + 61_000;
+      expect(await expiry.runOnce()).toBe(0);
+      expect(await expiry.msUntilNextDue()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leaves a top-level Room membership without a corner opener', async () => {

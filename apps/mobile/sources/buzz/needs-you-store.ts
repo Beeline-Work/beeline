@@ -30,6 +30,9 @@ const entries = new Map<string, NeedsYouEntry>();
 const versions = new Map<string, number>();
 /** Live deltas heard while a list read is in flight, replayed onto its result. */
 const readsInFlight = new Map<string, Set<NeedsYouLiveDelta[]>>();
+/** Start order of list reads; a read never overwrites one that started after it. */
+let readsStarted = 0;
+const newestRead = new Map<string, number>();
 /** Mounted trays per Workspace. A gap with no tray drops the list back to a count. */
 const listHolders = new Map<string, number>();
 const storeListeners = new Set<() => void>();
@@ -75,6 +78,7 @@ subscribeClientReset(() => {
   entries.clear();
   versions.clear();
   readsInFlight.clear();
+  newestRead.clear();
   countsInFlight.clear();
   viewer = undefined;
   viewerRead = undefined;
@@ -168,6 +172,7 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
   const at = clientResetGeneration();
   const viewerId = await resolveViewer();
   const key = entryKey(viewerId, workspaceId);
+  const started = ++readsStarted;
   const heard: NeedsYouLiveDelta[] = [];
   const reads = readsInFlight.get(key) ?? new Set();
   reads.add(heard);
@@ -175,8 +180,10 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
   try {
     const result = await monolithPhoneOperation('readNeedsYou', { workspaceId });
     const items = heard.reduce(applyNeedsSlice, sortNeeds([...result.items]));
-    if (at === clientResetGeneration() && viewer === viewerId)
+    if (at === clientResetGeneration() && viewer === viewerId && started > (newestRead.get(key) ?? 0)) {
+      newestRead.set(key, started);
       write(workspaceId, (entry) => ({ ...entry, items, count: null }));
+    }
     return items;
   } finally {
     readsInFlight.get(key)?.delete(heard);

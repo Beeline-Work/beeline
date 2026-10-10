@@ -773,6 +773,31 @@ describe('Needs-you badge and tray', () => {
     expect([rows(tree), badge(tree)]).toEqual([1, 1]);
   });
 
+  it('Reproduction NEEDS-YOU-READ-ORDER-1: an older gap read that finishes last does not undo a newer one', async () => {
+    serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
+    const tree = await render(true);
+    const answers: Array<(value: { items: unknown[] }) => void> = [];
+    phoneOperation.mockImplementation((name: string) => {
+      if (name === 'readNeedsYou') return new Promise((resolve) => { answers.push(resolve); });
+      if (name === 'listMessageBookmarks') return Promise.resolve({ bookmarks: [] });
+      return Promise.resolve(undefined);
+    });
+    for (let gap = 0; gap < 2; gap += 1) {
+      await act(async () => {
+        for (const listener of [...liveRegistrations])
+          listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'needs-you-gap' } });
+      });
+      await act(async () => undefined);
+    }
+    expect(answers).toHaveLength(2);
+    await act(async () => answers[1]({ items: [need()] }));
+    await act(async () => undefined);
+    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
+    await act(async () => answers[0]({ items: [need(), need({ messageId: 'ask-2' })] }));
+    await act(async () => undefined);
+    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
+  });
+
   it('a live delta moves the badge and the list together', async () => {
     serveNeeds({ needs: [need()] });
     const tree = await render(true);

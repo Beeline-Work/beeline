@@ -12,6 +12,8 @@ const list = vi.hoisted(() => ({
   createCalls: [] as unknown[][],
   createGate: null as Promise<void> | null,
   createFailure: null as Error | null,
+  /** When set, the screen's watch goes through this shared socket instead. */
+  live: null as null | import('@/sync/transport/live-connection').LiveConnection,
   subscriptions: [] as Array<{
     filters: readonly { readonly '#h'?: readonly string[] }[];
     emit(event: MonolithSurfaceEvent): void;
@@ -90,6 +92,7 @@ vi.mock('@/sync/transport', () => ({
           filters: readonly { readonly '#h'?: readonly string[] }[],
           listener: (event: MonolithSurfaceEvent) => void,
         ) => {
+          if (list.live) return list.live.register(filters, listener as (event: unknown) => void);
           list.subscriptions.push({ filters, emit: listener });
           return () => undefined;
         },
@@ -195,6 +198,7 @@ beforeEach(() => {
   list.createCalls.length = 0;
   list.createGate = null;
   list.createFailure = null;
+  list.live = null;
   cornerOpenEnded();
   vi.mocked(router.push).mockClear();
   list.subscriptions.length = 0;
@@ -218,6 +222,47 @@ describe('Corner list live path', () => {
     expect(paintedStates(renderer)).toEqual(['waiting']);
     expect(renderer.root.findByType('RoomCornersList').props.moreOpen).toBe(true);
     expect(list.reads).toBe(0);
+  });
+  it('paints the status the parent Room lane already heard when Corners opens from it', async () => {
+    const { LiveConnection } = await import('@/sync/transport/live-connection');
+    const sockets: Array<{ onopen?: () => void; onmessage?: (event: { data: string }) => void;
+      readyState: number }> = [];
+    vi.stubGlobal('WebSocket', class {
+      readyState = 0;
+      onopen?: () => void;
+      onmessage?: (event: { data: string }) => void;
+      constructor() { sockets.push(this); }
+      send() {}
+      close() { this.readyState = 3; }
+    });
+    const connection = new LiveConnection({
+      authorization: async () => 'phone-session',
+      liveUrl: () => 'wss://server.example/v1/phone/live',
+      subscribeIdentityChange: () => () => undefined,
+      subscribeForeground: () => () => undefined,
+    });
+    const emit = (frame: unknown) => sockets[0]!.onmessage?.({ data: JSON.stringify(frame) });
+    try {
+      // The Room screen holds the lane and hears a corner start working.
+      await connection.register([{ '#h': ['room-a'] }], () => undefined);
+      await vi.waitFor(() => expect(sockets).toHaveLength(1));
+      sockets[0]!.readyState = 1;
+      sockets[0]!.onopen?.();
+      emit({ type: 'subscribed', roomId: 'room-a', epoch: 'epoch', cursor: 1, resumed: false });
+      emit({ type: 'corner-status', roomId: 'room-a', cornerCount: 1, waitingCornerCount: 0,
+        openCorners: [], agentState: 'working', corners: cornerList('working').corners });
+      // Corners opens from it with an older saved list.
+      list.cached = cornerList('waiting');
+      list.live = connection;
+      let renderer!: ReactTestRenderer;
+      await act(async () => { renderer = create(<BuzzCorners />); });
+      await quiet();
+      expect(paintedStates(renderer)).toEqual(['working']);
+      expect(list.reads).toBe(0);
+    } finally {
+      connection.dispose();
+      vi.unstubAllGlobals();
+    }
   });
   it('creates and opens a randomly named corner from the plus button', async () => {
     const renderer = await mountList();

@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import type { CornerAppManifest, CornerAppView } from '@beeline/api-contract/phone';
@@ -9,10 +10,12 @@ import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation
 import { Modal } from '@/modal';
 
 export default function CornerAppRoute() {
+  useLatencyRouteFrame('/beeline/corner-app/[slug]');
   const { roomId, slug } = useLocalSearchParams<{ roomId?: string; slug?: string }>();
   const [app, setApp] = React.useState<CornerAppView>();
   const [busyAction, setBusyAction] = React.useState<string>();
   const [manifest, setManifest] = React.useState<CornerAppManifest>();
+  useLatencyRouteFrame('/beeline/corner-app/[slug]', app !== undefined, true);
   const [loadError, setLoadError] = React.useState<string>();
 
   React.useEffect(() => {

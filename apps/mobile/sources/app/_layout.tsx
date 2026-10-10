@@ -76,6 +76,7 @@ import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
 import { startDesktopNotifications } from '@/push/desktop-notifications';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { latencyFrameTraceEnabled, markLatencyRouteNavigation, markLatencyTouch } from '@/buzz/latency-frame-trace';
 
 const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
 
@@ -315,6 +316,9 @@ export default function RootLayout() {
   useTauriDrag();
   const pathname = usePathname();
   React.useEffect(() => {
+    if (latencyFrameTraceEnabled) markLatencyRouteNavigation(pathname);
+  }, [pathname]);
+  React.useEffect(() => {
     // `router.replace` only schedules the landing transition. Resolve the
     // notification gate after Expo Router reports the committed destination,
     // so a cold-start replace cannot overwrite the notification navigation.
@@ -426,6 +430,7 @@ export default function RootLayout() {
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <KeyboardProvider preload={false}>
         <GestureHandlerRootView
+          {...(latencyFrameTraceEnabled ? { onTouchStartCapture: markLatencyTouch } : {})}
           style={
             isDesktop
               ? { flex: 1 }

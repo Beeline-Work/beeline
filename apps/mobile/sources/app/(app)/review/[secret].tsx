@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -18,6 +19,7 @@ import { parseReviewSecret } from '@/buzz/review-link';
  * here with a useful error and a route back to the ordinary sign-in screen.
  */
 export default function ReviewSignIn() {
+  useLatencyRouteFrame('/review/[secret]');
   const { secret: routeSecret } = useLocalSearchParams<{ secret?: string | string[] }>();
   const incomingUrl = useURL();
   const secret = parseReviewSecret(routeSecret) ?? parseReviewSecret(incomingUrl ?? undefined);

@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useState } from 'react';
 import { AppState, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
@@ -59,6 +60,7 @@ const VAULT_REFRESH_POLL_MS = 500;
  * their vocabulary; only user-visible copy speaks Tools and Keys.
  */
 export default function WorkbenchScreen() {
+  useLatencyRouteFrame('/beeline/settings/workbench');
   const params = useLocalSearchParams<{
     workspaceId?: string | string[];
     viewerId?: string | string[];

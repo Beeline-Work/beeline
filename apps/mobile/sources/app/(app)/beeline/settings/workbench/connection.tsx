@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -37,6 +38,7 @@ function singleParam(value: string | string[] | undefined): string | undefined {
  * Key; the data model (`WorkbenchConnection`, `ref`) keeps its names.
  */
 export default function ConnectionDetailScreen() {
+  useLatencyRouteFrame('/beeline/settings/workbench/connection');
   const params = useLocalSearchParams<{
     workspaceId?: string | string[];
     viewerId?: string | string[];
@@ -47,6 +49,7 @@ export default function ConnectionDetailScreen() {
   const connectionId = singleParam(params.connectionId) ?? '';
   const insets = useSafeAreaInsets();
   const [detail, setDetail] = useState<ConnectionDetailView | null>(null);
+  useLatencyRouteFrame('/beeline/settings/workbench/connection', detail !== null, true);
   const [error, setError] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [revoking, setRevoking] = useState(false);

@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -20,6 +21,7 @@ import { INSTAGRAM_SIGN_IN_REQUIREMENT } from '@/buzz/app-sign-in-copy';
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
 export default function ConnectAppScreen() {
+  useLatencyRouteFrame('/beeline/settings/workbench/connect-app');
   const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[] }>();
   const workspaceId = first(params.workspaceId) ?? '';
   const viewerId = first(params.viewerId) ?? '';

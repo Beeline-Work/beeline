@@ -9,6 +9,8 @@ Room sample and explicit unmeasured rows for the remaining cases.
 local server/proxy baseline; its HTTP times are not page or tap times.
 `baseline-room-warm.md` records 20 steady-state warm Room opens on an
 uncalibrated x86 emulator; those samples had zero prepaint requests.
+`baseline-network-sweep.md` records 120 additional warm Room opens across
+four configured RTT profiles, with the limits of that comparison.
 
 ## Current scope
 
@@ -79,6 +81,23 @@ bash scripts/latency-rig/capture-room.sh
 `capture-room.sh` repeats warm Room opens and writes a **Room-only** report.
 It does not claim the 39-route launch baseline. Stop the dedicated AVD with
 `scripts/latency-rig/stop-emulator.sh` after capture.
+`sweep-room.sh` drives 30 opens each at 50, 100, 200, and 300 ms configured
+RTT, then writes `.local/rtt-sweep/summary.md`. Its 1% failure profile drops
+whole requests, not individual packets.
+
+On the current i9-10900K runner, the emulator starts in a user systemd CPU
+scope at 200% of one host core. We first tried the published Geekbench 6
+single-core score of [1744 for i9-10900K](https://browser.geekbench.com/processors/intel-core-i9-10900k)
+and [800 for Galaxy A16 Exynos 1330](https://browser.geekbench.com/mobile-benchmarks):
+800 / 1744 = 45.9%. A 46% **whole-emulator** quota made System UI
+unresponsive, so that ratio is invalid as an emulator setting. Five warm Room
+opens at 100% produced 268, 269, 271, 792 and 993 ms samples; at 200% they
+produced 94, 121, 156, 229 and 232 ms. The default 200% is an operational
+scenario selected to keep Android responsive, **not** an A15 calibration.
+`LATENCY_RIG_CPU_QUOTA_PERCENT` overrides it; an unknown host refuses the
+default. QEMU, Android scheduling, GPU and memory differ from a phone. Keep
+that distinction in every report. A release device verdict needs a physical
+A15-class Android cross-check or a comparable same-benchmark emulator result.
 
 Collect logcat with `adb -s <serial> logcat -v epoch` while driving the app.
 For Room first-frame samples:
@@ -97,6 +116,14 @@ node scripts/latency-rig/analyze.mjs \
   --network '<measured RTT and profile>' --out report.md --check
 ```
 
+The opt-in APK also logs `[LATENCY_FRAME]` for root touch starts, frame
+candidates, route commits, and content-ready route frames. Use
+`route-marks.mjs logcat.txt moments.ndjson warm` to extract only explicit
+content-ready route marks. It prefers a touch start within 1 s before the
+navigation commit. Candidate marks are intentionally excluded: they do not
+prove visible content or tap feedback. For a cold deep link, provide an
+external launch-start timestamp; a route commit alone misses process start.
+
 For another route or tap, supply one `moments.ndjson` record per sample:
 
 ```json
@@ -112,23 +139,37 @@ attribute concurrent actions.
 
 ## Calibration and limits
 
-Do not label an x86 emulator “A15 class” based on a CPU quota alone. Calibrate
-its Hermes startup, JS execution, render, and 30-message scroll against an
-A15-class reference Android device before publishing target p95 results. Record
-the calibration and actual shape parameters with each report. Derive the
-network RTT from matched production phone first-byte and server-finish log
-events (`derive-rtt.mjs` accepts 20 or more matched NDJSON records); the
-earlier static audits contain no such pair. Doubling the observed downstream
-leg assumes symmetric paths and synchronized clocks. Until that sample is
-available, 100 and 200 ms are test scenarios, **not** a measured production RTT.
+The release Room GET now returns its server processing time in `Server-Timing`.
+The phone measures the winning request's start and response-header arrival
+with its monotonic clock. After the Room paints, the **existing** page-load
+observation carries those two durations; it adds no network call. The server
+stores `request-to-first-byte minus server processing` as
+`operator_function_events.network_rtt_residual_ms`. This captures network,
+Fly edge and connection setup in one upper-bound residual, without trying to
+synchronize phone and server clocks. It does not capture radio packet RTT.
+Once that release has real traffic, export at least 20 content-free values
+read-only and run `derive-rtt.mjs` on one JSON object per line:
 
-Room has an in-app release first-frame marker. Other routes and tap feedback
-need equivalent first-frame marks or a calibrated external frame probe. This
-scripts-only package cannot certify their first meaningful frame from a
-`uiautomator` visibility check; that would be an imprecise upper bound. Exact
-physical bytes, negotiated compression, and packet loss need an on-device
-packet capture. The report generator refuses to fill unmeasured routes with
-static estimates.
+```sql
+SELECT network_rtt_residual_ms
+FROM operator_function_events
+WHERE function_name='page_load' AND network_rtt_residual_ms IS NOT NULL
+  AND created_at >= now()-interval '1 day'
+ORDER BY id DESC LIMIT 1000;
+```
+
+Until then, 50/100/200/300 ms sweeps are scenarios, **not** measured production
+RTT. Do not label an x86 emulator equivalent to an A15 phone based on the CPU
+quota alone. Cross-check Hermes startup, JS execution, rendering and scrolling
+against a physical A15-class Android before publishing a device verdict.
+
+Room has an in-app release first-frame marker. Some other routes now have
+content-ready marks; others have only frame candidates, and tap feedback has
+only frame candidates. Each candidate needs a visible-state probe before it
+can be called the first meaningful frame. `uiautomator` visibility alone is
+an imprecise upper bound. Exact physical bytes, negotiated compression, and
+packet loss need an on-device packet capture. The report generator refuses
+to fill unmeasured routes with static estimates.
 
 The per-PR contract check validates route coverage and the deterministic
 budget evaluator. Real timing checks belong in the on-demand rig workflow,

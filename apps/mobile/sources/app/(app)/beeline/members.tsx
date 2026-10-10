@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // Members is the canonical combined People + Agents surface. It lives in its
@@ -239,6 +240,7 @@ export default function BuzzMembers({
   workspaceIdOverride?: string;
   onClose?: () => void;
 } = {}) {
+  useLatencyRouteFrame('/beeline/members');
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
@@ -250,6 +252,8 @@ export default function BuzzMembers({
   const requestedAction = first(params.action);
   const [surface, setSurface] = useState<WorkspaceView | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<AgentDetailView | null>(null);
+  useLatencyRouteFrame(profileAgentId ? '/beeline/agent-profile' : '/beeline/members',
+    profileAgentId ? selectedAgent !== null : surface !== null, true);
   const [editingAgentSoul, setEditingAgentSoul] = useState(false);
   const [agentNameDraft, setAgentNameDraft, nameDraft] = useTextDraft(selectedAgent ? `agent-name:${workspaceId}:${selectedAgent.agent.identity.pubkey}` : null,
     '',

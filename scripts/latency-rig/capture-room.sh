@@ -6,14 +6,36 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 device="${LATENCY_RIG_DEVICE:-emulator-5580}"
 room_id="${LATENCY_RIG_ROOM_ID:-f13fbac4-e500-4f81-8c20-78bc02c3aac8}"
 count="${LATENCY_RIG_ROOM_SAMPLES:-20}"
+minimum="${LATENCY_RIG_MIN_SUCCESSFUL_SAMPLES:-$count}"
 output_dir="${1:-$repo_dir/scripts/latency-rig/.local/capture}"
 if ! [[ "$count" =~ ^[0-9]+$ ]] || (( count < 20 )); then
   echo 'LATENCY_RIG_ROOM_SAMPLES must be at least 20' >&2
   exit 2
 fi
+if ! [[ "$minimum" =~ ^[0-9]+$ ]] || (( minimum < 20 || minimum > count )); then
+  echo 'LATENCY_RIG_MIN_SUCCESSFUL_SAMPLES must be 20..LATENCY_RIG_ROOM_SAMPLES' >&2
+  exit 2
+fi
 if [[ ! "$room_id" =~ ^[0-9a-f-]{36}$ ]]; then
   echo 'Invalid local fixture Room id' >&2
   exit 2
+fi
+device_description="$device"
+if [[ "$device" == emulator-* ]]; then
+  port="${device#emulator-}"
+  qemu_pid="$(ps -eo pid,comm,args | awk -v port="$port" \
+    '$2 == "qemu-system-x86" && index($0, "-avd beeline-latency-pixel5 -port " port " ") {print $1}')"
+  if [[ ! "$qemu_pid" =~ ^[0-9]+$ ]]; then
+    echo "Could not identify the worktree-owned $device emulator process" >&2
+    exit 2
+  fi
+  cgroup="$(cut -d: -f3 "/proc/$qemu_pid/cgroup")"
+  read -r quota period <"/sys/fs/cgroup${cgroup}/cpu.max"
+  if [[ "$quota" == max ]] || ! [[ "$quota" =~ ^[0-9]+$ && "$period" =~ ^[0-9]+$ ]]; then
+    echo "The $device emulator has no measurable CPU quota" >&2
+    exit 2
+  fi
+  device_description="$device ($((quota * 100 / period))% host CPU quota)"
 fi
 mkdir -p "$output_dir"
 adb -s "$device" logcat -c
@@ -29,8 +51,8 @@ adb -s "$device" logcat -d -v epoch >"$output_dir/logcat.txt"
 node "$repo_dir/scripts/latency-rig/room-marks.mjs" \
   "$output_dir/logcat.txt" "$output_dir/moments.ndjson" warm
 actual="$(wc -l <"$output_dir/moments.ndjson")"
-if (( actual < count )); then
-  echo "Only $actual of $count requested Room marks were captured" >&2
+if (( actual < minimum )); then
+  echo "Only $actual of $count requested Room marks were captured (minimum $minimum)" >&2
   exit 1
 fi
 node "$repo_dir/scripts/latency-rig/join.mjs" \
@@ -40,7 +62,24 @@ node "$repo_dir/scripts/latency-rig/join.mjs" \
   --out "$output_dir/samples.ndjson"
 node "$repo_dir/scripts/latency-rig/analyze.mjs" \
   --input "$output_dir/samples.ndjson" --commit "$(git rev-parse HEAD)" \
-  --device "$device" --network "${LATENCY_RIG_NETWORK_DESCRIPTION:-local shaped proxy}" \
-  --note 'Room-only smoke. This x86 emulator has no A15 CPU calibration; local HTTP excludes TLS and production RTT. It cannot establish the launch budget.' \
+  --device "$device_description" --network "${LATENCY_RIG_NETWORK_DESCRIPTION:-local shaped proxy}" \
+  --note "Room-only smoke: $actual/$count attempts painted. CPU quota is an uncalibrated operating scenario; local HTTP excludes TLS and production RTT. This cannot establish the full launch budget." \
   --out "$output_dir/room-report.md"
 echo "Room-only report: $output_dir/room-report.md"
+if rg -q '\[LATENCY_FRAME\]' "$output_dir/logcat.txt"; then
+  node "$repo_dir/scripts/latency-rig/route-marks.mjs" \
+    "$output_dir/logcat.txt" "$output_dir/route-moments.ndjson" warm
+  if [[ -s "$output_dir/route-moments.ndjson" ]]; then
+    node "$repo_dir/scripts/latency-rig/join.mjs" \
+      --moments "$output_dir/route-moments.ndjson" \
+      --proxy "${LATENCY_RIG_PROXY_LOG:-$repo_dir/scripts/latency-rig/local-proxy.ndjson}" \
+      --sql "${LATENCY_RIG_SQL_LOG:-$repo_dir/scripts/latency-rig/local-sql.ndjson}" \
+      --out "$output_dir/route-samples.ndjson"
+    node "$repo_dir/scripts/latency-rig/analyze.mjs" \
+      --input "$output_dir/route-samples.ndjson" --commit "$(git rev-parse HEAD)" \
+      --device "$device_description" --network "${LATENCY_RIG_NETWORK_DESCRIPTION:-local shaped proxy}" \
+      --note "Route marks start at navigation commit unless a touch was captured; ambient network work may overlap. No A15/TLS verdict." \
+      --out "$output_dir/route-report.md"
+    echo "Route-mark report: $output_dir/route-report.md"
+  fi
+fi

@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -17,12 +18,14 @@ import { INSTAGRAM_SIGN_IN_REQUIREMENT } from '@/buzz/app-sign-in-copy';
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
 
 export default function AppDetailScreen() {
+  useLatencyRouteFrame('/beeline/settings/workbench/app');
   const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[]; appId?: string | string[] }>();
   const workspaceId = first(params.workspaceId) ?? '';
   const viewerId = first(params.viewerId) ?? '';
   const appId = first(params.appId) ?? '';
   const insets = useSafeAreaInsets();
   const [app, setApp] = useState<WorkbenchApp | null>(null);
+  useLatencyRouteFrame('/beeline/settings/workbench/app', app !== null, true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<string | null>(null);

@@ -10,6 +10,7 @@
  * Default is still silent: an unset flag in a release bundle emits nothing,
  * exactly as before.
  */
+import { markLatencyRouteFrame } from './latency-frame-trace';
 
 /** Build-time opt-in. Expo inlines EXPO_PUBLIC_* at bundle time. */
 const RELEASE_TRACE_ENABLED =
@@ -70,6 +71,7 @@ export function roomOpenTraceEnabled(): boolean {
 }
 
 export function markRoomOpen(phase: string, detail?: string): void {
+  if (phase === 'newest-frame') markLatencyRouteFrame('/beeline/chat/[channelId]');
   // Operational page timing is independent of the optional diagnostic trace.
   // Only the navigation and first painted frame matter; no Room identifier or
   // trace detail is sent. A failed covering read is the terminal failure event.

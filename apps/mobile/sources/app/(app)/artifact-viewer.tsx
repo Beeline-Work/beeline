@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
@@ -7,6 +8,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { findInRoomHistory } from '@/buzz/room-message-store';
 
 export default function ArtifactViewerRoute() {
+  useLatencyRouteFrame('/artifact-viewer');
   const { roomId, messageId, blockIndex } = useLocalSearchParams<{
     roomId?: string;
     messageId?: string;

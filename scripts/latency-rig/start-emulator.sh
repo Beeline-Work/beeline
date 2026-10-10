@@ -30,8 +30,25 @@ if adb devices | awk 'NR > 1 {print $1}' | grep -Fxq "$serial"; then
 fi
 echo $$ >"$local_dir/emulator.pid"
 echo "Starting $serial (worktree AVD $ANDROID_AVD_HOME/$avd_name.avd)"
+# This runner's 200% quota is a stable scenario, not a device equivalence.
+# The 46% Geekbench single-core score ratio made Android System UI unresponsive.
+# A different host must set an explicitly measured quota.
+cpu_quota="${LATENCY_RIG_CPU_QUOTA_PERCENT:-}"
+if [[ -z "$cpu_quota" ]]; then
+  if grep -q 'Intel(R) Core(TM) i9-10900K' /proc/cpuinfo; then
+    cpu_quota=200
+  else
+    echo 'Set LATENCY_RIG_CPU_QUOTA_PERCENT after calibrating this host' >&2
+    exit 2
+  fi
+fi
+if ! [[ "$cpu_quota" =~ ^[0-9]+$ ]] || (( cpu_quota < 10 || cpu_quota > 1000 )); then
+  echo 'LATENCY_RIG_CPU_QUOTA_PERCENT must be an integer from 10 to 1000' >&2
+  exit 2
+fi
 # Keep this process in the caller's session. For CI, run the script in the
 # background of the same job shell and wait on `adb -s "$serial" wait-for-device`.
-exec "$ANDROID_HOME/emulator/emulator" -avd "$avd_name" -port "$port" \
+exec systemd-run --user --scope --quiet -p "CPUQuota=${cpu_quota}%" \
+  "$ANDROID_HOME/emulator/emulator" -avd "$avd_name" -port "$port" \
   -no-window -no-snapshot -no-audio -gpu swiftshader_indirect \
   >"$local_dir/emulator.log" 2>&1

@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useState } from 'react';
 import { Redirect, type Href, useLocalSearchParams } from 'expo-router';
 import {
@@ -7,6 +8,7 @@ import {
 
 /** Return a cold-started GitHub App installation to the picker that launched it. */
 export default function GitHubInstallationFallback() {
+  useLatencyRouteFrame('/beeline/github-installation');
   const { installed } = useLocalSearchParams<{ installed?: string }>();
   const [returnPath, setReturnPath] = useState<string | null>(null);
 

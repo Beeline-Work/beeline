@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -34,6 +35,7 @@ const NEXT_RUN = new Intl.DateTimeFormat(undefined, {
  * corner's objective panel.
  */
 export default function ScheduledWork() {
+  useLatencyRouteFrame('/beeline/settings/schedules');
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     roomId?: string | string[];
@@ -46,6 +48,7 @@ export default function ScheduledWork() {
   const [schedules, setSchedules] = useState<readonly RoomScheduleView[]>([]);
   const [webhooks, setWebhooks] = useState<RoomWebhooksResult | null>(null);
   const [loading, setLoading] = useState(true);
+  useLatencyRouteFrame('/beeline/settings/schedules', !loading, true);
   const [working, setWorking] = useState(false);
   const [confirmStop, setConfirmStop] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -137,6 +138,7 @@ function firstParam(value: string | string[] | undefined): string | undefined {
  * the generated-mark reset are plain rows because the page is the workspace.
  */
 export default function WorkspaceSettings() {
+  useLatencyRouteFrame('/beeline/settings/workspace');
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ communityId?: string | string[] }>();
@@ -156,6 +158,7 @@ export default function WorkspaceSettings() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [workingKey, setWorkingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  useLatencyRouteFrame('/beeline/settings/workspace', !loading, true);
   const [error, setError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const workspaceSchedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);

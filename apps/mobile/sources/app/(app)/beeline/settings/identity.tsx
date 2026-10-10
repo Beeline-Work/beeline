@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -71,6 +72,7 @@ const PRIVACY_URL = 'https://usebeeline.app/privacy/';
 const TERMS_URL = 'https://usebeeline.app/terms/';
 const FEEDBACK_MAILTO = 'mailto:hello@usebeeline.app';
 export default function BuzzIdentitySettings() {
+  useLatencyRouteFrame('/beeline/settings/identity');
   const { githubReconnect } = useLocalSearchParams<{ githubReconnect?: string }>();
   const insets = useSafeAreaInsets();
   const [error, setError] = useState<string | null>(null);

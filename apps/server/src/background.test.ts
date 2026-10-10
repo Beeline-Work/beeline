@@ -993,6 +993,70 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+  // G9-R8: a read older than a day whose cursor message was delivered but
+  // never named still clears it; a newer unread notification stays.
+  it('clears an unnamed cursor notification of a read older than a day', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        ios = 'c0ffee'.repeat(10) + 'abcd',
+        cursor = '1'.repeat(64),
+        unread = 'f'.repeat(64);
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES($1,$2,'ios','physical',now()-interval '3 days')`,
+        [ios, human],
+      );
+      for (const [index, id] of [cursor, unread].entries()) {
+        await db.query(
+          `INSERT INTO messages(id,room_id,author_id,text,created_at)
+           VALUES($1,$2,$3,'hi',now()-interval '2 days 1 hour'+$4*interval '1 second')`,
+          [id, room, agent, index],
+        );
+        await db.query(
+          `INSERT INTO push_delivery_claims(message_id,device_token,status,claimed_at,completed_at)
+           VALUES($1,$2,'delivered',now()-interval '2 days 1 hour',now()-interval '2 days 1 hour')`,
+          [id, ios],
+        );
+      }
+      await db.query(
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
+         SELECT room_id,$2,created_at,id,now()-interval '2 days' FROM messages WHERE id=$1`,
+        [cursor, human],
+      );
+      const clearRead = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(
+        db,
+        undefined,
+        { send: vi.fn().mockResolvedValue(undefined), clearRead },
+      );
+      for (let pass = 0; pass < 3; pass += 1) {
+        await loop.runOnce();
+        await db.query(
+          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+        );
+      }
+      const dismissed = clearRead.mock.calls.flatMap(([, reads]: [string, ReadClearCursor[]]) =>
+        reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
+      );
+      expect(dismissed).toEqual([cursor]);
+    } finally {
+      await db.close();
+    }
+  });
   it('retries an APNs timeout durably and records acceptance on the same message claim', async () => {
     const db = new PgliteDatabase();
     try {

@@ -241,7 +241,8 @@ export class PushDeliveryLoop {
       // messages at or before it that this device was pushed, in server
       // order, so the phone keeps notifications for messages after the read.
       // A message is named until a sent push includes it: ids left out by the
-      // per-Room cap or the APNs size limit keep their Room pending.
+      // per-Room cap or the APNs size limit, and an unnamed cursor message,
+      // keep their Room pending.
       `SELECT device.token,batch.channel_ids,batch.read_at_texts,batch.read_ats,
          batch.message_ids,batch.read_message_ids
        FROM push_devices device
@@ -282,7 +283,7 @@ export class PushDeliveryLoop {
                  WHERE claim.device_token=device.token AND claim.status='delivered'
                    AND claim.read_cleared_at IS NULL
                    AND message.room_id=mark.room_id
-                   AND (message.created_at,message.id)<(mark.message_created_at,mark.message_id)))
+                   AND (message.created_at,message.id)<=(mark.message_created_at,mark.message_id)))
            ORDER BY mark.read_at,mark.room_id::text
            LIMIT ${READ_CLEAR_MAX_CHANNELS}
          ) pending

@@ -238,6 +238,8 @@ import { RoomViewHttpError } from '@beeline/buzz-client';
 import { cornerDisplayFromRoomView } from '@/buzz/corner-display-state';
 import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
+import { useRoomMessageStore } from '@/buzz/room-message-store';
+import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
 import {
   LIVE_TRACE_STORAGE_KEY,
   useRoomSurfaceSession,
@@ -285,6 +287,7 @@ function Harness({
     resetTranscript: vi.fn(),
     restoreOutboxMessages: vi.fn(),
     dismissOptimisticMessage: vi.fn(),
+    patchMessage: vi.fn(),
     observeRoomSurface: vi.fn(),
   });
   const result = useRoomSurfaceSession({
@@ -322,6 +325,7 @@ function LiveCornerHarness({ channelId }: { channelId: string }) {
     resetTranscript: vi.fn(),
     restoreOutboxMessages: vi.fn(),
     dismissOptimisticMessage: vi.fn(),
+    patchMessage: vi.fn(),
     observeRoomSurface: vi.fn(),
   });
   const { roomSurface } = useRoomSurfaceSession({ channelId, bindingsRef });
@@ -2152,6 +2156,111 @@ describe('useRoomSurfaceSession', () => {
     expect(current.roomSurface).toBeNull();
     expect(current.hydrationFailed).toBe(true);
     expect(current.hydrationError).toContain('Could not load this conversation');
+    await act(async () => renderer.unmount());
+  });
+});
+
+describe('Room history follows live row changes', () => {
+  const row = (id: string, createdAt: number, text = `row ${id}`): RoomViewMessage => ({
+    id,
+    text,
+    createdAt,
+    author: { pubkey: 'person-a', kind: 'human', name: 'Ada' },
+    presentation: 'message',
+  });
+  // A full tail: the session's newest 30 rows.
+  const tail = Array.from({ length: 30 }, (_, index) => row(`tail-${index}`, 100 + index));
+  const old = row('old-row', 10, 'before');
+
+  type Surface = {
+    session: UseRoomSurfaceSessionResult;
+    history: ReturnType<typeof useRoomMessageStore>;
+  };
+
+  // The chat screen's wiring: the session hands every server row to the store.
+  function HistoryHarness({ capture }: { capture(surface: Surface): void }) {
+    const patchRef = React.useRef<(message: RoomViewMessage) => void>(() => undefined);
+    const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
+      resetTranscript: vi.fn(),
+      restoreOutboxMessages: vi.fn(),
+      dismissOptimisticMessage: vi.fn(),
+      patchMessage: (message) => patchRef.current(message),
+      observeRoomSurface: vi.fn(),
+    });
+    const session = useRoomSurfaceSession({ channelId: 'room-a', bindingsRef });
+    const history = useRoomMessageStore({
+      roomId: 'room-a',
+      tailMessages: session.roomSurface?.messages,
+      roomClient: {
+        history: async (): Promise<RoomHistoryView> => ({ roomId: 'room-a', messages: [old] }),
+      },
+      enabled: true,
+      initialVisibleCount: 30,
+    });
+    patchRef.current = history.patch;
+    capture({ session, history });
+    return React.createElement('room-surface');
+  }
+
+  async function openWithHistory() {
+    controls.cached = { ...roomView('room-a'), messages: tail };
+    let current!: Surface;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(HistoryHarness, { capture: (surface: Surface) => (current = surface) }),
+      );
+    });
+    await flushEffects();
+    await act(async () => current.history.loadOlder(30));
+    await flushEffects();
+    expect(current.history.rows.map((message) => message.text)).toEqual(['before']);
+    return { current: () => current, renderer };
+  }
+
+  it('shows an edit to a row older than the newest 30', async () => {
+    const { current, renderer } = await openWithHistory();
+    await act(async () =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'message-delta',
+          roomId: 'room-a',
+          message: { ...old, text: 'after' },
+        },
+      }),
+    );
+    expect(current().history.rows.map((message) => message.text)).toEqual(['after']);
+    expect(current().session.roomSurface?.messages.map((message) => message.id)).toEqual(
+      tail.map((message) => message.id),
+    );
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps a delete on an older row once the server answers', async () => {
+    const { current, renderer } = await openWithHistory();
+    await act(async () =>
+      current().session.applyRoomMessageResult({ ...old, text: '', deleted: true }),
+    );
+    expect(current().history.rows.map((message) => message.deleted)).toEqual([true]);
+    await act(async () => renderer.unmount());
+  });
+
+  it('writes a live delta to the Room disk cache', async () => {
+    const { mobileSurfaceCache } = await import('@/buzz/surface-storage');
+    vi.useFakeTimers();
+    const { renderer } = await openWithHistory();
+    vi.mocked(mobileSurfaceCache.write).mockClear();
+    const fresh = row('fresh-row', 200, 'new');
+    await act(async () =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'message-delta', roomId: 'room-a', message: fresh },
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    const written = vi.mocked(mobileSurfaceCache.write).mock.calls.at(-1)?.[1] as RoomView;
+    expect(written.messages.at(-1)?.id).toBe('fresh-row');
     await act(async () => renderer.unmount());
   });
 });

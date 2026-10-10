@@ -239,7 +239,7 @@ async function run() {
   const root = document.getElementById('root')!;
   root.style.cssText = 'height:100vh;display:flex;flex-direction:column;overflow:hidden';
   createRoot(root).render(<BuzzChat />);
-  if (mode === 'warm' || mode === 'warm-retap' || mode === 'cold') {
+  if (mode === 'warm' || mode === 'warm-retap' || mode === 'warm-edit' || mode === 'cold') {
     await warm(mode);
     return;
   }
@@ -343,6 +343,35 @@ async function warm(mode: string) {
   const landed = await tap('push-1');
   if (mode === 'warm') {
     report(JSON.stringify({ mode, beforeTap, landed, timeline }));
+    return;
+  }
+  if (mode === 'warm-edit') {
+    // The landed row, rendered anywhere in the list, by its exact text.
+    const rowText = (text: string) =>
+      leaves(list()).some((node) => node.textContent!.trim() === text);
+    const before = await waitFor(() => rowText(targetText), 4000);
+    // Another client edits the landed message; the server sends its row.
+    const emit = (globalThis as unknown as { __emit(event: unknown): void }).__emit;
+    const room = query.get('room')!;
+    const messageId = query.get('target')!;
+    emit({
+      monolithLive: {
+        type: 'message-delta',
+        roomId: room,
+        message: {
+          id: messageId,
+          text: 'TARGET MESSAGE (edited)',
+          createdAt: Number(query.get('targetAt')),
+          author: JSON.parse(query.get('author')!),
+          presentation: 'message',
+          reference: { channelId: room, eventId: messageId, rootId: messageId },
+        },
+      },
+    });
+    const after = await waitFor(() => rowText('TARGET MESSAGE (edited)'), 2000);
+    report(
+      JSON.stringify({ mode, beforeTap, landed, edit: { before, after, stale: rowText(targetText) } }),
+    );
     return;
   }
   // The reader scrolls back down to the newest rows. The inverted list's

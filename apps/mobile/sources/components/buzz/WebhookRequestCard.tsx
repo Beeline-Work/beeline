@@ -10,9 +10,11 @@ export function WebhookRequestCard({ request, roomId, canManage, signingSecret, 
   request: Request; roomId: string; canManage: boolean; signingSecret?: string; onDecided?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState(request.status);
+  // The decision's answer, shown only until the server row carries a status.
+  const [decided, setDecided] = useState<Request['status'] | null>(null);
   const [error, setError] = useState('');
-  useEffect(() => setStatus(request.status), [request.status]);
+  useEffect(() => setDecided(null), [request.status]);
+  const status = decided ?? request.status;
   const pending = status === 'pending' && request.expiresAt > Date.now()/1000;
   async function decide(approve: boolean) {
     setBusy(true); setError('');
@@ -21,7 +23,7 @@ export function WebhookRequestCard({ request, roomId, canManage, signingSecret, 
         roomId, webhookRequestId: request.requestId, approve,
         ...(approve && signingSecret ? { signingSecret } : {}),
       });
-      setStatus(result.status as Request['status']);
+      setDecided(result.status as Request['status']);
       onDecided?.();
     } catch (e) { setError(phoneOperationFailureReason(e)); }
     finally { setBusy(false); }

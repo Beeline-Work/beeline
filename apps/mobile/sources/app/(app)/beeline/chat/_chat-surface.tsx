@@ -1427,6 +1427,7 @@ export function BuzzChatSurface({
     loadOlder: loadOlderHistory,
     retryOlder: retryOlderHistory,
     revealThrough: revealTranscriptThrough,
+    patch: patchTranscriptHistory,
     reset: resetTranscriptHistory,
   } = useRoomMessageStore({
     roomId: decodedId,
@@ -1435,6 +1436,9 @@ export function BuzzChatSurface({
     enabled: Boolean(cacheViewerPubkey),
     initialVisibleCount: isCorner ? INITIAL_CORNER_MESSAGE_WINDOW : INITIAL_MESSAGE_WINDOW,
   });
+  // The loaded server rows, read by actions that patch one row by id.
+  const serverRowsRef = useRef({ tail: roomSurface?.messages, history: historyRows });
+  serverRowsRef.current = { tail: roomSurface?.messages, history: historyRows };
   const committedMessageIds = useMemo(
     () => new Set(cachedMessages.map((message) => message.id)),
     [cachedMessages],
@@ -1476,6 +1480,7 @@ export function BuzzChatSurface({
     },
     restoreOutboxMessages: addMessages,
     dismissOptimisticMessage: removeOptimistic,
+    patchMessage: patchTranscriptHistory,
     // A newly indexed working lease can be newer than the screen's prior
     // clock. Re-evaluate it at RoomView application time, as this screen did
     // before the surface lifecycle moved into useRoomSurfaceSession.
@@ -3758,7 +3763,18 @@ export function BuzzChatSurface({
           messageId,
           bookmarked,
         });
-        setOptimisticBookmarks((current) => ({ ...current, [messageId]: result.bookmarked }));
+        const { tail, history } = serverRowsRef.current;
+        const row =
+          tail?.find((candidate) => candidate.id === messageId) ??
+          history.find((candidate) => candidate.id === messageId);
+        // The server value now lives on its row; the overlay only bridged the wait.
+        if (row) applyRoomMessageResult({ ...row, bookmarked: result.bookmarked });
+        setOptimisticBookmarks((current) => {
+          if (!row) return { ...current, [messageId]: result.bookmarked };
+          const updated = { ...current };
+          delete updated[messageId];
+          return updated;
+        });
       } catch (error) {
         setOptimisticBookmarks((current) => ({ ...current, [messageId]: previous }));
         AccessibilityInfo.announceForAccessibility('Bookmark change failed');
@@ -3768,7 +3784,7 @@ export function BuzzChatSurface({
         );
       }
     },
-    [activeCommunityId, decodedId, messageIsBookmarked],
+    [applyRoomMessageResult, decodedId, messageIsBookmarked],
   );
 
   const messageIsReported = useCallback(

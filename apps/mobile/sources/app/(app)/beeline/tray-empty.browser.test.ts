@@ -41,6 +41,7 @@ function dataShims(
     '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
     '@/sync/transport/live-connection':
       'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
+    '@/auth/monolith-session': 'export const monolithSession = { subscribeIdentityChange: () => () => undefined };',
     '@/buzz/community-storage': `export const loadActiveCommunityId = async () => ${link === 'active' ? "'workspace-1'" : 'null'};`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ${link === 'workspace' ? 'null' : "({ publicKey: 'viewer' })"};`,

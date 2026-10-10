@@ -19,6 +19,7 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
+import { NeedsYouExpiryLoop } from './needs-you-expiry.js';
 import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
 import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { ConnectionPresence } from './connection-presence.js';
@@ -270,6 +271,7 @@ async function main() {
       })
     : new MediaExpiryLoop(jobsDatabase);
   const choiceExpiry = new ChoiceExpiryLoop(jobsDatabase);
+  const needsYouExpiry = new NeedsYouExpiryLoop(jobsDatabase);
   const sendPushTest = pushSender || webPushSender
     ? createPushTestSender(database, pushSender, apnsPushSender, webPushSender)
     : undefined;
@@ -400,6 +402,7 @@ async function main() {
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       await backgroundJobs.run('webhook-expiry', () => new RoomWebhooks(jobsDatabase).expireRequests());
+      const needsYouDue = await backgroundJobs.run('needs-you-expiry', () => needsYouExpiry.runOnce());
       // Recovery scans run once per leadership tenure. Normal writes and
       // webhooks drive their own transitions; failures retry on the next cycle.
       if (githubJobs && !recoveredCornerMerges) {
@@ -442,6 +445,8 @@ async function main() {
         reconciliationMs,
         ...(nextDue.ok && nextDue.value
           ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
+        ...(needsYouDue.ok && needsYouDue.value !== null
+          ? [Math.max(0, needsYouDue.value - Date.now())] : []),
       );
     },
     reconciliationMs,

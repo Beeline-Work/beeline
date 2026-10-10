@@ -37,6 +37,7 @@ import {
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
+import { cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you-expiry.js';
 import { cancelArchivedCornerAssignments } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
@@ -2890,6 +2891,20 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY messages_needs_you_approval_idx
      ON messages(room_id)
      WHERE card_type IN ('agent-sign-in','app-sign-in','squire-approval') AND deleted_at IS NULL`,
+  ));
+  // The Needs-you expiry sweep (needs-you-expiry.ts) finds the cells whose
+  // clock passed since its last run: open marks by first sight, and expiring
+  // approval cards by their `expiresAt`.
+  await retryMigrationStep('needs-you mark expiry index', () => createIndexConcurrently(
+    database, 'needs_you_marks_open_first_seen_idx',
+    `CREATE INDEX CONCURRENTLY needs_you_marks_open_first_seen_idx
+     ON needs_you_marks(first_seen_at) WHERE cleared_at IS NULL`,
+  ));
+  await retryMigrationStep('needs-you card expiry index', () => createIndexConcurrently(
+    database, 'messages_needs_you_expiry_idx',
+    `CREATE INDEX CONCURRENTLY messages_needs_you_expiry_idx
+     ON messages(${cardExpiresAtSql()})
+     WHERE ${EXPIRING_CARD_TYPES} AND deleted_at IS NULL`,
   ));
   await retryMigrationStep('squire decision index', () => createIndexConcurrently(
     database, 'messages_squire_decision_idx',

@@ -1,7 +1,7 @@
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { messageJumpHref, roomHref } from '@/buzz/corner-navigation';
 import { useIsDesktop } from '@/utils/responsive';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   FlatList,
@@ -19,7 +19,16 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
-import { subscribeNeedsYouLiveDelta, type NeedsYouLiveDelta } from '@/buzz/needs-you';
+import {
+  holdNeedsYou,
+  loadNeedsYouList,
+  needsYouVersion,
+  removeNeedsYou,
+  restoreNeedsYou,
+  seedNeedsYouList,
+  setNeedsYouList,
+  useNeedsYouList,
+} from '@/buzz/needs-you-store';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
@@ -32,6 +41,8 @@ import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import brand from '@/buzz/brand.json';
+
+const EMPTY_NEEDS: readonly NeedsYouItemView[] = [];
 
 /** How long a removal or a section clear can be undone. */
 const UNDO_MS = 6_000;
@@ -109,15 +120,6 @@ type Row =
   | { readonly key: string; readonly type: 'saved-empty' }
   | { readonly key: string; readonly type: 'saved-more' };
 
-function applyNeedsSlice(
-  current: readonly NeedsYouItemView[], delta: NeedsYouLiveDelta,
-): NeedsYouItemView[] {
-  return [...current.filter((item) => item.roomId !== delta.sourceRoomId),
-    ...delta.items].sort((a, b) => Number(!a.approval) - Number(!b.approval) ||
-      (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity) ||
-      a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId));
-}
-
 type BookmarkDelta = { readonly messageId: string; readonly bookmark: MessageBookmarkView | null };
 function applyBookmarkChange(
   current: readonly MessageBookmarkView[], delta: BookmarkDelta,
@@ -151,7 +153,9 @@ export default function TrayScreen() {
   const lostWorkspaceRef = useRef<string | null>(null);
   const workspaceLost = Boolean(workspaceId) && lostWorkspaceId === workspaceId;
   const noWorkspace = (!routeWorkspaceId && activeWorkspaceId === null) || workspaceLost;
-  const [needs, setNeeds] = useState<readonly NeedsYouItemView[]>([]);
+  // The badge reads the same store, so its count is this list's length.
+  const needsList = useNeedsYouList(workspaceId);
+  const needs = needsList.all ?? EMPTY_NEEDS;
   const [bookmarks, setBookmarks] = useState<readonly MessageBookmarkView[]>([]);
   const [savedNext, setSavedNext] = useState<string | undefined>();
   const loadingSaved = useRef(false);
@@ -161,7 +165,6 @@ export default function TrayScreen() {
   const loadedWorkspaceRef = useRef<string | null>(null);
   const loadGenerationRef = useRef(0);
   const loadInFlightRef = useRef(false);
-  const needsDuringLoadRef = useRef<NeedsYouLiveDelta[]>([]);
   const bookmarksDuringLoadRef = useRef<BookmarkDelta[]>([]);
   const bookmarksDuringPageRef = useRef<BookmarkDelta[]>([]);
   useLatencyRouteFrame('/beeline/tray', !loading, true);
@@ -178,14 +181,12 @@ export default function TrayScreen() {
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const loadedSections = useRef({ workspaceId: '', needs: false, bookmarks: false });
-  const needsVersionRef = useRef(0);
   const bookmarksVersionRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
     const generation = ++loadGenerationRef.current;
     loadInFlightRef.current = true;
-    needsDuringLoadRef.current = [];
     bookmarksDuringLoadRef.current = [];
     savedScroll.current = false;
     if (loadedSections.current.workspaceId !== workspaceId)
@@ -195,7 +196,7 @@ export default function TrayScreen() {
     // Each section reads on its own: a failed Saved read must not hide what
     // needs the person, and the other way round.
     const [needsResult, savedResult] = await Promise.allSettled([
-      monolithPhoneOperation('readNeedsYou', { workspaceId }),
+      loadNeedsYouList(workspaceId),
       monolithPhoneOperation('listMessageBookmarks', { workspaceId }),
     ]);
     const results = [needsResult, savedResult];
@@ -210,7 +211,7 @@ export default function TrayScreen() {
       lostWorkspaceRef.current = workspaceId;
       setLostWorkspaceId(workspaceId);
       loadedSections.current = { workspaceId, needs: true, bookmarks: true };
-      setNeeds([]);
+      setNeedsYouList(workspaceId, []);
       setBookmarks([]);
       setSavedNext(undefined);
       setSelected(null);
@@ -225,14 +226,9 @@ export default function TrayScreen() {
     }
     lostWorkspaceRef.current = null;
     setLostWorkspaceId(null);
-    const mergedNeeds = needsResult.status === 'fulfilled'
-      ? needsDuringLoadRef.current.reduce(applyNeedsSlice, [...needsResult.value.items]) : null;
     const mergedBookmarks = savedResult.status === 'fulfilled'
       ? bookmarksDuringLoadRef.current.reduce(applyBookmarkChange, [...savedResult.value.bookmarks]) : null;
-    if (mergedNeeds) {
-      loadedSections.current.needs = true;
-      setNeeds(mergedNeeds);
-    }
+    if (needsResult.status === 'fulfilled') loadedSections.current.needs = true;
     if (mergedBookmarks) {
       loadedSections.current.bookmarks = true;
       setBookmarks(mergedBookmarks);
@@ -267,13 +263,6 @@ export default function TrayScreen() {
         '/workspace/:id/bookmarks', { workspaceId }), { bookmarks, next: savedNext }, isBookmarkList);
     });
   }, [workspaceId, bookmarks, savedNext]);
-
-  useEffect(() => subscribeNeedsYouLiveDelta((delta) => {
-    if (delta.workspaceId !== workspaceId) return;
-    needsVersionRef.current += 1;
-    if (loadInFlightRef.current) needsDuringLoadRef.current.push(delta);
-    setNeeds((current) => applyNeedsSlice(current, delta));
-  }), [workspaceId]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -331,7 +320,7 @@ export default function TrayScreen() {
     if (!workspaceId) return;
     if (loadedSections.current.workspaceId !== workspaceId)
       loadedSections.current = { workspaceId, needs: false, bookmarks: false };
-    const needsVersion = needsVersionRef.current;
+    const needsVersion = needsYouVersion(workspaceId);
     const bookmarksVersion = bookmarksVersionRef.current;
     let cancelled = false;
     void (async () => {
@@ -344,8 +333,8 @@ export default function TrayScreen() {
           '/workspace/:id/bookmarks', { workspaceId }), isBookmarkList),
       ]);
       if (cancelled) return;
-      if (savedNeeds && !loadedSections.current.needs && needsVersion === needsVersionRef.current)
-        setNeeds(savedNeeds.items);
+      if (savedNeeds && !loadedSections.current.needs && needsVersion === needsYouVersion(workspaceId))
+        seedNeedsYouList(workspaceId, savedNeeds.items);
       if (savedBookmarks && !loadedSections.current.bookmarks && bookmarksVersion === bookmarksVersionRef.current) {
         setBookmarks(savedBookmarks.bookmarks);
         setSavedNext(savedBookmarks.next);
@@ -490,16 +479,14 @@ export default function TrayScreen() {
 
   /** Tapped or dismissed: the cell leaves this tray, and every other device's. */
   const clear = useCallback(async (item: NeedsYouItemView) => {
-    setNeeds((current) => current.filter((entry) => entry.messageId !== item.messageId));
+    removeNeedsYou(item.workspaceId, [item.messageId]);
     try {
       await monolithPhoneOperation('clearNeedsYou', {
         workspaceId: item.workspaceId,
         messageId: item.messageId,
       });
     } catch (cause) {
-      setNeeds((current) =>
-        [item, ...current].sort((left, right) => right.createdAt - left.createdAt),
-      );
+      restoreNeedsYou(item.workspaceId, [item]);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, []);
@@ -526,13 +513,11 @@ export default function TrayScreen() {
   const commitClear = useCallback(async (clear: PendingClear) => {
     const ids = new Set(clear.items.map((item) => item.messageId));
     if (clear.kind === 'needs') {
-      setNeeds((current) => current.filter((item) => !ids.has(item.messageId)));
+      removeNeedsYou(clear.workspaceId, ids);
       try {
         await monolithPhoneOperation('clearNeedsYouSection', { workspaceId: clear.workspaceId });
       } catch (cause) {
-        setNeeds((current) =>
-          [...clear.items, ...current].sort((left, right) => right.createdAt - left.createdAt),
-        );
+        restoreNeedsYou(clear.workspaceId, clear.items);
         setError(cause instanceof Error ? cause.message : String(cause));
       }
       return;
@@ -575,14 +560,23 @@ export default function TrayScreen() {
   }, [flushClears, pending]);
   useFocusEffect(useCallback(() => () => flushClears(() => true), [flushClears]));
 
-  const visibleNeeds = useMemo(() => {
-    const held = new Set(
-      pending.flatMap((clear) =>
-        clear.kind === 'needs' ? clear.items.map((item) => item.messageId) : [],
-      ),
-    );
-    return held.size ? needs.filter((item) => !held.has(item.messageId)) : needs;
-  }, [needs, pending]);
+  // Held section clears hide their cells in the store, so the badge drops too.
+  // A layout effect, so the cells never paint once more after the clear.
+  useLayoutEffect(() => {
+    const held = new Map<string, string[]>();
+    for (const clear of pending) {
+      if (clear.kind !== 'needs') continue;
+      held.set(clear.workspaceId, [
+        ...(held.get(clear.workspaceId) ?? []),
+        ...clear.items.map((item) => item.messageId),
+      ]);
+    }
+    for (const [id, ids] of held) holdNeedsYou(id, ids);
+    return () => {
+      for (const id of held.keys()) holdNeedsYou(id, []);
+    };
+  }, [pending]);
+  const visibleNeeds = needsList.items ?? EMPTY_NEEDS;
   const visibleBookmarks = useMemo(() => {
     const held = new Set(
       pending.flatMap((clear) =>

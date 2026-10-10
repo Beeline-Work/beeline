@@ -104,7 +104,17 @@ vi.mock('@expo/vector-icons', async () => {
   const ReactModule = await import('react');
   return { Ionicons: (props: any) => ReactModule.createElement('Ionicons', props) };
 });
+const identityListeners = vi.hoisted(() => new Set<() => void>());
+
 vi.mock('@/auth/buzz-identity-storage', () => auth);
+vi.mock('@/auth/monolith-session', () => ({
+  monolithSession: {
+    subscribeIdentityChange: (listener: () => void) => {
+      identityListeners.add(listener);
+      return () => identityListeners.delete(listener);
+    },
+  },
+}));
 vi.mock('@/buzz/surface-storage', () => ({
   surfaceAddress: (_relay: string, _viewer: string, endpoint: string) => endpoint,
   mobileSurfaceCache: {
@@ -153,7 +163,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 });
 
 import TrayScreen from './tray';
-import { applyNeedsYouLiveDelta } from '@/buzz/needs-you';
+import { applyNeedsYouLiveDelta, resetNeedsYou, useNeedsYouCount } from '@/buzz/needs-you-store';
 
 const person = {
   pubkey: 'person-1',
@@ -286,6 +296,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   liveRegistrations.clear();
+  resetNeedsYou();
+  auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'viewer' }));
   layout.os = 'web';
   layout.width = 1200;
   navigation.back.mockReset();
@@ -301,11 +313,18 @@ beforeEach(() => {
   roomRead.mockImplementation(async (id: string) => (id === 'room-1' ? parentRoom : cornerRoom));
 });
 
+/** Trees still mounted at a test's end; a left-over tray would hold its list in the store. */
+const mountedTrees: ReactTestRenderer[] = [];
+afterEach(async () => {
+  for (const tree of mountedTrees.splice(0)) await act(async () => tree.unmount());
+});
+
 async function renderTray(): Promise<ReactTestRenderer> {
   let tree!: ReactTestRenderer;
   await act(async () => {
     tree = create(<TrayScreen />);
   });
+  mountedTrees.push(tree);
   await act(async () => undefined);
   return tree;
 }
@@ -541,6 +560,7 @@ describe('Bookmarks mobile open', () => {
         : Promise.resolve(undefined));
     let tree!: ReactTestRenderer;
     await act(async () => { tree = create(<TrayScreen />); });
+    mountedTrees.push(tree);
     await act(async () => undefined);
     await act(async () => {
       for (const listener of [...liveRegistrations]) listener({ monolithLive: {
@@ -646,6 +666,149 @@ describe('Bookmarks mobile open', () => {
       expect(tree.root.findAllByProps({ testID: 'tray-no-workspace' })).toHaveLength(0);
       expect(textOf(tree)).toContain('Retry');
     }
+  });
+});
+
+describe('Needs-you badge and tray', () => {
+  /** The badge a Room list or sidebar paints, beside an optionally mounted tray. */
+  function BadgeAndTray({ tray }: { tray: boolean }) {
+    const count = useNeedsYouCount('ws', 1);
+    return (
+      <>
+        {React.createElement('Text', { testID: 'badge' }, String(count))}
+        {tray ? <TrayScreen /> : null}
+      </>
+    );
+  }
+
+  function badge(tree: ReactTestRenderer): number {
+    return Number(tree.root.findByProps({ testID: 'badge' }).props.children);
+  }
+
+  function rows(tree: ReactTestRenderer): number {
+    return tree.root.findAll((node: any) =>
+      /^needs-you-ask-\d$/.test(String(node.props.testID ?? '')) && typeof node.type === 'string').length;
+  }
+
+  /** The server: `needs` is what a list read sees; the count is its length. */
+  function serveNeeds(state: { needs: unknown[]; failClear?: boolean }) {
+    phoneOperation.mockImplementation(async (name: string, input: { messageId?: string }) => {
+      if (name === 'readNeedsYou') return { items: state.needs };
+      if (name === 'countNeedsYou') return { count: state.needs.length };
+      if (name === 'listMessageBookmarks') return { bookmarks: [] };
+      if (name === 'clearNeedsYou') {
+        if (state.failClear) throw new Error('clear refused');
+        state.needs = state.needs.filter((item: any) => item.messageId !== input.messageId);
+      }
+      return undefined;
+    });
+  }
+
+  async function render(tray: boolean): Promise<ReactTestRenderer> {
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<BadgeAndTray tray={tray} />);
+    });
+    mountedTrees.push(tree);
+    await act(async () => undefined);
+    return tree;
+  }
+
+  async function swipe(tree: ReactTestRenderer, id: string) {
+    await act(async () => {
+      tree.root.findByProps({ testID: `needs-you-swipe-${id}` }).props.onSwipeableOpen('left');
+    });
+    await act(async () => undefined);
+  }
+
+  beforeEach(() => {
+    layout.os = 'ios';
+    layout.width = 390;
+  });
+
+  it('Reproduction NEEDS-YOU-BADGE-1: a dismiss drops the badge with the list', async () => {
+    serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
+    const tree = await render(true);
+    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
+    await swipe(tree, 'ask-1');
+    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
+  });
+
+  it('a failed clear puts the cell back in the list and the badge', async () => {
+    serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })], failClear: true });
+    const tree = await render(true);
+    await swipe(tree, 'ask-1');
+    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
+  });
+
+  it('a held section clear hides the cells from the badge until Undo', async () => {
+    serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
+    const tree = await render(true);
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    expect([rows(tree), badge(tree)]).toEqual([0, 0]);
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-undo' })
+      .findByProps({ accessibilityRole: 'button' }).props.onPress());
+    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
+  });
+
+  it('a reconnect after the tray closed counts again instead of keeping the old list', async () => {
+    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
+    serveNeeds(server);
+    const tree = await render(true);
+    expect(badge(tree)).toBe(2);
+    await act(async () => tree.update(<BadgeAndTray tray={false} />));
+    server.needs = [need()];
+    await act(async () => {
+      for (const listener of [...liveRegistrations])
+        listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' } });
+    });
+    // The fresh count resolves after the viewer and the request settle.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(badge(tree)).toBe(1);
+  });
+
+  it('an open tray re-reads on a gap and the badge follows it', async () => {
+    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
+    serveNeeds(server);
+    const tree = await render(true);
+    server.needs = [need()];
+    await act(async () => {
+      for (const listener of [...liveRegistrations])
+        listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'needs-you-gap' } });
+    });
+    await act(async () => undefined);
+    expect([rows(tree), badge(tree)]).toEqual([1, 1]);
+  });
+
+  it('a live delta moves the badge and the list together', async () => {
+    serveNeeds({ needs: [need()] });
+    const tree = await render(true);
+    await act(async () => applyNeedsYouLiveDelta({
+      workspaceId: 'ws', sourceRoomId: 'room-2', count: 2,
+      items: [need({ messageId: 'ask-2', roomId: 'room-2' })] as never,
+    }));
+    expect([rows(tree), badge(tree)]).toEqual([2, 2]);
+  });
+
+  it('an account switch never shows the previous account\'s count', async () => {
+    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
+    serveNeeds(server);
+    const tree = await render(false);
+    expect(badge(tree)).toBe(2);
+    let answerCount!: (value: { count: number }) => void;
+    phoneOperation.mockImplementation((name: string) => name === 'countNeedsYou'
+      ? new Promise((resolve) => { answerCount = resolve; })
+      : Promise.resolve(undefined));
+    auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'other-viewer' }));
+    await act(async () => {
+      for (const listener of [...identityListeners]) listener();
+    });
+    await act(async () => undefined);
+    expect(badge(tree)).toBe(0);
+    await act(async () => answerCount({ count: 0 }));
+    expect(badge(tree)).toBe(0);
   });
 });
 
@@ -1150,6 +1313,7 @@ it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN â
       '@/sync/transport/live-connection':
         'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
       '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
+      '@/auth/monolith-session': 'export const monolithSession = { subscribeIdentityChange: () => () => undefined };',
       '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
       'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
       '@expo/vector-icons': "import React from 'react'; export const Ionicons = () => React.createElement('span');",
@@ -1182,6 +1346,7 @@ function clearProofShims(mobile: string) {
     '@/sync/transport/live-connection':
       'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
     '@/auth/buzz-identity-storage': "export const getEffectiveRelayUrl = async () => 'http://local'; export const loadBuzzIdentity = async () => null;",
+    '@/auth/monolith-session': 'export const monolithSession = { subscribeIdentityChange: () => () => undefined };',
     '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',
     'react-native-gesture-handler': 'export const Swipeable = ({ children }) => children;',
     '@expo/vector-icons': "import React from 'react'; export const Ionicons = () => React.createElement('span');",

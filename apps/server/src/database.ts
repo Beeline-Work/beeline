@@ -2074,7 +2074,7 @@ ALTER TABLE push_devices ALTER COLUMN registered_at SET DEFAULT now();
 ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
--- One row per iOS device: the last read mark, by (updated_at, room_id), already
+-- One row per iOS device: the last read mark, by (read_at, room_id), already
 -- sent to it as a silent shade clear, and when (PushDeliveryLoop.sendReadClears).
 CREATE TABLE IF NOT EXISTS push_read_clears (
   device_token text PRIMARY KEY REFERENCES push_devices(token) ON DELETE CASCADE,
@@ -2082,8 +2082,11 @@ CREATE TABLE IF NOT EXISTS push_read_clears (
   cleared_through_room text NOT NULL DEFAULT '',
   sent_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS room_read_marks_identity_updated_idx
-  ON room_read_marks(identity_id,updated_at);
+-- When the mark last moved forward (PhoneService.markRead). updated_at also
+-- moves on markUnread, which must not clear a phone's shade.
+ALTER TABLE room_read_marks ADD COLUMN IF NOT EXISTS read_at timestamptz;
+CREATE INDEX IF NOT EXISTS room_read_marks_identity_read_idx
+  ON room_read_marks(identity_id,read_at);
 
 CREATE TABLE IF NOT EXISTS push_delivery_floors (
   id text PRIMARY KEY,

@@ -216,27 +216,28 @@ export class PushDeliveryLoop {
       channel_ids: string[];
     }>(
       // Each push takes the oldest READ_CLEAR_MAX_CHANNELS marks past the
-      // device's (updated_at, room_id) cursor and moves the cursor to the last
-      // one sent, so overflow and marks tied on updated_at go in later pushes.
+      // device's (read_at, room_id) cursor and moves the cursor to the last
+      // one sent, so overflow and marks tied on read_at go in later pushes.
+      // read_at moves only on markRead, so marking a Room unread sends nothing.
       // Text, not a JS Date: a Date drops microseconds, and the next pass
       // would see the same mark as newer than the boundary forever.
       `SELECT device.token,batch.cleared_through,batch.cleared_through_room,batch.channel_ids
        FROM push_devices device
        LEFT JOIN push_read_clears clear ON clear.device_token=device.token
        CROSS JOIN LATERAL (
-         SELECT array_agg(pending.room_id ORDER BY pending.updated_at,pending.room_id) channel_ids,
-           (array_agg(pending.updated_at::text
-             ORDER BY pending.updated_at DESC,pending.room_id DESC))[1] cleared_through,
+         SELECT array_agg(pending.room_id ORDER BY pending.read_at,pending.room_id) channel_ids,
+           (array_agg(pending.read_at::text
+             ORDER BY pending.read_at DESC,pending.room_id DESC))[1] cleared_through,
            (array_agg(pending.room_id
-             ORDER BY pending.updated_at DESC,pending.room_id DESC))[1] cleared_through_room
+             ORDER BY pending.read_at DESC,pending.room_id DESC))[1] cleared_through_room
          FROM (
-           SELECT mark.room_id::text room_id,mark.updated_at FROM room_read_marks mark
+           SELECT mark.room_id::text room_id,mark.read_at FROM room_read_marks mark
            WHERE mark.identity_id=device.identity_id
-             AND mark.updated_at>GREATEST(device.registered_at,now()-interval '1 day')
-             AND (mark.updated_at,mark.room_id::text)
+             AND mark.read_at>GREATEST(device.registered_at,now()-interval '1 day')
+             AND (mark.read_at,mark.room_id::text)
                >(COALESCE(clear.cleared_through,'-infinity'::timestamptz),
                  COALESCE(clear.cleared_through_room,''))
-           ORDER BY mark.updated_at,mark.room_id::text
+           ORDER BY mark.read_at,mark.room_id::text
            LIMIT ${READ_CLEAR_MAX_CHANNELS}
          ) pending
        ) batch

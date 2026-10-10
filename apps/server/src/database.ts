@@ -2074,11 +2074,12 @@ ALTER TABLE push_devices ALTER COLUMN registered_at SET DEFAULT now();
 ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
--- One row per iOS device: the newest read mark already sent to it as a silent
--- shade clear, and when (PushDeliveryLoop.sendReadClears).
+-- One row per iOS device: the last read mark, by (updated_at, room_id), already
+-- sent to it as a silent shade clear, and when (PushDeliveryLoop.sendReadClears).
 CREATE TABLE IF NOT EXISTS push_read_clears (
   device_token text PRIMARY KEY REFERENCES push_devices(token) ON DELETE CASCADE,
   cleared_through timestamptz NOT NULL,
+  cleared_through_room text NOT NULL DEFAULT '',
   sent_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS room_read_marks_identity_updated_idx

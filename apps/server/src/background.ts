@@ -212,32 +212,49 @@ export class PushDeliveryLoop {
     const due = await this.database.query<{
       token: string;
       cleared_through: string;
+      cleared_through_room: string;
       channel_ids: string[];
     }>(
+      // Each push takes the oldest READ_CLEAR_MAX_CHANNELS marks past the
+      // device's (updated_at, room_id) cursor and moves the cursor to the last
+      // one sent, so overflow and marks tied on updated_at go in later pushes.
       // Text, not a JS Date: a Date drops microseconds, and the next pass
       // would see the same mark as newer than the boundary forever.
-      `SELECT device.token,max(mark.updated_at)::text cleared_through,
-         (array_agg(mark.room_id::text ORDER BY mark.updated_at DESC))[1:${READ_CLEAR_MAX_CHANNELS}] channel_ids
+      `SELECT device.token,batch.cleared_through,batch.cleared_through_room,batch.channel_ids
        FROM push_devices device
        LEFT JOIN push_read_clears clear ON clear.device_token=device.token
-       JOIN room_read_marks mark ON mark.identity_id=device.identity_id
-         AND mark.updated_at>GREATEST(COALESCE(clear.cleared_through,'-infinity'::timestamptz),
-           device.registered_at,now()-interval '1 day')
-       WHERE device.platform='ios'
+       CROSS JOIN LATERAL (
+         SELECT array_agg(pending.room_id ORDER BY pending.updated_at,pending.room_id) channel_ids,
+           (array_agg(pending.updated_at::text
+             ORDER BY pending.updated_at DESC,pending.room_id DESC))[1] cleared_through,
+           (array_agg(pending.room_id
+             ORDER BY pending.updated_at DESC,pending.room_id DESC))[1] cleared_through_room
+         FROM (
+           SELECT mark.room_id::text room_id,mark.updated_at FROM room_read_marks mark
+           WHERE mark.identity_id=device.identity_id
+             AND mark.updated_at>GREATEST(device.registered_at,now()-interval '1 day')
+             AND (mark.updated_at,mark.room_id::text)
+               >(COALESCE(clear.cleared_through,'-infinity'::timestamptz),
+                 COALESCE(clear.cleared_through_room,''))
+           ORDER BY mark.updated_at,mark.room_id::text
+           LIMIT ${READ_CLEAR_MAX_CHANNELS}
+         ) pending
+       ) batch
+       WHERE device.platform='ios' AND batch.channel_ids IS NOT NULL
          AND COALESCE(clear.sent_at,'-infinity'::timestamptz)
            <now()-interval '${READ_CLEAR_INTERVAL_SECONDS} seconds'
-       GROUP BY device.token
        LIMIT 100`,
     );
     for (const row of due.rows) {
       try {
         await sender.clearRead(row.token, row.channel_ids);
         await this.database.query(
-          `INSERT INTO push_read_clears(device_token,cleared_through,sent_at)
-           VALUES($1,$2::timestamptz,now())
+          `INSERT INTO push_read_clears(device_token,cleared_through,cleared_through_room,sent_at)
+           VALUES($1,$2::timestamptz,$3,now())
            ON CONFLICT(device_token) DO UPDATE
-             SET cleared_through=EXCLUDED.cleared_through,sent_at=EXCLUDED.sent_at`,
-          [row.token, row.cleared_through],
+             SET cleared_through=EXCLUDED.cleared_through,
+               cleared_through_room=EXCLUDED.cleared_through_room,sent_at=EXCLUDED.sent_at`,
+          [row.token, row.cleared_through, row.cleared_through_room],
         );
       } catch (error) {
         if (isUnregisteredPushToken(error)) {

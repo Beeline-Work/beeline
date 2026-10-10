@@ -7,6 +7,7 @@ import {
   PUSH_DELIVERY_CONCURRENCY,
   PushDeliveryLoop,
   READ_CLEAR_INTERVAL_SECONDS,
+  READ_CLEAR_MAX_CHANNELS,
   runMaintenance,
   type LeaderConnection,
 } from './background.js';
@@ -600,6 +601,77 @@ describe('background advisory-lock ownership', () => {
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(firebaseSend).not.toHaveBeenCalled();
+    } finally {
+      await db.close();
+    }
+  });
+  // G9-R1: a push names at most READ_CLEAR_MAX_CHANNELS Rooms. Overflow,
+  // including marks tied on updated_at, must go out in later pushes.
+  it('clears every read Room across throttled pushes when more than one batch is pending', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        ios = 'c0ffee'.repeat(10) + 'abcd',
+        count = READ_CLEAR_MAX_CHANNELS + 1;
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical')`,
+        [ios, human],
+      );
+      const rooms = (
+        await db.query<{ id: string }>(
+          `INSERT INTO rooms(id,workspace_id,parent_id,name)
+           SELECT gen_random_uuid(),$1,NULL,'Room '||n FROM generate_series(1,$2::int) n RETURNING id::text`,
+          [workspace, count],
+        )
+      ).rows.map((row) => row.id);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text)
+         SELECT md5(id::text)||md5(id::text),id,$1,'hi' FROM rooms`,
+        [agent],
+      );
+      // One statement, so every mark shares the same updated_at.
+      await db.query(
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
+         SELECT room_id,$1,created_at,id,now() FROM messages`,
+        [human],
+      );
+      const clearRead = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(
+        db,
+        undefined,
+        { send: vi.fn().mockResolvedValue(undefined), clearRead },
+      );
+      const ageThrottle = () =>
+        db.query(
+          `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+        );
+
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(1);
+      expect(clearRead.mock.calls[0]![1]).toHaveLength(READ_CLEAR_MAX_CHANNELS);
+      // The throttle still holds the overflow inside the interval.
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(1);
+
+      await ageThrottle();
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(2);
+      expect(clearRead.mock.calls[1]![1]).toHaveLength(1);
+
+      await ageThrottle();
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(2);
+      const cleared = clearRead.mock.calls.flatMap((call) => [...call[1]]);
+      expect(new Set(cleared).size).toBe(count);
+      expect([...cleared].sort()).toEqual([...rooms].sort());
     } finally {
       await db.close();
     }

@@ -15,6 +15,7 @@ import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { getWalletSource } from '@/buzz/wallet-source';
 import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
+import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { AppMark } from '@/components/buzz/AppMark';
@@ -66,6 +67,7 @@ export default function WorkbenchScreen() {
     googleNotice?: string | string[];
   }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
+  const activeWorkspaceId = useActiveCommunityId();
   const viewerId = firstParam(params.viewerId) ?? '';
   const desktop = useIsDesktop();
   const { theme } = useUnistyles();
@@ -172,7 +174,7 @@ export default function WorkbenchScreen() {
 
   const openWallet = useCallback(async () => {
     try {
-      const selectedId = await resolveWalletWorkspaceId(workspaceId);
+      const selectedId = await resolveWalletWorkspaceId(workspaceId, activeWorkspaceId);
       if (!selectedId) {
         setWalletWorkspaceMissing(true);
         return;
@@ -185,14 +187,14 @@ export default function WorkbenchScreen() {
     } catch {
       setNetworkFailure('wallet');
     }
-  }, [workspaceId]);
+  }, [activeWorkspaceId, workspaceId]);
 
   const connectWallet = useCallback(async () => {
     if (walletConnecting) return;
     setWalletConnecting(true);
     setNetworkFailure(null);
     try {
-      const selectedId = await resolveWalletWorkspaceId(workspaceId);
+      const selectedId = await resolveWalletWorkspaceId(workspaceId, activeWorkspaceId);
       if (!selectedId) {
         setWalletWorkspaceMissing(true);
         return;
@@ -211,7 +213,7 @@ export default function WorkbenchScreen() {
     } finally {
       setWalletConnecting(false);
     }
-  }, [walletConnecting, workspaceId]);
+  }, [activeWorkspaceId, walletConnecting, workspaceId]);
 
   const connectLink = useCallback(async () => {
     if (linkConnecting) return;

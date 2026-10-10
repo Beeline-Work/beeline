@@ -12,6 +12,7 @@ import {
   isWorkspaceListView,
   type Identity,
   type ManagedIdentity,
+  type WorkspaceListView,
 } from '@beeline/buzz-client';
 import type { PushLevel } from '@beeline/api-contract/phone';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -21,6 +22,7 @@ import {
   loadBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
+import { useActiveCommunityId } from '@/buzz/use-active-community';
 import {
   ensurePersonNameForWorkspace,
   loadPreferredPersonName,
@@ -92,6 +94,11 @@ export default function BuzzIdentitySettings() {
   } | null>(null);
   const [workbench, setWorkbench] = useState<WorkbenchSummary | null>(null);
   const [workspaceRole, setWorkspaceRole] = useState<string | null>(null);
+  const [workspaceList, setWorkspaceList] = useState<{
+    workspaces: WorkspaceListView['workspaces'];
+    confirmed: boolean;
+  } | null>(null);
+  const currentWorkspaceId = useActiveCommunityId();
   const [face, setFace] = useState<string | null>(null);
   const [facePickerOpen, setFacePickerOpen] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
@@ -183,6 +190,9 @@ export default function BuzzIdentitySettings() {
           setProfilePubkey(identity.publicKey);
           setProfileName((current) => current || fallbackPersonName(identity.publicKey));
         }
+        // The device copy of the name is only a cold-start hint until the server answers.
+        const preferredName = await loadPreferredPersonName(identity.publicKey);
+        if (preferredName && !cancelled) setProfileName(preferredName);
         const relayUrl = await getEffectiveRelayUrl();
         const transport = new BuzzRigTransport(identity);
         const clientPromise = transport.ensureClient();
@@ -190,33 +200,25 @@ export default function BuzzIdentitySettings() {
         const workspacePromise = mobileSurfaceCache.fetch(workspaceAddress, isWorkspaceListView, () =>
           new RoomViewClient({ baseUrl: relayUrl, identity }).workspaces());
         const cachedWorkspaces = await mobileSurfaceCache.read(workspaceAddress, isWorkspaceListView);
-        if (cachedWorkspaces && !cancelled) {
-          const activeId = await loadActiveCommunityId(identity.publicKey);
-          const selected = cachedWorkspaces.workspaces.find((item) => item.id === activeId) ?? cachedWorkspaces.workspaces[0];
-          setWorkspaceRole(selected?.role ?? null);
-        }
+        if (cachedWorkspaces && !cancelled)
+          setWorkspaceList({ workspaces: cachedWorkspaces.workspaces, confirmed: false });
         const client = await clientPromise;
-        const [workspaceList, activeCommunityId, preferredName, enabled, registration, permission] =
+        const [freshWorkspaces, activeCommunityId, enabled, registration, permission] =
           await Promise.all([
             workspacePromise,
             loadActiveCommunityId(identity.publicKey),
-            loadPreferredPersonName(identity.publicKey),
             getBuzzPushEnabled(identity.publicKey),
             getBuzzPushRegistrationState(identity.publicKey),
             getPushPermissionInfo(),
           ]);
-        const communityId = workspaceList.workspaces.some((item) => item.id === activeCommunityId)
+        if (!cancelled) setWorkspaceList({ workspaces: freshWorkspaces.workspaces, confirmed: true });
+        const communityId = freshWorkspaces.workspaces.some((item) => item.id === activeCommunityId)
           ? (activeCommunityId ?? undefined)
-          : workspaceList.workspaces[0]?.id;
-        if (!cancelled)
-          setWorkspaceRole(
-            workspaceList.workspaces.find((workspace) => workspace.id === communityId)?.role ??
-              null,
-          );
+          : freshWorkspaces.workspaces[0]?.id;
         const profile = communityId
           ? await ensurePersonNameForWorkspace(client, communityId, identity.publicKey)
           : await client.getGlobalPersonProfile(identity.publicKey);
-        if (profile?.name && !preferredName) {
+        if (profile?.name && profile.name !== preferredName) {
           await savePreferredPersonName(identity.publicKey, profile.name);
         }
         if (!cancelled) {
@@ -238,9 +240,6 @@ export default function BuzzIdentitySettings() {
           setPushEnabledState(enabled);
           setPushRegistration(registration);
           setPushPermission(permission);
-        }
-        if (communityId && !cancelled) {
-          setWorkbenchScope({ workspaceId: communityId, viewerId: identity.publicKey });
         }
         try {
           if (monolithEnabled) {
@@ -282,6 +281,21 @@ export default function BuzzIdentitySettings() {
       cancelled = true;
     };
   }, [monolithEnabled]);
+
+  // Role and Workbench follow the current Workspace when a Room opens elsewhere.
+  useEffect(() => {
+    if (!workspaceList || currentWorkspaceId === undefined) return;
+    const selected =
+      workspaceList.workspaces.find((item) => item.id === currentWorkspaceId) ??
+      workspaceList.workspaces[0];
+    setWorkspaceRole(selected?.role ?? null);
+    if (selected && workspaceList.confirmed && profilePubkey)
+      setWorkbenchScope((current) =>
+        current?.workspaceId === selected.id && current.viewerId === profilePubkey
+          ? current
+          : { workspaceId: selected.id, viewerId: profilePubkey },
+      );
+  }, [currentWorkspaceId, profilePubkey, workspaceList]);
 
   // Re-read on every focus, not only on mount: the Workbench page's vault
   // sync can change the counts while Settings sits underneath it.

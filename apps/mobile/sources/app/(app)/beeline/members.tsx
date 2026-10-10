@@ -55,6 +55,7 @@ import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
+import { patchWorkspaceAgent, workspaceAgentFromDetail } from '@/buzz/workspace-surface';
 import {
   AGENT_MODEL_PICKER_VISIBLE_ROWS,
   effortConfigAxis,
@@ -319,6 +320,8 @@ export default function BuzzMembers({
           workspaceId, agentPubkey: value.agent.identity.pubkey,
         });
       void mobileSurfaceCache.write(address, value, isAgentDetailView);
+      void patchWorkspaceAgent(relayUrl, identity.publicKey, workspaceId,
+        value.agent.identity.pubkey, value).catch(() => undefined);
     }
   };
 
@@ -415,6 +418,7 @@ export default function BuzzMembers({
     if (!workspaceId) return;
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
+    let stopSurface: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<WorkspaceView> | undefined;
     let subscribedFilters = '';
     let subscriptionChange = Promise.resolve();
@@ -434,6 +438,32 @@ export default function BuzzMembers({
       setIdentity(nextIdentity);
       setRelayUrl(nextRelayUrl);
       if (cached) setSurface(cached);
+      // Every Members instance (the list under an agent profile included)
+      // paints the one shared entry, so a receipt patched there reaches all.
+      let painted = cached;
+      stopSurface = mobileSurfaceCache.subscribe(address, () => {
+        const next = mobileSurfaceCache.peek(address, isWorkspaceView);
+        if (cancelled || !next) return;
+        const previous = painted;
+        painted = next;
+        setSurface(next);
+        const fresh = new Map(next.agents.map((agent) => [agent.identity.pubkey, agent]));
+        // A shrinking total is a removal; a page that merely reorders is not.
+        const shrank = previous?.agentTotal !== undefined && next.agentTotal !== undefined &&
+          next.agentTotal < previous.agentTotal;
+        const dropped = new Set(shrank
+          ? (previous?.agents ?? []).map((agent) => agent.identity.pubkey)
+            .filter((pubkey) => !fresh.has(pubkey))
+          : []);
+        setRosterAgents((current) => {
+          if (!current) return current;
+          const kept = current.filter((agent) => !dropped.has(agent.identity.pubkey));
+          const removed = current.length - kept.length;
+          if (removed > 0)
+            setRosterAgentTotal((total) => (total === null ? total : Math.max(0, total - removed)));
+          return kept.map((agent) => fresh.get(agent.identity.pubkey) ?? agent);
+        });
+      });
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
       const relay = await new BuzzRigTransport(nextIdentity).ensureClient();
       const bootstrapFilters: WorkspaceView['watchFilters'] = [
@@ -483,6 +513,7 @@ export default function BuzzMembers({
       cancelled = true;
       agentRequestGenerationRef.current += 1;
       unsubscribe?.();
+      stopSurface?.();
       scheduler?.dispose();
       schedulerRef.current = null;
       setRosterPeople(null);
@@ -781,7 +812,7 @@ export default function BuzzMembers({
         current
           ? current.map((member) =>
               member.identity.pubkey === pubkey
-                ? { ...member, identity: { ...member.identity, name } }
+                ? workspaceAgentFromDetail(member, receipt as unknown as AgentDetailView)
                 : member,
             )
           : current,
@@ -955,6 +986,9 @@ export default function BuzzMembers({
     try {
       const client = await writeClient();
       await client.removeAgent(workspaceId, pubkey);
+      if (identity && relayUrl)
+        void patchWorkspaceAgent(relayUrl, identity.publicKey, workspaceId, pubkey, null)
+          .catch(() => undefined);
       setRosterAgents((current) =>
         current ? current.filter((member) => member.identity.pubkey !== pubkey) : current,
       );

@@ -44,6 +44,30 @@ export function subscribeActiveCommunityId(
   };
 }
 
+/** The one current-Workspace reader: seeds from storage, then follows every later Room open. */
+export function watchActiveCommunityId(
+  pubkey: string,
+  listener: (communityId: string | null) => void,
+): () => void {
+  let heard = false;
+  let stopped = false;
+  const stop = subscribeActiveCommunityId(pubkey, (communityId) => {
+    heard = true;
+    listener(communityId);
+  });
+  if (!heard) {
+    void loadActiveCommunityId(pubkey)
+      .catch(() => null)
+      .then((communityId) => {
+        if (!heard && !stopped) listener(communityId);
+      });
+  }
+  return () => {
+    stopped = true;
+    stop();
+  };
+}
+
 export async function loadPersonalCommunityId(pubkey: string): Promise<string | null> {
   return AsyncStorage.getItem(`${PERSONAL_COMMUNITY_PREFIX}${pubkey}`);
 }

@@ -22,6 +22,7 @@ vi.mock('./SettingsRow', () => ({
   SettingsRow: (props: any) => React.createElement('SettingsRow', props),
 }));
 import { SoulPortraitControls } from './SoulPortraitControls';
+import { avatarGenerationShowsPending } from '@/buzz/avatar-generation';
 
 const original = {
   agent: { identity: { pubkey: 'agent', name: 'Ember', handle: 'ember', face: 'fox' } },
@@ -124,5 +125,35 @@ describe('soul avatar generation', () => {
     expect(countHint()).toBe(0);
     await agentChanged();
     expect(props.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a server answer end the client bridge without waiting for a live signal', async () => {
+    let finish!: () => void;
+    const generate = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const props = mount(original, generate);
+    const rerender = (detail: AgentDetailView) =>
+      act(() => renderer.update(React.createElement(SoulPortraitControls, { ...props, detail })));
+    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
+    // Before the server reports the job, the client job bridges the gap.
+    rerender({ ...original, avatarGenerationPending: false });
+    expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(true);
+    await act(async () => finish());
+    rerender({ ...original, avatarGenerationPending: true });
+    expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(true);
+    await act(async () => rerender({ ...original, avatarGenerationPending: false }));
+    expect(renderer.root.findAllByProps({ testID: 'avatar-generation-pending' })).toHaveLength(0);
+    expect(renderer.root.findByType('SettingsRow').props.title).toBe('Retry avatar generation');
+    expect(props.refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('avatarGenerationShowsPending', () => {
+  const job = { pending: true, error: null, since: 'old' };
+  it('bridges only until the server reports', () => {
+    expect(avatarGenerationShowsPending(job, { avatarGenerationId: 'old' })).toBe(true);
+    expect(avatarGenerationShowsPending(job, { avatarGenerationId: 'new', avatarGenerationPending: false })).toBe(false);
+    expect(avatarGenerationShowsPending({ ...job, serverSeen: true }, { avatarGenerationId: 'old', avatarGenerationPending: false })).toBe(false);
+    expect(avatarGenerationShowsPending({ pending: false, error: null }, { avatarGenerationPending: true })).toBe(true);
+    expect(avatarGenerationShowsPending({ pending: false, error: null }, {})).toBe(false);
   });
 });

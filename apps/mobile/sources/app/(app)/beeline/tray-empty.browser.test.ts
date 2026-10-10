@@ -41,7 +41,11 @@ function dataShims(
     '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
     '@/sync/transport/live-connection':
       'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
-    '@/buzz/community-storage': `export const loadActiveCommunityId = async () => ${link === 'active' ? "'workspace-1'" : 'null'};`,
+    '@/buzz/community-storage': `export const loadActiveCommunityId = async () => ${link === 'active' ? "'workspace-1'" : 'null'};
+    export const watchActiveCommunityId = (_pubkey, listener) => {
+      void loadActiveCommunityId().then(listener);
+      return () => undefined;
+    };`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ${link === 'workspace' ? 'null' : "({ publicKey: 'viewer' })"};`,
     '@/components/DesktopRoomInspector': 'export const DesktopRoomInspector = () => null;',

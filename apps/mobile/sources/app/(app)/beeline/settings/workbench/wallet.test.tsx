@@ -10,6 +10,7 @@ const workspace = vi.hoisted(() => ({
 }));
 
 vi.mock('@/buzz/wallet-workspace', () => ({ resolveWalletWorkspaceId: workspace.resolve }));
+vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'workspace-active' }));
 
 vi.mock('expo-router', () => ({
   router: navigation,
@@ -311,7 +312,7 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     await act(async () => {
       await renderer.root.findByProps({ testID: 'wallet-connect-row' }).props.onPress();
     });
-    expect(workspace.resolve).toHaveBeenCalledWith(undefined);
+    expect(workspace.resolve).toHaveBeenCalledWith(undefined, 'workspace-active');
     expect(grant).toHaveBeenCalledWith({ workspaceId: 'workspace-1' });
     expect(renderer.root.findAllByProps({ testID: 'wallet-connect-row' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'wallet-balance-value' })).toBeTruthy();

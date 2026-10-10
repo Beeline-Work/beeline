@@ -132,6 +132,10 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 }));
 vi.mock('@/buzz/community-storage', () => ({
   loadActiveCommunityId: vi.fn(async () => workspaceSet.active),
+  watchActiveCommunityId: vi.fn((_pubkey: string, listener: (id: string | null) => void) => {
+    void Promise.resolve(workspaceSet.active).then(listener);
+    return () => undefined;
+  }),
 }));
 vi.mock('@/components/DesktopRoomInspector', async () => {
   const ReactModule = await import('react');

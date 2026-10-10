@@ -66,8 +66,10 @@ import {
   type GitHubInstallationAccess,
   type MessageReactionEmoji,
   type ChatListItem,
+  type SurfaceCacheAddress,
   AGENT_PRESENCE_STALE_MS,
   isChatListView,
+  isWorkspaceView,
 } from '@beeline/buzz-client';
 import {
   cornerDisplayName,
@@ -444,13 +446,6 @@ import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 type RoomMemberOption = RoomRosterParticipant;
 type MessageShortcut = { text: string; replyTarget: MessageReplyTarget };
 const NO_SELECTED_MENTIONS: ReadonlyMap<string, string> = new Map();
-/**
- * The Workspace roster each Room reads on entry so agent bylines can name
- * their model: read once per app session, and again whenever the roster sheet
- * or the member picker opens.
- */
-const workspaceRosterThisSession = new Map<string, WorkspaceView>();
-
 /**
  * The reserved `@channel` autocomplete row: tags every human in the Room (the
  * parent Room, for a corner) except the author, never an agent. It is not a
@@ -947,10 +942,9 @@ export function BuzzChatSurface({
   // the daemon recorded on its create event, and the bounded window of Room
   // conversation that preceded it. Corner-only; a Room never reads it.
   const [addingMembers, setAddingMembers] = useState(false);
-  /** The Workspace roster behind member and mention pickers; null until the first scoped read. */
-  const [workspaceRoster, setWorkspaceRoster] = useState<Awaited<
-    ReturnType<NonNullable<typeof roomClient>['workspace']>
-  > | null>(null);
+  /** The shared `/workspace/:id` entry behind bylines and member and mention pickers. */
+  const [workspaceRoster, setWorkspaceRoster] = useState<WorkspaceView | null>(null);
+  const [workspaceRosterAddress, setWorkspaceRosterAddress] = useState<SurfaceCacheAddress | null>(null);
   const workspaceRosterScopeRef = useRef<string | null>(null);
   // The repo this Room owns, or `null` for a chat-only Room. Corners never
   // read this — a corner has no room-repository binding of its own; the
@@ -1829,20 +1823,39 @@ export function BuzzChatSurface({
   // The picker's candidates are the WORKSPACE roster minus this Room's
   // members. The old picker filtered this Room's own member list, so its
   // "add" section was always empty and the only visible path led to the
-  // pairing command (captain report C74). The transcript reads the Workspace
-  // roster once on entry so every agent byline can name its model. Later sheet
-  // refreshes keep the last roster visible until the fresh response lands.
+  // pairing command (captain report C74). The transcript paints the shared
+  // `/workspace/:id` entry, so Members, profile receipts and settings reach
+  // every byline at once. It reads the roster on entry so every agent byline
+  // can name its model, and again whenever the roster sheet or member picker
+  // opens; the last roster stays visible until the fresh response lands.
   useEffect(() => {
     workspaceRosterScopeRef.current = null;
-    setWorkspaceRoster(
-      activeCommunityId ? (workspaceRosterThisSession.get(activeCommunityId) ?? null) : null,
-    );
-    if (activeCommunityId && workspaceRosterThisSession.has(activeCommunityId))
-      workspaceRosterScopeRef.current = activeCommunityId;
-  }, [activeCommunityId]);
+    setWorkspaceRoster(null);
+    setWorkspaceRosterAddress(null);
+    if (!activeCommunityId || !userPubkey) return;
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    void (async () => {
+      const address = surfaceAddress(await getEffectiveRelayUrl(), userPubkey, '/workspace/:id', {
+        workspaceId: activeCommunityId,
+      });
+      if (cancelled) return;
+      const paint = () => {
+        if (!cancelled) setWorkspaceRoster(mobileSurfaceCache.peek(address, isWorkspaceView));
+      };
+      stop = mobileSurfaceCache.subscribe(address, paint);
+      await mobileSurfaceCache.read(address, isWorkspaceView);
+      paint();
+      if (!cancelled) setWorkspaceRosterAddress(address);
+    })().catch(() => undefined);
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [activeCommunityId, userPubkey]);
   useEffect(() => {
     const rosterSurfaceVisible = participantPickerVisible || rosterVisible;
-    if (!roomClient || !activeCommunityId) return;
+    if (!roomClient || !activeCommunityId || !workspaceRosterAddress) return;
     if (
       !shouldReadWorkspaceRoster({
         activeWorkspaceId: activeCommunityId,
@@ -1852,14 +1865,10 @@ export function BuzzChatSurface({
     )
       return;
     let cancelled = false;
-    roomClient
-      .workspace(activeCommunityId)
-      .then((view) => {
-        workspaceRosterThisSession.set(activeCommunityId, view);
-        if (!cancelled) {
-          workspaceRosterScopeRef.current = activeCommunityId;
-          setWorkspaceRoster(view);
-        }
+    mobileSurfaceCache
+      .fetch(workspaceRosterAddress, isWorkspaceView, () => roomClient.workspace(activeCommunityId))
+      .then(() => {
+        if (!cancelled) workspaceRosterScopeRef.current = activeCommunityId;
       })
       .catch((err) => {
         if (!cancelled && rosterSurfaceVisible)
@@ -1868,7 +1877,7 @@ export function BuzzChatSurface({
     return () => {
       cancelled = true;
     };
-  }, [activeCommunityId, participantPickerVisible, roomClient, rosterVisible]);
+  }, [activeCommunityId, participantPickerVisible, roomClient, rosterVisible, workspaceRosterAddress]);
   const participantPickerCandidates = useMemo<MemberPickerCandidate[] | null>(() => {
     if (!workspaceRoster) return null;
     return [...workspaceRoster.members, ...workspaceRoster.agents]

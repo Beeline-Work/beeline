@@ -681,6 +681,17 @@ export default function BuzzChannels() {
     }, [activeCommunityId, refreshMissed]),
   );
 
+  // The rail paints the shared `/workspaces` entry, so a rename patched there
+  // by Workspace settings shows here without another read.
+  useEffect(() => {
+    if (!identity || !relayUrl) return;
+    const address = surfaceAddress(relayUrl, identity.publicKey, '/workspaces');
+    return mobileSurfaceCache.subscribe(address, () => {
+      const next = mobileSurfaceCache.peek(address, isWorkspaceListView);
+      if (next) setWorkspaceList(next);
+    });
+  }, [identity, relayUrl]);
+
   useEffect(() => {
     if (!memberPickerVisible || !identity || !relayUrl || !activeCommunityId) return;
     let cancelled = false;

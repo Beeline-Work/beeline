@@ -13,6 +13,7 @@ const workspace = vi.hoisted(() => ({
   resolve: vi.fn(async (id?: string): Promise<string | null> => id || 'workspace-1'),
 }));
 vi.mock('@/buzz/wallet-workspace', () => ({ resolveWalletWorkspaceId: workspace.resolve }));
+vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'workspace-active' }));
 const focus = vi.hoisted(() => ({
   effect: undefined as undefined | (() => void | (() => void)),
 }));
@@ -597,7 +598,7 @@ describe('Workbench settings screen', () => {
     await act(async () => {
       await wallet.props.trailingPress.onPress();
     });
-    expect(workspace.resolve).toHaveBeenCalledWith('');
+    expect(workspace.resolve).toHaveBeenCalledWith('', 'workspace-active');
     expect(navigation.push.mock.calls.at(-1)![0].params.workspaceId).toBe('workspace-1');
   });
 
@@ -618,7 +619,7 @@ describe('Workbench settings screen', () => {
     await act(async () => {
       await renderer.root.findByProps({ testID: 'workbench-connector-wallet-head' }).props.onPress();
     });
-    expect(workspace.resolve).toHaveBeenCalledWith('workspace-1');
+    expect(workspace.resolve).toHaveBeenCalledWith('workspace-1', 'workspace-active');
     expect(navigation.push.mock.calls.at(-1)![0].params.workspaceId).toBe('workspace-1');
   });
 

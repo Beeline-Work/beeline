@@ -750,9 +750,12 @@ export class MonolithRoomTurnLoop {
    * fixed when it opens: they cannot be corrected in place, so a changed one
    * has to cost a respawn. The check is one round trip — the roster half of
    * which the turn was going to fetch anyway — against a cold spawn measured
-   * in seconds.
+   * in seconds. A harness process that has exited (a memory-limit kill, a
+   * crash) is never current: handing it back fails the turn with
+   * `AcpClient not started` instead of spawning a fresh one.
    */
   private async sessionIsCurrent(): Promise<boolean> {
+    if (!this.client?.isAlive) return false;
     await this.refreshTurnCheckout();
     return (
       this.sessionCwd === this.options.cwd &&

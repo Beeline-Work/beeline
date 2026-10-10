@@ -154,6 +154,7 @@ async function runTurns(options: {
 
   const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
   let activations = 0;
+  vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
   vi.spyOn(acp, 'start').mockImplementation(async () => {
     activations += 1;
   });

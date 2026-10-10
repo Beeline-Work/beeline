@@ -117,6 +117,7 @@ async function activateWith(
   } as unknown as DaemonApiClient;
 
   const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
+  vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
   vi.spyOn(acp, 'start').mockResolvedValue(undefined);
   vi.spyOn(acp, 'sessionNew').mockResolvedValue({
     sessionId: 'room-session',
@@ -265,6 +266,7 @@ async function activateGrokLaunchArgv(): Promise<string[]> {
   } as unknown as DaemonApiClient;
 
   const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
+  vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
   vi.spyOn(acp, 'start').mockResolvedValue(undefined);
   vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'room-session', raw: {} });
   vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
@@ -414,6 +416,7 @@ async function activateAcrossSelectionChange(
   } as unknown as DaemonApiClient;
 
   const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
+  vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
   vi.spyOn(acp, 'start').mockResolvedValue(undefined);
   const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({
     sessionId: 'room-session',

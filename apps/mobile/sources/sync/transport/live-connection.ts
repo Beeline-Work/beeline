@@ -481,7 +481,9 @@ export class LiveConnection {
       };
     }
     if (!('roomId' in live)) return;
-    if (live.type === 'invalidate' && live.roomId === '' && live.reason === 'postgres:memberships') {
+    if (live.roomId === '' && (live.type === 'resource-change' ||
+        (live.type === 'invalidate' &&
+          (live.reason === 'postgres:memberships' || live.reason === 'reconnect')))) {
       for (const registration of this.registrations.values()) {
         if (!registration.closed && registration.roomIds.size === 0)
           registration.listener({ monolithLive: live });

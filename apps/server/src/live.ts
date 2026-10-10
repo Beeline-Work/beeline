@@ -65,6 +65,9 @@ export type LiveTrace = {
 };
 
 export type LiveEvent =
+  /** Owner-scoped change to a settings projection. Never send ownerId to a phone. */
+  | { type: 'resource-change'; roomId: ''; ownerId: string; agentId?: undefined;
+      resource: 'install' | 'workbench' | 'agent'; resourceId?: string; version?: string }
   /** `agentId` names the author when one agent's own write caused it; a fact the
    *  server itself publishes carries none. `corner-wake.ts` reads it. */
   | {
@@ -115,6 +118,8 @@ export type LiveEvent =
   /** A server instance accepted a newer connection for this agent. Never sent
    *  to a socket; every instance drops its own older connection for the agent. */
   | { type: 'agent-connection'; roomId: ''; agentId: string; epoch: number }
+  /** Committed helper bundle; one row notification fans out to local sockets. */
+  | { type: 'helper-release'; roomId: ''; agentId: ''; version: string; sha: string }
   /** One `@agent /login` step (`agent-sign-in.ts`). Never sent to a phone
    *  socket: a helper session forwards only `start`/`code` for its own agent,
    *  and the owner's waiting request reads `link`/`result`. */

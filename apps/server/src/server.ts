@@ -716,9 +716,19 @@ export function createBeelineServer(options: ServerOptions): Server {
       // Workspace membership notifications survive the deletion cascade and
       // reach the affected identity without requiring a readable Room.
       const releaseWorkspaces = options.live.subscribeAll((event) => {
+        if (event.type === 'resource-change' && event.ownerId === principal.identityId) {
+          sendLive(JSON.stringify({ type: 'resource-change', roomId: '',
+            resource: event.resource, ...(event.resourceId ? { resourceId: event.resourceId } : {}),
+            ...(event.version ? { version: event.version } : {}) }));
+          return;
+        }
         if (event.type === 'invalidate' && event.roomId === '' &&
             event.reason === 'postgres:memberships' && event.readerId === principal.identityId)
           sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: event.reason }));
+      });
+      const releasePersonalResync = options.live.subscribeResync(() => {
+        if (client.readyState === client.OPEN)
+          sendLive(JSON.stringify({ type: 'invalidate', roomId: '', reason: 'reconnect' }));
       });
       const releases = new Map<string, () => void>();
       // The socket is an ordered stream. Keep the last text handed to this
@@ -1147,6 +1157,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         options.live.humanDisconnected(principal.identityId);
         releasePhoneView();
         releaseWorkspaces();
+        releasePersonalResync();
         pendingPaintTraces.clear();
         for (const release of releases.values()) release();
         releases.clear();

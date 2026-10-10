@@ -98,7 +98,7 @@ describe('resource observers in the desktop web renderer', () => {
       expect(result.status, result.stderr).toBe(0);
       console.log('Reproductions R9a–R9c desktop web:', result.result);
       const proof = JSON.parse(result.result);
-      expect(proof).toMatchObject({ draftReady: true, pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, terminalReads: 8, stoppedReads: 8, retryReads: 9, returnedToInstaller: 1, sameTranscript: true, loaderDuringRefresh: false, sentBeforeRead: false, sentAfterRead: true, repaired: true, messageVisible: true, stoppedBeforeRead: false, stoppedAfterRead: true });
+      expect(proof).toMatchObject({ draftReady: true, pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, terminalReads: 1, stoppedReads: 1, retryReads: 2, returnedToInstaller: 1, sameTranscript: true, loaderDuringRefresh: false, sentBeforeRead: false, sentAfterRead: true, repaired: true, messageVisible: true, stoppedBeforeRead: false, stoppedAfterRead: true });
       expect(proof.signInError).toContain('Retry');
       expect(proof.installerError).toContain('Lost track');
       expect(proof.inspectorError).toContain('Selected corner unavailable');

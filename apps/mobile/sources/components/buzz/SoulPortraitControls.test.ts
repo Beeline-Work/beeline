@@ -3,6 +3,13 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDetailView } from '@beeline/buzz-client';
+const liveListeners = vi.hoisted(() => new Set<(event: any) => void>());
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
+  register: async (_filters: unknown, listener: (event: any) => void) => {
+    liveListeners.add(listener);
+    return () => liveListeners.delete(listener);
+  },
+}) }));
 
 vi.mock('react-native', () => ({
   Platform: { OS: 'android', select: (choices: any) => choices.default },
@@ -21,6 +28,7 @@ const original = {
 } as AgentDetailView;
 let renderer: any;
 beforeEach(() => {
+  liveListeners.clear();
   vi.useFakeTimers();
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 });
@@ -32,6 +40,14 @@ const countHint = () =>
   renderer.root
     .findAllByType('View')
     .filter((node: any) => node.props.testID === 'avatar-refinement-hint').length;
+async function agentChanged() {
+  await act(async () => {
+    for (const listener of liveListeners) listener({ monolithLive: {
+      type: 'resource-change', roomId: '', resource: 'agent', resourceId: 'agent',
+    } });
+    await Promise.resolve();
+  });
+}
 function mount(
   detail = original,
   generate = vi.fn().mockResolvedValue(undefined),
@@ -89,7 +105,7 @@ describe('soul avatar generation', () => {
     await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
     expect(countHint()).toBe(0);
     expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(true);
-    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    await agentChanged();
     expect(countHint()).toBe(1);
     expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(false);
     act(() => renderer.unmount());
@@ -98,25 +114,15 @@ describe('soul avatar generation', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain('@ember /draw-avatar');
   });
 
-  it('bounds an offline wait and preserves exclusion when the settings close', async () => {
-    const props = mount();
+  it('makes no periodic reads over five minutes while a job is pending', async () => {
+    const props = mount(original, vi.fn().mockResolvedValue(undefined),
+      vi.fn().mockResolvedValue({ ...original, avatarGenerationPending: true }));
     await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
-    await act(async () => vi.advanceTimersByTimeAsync(180000));
-    expect(renderer.root.findByType('SettingsRow').props.title).toBe('Retry avatar generation');
-    expect(countHint()).toBe(0);
-    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
-    act(() => renderer.unmount());
-    const calls = (props.refresh as any).mock.calls.length;
-    await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect((props.refresh as any).mock.calls.length).toBe(calls + 1);
-    const reopened = mount();
+    await act(async () => vi.advanceTimersByTimeAsync(300000));
+    expect(props.refresh).not.toHaveBeenCalled();
     expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(true);
-    expect(renderer.root.findByProps({ testID: 'avatar-generation-pending' }).props.children).toBe(
-      'generating, will DM you when the avatar is ready',
-    );
-    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
-    expect(reopened.generate).not.toHaveBeenCalled();
-    await act(async () => vi.advanceTimersByTimeAsync(180000));
-    expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(false);
+    expect(countHint()).toBe(0);
+    await agentChanged();
+    expect(props.refresh).toHaveBeenCalledTimes(1);
   });
 });

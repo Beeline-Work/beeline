@@ -938,6 +938,8 @@ export type AgentComposerCommand = {
 };
 
 export type AgentDetailView = {
+  /** Agent configuration commit order, for deduping a live echo of a write receipt. */
+  readonly configVersion?: string;
   /** Present only after a generated portrait has committed successfully. */
   readonly avatarGenerationId?: string;
   readonly avatarGenerationPending?: boolean;

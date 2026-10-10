@@ -137,6 +137,19 @@ async function triageRun(): Promise<string> {
 }
 
 describe('listRoomWorkflowRuns', () => {
+  it('uses the run-sequence index for the latest persisted handoff', async () => {
+    const runId = await triageRun();
+    await database.query(`SET enable_seqscan=off`);
+    const plan = await database.query<{ 'QUERY PLAN': unknown }>(
+      `EXPLAIN (FORMAT JSON) SELECT id FROM messages
+       WHERE room_id=$1 AND card_type='workflow-handoff'
+         AND card->>'runId'=$2 AND card->>'runId' IS NOT NULL
+       ORDER BY (card->>'seq')::int DESC NULLS LAST,created_at DESC,id DESC LIMIT 1`,
+      [CORNER, runId],
+    );
+    expect(JSON.stringify(plan.rows[0]?.['QUERY PLAN'])).toContain('messages_workflow_handoff_run_seq_idx');
+  });
+
   it('Reproduction display-8: keeps the Room run beside a newer corner run of the same workflow', async () => {
     await saveWorkflow(database, await command(ROOM, TRIAGER), { contract: describedWorkflow(TRIAGE) });
     const roomRun = await startWorkflow(database, await command(ROOM, TRIAGER), {
@@ -148,7 +161,7 @@ describe('listRoomWorkflowRuns', () => {
     const listed = await phone.execute('listRoomWorkflowRuns', { roomId: ROOM }, OWNER);
     const reads = vi.spyOn(database, 'query');
     await listRoomWorkflowRuns(database, ROOM, OWNER);
-    expect(reads).toHaveBeenCalledTimes(4); // heads + pinned contracts + actors + viewer, independent of run count
+    expect(reads).toHaveBeenCalledTimes(1); // authorized heads, pinned contracts, actors, and viewer
     reads.mockRestore();
     expect(listed.workflows.every(run => run.startedBy?.id === TRIAGER)).toBe(true);
     expect(listed.workflows.every(run => !('earlierRunCount' in run) && !('activeRunIds' in run))).toBe(true);
@@ -255,6 +268,15 @@ describe('listRoomWorkflowRuns', () => {
 });
 
 describe('readWorkflowRun', () => {
+  it('reads the authorized run, cards, gate records and opened corners in one statement', async () => {
+    const runId = await triageRun();
+    const reads = vi.spyOn(database, 'query');
+    const run = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);
+    expect(run.run.runId).toBe(runId);
+    expect(reads).toHaveBeenCalledTimes(1);
+    reads.mockRestore();
+  });
+
   it('sends visit display status for live, deadline-failed, and cancelled runs without changing card status', async () => {
     const starter = await command(CORNER, TRIAGER);
     await saveWorkflow(database, starter, { contract: describedWorkflow(TRIAGE) });

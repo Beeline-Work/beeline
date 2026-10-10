@@ -97,7 +97,7 @@ export type PhoneOperationMap = {
   clearMessageBookmarks: { input: WorkspaceInput; output: void };
   /** Report issue: files this message with the Beeline feedback loop. One report per message. */
   reportMessageIssue: { input: ReportMessageIssueInput; output: ReportMessageIssueResult };
-  listMessageBookmarks: { input: WorkspaceInput; output: MessageBookmarkListResult };
+  listMessageBookmarks: { input: WorkspaceInput & { readonly before?: string }; output: MessageBookmarkListResult };
   /** The viewer's Needs-you cells, newest first. Reading starts each cell's 24-hour clock. */
   readNeedsYou: { input: WorkspaceInput; output: NeedsYouListResult };
   /** The tray badge count. Unlike `readNeedsYou`, it starts no clock. */
@@ -485,7 +485,7 @@ export type ReportMessageIssueInput = RoomInput & {
 };
 /** `duplicate` is true when this message was already reported. */
 export type ReportMessageIssueResult = { readonly itemId: string; readonly duplicate: boolean };
-export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[] };
+export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[]; readonly next?: string };
 export type NeedsYouListResult = { readonly items: readonly NeedsYouItemView[] };
 export type NeedsYouCountResult = { readonly count: number };
 export type ClearNeedsYouInput = WorkspaceInput & { readonly messageId: string };

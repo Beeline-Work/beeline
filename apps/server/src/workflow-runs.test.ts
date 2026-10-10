@@ -3458,7 +3458,7 @@ describe('Reproduction run-status: one saved status for every reader', () => {
     console.log('Demonstrated run-timers: a step timer deleted after the one-time backfills ran was re-armed once by the next boot');
   });
 
-  it('reads live runs through the partial index on the saved status', async () => {
+  it('reads live runs through a partial workflow index on the saved status or start cards', async () => {
     await startedGatedRun({ room_id: ROOM, agent_id: OWNER });
     await database.query(`SET enable_seqscan=off`);
     try {
@@ -3466,8 +3466,11 @@ describe('Reproduction run-status: one saved status for every reader', () => {
         (await database.query<Record<string, unknown>>(`EXPLAIN (FORMAT JSON) ${sql}`)).rows[0]?.['QUERY PLAN']);
       expect(await plan(`SELECT id FROM messages WHERE room_id='${ROOM}' AND card_type='workflow-handoff'
         AND ${workflowRunIsLiveSql('card')} AND card->>'workflowSlug'='gated'`)).toContain('messages_workflow_run_live_idx');
+      // An unscoped status sweep can use either partial index. The new start
+      // index also contains exactly the start cards this predicate requests;
+      // the Room-scoped check above still proves the saved-live index is used.
       expect(await plan(`SELECT id FROM messages WHERE card_type='workflow-handoff' AND id=card->>'runId'
-        AND ${workflowRunIsLiveSql('card')}`)).toContain('messages_workflow_run_live_idx');
+        AND ${workflowRunIsLiveSql('card')}`)).toMatch(/messages_workflow_run_(live|start)_idx/);
       expect(await plan(`SELECT id FROM messages WHERE card_type='workflow-handoff'
         AND ${workflowRunStatusUnsavedSql('card', 'id')}`)).toContain('messages_workflow_run_status_backfill_idx');
     } finally {

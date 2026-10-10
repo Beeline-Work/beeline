@@ -505,6 +505,33 @@ describe('Bookmarks empty state', () => {
 });
 
 describe('Bookmarks mobile open', () => {
+  it('keeps a live removal while an older saved page finishes loading', async () => {
+    let finishPage!: (value: { bookmarks: ReturnType<typeof bookmark>[] }) => void;
+    phoneOperation.mockImplementation((name: string, input?: { before?: string }) => {
+      if (name === 'readNeedsYou') return Promise.resolve({ items: [] });
+      if (name === 'listMessageBookmarks') return input?.before
+        ? new Promise((resolve) => { finishPage = resolve; })
+        : Promise.resolve({ bookmarks: [bookmark()], next: 'cursor' });
+      return Promise.resolve(undefined);
+    });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'bookmarks-more' }).props.onPress());
+    await act(async () => {
+      for (const listener of [...liveRegistrations]) listener({ monolithLive: {
+        type: 'bookmark-delta', roomId: '', workspaceId: 'ws',
+        messageId: 'msg-2', bookmark: null,
+      } });
+    });
+    await act(async () => finishPage({ bookmarks: [
+      bookmark({ messageId: 'msg-2', bookmarkedAt: 1_700_000_050 }),
+      bookmark({ messageId: 'msg-3', bookmarkedAt: 1_700_000_040 }),
+    ] }));
+    expect(tree.root.findAllByProps({ testID: 'bookmark-msg-2' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'bookmark-msg-3' }).length).toBeGreaterThan(0);
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'listMessageBookmarks'))
+      .toHaveLength(2);
+  });
+
   it('keeps a live removal when an older covering read finishes afterward', async () => {
     let finishSaved!: (value: { bookmarks: ReturnType<typeof bookmark>[] }) => void;
     phoneOperation.mockImplementation((name: string) => name === 'readNeedsYou'

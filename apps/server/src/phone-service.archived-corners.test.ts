@@ -73,6 +73,37 @@ describe('readCorners', () => {
     expect(view?.corners[0]?.closedAt).toBeUndefined();
   });
 
+  it('pages open corners in creation order without repeating a row', async () => {
+    const phone = await fixture(async (database) => {
+      await database.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,created_at)
+         SELECT ('44444444-4444-4444-8444-' || lpad(series::text,12,'0'))::uuid,
+           $1,$2,$3,'Open ' || series,'2026-01-04T00:00:00Z'::timestamptz
+         FROM generate_series(1,31) series`,
+        [WORKSPACE, ROOM, VIEWER],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         SELECT $1,id,$2,'owner' FROM rooms WHERE parent_id=$3 AND name LIKE 'Open %'`,
+        [WORKSPACE, VIEWER, ROOM],
+      );
+    });
+    const first = (await phone.readCorners(ROOM, VIEWER))!;
+    expect(first.corners).toHaveLength(30);
+    expect(first.nextOpen).toBeDefined();
+    const live = (await phone.liveChatCornerStatus(ROOM, VIEWER))!;
+    expect(live.cornerCount).toBe(32);
+    expect(live.corners).toEqual(first.corners);
+    expect(live.nextOpen).toBe(first.nextOpen);
+    const cursor = first.nextOpen!.split(',');
+    const second = (await phone.readCorners(ROOM, VIEWER, false, false, undefined, {
+      micros: cursor[0]!, id: cursor[1]!,
+    }))!;
+    expect(second.corners).toHaveLength(2);
+    expect(second.nextOpen).toBeUndefined();
+    expect(new Set([...first.corners, ...second.corners].map((row) => row.corner.id)).size).toBe(32);
+  });
+
   it('answers the archived read with closed work alone, newest closure first', async () => {
     const phone = await fixture();
     const view = await phone.readCorners(ROOM, VIEWER, false, true);

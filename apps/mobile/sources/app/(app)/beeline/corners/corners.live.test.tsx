@@ -213,9 +213,10 @@ describe('Corner list live path', () => {
     expect(paintedStates(renderer)).toEqual(['working']);
     parentWatch().emit({ monolithLive: { type: 'corner-status', roomId: 'room-a',
       cornerCount: 1, waitingCornerCount: 1, openCorners: [], agentState: null,
-      corners: cornerList('waiting').corners } });
+      corners: cornerList('waiting').corners, nextOpen: 'older-corners' } });
     await quiet();
     expect(paintedStates(renderer)).toEqual(['waiting']);
+    expect(renderer.root.findByType('RoomCornersList').props.moreOpen).toBe(true);
     expect(list.reads).toBe(0);
   });
   it('creates and opens a randomly named corner from the plus button', async () => {

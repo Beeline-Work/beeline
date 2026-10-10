@@ -49,7 +49,7 @@ export type LiveWireEvent = (
   | { type: 'corner-status'; roomId: string; cornerCount: number;
       waitingCornerCount: number; openCorners: readonly ChatListCorner[];
       agentState: 'needs-you' | 'working' | null;
-      corners?: readonly CornerListItem[] }
+      corners?: readonly CornerListItem[]; nextOpen?: string }
   | {
       type: 'message-delta';
       roomId: string;

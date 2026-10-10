@@ -59,7 +59,8 @@ function isNeedsYouList(value: unknown): value is NeedsYouListResult {
 }
 
 function isBookmarkList(value: unknown): value is MessageBookmarkListResult {
-  return isRecord(value) && Array.isArray(value.bookmarks) && value.bookmarks.every((item: unknown) =>
+  return isRecord(value) && (value.next === undefined || typeof value.next === 'string') &&
+    Array.isArray(value.bookmarks) && value.bookmarks.every((item: unknown) =>
     isRecord(item) && typeof item.messageId === 'string' && typeof item.workspaceId === 'string' &&
     typeof item.roomId === 'string' && typeof item.roomName === 'string' &&
     typeof item.bookmarkedAt === 'number' && typeof item.available === 'boolean');
@@ -74,6 +75,7 @@ function sourceLabel(bookmark: MessageBookmarkView): string {
 }
 
 function clearedLabel(clear: PendingClear): string {
+  if (clear.kind === 'saved' && clear.more) return 'Cleared saved bookmarks';
   const count = clear.items.length;
   const noun = clear.kind === 'needs' ? 'item' : 'bookmark';
   return `Cleared ${count} ${noun}${count === 1 ? '' : 's'}`;
@@ -89,7 +91,7 @@ type Target = {
 /** A section clear held back until its own Undo window closes. */
 type PendingClear = { readonly id: number; readonly expiresAt: number; readonly workspaceId: string } & (
   | { readonly kind: 'needs'; readonly items: readonly NeedsYouItemView[] }
-  | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[] }
+  | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[]; readonly more: boolean }
 );
 
 type Row =
@@ -103,7 +105,8 @@ type Row =
   | { readonly key: string; readonly type: 'needs'; readonly item: NeedsYouItemView }
   | { readonly key: string; readonly type: 'needs-empty' }
   | { readonly key: string; readonly type: 'saved'; readonly bookmark: MessageBookmarkView }
-  | { readonly key: string; readonly type: 'saved-empty' };
+  | { readonly key: string; readonly type: 'saved-empty' }
+  | { readonly key: string; readonly type: 'saved-more' };
 
 function applyNeedsSlice(
   current: readonly NeedsYouItemView[], delta: NeedsYouLiveDelta,
@@ -148,6 +151,9 @@ export default function TrayScreen() {
   const noWorkspace = (!routeWorkspaceId && activeWorkspaceId === null) || workspaceLost;
   const [needs, setNeeds] = useState<readonly NeedsYouItemView[]>([]);
   const [bookmarks, setBookmarks] = useState<readonly MessageBookmarkView[]>([]);
+  const [savedNext, setSavedNext] = useState<string | undefined>();
+  const loadingSaved = useRef(false);
+  const savedScroll = useRef(false);
   const [selected, setSelected] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
   const loadedWorkspaceRef = useRef<string | null>(null);
@@ -155,6 +161,7 @@ export default function TrayScreen() {
   const loadInFlightRef = useRef(false);
   const needsDuringLoadRef = useRef<NeedsYouLiveDelta[]>([]);
   const bookmarksDuringLoadRef = useRef<BookmarkDelta[]>([]);
+  const bookmarksDuringPageRef = useRef<BookmarkDelta[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<MessageBookmarkView | null>(null);
   // Oldest first; the Undo bar offers the newest.
@@ -177,6 +184,7 @@ export default function TrayScreen() {
     loadInFlightRef.current = true;
     needsDuringLoadRef.current = [];
     bookmarksDuringLoadRef.current = [];
+    savedScroll.current = false;
     if (loadedSections.current.workspaceId !== workspaceId)
       loadedSections.current = { workspaceId, needs: false, bookmarks: false };
     setError(null);
@@ -201,6 +209,7 @@ export default function TrayScreen() {
       loadedSections.current = { workspaceId, needs: true, bookmarks: true };
       setNeeds([]);
       setBookmarks([]);
+      setSavedNext(undefined);
       setSelected(null);
       setLoading(false);
       loadedWorkspaceRef.current = null;
@@ -224,6 +233,7 @@ export default function TrayScreen() {
     if (mergedBookmarks) {
       loadedSections.current.bookmarks = true;
       setBookmarks(mergedBookmarks);
+      if (savedResult.status === 'fulfilled') setSavedNext(savedResult.value.next);
     }
     const failed = [needsResult, savedResult].find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected')
@@ -251,9 +261,9 @@ export default function TrayScreen() {
     void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
       if (identity && loadedSections.current.workspaceId === workspaceId &&
           lostWorkspaceRef.current !== workspaceId) void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey,
-        '/workspace/:id/bookmarks', { workspaceId }), { bookmarks }, isBookmarkList);
+        '/workspace/:id/bookmarks', { workspaceId }), { bookmarks, next: savedNext }, isBookmarkList);
     });
-  }, [workspaceId, bookmarks]);
+  }, [workspaceId, bookmarks, savedNext]);
 
   useEffect(() => subscribeNeedsYouLiveDelta((delta) => {
     if (delta.workspaceId !== workspaceId) return;
@@ -273,6 +283,7 @@ export default function TrayScreen() {
         if (live.type === 'bookmark-delta' && live.workspaceId === workspaceId) {
           bookmarksVersionRef.current += 1;
           if (loadInFlightRef.current) bookmarksDuringLoadRef.current.push(live);
+          if (loadingSaved.current) bookmarksDuringPageRef.current.push(live);
           setBookmarks((current) => applyBookmarkChange(current, live));
         } else if (live.type === 'invalidate' &&
             (live.reason === 'bookmark-gap' || live.reason === 'needs-you-gap' ||
@@ -285,6 +296,33 @@ export default function TrayScreen() {
     })().catch(() => undefined);
     return () => { cancelled = true; unsubscribe?.(); };
   }, [workspaceId, load]);
+
+  const loadMoreSaved = useCallback(async () => {
+    if (!workspaceId || !savedNext || loadingSaved.current) return;
+    const generation = loadGenerationRef.current;
+    loadingSaved.current = true;
+    bookmarksDuringPageRef.current = [];
+    try {
+      const page = await monolithPhoneOperation('listMessageBookmarks', {
+        workspaceId, before: savedNext,
+      });
+      if (generation !== loadGenerationRef.current) return;
+      const deltas = bookmarksDuringPageRef.current;
+      setBookmarks((current) => {
+        const seen = new Set(current.map((item) => item.messageId));
+        const combined = [...current, ...page.bookmarks.filter((item) => !seen.has(item.messageId))];
+        return deltas.reduce(applyBookmarkChange, combined).sort((a, b) =>
+          b.bookmarkedAt - a.bookmarkedAt || a.messageId.localeCompare(b.messageId));
+      });
+      setSavedNext(page.next);
+    } catch (cause) {
+      if (generation === loadGenerationRef.current)
+        setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      loadingSaved.current = false;
+      bookmarksDuringPageRef.current = [];
+    }
+  }, [workspaceId, savedNext]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -305,8 +343,10 @@ export default function TrayScreen() {
       if (cancelled) return;
       if (savedNeeds && !loadedSections.current.needs && needsVersion === needsVersionRef.current)
         setNeeds(savedNeeds.items);
-      if (savedBookmarks && !loadedSections.current.bookmarks && bookmarksVersion === bookmarksVersionRef.current)
+      if (savedBookmarks && !loadedSections.current.bookmarks && bookmarksVersion === bookmarksVersionRef.current) {
         setBookmarks(savedBookmarks.bookmarks);
+        setSavedNext(savedBookmarks.next);
+      }
       if (savedNeeds || savedBookmarks) setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -497,6 +537,8 @@ export default function TrayScreen() {
     setBookmarks((current) => current.filter((item) => !ids.has(item.messageId)));
     try {
       await monolithPhoneOperation('clearMessageBookmarks', { workspaceId: clear.workspaceId });
+      setBookmarks([]);
+      setSavedNext(undefined);
     } catch (cause) {
       setBookmarks((current) =>
         [...clear.items, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
@@ -556,13 +598,13 @@ export default function TrayScreen() {
       const clear: PendingClear =
         kind === 'needs'
           ? { ...held, kind, items: visibleNeeds }
-          : { ...held, kind, items: visibleBookmarks };
+          : { ...held, kind, items: visibleBookmarks, more: !!savedNext };
       if (!clear.items.length) return;
       pendingRef.current = [...pendingRef.current, clear];
       setPending(pendingRef.current);
       AccessibilityInfo.announceForAccessibility(`${clearedLabel(clear)}. Undo available.`);
     },
-    [visibleBookmarks, visibleNeeds, workspaceId],
+    [visibleBookmarks, visibleNeeds, workspaceId, savedNext],
   );
 
   /** Undo the newest held clear; an older one still in its window shows next. */
@@ -639,8 +681,9 @@ export default function TrayScreen() {
             bookmark,
           }))
         : [{ key: 'saved-empty', type: 'saved-empty' } as const]),
+      ...(savedNext ? [{ key: 'saved-more', type: 'saved-more' } as const] : []),
     ];
-  }, [loading, visibleBookmarks, visibleNeeds, workspaceLost]);
+  }, [loading, visibleBookmarks, visibleNeeds, workspaceLost, savedNext]);
 
   const renderSaved = (bookmark: MessageBookmarkView) => (
     <Pressable
@@ -724,6 +767,9 @@ export default function TrayScreen() {
 
   const list = (
     <FlatList
+      onScroll={(event) => { if (event.nativeEvent.contentOffset.y > 20) savedScroll.current = true; }}
+      onEndReached={() => { if (savedScroll.current) void loadMoreSaved(); }}
+      onEndReachedThreshold={0.5}
       contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
       data={rows}
       keyExtractor={(row) => row.key}
@@ -801,6 +847,11 @@ export default function TrayScreen() {
             );
           case 'saved':
             return renderSaved(row.bookmark);
+          case 'saved-more':
+            return <Pressable accessibilityRole="button" onPress={() => void loadMoreSaved()}
+              style={styles.emptyBlock} testID="bookmarks-more">
+              <Text style={styles.removeText}>LOAD MORE SAVED</Text>
+            </Pressable>;
           case 'saved-empty':
             return (
               <View style={styles.emptyBlock} testID="bookmarks-empty">

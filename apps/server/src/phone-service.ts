@@ -228,6 +228,27 @@ const CONNECT_RENAME_WINDOW_MS = 15 * 60 * 1_000;
 const SLOW_ROOM_READ_MS = 500;
 /** Archived corners come ten at a time, newest closure first. */
 const ARCHIVED_CORNER_PAGE = 10;
+const OPEN_CORNER_PAGE = 30;
+const BOOKMARK_PAGE = 30;
+/** A profile paints a recent ledger window; older entries stay in the store. */
+const PROFILE_GRANT_LIMIT = 100;
+type MemberGrantRow = {
+  id: string;
+  kind: AgentGrantView['kind'];
+  target: string;
+  reason: string;
+  status: AgentGrantStatus;
+  room_id: string;
+  room_name: string | null;
+  auto: boolean;
+  created_at: Date;
+  decided_at: Date | null;
+  expires_at: Date | null;
+  agent: IdentityRow;
+  requester: IdentityRow;
+  decider: IdentityRow | null;
+  script: unknown;
+};
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Agents a Room may list after its reviewer, tried in order (`agent-health.ts`). */
 const REVIEWER_FALLBACKS_MAX = 15;
@@ -374,6 +395,12 @@ interface MemberRow extends IdentityRow {
   presence_body: { status: 'online' | 'offline'; observedAt: number; held?: unknown } | null;
   presence_updated_at: Date | null;
 }
+interface AgentGrantRow {
+  id: string; kind: AgentGrantView['kind']; target: string; reason: string;
+  status: AgentGrantStatus; room_id: string; auto: boolean;
+  created_at: Date; decided_at: Date | null; expires_at: Date | null;
+  requester: IdentityRow; decider: IdentityRow | null; script: unknown;
+}
 interface CornerRow extends RoomRow {
   lifecycle: RoomView['cornerLifecycle'] | null;
   /** The corner lifecycle's projected state and the outcome that reached it. */
@@ -399,6 +426,7 @@ interface CornerRow extends RoomRow {
   follows_viewer: boolean | null;
   /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
   archived_us: string | null;
+  created_us: string;
   agent_id: string | null;
   agent_name: string | null;
   agent_handle: string | null;
@@ -1350,16 +1378,27 @@ export class PhoneService {
 
   async readWorkspaces(viewerId: string): Promise<WorkspaceListView> {
     const rows = await this.database.query<{
-      id: string;
-      name: string;
+      id: string | null;
+      name: string | null;
       avatar: string | null;
-      visibility: 'public' | 'invite-only';
-      role: 'owner' | 'admin' | 'member' | 'spectator';
-      updated_at: Date;
-      room_count: string;
-      attention: boolean;
+      visibility: 'public' | 'invite-only' | null;
+      role: 'owner' | 'admin' | 'member' | 'spectator' | null;
+      updated_at: Date | null;
+      room_count: string | null;
+      attention: boolean | null;
+      viewer_id: string;
+      viewer_kind: 'human' | 'agent';
+      viewer_name: string;
+      viewer_handle: string | null;
+      viewer_avatar: string | null;
+      viewer_face_id: string | null;
+      deleted_notices: { workspaceId: string; workspaceName: string }[] | null;
     }>(
-      `SELECT w.id, w.name, w.avatar, w.visibility, m.role, w.updated_at, summary.room_count, summary.attention
+      `WITH deleted AS (
+         DELETE FROM workspace_deletion_notices WHERE identity_id=$1
+         RETURNING workspace_id,workspace_name
+       ), visible AS (
+       SELECT w.id, w.name, w.avatar, w.visibility, m.role, w.updated_at, summary.room_count, summary.attention
        FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
        LEFT JOIN LATERAL (
          SELECT count(*)::text room_count,COALESCE(bool_or(
@@ -1390,119 +1429,70 @@ export class PhoneService {
              OR NOT (peer.id=ANY($3::text[])) OR visible.id IS NOT NULL)
        ) summary ON true
        WHERE m.identity_id = $1 AND m.room_id IS NULL AND m.removed_at IS NULL
-       ORDER BY w.updated_at DESC, w.id LIMIT 51`,
+       ORDER BY w.updated_at DESC, w.id LIMIT 51
+       )
+       SELECT visible.*,viewer.id viewer_id,viewer.kind viewer_kind,
+         viewer.name viewer_name,viewer.handle viewer_handle,
+         viewer.avatar viewer_avatar,viewer.face_id viewer_face_id,
+         (SELECT jsonb_agg(jsonb_build_object('workspaceId',workspace_id,
+            'workspaceName',workspace_name)) FROM deleted) deleted_notices
+       FROM identities viewer LEFT JOIN visible ON true
+       WHERE viewer.id=$1
+       ORDER BY visible.updated_at DESC NULLS LAST,visible.id`,
       [viewerId, viewerId, connectorIdentityIds()],
     );
-    const deletedNotices = await this.database.query<{
-      id: string;
-      workspace_id: string;
-      workspace_name: string;
-    }>(
-      `DELETE FROM workspace_deletion_notices WHERE identity_id=$1
-       RETURNING id,workspace_id,workspace_name`,
-      [viewerId],
-    );
+    const viewer = rows.rows[0];
+    if (!viewer) throw new Error('identity not found');
+    const workspaces = rows.rows.filter((row) => row.id !== null) as (typeof rows.rows)[number][];
     return {
-      workspaces: rows.rows.slice(0, 50).map((row) => ({
-        id: row.id,
-        name: row.name,
+      workspaces: workspaces.slice(0, 50).map((row) => ({
+        id: row.id!,
+        name: row.name!,
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
-        visibility: row.visibility,
-        role: row.role,
-        updatedAt: unix(row.updated_at),
+        visibility: row.visibility!,
+        role: row.role!,
+        updatedAt: unix(row.updated_at!),
         roomCount: Number(row.room_count),
-        attention: row.attention,
+        attention: Boolean(row.attention),
       })),
-      viewer: await this.requireIdentity(viewerId),
-      truncated: rows.rows.length > 50,
+      viewer: identity({
+        id: viewer.viewer_id,kind: viewer.viewer_kind,name: viewer.viewer_name,
+        handle: viewer.viewer_handle,avatar: viewer.viewer_avatar,face_id: viewer.viewer_face_id,
+      }, this.publicOrigin),
+      truncated: workspaces.length > 50,
       watchFilters: [],
-      ...(deletedNotices.rows.length
-        ? {
-            deletedNotices: deletedNotices.rows.map((row) => ({
-              workspaceId: row.workspace_id,
-              workspaceName: row.workspace_name,
-            })),
-          }
-        : {}),
+      ...(viewer.deleted_notices?.length ? { deletedNotices: viewer.deleted_notices } : {}),
     };
   }
 
   async readWorkspace(workspaceId: string, viewerId: string): Promise<WorkspaceView | null> {
-    const workspace = await this.database.query<{
-      id: string;
-      name: string;
-      about: string | null;
-      avatar: string | null;
-      visibility: 'public' | 'invite-only';
-      created_at: Date;
-      updated_at: Date;
-      role: 'owner' | 'admin' | 'member' | 'spectator';
-    }>(
-      `SELECT w.*, m.role FROM workspaces w JOIN memberships m ON m.workspace_id=w.id AND m.room_id IS NULL
-       WHERE w.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
-      [workspaceId, viewerId],
-    );
-    const row = workspace.rows[0];
-    if (!row) return null;
-    const managedRoomRows =
-      row.role === 'owner' || row.role === 'admin'
-        ? (
-            await this.database.query<{
-              id: string;
-              name: string;
-              visibility: 'public' | 'invite-only';
-              created_at: Date;
-            }>(
-              `SELECT id,name,visibility,created_at FROM rooms
-               WHERE workspace_id=$1 AND parent_id IS NULL AND direct_participants IS NULL
-                 AND archived_at IS NULL
-               -- Fetch one extra row to expose the server-owned 200-Room settings bound.
-               ORDER BY lower(name),name,id LIMIT $2`,
-              [workspaceId, ROOM_VIEW_CHAT_LIMIT + 1],
-            )
-          ).rows
-        : undefined;
-    const managedRooms = managedRoomRows?.slice(0, ROOM_VIEW_CHAT_LIMIT).map((room) => ({
-      id: room.id,
-      name: room.name,
-      visibility: room.visibility,
-      createdAt: unix(room.created_at),
-    }));
-    const roster = await this.workspaceRoster(workspaceId);
-    const viewerIdentity = await this.requireIdentity(viewerId);
+    const roster = await this.workspaceRoster(workspaceId, viewerId);
+    if (!roster) return null;
+    const row = roster.workspaceRow;
+    const managedRooms = row.role === 'owner' || row.role === 'admin'
+      ? roster.managedRoomRows.slice(0, ROOM_VIEW_CHAT_LIMIT).map((room) => ({
+          id: room.id,name: room.name,visibility: room.visibility,
+          createdAt: unix(room.created_at),
+        }))
+      : undefined;
     return {
       workspace: {
-        id: row.id,
-        name: row.name,
+        id: row.id,name: row.name,
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
-        visibility: row.visibility,
-        role: row.role,
-        updatedAt: unix(row.updated_at),
-        ...(row.about ? { about: row.about } : {}),
-        createdAt: unix(row.created_at),
+        visibility: row.visibility,role: row.role,updatedAt: unix(row.updated_at),
+        ...(row.about ? { about: row.about } : {}),createdAt: unix(row.created_at),
       },
-      ...(managedRooms
-        ? {
-            managerSettings: {
-              visibility: row.visibility,
-              rooms: managedRooms,
-              roomsTruncated: managedRoomRows!.length > ROOM_VIEW_CHAT_LIMIT,
-            },
-          }
-        : {}),
-      members: roster.members,
-      agents: roster.agents,
-      peopleTotal: roster.peopleTotal,
-      agentTotal: roster.agentTotal,
-      membersTruncated: roster.membersTruncated,
-      agentsTruncated: roster.agentsTruncated,
+      ...(managedRooms ? { managerSettings: {
+        visibility: row.visibility,rooms: managedRooms,
+        roomsTruncated: roster.managedRoomRows.length > ROOM_VIEW_CHAT_LIMIT,
+      } } : {}),
+      members: roster.members,agents: roster.agents,
+      peopleTotal: roster.peopleTotal,agentTotal: roster.agentTotal,
+      membersTruncated: roster.membersTruncated,agentsTruncated: roster.agentsTruncated,
       viewer: {
-        identity: viewerIdentity,
-        role: row.role,
-        permissions: {
-          send: row.role !== 'spectator',
-          manage: row.role === 'owner' || row.role === 'admin',
-        },
+        identity: roster.viewerIdentity,role: row.role,
+        permissions: { send: row.role !== 'spectator',
+          manage: row.role === 'owner' || row.role === 'admin' },
       },
       watchFilters: [],
     };
@@ -1513,32 +1503,74 @@ export class PhoneService {
     viewerId: string,
     query: WorkspaceMemberListQuery = {},
   ): Promise<WorkspaceMemberListView | null> {
-    const access = await this.database.query<{ role: 'owner' | 'admin' | 'member' | 'spectator' }>(
-      `SELECT role FROM memberships
-       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
-      [workspaceId, viewerId],
-    );
-    if (!access.rowCount) return null;
-    if (query.memberId) {
-      const [members, grants] = await Promise.all([
-        this.members(workspaceId, null, query.memberId),
-        this.memberGrants(workspaceId, query.memberId, viewerId),
-      ]);
-      const role = access.rows[0]!.role;
+    if (!query.memberId) {
+      const roster = await this.workspaceRoster(workspaceId, viewerId, query);
+      if (!roster) return null;
       return {
-        viewer: {
-          identity: await this.requireIdentity(viewerId),
-          role,
-          permissions: { send: role !== 'spectator', manage: role === 'owner' || role === 'admin' },
-        },
-        members: members.filter((m) => m.identity.kind === 'human'),
-        agents: [],
-        grants,
-        membersTruncated: false,
-        agentsTruncated: false,
+        members: roster.members,agents: roster.agents,
+        peopleTotal: roster.peopleTotal,agentTotal: roster.agentTotal,
+        membersTruncated: roster.membersTruncated,agentsTruncated: roster.agentsTruncated,
       };
     }
-    return this.workspaceRoster(workspaceId, query);
+    const detail = await this.database.query<{
+      role: 'owner' | 'admin' | 'member' | 'spectator';
+      viewer_row: IdentityRow;
+      member_row: MemberRow | null;
+      grant_rows: MemberGrantRow[];
+    }>(`WITH authorized AS (
+        SELECT role FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+          AND identity_id=$2 AND removed_at IS NULL
+      ), member_row AS (
+        SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
+          NULL::jsonb presence_body,NULL::timestamptz presence_updated_at
+        FROM memberships m JOIN identities i ON i.id=m.identity_id
+        WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.identity_id=$3
+          AND m.removed_at IS NULL AND i.kind='human' AND i.hidden_from_roster=false
+      )
+      SELECT authorized.role,to_jsonb(viewer) viewer_row,
+        (SELECT to_jsonb(member_row) FROM member_row) member_row,
+        COALESCE((SELECT jsonb_agg(to_jsonb(grant_row) ORDER BY created_at DESC,id) FROM (
+          SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,g.created_at,
+            g.decided_at,g.expires_at,
+            CASE WHEN EXISTS(SELECT 1 FROM memberships rm
+              WHERE rm.room_id=g.room_id AND rm.identity_id=$2 AND rm.removed_at IS NULL)
+              OR (room.parent_id IS NULL AND room.direct_participants IS NULL
+                AND room.archived_at IS NULL AND authorized.role IN ('owner','admin'))
+              THEN room.name END room_name,g.script,
+            to_jsonb(agent_identity) agent,to_jsonb(requester) requester,
+            to_jsonb(decider) decider
+          FROM agent_grants g JOIN rooms room ON room.id=g.room_id
+          JOIN agents a ON a.agent_id=g.agent_id AND a.owner_id=$3
+          JOIN identities agent_identity ON agent_identity.id=g.agent_id
+          JOIN identities requester ON requester.id=g.requested_by
+          LEFT JOIN identities decider ON decider.id=g.decided_by
+          WHERE g.workspace_id=$1 AND g.status<>'pending'
+            AND (g.kind='repository' OR a.owner_id=$2)
+          ORDER BY g.created_at DESC,g.id LIMIT $4
+        ) grant_row),'[]'::jsonb) grant_rows
+      FROM authorized JOIN identities viewer ON viewer.id=$2`,
+      [workspaceId, viewerId, query.memberId, PROFILE_GRANT_LIMIT]);
+    const row = detail.rows[0];
+    if (!row) return null;
+    const member = row.member_row ? reviveDates(row.member_row, ['presence_updated_at']) : null;
+    if (member) {
+      const presence = await this.optionalEnrichment('member-presence',
+        this.enrichmentDatabase.query<{ presence_body: MemberRow['presence_body'];
+          presence_updated_at: Date }>(`SELECT body presence_body,updated_at presence_updated_at
+          FROM live_outputs WHERE agent_id=$1 AND kind='presence'
+          ORDER BY updated_at DESC LIMIT 1`, [member.id]));
+      member.presence_body = presence?.rows[0]?.presence_body ?? null;
+      member.presence_updated_at = presence?.rows[0]?.presence_updated_at ?? null;
+    }
+    const role = row.role;
+    return {
+      viewer: { identity: identity(row.viewer_row, this.publicOrigin), role,
+        permissions: { send: role !== 'spectator', manage: role === 'owner' || role === 'admin' } },
+      members: member ? this.projectMembers([member], null) : [],
+      agents: [],grants: this.projectMemberGrantRows(row.grant_rows.map((grant) =>
+        reviveDates(grant, ['created_at', 'decided_at', 'expires_at']))),
+      membersTruncated: false,agentsTruncated: false,
+    };
   }
 
   /** Project only the parent deck fields a child-corner status changes. */
@@ -1551,10 +1583,20 @@ export class PhoneService {
     openCorners: ChatListCorner[];
     agentState: 'needs-you' | 'working' | null;
     corners: CornerListView['corners'];
+    nextOpen?: string;
   } | null> {
+    const view = await this.readCorners(parentRoomId, viewerId);
+    if (!view) return null;
     const parent = await this.database.query<{
       needs_you: boolean;
       working: boolean;
+      corner_rows: Array<{
+        id: string; name: string; parent_id: string; archived_at: Date | null;
+        lifecycle: CornerLifecycleView | null; workflow_state: string | null;
+        workflow_outcome: string | null; latest_turn_status: string | null;
+        follows_viewer: boolean | null; latest_created_at: Date | null;
+        owed: boolean; owed_viewer: boolean; attention: boolean;
+      }>;
     }>(
       `SELECT
          EXISTS(SELECT 1 FROM permission_authority p
@@ -1563,44 +1605,57 @@ export class PhoneService {
          EXISTS(SELECT 1 FROM agent_turns t
            WHERE (t.room_id=r.id OR t.room_id IN
              (SELECT id FROM rooms WHERE parent_id=r.id AND archived_at IS NULL))
-             AND t.status='working') working
+             AND t.status='working') working,
+         COALESCE((SELECT jsonb_agg(to_jsonb(corners) ORDER BY corners.created_at DESC,corners.id)
+           FROM (SELECT c.id,c.name,c.parent_id,c.created_at,c.archived_at,
+             f.lifecycle,f.workflow_state,f.workflow_outcome,
+             turn.status latest_turn_status,
+             ${followsCornerSql('c', '$2')} follows_viewer,
+             lm.created_at latest_created_at,
+             owed.owed,owed.owed_viewer,owed.attention
+           FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+           LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id
+             AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+           LEFT JOIN LATERAL (SELECT status FROM agent_turns WHERE room_id=c.id
+             ORDER BY created_at DESC LIMIT 1) turn ON true
+           ${cornerOwedLookupSql('c', '$2')}
+           WHERE c.parent_id=r.id AND c.archived_at IS NULL AND EXISTS (
+             SELECT 1 FROM memberships child_member WHERE child_member.room_id=c.id
+               AND child_member.identity_id=$2 AND child_member.removed_at IS NULL)
+           ) corners),'[]'::jsonb) corner_rows
        FROM rooms r JOIN memberships member ON member.room_id=r.id
          AND member.identity_id=$2 AND member.removed_at IS NULL
+       JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+         AND workspace_member.removed_at IS NULL
        WHERE r.id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL`,
       [parentRoomId, viewerId],
     );
     if (!parent.rows[0]) return null;
-    const corners = await this.cornerRows(parentRoomId, viewerId);
-    const counts = chatCornerCounts(corners.map((corner) => ({
-      ...corner, parent_id: parentRoomId, lifecycle: corner.lifecycle ?? null,
-      attention: corner.attention ?? false,
-    }))).get(parentRoomId) ?? {
+    const counts = chatCornerCounts(parent.rows[0].corner_rows.map((corner) =>
+      reviveDates(corner, ['archived_at', 'latest_created_at']))).get(parentRoomId) ?? {
       cornerCount: 0, waitingCornerCount: 0, openCorners: [],
     };
     return { ...counts,
       agentState: parent.rows[0].needs_you ? 'needs-you'
         : parent.rows[0].working ? 'working' : null,
-      corners: this.projectCorners(corners),
+      corners: view.corners,
+      ...(view.nextOpen ? { nextOpen: view.nextOpen } : {}),
     };
   }
 
   async readChats(workspaceId: string, viewerId: string): Promise<ChatListView | null> {
-    const workspace = await this.database.query<{
-      id: string;
-      name: string;
-      avatar: string | null;
-      visibility: 'public' | 'invite-only';
-      role: 'owner' | 'admin' | 'member' | 'spectator';
-      updated_at: Date;
-    }>(
-      `SELECT w.id,w.name,w.avatar,w.visibility,w.updated_at,wm.role FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
-       WHERE w.id=$1 AND wm.identity_id=$2 AND wm.removed_at IS NULL`,
-      [workspaceId, viewerId],
-    );
-    const current = workspace.rows[0];
-    if (!current) return null;
-    const rooms = await this.database.query<
-      RoomRow & {
+    const result = await this.database.query<{
+      viewer_row: IdentityRow;
+      workspace: {
+        id: string;
+        name: string;
+        avatar: string | null;
+        visibility: 'public' | 'invite-only';
+        role: 'owner' | 'admin' | 'member' | 'spectator';
+        updated_at: Date;
+      };
+      room_rows: (RoomRow & {
         member_count: string;
         leave_deletes_room: boolean;
         latest_id: string | null;
@@ -1629,9 +1684,13 @@ export class PhoneService {
         needs_you: boolean;
         closed: boolean;
         agents_offline: boolean;
-      }
-    >(
-      `
+      })[];
+    }>(
+      `WITH visible_workspace AS (
+         SELECT w.id,w.name,w.avatar,w.visibility,w.updated_at,wm.role
+         FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
+         WHERE w.id=$1 AND wm.identity_id=$2 AND wm.removed_at IS NULL
+       ), visible_rooms AS (
       SELECT r.*,
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
         NOT EXISTS (
@@ -1694,129 +1753,182 @@ export class PhoneService {
           CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
         ) p WHERE p<>$2 LIMIT 1)
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
+        AND EXISTS (SELECT 1 FROM visible_workspace)
         AND (
           r.direct_participants IS NULL OR peer.id IS NULL
           OR NOT (peer.id = ANY($3::text[])) OR lm.id IS NOT NULL
         )
-      ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201`,
+      ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201
+      )
+      SELECT to_jsonb(visible_workspace) workspace,
+        (SELECT to_jsonb(viewer) FROM identities viewer WHERE viewer.id=$2) viewer_row,
+        COALESCE((SELECT jsonb_agg(to_jsonb(visible_rooms)) FROM visible_rooms),'[]'::jsonb) room_rows
+      FROM visible_workspace`,
       [workspaceId, viewerId, connectorIdentityIds()],
     );
+    const current = result.rows[0]?.workspace;
+    if (!current) return null;
+    reviveDates(current, ['updated_at']);
+    const rooms = { rows: result.rows[0]!.room_rows.map((row) =>
+      reviveDates(row, ['created_at', 'updated_at', 'archived_at', 'latest_created_at',
+        'peer_presence_updated_at', 'peer_activity_at'])) };
     const roomIds = rooms.rows.map((room) => room.id);
-    const [presence, cursors, cornerStates] = await Promise.all([
-      this.optionalEnrichment(
-        'chat-presence',
-        this.enrichmentDatabase.query<{
-          room_id: string;
-          peer_presence_body: Record<string, unknown> | null;
-          peer_presence_updated_at: Date | null;
-          peer_activity_at: Date | null;
-          agents_offline: boolean;
-        }>(
-          `SELECT room.id room_id,presence.body peer_presence_body,
-             presence.updated_at peer_presence_updated_at,
-             GREATEST(
-               (SELECT max(message.created_at) FROM messages message
-                WHERE message.room_id=room.id AND message.author_id=peer.id),
-               (SELECT max(mark.updated_at) FROM room_read_marks mark
-                WHERE mark.room_id=room.id AND mark.identity_id=peer.id)
-             ) peer_activity_at,
-             agent_presence.agent_count > 0
-               AND agent_presence.known_presence_count = agent_presence.agent_count
-               AND agent_presence.online_agent_count = 0 agents_offline
-           FROM rooms room
-           LEFT JOIN identities peer ON peer.id=(SELECT participant FROM jsonb_array_elements_text(
-             CASE WHEN jsonb_typeof(room.direct_participants)='array'
-               THEN room.direct_participants ELSE '[]'::jsonb END
-           ) participant WHERE participant<>$2 LIMIT 1)
-           LEFT JOIN LATERAL(
-             SELECT body,updated_at FROM live_outputs
-             WHERE agent_id=peer.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1
-           ) presence ON peer.kind='agent'
-           LEFT JOIN LATERAL(
-             SELECT count(*)::int agent_count,
-               count(agent_status.body)::int known_presence_count,
-               count(*) FILTER(
-                 WHERE agent_status.body->>'status'='online'
-                   AND (agent_status.updated_at>$3 OR agent_status.body->>'held'='true')
-               )::int online_agent_count
-             FROM memberships member
-             JOIN identities agent ON agent.id=member.identity_id
-               AND agent.kind='agent' AND agent.hidden_from_roster=false
-             LEFT JOIN LATERAL(
-               SELECT body,updated_at FROM live_outputs
-               WHERE agent_id=member.identity_id AND kind='presence'
-               ORDER BY updated_at DESC LIMIT 1
-             ) agent_status ON true
-             WHERE member.room_id=room.id AND member.removed_at IS NULL
-           ) agent_presence ON true
-           WHERE room.id=ANY($1::uuid[])`,
-          [roomIds, viewerId, new Date(Date.now() - AGENT_REACHABLE_HORIZON_MS)],
-        ),
+    const enrichment = await this.optionalEnrichment(
+      'chat-enrichment',
+      this.enrichmentDatabase.query<{
+        presence: Array<{ room_id: string; peer_presence_body: Record<string, unknown> | null;
+          peer_presence_updated_at: Date | null; peer_activity_at: Date | null; agents_offline: boolean }>;
+        cursors: Array<{ room_id: string; unread: boolean }>;
+        corner_summaries: Array<{ parent_id: string; corner_count: number;
+          waiting_count: number; preview: Array<{ id: string; name: string; state: ChatListCorner['state'];
+            follows_viewer: boolean; owed_viewer: boolean; attention: boolean;
+            latest_created_at: string | null }> }>;
+      }>(`WITH presence AS (
+          SELECT room.id room_id,presence.body peer_presence_body,
+            presence.updated_at peer_presence_updated_at,
+            GREATEST(
+              (SELECT max(message.created_at) FROM messages message
+               WHERE message.room_id=room.id AND message.author_id=peer.id),
+              (SELECT max(mark.updated_at) FROM room_read_marks mark
+               WHERE mark.room_id=room.id AND mark.identity_id=peer.id)
+            ) peer_activity_at,
+            agent_presence.agent_count > 0
+              AND agent_presence.known_presence_count = agent_presence.agent_count
+              AND agent_presence.online_agent_count = 0 agents_offline
+          FROM rooms room
+          LEFT JOIN identities peer ON peer.id=(SELECT participant FROM jsonb_array_elements_text(
+            CASE WHEN jsonb_typeof(room.direct_participants)='array'
+              THEN room.direct_participants ELSE '[]'::jsonb END
+          ) participant WHERE participant<>$2 LIMIT 1)
+          LEFT JOIN LATERAL(
+            SELECT body,updated_at FROM live_outputs
+            WHERE agent_id=peer.id AND kind='presence' ORDER BY updated_at DESC LIMIT 1
+          ) presence ON peer.kind='agent'
+          LEFT JOIN LATERAL(
+            SELECT count(*)::int agent_count,
+              count(agent_status.body)::int known_presence_count,
+              count(*) FILTER(
+                WHERE agent_status.body->>'status'='online'
+                  AND (agent_status.updated_at>$3 OR agent_status.body->>'held'='true')
+              )::int online_agent_count
+            FROM memberships member
+            JOIN identities agent ON agent.id=member.identity_id
+              AND agent.kind='agent' AND agent.hidden_from_roster=false
+            LEFT JOIN LATERAL(
+              SELECT body,updated_at FROM live_outputs
+              WHERE agent_id=member.identity_id AND kind='presence'
+              ORDER BY updated_at DESC LIMIT 1
+            ) agent_status ON true
+            WHERE member.room_id=room.id AND member.removed_at IS NULL
+          ) agent_presence ON true
+          WHERE room.id=ANY($1::uuid[])
+        ), cursors AS (
+          SELECT room.id room_id,(latest.id IS NOT NULL AND (
+            mark.message_created_at IS NULL OR latest.id<>mark.message_id AND
+            (latest.created_at,latest.id)>(mark.message_created_at,mark.message_id)
+          )) unread
+          FROM rooms room
+          LEFT JOIN room_read_marks mark ON mark.room_id=room.id AND mark.identity_id=$2
+          LEFT JOIN LATERAL(
+            SELECT message.id,message.created_at FROM messages message
+            WHERE message.room_id=room.id AND ${unreadMessageSql('message')}
+            ORDER BY message.created_at DESC,message.id DESC LIMIT 1
+          ) latest ON true
+          WHERE room.id=ANY($1::uuid[])
+        ), corner_candidates AS (
+          SELECT c.id,c.name,c.parent_id,c.created_at,
+            ${followsCornerSql('c', '$2')} follows_viewer,
+            lm.created_at latest_created_at,
+            owed.owed,owed.owed_viewer,owed.attention,
+            turn.status latest_turn_status,
+            COALESCE(f.workflow_state,CASE
+              WHEN NULLIF(f.lifecycle#>>'{pr,mergedAt}','') IS NOT NULL
+                OR f.lifecycle->>'outcome'='landed'
+                OR lower(btrim(f.lifecycle->>'lifecycle'))='merged' THEN 'landed'
+              WHEN c.archived_at IS NOT NULL OR f.lifecycle->>'outcome'='abandoned'
+                OR lower(btrim(f.lifecycle->>'lifecycle')) IN
+                  ('done','concluded','closed','abandoned','cleaned') THEN 'closed'
+              WHEN jsonb_typeof(f.lifecycle->'pr')='object' THEN CASE
+                WHEN COALESCE(f.lifecycle#>>'{checksSummary,status}',f.lifecycle->>'checks')='failing'
+                  THEN 'implement'
+                WHEN COALESCE(f.lifecycle#>>'{checksSummary,status}',f.lifecycle->>'checks')='passing'
+                  THEN 'review' ELSE 'checks' END
+              WHEN lower(btrim(f.lifecycle->>'reason'))='question'
+                OR lower(btrim(f.lifecycle->>'lifecycle'))='question' THEN 'ask_human'
+              ELSE 'implement' END) run_state,
+            COALESCE(f.workflow_outcome,CASE
+              WHEN jsonb_typeof(f.lifecycle->'pr')='object' AND
+                COALESCE(f.lifecycle#>>'{checksSummary,status}',f.lifecycle->>'checks')='failing'
+                THEN 'failing'
+              WHEN lower(btrim(f.lifecycle->>'reason')) IN ('failure','failed')
+                OR lower(btrim(f.lifecycle->>'lifecycle')) IN ('failure','failed')
+                THEN 'failed' END) run_outcome
+          FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+          LEFT JOIN LATERAL (SELECT created_at FROM messages WHERE room_id=c.id
+            AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+          LEFT JOIN LATERAL (SELECT status FROM agent_turns WHERE room_id=c.id
+            ORDER BY created_at DESC LIMIT 1) turn ON true
+          ${cornerOwedLookupSql('c', '$2')}
+          WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
+            SELECT 1 FROM memberships member WHERE member.room_id=c.id
+              AND member.identity_id=$2 AND member.removed_at IS NULL
+          )
+        ), corner_states AS (
+          SELECT corner_candidates.*,CASE
+            WHEN run_state IN ('landed','closed') THEN 'archived'
+            WHEN latest_turn_status='working' THEN 'working'
+            WHEN run_state IN ('checks','review') OR
+              (run_state='implement' AND run_outcome='failing') THEN 'review'
+            WHEN run_state='ask_human' OR
+              (run_state='implement' AND run_outcome='failed') THEN 'waiting'
+            WHEN owed=false THEN 'idle' ELSE 'waiting' END state
+          FROM corner_candidates
+        ), corner_ranked AS (
+          SELECT corner_states.*,row_number() OVER (
+            PARTITION BY parent_id ORDER BY (state<>'archived') DESC,created_at DESC,id DESC
+          ) rn FROM corner_states
+        ), corner_summaries AS (
+          SELECT parent_id,
+            count(*) FILTER (WHERE state<>'archived')::int corner_count,
+            count(*) FILTER (WHERE state='waiting')::int waiting_count,
+            COALESCE(jsonb_agg(jsonb_build_object('id',id,'name',name,'state',state,
+              'follows_viewer',follows_viewer,'owed_viewer',owed_viewer,
+              'attention',attention,'latest_created_at',latest_created_at)
+              ORDER BY created_at DESC,id DESC)
+              FILTER (WHERE rn<=8 AND state<>'archived'),'[]'::jsonb) preview
+          FROM corner_ranked GROUP BY parent_id
+        )
+        SELECT COALESCE((SELECT jsonb_agg(to_jsonb(p)) FROM presence p),'[]'::jsonb) presence,
+          COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM cursors c),'[]'::jsonb) cursors,
+          COALESCE((SELECT jsonb_agg(to_jsonb(c)) FROM corner_summaries c),'[]'::jsonb) corner_summaries`,
+        [roomIds, viewerId, new Date(Date.now() - AGENT_REACHABLE_HORIZON_MS)],
       ),
-      this.optionalEnrichment(
-        'chat-read-cursor',
-        this.enrichmentDatabase.query<{ room_id: string; unread: boolean }>(
-          `SELECT room.id room_id,(latest.id IS NOT NULL AND (
-             mark.message_created_at IS NULL OR latest.id<>mark.message_id AND
-             (latest.created_at,latest.id)>(mark.message_created_at,mark.message_id)
-           )) unread
-           FROM rooms room
-           LEFT JOIN room_read_marks mark ON mark.room_id=room.id AND mark.identity_id=$2
-           LEFT JOIN LATERAL(
-             -- The deck's boolean and the Room's cursor now ask one question.
-             SELECT message.id,message.created_at FROM messages message
-             WHERE message.room_id=room.id AND ${unreadMessageSql('message')}
-             ORDER BY message.created_at DESC,message.id DESC LIMIT 1
-           ) latest ON true
-           WHERE room.id=ANY($1::uuid[])`,
-          [roomIds, viewerId],
-        ),
-      ),
-      this.optionalEnrichment(
-        'chat-corner-counts',
-        this.enrichmentDatabase.query<{
-          id: string;
-          name: string;
-          parent_id: string;
-          archived_at: Date | null;
-          lifecycle: CornerLifecycleView | null;
-          workflow_state: string | null;
-          workflow_outcome: string | null;
-          latest_turn_status: string | null;
-          follows_viewer: boolean | null;
-          latest_created_at: Date | null;
-          owed: boolean;
-          owed_viewer: boolean;
-          attention: boolean;
-        }>(
-          `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
-           turn.status latest_turn_status,
-           ${followsCornerSql('c', '$2')} follows_viewer,
-           lm.created_at latest_created_at,
-           owed.owed,owed.owed_viewer,owed.attention
-         FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
-         LEFT JOIN LATERAL (SELECT * FROM messages WHERE room_id=c.id AND presentation IN ('message','system') ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
-         LEFT JOIN LATERAL (
-           SELECT status FROM agent_turns WHERE room_id=c.id
-           ORDER BY created_at DESC LIMIT 1
-         ) turn ON true
-         ${cornerOwedLookupSql('c', '$2')}
-         WHERE c.parent_id=ANY($1::uuid[]) AND c.archived_at IS NULL AND EXISTS (
-           SELECT 1 FROM memberships member WHERE member.room_id=c.id
-             AND member.identity_id=$2 AND member.removed_at IS NULL
-         )
-         ORDER BY c.created_at DESC,c.id`,
-          [roomIds, viewerId],
-        ),
-      ),
-    ]);
+    );
+    const enrichmentRow = enrichment?.rows[0];
+    const presence = enrichmentRow ? { rows: enrichmentRow.presence.map((row) =>
+      reviveDates(row, ['peer_presence_updated_at', 'peer_activity_at'])) } : undefined;
+    const cursors = enrichmentRow ? { rows: enrichmentRow.cursors } : undefined;
+    const cornerSummaries = enrichmentRow?.corner_summaries;
     // A timed-out enrichment is unknown, not empty. Omitting its fields (and
     // naming unread, which old phones require) lets the phone keep what it
     // last knew instead of painting no corners and no unread dot.
-    const countsByRoom = cornerStates ? chatCornerCounts(cornerStates.rows) : undefined;
+    const countsByRoom = cornerSummaries ? new Map(cornerSummaries.map((summary) => [
+      summary.parent_id,
+      {
+        cornerCount: summary.corner_count,
+        waitingCornerCount: summary.waiting_count,
+        openCorners: summary.preview.map((corner): ChatListCorner => ({
+          id: corner.id,name: corner.name,state: corner.state,
+          ...(corner.follows_viewer || corner.owed_viewer ? { mine: true } : {}),
+          ...(corner.state === 'waiting' && (corner.follows_viewer || corner.owed_viewer) &&
+            corner.latest_created_at ? { waitingSince: unix(new Date(corner.latest_created_at)) } : {}),
+          ...(corner.state === 'waiting' && corner.attention ? { attention: true } : {}),
+        })),
+      },
+    ])) : undefined;
     const unavailable = [
       ...(cursors ? [] : ['unread' as const]),
-      ...(cornerStates ? [] : ['corners' as const]),
+      ...(cornerSummaries ? [] : ['corners' as const]),
     ];
     const presenceByRoom = new Map(presence?.rows.map((item) => [item.room_id, item]) ?? []);
     const cursorByRoom = new Map(cursors?.rows.map((item) => [item.room_id, item]) ?? []);
@@ -1937,7 +2049,7 @@ export class PhoneService {
         }))
         // A viewer's corner going to waiting lifts its Room like a message does.
         .sort((left, right) => chatActivityAt(right) - chatActivityAt(left)),
-      viewer: await this.requireIdentity(viewerId),
+      viewer: identity(result.rows[0]!.viewer_row, this.publicOrigin),
       truncated: rooms.rows.length > 200,
       ...(unavailable.length ? { unavailable } : {}),
       watchFilters: rooms.rows.length
@@ -2321,11 +2433,17 @@ export class PhoneService {
     viewerId: string,
     targetId: string,
   ): Promise<RoomHistoryView | null> {
-    if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
-    const rows = (
-      await this.database.query<MessageRow>(
-        `WITH target AS (
-         SELECT created_at,id FROM messages WHERE room_id=$1 AND id=$2
+    const result = await this.database.query<{ rows: MessageRow[] }>(
+      `WITH authorized AS (
+        SELECT 1 FROM memberships room_member JOIN rooms room ON room.id=room_member.room_id
+        WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+          AND room_member.removed_at IS NULL
+          AND ($2=$4 OR EXISTS(SELECT 1 FROM memberships workspace_member
+            WHERE workspace_member.workspace_id=room.workspace_id
+              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+              AND workspace_member.removed_at IS NULL))
+      ), target AS (
+         SELECT created_at,id FROM messages WHERE room_id=$1 AND id=$3
        ), target_rows AS (
          (SELECT m.id FROM messages m,target
           WHERE m.room_id=$1 AND (m.created_at,m.id)>=(target.created_at,target.id)
@@ -2338,24 +2456,25 @@ export class PhoneService {
             AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
             AND ${hiddenWakeCardSql('m')}
           ORDER BY m.created_at DESC,m.id DESC LIMIT 15)
-       )
+       ), page AS (
        SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
          ${reactionIdentitiesSql('m')} reaction_identities,
          '{}'::text[] tagged_ids
        FROM target_rows JOIN messages m ON m.id=target_rows.id
        JOIN identities i ON i.id=m.author_id
-       ORDER BY m.created_at,m.id`,
-        [roomId, targetId],
-      )
-    ).rows;
-    await this.enrichMessageTags(rows);
-    await this.enrichMessageBookmarks(rows, viewerId);
+       ORDER BY m.created_at,m.id
+       )
+       SELECT COALESCE((SELECT jsonb_agg(to_jsonb(page) ORDER BY page.created_at,page.id)
+         FROM page),'[]'::jsonb) rows FROM authorized`,
+      [roomId,viewerId,targetId,SYSTEM_IDENTITY_ID],
+    );
+    const loaded = result.rows[0];
+    if (!loaded) return null;
+    const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
+    const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const [attachmentFacts, appMessages] = await Promise.all([
-      this.attachmentFacts(messages),
-      this.decorateAppSignInCards(messages),
-    ]);
+    const appMessages = await this.decorateAppSignInCards(messages);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
@@ -2364,10 +2483,17 @@ export class PhoneService {
     viewerId: string,
     afterId: string,
   ): Promise<RoomHistoryView | null> {
-    if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
-    const rows = (
-      await this.database.query<MessageRow>(
-        `SELECT m.*,
+    const result = await this.database.query<{ rows: MessageRow[]; cursor_exists: boolean }>(
+      `WITH authorized AS (
+        SELECT 1 FROM memberships room_member JOIN rooms room ON room.id=room_member.room_id
+        WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+          AND room_member.removed_at IS NULL
+          AND ($2=$4 OR EXISTS(SELECT 1 FROM memberships workspace_member
+            WHERE workspace_member.workspace_id=room.workspace_id
+              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+              AND workspace_member.removed_at IS NULL))
+      ), page AS (
+      SELECT m.*,
          i.kind author_kind,i.name author_name,i.handle author_handle,
          i.avatar author_avatar,i.face_id author_face,
          ${reactionIdentitiesSql('m')} reaction_identities,
@@ -2377,26 +2503,22 @@ export class PhoneService {
          AND ${hiddenWakeCardSql('m')}
          AND (m.created_at,m.id)>(
            SELECT cursor.created_at,cursor.id FROM messages cursor
-           WHERE cursor.room_id=$1 AND cursor.id=$2
+           WHERE cursor.room_id=$1 AND cursor.id=$3
          )
-       ORDER BY m.created_at,m.id LIMIT 30`,
-        [roomId, afterId],
+       ORDER BY m.created_at,m.id LIMIT 30
       )
-    ).rows;
-    if (rows.length === 0) {
-      const cursor = await this.database.query<{ id: string }>(
-        `SELECT id FROM messages WHERE room_id=$1 AND id=$2`,
-        [roomId, afterId],
-      );
-      if (!cursor.rowCount) return null;
-    }
-    await this.enrichMessageTags(rows);
-    await this.enrichMessageBookmarks(rows, viewerId);
+      SELECT COALESCE((SELECT jsonb_agg(to_jsonb(page) ORDER BY page.created_at,page.id)
+        FROM page),'[]'::jsonb) rows,
+        EXISTS(SELECT 1 FROM messages WHERE room_id=$1 AND id=$3) cursor_exists
+      FROM authorized`,
+      [roomId,viewerId,afterId,SYSTEM_IDENTITY_ID],
+    );
+    const loaded = result.rows[0];
+    if (!loaded || !loaded.cursor_exists) return null;
+    const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
+    const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const [attachmentFacts, appMessages] = await Promise.all([
-      this.attachmentFacts(messages),
-      this.decorateAppSignInCards(messages),
-    ]);
+    const appMessages = await this.decorateAppSignInCards(messages);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
@@ -2405,28 +2527,45 @@ export class PhoneService {
     viewerId: string,
     before?: { createdAt: number; id: string },
   ): Promise<RoomHistoryView | null> {
-    if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
-    let rows = await this.messageRows(roomId, before, 31);
-    if (before && rows.length === 0) {
-      // A cached cursor can point to a message deleted since the Room read.
-      // The cursor subquery then matches nothing; an empty result is not proof
-      // that this Room has no older history. Restart from the current tail.
-      const cursor = await this.database.query<{ id: string }>(
-        `SELECT id FROM messages WHERE room_id=$1 AND id=$2`,
-        [roomId, before.id],
-      );
-      if (!cursor.rowCount) rows = await this.messageRows(roomId, undefined, 31);
-    }
+    const result = await this.database.query<{ rows: MessageRow[] }>(
+      `WITH authorized AS (
+        SELECT 1 FROM memberships room_member
+        JOIN rooms room ON room.id=room_member.room_id
+        WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+          AND room_member.removed_at IS NULL
+          AND ($2=$4 OR EXISTS(SELECT 1 FROM memberships workspace_member
+            WHERE workspace_member.workspace_id=room.workspace_id
+              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+              AND workspace_member.removed_at IS NULL))
+      ), cursor AS (
+        SELECT created_at,id FROM messages WHERE room_id=$1 AND id=$3
+      ), page AS (
+        SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+          i.avatar author_avatar,i.face_id author_face,
+          ${reactionIdentitiesSql('m')} reaction_identities,
+          '{}'::text[] tagged_ids
+        FROM messages m JOIN identities i ON i.id=m.author_id
+        WHERE m.room_id=$1 AND EXISTS(SELECT 1 FROM authorized)
+          AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+          AND ${hiddenWakeCardSql('m')}
+          AND ($3::text IS NULL OR NOT EXISTS(SELECT 1 FROM cursor)
+            OR (m.created_at,m.id)<(SELECT created_at,id FROM cursor))
+        ORDER BY m.created_at DESC,m.id DESC LIMIT 31
+      )
+      SELECT COALESCE((SELECT jsonb_agg(to_jsonb(page) ORDER BY page.created_at DESC,page.id DESC)
+        FROM page),'[]'::jsonb) rows FROM authorized`,
+      [roomId,viewerId,before?.id ?? null,SYSTEM_IDENTITY_ID],
+    );
+    const loaded = result.rows[0];
+    if (!loaded) return null;
+    const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const page = rows.slice(0, 30);
-    await this.enrichMessageBookmarks(page, viewerId);
+    const attachmentFacts = await this.enrichHistoryRows(page, viewerId);
     const tail = page.at(-1);
     const messages = page
       .reverse()
       .map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const [attachmentFacts, appMessages] = await Promise.all([
-      this.attachmentFacts(messages),
-      this.decorateAppSignInCards(messages),
-    ]);
+    const appMessages = await this.decorateAppSignInCards(messages);
     return {
       roomId,
       messages: decorateAttachments(appMessages, attachmentFacts),
@@ -2447,15 +2586,22 @@ export class PhoneService {
     viewerId: string,
     timeZone: string,
   ): Promise<RoomHistoryOutline | null> {
-    if (!(await this.hasRoomAccess(roomId, viewerId))) return null;
-    if (!this.outlineCache) return this.countHistoryOutline(roomId, timeZone);
-    const newest = await this.database.query<{ id: string }>(
-      `SELECT m.id FROM messages m
-       WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-         AND ${hiddenWakeCardSql('m')}
-       ORDER BY m.created_at DESC,m.id DESC LIMIT 1`,
-      [roomId],
+    const newest = await this.database.query<{ id: string | null }>(
+      `SELECT (SELECT m.id FROM messages m
+         WHERE m.room_id=room.id AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+           AND ${hiddenWakeCardSql('m')}
+         ORDER BY m.created_at DESC,m.id DESC LIMIT 1) id
+       FROM rooms room JOIN memberships member ON member.room_id=room.id
+         AND member.identity_id=$2 AND member.removed_at IS NULL
+       WHERE room.id=$1 AND ($2=$3 OR EXISTS(
+         SELECT 1 FROM memberships workspace_member
+         WHERE workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+           AND workspace_member.removed_at IS NULL))`,
+      [roomId,viewerId,SYSTEM_IDENTITY_ID],
     );
+    if (!newest.rows[0]) return null;
+    if (!this.outlineCache) return this.countHistoryOutline(roomId, timeZone);
     return this.outlineCache.read(roomId, timeZone, newest.rows[0]?.id ?? null, () =>
       this.countHistoryOutline(roomId, timeZone),
     );
@@ -2470,10 +2616,14 @@ export class PhoneService {
         created_at: Date;
         author_name: string;
         author_handle: string | null;
+        newest_id: string;
+        newest_created_at: Date;
       }>(
         `SELECT DISTINCT ON (local.day) local.day::text AS local_day,
            count(*) OVER (PARTITION BY local.day)::text AS message_count,
-           m.id,m.created_at,i.name author_name,i.handle author_handle
+           m.id,m.created_at,i.name author_name,i.handle author_handle,
+           first_value(m.id) OVER (ORDER BY m.created_at DESC,m.id DESC) newest_id,
+           first_value(m.created_at) OVER (ORDER BY m.created_at DESC,m.id DESC) newest_created_at
          FROM messages m JOIN identities i ON i.id=m.author_id
          CROSS JOIN LATERAL (SELECT (m.created_at AT TIME ZONE $2)::date AS day) local
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
@@ -2492,12 +2642,12 @@ export class PhoneService {
         ...(row.author_handle ? { authorHandle: row.author_handle } : {}),
       },
     }));
-    const [newest] = await this.messageRows(roomId, undefined, 1);
+    const newest = rows[0];
     return {
       roomId,
       timeZone,
       total: days.reduce((sum, day) => sum + day.count, 0),
-      ...(newest ? { newest: { id: newest.id, createdAt: unix(newest.created_at) } } : {}),
+      ...(newest ? { newest: { id: newest.newest_id, createdAt: unix(newest.newest_created_at) } } : {}),
       days,
     };
   }
@@ -2516,41 +2666,59 @@ export class PhoneService {
     roomViewFamilyOrder = false,
     archived = false,
     archivedBefore?: ArchivedCornerCursor,
+    openBefore?: ArchivedCornerCursor,
   ): Promise<CornerListView | null> {
-    const parent = await this.database.query<
-      RoomRow & {
+    const cornerQuery = this.cornerRowsSql(roomViewFamilyOrder, archived, archivedBefore ?? openBefore);
+    const result = await this.database.query<{
+      room_row: RoomRow & {
         viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
         workspace_role: 'owner' | 'admin' | 'member' | 'spectator';
-      }
-    >(
-      `SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
-       FROM rooms r JOIN memberships m ON m.room_id=r.id
-       JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
-         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
-         AND workspace_member.removed_at IS NULL
-       WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
-      [roomId, viewerId],
+      };
+      corner_rows: CornerRow[];
+      viewer_row: IdentityRow;
+      app_rows: Array<{ id: string; manifest: unknown }>;
+    }>(`WITH authorized AS (
+        SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
+        FROM rooms r JOIN memberships m ON m.room_id=r.id
+        JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
+          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+          AND workspace_member.removed_at IS NULL
+        WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
+      ), selected_corners AS (${cornerQuery})
+      SELECT to_jsonb(authorized) room_row,
+        COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY ${archived
+          ? 'c.archived_at DESC,c.id DESC' : 'c.created_at DESC,c.id DESC'})
+          FROM selected_corners c),'[]'::jsonb) corner_rows,
+        jsonb_build_object('id',viewer.id,'kind',viewer.kind,'name',viewer.name,
+          'handle',viewer.handle,'avatar',viewer.avatar,'face_id',viewer.face_id) viewer_row,
+        COALESCE((SELECT jsonb_agg(jsonb_build_object('id',app.id,'manifest',app.manifest)
+          ORDER BY app.connected_at DESC,app.id)
+          FROM corner_app_installations app WHERE app.workspace_id=authorized.workspace_id),'[]'::jsonb) app_rows
+      FROM authorized JOIN identities viewer ON viewer.id=$2`,
+      (archivedBefore ?? openBefore)
+        ? [roomId, viewerId, (archivedBefore ?? openBefore)!.micros, (archivedBefore ?? openBefore)!.id]
+        : [roomId, viewerId],
     );
-    const room = parent.rows[0];
-    if (!room) return null;
-    const [fetched, viewerIdentity, appRows] = await Promise.all([
-      this.cornerRows(roomId, viewerId, roomViewFamilyOrder, archived, archivedBefore),
-      this.requireIdentity(viewerId),
-      this.database.query<{ id: string; manifest: unknown }>(
-        `SELECT id,manifest FROM corner_app_installations
-         WHERE workspace_id=$1 ORDER BY connected_at DESC,id`,
-        [room.workspace_id],
-      ),
-    ]);
+    const loaded = result.rows[0];
+    if (!loaded) return null;
+    const room = reviveDates(loaded.room_row,
+      ['created_at','updated_at','archived_at','repository_updated_at']);
+    const fetched = loaded.corner_rows.map((row) => reviveDates(row,
+      ['created_at','updated_at','archived_at','repository_updated_at',
+        'latest_created_at','latest_turn_created_at']));
+    const viewerIdentity = identity(loaded.viewer_row, this.publicOrigin);
+    const appRows = { rows: loaded.app_rows };
     // The archived read asks for one row past the page; its presence is what
     // says another page exists.
-    const more = archived && fetched.length > ARCHIVED_CORNER_PAGE;
-    const rows = more ? fetched.slice(0, ARCHIVED_CORNER_PAGE) : fetched;
+    const pageSize = archived ? ARCHIVED_CORNER_PAGE : OPEN_CORNER_PAGE;
+    const more = fetched.length > pageSize;
+    const rows = more ? fetched.slice(0, pageSize) : fetched;
     const last = rows.at(-1);
     return {
       room: roomHeader(room, this.publicOrigin),
       corners: this.projectCorners(rows),
-      ...(more && last?.archived_us ? { nextArchived: `${last.archived_us},${last.id}` } : {}),
+      ...(archived && more && last?.archived_us ? { nextArchived: `${last.archived_us},${last.id}` } : {}),
+      ...(!archived && more && last?.created_us ? { nextOpen: `${last.created_us},${last.id}` } : {}),
       apps: appRows.rows.flatMap((row) => {
         const manifest = readCornerAppManifest(row.manifest);
         return manifest ? [{ id: row.id, manifest }] : [];
@@ -2951,13 +3119,11 @@ export class PhoneService {
     };
   }
 
-  private async cornerRows(
-    roomId: string,
-    viewerId: string,
+  private cornerRowsSql(
     roomViewFamilyOrder = false,
     archived = false,
-    archivedBefore?: ArchivedCornerCursor,
-  ): Promise<CornerRow[]> {
+    before?: ArchivedCornerCursor,
+  ): string {
     // The archived list is ordered by when work CLOSED, not when it opened: a
     // corner opened first can close last, and a reader looking for what just
     // finished expects it at the top.
@@ -2969,12 +3135,11 @@ export class PhoneService {
     // Keyset paging on the same (archived_at, id) order, compared in exact
     // microseconds, so no row is skipped or repeated between pages.
     const archivedMicros = '(extract(epoch FROM c.archived_at)*1000000)::bigint';
+    const createdMicros = '(extract(epoch FROM c.created_at)*1000000)::bigint';
     const keyset =
-      archived && archivedBefore ? `AND (${archivedMicros},c.id) < ($3::bigint,$4::uuid)` : '';
-    const limit = archived ? `LIMIT ${ARCHIVED_CORNER_PAGE + 1}` : '';
-    return (
-      await this.database.query<CornerRow>(
-        `
+      before ? `AND (${archived ? archivedMicros : createdMicros},c.id) < ($3::bigint,$4::uuid)` : '';
+    const limit = `LIMIT ${(archived ? ARCHIVED_CORNER_PAGE : OPEN_CORNER_PAGE) + 1}`;
+    return `
       SELECT c.*,f.lifecycle,f.workflow_state,f.workflow_outcome,f.objective,lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
         initiator.id initiator_id,initiator.name initiator_name,
         initiator.handle initiator_handle,initiator.avatar initiator_avatar,
@@ -2988,6 +3153,7 @@ export class PhoneService {
         ${archived ? 'NULL::boolean owed,NULL::boolean owed_viewer,NULL::boolean attention' : 'owed.owed,owed.owed_viewer,owed.attention'},
         ${archived ? 'NULL::boolean' : followsCornerSql('c', '$2')} follows_viewer,
         ${archivedMicros}::text archived_us,
+        ${createdMicros}::text created_us,
         (SELECT max(brief.revision) FROM corner_brief_revisions brief WHERE brief.corner_id=c.id) brief_revision
       FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
       LEFT JOIN identities initiator
@@ -3013,12 +3179,7 @@ export class PhoneService {
       WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND EXISTS(
         SELECT 1 FROM memberships viewer
         WHERE viewer.room_id=c.id AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
-      ) ${keyset} ${order} ${limit}`,
-        keyset
-          ? [roomId, viewerId, archivedBefore!.micros, archivedBefore!.id]
-          : [roomId, viewerId],
-      )
-    ).rows;
+      ) AND EXISTS (SELECT 1 FROM authorized) ${keyset} ${order} ${limit}`;
   }
 
   private projectCorners(rows: readonly CornerRow[]): CornerListView['corners'] {
@@ -3123,94 +3284,110 @@ export class PhoneService {
     viewerId: string,
     workCursor?: string,
   ): Promise<AgentDetailView | null> {
-    const viewer = await this.database.query(
-      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
-      [workspaceId, viewerId],
-    );
-    if (!viewer.rowCount) return null;
-    const member = (await this.members(workspaceId, null, agentId)).find(
-      (entry) => entry.identity.pubkey === agentId,
-    );
-    if (!member || member.identity.kind !== 'agent') return null;
-    const config = (
-      await this.database.query<{
-        soul: AgentDetailView['soul'] | null;
-        model_catalog: AgentDetailView['catalog'];
-        commands: AgentDetailView['commands'];
-        selected_model: string | null;
-        selected_effort: string | null;
-        fast_mode: boolean;
-        model_unavailable: 'model' | 'effort' | 'selection' | null;
-        yolo_mode: boolean;
-        yolo_forced_off: boolean;
-        yolo_set_by_name: string | null;
-        yolo_set_at: Date | null;
-        avatar_generation_id: string | null;
-        avatar_generation_pending: boolean;
-        can_change_yolo: boolean;
-        can_manage_grants: boolean;
-        harness: string | null;
-        access_policy: unknown;
-        owner_id: string | null;
-        owner_name: string | null;
-        owner_handle: string | null;
-        config_version: string;
-      }>(
-        `SELECT a.harness,a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.fast_mode,a.model_unavailable,
-                floor(extract(epoch FROM a.updated_at)*1000000)::bigint::text config_version,
-                (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
-                EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=a.agent_id AND c.avatar_job AND c.state IN ('pending','claimed')) avatar_generation_pending,
-                CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
-                workspace.visibility='public' yolo_forced_off,a.yolo_set_at,
-                setter.name yolo_set_by_name,a.access_policy,a.owner_id,
-                owner.name owner_name,owner.handle owner_handle,
-                a.owner_id=$3 can_change_yolo,
-                (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants
-         FROM agents a
-         JOIN memberships agent_membership ON agent_membership.identity_id=a.agent_id
-           AND agent_membership.workspace_id=$2 AND agent_membership.room_id IS NULL
-           AND agent_membership.removed_at IS NULL
-         JOIN workspaces workspace ON workspace.id=agent_membership.workspace_id
-         JOIN memberships viewer_membership ON viewer_membership.workspace_id=$2
-           AND viewer_membership.room_id IS NULL AND viewer_membership.identity_id=$3
-           AND viewer_membership.removed_at IS NULL
-         LEFT JOIN identities setter ON setter.id=a.yolo_set_by
-         LEFT JOIN identities owner ON owner.id=a.owner_id
-         WHERE a.agent_id=$1`,
-        [agentId, workspaceId, viewerId],
-      )
-    ).rows[0];
     let cursor: [string, string] | null = null;
     if (workCursor) {
       try {
         const value: unknown = JSON.parse(workCursor);
-        if (
-          !Array.isArray(value) ||
-          value.length !== 2 ||
-          !value.every((part) => typeof part === 'string' && part.length <= 2048)
-        )
+        if (!Array.isArray(value) || value.length !== 2 ||
+          !value.every((part) => typeof part === 'string' && part.length <= 2048))
           throw new Error('invalid cursor');
         cursor = value as [string, string];
       } catch {
         throw new Error('invalid recent work cursor');
       }
     }
-    const recentWork = await this.database.query<{ title: string; url: string; merged_at: string }>(
-      `SELECT max(f.lifecycle->'pr'->>'title') title, f.lifecycle->'pr'->>'url' url,
-              max(f.lifecycle->'pr'->>'mergedAt') merged_at
-       FROM corner_facts f JOIN rooms r ON r.id=f.corner_id
-       WHERE r.workspace_id=$1 AND f.owner_agent_id=$2
-         AND NULLIF(f.lifecycle->'pr'->>'mergedAt','') IS NOT NULL
-         AND NULLIF(f.lifecycle->'pr'->>'title','') IS NOT NULL
-         AND f.lifecycle->'pr'->>'url' ~ '^https://github[.]com/[^/]+/[^/]+/pull/[0-9]+$'
-         AND EXISTS (SELECT 1 FROM memberships m WHERE m.room_id=r.id
-           AND m.identity_id=$3 AND m.removed_at IS NULL)
-       GROUP BY f.lifecycle->'pr'->>'url'
-       HAVING $4::text IS NULL OR (max(f.lifecycle->'pr'->>'mergedAt'), f.lifecycle->'pr'->>'url') < ($4,$5)
-       ORDER BY merged_at DESC, url DESC LIMIT 6`,
-      [workspaceId, agentId, viewerId, cursor?.[0] ?? null, cursor?.[1] ?? null],
+    const core = await this.database.query<{
+      member_id: string; member_name: string; member_handle: string | null;
+      member_avatar: string | null; member_face: string | null;
+      member_role: MemberRow['role'];
+      config_version: string | null;
+      soul: AgentDetailView['soul'] | null;
+      model_catalog: AgentDetailView['catalog'] | null;
+      commands: AgentDetailView['commands'] | null;
+      selected_model: string | null; selected_effort: string | null;
+      fast_mode: boolean | null; model_unavailable: 'model' | 'effort' | 'selection' | null;
+      yolo_mode: boolean; yolo_forced_off: boolean; yolo_set_by_name: string | null;
+      yolo_set_at: Date | null; avatar_generation_id: string | null;
+      avatar_generation_pending: boolean; can_change_yolo: boolean;
+      can_manage_grants: boolean; harness: string | null; access_policy: unknown;
+      owner_id: string | null; owner_name: string | null; owner_handle: string | null;
+      recent_work: Array<{ title: string; url: string; merged_at: string }>;
+      grants: AgentGrantRow[];
+    }>(`SELECT agent_identity.id member_id,agent_identity.name member_name,
+        agent_identity.handle member_handle,agent_identity.avatar member_avatar,
+        agent_identity.face_id member_face,agent_membership.role member_role,
+        a.harness,a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,
+        a.fast_mode,a.model_unavailable,
+        floor(extract(epoch FROM a.updated_at)*1000000)::bigint::text config_version,
+        (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
+        EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=a.agent_id
+          AND c.avatar_job AND c.state IN ('pending','claimed')) avatar_generation_pending,
+        CASE WHEN workspace.visibility='public' THEN false ELSE COALESCE(a.yolo_mode,false) END yolo_mode,
+        workspace.visibility='public' yolo_forced_off,a.yolo_set_at,
+        setter.name yolo_set_by_name,a.access_policy,a.owner_id,
+        owner.name owner_name,owner.handle owner_handle,
+        a.owner_id=$3 can_change_yolo,
+        (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants,
+        COALESCE((SELECT jsonb_agg(to_jsonb(work)) FROM (
+          SELECT max(f.lifecycle->'pr'->>'title') title,
+            f.lifecycle->'pr'->>'url' url,max(f.lifecycle->'pr'->>'mergedAt') merged_at
+          FROM corner_facts f JOIN rooms r ON r.id=f.corner_id
+          WHERE r.workspace_id=$2 AND f.owner_agent_id=$1
+            AND NULLIF(f.lifecycle->'pr'->>'mergedAt','') IS NOT NULL
+            AND NULLIF(f.lifecycle->'pr'->>'title','') IS NOT NULL
+            AND f.lifecycle->'pr'->>'url' ~ '^https://github[.]com/[^/]+/[^/]+/pull/[0-9]+$'
+            AND EXISTS (SELECT 1 FROM memberships m WHERE m.room_id=r.id
+              AND m.identity_id=$3 AND m.removed_at IS NULL)
+          GROUP BY f.lifecycle->'pr'->>'url'
+          HAVING $4::text IS NULL OR (max(f.lifecycle->'pr'->>'mergedAt'),
+            f.lifecycle->'pr'->>'url') < ($4,$5)
+          ORDER BY merged_at DESC,url DESC LIMIT 6
+        ) work),'[]'::jsonb) recent_work,
+        COALESCE((SELECT jsonb_agg(to_jsonb(grant_row)) FROM (
+          SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,
+            g.created_at,g.decided_at,g.expires_at,g.script,
+            to_jsonb(requester) requester,to_jsonb(decider) decider
+          FROM agent_grants g
+          JOIN identities requester ON requester.id=g.requested_by
+          LEFT JOIN identities decider ON decider.id=g.decided_by
+          WHERE g.agent_id=$1 AND g.workspace_id=$2 AND g.status<>'pending'
+            AND (g.kind='repository' OR a.owner_id=$3)
+          ORDER BY g.created_at DESC,g.id LIMIT $6
+        ) grant_row),'[]'::jsonb) grants
+      FROM memberships agent_membership
+      JOIN identities agent_identity ON agent_identity.id=agent_membership.identity_id
+        AND agent_identity.kind='agent' AND agent_identity.hidden_from_roster=false
+      JOIN memberships viewer_membership ON viewer_membership.workspace_id=$2
+        AND viewer_membership.room_id IS NULL AND viewer_membership.identity_id=$3
+        AND viewer_membership.removed_at IS NULL
+      JOIN workspaces workspace ON workspace.id=agent_membership.workspace_id
+      LEFT JOIN agents a ON a.agent_id=agent_membership.identity_id
+      LEFT JOIN identities setter ON setter.id=a.yolo_set_by
+      LEFT JOIN identities owner ON owner.id=a.owner_id
+      WHERE agent_membership.identity_id=$1 AND agent_membership.workspace_id=$2
+        AND agent_membership.room_id IS NULL AND agent_membership.removed_at IS NULL`,
+      [agentId, workspaceId, viewerId, cursor?.[0] ?? null,cursor?.[1] ?? null,
+        PROFILE_GRANT_LIMIT],
     );
-    const workPage = recentWork.rows.slice(0, 5);
+    const config = core.rows[0];
+    if (!config) return null;
+    const presence = await this.optionalEnrichment('member-presence',
+      this.enrichmentDatabase.query<{
+        presence_body: MemberRow['presence_body']; presence_updated_at: Date | null;
+      }>(`SELECT live.body presence_body,live.updated_at presence_updated_at
+        FROM live_outputs live WHERE live.agent_id=$1 AND live.kind='presence'
+        ORDER BY live.updated_at DESC LIMIT 1`, [agentId]));
+    const presenceRow = presence?.rows[0];
+    const member = this.projectMembers([{
+      id: config.member_id,kind: 'agent',name: config.member_name,
+      handle: config.member_handle,avatar: config.member_avatar,
+      face_id: config.member_face,role: config.member_role,
+      presence_body: presenceRow?.presence_body ?? null,
+      presence_updated_at: presenceRow?.presence_updated_at ?? null,
+    }], null)[0]!;
+    const recentWork = config.recent_work;
+    const grants = this.projectAgentGrants(config.grants);
+    const workPage = recentWork.slice(0, 5);
     const lastWork = workPage.at(-1);
     return {
       workspaceId,
@@ -3218,7 +3395,7 @@ export class PhoneService {
       ...(config?.avatar_generation_id ? { avatarGenerationId: config.avatar_generation_id } : {}),
       avatarGenerationPending: config?.avatar_generation_pending ?? false,
       recentWork: workPage.map(({ title, url }) => ({ title, url })),
-      ...(recentWork.rows.length > 5 && lastWork
+      ...(recentWork.length > 5 && lastWork
         ? { recentWorkCursor: JSON.stringify([lastWork.merged_at, lastWork.url]) }
         : {}),
       agent: member,
@@ -3291,42 +3468,17 @@ export class PhoneService {
           : {}),
         canChange: config?.can_change_yolo ?? false,
       },
-      grants: (await this.agentGrants(workspaceId, agentId)).filter(
-        (grant) => grant.kind === 'repository' || config?.owner_id === viewerId,
-      ),
+      grants,
       // Grant decisions retain their separate owner-or-Workspace-manager axis.
       canManageGrants: config?.can_manage_grants ?? false,
       canLogin: config?.owner_id === viewerId && isAgentSignInHarness(config?.harness),
       watchFilters: [],
     };
   }
-  /** The grant store as the profile lists it: every non-pending grant, newest first. */
-  private async agentGrants(workspaceId: string, agentId: string): Promise<AgentGrantView[]> {
-    const rows = await this.database.query<{
-      id: string;
-      kind: AgentGrantView['kind'];
-      target: string;
-      reason: string;
-      status: AgentGrantStatus;
-      room_id: string;
-      auto: boolean;
-      created_at: Date;
-      decided_at: Date | null;
-      expires_at: Date | null;
-      requester: IdentityRow;
-      decider: IdentityRow | null;
-      script: unknown;
-    }>(
-      `SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,g.created_at,g.decided_at,g.expires_at,
-              g.script,to_jsonb(requester) requester,to_jsonb(decider) decider
-       FROM agent_grants g
-       JOIN identities requester ON requester.id=g.requested_by
-       LEFT JOIN identities decider ON decider.id=g.decided_by
-       WHERE g.agent_id=$1 AND g.workspace_id=$2 AND g.status<>'pending'
-       ORDER BY g.created_at DESC,g.id`,
-      [agentId, workspaceId],
-    );
-    return rows.rows.map((row) => ({
+  /** Project the bounded ledger returned with the authorized profile core. */
+  private projectAgentGrants(rows: AgentGrantRow[]): AgentGrantView[] {
+    for (const row of rows) reviveDates(row, ['created_at','decided_at','expires_at']);
+    return rows.map((row) => ({
       grantId: row.id,
       kind: row.kind,
       target: row.target,
@@ -3344,49 +3496,9 @@ export class PhoneService {
     }));
   }
 
-  /** Settled grants for every agent owned by one member, with the profile privacy boundary applied. */
-  private async memberGrants(
-    workspaceId: string,
-    memberId: string,
-    viewerId: string,
-  ): Promise<WorkspaceMemberGrantView[]> {
-    const rows = await this.database.query<{
-      id: string;
-      kind: AgentGrantView['kind'];
-      target: string;
-      reason: string;
-      status: AgentGrantStatus;
-      room_id: string;
-      room_name: string | null;
-      auto: boolean;
-      created_at: Date;
-      decided_at: Date | null;
-      expires_at: Date | null;
-      agent: IdentityRow;
-      requester: IdentityRow;
-      decider: IdentityRow | null;
-      script: unknown;
-    }>(
-      `SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,g.created_at,g.decided_at,g.expires_at,
-              CASE WHEN EXISTS(SELECT 1 FROM memberships rm
-                WHERE rm.room_id=g.room_id AND rm.identity_id=$3 AND rm.removed_at IS NULL)
-                OR (room.parent_id IS NULL AND room.direct_participants IS NULL AND room.archived_at IS NULL
-                  AND EXISTS(SELECT 1 FROM memberships wm
-                    WHERE wm.workspace_id=$1 AND wm.room_id IS NULL AND wm.identity_id=$3
-                      AND wm.removed_at IS NULL AND wm.role IN ('owner','admin')))
-                THEN room.name END room_name,g.script,to_jsonb(agent_identity) agent,to_jsonb(requester) requester,to_jsonb(decider) decider
-       FROM agent_grants g
-       JOIN rooms room ON room.id=g.room_id
-       JOIN agents a ON a.agent_id=g.agent_id AND a.owner_id=$2
-       JOIN identities agent_identity ON agent_identity.id=g.agent_id
-       JOIN identities requester ON requester.id=g.requested_by
-       LEFT JOIN identities decider ON decider.id=g.decided_by
-       WHERE g.workspace_id=$1 AND g.status<>'pending'
-         AND (g.kind='repository' OR a.owner_id=$3)
-       ORDER BY g.created_at DESC,g.id`,
-      [workspaceId, memberId, viewerId],
-    );
-    return rows.rows.map((row) => ({
+  /** Grant rows already selected with the member profile's authorized core. */
+  private projectMemberGrantRows(rows: readonly MemberGrantRow[]): WorkspaceMemberGrantView[] {
+    return rows.map((row) => ({
       grantId: row.id,
       kind: row.kind,
       target: row.target,
@@ -4748,7 +4860,6 @@ export class PhoneService {
     return { schedules: schedules.rows.map(roomSchedule) };
   }
   private async listRoomWorkflowRuns(roomId: string, viewerId: string) {
-    if (!(await this.hasRoomAccess(roomId, viewerId))) throw new Error('room access denied');
     return listRoomWorkflowRuns(this.database, roomId, viewerId, undefined, this.publicOrigin);
   }
 
@@ -4757,7 +4868,6 @@ export class PhoneService {
     return this.listRoomWorkflowRuns(roomId, viewerId);
   }
   private async readWorkflowRun(input: Input<'readWorkflowRun'>, viewerId: string) {
-    if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
     const run = await readWorkflowRun(this.database, input, viewerId, this.publicOrigin);
     if (!run) throw new Error('workflow run not found');
     return run;
@@ -5090,8 +5200,9 @@ export class PhoneService {
     input: Input<'listMessageBookmarks'>,
     viewerId: string,
   ): Promise<Output<'listMessageBookmarks'>> {
-    await this.requireWorkspaceMember(input.workspaceId, viewerId);
-    const result = await this.database.query<{
+    const cursor = input.before?.match(/^(\d{1,19}),([a-zA-Z0-9_-]{1,128})$/);
+    if (input.before !== undefined && !cursor) throw new Error('invalid_cursor');
+    const result = await this.database.query<{ bookmarks: Array<{
       message_id: string;
       workspace_id: string;
       room_id: string;
@@ -5099,6 +5210,7 @@ export class PhoneService {
       room_kind: 'room' | 'corner';
       message_created_at: Date;
       bookmarked_at: Date;
+      bookmarked_us: string;
       available: boolean;
       text: string | null;
       author_id: string | null;
@@ -5107,11 +5219,16 @@ export class PhoneService {
       author_handle: string | null;
       author_avatar: string | null;
       author_face: string | null;
-    }>(
-      `SELECT bookmark.message_id,bookmark.workspace_id,bookmark.room_id,
+    }> }>(
+      `WITH authorized AS (
+         SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+           AND identity_id=$2 AND removed_at IS NULL
+       ), bookmarks AS (
+       SELECT bookmark.message_id,bookmark.workspace_id,bookmark.room_id,
          COALESCE(room.name,bookmark.source_room_name) room_name,
          bookmark.source_room_kind room_kind,
          bookmark.message_created_at,bookmark.created_at bookmarked_at,
+         (extract(epoch FROM bookmark.created_at)*1000000)::bigint::text bookmarked_us,
          (message.id IS NOT NULL AND message.deleted_at IS NULL AND room.id IS NOT NULL AND room_member.identity_id IS NOT NULL) available,
          CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN message.text END text,
          CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.id END author_id,
@@ -5127,11 +5244,25 @@ export class PhoneService {
        LEFT JOIN messages message ON message.id=bookmark.message_id AND message.room_id=room.id
        LEFT JOIN identities author ON author.id=message.author_id
        WHERE bookmark.workspace_id=$1 AND bookmark.identity_id=$2
-       ORDER BY bookmark.created_at DESC,bookmark.message_id`,
-      [input.workspaceId, viewerId],
+         ${cursor ? `AND ((extract(epoch FROM bookmark.created_at)*1000000)::bigint < $3::bigint
+           OR ((extract(epoch FROM bookmark.created_at)*1000000)::bigint = $3::bigint
+             AND bookmark.message_id > $4))` : ''}
+       ORDER BY bookmark.created_at DESC,bookmark.message_id
+       LIMIT ${BOOKMARK_PAGE + 1}
+       )
+       SELECT COALESCE((SELECT jsonb_agg(to_jsonb(bookmarks) ORDER BY bookmarked_at DESC,message_id)
+         FROM bookmarks),'[]'::jsonb) bookmarks FROM authorized`,
+      cursor ? [input.workspaceId, viewerId, cursor[1], cursor[2]] : [input.workspaceId, viewerId],
     );
+    if (!result.rows[0]) throw new Error('workspace membership required');
+    const page = result.rows[0].bookmarks.slice(0, BOOKMARK_PAGE);
+    const last = page.at(-1);
     return {
-      bookmarks: result.rows.map((row) => ({
+      ...(result.rows[0].bookmarks.length > BOOKMARK_PAGE && last
+        ? { next: `${last.bookmarked_us},${last.message_id}` } : {}),
+      bookmarks: page.map((raw) => {
+        const row = reviveDates(raw, ['message_created_at','bookmarked_at']);
+        return ({
         messageId: row.message_id,
         workspaceId: row.workspace_id,
         roomId: row.room_id,
@@ -5156,7 +5287,8 @@ export class PhoneService {
               ),
             }
           : {}),
-      })),
+        });
+      }),
     };
   }
 
@@ -5969,46 +6101,44 @@ export class PhoneService {
    * membership row went with it.
    */
   private async deleteWorkspace(input: Input<'deleteWorkspace'>, viewerId: string) {
-    await this.database.transaction(async (database) => {
-      await database.query(`SELECT 1 FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
-      const workspace = (
-        await database.query<{ name: string }>(`SELECT name FROM workspaces WHERE id=$1`, [
-          input.workspaceId,
-        ])
-      ).rows[0];
-      if (!workspace) return; // idempotent: already deleted
-      await this.requireWorkspaceOwner(input.workspaceId, viewerId, database);
-      const members = await database.query<{ identity_id: string; kind: 'human' | 'agent' }>(
-        `SELECT m.identity_id,i.kind FROM memberships m JOIN identities i ON i.id=m.identity_id
-         WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL`,
-        [input.workspaceId],
-      );
-      for (const member of members.rows) {
-        if (member.identity_id === viewerId || member.kind !== 'human') continue;
-        await database.query(
-          `INSERT INTO workspace_deletion_notices(identity_id,workspace_id,workspace_name) VALUES ($1,$2,$3)`,
-          [member.identity_id, input.workspaceId, workspace.name],
-        );
-      }
-      const agentIds = members.rows.filter((m) => m.kind === 'agent').map((m) => m.identity_id);
-      if (agentIds.length)
-        await database.query(
-          `UPDATE daemon_tokens SET revoked_at=now()
-           WHERE agent_id=ANY($1) AND revoked_at IS NULL
-             AND NOT EXISTS (
-               SELECT 1 FROM memberships m
-               WHERE m.identity_id=daemon_tokens.agent_id AND m.removed_at IS NULL
-                 AND m.workspace_id<>$2
-             )`,
-          [agentIds, input.workspaceId],
-        );
-      await database.query(
-        `INSERT INTO workspace_deletions(workspace_id,workspace_name,deleted_by)
-         VALUES ($1,$2,$3) ON CONFLICT (workspace_id) DO NOTHING`,
-        [input.workspaceId, workspace.name, viewerId],
-      );
-      await database.query(`DELETE FROM workspaces WHERE id=$1`, [input.workspaceId]);
-    });
+    const outcome = await this.database.query<{ existed: boolean; deleted: boolean }>(
+      `WITH existing AS MATERIALIZED (
+         SELECT id,name FROM workspaces WHERE id=$1 FOR UPDATE
+       ), members AS MATERIALIZED (
+         SELECT m.identity_id,i.kind FROM memberships m JOIN identities i ON i.id=m.identity_id
+         WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
+       ), deleted AS (
+         DELETE FROM workspaces workspace USING existing
+         WHERE workspace.id=existing.id AND EXISTS (
+           SELECT 1 FROM memberships owner WHERE owner.workspace_id=existing.id
+             AND owner.room_id IS NULL AND owner.identity_id=$2
+             AND owner.removed_at IS NULL AND owner.role='owner'
+         ) RETURNING workspace.id,workspace.name
+       ), notices AS (
+         INSERT INTO workspace_deletion_notices(identity_id,workspace_id,workspace_name)
+         SELECT members.identity_id,deleted.id,deleted.name FROM deleted JOIN members ON true
+         WHERE members.identity_id<>$2 AND members.kind='human' RETURNING identity_id
+       ), revoked AS (
+         UPDATE daemon_tokens token SET revoked_at=now()
+         WHERE token.revoked_at IS NULL AND EXISTS (SELECT 1 FROM deleted)
+           AND EXISTS (SELECT 1 FROM members
+             WHERE members.identity_id=token.agent_id AND members.kind='agent')
+           AND NOT EXISTS (SELECT 1 FROM memberships other
+             WHERE other.identity_id=token.agent_id AND other.removed_at IS NULL
+               AND other.workspace_id<>$1)
+         RETURNING token.agent_id
+       ), audit AS (
+         INSERT INTO workspace_deletions(workspace_id,workspace_name,deleted_by)
+         SELECT id,name,$2 FROM deleted ON CONFLICT (workspace_id) DO NOTHING
+         RETURNING workspace_id
+       )
+       SELECT EXISTS(SELECT 1 FROM existing) existed,EXISTS(SELECT 1 FROM deleted) deleted,
+         (SELECT count(*) FROM notices) notice_count,(SELECT count(*) FROM revoked) revoked_count,
+         (SELECT count(*) FROM audit) audit_count`,
+      [input.workspaceId, viewerId],
+    );
+    if (outcome.rows[0]?.existed && !outcome.rows[0].deleted)
+      throw new Error('workspace owner access denied');
   }
   private async createRoom(input: Input<'createRoom'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
@@ -9312,175 +9442,156 @@ export class PhoneService {
     return needle ? needle.slice(0, 80) : null;
   }
 
-  private async workspaceRosterPage(
-    workspaceId: string,
-    kind: 'human' | 'agent',
-    needle: string | null,
-    offset: number,
-    ownerId?: string,
-  ): Promise<{ rows: MemberRow[]; total: number; truncated: boolean }> {
-    const rows = await this.database.query<MemberRow & { kind_total: string }>(
-      `SELECT i.id,
-         i.kind,i.name,i.handle,i.avatar,
-         i.face_id,
-         m.role,NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
-         count(*) OVER ()::text AS kind_total
-       FROM memberships m JOIN identities i ON i.id=m.identity_id
-       WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
-         AND i.hidden_from_roster=false AND i.kind=$2
-         AND ($6::text IS NULL OR EXISTS(SELECT 1 FROM agents owned WHERE owned.agent_id=i.id AND owned.owner_id=$6))
-         AND (
-           $3::text IS NULL
-           OR position($3 in lower(i.name)) > 0
-           OR position($3 in lower(COALESCE(i.handle, ''))) > 0
-         )
-       ORDER BY CASE WHEN $2='human' AND m.role='owner' THEN 0 ELSE 1 END,
-         lower(i.name), i.id
-       LIMIT $4 OFFSET $5`,
-      [workspaceId, kind, needle, WORKSPACE_MEMBER_PAGE_SIZE + 1, offset, ownerId ?? null],
-    );
-    const truncated = rows.rows.length > WORKSPACE_MEMBER_PAGE_SIZE;
-    const page = rows.rows.slice(0, WORKSPACE_MEMBER_PAGE_SIZE);
-    return {
-      rows: page,
-      total: Number(page[0]?.kind_total ?? rows.rows[0]?.kind_total ?? 0),
-      truncated,
-    };
-  }
-
-  private async enrichWorkspaceAgents(
-    members: readonly RoomViewMember[],
-  ): Promise<WorkspaceAgentView[]> {
-    const agentMembers = members.filter((member) => member.identity.kind === 'agent');
-    if (!agentMembers.length) return [];
-    const configs = await this.database.query<{
-      agent_id: string;
-      selected_model: string | null;
-      model_catalog: AgentDetailView['catalog'];
-      owner_id: string;
-      owner_name: string;
-      owner_handle: string | null;
-    }>(
-      `SELECT agent.agent_id,agent.selected_model,agent.model_catalog,
-              owner.id owner_id,owner.name owner_name,owner.handle owner_handle
-       FROM agents agent JOIN identities owner ON owner.id=agent.owner_id
-       WHERE agent.agent_id=ANY($1::text[])`,
-      [agentMembers.map((member) => member.identity.pubkey)],
-    );
-    const configByAgent = new Map(configs.rows.map((config) => [config.agent_id, config]));
-    return agentMembers.map((member) => {
-      const config = configByAgent.get(member.identity.pubkey);
-      const model = config
-        ? selectedModelLabel(config.selected_model, config.model_catalog ?? [])
-        : undefined;
-      return {
-        ...member,
-        ...(model ? { model } : {}),
-        ...(config
-          ? {
-              owner: {
-                pubkey: config.owner_id,
-                kind: 'human' as const,
-                name: config.owner_name,
-                ...(config.owner_handle ? { handle: config.owner_handle } : {}),
-              },
-            }
-          : {}),
-      };
-    });
-  }
-
-  private async workspaceRosterCount(
-    workspaceId: string,
-    kind: 'human' | 'agent',
-    needle: string | null,
-  ): Promise<number> {
-    const rows = await this.database.query<{ total: string }>(
-      `SELECT count(*)::text AS total
-       FROM memberships m JOIN identities i ON i.id=m.identity_id
-       WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
-         AND i.hidden_from_roster=false AND i.kind=$2
-         AND (
-           $3::text IS NULL
-           OR position($3 in lower(i.name)) > 0
-           OR position($3 in lower(COALESCE(i.handle, ''))) > 0
-         )`,
-      [workspaceId, kind, needle],
-    );
-    return Number(rows.rows[0]?.total ?? 0);
-  }
-
   private async workspaceRoster(
     workspaceId: string,
+    viewerId: string,
     query: WorkspaceMemberListQuery = {},
-  ): Promise<WorkspaceMemberListView> {
+  ): Promise<(WorkspaceMemberListView & {
+    workspaceRow: {
+      id: string; name: string; about: string | null; avatar: string | null;
+      visibility: 'public' | 'invite-only'; created_at: Date; updated_at: Date;
+      role: 'owner' | 'admin' | 'member' | 'spectator';
+    };
+    viewerIdentity: RoomViewIdentity;
+    managedRoomRows: Array<{
+      id: string; name: string; visibility: 'public' | 'invite-only'; created_at: Date;
+    }>;
+  }) | null> {
     const needle = this.rosterSearchNeedle(query.q);
-    const offset =
-      Number.isSafeInteger(query.offset) && (query.offset ?? 0) > 0 ? query.offset! : 0;
+    const offset = Number.isSafeInteger(query.offset) && (query.offset ?? 0) > 0
+      ? query.offset! : 0;
     const kind = query.kind === 'human' || query.kind === 'agent' ? query.kind : undefined;
-    const loadPeople = kind !== 'agent';
-    const loadAgents = kind !== 'human';
-    const [peoplePage, agentPage] = await Promise.all([
-      loadPeople
-        ? this.workspaceRosterPage(workspaceId, 'human', needle, kind === 'human' ? offset : 0)
-        : Promise.resolve({ rows: [] as MemberRow[], total: 0, truncated: false }),
-      loadAgents
-        ? this.workspaceRosterPage(
-            workspaceId,
-            'agent',
-            needle,
-            kind === 'agent' ? offset : 0,
-            query.ownerId,
-          )
-        : Promise.resolve({ rows: [] as MemberRow[], total: 0, truncated: false }),
-    ]);
-    const pageRows = [...peoplePage.rows, ...agentPage.rows];
-    const presenceIds = pageRows.map((row) => row.id);
-    if (presenceIds.length) {
+    type RosterAgentRow = MemberRow & {
+      selected_model: string | null;
+      model_catalog: AgentDetailView['catalog'] | null;
+      owner_id: string | null;
+      owner_name: string | null;
+      owner_handle: string | null;
+    };
+    const result = await this.database.query<{
+      workspace_row: {
+        id: string; name: string; about: string | null; avatar: string | null;
+        visibility: 'public' | 'invite-only'; created_at: Date; updated_at: Date;
+        role: 'owner' | 'admin' | 'member' | 'spectator';
+      };
+      viewer_row: IdentityRow;
+      managed_room_rows: Array<{
+        id: string; name: string; visibility: 'public' | 'invite-only'; created_at: Date;
+      }>;
+      people_rows: MemberRow[];
+      agent_rows: RosterAgentRow[];
+      people_total: string;
+      agent_total: string;
+    }>(`WITH visible_workspace AS (
+        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.created_at,w.updated_at,wm.role
+        FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
+        WHERE w.id=$1 AND wm.identity_id=$7 AND wm.removed_at IS NULL
+      ), viewer_row AS (
+        SELECT id,kind,name,handle,avatar,face_id FROM identities WHERE id=$7
+      ), people AS (
+        SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
+          NULL::jsonb presence_body,NULL::timestamptz presence_updated_at
+        FROM memberships m JOIN identities i ON i.id=m.identity_id
+        WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
+          AND i.hidden_from_roster=false AND i.kind='human'
+          AND ($2::text IS NULL OR position($2 in lower(i.name))>0
+            OR position($2 in lower(COALESCE(i.handle,'')))>0)
+      ), agent_rows AS (
+        SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
+          NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
+          agent.selected_model,agent.model_catalog,
+          owner.id owner_id,owner.name owner_name,owner.handle owner_handle
+        FROM memberships m JOIN identities i ON i.id=m.identity_id
+        LEFT JOIN agents agent ON agent.agent_id=i.id
+        LEFT JOIN identities owner ON owner.id=agent.owner_id
+        WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
+          AND i.hidden_from_roster=false AND i.kind='agent'
+          AND ($2::text IS NULL OR position($2 in lower(i.name))>0
+            OR position($2 in lower(COALESCE(i.handle,'')))>0)
+          AND ($5::text IS NULL OR $4::text='human' OR agent.owner_id=$5)
+      )
+      SELECT to_jsonb(visible_workspace) workspace_row,
+        to_jsonb(viewer_row) viewer_row,
+        COALESCE((SELECT jsonb_agg(to_jsonb(managed)) FROM (
+          SELECT id,name,visibility,created_at FROM rooms
+          WHERE workspace_id=$1 AND parent_id IS NULL AND direct_participants IS NULL
+            AND archived_at IS NULL
+            AND visible_workspace.role IN ('owner','admin')
+          ORDER BY lower(name),name,id LIMIT $8
+        ) managed),'[]'::jsonb) managed_room_rows,
+        (SELECT count(*)::text FROM people) people_total,
+        (SELECT count(*)::text FROM agent_rows) agent_total,
+        COALESCE((SELECT jsonb_agg(to_jsonb(page)) FROM (
+          SELECT * FROM people
+          ORDER BY CASE WHEN role='owner' THEN 0 ELSE 1 END,lower(name),id
+          LIMIT $6 OFFSET CASE WHEN $4='human' THEN $3 ELSE 0 END
+        ) page),'[]'::jsonb) people_rows,
+        COALESCE((SELECT jsonb_agg(to_jsonb(page)) FROM (
+          SELECT * FROM agent_rows ORDER BY lower(name),id
+          LIMIT $6 OFFSET CASE WHEN $4='agent' THEN $3 ELSE 0 END
+        ) page),'[]'::jsonb) agent_rows
+      FROM visible_workspace JOIN viewer_row ON true`,
+      [workspaceId, needle, offset, kind ?? null, query.ownerId ?? null,
+        WORKSPACE_MEMBER_PAGE_SIZE + 1, viewerId, ROOM_VIEW_CHAT_LIMIT + 1],
+    );
+    const data = result.rows[0];
+    if (!data) return null;
+    const peoplePage = kind === 'agent' ? [] : data.people_rows;
+    const agentPage = kind === 'human' ? [] : data.agent_rows;
+    const peopleTruncated = peoplePage.length > WORKSPACE_MEMBER_PAGE_SIZE;
+    const agentsTruncated = agentPage.length > WORKSPACE_MEMBER_PAGE_SIZE;
+    const pageRows: MemberRow[] = [
+      ...peoplePage.slice(0, WORKSPACE_MEMBER_PAGE_SIZE),
+      ...agentPage.slice(0, WORKSPACE_MEMBER_PAGE_SIZE),
+    ];
+    if (pageRows.length) {
       const presence = await this.optionalEnrichment(
         'member-presence',
         this.enrichmentDatabase.query<{
-          id: string;
-          presence_body: MemberRow['presence_body'];
-          presence_updated_at: Date;
-        }>(
-          `SELECT member.identity_id id,presence.body presence_body,
-             presence.updated_at presence_updated_at
-           FROM memberships member
-           JOIN LATERAL(
-             SELECT body,updated_at FROM live_outputs
-             WHERE agent_id=member.identity_id AND kind='presence'
-             ORDER BY updated_at DESC LIMIT 1
-           ) presence ON true
-           WHERE member.workspace_id=$1 AND member.room_id IS NULL
-             AND member.removed_at IS NULL AND member.identity_id=ANY($2::text[])`,
-          [workspaceId, presenceIds],
+          id: string; presence_body: MemberRow['presence_body']; presence_updated_at: Date;
+        }>(`SELECT member.identity_id id,presence.body presence_body,
+            presence.updated_at presence_updated_at
+          FROM memberships member
+          JOIN LATERAL(
+            SELECT body,updated_at FROM live_outputs
+            WHERE agent_id=member.identity_id AND kind='presence'
+            ORDER BY updated_at DESC LIMIT 1
+          ) presence ON true
+          WHERE member.workspace_id=$1 AND member.room_id IS NULL
+            AND member.removed_at IS NULL AND member.identity_id=ANY($2::text[])`,
+          [workspaceId, pageRows.map((row) => row.id)],
         ),
       );
-      const presenceByMember = new Map(presence?.rows.map((item) => [item.id, item]) ?? []);
-      for (const member of pageRows) {
-        const item = presenceByMember.get(member.id);
-        member.presence_body = item?.presence_body ?? null;
-        member.presence_updated_at = item?.presence_updated_at ?? null;
+      const byId = new Map(presence?.rows.map((row) => [row.id, row]) ?? []);
+      for (const row of pageRows) {
+        const found = byId.get(row.id);
+        row.presence_body = found?.presence_body ?? null;
+        row.presence_updated_at = found?.presence_updated_at ?? null;
       }
     }
-    const people = this.projectMembers(peoplePage.rows, null);
-    const agents = await this.enrichWorkspaceAgents(this.projectMembers(agentPage.rows, null));
-    const [peopleTotal, agentTotal] = await Promise.all([
-      kind === 'agent'
-        ? this.workspaceRosterCount(workspaceId, 'human', needle)
-        : Promise.resolve(peoplePage.total),
-      kind === 'human'
-        ? this.workspaceRosterCount(workspaceId, 'agent', needle)
-        : Promise.resolve(agentPage.total),
-    ]);
+    const people = this.projectMembers(pageRows.filter((row) => row.kind === 'human'), null);
+    const agentConfig = new Map(agentPage.map((row) => [row.id, row]));
+    const agents: WorkspaceAgentView[] = this.projectMembers(
+      pageRows.filter((row) => row.kind === 'agent'), null,
+    ).map((member) => {
+      const config = agentConfig.get(member.identity.pubkey);
+      const model = config ? selectedModelLabel(config.selected_model, config.model_catalog ?? []) : undefined;
+      return {
+        ...member,
+        ...(model ? { model } : {}),
+        ...(config?.owner_id && config.owner_name ? { owner: {
+          pubkey: config.owner_id,kind: 'human' as const,name: config.owner_name,
+          ...(config.owner_handle ? { handle: config.owner_handle } : {}),
+        } } : {}),
+      };
+    });
     return {
-      members: people,
-      agents,
-      peopleTotal,
-      agentTotal,
-      membersTruncated: peoplePage.truncated,
-      agentsTruncated: agentPage.truncated,
+      workspaceRow: reviveDates(data.workspace_row, ['created_at', 'updated_at']),
+      viewerIdentity: identity(data.viewer_row, this.publicOrigin),
+      managedRoomRows: data.managed_room_rows.map((row) => reviveDates(row, ['created_at'])),
+      members: people,agents,
+      peopleTotal: Number(data.people_total),agentTotal: Number(data.agent_total),
+      membersTruncated: peopleTruncated,agentsTruncated,
     };
   }
 
@@ -9589,38 +9700,55 @@ export class PhoneService {
     };
   }
 
-  private async messageRows(
-    roomId: string,
-    before: { createdAt: number; id: string } | undefined,
-    limit: number,
-  ) {
-    // `createdAt` is the compatibility display stamp and is rounded to
-    // seconds. Resolve the cursor row so siblings stored inside that second
-    // cannot disappear between pages.
-    const rows = (
-      await this.database.query<MessageRow>(
-        `SELECT m.*,
-           i.kind author_kind,i.name author_name,i.handle author_handle,
-           i.avatar author_avatar,i.face_id author_face,
-           ${reactionIdentitiesSql('m')} reaction_identities,
-           '{}'::text[] tagged_ids
-         FROM messages m JOIN identities i ON i.id=m.author_id
-         WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-           AND ${hiddenWakeCardSql('m')}
-         ${
-           before
-             ? `AND (m.created_at,m.id)<(
-                  SELECT cursor.created_at,cursor.id FROM messages cursor
-                  WHERE cursor.room_id=$1 AND cursor.id=$2
-                )`
-             : ''
-         }
-         ORDER BY m.created_at DESC,m.id DESC LIMIT ${limit}`,
-        before ? [roomId, before.id] : [roomId],
-      )
-    ).rows;
-    await this.enrichMessageTags(rows);
-    return rows;
+  /** One optional history decoration query for tags, bookmark/report flags and media facts. */
+  private async enrichHistoryRows(rows: MessageRow[], viewerId: string): Promise<AttachmentFacts> {
+    if (!rows.length) return { expired: new Set(), artifacts: new Map() };
+    const mediaIds = new Set<string>();
+    for (const row of rows) for (const attachment of
+      (Array.isArray(row.attachments) ? row.attachments : [])) {
+      const url = (attachment as { url?: unknown } | null)?.url;
+      const id = typeof url === 'string' ? mediaIdFromUrl(url) : null;
+      if (id) mediaIds.add(id);
+    }
+    const result = await this.optionalEnrichment('history-decoration',
+      this.enrichmentDatabase.query<{
+        decorations: Array<{ id: string; tagged_ids: string[];
+          bookmarked: boolean; feedback_reported: boolean }>;
+        expired: string[];
+        artifacts: Array<{ id: string; title: string; mime: string; size: string; author: string }>;
+      }>(`SELECT
+          COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,
+            'tagged_ids',${taggedIdentityIdsSql('m')},
+            'bookmarked',EXISTS(SELECT 1 FROM message_bookmarks bookmark
+              WHERE bookmark.message_id=m.id AND bookmark.identity_id=$2),
+            'feedback_reported',EXISTS(SELECT 1 FROM feedback_items feedback
+              WHERE feedback.trigger_message_id=m.id AND feedback.source_kind='human')))
+            FROM messages m WHERE m.id=ANY($1::text[])),'[]'::jsonb) decorations,
+          COALESCE((SELECT jsonb_agg(expired.id::text) FROM object_expirations expired
+            WHERE expired.id=ANY($3::uuid[])),'[]'::jsonb) expired,
+          COALESCE((SELECT jsonb_agg(jsonb_build_object('id',object.id::text,
+            'title',COALESCE(object.title,''),'mime',object.mime,
+            'size',object.size::text,'author',COALESCE(author.handle,author.name)))
+            FROM objects object JOIN identities author ON author.id=object.owner_id
+            WHERE object.state='ready' AND object.id=ANY($3::uuid[])),'[]'::jsonb) artifacts`,
+        [rows.map((row) => row.id),viewerId,[...mediaIds]],
+      ),
+    );
+    const data = result?.rows[0];
+    const byId = new Map(data?.decorations.map((row) => [row.id,row]) ?? []);
+    for (const row of rows) {
+      const decorated = byId.get(row.id);
+      row.tagged_ids = decorated?.tagged_ids ?? [];
+      row.bookmarked = decorated?.bookmarked ?? false;
+      row.feedback_reported = decorated?.feedback_reported ?? false;
+    }
+    return {
+      expired: new Set(data?.expired ?? []),
+      artifacts: new Map((data?.artifacts ?? []).map((row) => [row.id,{
+        kind: 'artifact' as const,title: row.title,mimeType: row.mime,
+        size: Number(row.size),author: row.author,
+      }])),
+    };
   }
 
   private async enrichMessageTags(rows: MessageRow[]): Promise<void> {
@@ -9930,4 +10058,6 @@ const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'getGitHubRepositoryAccess',
   'listRoomWorkflows',
   'listRoomSchedules',
+  'listRoomWorkflowRuns',
+  'readWorkflowRun',
 ]);

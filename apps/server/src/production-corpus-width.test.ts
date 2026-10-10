@@ -152,6 +152,46 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
       }),
     );
   });
+
+  it('holds list statement counts at one core plus one optional query across 1, 10 and 200 Rooms', async () => {
+    const counting = new CountingDatabase(database);
+    const measured = new PhoneService(counting, 'http://local.test');
+    for (const width of [1, 10, 200]) {
+      await database.query(
+        `UPDATE memberships SET removed_at=CASE
+           WHEN room_id IS NULL OR room_id IN (
+             SELECT id FROM rooms WHERE parent_id IS NULL AND workspace_id=$1
+             ORDER BY id LIMIT $2) THEN NULL ELSE now() END
+         WHERE workspace_id=$1 AND identity_id=$3 AND room_id IS NOT NULL`,
+        [WORKSPACE, width, VIEWER],
+      );
+      counting.count = 0;
+      const chats = await measured.readChats(WORKSPACE, VIEWER);
+      expect(chats?.chats).toHaveLength(width);
+      expect(counting.count).toBe(2);
+    }
+    await database.query(
+      `UPDATE memberships SET removed_at=NULL WHERE workspace_id=$1 AND identity_id=$2`,
+      [WORKSPACE, VIEWER],
+    );
+    counting.count = 0;
+    const corners = await measured.readCorners(WIDE_ROOM, VIEWER);
+    expect(corners?.corners).toHaveLength(30);
+    expect(corners?.nextOpen).toBeDefined();
+    expect(counting.count).toBe(1);
+    counting.count = 0;
+    expect(await measured.readWorkspace(WORKSPACE, VIEWER)).not.toBeNull();
+    expect(counting.count).toBe(2);
+    counting.count = 0;
+    expect(await measured.readWorkspaceMembers(WORKSPACE, VIEWER)).not.toBeNull();
+    expect(counting.count).toBe(2);
+    counting.count = 0;
+    expect(await measured.readWorkspaceMembers(WORKSPACE, VIEWER, { memberId: VIEWER })).not.toBeNull();
+    expect(counting.count).toBe(2);
+    counting.count = 0;
+    expect(await measured.readAgent(WORKSPACE, AGENT, VIEWER)).not.toBeNull();
+    expect(counting.count).toBe(2);
+  });
 });
 
 const matchers: ReadonlyArray<readonly [HotReadName, (sql: string) => boolean]> = [
@@ -222,5 +262,17 @@ class HotReadDatabase implements SqlDatabase {
 
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
     return this.database.transaction((database) => work(new HotReadDatabase(database)));
+  }
+}
+
+class CountingDatabase implements SqlDatabase {
+  count = 0;
+  constructor(private readonly database: SqlDatabase) {}
+  query<Row extends QueryResultRow = QueryResultRow>(sql: string, values: unknown[] = []): Promise<QueryResult<Row>> {
+    this.count += 1;
+    return this.database.query<Row>(sql, values);
+  }
+  transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
+    return this.database.transaction((database) => work(new CountingDatabase(database)));
   }
 }

@@ -905,8 +905,8 @@ CREATE TABLE IF NOT EXISTS message_bookmarks (
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(identity_id,message_id)
 );
-CREATE INDEX IF NOT EXISTS message_bookmarks_workspace_viewer_idx
-  ON message_bookmarks(workspace_id,identity_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS message_bookmarks_workspace_viewer_page_idx
+  ON message_bookmarks(workspace_id,identity_id,created_at DESC,message_id);
 -- The Needs-you tray's only stored facts, per person: when they first saw a
 -- cell (its 24-hour clock, shared by every device) and when they cleared it
 -- by tapping or dismissing. Which messages are cells is read live
@@ -2861,6 +2861,21 @@ export async function migrate(
     database, 'messages_workflow_run_live_idx',
     `CREATE INDEX CONCURRENTLY messages_workflow_run_live_idx
      ON messages(room_id) WHERE card_type='workflow-handoff' AND ${workflowRunIsLiveSql('card')}`,
+  ));
+  // The phone finds each persisted start card, then the latest handoff for
+  // that run. Both indexes are built outside the schema transaction because
+  // messages is a busy table.
+  await retryMigrationStep('workflow run start index', () => createIndexConcurrently(
+    database, 'messages_workflow_run_start_idx',
+    `CREATE INDEX CONCURRENTLY messages_workflow_run_start_idx
+     ON messages(room_id,created_at DESC,id DESC)
+     WHERE card_type='workflow-handoff' AND id=card->>'runId'`,
+  ));
+  await retryMigrationStep('workflow run handoff index', () => createIndexConcurrently(
+    database, 'messages_workflow_handoff_run_seq_idx',
+    `CREATE INDEX CONCURRENTLY messages_workflow_handoff_run_seq_idx
+     ON messages(room_id,(card->>'runId'),((card->>'seq')::int) DESC NULLS LAST)
+     WHERE card_type='workflow-handoff' AND card->>'runId' IS NOT NULL`,
   ));
   // Empty once every start card has its saved status, so each release's check is free.
   await retryMigrationStep('workflow run status backfill index', () => createIndexConcurrently(

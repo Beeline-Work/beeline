@@ -45,6 +45,10 @@ export default function BuzzCorners() {
   const decodedId = roomId ? decodeURIComponent(roomId) : '';
   const insets = useSafeAreaInsets();
   const [surface, setSurface] = useState<CornerListView | null>(null);
+  const [openMore, setOpenMore] = useState<CornerListView['corners']>([]);
+  const [nextOpen, setNextOpen] = useState<string | undefined>();
+  const loadingOpen = useRef(false);
+  const openPageGeneration = useRef(0);
   useLatencyRouteFrame('/beeline/corners/[roomId]', surface !== null, true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -74,12 +78,18 @@ export default function BuzzCorners() {
       });
       const cached = await mobileSurfaceCache.read(address, isCornerListView);
       if (cancelled) return;
-      if (cached) setSurface(cached);
+      if (cached) {
+        setSurface(cached);
+        setNextOpen(cached.nextOpen);
+      }
       const http = new RoomViewClient({ baseUrl: relayUrl, identity });
       scheduler = new SurfaceRefreshScheduler({
         fetch: () => http.corners(decodedId),
         apply: (value) => {
+          openPageGeneration.current += 1;
           setSurface(value);
+          setOpenMore([]);
+          setNextOpen(value.nextOpen);
           setError(null);
           setRefreshing(false);
           void mobileSurfaceCache.write(address, value, isCornerListView);
@@ -127,6 +137,30 @@ export default function BuzzCorners() {
     () => (surface ? (displayRoomIndexTitle(surface.room.name) ?? surface.room.name) : 'Room'),
     [surface],
   );
+  const loadMoreOpen = async () => {
+    if (!nextOpen || loadingOpen.current) return;
+    loadingOpen.current = true;
+    const cursor = nextOpen;
+    const generation = openPageGeneration.current;
+    try {
+      const identity = (await loadBuzzIdentity()) as Identity | null;
+      if (!identity) return;
+      const relayUrl = await getEffectiveRelayUrl();
+      const page = await new RoomViewClient({ baseUrl: relayUrl, identity }).corners(decodedId, {
+        openBefore: cursor,
+      });
+      if (generation !== openPageGeneration.current) return;
+      setOpenMore((current) => {
+        const seen = new Set([...(surface?.corners ?? []), ...current].map((item) => item.corner.id));
+        return [...current, ...page.corners.filter((item) => !seen.has(item.corner.id))];
+      });
+      setNextOpen(page.nextOpen);
+    } catch (reason) {
+      setError(phoneOperationFailureReason(reason));
+    } finally {
+      loadingOpen.current = false;
+    }
+  };
 
   /**
    * Closed corners are not in the live surface, so the archived footer pays
@@ -281,7 +315,9 @@ export default function BuzzCorners() {
         )}
         <CornerOpenRow roomId={decodedId} />
         <RoomCornersList
-          corners={surface.corners}
+          corners={[...surface.corners, ...openMore]}
+          onMoreOpen={() => void loadMoreOpen()}
+          moreOpen={!!nextOpen}
           parentRoomId={decodedId}
           parentRoomName={title}
           refreshing={refreshing}

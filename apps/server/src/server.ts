@@ -1981,8 +1981,16 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)\/corners$/);
   if (method === 'GET' && match) {
     const before = url.searchParams.get('before');
+    const archived = url.searchParams.get('archived') === '1';
     const archivedBefore = parseArchivedCornerCursor(before);
     if (before !== null && !archivedBefore) {
+      json(response, 400, { error: 'invalid_cursor' });
+      return;
+    }
+    const openBeforeRaw = url.searchParams.get('openBefore');
+    const openBefore = parseArchivedCornerCursor(openBeforeRaw);
+    if ((openBeforeRaw !== null && !openBefore) || (archived && openBeforeRaw !== null)
+      || (!archived && before !== null)) {
       json(response, 400, { error: 'invalid_cursor' });
       return;
     }
@@ -1990,8 +1998,9 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       match[1]!,
       identityId!,
       false,
-      url.searchParams.get('archived') === '1',
+      archived,
       archivedBefore,
+      openBefore,
     );
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;

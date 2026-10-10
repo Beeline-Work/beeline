@@ -125,11 +125,11 @@ class MonolithRoomViewClient {
   }
   corners(
     id: string,
-    options: { readonly archived?: boolean; readonly before?: string } = {},
+    options: { readonly archived?: boolean; readonly before?: string; readonly openBefore?: string } = {},
   ): Promise<CornerListView> {
     const query = options.archived
       ? `?archived=1${options.before ? `&before=${encodeURIComponent(options.before)}` : ''}`
-      : '';
+      : options.openBefore ? `?openBefore=${encodeURIComponent(options.openBefore)}` : '';
     return this.get(
       `/v1/phone/rooms/${encodeURIComponent(id)}/corners${query}`,
       readCornerListView,
@@ -361,7 +361,7 @@ export class RoomViewClient {
     return this.implementation.room(id);
   }
   /** `before` is an archived page's `nextArchived` cursor. */
-  corners(id: string, options?: { readonly archived?: boolean; readonly before?: string }) {
+  corners(id: string, options?: { readonly archived?: boolean; readonly before?: string; readonly openBefore?: string }) {
     return this.implementation.corners(id, options);
   }
   history(id: string, before?: { createdAt: number; id: string }) {

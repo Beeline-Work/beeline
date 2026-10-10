@@ -66,6 +66,27 @@ beforeEach(async () => {
 afterEach(() => database.close());
 
 describe('Mine corners use the push Followed rule', () => {
+  it('counts every open corner while returning only a bounded deck preview', async () => {
+    for (let index = 0; index < 12; index += 1) {
+      const cornerId = `40000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+      await database.query(
+        `INSERT INTO rooms(id,workspace_id,name,parent_id,created_by)
+         VALUES($1,$2,$3,$4,$5)`,
+        [cornerId, WORKSPACE, `Corner ${index}`, ROOM, TEAMMATE],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'member')`,
+        [WORKSPACE, cornerId, PERSON],
+      );
+    }
+    const room = (await phone.readChats(WORKSPACE, PERSON))?.chats.find(
+      (chat) => chat.room.id === ROOM,
+    );
+    expect(room?.cornerCount).toBe(13);
+    expect(room?.openCorners).toHaveLength(8);
+  });
+
   it('leaves out a corner the person never touched', async () => {
     await post('Untagged update', TEAMMATE);
     expect(await mine()).toEqual({ list: false, page: false });

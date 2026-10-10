@@ -92,6 +92,22 @@ describe('background advisory-lock ownership', () => {
     expect(released).toBe(true);
   });
 
+  it('marks only the first cycle under each acquired lock for recovery', async () => {
+    const lock = new FakeAdvisoryLock();
+    const firstCycles: boolean[] = [];
+    const leader = new BackgroundLeader(
+      { connectDedicated: () => lock.connect('recovery') },
+      async (newLeader) => { firstCycles.push(newLeader); },
+      1,
+    );
+    const running = leader.run();
+    await until(() => firstCycles.length > 2);
+    leader.stop();
+    await running;
+    expect(firstCycles[0]).toBe(true);
+    expect(firstCycles.slice(1).every((item) => item === false)).toBe(true);
+  });
+
   it('moves work to the peer after the lock-holder connection dies', async () => {
     const lock = new FakeAdvisoryLock();
     let first = 0;

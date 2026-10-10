@@ -340,7 +340,9 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
             codePath={grant.script?.path}
             footerNote={
               pendingGrant
-                ? canDecide
+                ? busy
+                  ? 'Sending decision…'
+                  : canDecide
                   ? undefined
                   : repositoryRequest
                     ? 'waiting for a Workspace admin'
@@ -709,7 +711,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
       }
       footerNote={
         open
-          ? undefined
+          ? busy ? 'Sending decision…' : undefined
           : card.footer ||
             (card.status === 'answered'
               ? `picked ${card.selectedOptionId ?? ''} · @${choiceHandle(card.answeredBy)}`

@@ -809,7 +809,7 @@ export class BackgroundLeader {
 
   constructor(
     private readonly database: { connectDedicated(): Promise<LeaderConnection> },
-    private readonly cycle: () => Promise<number | void>,
+    private readonly cycle: (newLeader: boolean) => Promise<number | void>,
     private readonly reconciliationMs = 60_000,
   ) {}
 
@@ -828,10 +828,12 @@ export class BackgroundLeader {
           await this.wait();
           continue;
         }
+        let newLeader = true;
         while (!this.#stopped) {
           // Detect a dead lock-owning connection before any work can fire.
           await client.query('SELECT 1');
-          const nextDelay = await this.cycle();
+          const nextDelay = await this.cycle(newLeader);
+          newLeader = false;
           await this.wait(
             typeof nextDelay === 'number'
               ? Math.max(0, Math.min(nextDelay, this.reconciliationMs))

@@ -319,7 +319,8 @@ describe.each([R, C])('server command authority in %s', (room) => {
       { roomId: room, messageId: steerId, text: '@hoots change course' },
       H,
     );
-    expect(received).toEqual({ messageId: steerId, activeSteerAgentIds: [A] });
+    expect(received).toMatchObject({ messageId: steerId, activeSteerAgentIds: [A],
+      message: { id: steerId, text: '@hoots change course' } });
     expect((await commands(A, room)).map((command) => command.sourceMessageId)).toContain(steerId);
 
     // A retried write reads the same committed routing result instead of
@@ -340,7 +341,8 @@ describe.each([R, C])('server command authority in %s', (room) => {
         { roomId: room, messageId: idleId, text: '@hoots next task' },
         H,
       ),
-    ).resolves.toEqual({ messageId: idleId, activeSteerAgentIds: [] });
+    ).resolves.toMatchObject({ messageId: idleId, activeSteerAgentIds: [],
+      message: { id: idleId, text: '@hoots next task' } });
     expect(first.messageId).toBe(active!.sourceMessageId);
   });
 

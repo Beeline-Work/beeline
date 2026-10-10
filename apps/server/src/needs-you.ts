@@ -193,12 +193,17 @@ const ROW_COLUMNS = `
   author.id author_id,author.kind author_kind,author.name author_name,
   author.handle author_handle,author.avatar author_avatar,author.face_id author_face`;
 
+const VIEWER_MEMBER = `EXISTS (SELECT 1 FROM memberships workspace_member
+  WHERE workspace_member.workspace_id=$1 AND workspace_member.room_id IS NULL
+    AND workspace_member.identity_id=$2 AND workspace_member.removed_at IS NULL)`;
+
 const VIEWER_ROOMS = `
   viewer_rooms AS (
     SELECT room.* FROM memberships room_member
     JOIN rooms room ON room.id=room_member.room_id
     WHERE room_member.identity_id=$2 AND room_member.removed_at IS NULL
       AND room.workspace_id=$1 AND room.archived_at IS NULL
+      AND ${VIEWER_MEMBER}
   )`;
 
 /** Keep the section clear's candidate rule identical to the read, without its 500-row display bound. */
@@ -257,27 +262,21 @@ const APPROVAL_JOINS = `
   LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id`;
 
 /**
- * One query per approval kind, each driven from that kind's pending rows and
+ * One branch per approval kind, each driven from that kind's pending rows and
  * filtered by the rule the decide operation itself enforces, so the tray
  * never offers a card the viewer cannot decide. Sign-in and Squire cards
  * are read through `messages_needs_you_approval_idx`; Squire's stored expiry
  * bounds their life even if a decision never arrives.
  */
-const APPROVAL_QUERIES: readonly string[] = [
+const APPROVAL_BRANCHES: readonly string[] = [
   // Driven from the few pending grants rather than from the transcript, so
   // an old undecided card costs nothing to find. The decider rule is
   // `requireGrantAuthority`'s: the agent's owner for a personal resource, a
   // Workspace owner/admin for a repository.
-  `WITH ${VIEWER_ROOMS},
-   decidable AS (
-     SELECT grant_row.id::text grant_id FROM agent_grants grant_row
-     WHERE grant_row.workspace_id=$1 AND grant_row.status='pending'
-       AND ${grantDecidedBySql('grant_row', '$2')}
-   )
-   SELECT ${ROW_COLUMNS},'grant' approval_kind,NULL::timestamptz approval_expires_at,
-     NULL::text actor_name,
+  `SELECT ${ROW_COLUMNS},'grant' approval_kind,NULL::timestamptz approval_expires_at,
      ARRAY(SELECT entry->>'grantId' FROM jsonb_array_elements(m.card->'grants') entry
-       WHERE entry->>'grantId' IN (SELECT grant_id FROM decidable)) pending_grant_ids
+       WHERE entry->>'grantId' IN (SELECT grant_id FROM decidable)) pending_grant_ids,
+     NULL::text actor_name
    FROM viewer_rooms room
    JOIN messages m ON m.room_id=room.id AND m.card_type='grant-request'
    ${APPROVAL_JOINS}
@@ -288,8 +287,7 @@ const APPROVAL_QUERIES: readonly string[] = [
      )`,
   // `decidePermission`: the person the agent asked, or a Workspace manager.
   // Deciding posts a second card; only the original one still says pending.
-  `WITH ${VIEWER_ROOMS}
-   ${APPROVAL_FROM('write-access')}
+  `${APPROVAL_FROM('write-access')}
    JOIN permission_authority permission ON permission.room_id=room.id
      AND permission.status='pending'
    JOIN messages m ON m.room_id=room.id AND m.card_type='permission'
@@ -299,8 +297,7 @@ const APPROVAL_QUERIES: readonly string[] = [
      AND (permission.principal_id=$2 OR ${VIEWER_MANAGES_WORKSPACE})`,
   // An open question addressed to the viewer: tagged, or asked of its
   // requester when it tags nobody (`addressedToPersonSql`'s reading).
-  `WITH ${VIEWER_ROOMS}
-   ${APPROVAL_FROM('choice', 'choice.closes_at')}
+  `${APPROVAL_FROM('choice', 'choice.closes_at')}
    JOIN room_choices choice ON choice.room_id=room.id AND choice.status='open'
      AND choice.mode='question' AND (choice.closes_at IS NULL OR choice.closes_at>now())
    JOIN messages m ON m.id=choice.message_id AND m.card_type='${CHOICE_CARD_TYPE}'
@@ -312,8 +309,7 @@ const APPROVAL_QUERIES: readonly string[] = [
      END`,
   // `acceptConnectorOffer`: the addressee, or a Workspace manager except for
   // a wallet, which only its addressee may accept.
-  `WITH ${VIEWER_ROOMS}
-   ${APPROVAL_FROM('connector')}
+  `${APPROVAL_FROM('connector')}
    JOIN connector_offers offer ON offer.room_id=room.id AND offer.status='pending'
    JOIN messages m ON m.id=offer.message_id
    ${APPROVAL_JOINS}
@@ -321,8 +317,7 @@ const APPROVAL_QUERIES: readonly string[] = [
      AND (offer.addressee_id=$2
        OR (offer.connector_type<>'wallet' AND ${VIEWER_MANAGES_WORKSPACE}))`,
   // `RoomWebhooks.decide`: a human Room or Workspace owner/admin.
-  `WITH ${VIEWER_ROOMS}
-   ${APPROVAL_FROM('webhook', 'webhook.expires_at')}
+  `${APPROVAL_FROM('webhook', 'webhook.expires_at')}
    JOIN room_webhook_requests webhook ON webhook.room_id=room.id
      AND webhook.status='pending' AND webhook.expires_at>now()
    JOIN messages m ON m.id=webhook.message_id
@@ -333,8 +328,7 @@ const APPROVAL_QUERIES: readonly string[] = [
    WHERE m.deleted_at IS NULL
      AND (viewer_member.role IN ('owner','admin') OR ${VIEWER_MANAGES_WORKSPACE})`,
   // A sign-in only its owner can finish, while it still waits on them.
-  `WITH ${VIEWER_ROOMS}
-   ${APPROVAL_FROM(
+  `${APPROVAL_FROM(
      'sign-in',
      `CASE WHEN m.card->>'expiresAt' ~ '^[0-9]+$'
        THEN to_timestamp((m.card->>'expiresAt')::bigint/1000.0) END`,
@@ -352,8 +346,7 @@ const APPROVAL_QUERIES: readonly string[] = [
      END`,
   // A Trusty Squire approval in the owner's connector DM. Squire decides it;
   // the decision (or Squire's expiry) lands in the Room the paused turn ran in.
-  `WITH ${VIEWER_ROOMS}
-   ${APPROVAL_FROM('squire', `to_timestamp((m.card->>'expiresAt')::bigint/1000.0)`)}
+  `${APPROVAL_FROM('squire', `to_timestamp((m.card->>'expiresAt')::bigint/1000.0)`)}
    JOIN messages m ON m.room_id=room.id AND m.card_type='squire-approval'
    ${APPROVAL_JOINS}
    WHERE m.deleted_at IS NULL AND m.card->>'approvalId' IS NOT NULL
@@ -386,11 +379,72 @@ export function grantDecidedBySql(grant: string, identityExpr: string): string {
     END`;
 }
 
-/**
- * Every current cell for one person in one Workspace, newest first, with the
- * ids nobody has started a clock for yet. Pure read: `readNeedsYou` starts
- * the clocks for what it shows, and the badge count starts none.
- */
+const QUESTION_BRANCH = `
+  SELECT ${ROW_COLUMNS},NULL::text approval_kind,NULL::timestamptz approval_expires_at,
+    NULL::text[] pending_grant_ids,NULL::text actor_name
+  FROM viewer_rooms room
+  JOIN messages m ON m.room_id=room.id
+  JOIN identities viewer ON viewer.id=$2
+  LEFT JOIN identities author ON author.id=m.author_id
+  LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
+  WHERE ${QUESTION_WHERE}
+  ORDER BY m.created_at DESC,m.id DESC
+  LIMIT ${CANDIDATE_LIMIT}`;
+
+/** The same authorized candidates drive the tray and its badge. */
+const NEEDS_YOU_CANDIDATES = `WITH ${VIEWER_ROOMS},
+  decidable AS (
+    SELECT grant_row.id::text grant_id FROM agent_grants grant_row
+    WHERE grant_row.workspace_id=$1 AND grant_row.status='pending'
+      AND ${grantDecidedBySql('grant_row', '$2')}
+  ),
+  candidates AS (
+    SELECT * FROM (${QUESTION_BRANCH}) questions
+    UNION ALL
+    ${APPROVAL_BRANCHES.join('\n    UNION ALL\n')}
+  )`;
+
+/** Match approvalView's subject and tray dismissal rules before counting or painting. */
+const VISIBLE_CANDIDATE = `(approval_kind IS NULL OR cleared_at IS NULL) AND CASE approval_kind
+  WHEN 'grant' THEN EXISTS (
+    SELECT 1 FROM (
+      SELECT entry FROM jsonb_array_elements(COALESCE(card->'grants','[]'::jsonb))
+        WITH ORDINALITY AS grant_entry(entry, position)
+      WHERE entry->>'grantId'=ANY(pending_grant_ids)
+      ORDER BY position LIMIT 1
+    ) first_grant
+    WHERE NULLIF(first_grant.entry->>'kind','') IS NOT NULL
+      AND NULLIF(first_grant.entry->>'target','') IS NOT NULL)
+  WHEN 'write-access' THEN NULLIF(btrim(CASE WHEN card->>'purpose'='squire-spending'
+    THEN card->>'tool' ELSE card->>'repository' END),'') IS NOT NULL
+  WHEN 'choice' THEN NULLIF(btrim(card->>'prompt'),'') IS NOT NULL
+  WHEN 'connector' THEN NULLIF(btrim(card->>'connectorName'),'') IS NOT NULL
+  WHEN 'webhook' THEN NULLIF(btrim(card->>'source'),'') IS NOT NULL
+  WHEN 'sign-in' THEN CASE WHEN card->>'harness' IS NOT NULL
+    THEN card->>'harness' IN (${Object.keys(AGENT_SIGN_IN_SERVICE_LABELS)
+      .map((value) => `'${value}'`)
+      .join(',')})
+    ELSE NULLIF(btrim(card->>'name'),'') IS NOT NULL END
+  WHEN 'squire' THEN NULLIF(btrim(card->>'title'),'') IS NOT NULL
+  ELSE true END`;
+
+/** Count without fetching cards or building cell DTOs. The question cap is unchanged. */
+export async function countNeedsYouItems(
+  database: SqlDatabase,
+  workspaceId: string,
+  viewerId: string,
+): Promise<number> {
+  const result = await database.query<{ count: string; authorized: boolean }>(
+    `${NEEDS_YOU_CANDIDATES}
+     SELECT count(*)::text count,${VIEWER_MEMBER} authorized
+     FROM candidates WHERE ${VISIBLE_CANDIDATE}`,
+    [workspaceId, viewerId],
+  );
+  if (!result.rows[0]?.authorized) throw new Error('workspace membership required');
+  return Number(result.rows[0]?.count ?? 0);
+}
+
+/** Every visible cell, with first-paint question clocks started in the same statement. */
 export async function needsYouItems(
   database: SqlDatabase,
   workspaceId: string,
@@ -403,45 +457,42 @@ export async function needsYouItems(
     avatar: string | null;
     face_id: string | null;
   }) => RoomViewIdentity,
-): Promise<{ items: NeedsYouItemView[]; unseen: string[] }> {
-  const viewer = (
-    await database.query<{ handle: string | null }>(`SELECT handle FROM identities WHERE id=$1`, [
-      viewerId,
-    ])
-  ).rows[0];
-  if (!viewer) return { items: [], unseen: [] };
-  const [tagged, ...approvals] = await Promise.all([
-    database.query<Row>(
-      `WITH ${VIEWER_ROOMS}
-       SELECT ${ROW_COLUMNS},NULL::text approval_kind,NULL::timestamptz approval_expires_at,
-         NULL::text[] pending_grant_ids,NULL::text actor_name
-       FROM viewer_rooms room
-       JOIN messages m ON m.room_id=room.id
-       JOIN identities viewer ON viewer.id=$2
-       LEFT JOIN identities author ON author.id=m.author_id
-       LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
-       WHERE ${QUESTION_WHERE}
-       ORDER BY m.created_at DESC,m.id DESC
-       LIMIT ${CANDIDATE_LIMIT}`,
-      [workspaceId, viewerId],
-    ),
-    ...APPROVAL_QUERIES.map((sql) => database.query<Row>(
-      `SELECT * FROM (${sql}) approval WHERE approval.cleared_at IS NULL`,
-      [workspaceId, viewerId],
-    )),
-  ]);
-  const built = [
-    ...tagged.rows.filter((row) => isNeedsYouAsk(row.text)),
-    ...approvals.flatMap((result) => result.rows),
-  ].flatMap((row) => {
+): Promise<{ items: NeedsYouItemView[] }> {
+  const result = await database.query<Row & {
+    painted_first_seen_at: Date | null;
+    viewer_handle: string | null;
+    authorized: boolean;
+  }>(
+    `${NEEDS_YOU_CANDIDATES},
+     visible AS MATERIALIZED (SELECT * FROM candidates WHERE ${VISIBLE_CANDIDATE}),
+     started AS (
+       INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
+       SELECT $2,message_id,$1 FROM visible
+       WHERE approval_kind IS NULL AND first_seen_at IS NULL
+       ON CONFLICT(identity_id,message_id)
+         DO UPDATE SET first_seen_at=needs_you_marks.first_seen_at
+       RETURNING message_id,first_seen_at
+     )
+     SELECT visible.*,
+       COALESCE(started.first_seen_at,visible.first_seen_at) painted_first_seen_at,
+       viewer.handle viewer_handle,access.authorized
+     FROM (SELECT ${VIEWER_MEMBER} authorized) access
+     LEFT JOIN visible ON true
+     LEFT JOIN started ON started.message_id=visible.message_id
+     LEFT JOIN identities viewer ON viewer.id=$2`,
+    [workspaceId, viewerId],
+  );
+  if (!result.rows[0]?.authorized) throw new Error('workspace membership required');
+  const built = result.rows.filter((row) => row.message_id &&
+    (!!row.approval_kind || isNeedsYouAsk(row.text))).flatMap((row) => {
     const approval = row.approval_kind ? approvalView(row, viewerId) : undefined;
     if (row.approval_kind && !approval) return [];
     const expiresAt = row.approval_kind
       ? row.approval_expires_at
         ? Math.floor(row.approval_expires_at.getTime() / 1000)
         : undefined
-      : row.first_seen_at
-        ? needsYouExpiresAt(row.first_seen_at)
+      : row.painted_first_seen_at
+        ? needsYouExpiresAt(row.painted_first_seen_at)
         : undefined;
     return [{ row, approval, expiresAt }];
   });
@@ -462,7 +513,7 @@ export async function needsYouItems(
     ...(row.parent_room_name ? { parentRoomName: row.parent_room_name } : {}),
     text: approval
       ? keepEnd(`${approval.actor} ${approval.ask} ${approval.subject}`)
-      : needsYouRowText(row.text, viewer.handle),
+      : needsYouRowText(row.text, row.viewer_handle),
     createdAt: Math.floor(row.created_at.getTime() / 1000),
     ...(expiresAt !== undefined ? { expiresAt } : {}),
     ...(row.author_id && row.author_kind && row.author_name
@@ -479,13 +530,7 @@ export async function needsYouItems(
       : {}),
     ...(approval ? { approval } : {}),
   }));
-  return {
-    items,
-    // Approval expiry comes from its card or state, never the question clock.
-    unseen: built
-      .filter(({ row }) => !row.approval_kind && !row.first_seen_at)
-      .map(({ row }) => row.message_id),
-  };
+  return { items };
 }
 
 export function needsYouExpiresAt(firstSeenAt: Date): number {

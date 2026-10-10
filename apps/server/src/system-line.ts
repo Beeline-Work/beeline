@@ -511,6 +511,12 @@ export async function systemLine(
         causeId: input.causeId,
         commandId: input.commandId,
       });
+      if (input.kind && isSubscribableEventKind(input.kind) && wakes.length)
+        await db.query(
+          `UPDATE agent_subscriptions SET last_fired_at=now()
+           WHERE room_id=$1 AND source='room' AND event=$2 AND agent_id=ANY($3::text[])`,
+          [input.roomId, input.kind, wakes],
+        );
     }
     return { id, text, event, inserted: Boolean(result.rowCount) };
   };

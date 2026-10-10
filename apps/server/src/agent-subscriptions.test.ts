@@ -44,6 +44,7 @@ describe('agent subscriptions', () => {
       });
       expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='subscribed_event'`,
         [ROOM, AGENT])).rowCount).toBe(1);
+      expect((await listAgentSubscriptions(db, ROOM, AGENT)).subscriptions[0]?.lastFiredAt).toBeTypeOf('number');
       await db.query(`UPDATE memberships SET event_subscriptions='["merged"]'::jsonb
         WHERE room_id=$1 AND identity_id=$2`, [ROOM, AGENT]);
       const legacy = (await listRoomSubscriptions(db, ROOM)).subscriptions.find((item) => item.event === 'merged');

@@ -18,7 +18,8 @@ const shims: Record<string, string> = {
       {id:'daily',agentId:'agent-1',cadence:{kind:'cron',expression:'0 8 * * *',timeZone:'UTC'},
         message:'Post the morning standup summary',nextRunAt:1790000000},
       {id:'hourly',agentId:'agent-1',cadence:{kind:'interval',everyMinutes:60},
-        message:'Check the deploy queue',nextRunAt:1790000000,corner:{id:'corner-1',name:'quiet amber corner'}}]};
+        message:'Start the feedback triage workflow',workflowSlug:'feedback-triage',
+        nextRunAt:1790000000,corner:{id:'corner-1',name:'quiet amber corner'}}]};
     if (name === 'listRoomSubscriptions') return {subscriptions: location.search.includes('empty') ? [] : [
       {id:'repo-1',roomId:'room-1',agentId:'agent-1',source:'repository',event:'issue.opened',
         repository:'owner/widgets',lastFiredAt:1790000000},

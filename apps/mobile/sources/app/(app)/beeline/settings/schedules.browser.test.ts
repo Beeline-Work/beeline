@@ -123,7 +123,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       '@Ruby · #issues-triage',
       'SUBSCRIPTIONS',
       'pull_request.opened · When received',
-      '@Ruby · this Room',
+      '@Ruby · owner/widgets',
     ]);
     // Only the workflow schedule wears a glyph.
     expect(page.glyphs).toEqual(['scheduled-work-glyph-video']);

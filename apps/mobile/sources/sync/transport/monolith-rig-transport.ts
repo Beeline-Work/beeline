@@ -5,13 +5,12 @@ import type {
   BuzzClient,
   Identity,
   KnownMessageReference,
-  RoomRepository,
   RoomRepositoryInput,
   RoomViewAgentTurn,
   RoomViewMessage,
   WritePermissionDecision,
 } from '@beeline/buzz-client';
-import type { AgentMessageWriteResult, ChatListCorner, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+import type { AgentMessageWriteResult, ChatListCorner, RoomRepositoryResult, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import type { MessageSubmitInput } from './rig-transport';
 import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -416,6 +415,12 @@ export class MonolithRigTransport {
   inviteWorkspaceMemberToChannel(roomId: string, memberId: string) {
     return this.inviteAgentToChannel(roomId, memberId);
   }
+  inviteRoomMembers(roomId: string, memberIds: readonly string[]) {
+    return this.operation('addRoomMember', { roomId, memberIds }) as Promise<{
+      joined: boolean;
+      joinedIds?: readonly string[];
+    }>;
+  }
   removeRoomMember(roomId: string, memberId: string) {
     return this.operation('removeRoomMember', { roomId, memberId }).then(() => undefined);
   }
@@ -474,7 +479,7 @@ export class MonolithRigTransport {
       { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS },
     ).then((value) => (value as { id: string }).id);
   }
-  roomRepositorySet(roomId: string, input: RoomRepositoryInput): Promise<RoomRepository> {
+  roomRepositorySet(roomId: string, input: RoomRepositoryInput): Promise<RoomRepositoryResult> {
     return this.operation('setRoomRepository', {
       roomId,
       key: input.key,
@@ -482,13 +487,13 @@ export class MonolithRigTransport {
       remote: input.remote,
       targetBranch: input.targetBranch ?? 'main',
       githubInstallationId: input.githubInstallationId,
-    }) as Promise<RoomRepository>;
+    }) as Promise<RoomRepositoryResult>;
   }
-  roomTargetBranchSet(roomId: string, targetBranch: string): Promise<RoomRepository> {
+  roomTargetBranchSet(roomId: string, targetBranch: string): Promise<RoomRepositoryResult> {
     return this.operation('setRoomTargetBranch', {
       roomId,
       targetBranch,
-    }) as Promise<RoomRepository>;
+    }) as Promise<RoomRepositoryResult>;
   }
   /** Sever the Room→repository binding; the Room becomes chat-only. Idempotent. */
   roomRepositoryRemove(roomId: string): Promise<void> {

@@ -1433,6 +1433,30 @@ describe('monolith integration', () => {
     ).toEqual([{ role: 'admin', removed: false }]);
   });
 
+  it('adds several current Workspace members with one phone write', async () => {
+    const memberIds = ['batch-room-0', 'batch-room-1'].map((name) =>
+      createHash('sha256').update(`github:${name}`).digest('hex'),
+    );
+    for (const [index, memberId] of memberIds.entries()) {
+      await phoneToken(`batch-room-${index}`);
+      await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+    }
+    const room = (await (
+      await operation('createRoom', {
+        workspaceId: WORKSPACE,
+        name: 'batch-room-members',
+        visibility: 'invite-only',
+      })
+    ).json()) as { id: string };
+    expect(await (await operation('addRoomMember', { roomId: room.id, memberIds })).json())
+      .toEqual({ joined: true, joinedIds: memberIds });
+    expect((await database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships WHERE room_id=$1 AND identity_id=ANY($2::text[])
+         AND removed_at IS NULL ORDER BY identity_id`,
+      [room.id, memberIds],
+    )).rows.map((row) => row.identity_id)).toEqual([...memberIds].sort());
+  });
+
   it('reserves workspace and Room management for workspace owners and admins', async () => {
     const memberToken = await phoneToken('room-member');
     const memberId = createHash('sha256').update('github:room-member').digest('hex');
@@ -2562,9 +2586,11 @@ describe('monolith integration', () => {
     expect(
       (await operation('sendRoomMessage', { roomId: ROOM, messageId, text: 'React here' })).status,
     ).toBe(200);
-    expect(
-      (await operation('reactToMessage', { roomId: ROOM, messageId, emoji: '👍' })).status,
-    ).toBe(204);
+    const reactionReceipt = await operation('reactToMessage', { roomId: ROOM, messageId, emoji: '👍' });
+    expect(reactionReceipt.status).toBe(200);
+    expect((await reactionReceipt.json()).reactions).toEqual([
+      expect.objectContaining({ emoji: '👍', count: 1, reacted: true }),
+    ]);
 
     const reacted = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
     expect(reacted.messages.find((message) => message.id === messageId)?.reactions).toEqual([
@@ -2602,7 +2628,7 @@ describe('monolith integration', () => {
 
     expect(
       (await operation('reactToMessage', { roomId: ROOM, messageId, emoji: '👍' })).status,
-    ).toBe(204);
+    ).toBe(200);
     const cleared = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
     expect(cleared.messages.find((message) => message.id === messageId)?.reactions).toBeUndefined();
   });
@@ -2632,7 +2658,8 @@ describe('monolith integration', () => {
       `INSERT INTO institutional_memory_item_sources(item_id,message_id) VALUES($1,$2)`,
       [memoryItemId, authorMessageId],
     );
-    await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: authorMessageId }, AGENT);
+    const deleteReceipt = await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: authorMessageId }, AGENT);
+    expect(deleteReceipt).toMatchObject({ id: authorMessageId, deleted: true, presentation: 'system' });
 
     const authorDeleted = (await phone.readRoom(ROOM, HUMAN))!.messages.find(
       (message) => message.id === authorMessageId,
@@ -5206,11 +5233,13 @@ describe('monolith integration', () => {
     ]);
 
     expect([foreground.status, outbox.status]).toEqual([200, 200]);
-    expect(await foreground.json()).toEqual({
+    expect(await foreground.json()).toMatchObject({
       messageId: payload.messageId,
       activeSteerAgentIds: [],
+      message: { id: payload.messageId, text: payload.text },
     });
-    expect(await outbox.json()).toEqual({ messageId: payload.messageId, activeSteerAgentIds: [] });
+    expect(await outbox.json()).toMatchObject({ messageId: payload.messageId, activeSteerAgentIds: [],
+      message: { id: payload.messageId, text: payload.text } });
     const stored = await database.query<{ count: string }>(
       `SELECT count(*)::text FROM messages WHERE id=$1`,
       [payload.messageId],

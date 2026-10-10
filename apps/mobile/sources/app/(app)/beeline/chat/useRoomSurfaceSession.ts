@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
+import type { RoomRepositoryResult } from '@beeline/api-contract/phone';
 import {
   KIND_AGENT_DRAFT,
   LiveOverlayDecoder,
@@ -11,6 +12,7 @@ import {
   type LiveOverlay,
   type RoomView,
   type RoomViewAgentTurn,
+  type RoomViewMessage,
 } from '@beeline/buzz-client';
 import {
   isRoomViewTimeoutError,
@@ -24,7 +26,7 @@ import {
   getEffectiveRelayUrl,
 } from '@/auth/buzz-identity-storage';
 import { markRoomOpen, markRoomOpenWeight } from '@/buzz/room-open-trace';
-import { issueUnreadLine } from '@/buzz/unread-line-ticket';
+import { issueUnreadLine, spendUnreadLine, unreadLineSpent } from '@/buzz/unread-line-ticket';
 import {
   displayRoomMessages,
   reconcileRoomView,
@@ -54,12 +56,6 @@ import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { scheduleAnimationFrame } from '@/buzz/host-scheduler';
 import { takePrefetchedPushRoom } from '@/push/push-room-prefetch';
 
-/**
- * A sent message is confirmed by its own delta on the live socket. One that
- * has not arrived by then gets one Room read, which also proves whether the
- * socket missed it (and replaces the socket if so).
- */
-const OUTBOX_DELTA_GRACE_MS = 4_000;
 /** A socket that never answers must not hold the open's one Room read. */
 const SUBSCRIBE_HANDSHAKE_TIMEOUT_MS = 2_000;
 /**
@@ -224,7 +220,6 @@ export interface RoomSurfaceOutboxHandle {
   current(): RoomOutbox | null;
   failedIds: ReadonlySet<string>;
   markFailed(eventId: string): Promise<void>;
-  scheduleConfirmation(eventId: string): void;
   retry(eventId: string, transport?: BuzzRigTransport | null): void;
   dismiss(eventId: string): void;
 }
@@ -246,6 +241,13 @@ export interface UseRoomSurfaceSessionResult {
   adoptTransport(transport: BuzzRigTransport): void;
   roomClient: RoomViewClient | null;
   roomSurface: RoomView | null;
+  /** A repository write already returned the canonical binding and version. */
+  applyRoomRepositoryResult(result: RoomRepositoryResult): void;
+  clearRoomRepository(): void;
+  /** A message mutation returned the same canonical row as the live lane. */
+  applyRoomMessageResult(message: RoomViewMessage): void;
+  applyRoomName(name: string, expected?: string): void;
+  applyRoomReviewers(reviewerAgentId: string | undefined, reviewerFallbackIds: readonly string[]): void;
   /** Exact server-owned unread boundary captured before this visit advances the read mark. */
   firstUnreadMessageId: string | null;
   /** Server counts captured with the opening boundary, before viewport reads advance it. */
@@ -290,6 +292,57 @@ export function useRoomSurfaceSession({
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [roomClient, setRoomClient] = useState<RoomViewClient | null>(null);
   const [roomSurface, setRoomSurface] = useState<RoomView | null>(null);
+  const applyRoomRepositoryResult = useCallback((result: RoomRepositoryResult) => {
+    if (result.channelId !== channelId) return;
+    setRoomSurface((current) => {
+      if (!current || (current.repository?.updatedAt ?? -1) > result.updatedAt) return current;
+      const next: RoomView = {
+        ...current,
+        repositoryResolution: 'repository',
+        repository: {
+          ...result.binding,
+          targetBranch: result.targetBranch,
+          updatedAt: result.updatedAt,
+          githubEventsEnabled: result.githubEventsEnabled,
+        },
+      };
+      reconciledViewRef.current = next;
+      return next;
+    });
+  }, [channelId]);
+  const clearRoomRepository = useCallback(() => {
+    setRoomSurface((current) => {
+      if (!current) return current;
+      const next = { ...current, repository: undefined, repositoryResolution: 'none' as const };
+      reconciledViewRef.current = next;
+      return next;
+    });
+  }, []);
+  const applyRoomMessageResult = useCallback((message: RoomViewMessage) => {
+    setRoomSurface((current) => {
+      if (!current) return current;
+      const next = reconcileRoomMessageDelta(current, message);
+      reconciledViewRef.current = next;
+      void outboxRef.current?.reconcile(new Set(next.messages.map((row) => row.id)));
+      return next;
+    });
+  }, []);
+  const applyRoomName = useCallback((name: string, expected?: string) => {
+    setRoomSurface((current) => {
+      if (!current || (expected !== undefined && current.room.name !== expected)) return current;
+      const next = { ...current, room: { ...current.room, name } };
+      reconciledViewRef.current = next;
+      return next;
+    });
+  }, []);
+  const applyRoomReviewers = useCallback((reviewerAgentId: string | undefined, reviewerFallbackIds: readonly string[]) => {
+    setRoomSurface((current) => {
+      if (!current) return current;
+      const next = { ...current, room: { ...current.room, reviewerAgentId, reviewerFallbackIds } };
+      reconciledViewRef.current = next;
+      return next;
+    });
+  }, []);
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<string | null>(null);
   const [openingUnreadCounts, setOpeningUnreadCounts] = useState<{
     messages: number;
@@ -386,7 +439,9 @@ export function useRoomSurfaceSession({
     // The reader has said this message is unread. Stop the viewport from
     // reading it again on the very next report, then move the server boundary.
     readCursorRef.current?.suspend();
-    await roomClientRef.current?.markUnread(channelIdRef.current, messageId);
+    const previousMessageId = firstUnreadMessageId;
+    const previousCounts = openingUnreadCounts;
+    const lineWasSpent = unreadLineSpent(channelIdRef.current);
     // Naming a row is asking for the line back, so it gets a ticket even if
     // this visit already spent one (`buzz/unread-line-ticket.ts`). Issued
     // before the boundary moves, because the boundary is what the control
@@ -394,7 +449,16 @@ export function useRoomSurfaceSession({
     issueUnreadLine(channelIdRef.current);
     setFirstUnreadMessageId(messageId);
     setOpeningUnreadCounts(null);
-  }, []);
+    try {
+      await roomClientRef.current?.markUnread(channelIdRef.current, messageId);
+    } catch (error) {
+      setFirstUnreadMessageId(previousMessageId);
+      setOpeningUnreadCounts(previousCounts);
+      if (lineWasSpent) spendUnreadLine(channelIdRef.current);
+      readCursorRef.current?.resume();
+      throw error;
+    }
+  }, [firstUnreadMessageId, openingUnreadCounts]);
 
   const acknowledgeReadMark = useCallback((messageId: string) => {
     if (!isCornerRef.current) readCursorRef.current?.acknowledge(messageId);
@@ -422,15 +486,6 @@ export function useRoomSurfaceSession({
     setFailedIds((current) => new Set(current).add(eventId));
   }, []);
 
-  const scheduleConfirmation = useCallback((eventId: string) => {
-    const scheduler = schedulerRef.current;
-    setTimeout(() => {
-      if (schedulerRef.current !== scheduler) return;
-      const painted = reconciledViewRef.current?.messages.some((message) => message.id === eventId);
-      if (!painted) scheduler?.signal();
-    }, OUTBOX_DELTA_GRACE_MS);
-  }, []);
-
   const retryOutbox = useCallback(
     (eventId: string, retryTransport?: BuzzRigTransport | null) => {
       const outbox = outboxRef.current;
@@ -445,14 +500,14 @@ export function useRoomSurfaceSession({
           return next;
         });
         try {
-          await activeTransport.publishPreparedMessage(record.event);
-          scheduleConfirmation(eventId);
+          const result = await activeTransport.publishPreparedMessage(record.event);
+          if (result.message) applyRoomMessageResult(result.message);
         } catch {
           await markFailed(eventId);
         }
       })();
     },
-    [markFailed, scheduleConfirmation, transport],
+    [applyRoomMessageResult, markFailed, transport],
   );
 
   const dismissOutbox = useCallback(
@@ -499,6 +554,7 @@ export function useRoomSurfaceSession({
     // seconds, so the read cannot tell a same-second retry from a stale turn;
     // replaying these in order on top of the read keeps what the socket said.
     let turnDeltasDuringRead: RoomViewAgentTurn[] | undefined;
+    let messageDeltasDuringRead: RoomViewMessage[] | undefined;
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
     let watchGeneration = 0;
@@ -711,10 +767,9 @@ export function useRoomSurfaceSession({
             if (live.type === 'subscribed') {
               markRoomOpen('subscribed', live.roomId);
               // This watch's first frame is listen-ready. A later frame on
-              // this same watch is a reconnect and must reread. The opening
-              // read runs alongside the watch, so its snapshot may predate
-              // this lane: one follow-up read covers that gap without
-              // discarding the opening read still in flight.
+              // this same watch is a reconnect and may need one reconcile.
+              // A push-prefetched read can predate this lane, in which case
+              // one follow-up read covers that gap.
               if (handshakeSeen) {
                 if (hasPainted && !live.resumed) visibleScheduler()?.force();
                 return;
@@ -750,9 +805,11 @@ export function useRoomSurfaceSession({
                 : undefined;
               if (received) logLiveTrace('socket-receipt', [received], received.receivedAt);
               if (live.type === 'turn-delta') turnDeltasDuringRead?.push(live.turn);
+              else messageDeltasDuringRead?.push(live.message);
               const current = reconciledViewRef.current;
               if (!current) {
-                visibleScheduler()?.force();
+                // The opening read is already in flight. Its snapshot will be
+                // replayed with this row, so a second GET adds no information.
                 return;
               }
               const next =
@@ -902,9 +959,7 @@ export function useRoomSurfaceSession({
             requestId &&
             (!replaying || replayedFreshWorkingReceipt)
           ) {
-            visibleScheduler()?.signalUntil((view) =>
-              view.latestAgentTurns.some((turn) => turn.requestId === requestId),
-            );
+            visibleScheduler()?.signal();
             return;
           }
           if (replaying) return;
@@ -922,9 +977,7 @@ export function useRoomSurfaceSession({
                 ].includes(marker),
               ));
           if (expectsPaintedMessage) {
-            visibleScheduler()?.signalUntil((view) =>
-              view.messages.some((message) => message.id === event.id),
-            );
+            visibleScheduler()?.signal();
           } else {
             visibleScheduler()?.signal();
           }
@@ -1033,7 +1086,7 @@ export function useRoomSurfaceSession({
         for (const record of outbox.list().filter((record) => record.status === 'pending')) {
           await outbox.attempted(record.event.id);
           void nextTransport.publishPreparedMessage(record.event).then(
-            () => scheduleConfirmation(record.event.id),
+            (result) => { if (result.message) applyRoomMessageResult(result.message); },
             () => void markFailed(record.event.id),
           );
         }
@@ -1050,6 +1103,7 @@ export function useRoomSurfaceSession({
             logLiveTrace('room-read-start', traces);
             markRoomOpen('room-read-start');
             turnDeltasDuringRead = [];
+            messageDeltasDuringRead = [];
             try {
               const prefetched = openingPrefetch;
               openingPrefetch = null;
@@ -1065,6 +1119,7 @@ export function useRoomSurfaceSession({
               logLiveTrace('room-read-error', traces);
               markRoomOpen('room-read-error');
               turnDeltasDuringRead = undefined;
+              messageDeltasDuringRead = undefined;
               throw error;
             }
           },
@@ -1077,9 +1132,14 @@ export function useRoomSurfaceSession({
             heardSinceRead = false;
             liveReadApplied = true;
             const replayedTurns = turnDeltasDuringRead ?? [];
+            const replayedMessages = messageDeltasDuringRead ?? [];
             turnDeltasDuringRead = undefined;
+            messageDeltasDuringRead = undefined;
             applyView(
-              replayedTurns.reduce(reconcileRoomTurnDelta, view),
+              replayedMessages.reduce(
+                reconcileRoomMessageDelta,
+                replayedTurns.reduce(reconcileRoomTurnDelta, view),
+              ),
               identity.publicKey,
               relayUrl,
               true,
@@ -1164,15 +1224,15 @@ export function useRoomSurfaceSession({
           scheduler.refreshNow();
           await scheduler.startAfter(Promise.resolve());
         } else {
-          // The opening read starts with the watch instead of waiting up to
-          // SUBSCRIBE_HANDSHAKE_TIMEOUT_MS for its first frame; that frame
-          // then asks for the covering read.
+          // Attach the live lane before the single opening GET. A healthy
+          // subscribe handshake proves there is no read/watch gap; any rows
+          // received during the GET are replayed on its result.
           watchStarted = true;
-          readRacedAhead = true;
           markRoomOpen('watch-install');
-          const watchReady = installWatch();
+          await installWatch();
+          if (cancelled) return;
           scheduler.refreshNow();
-          await Promise.all([scheduler.startAfter(Promise.resolve()), watchReady]);
+          await scheduler.startAfter(Promise.resolve());
         }
         markRoomOpen('watch-ready');
       } catch (error) {
@@ -1206,7 +1266,6 @@ export function useRoomSurfaceSession({
     markFailed,
     notificationResponseId,
     isFocused,
-    scheduleConfirmation,
   ]);
 
   const outbox = useMemo<RoomSurfaceOutboxHandle>(
@@ -1214,11 +1273,10 @@ export function useRoomSurfaceSession({
       current: () => outboxRef.current,
       failedIds,
       markFailed,
-      scheduleConfirmation,
       retry: retryOutbox,
       dismiss: dismissOutbox,
     }),
-    [dismissOutbox, failedIds, markFailed, retryOutbox, scheduleConfirmation],
+    [dismissOutbox, failedIds, markFailed, retryOutbox],
   );
 
   return {
@@ -1226,6 +1284,11 @@ export function useRoomSurfaceSession({
     adoptTransport: setTransport,
     roomClient,
     roomSurface,
+    applyRoomRepositoryResult,
+    clearRoomRepository,
+    applyRoomMessageResult,
+    applyRoomName,
+    applyRoomReviewers,
     firstUnreadMessageId,
     openingUnreadCounts,
     advanceReadCursor,

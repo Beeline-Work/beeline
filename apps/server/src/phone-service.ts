@@ -1030,10 +1030,11 @@ export class PhoneService {
     viewerId: string,
     target:
       { type: 'message'; messageId: string } | { type: 'turn'; agentId: string; requestId: string },
+    database: SqlDatabase = this.database,
   ): Promise<RoomLiveDelta | null> {
     if (target.type === 'turn') {
       const row = (
-        await this.database.query<AgentTurnRow>(
+        await database.query<AgentTurnRow>(
           `SELECT turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
              requester.id requested_by
            FROM rooms room
@@ -1055,7 +1056,7 @@ export class PhoneService {
       return { type: 'turn-delta', roomId, turn: this.projectAgentTurns([row])[0]! };
     }
     const row = (
-      await this.database.query<MessageRow>(
+      await database.query<MessageRow>(
         `SELECT message.*,author.kind author_kind,author.name author_name,
            author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
            ${reactionIdentitiesSql('message')} reaction_identities,
@@ -3783,7 +3784,7 @@ export class PhoneService {
       )
     )
       throw new Error('valid Workspace ID required');
-    if ((scope.workspaceId || scope.roomId) && !SPECTATOR_READ_OPERATIONS.has(name)) {
+    if ((scope.workspaceId || scope.roomId) && !SPECTATOR_READ_OPERATIONS.has(name) && name !== 'sendRoomMessage') {
       const spectator = await this.database.query(
         `SELECT 1 FROM memberships m WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
          AND m.role='spectator' AND (m.workspace_id=$2::uuid OR m.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3::uuid))`,
@@ -3840,11 +3841,9 @@ export class PhoneService {
         return sent as Output<Name>;
       }
       case 'reactToMessage':
-        await this.reactToMessage(input as Input<'reactToMessage'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.reactToMessage(input as Input<'reactToMessage'>, viewerId)) as Output<Name>;
       case 'deleteRoomMessage':
-        await this.deleteRoomMessage(input as Input<'deleteRoomMessage'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.deleteRoomMessage(input as Input<'deleteRoomMessage'>, viewerId)) as Output<Name>;
       case 'reportMessageIssue':
         return (await reportMessageIssue(
           this.database,
@@ -4363,20 +4362,30 @@ export class PhoneService {
   }
 
   async markRead(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
-    const message = await this.database.query<{ exists: boolean }>(
-      `SELECT true exists FROM messages WHERE id=$1 AND room_id=$2`,
-      [messageIdValue, roomId],
-    );
-    if (!message.rows[0] || !(await this.hasRoomAccess(roomId, viewerId)))
-      throw new Error('message not found');
-    const written = await this.database.query(
-      `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-      SELECT $1,$2,message.created_at,$3 FROM messages message WHERE message.id=$3 AND message.room_id=$1
-      ON CONFLICT(room_id,identity_id) DO UPDATE SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()
-      WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>(room_read_marks.message_created_at,room_read_marks.message_id)`,
+    const result = (await this.database.query<{ eligible: boolean; changed: boolean }>(
+      `WITH eligible AS (
+         SELECT message.id,message.created_at FROM messages message
+         JOIN rooms room ON room.id=message.room_id
+         JOIN memberships room_member ON room_member.room_id=room.id
+           AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+           AND workspace_member.removed_at IS NULL
+         WHERE message.id=$3 AND room.id=$1
+       ), written AS (
+         INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT $1,$2,created_at,id FROM eligible
+         ON CONFLICT(room_id,identity_id) DO UPDATE
+           SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()
+         WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
+           (room_read_marks.message_created_at,room_read_marks.message_id)
+         RETURNING message_id
+       ) SELECT EXISTS(SELECT 1 FROM eligible) eligible,
+           EXISTS(SELECT 1 FROM written) changed`,
       [roomId, viewerId, messageIdValue],
-    );
-    if (written.rowCount) {
+    )).rows[0];
+    if (!result?.eligible) throw new Error('message not found');
+    if (result.changed) {
       this.live?.publish({ type: 'invalidate', roomId, reason: 'read-mark', readerId: viewerId });
     }
   }
@@ -4396,48 +4405,47 @@ export class PhoneService {
    * drew a NEW MESSAGES divider at the chosen row (review 2026-09-22).
    */
   async markUnread(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
-    const message = await this.database.query<{ exists: boolean }>(
-      `SELECT true exists FROM messages WHERE id=$1 AND room_id=$2`,
-      [messageIdValue, roomId],
-    );
-    if (!message.rows[0] || !(await this.hasRoomAccess(roomId, viewerId)))
-      throw new Error('message not found');
-    const countable = await this.database.query<{ exists: boolean }>(
-      `SELECT true exists FROM messages message
-       WHERE message.id=$1 AND message.room_id=$3 AND ${unreadMessageSql('message')}`,
-      [messageIdValue, viewerId, roomId],
-    );
-    // 'invalid' is what the router reads as a 400 — the row is real and
-    // readable, it is simply not something this viewer can hold unread.
-    if (!countable.rows[0])
-      throw new Error(
-        'messageId is invalid: only a row that counts as unread can be marked unread',
-      );
-    const previous = (
-      await this.database.query<{ id: string; created_at: Date }>(
-        `SELECT earlier.id,earlier.created_at FROM messages target
+    const result = (await this.database.query<{ accessible: boolean; countable: boolean }>(
+      `WITH accessible AS (
+         SELECT message.* FROM messages message
+         JOIN rooms room ON room.id=message.room_id
+         JOIN memberships room_member ON room_member.room_id=room.id
+           AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+           AND workspace_member.removed_at IS NULL
+         WHERE message.id=$1 AND room.id=$3
+       ), target AS (
+         SELECT * FROM accessible message WHERE ${unreadMessageSql('message')}
+       ), previous AS (
+         SELECT earlier.id,earlier.created_at FROM target
          JOIN messages earlier ON earlier.room_id=target.room_id
            AND (earlier.created_at,earlier.id)<(target.created_at,target.id)
            AND ${visibleChatMessageSql('earlier')}
-         WHERE target.id=$1 AND target.room_id=$2
-         ORDER BY earlier.created_at DESC,earlier.id DESC LIMIT 1`,
-        [messageIdValue, roomId],
-      )
-    ).rows[0];
-    if (previous) {
-      await this.database.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-         VALUES($1,$2,$3,$4)
+         ORDER BY earlier.created_at DESC,earlier.id DESC LIMIT 1
+       ), written AS (
+         INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT $3,$2,created_at,id FROM previous
          ON CONFLICT(room_id,identity_id) DO UPDATE
-           SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()`,
-        [roomId, viewerId, previous.created_at, previous.id],
+           SET message_created_at=EXCLUDED.message_created_at,
+               message_id=EXCLUDED.message_id,updated_at=now()
+         RETURNING message_id
+       ), cleared AS (
+         DELETE FROM room_read_marks
+         WHERE room_id=$3 AND identity_id=$2 AND EXISTS(SELECT 1 FROM target)
+           AND NOT EXISTS(SELECT 1 FROM previous)
+         RETURNING message_id
+       ) SELECT EXISTS(SELECT 1 FROM accessible) accessible,
+           EXISTS(SELECT 1 FROM target) countable`,
+      [messageIdValue, viewerId, roomId],
+    )).rows[0];
+    if (!result?.accessible) throw new Error('message not found');
+    // 'invalid' is what the router reads as a 400 — the row is real and
+    // readable, it is simply not something this viewer can hold unread.
+    if (!result.countable)
+      throw new Error(
+        'messageId is invalid: only a row that counts as unread can be marked unread',
       );
-    } else {
-      await this.database.query(`DELETE FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`, [
-        roomId,
-        viewerId,
-      ]);
-    }
     this.live?.publish({ type: 'invalidate', roomId, reason: 'read-mark', readerId: viewerId });
   }
 
@@ -4476,46 +4484,91 @@ export class PhoneService {
           true,
         ).sendMessage(input, author),
       );
-    if (!(await this.hasRoomAccess(input.roomId, author))) throw new Error('room access denied');
-    await this.assertRoomIsWritable(input.roomId, author);
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const noticeAgentIds = await this.unansweredMentionTargets(input.roomId, author, input.text);
-    const values = [id, input.roomId, author, input.text, attachments];
     return this.database.transaction(async (database) => {
-      const inserted = await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,attachments)
-       VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT(id) DO NOTHING`,
-        values,
-      );
-      if (!inserted.rowCount) {
-        const retry = await database.query(
-          `SELECT 1 FROM messages
-         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND text=$4
-           AND attachments=$5::jsonb
-           AND reply_to_message_id IS NULL`,
-          values,
-        );
-        if (!retry.rowCount) throw new Error('messageId is invalid');
+      const write = (await database.query<{
+        inserted: boolean;
+        retry: boolean;
+        writable: boolean;
+        system_dm: boolean;
+        connector_dm: boolean;
+        direct: boolean;
+        corner: boolean;
+        author_kind: 'human' | 'agent';
+      }>(
+        `WITH access AS (
+           SELECT room.id,room.parent_id,room.direct_participants,identity.kind author_kind,
+             COALESCE(room.direct_participants ? $6,false) system_dm,
+             COALESCE(room.direct_participants ?| $7::text[],false) connector_dm,
+             COALESCE(workspace_member.role<>'spectator',$3=$6) writable
+           FROM rooms room
+           JOIN memberships room_member ON room_member.room_id=room.id
+             AND room_member.identity_id=$3 AND room_member.removed_at IS NULL
+           LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
+             AND workspace_member.removed_at IS NULL
+           JOIN identities identity ON identity.id=$3
+           WHERE room.id=$2 AND ($3=$6 OR workspace_member.identity_id IS NOT NULL)
+         ), inserted AS (
+           INSERT INTO messages(id,room_id,author_id,text,attachments)
+           SELECT $1,$2,$3,$4,$5::jsonb FROM access
+           WHERE writable AND ($3=$6 OR NOT (system_dm OR connector_dm))
+           ON CONFLICT(id) DO NOTHING
+           RETURNING id,room_id,created_at
+         ), read_mark AS (
+           INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
+           SELECT room_id,$3,created_at,id,'epoch'::timestamptz FROM inserted
+           ON CONFLICT(room_id,identity_id) DO UPDATE
+             SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id
+           WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
+             (room_read_marks.message_created_at,room_read_marks.message_id)
+           RETURNING 1
+         )
+         SELECT EXISTS(SELECT 1 FROM inserted) inserted,
+           EXISTS(SELECT 1 FROM messages message
+             WHERE message.id=$1 AND message.room_id=$2 AND message.author_id=$3
+               AND message.text=$4 AND message.attachments=$5::jsonb
+               AND message.reply_to_message_id IS NULL) retry,
+           access.writable,access.system_dm,access.connector_dm,
+           access.direct_participants IS NOT NULL direct,
+           access.parent_id IS NOT NULL corner,access.author_kind
+         FROM access`,
+        [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID, connectorIdentityIds()],
+      )).rows[0];
+      if (!write) throw new Error('room access denied');
+      if (!write.writable) throw new Error('spectator access is read-only (access denied)');
+      if (author !== SYSTEM_IDENTITY_ID && write.system_dm)
+        throw new Error('this is a read-only system announcements channel; only @system may post here (access denied)');
+      if (author !== SYSTEM_IDENTITY_ID && write.connector_dm)
+        throw new Error('this is a read-only connector receipts channel; only the connector identity may post there (access denied)');
+      const mayRoute = write.direct || write.corner || input.text.includes('@');
+      if (!write.inserted) {
+        if (!write.retry) throw new Error('messageId is invalid');
         return {
           messageId: id,
-          activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+          activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
+          ...(await this.receiptMessage(input.roomId, author, id, database)),
         };
       }
-      await advanceAuthorReadMark(database, input.roomId, author, id);
-      const lifecycleCommand = await routeHumanMessage(database, id);
+      const noticeAgentIds = write.author_kind === 'human' && mayRoute
+        ? await this.unansweredMentionTargets(input.roomId, author, input.text)
+        : [];
+      const lifecycleCommand = mayRoute ? await routeHumanMessage(database, id) : undefined;
       if (!lifecycleCommand)
         await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
-      await recordSystemReportMention(database, {
-        roomId: input.roomId,
-        messageId: id,
-        authorId: author,
-        text: input.text,
-      });
+      if (input.text.includes('@'))
+        await recordSystemReportMention(database, {
+          roomId: input.roomId,
+          messageId: id,
+          authorId: author,
+          text: input.text,
+        });
       return {
         messageId: id,
-        activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+        activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
+        ...(await this.receiptMessage(input.roomId, author, id, database)),
       };
     });
   }
@@ -4630,6 +4683,7 @@ export class PhoneService {
         return {
           messageId: id,
           activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+          ...(await this.receiptMessage(input.roomId, author, id, database)),
         };
       }
       await advanceAuthorReadMark(database, input.roomId, author, id);
@@ -4645,11 +4699,12 @@ export class PhoneService {
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+        ...(await this.receiptMessage(input.roomId, author, id, database)),
       };
     });
   }
 
-  private async reactToMessage(input: Input<'reactToMessage'>, viewerId: string): Promise<void> {
+  private async reactToMessage(input: Input<'reactToMessage'>, viewerId: string): Promise<RoomViewMessage | null> {
     if (!MESSAGE_REACTION_EMOJIS.includes(input.emoji)) throw new Error('reaction is invalid');
     await this.database.transaction(async (database) => {
       const row = (
@@ -4685,12 +4740,16 @@ export class PhoneService {
         JSON.stringify(reactions),
       ]);
     });
+    const delta = await this.readLiveDelta(input.roomId, viewerId, {
+      type: 'message', messageId: input.messageId,
+    });
+    return delta?.type === 'message-delta' ? delta.message : null;
   }
 
   private async deleteRoomMessage(
     input: Input<'deleteRoomMessage'>,
     viewerId: string,
-  ): Promise<void> {
+  ): Promise<RoomViewMessage | null> {
     if (!/^[0-9a-f]{64}$/.test(input.messageId)) throw new Error('messageId is invalid');
     await this.database.transaction(async (database) => {
       const deleted = await database.query<{ author_id: string; deleted_by: string }>(
@@ -4729,6 +4788,10 @@ export class PhoneService {
         input.messageId,
       ]);
     });
+    const delta = await this.readLiveDelta(input.roomId, viewerId, {
+      type: 'message', messageId: input.messageId,
+    });
+    return delta?.type === 'message-delta' ? delta.message : null;
   }
 
   private async setMessageBookmark(
@@ -4943,6 +5006,13 @@ export class PhoneService {
    * in one transaction, so the phone can distinguish a server-accepted steer
    * from text that merely looked addressed locally.
    */
+  private async receiptMessage(roomId: string, viewerId: string, messageIdValue: string, database: SqlDatabase) {
+    const delta = await this.readLiveDelta(roomId, viewerId, {
+      type: 'message', messageId: messageIdValue,
+    }, database);
+    return delta?.type === 'message-delta' ? { message: delta.message } : {};
+  }
+
   private async activeSteerAgentIds(database: SqlDatabase, messageIdValue: string) {
     const commands = await database.query<{ agent_id: string }>(
       `SELECT DISTINCT command.agent_id
@@ -6199,21 +6269,32 @@ export class PhoneService {
     });
   }
   private async addRoomMember(input: Input<'addRoomMember'>, viewerId: string) {
+    const memberIds = [...new Set(input.memberIds ?? (input.memberId ? [input.memberId] : []))];
+    if (!memberIds.length || memberIds.length > ROOM_VIEW_MEMBER_LIMIT)
+      throw new Error('invalid Room member list');
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
-    const workspaceMember = await this.database.query(
-      `SELECT 1 FROM memberships
-       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
-      [room.workspace_id, input.memberId],
+    const workspaceMembers = await this.database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=ANY($2::text[])
+         AND removed_at IS NULL`,
+      [room.workspace_id, memberIds],
     );
-    if (!workspaceMember.rowCount) throw new Error('workspace membership required');
-    const result = await joinRooms(this.database, {
-      workspaceId: room.workspace_id,
-      identityId: input.memberId,
-      invitedById: viewerId,
-      rooms: { type: 'rooms', roomIds: [input.roomId] },
+    if (workspaceMembers.rowCount !== memberIds.length)
+      throw new Error('workspace membership required');
+    return this.database.transaction(async (database) => {
+      const joinedIds: string[] = [];
+      for (const memberId of memberIds) {
+        const result = await joinRooms(database, {
+          workspaceId: room.workspace_id,
+          identityId: memberId,
+          invitedById: viewerId,
+          rooms: { type: 'rooms', roomIds: [input.roomId] },
+        });
+        if (result.roomIds.length) joinedIds.push(memberId);
+      }
+      return { joined: joinedIds.length > 0, ...(input.memberIds ? { joinedIds } : {}) };
     });
-    return { joined: result.roomIds.length > 0 };
   }
   private async removeRoomMember(input: Input<'removeRoomMember'>, viewerId: string) {
     const room = await this.requireTopLevelRoom(input.roomId);

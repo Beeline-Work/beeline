@@ -819,6 +819,60 @@ describe('Needs-you badge and tray', () => {
     await act(async () => answers[1]!({ count: 1 }));
     expect(badge(tree)).toBe(1);
   });
+
+  /** A's clears wait on `fail`; after the switch B's server holds one other cell. */
+  function serveSwitch() {
+    let fail!: () => void;
+    const refused = new Promise<never>((_resolve, reject) => {
+      fail = () => reject(new Error('clear refused'));
+    });
+    refused.catch(() => undefined);
+    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
+    phoneOperation.mockImplementation(async (name: string) => {
+      if (name === 'readNeedsYou') return { items: server.needs };
+      if (name === 'countNeedsYou') return { count: server.needs.length };
+      if (name === 'listMessageBookmarks') return { bookmarks: [] };
+      if (name === 'clearNeedsYou' || name === 'clearNeedsYouSection') return refused;
+      return undefined;
+    });
+    return {
+      fail,
+      async switchToB(): Promise<ReactTestRenderer> {
+        server.needs = [need({ messageId: 'ask-3' })];
+        auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'other-viewer' }));
+        await act(async () => resetClientState());
+        return render(true);
+      },
+    };
+  }
+
+  it('a clear that fails after an account switch leaves the new account alone', async () => {
+    const a = serveSwitch();
+    const treeA = await render(true);
+    await swipe(treeA, 'ask-1');
+    expect([rows(treeA), badge(treeA)]).toEqual([1, 1]);
+    await act(async () => treeA.unmount());
+    const treeB = await a.switchToB();
+    expect([rows(treeB), badge(treeB)]).toEqual([1, 1]);
+    await act(async () => a.fail());
+    await act(async () => undefined);
+    expect([rows(treeB), badge(treeB)]).toEqual([1, 1]);
+  });
+
+  it('a section clear that fails after an account switch leaves the new account alone', async () => {
+    const a = serveSwitch();
+    const treeA = await render(true);
+    await act(async () => treeA.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    // Leaving the tray sends the held clear at once.
+    await act(async () => treeA.update(<BadgeAndTray tray={false} />));
+    expect(phoneOperation.mock.calls.some(([name]) => name === 'clearNeedsYouSection')).toBe(true);
+    await act(async () => treeA.unmount());
+    const treeB = await a.switchToB();
+    expect([rows(treeB), badge(treeB)]).toEqual([1, 1]);
+    await act(async () => a.fail());
+    await act(async () => undefined);
+    expect([rows(treeB), badge(treeB)]).toEqual([1, 1]);
+  });
 });
 
 describe('Tray Needs you', () => {

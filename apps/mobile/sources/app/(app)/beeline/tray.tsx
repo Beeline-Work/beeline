@@ -18,6 +18,7 @@ import { isWorkspaceListView, isWorkspaceView, type RoomView } from '@beeline/bu
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { clientResetGeneration } from '@/sync/client-reset';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
   holdNeedsYou,
@@ -479,6 +480,7 @@ export default function TrayScreen() {
 
   /** Tapped or dismissed: the cell leaves this tray, and every other device's. */
   const clear = useCallback(async (item: NeedsYouItemView) => {
+    const at = clientResetGeneration();
     removeNeedsYou(item.workspaceId, [item.messageId]);
     try {
       await monolithPhoneOperation('clearNeedsYou', {
@@ -486,6 +488,8 @@ export default function TrayScreen() {
         messageId: item.messageId,
       });
     } catch (cause) {
+      // A failure that lands after an account switch belongs to the previous account.
+      if (at !== clientResetGeneration()) return;
       restoreNeedsYou(item.workspaceId, [item]);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -513,10 +517,12 @@ export default function TrayScreen() {
   const commitClear = useCallback(async (clear: PendingClear) => {
     const ids = new Set(clear.items.map((item) => item.messageId));
     if (clear.kind === 'needs') {
+      const at = clientResetGeneration();
       removeNeedsYou(clear.workspaceId, ids);
       try {
         await monolithPhoneOperation('clearNeedsYouSection', { workspaceId: clear.workspaceId });
       } catch (cause) {
+        if (at !== clientResetGeneration()) return;
         restoreNeedsYou(clear.workspaceId, clear.items);
         setError(cause instanceof Error ? cause.message : String(cause));
       }

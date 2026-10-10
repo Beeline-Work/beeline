@@ -37,9 +37,7 @@ describe('Room composer status layout', () => {
   it('lets iOS and Android use native line metrics for long composer text', () => {
     // Android: a fixed line height on the input gives the text after an
     // inline tag a mid-line span that breaks partial relayout (composer jitter).
-    expect(inputStyle).toContain(
-      '...Platform.select({ ios: {}, android: {}, default: { lineHeight: 20 } })',
-    );
+    expect(inputStyle).toContain('android: { lineHeight: undefined },');
     expect(inputStyle).not.toMatch(/^\s*lineHeight:\s*20,/m);
   });
 

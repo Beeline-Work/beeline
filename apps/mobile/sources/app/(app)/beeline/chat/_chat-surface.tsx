@@ -441,6 +441,7 @@ import {
   type DictatedSend,
 } from '@/components/buzz/ConversationComposer';
 import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
+import { subscribeClientReset } from '@/sync/client-reset';
 
 type RoomMemberOption = RoomRosterParticipant;
 type MessageShortcut = { text: string; replyTarget: MessageReplyTarget };
@@ -451,6 +452,7 @@ const NO_SELECTED_MENTIONS: ReadonlyMap<string, string> = new Map();
  * or the member picker opens.
  */
 const workspaceRosterThisSession = new Map<string, WorkspaceView>();
+subscribeClientReset(() => workspaceRosterThisSession.clear());
 
 /**
  * The reserved `@channel` autocomplete row: tags every human in the Room (the

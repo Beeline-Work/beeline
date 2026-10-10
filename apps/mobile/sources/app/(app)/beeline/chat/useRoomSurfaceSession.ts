@@ -1087,7 +1087,7 @@ export function useRoomSurfaceSession({
         setTransport(nextTransport);
         setRoomClient(nextRoomClient);
 
-        const outbox = createRoomOutbox(identity, channelId);
+        const outbox = createRoomOutbox(relayUrl, identity, channelId);
         outboxRef.current = outbox;
         await outbox.restore();
         if (cancelled) return;

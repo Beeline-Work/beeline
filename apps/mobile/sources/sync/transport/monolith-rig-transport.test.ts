@@ -65,8 +65,10 @@ import { resetSharedLiveConnection } from './live-connection';
 import { BuzzRigTransport } from './buzz-rig-transport';
 import { MonolithPhoneOperationError } from './monolith-operation';
 import { clearMobileSurfaceStorage, createRoomOutbox } from '@/buzz/surface-storage';
+import { resetClientState } from '@/sync/client-reset';
 
 const ROOM = 'bb91a1c7-7cad-4fde-aafc-94fccb651ac8';
+const RELAY = 'https://server.example';
 const identity = { publicKey: 'monolith-viewer', secretKey: new Uint8Array() };
 
 function optimisticRow(event: NostrEvent, text: string): RoomViewMessage {
@@ -83,7 +85,7 @@ async function driveHandleSendPath(
   transport: Pick<MonolithRigTransport, 'publishPreparedMessage'>,
   compose: () => Promise<NostrEvent>,
 ): Promise<NostrEvent> {
-  const outbox = createRoomOutbox(identity, ROOM);
+  const outbox = createRoomOutbox(RELAY, identity, ROOM);
   const preparedEvent = await compose();
   await outbox.enqueue(preparedEvent, optimisticRow(preparedEvent, preparedEvent.content));
   await outbox.attempted(preparedEvent.id);
@@ -182,7 +184,7 @@ describe('monolith Room send path', () => {
 
     stop();
     expect(sockets[1]!.closed).toBe(false);
-    for (const listener of controls.identityListeners) listener();
+    resetClientState();
     expect(sockets[1]!.closed).toBe(true);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(sockets).toHaveLength(2);
@@ -472,7 +474,7 @@ describe('monolith Room send path', () => {
   });
 
   it('still rejects an unsigned legacy Room event', async () => {
-    const outbox = createRoomOutbox(identity, ROOM);
+    const outbox = createRoomOutbox(RELAY, identity, ROOM);
     const event: NostrEvent = {
       id: '08'.repeat(32),
       pubkey: identity.publicKey,

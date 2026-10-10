@@ -6,6 +6,7 @@ const wire = vi.hoisted(() => ({ listener: undefined as any, stop: vi.fn(), regi
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: wire.register.mockImplementation(async (_: unknown, listener: unknown) => { wire.listener = listener; return wire.stop; }) }) }));
 vi.mock('@/buzz/workbench-source', () => ({ getWorkbenchSource: vi.fn() }));
 import { useObservedResource, observeRoomResource } from './use-observed-resource';
+import { resetClientState } from '@/sync/client-reset';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: any[] = [];
 afterEach(async () => { await act(async () => mounted.splice(0).forEach(tree => tree.unmount())); vi.useRealTimers(); vi.clearAllMocks(); });
@@ -157,4 +158,22 @@ it('reads again for a workflow line or a change no delta describes, never for pr
   expect(load).toHaveBeenCalledTimes(3);
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'corner-status' } }));
   expect(load).toHaveBeenCalledTimes(4);
+});
+
+it('an account switch drops the old data and the old read, then shows the new account', async () => {
+  const releases: Array<(value: string) => void> = [];
+  const load = vi.fn(() => new Promise<string>(resolve => releases.push(resolve)));
+  let current: any;
+  function Reader() { current = useObservedResource('account', { load }); return <span>{current.data}</span>; }
+  await act(async () => { mount(<Reader />); });
+  await act(async () => releases.shift()!('first account'));
+  expect(current.data).toBe('first account');
+  await act(async () => { void current.retry(); });
+  await act(async () => resetClientState());
+  expect(current.data).toBeUndefined();
+  expect(current.loading).toBe(true);
+  await act(async () => releases.shift()!('first account, late'));
+  expect(current.data).toBeUndefined();
+  await act(async () => releases.shift()!('second account'));
+  expect(current.data).toBe('second account');
 });

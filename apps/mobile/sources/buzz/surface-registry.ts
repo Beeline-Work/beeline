@@ -106,8 +106,13 @@ export class SurfaceRegistry {
     const existing = this.fetches.get(key);
     if (existing) return existing as Promise<T>;
     const epoch = this.epoch;
+    const revision = this.revisions.get(key) ?? 0;
     const pending = request().then(async (value) => {
-      if (this.epoch === epoch) await this.write(address, value, guard);
+      // A live publish or removal after the request started is newer than this response.
+      if (this.epoch !== epoch || (this.revisions.get(key) ?? 0) !== revision) {
+        return this.peek(address, guard) ?? value;
+      }
+      await this.write(address, value, guard);
       return value;
     });
     this.fetches.set(key, pending);

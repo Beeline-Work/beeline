@@ -52,6 +52,8 @@ export interface SystemLineInput {
    * kind is one nothing subscribes to.
    */
   readonly kind?: SystemEventKind;
+  /** The schedule a `schedule-ran` line fired, so its run may inherit its sessions. */
+  readonly scheduleId?: string;
   readonly payload?: unknown;
   readonly object?: string | SystemObject;
   readonly consequence?: string;
@@ -190,7 +192,7 @@ export interface SystemLineResult {
 
 export type SystemPhrase = Pick<
   SystemLineInput,
-  'subject' | 'verb' | 'object' | 'consequence' | 'attribution' | 'kind' | 'payload'
+  'subject' | 'verb' | 'object' | 'consequence' | 'attribution' | 'kind' | 'scheduleId' | 'payload'
 >;
 
 const CLEAN = /[\s ]+/g;
@@ -219,6 +221,7 @@ export function composeSystemLine(phrase: SystemPhrase): { text: string; event: 
     ...(object && object.text ? { object } : {}),
     ...(consequence ? { consequence } : {}),
     ...(phrase.kind ? { kind: phrase.kind } : {}),
+    ...(phrase.scheduleId ? { scheduleId: phrase.scheduleId } : {}),
     ...(phrase.kind?.startsWith('webhook:') ? { payload: phrase.payload } : {}),
   };
   // The kind never reaches the text: `formatSystemLine` reads subject, verb,

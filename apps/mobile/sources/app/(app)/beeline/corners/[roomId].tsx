@@ -343,7 +343,6 @@ export default function BuzzCorners() {
           archived={archived}
           onShowArchived={() => void loadArchived()}
           onMoreArchived={() => void loadMoreArchived()}
-          viewerPubkey={surface.viewer.identity.pubkey}
           desktop={desktop}
           liveRuns={(cornerId) => liveRoomRuns(cornerId, workflows)}
           onOpenWorkflow={(run) => router.push(workflowRunHref(run))}

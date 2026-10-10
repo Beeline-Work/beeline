@@ -42,6 +42,25 @@ describe('chat corner counts', () => {
       undefined,
     ]);
   });
+  it('marks a corner the viewer commissioned as Mine', () => {
+    const result = chatCornerCounts([{ ...row(), commissioned_viewer: true }, row()]);
+    expect(result.get('room')?.openCorners.map((corner) => corner.mine)).toEqual([true, undefined]);
+    expect(result.get('room')?.mineCornerCount).toBe(1);
+  });
+  it('lists every Mine corner, fills to eight with the newest others, and counts exactly', () => {
+    const corners = (prefix: string, length: number, mine: boolean) =>
+      Array.from({ length }, (_, index) => ({ ...row(), id: `${prefix}-${index}`, follows_viewer: mine }));
+    const few = chatCornerCounts([...corners('other', 10, false), ...corners('mine', 3, true)]).get('room');
+    expect(few?.openCorners.map((corner) => corner.id)).toEqual([
+      'other-0', 'other-1', 'other-2', 'other-3', 'other-4', 'mine-0', 'mine-1', 'mine-2',
+    ]);
+    expect(few).toMatchObject({ cornerCount: 13, mineCornerCount: 3 });
+    const many = chatCornerCounts([...corners('other', 2, false), ...corners('mine', 9, true)]).get('room');
+    expect(many?.openCorners.map((corner) => corner.id)).toEqual(
+      Array.from({ length: 9 }, (_, index) => `mine-${index}`),
+    );
+    expect(many).toMatchObject({ cornerCount: 11, mineCornerCount: 9 });
+  });
   it('reads idle with nothing owed and flags only unseen asks for the viewer', () => {
     const result = chatCornerCounts([
       { ...row(), follows_viewer: true, owed: false, owed_viewer: false, attention: false },
@@ -87,6 +106,7 @@ describe('chat corner counts', () => {
           {
             cornerCount: 1,
             waitingCornerCount: 1,
+            mineCornerCount: 0,
             openCorners: [{ id: 'corner', name: 'Corner', state: 'waiting' }],
           },
         ],

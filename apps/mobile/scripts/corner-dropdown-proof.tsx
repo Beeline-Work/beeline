@@ -330,6 +330,7 @@ async function pulse() {
     state: 'waiting',
     stateAt: 1_790_000_900,
     initiator: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Me' },
+    mine: true,
   };
   const render = (withPage: boolean) =>
     root.render(
@@ -339,7 +340,6 @@ async function pulse() {
           <RoomCornersList
             parentRoomId={alpha}
             parentRoomName="alpha"
-            viewerPubkey={'a'.repeat(64)}
             corners={[pageItem as never]}
           />
         )}

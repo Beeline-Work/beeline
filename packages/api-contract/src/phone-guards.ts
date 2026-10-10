@@ -1279,6 +1279,10 @@ function readChat(value: unknown): ChatListItem | null {
         ? item.waitingCornerCount
         : undefined,
     ),
+    ...field(
+      'mineCornerCount',
+      integer(item.mineCornerCount) && item.mineCornerCount >= 0 ? item.mineCornerCount : undefined,
+    ),
     ...field('openCorners', readList(item.openCorners, readChatCorner)),
     ...field(
       'agentsOffline',
@@ -1397,6 +1401,7 @@ function readCorner(value: unknown): CornerListItem | null {
     ...field('initiator', initiator && initiator.kind === 'human' ? initiator : undefined),
     ...field('awaitsViewer', item.awaitsViewer === true ? (true as const) : undefined),
     ...field('followsViewer', item.followsViewer === true ? (true as const) : undefined),
+    ...field('mine', item.mine === true ? (true as const) : undefined),
     ...field('agent', readIdentityOnly(item.agent)),
     ...field('app', readCornerAppBinding(item.app)),
     ...field(

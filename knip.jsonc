@@ -64,6 +64,7 @@
         "scripts/pr-accordion-proof.tsx",
         "scripts/ci-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",
+        "scripts/needs-you-badge-proof.tsx",
         "scripts/desktop-rail-mine-proof.tsx",
         "scripts/desktop-ui-fixes-proof.tsx",
         "scripts/room-card-spacing-proof.tsx",

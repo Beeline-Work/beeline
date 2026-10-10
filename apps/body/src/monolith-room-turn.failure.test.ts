@@ -146,6 +146,7 @@ async function runTurn(options: {
     return respond(name, input);
   });
   const acp = new AcpClient({ agentBinary: options.agentCommand, agentEnv: {} });
+  vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
   vi.spyOn(acp, 'start').mockResolvedValue(undefined);
   const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({
     sessionId: 'room-session',

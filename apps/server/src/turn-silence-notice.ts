@@ -161,15 +161,19 @@ export async function noteFirstSilence(
     agentId: input.agentId,
   });
 
+  // A steer is an agent-authored relay card, but it is the destination
+  // corner's request all the same: its failure gets the line and the retry.
   const trigger = (
     await database.query<{ agent_name: string; login_handle: string | null; harness: string | null }>(
       `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
               agent.handle login_handle,
               (SELECT harness FROM agents WHERE agent_id=$3) harness
        FROM messages message
-       JOIN identities requester ON requester.id=message.author_id AND requester.kind='human'
+       JOIN identities requester ON requester.id=message.author_id
        JOIN identities agent ON agent.id=$3
-       WHERE message.id=$2 AND message.presentation IN ('message','system')
+       WHERE message.id=$2
+         AND ((requester.kind='human' AND message.presentation IN ('message','system'))
+           OR (message.room_id=$1 AND message.presentation='card' AND message.card_type='relay'))
          AND (message.room_id=$1 OR message.room_id=(SELECT parent_id FROM rooms WHERE id=$1))`,
       [input.roomId, input.requestId, input.agentId],
     )

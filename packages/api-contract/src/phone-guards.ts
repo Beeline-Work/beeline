@@ -1266,7 +1266,7 @@ function readChat(value: unknown): ChatListItem | null {
       : undefined;
   return {
     room,
-    unread: item.unread === true,
+    ...field('unread', typeof item.unread === 'boolean' ? item.unread : undefined),
     ...field(
       'leaveDeletesRoom',
       typeof item.leaveDeletesRoom === 'boolean' ? item.leaveDeletesRoom : undefined,

@@ -3,7 +3,7 @@ import * as React from 'react';
 import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
 import { FlatList, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { CornerListItem, RoomView } from '@beeline/buzz-client';
+import type { CornerListItem, RoomView, RoomViewMessage } from '@beeline/buzz-client';
 import type { RoomViewClient } from '@/sync/transport/room-view-client';
 import {
   clampDesktopPaneWidth,
@@ -25,6 +25,7 @@ import {
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
+import { useRoomMessageRecords } from '@/buzz/room-message-records';
 import { buildChannelReferenceIndex, type ChannelReferenceIndex, type ChannelReferenceTarget } from '@/buzz/channel-reference';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -69,6 +70,7 @@ type Props = {
 
 const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
 const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
+const noRows: readonly RoomViewMessage[] = [];
 
 function stateLine(corner: CornerListItem): string {
   return corner.state;
@@ -300,7 +302,7 @@ function CornerCockpit({
   const [stopping, setStopping] = React.useState(false);
   const [now, setNow] = React.useState(Date.now);
   const {
-    rows: historyRows,
+    rows: serverHistoryRows,
     status: historyStatus,
     loadOlder,
   } = useRoomMessageStore({
@@ -349,6 +351,13 @@ function CornerCockpit({
       return false;
     }
   };
+  // The same message records the main transcript reads, so both show one
+  // version of each message. This pane keeps its own rows and scroll.
+  const [historyRows, tailRows, toolRows] = useRoomMessageRecords(detail?.room.id, [
+    serverHistoryRows,
+    detail?.messages ?? noRows,
+    detail?.toolRows ?? noRows,
+  ]);
   const projector = React.useMemo(() => createRoomMessageProjector(), [detail?.room.id]);
   const messages = React.useMemo(
     () =>
@@ -356,14 +365,14 @@ function CornerCockpit({
         ? foldPrLifecycleRuns(anchorRelayReports(
             projector.project(
               roomViewTranscriptMessages({
-                messages: [...historyRows, ...detail.messages],
-                toolRows: detail.toolRows,
+                messages: [...historyRows, ...tailRows],
+                toolRows,
               }),
               detail.viewer.identity.pubkey,
             ),
           ))
         : [],
-    [detail, historyRows, projector],
+    [detail, historyRows, projector, tailRows, toolRows],
   );
   React.useEffect(() => {
     focusedAnchorRef.current = null;

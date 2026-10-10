@@ -23,6 +23,7 @@ import { roomListSections } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { refreshChatList, useChatList } from '@/buzz/chat-list-store';
 import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
@@ -41,7 +42,6 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
 import { isTauri } from '@/utils/isTauri';
 import {
-  type ChatListView,
   type RoomViewIdentity,
   type WorkspaceListView,
   isChatListView,
@@ -188,7 +188,6 @@ export const SidebarView = React.memo(function SidebarView() {
   const [viewerIdentity, setViewerIdentity] = React.useState<RoomViewIdentity | null>(null);
   const [workspaces, setWorkspaces] = React.useState<WorkspaceListView['workspaces']>([]);
   const [workspaceId, setWorkspaceId] = React.useState<string | null>(null);
-  const [surface, setSurface] = React.useState<ChatListView | null>(null);
   const [query, setQuery] = useTextDraft(`sidebar-room-search:${workspaceId}`, '', identityPubkey);
   const [desktopSearchOpen, setDesktopSearchOpen] = React.useState(false);
   const [navigationError, setNavigationError] = React.useState<string | null>(null);
@@ -263,7 +262,6 @@ export const SidebarView = React.memo(function SidebarView() {
         const nextId = list.workspaces[0]?.id ?? null;
         workspaceIdRef.current = nextId;
         setWorkspaceId(nextId);
-        setSurface(null);
         void saveActiveCommunityId(identityPubkey, nextId);
         router.replace(nextId
           ? { pathname: '/beeline/channels', params: { communityId: nextId } }
@@ -278,30 +276,27 @@ export const SidebarView = React.memo(function SidebarView() {
     };
   }, [client, identityPubkey, relayUrl, refreshNonce]);
 
+  // The app-level Room list owns its live watch, so the Sidebar stays current
+  // whether or not the deck is mounted.
+  const chatListKey = React.useMemo(
+    () => (relayUrl && identityPubkey && workspaceId
+      ? { relayUrl, viewerPubkey: identityPubkey, workspaceId }
+      : null),
+    [identityPubkey, relayUrl, workspaceId],
+  );
+  const chatListSource = React.useMemo(
+    () => (client && workspaceId ? { chats: () => client.chats(workspaceId) } : null),
+    [client, workspaceId],
+  );
+  const surface = useChatList(chatListKey, chatListSource, {
+    onError: () => setNavigationError(`Could not load ${ROOMS_LABEL.toLowerCase()}.`),
+  });
+  // An identity-wide change (a Room joined or left) reads the list again; the
+  // mounted deck already reads for its own Workspace watch.
   React.useEffect(() => {
-    if (!client || !workspaceId || !relayUrl || !identityPubkey) return;
-    let cancelled = false;
-    const address = surfaceAddress(relayUrl, identityPubkey, '/workspace/:id/chats', { workspaceId });
-    const paint = (initial = false) => {
-      const cached = mobileSurfaceCache.peek(address, isChatListView);
-      if (!cancelled) setSurface((current) => cached ?? (initial && current?.workspace.id === workspaceId ? current : null));
-    };
-    paint(true);
-    const stop = mobileSurfaceCache.subscribe(address, () => paint());
-    setNavigationError(null);
-    if (!pathname.startsWith('/beeline/channels')) void (async () => {
-      await mobileSurfaceCache.read(address, isChatListView);
-      if (cancelled) return;
-      await mobileSurfaceCache.fetch(address, isChatListView, () => client.chats(workspaceId));
-    })()
-      .catch(() => {
-        if (!cancelled) setNavigationError(`Could not load ${ROOMS_LABEL.toLowerCase()}.`);
-      });
-    return () => {
-      cancelled = true;
-      stop();
-    };
-  }, [client, workspaceId, relayUrl, identityPubkey, refreshNonce]);
+    if (refreshNonce === 0 || !chatListKey || pathname.startsWith('/beeline/channels')) return;
+    refreshChatList(chatListKey);
+  }, [refreshNonce]);
 
   React.useEffect(() => {
     if (!identityPubkey) return;
@@ -309,7 +304,6 @@ export const SidebarView = React.memo(function SidebarView() {
       if (!nextWorkspaceId) {
         workspaceIdRef.current = null;
         setWorkspaceId(null);
-        setSurface(null);
         setRefreshNonce((nonce) => nonce + 1);
         return;
       }
@@ -325,10 +319,6 @@ export const SidebarView = React.memo(function SidebarView() {
       if (workspaceIdRef.current === nextWorkspaceId) return;
       workspaceIdRef.current = nextWorkspaceId;
       setWorkspaceId(nextWorkspaceId);
-      setSurface(relayUrl ? mobileSurfaceCache.peek(
-        surfaceAddress(relayUrl, identityPubkey, '/workspace/:id/chats', { workspaceId: nextWorkspaceId }),
-        isChatListView,
-      ) : null);
       });
   }, [identityPubkey, workspaces, relayUrl]);
 
@@ -342,10 +332,6 @@ export const SidebarView = React.memo(function SidebarView() {
     }
     workspaceIdRef.current = routeWorkspaceId;
     setWorkspaceId(routeWorkspaceId);
-    setSurface(relayUrl && identityPubkey ? mobileSurfaceCache.peek(
-      surfaceAddress(relayUrl, identityPubkey, '/workspace/:id/chats', { workspaceId: routeWorkspaceId }),
-      isChatListView,
-    ) : null);
     if (identityPubkey) void saveActiveCommunityId(identityPubkey, routeWorkspaceId);
   }, [identityPubkey, routeWorkspaceId, workspaces, relayUrl]);
 
@@ -476,7 +462,6 @@ export const SidebarView = React.memo(function SidebarView() {
         surfaceAddress(relayUrl, identityPubkey, '/workspace/:id/chats', { workspaceId: nextId }),
         isChatListView,
       ) : null;
-      setSurface(cached);
       if (identityPubkey) void saveActiveCommunityId(identityPubkey, nextId);
       router.push(desktopWorkspaceRoute(nextId, cached?.chats.map((chat) => chat.room.id) ?? [], null) as Href);
     },

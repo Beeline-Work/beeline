@@ -1,4 +1,8 @@
-import { chatActivityAt, type ChatListCorner } from '@beeline/api-contract/phone';
+import {
+  chatActivityAt,
+  type ChatListCorner,
+  type ChatListUnavailable,
+} from '@beeline/api-contract/phone';
 import type {
   ChatListItem,
   ChatListView,
@@ -25,7 +29,17 @@ const PREVIEW_PRESENTATIONS: ReadonlySet<RoomViewMessage['presentation']> = new 
   'card',
 ]);
 
-function applyMessage(view: ChatListView, index: number, message: RoomViewMessage): ChatListView {
+export type ChatListDeltaContext = {
+  /** Whether the reader has this Room on screen, so its read mark follows at once. */
+  readonly viewing?: (roomId: string) => boolean;
+};
+
+function applyMessage(
+  view: ChatListView,
+  index: number,
+  message: RoomViewMessage,
+  context: ChatListDeltaContext,
+): ChatListView {
   const item = view.chats[index]!;
   const latest = item.latestMessage;
   if (message.deleted || !PREVIEW_PRESENTATIONS.has(message.presentation)) return view;
@@ -46,11 +60,16 @@ function applyMessage(view: ChatListView, index: number, message: RoomViewMessag
   }
   const incoming = message.author.pubkey !== view.viewer.pubkey;
   const { closed: _closed, ...open } = item;
-  // Newer incoming activity reopens a closed chat and lights unread; the
-  // viewer's own message is written from inside the Room it has read.
+  // Unread is the server's read cursor. Newer incoming activity reopens a
+  // closed chat and lights unread unless the Room is on screen, where the read
+  // mark follows at once. The viewer's own message, possibly sent from another
+  // device, proves nothing about older messages past the cursor: it keeps the
+  // held value, and the read-mark frame's read decides.
   const next: ChatListItem = incoming
-    ? { ...open, latestMessage: preview, unread: true }
-    : { ...item, latestMessage: preview, unread: false };
+    ? context.viewing?.(item.room.id)
+      ? { ...open, latestMessage: preview }
+      : { ...open, latestMessage: preview, unread: true }
+    : { ...item, latestMessage: preview };
   const rest = view.chats.filter((_, position) => position !== index);
   const at = rest.findIndex((candidate) => chatActivityAt(candidate) <= chatActivityAt(next));
   rest.splice(at < 0 ? rest.length : at, 0, next);
@@ -62,7 +81,11 @@ function applyMessage(view: ChatListView, index: number, message: RoomViewMessag
  * a terminal one cannot clear it here, because the row's state also rolls up
  * every corner's turns — see `chatListDeltaNeedsRead`.
  */
-export function applyChatListDelta(view: ChatListView, delta: ChatListDelta): ChatListView {
+export function applyChatListDelta(
+  view: ChatListView,
+  delta: ChatListDelta,
+  context: ChatListDeltaContext = {},
+): ChatListView {
   const index = view.chats.findIndex((item) => item.room.id === delta.roomId);
   if (index < 0) return view;
   const item = view.chats[index]!;
@@ -76,7 +99,7 @@ export function applyChatListDelta(view: ChatListView, delta: ChatListDelta): Ch
       chats.splice(at < 0 ? chats.length : at, 0, next);
       return { ...view, chats };
     }
-    return applyMessage(view, index, delta.message);
+    return applyMessage(view, index, delta.message, context);
   }
   if (delta.type === 'corner-status') {
     const { agentState: _oldState, attentionReason: _oldReason, mineCornerCount: _oldMine,
@@ -150,40 +173,54 @@ export function roomsMissedByLive(
 /**
  * A read whose unread or corner lookup timed out on the server says nothing
  * about those facts. Carry each row's last known values instead of painting
- * every dot and corner count away until the next read.
+ * every dot and corner count away until the next read. A row whose unread is
+ * unknown and has no last known value keeps `unread` absent, so neither
+ * memory nor disk holds it as known and a later incomplete read still sees
+ * it as unknown. The result lists each fact that some row still lacks.
  */
 export function keepUnavailableChatFacts(
   held: ChatListView | null,
   read: ChatListView,
 ): ChatListView {
   const { unavailable, ...view } = read;
-  if (!unavailable?.length) return read;
+  if (!unavailable?.length && read.chats.every((item) => typeof item.unread === 'boolean')) return read;
+  const keepUnread = unavailable?.includes('unread') ?? false;
+  const keepCorners = unavailable?.includes('corners') ?? false;
   const heldById = new Map(held?.chats.map((item) => [item.room.id, item]) ?? []);
-  const keepUnread = unavailable.includes('unread');
-  const keepCorners = unavailable.includes('corners');
-  return {
-    ...view,
-    chats: read.chats.map((item) => {
-      const before = heldById.get(item.room.id);
-      if (!before) return item;
-      return {
-        ...item,
-        ...(keepUnread ? { unread: before.unread } : {}),
-        ...(keepCorners
-          ? {
-              ...(before.cornerCount !== undefined ? { cornerCount: before.cornerCount } : {}),
-              ...(before.waitingCornerCount !== undefined
-                ? { waitingCornerCount: before.waitingCornerCount }
-                : {}),
-              ...(before.mineCornerCount !== undefined
-                ? { mineCornerCount: before.mineCornerCount }
-                : {}),
-              ...(before.openCorners ? { openCorners: before.openCorners } : {}),
-            }
-          : {}),
-      };
-    }),
-  };
+  // Rows a previous incomplete read left without corner facts stay unknown.
+  let cornersUnknown = keepCorners && (held?.unavailable?.includes('corners') ?? false);
+  const chats = read.chats.map((item) => {
+    const before = heldById.get(item.room.id);
+    const { unread, ...rest } = item;
+    const knownUnread =
+      !keepUnread && typeof unread === 'boolean'
+        ? unread
+        : typeof before?.unread === 'boolean'
+          ? before.unread
+          : undefined;
+    if (keepCorners && !before) cornersUnknown = true;
+    return {
+      ...rest,
+      ...(knownUnread !== undefined ? { unread: knownUnread } : {}),
+      ...(keepCorners && before
+        ? {
+            ...(before.cornerCount !== undefined ? { cornerCount: before.cornerCount } : {}),
+            ...(before.waitingCornerCount !== undefined
+              ? { waitingCornerCount: before.waitingCornerCount }
+              : {}),
+            ...(before.mineCornerCount !== undefined
+              ? { mineCornerCount: before.mineCornerCount }
+              : {}),
+            ...(before.openCorners ? { openCorners: before.openCorners } : {}),
+          }
+        : {}),
+    };
+  });
+  const unknown: ChatListUnavailable[] = [
+    ...(chats.some((item) => item.unread === undefined) ? ['unread' as const] : []),
+    ...(cornersUnknown ? ['corners' as const] : []),
+  ];
+  return { ...view, chats, ...(unknown.length ? { unavailable: unknown } : {}) };
 }
 
 /**

@@ -54,6 +54,8 @@ async function twoTurns(
       workspaceRoot: string;
     }) => Promise<void>;
     betweenTurns?: (paths: { operatorHome: string; agentHomeRoot: string }) => Promise<void>;
+    /** The harness process exits (a memory-limit kill) after the first turn. */
+    exitBetweenTurns?: boolean;
   },
 ): Promise<{
   activations: number;
@@ -106,6 +108,7 @@ async function twoTurns(
     ...(hooks?.thirdTurn ? [{ id: 'ask-3', body: 'third' }] : []),
   ];
   const receipts: Array<Record<string, unknown>> = [];
+  let alive = false;
   const settled = () => receipts.filter((receipt) => receipt.status !== 'working').length;
   let bootstrapped = false;
   let delivered = 0;
@@ -132,6 +135,7 @@ async function twoTurns(
         if (delivered === 1 && hooks?.betweenTurns) {
           await hooks.betweenTurns(paths);
         }
+        if (delivered === 1 && hooks?.exitBetweenTurns) alive = false;
         const ask = asks[delivered]!;
         delivered += 1;
         return {
@@ -166,8 +170,10 @@ async function twoTurns(
   const mountedInventories: string[][] = [];
   let activations = 0;
   const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
+  vi.spyOn(acp, 'isAlive', 'get').mockImplementation(() => alive);
   vi.spyOn(acp, 'start').mockImplementation(async () => {
     activations += 1;
+    alive = true;
   });
   vi.spyOn(acp, 'sessionNew').mockImplementation(async (input: { systemPrompt?: string }) => {
     mountedInventories.push(
@@ -194,12 +200,15 @@ async function twoTurns(
   vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
   vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
   vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
-  vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => ({
-    stopReason: 'end_turn',
-    updates: [],
-    agentText: 'Done.',
-    toolCalls: [],
-  }));
+  vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
+    if (!alive) throw new Error('AcpClient not started');
+    return {
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Done.',
+      toolCalls: [],
+    };
+  });
 
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const abort = new AbortController();
@@ -239,6 +248,18 @@ describe('retained Room session', () => {
 
     expect(activations).toBe(1);
     expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'warm']);
+  });
+
+  it('spawns a fresh harness when the retained process exited', async () => {
+    const { activations, traces } = await twoTurns([unchanged, unchanged], [], {
+      exitBetweenTurns: true,
+    });
+
+    // Handing back the dead process failed every later turn with
+    // `AcpClient not started` until the session idled out.
+    expect(traces.map((trace) => trace.outcome)).toEqual(['complete', 'complete']);
+    expect(activations).toBe(2);
+    expect(traces.map((trace) => trace.attempts[0]!.activation)).toEqual(['cold', 'cold']);
   });
 
   it('retains the fallback session after CodeGraph preparation fails', async () => {

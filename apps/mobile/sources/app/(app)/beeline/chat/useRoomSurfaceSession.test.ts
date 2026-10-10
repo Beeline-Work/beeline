@@ -2,7 +2,7 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NostrEvent, RoomView } from '@beeline/buzz-client';
+import type { ChatListView, NostrEvent, RoomView } from '@beeline/buzz-client';
 import { visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
@@ -43,6 +43,8 @@ const controls = vi.hoisted(() => ({
   roomResponse: null as RoomView | null,
   roomReads: 0,
   roomError: null as unknown,
+  liveList: null as ChatListView | null,
+  liveListKeys: [] as unknown[],
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -119,6 +121,13 @@ vi.mock('@/buzz/surface-storage', () => ({
     remove: vi.fn(async () => undefined),
     get: controls.outboxGet,
   })),
+}));
+
+vi.mock('@/buzz/chat-list-store', () => ({
+  liveChatList: (key: unknown) => {
+    controls.liveListKeys.push(key);
+    return controls.liveList;
+  },
 }));
 
 vi.mock('@/sync/transport', () => ({
@@ -238,6 +247,9 @@ import { RoomViewHttpError } from '@beeline/buzz-client';
 import { cornerDisplayFromRoomView } from '@/buzz/corner-display-state';
 import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
+import { useRoomMessageStore } from '@/buzz/room-message-store';
+import { roomMessageRecord, useRoomMessageRecords } from '@/buzz/room-message-records';
+import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
 import {
   LIVE_TRACE_STORAGE_KEY,
   useRoomSurfaceSession,
@@ -389,9 +401,55 @@ beforeEach(() => {
   controls.roomResponse = null;
   controls.roomReads = 0;
   controls.roomError = null;
+  controls.liveList = null;
+  controls.liveListKeys.length = 0;
   controls.outboxFail.mockClear();
   controls.outboxGet.mockClear();
   vi.clearAllMocks();
+});
+
+describe('reopening a dismissed Room', () => {
+  function chatList(closed: boolean): ChatListView {
+    return {
+      workspace: { id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 },
+      chats: [{ room: roomView('room-a').room, unread: false, ...(closed ? { closed: true } : {}) }],
+      viewer: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
+      truncated: false,
+      watchFilters: [{ '#h': ['room-a'] }],
+    };
+  }
+
+  async function openRoom(): Promise<void> {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }));
+    });
+    await flushEffects();
+    await act(async () => controls.schedulers[0]!.apply(roomView('room-a')));
+    await flushEffects();
+    await act(async () => renderer.unmount());
+  }
+
+  it('reopens a Room the live Room list shows dismissed', async () => {
+    controls.liveList = chatList(true);
+    await openRoom();
+    expect(controls.liveListKeys).toEqual([
+      { relayUrl: 'https://relay.test', viewerPubkey: 'viewer', workspaceId: 'workspace' },
+    ]);
+    expect(controls.reopenChat).toHaveBeenCalledWith('room-a');
+  });
+
+  it('lets the server decide when no live Room list is held', async () => {
+    controls.liveList = null;
+    await openRoom();
+    expect(controls.reopenChat).toHaveBeenCalledWith('room-a');
+  });
+
+  it('skips the reopen call for a Room the live list shows open', async () => {
+    controls.liveList = chatList(false);
+    await openRoom();
+    expect(controls.reopenChat).not.toHaveBeenCalled();
+  });
 });
 
 describe('useRoomSurfaceSession', () => {
@@ -2152,6 +2210,169 @@ describe('useRoomSurfaceSession', () => {
     expect(current.roomSurface).toBeNull();
     expect(current.hydrationFailed).toBe(true);
     expect(current.hydrationError).toContain('Could not load this conversation');
+    await act(async () => renderer.unmount());
+  });
+});
+
+describe('Room history follows live row changes', () => {
+  const row = (id: string, createdAt: number, text = `row ${id}`): RoomViewMessage => ({
+    id,
+    text,
+    createdAt,
+    author: { pubkey: 'person-a', kind: 'human', name: 'Ada' },
+    presentation: 'message',
+  });
+  // A full tail: the session's newest 30 rows.
+  const tail = Array.from({ length: 30 }, (_, index) => row(`tail-${index}`, 100 + index));
+  const old = row('old-row', 10, 'before');
+
+  type Surface = {
+    session: UseRoomSurfaceSessionResult;
+    history: ReturnType<typeof useRoomMessageStore>;
+    historyRows: readonly RoomViewMessage[];
+    tailRows: readonly RoomViewMessage[];
+  };
+
+  // The chat screen's wiring: history rows read through the Room's message records.
+  function HistoryHarness({ capture }: { capture(surface: Surface): void }) {
+    const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
+      resetTranscript: vi.fn(),
+      restoreOutboxMessages: vi.fn(),
+      dismissOptimisticMessage: vi.fn(),
+      observeRoomSurface: vi.fn(),
+    });
+    const session = useRoomSurfaceSession({ channelId: 'room-a', bindingsRef });
+    const history = useRoomMessageStore({
+      roomId: 'room-a',
+      tailMessages: session.roomSurface?.messages,
+      roomClient: {
+        history: async (): Promise<RoomHistoryView> => ({ roomId: 'room-a', messages: [old] }),
+      },
+      enabled: true,
+      initialVisibleCount: 30,
+    });
+    // The same groups the chat screen passes: the tail and the history rows.
+    const [tailRows, historyRows] = useRoomMessageRecords('room-a', [
+      session.roomSurface?.messages ?? [],
+      history.rows,
+    ]);
+    capture({ session, history, historyRows, tailRows });
+    return React.createElement('room-surface');
+  }
+
+  async function openWithHistory() {
+    controls.cached = { ...roomView('room-a'), messages: tail };
+    let current!: Surface;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        React.createElement(HistoryHarness, { capture: (surface: Surface) => (current = surface) }),
+      );
+    });
+    await flushEffects();
+    await act(async () => current.history.loadOlder(30));
+    await flushEffects();
+    expect(current.historyRows.find((message) => message.id === 'old-row')?.text).toBe('before');
+    return { current: () => current, renderer };
+  }
+
+  it('shows an edit to a row older than the newest 30', async () => {
+    const { current, renderer } = await openWithHistory();
+    await act(async () =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'message-delta',
+          roomId: 'room-a',
+          message: { ...old, text: 'after' },
+        },
+      }),
+    );
+    expect(current().historyRows.find((message) => message.id === 'old-row')?.text).toBe('after');
+    expect(current().session.roomSurface?.messages.map((message) => message.id)).toEqual(
+      tail.map((message) => message.id),
+    );
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps a delete on an older row once the server answers', async () => {
+    const { current, renderer } = await openWithHistory();
+    await act(async () =>
+      current().session.applyRoomMessageResult({ ...old, text: '', deleted: true }),
+    );
+    expect(current().historyRows.find((message) => message.id === 'old-row')?.deleted).toBe(true);
+    await act(async () => renderer.unmount());
+  });
+
+  // A later unrelated delta re-renders every window with its old row objects.
+  async function emitUnrelatedDelta(id: string) {
+    await act(async () =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'message-delta', roomId: 'room-a', message: row(id, 300) },
+      }),
+    );
+  }
+  const byId = (rows: readonly RoomViewMessage[], id: string) =>
+    rows.find((message) => message.id === id);
+
+  it('keeps a live edit on a tail row after the windows re-render', async () => {
+    const { current, renderer } = await openWithHistory();
+    await act(async () =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: {
+          type: 'message-delta',
+          roomId: 'room-a',
+          message: { ...tail[29]!, text: 'edited' },
+        },
+      }),
+    );
+    await emitUnrelatedDelta('later-1');
+    await emitUnrelatedDelta('later-2');
+    expect(byId(current().tailRows, 'tail-29')?.text).toBe('edited');
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps a delete on an older row after the windows re-render', async () => {
+    const { current, renderer } = await openWithHistory();
+    await act(async () =>
+      current().session.applyRoomMessageResult({ ...old, text: '', deleted: true }),
+    );
+    await emitUnrelatedDelta('later-1');
+    await emitUnrelatedDelta('later-2');
+    expect(byId(current().historyRows, 'old-row')?.deleted).toBe(true);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps the server bookmark on an older row after the windows re-render', async () => {
+    const { current, renderer } = await openWithHistory();
+    // The chat screen's bookmark settlement: the server value onto the record.
+    await act(async () =>
+      current().session.applyRoomMessageResult({
+        ...roomMessageRecord('room-a', 'old-row')!,
+        bookmarked: true,
+      }),
+    );
+    await emitUnrelatedDelta('later-1');
+    await emitUnrelatedDelta('later-2');
+    expect(byId(current().historyRows, 'old-row')?.bookmarked).toBe(true);
+    await act(async () => renderer.unmount());
+  });
+
+  it('writes a live delta to the Room disk cache', async () => {
+    const { mobileSurfaceCache } = await import('@/buzz/surface-storage');
+    vi.useFakeTimers();
+    const { renderer } = await openWithHistory();
+    vi.mocked(mobileSurfaceCache.write).mockClear();
+    const fresh = row('fresh-row', 200, 'new');
+    await act(async () =>
+      controls.subscriptions[0]!.emit({
+        monolithLive: { type: 'message-delta', roomId: 'room-a', message: fresh },
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    const written = vi.mocked(mobileSurfaceCache.write).mock.calls.at(-1)?.[1] as RoomView;
+    expect(written.messages.at(-1)?.id).toBe('fresh-row');
     await act(async () => renderer.unmount());
   });
 });

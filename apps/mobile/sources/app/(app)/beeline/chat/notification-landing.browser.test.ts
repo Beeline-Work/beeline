@@ -215,7 +215,7 @@ function shims(mobile: string): Record<string, string> {
       get: () => undefined, add: async () => undefined });`,
     '@/buzz/community-storage': `export const saveActiveCommunityId = async () => undefined; export const saveLastViewedChannel = async () => undefined;`,
     '@/sync/transport': `export class BuzzRigTransport {
-      async ensureClient() { return { surfaceSubscribe: async (_filters, emit) => { setTimeout(() => emit({ monolithLive: { type: 'subscribed', roomId: '${ROOM}' } }), 0); return () => undefined; } }; }
+      async ensureClient() { return { surfaceSubscribe: async (_filters, emit) => { globalThis.__emit = emit; setTimeout(() => emit({ monolithLive: { type: 'subscribed', roomId: '${ROOM}' } }), 0); return () => undefined; } }; }
       async publishPreparedMessage() {}
       reconnectLive() {}
       async reopenChat() {}
@@ -307,6 +307,7 @@ async function proof(
     | 'landed-then-missing'
     | 'warm'
     | 'warm-retap'
+    | 'warm-edit'
     | 'cold'
     | 'first',
   extra = '',
@@ -510,6 +511,23 @@ describe.skipIf(!existsSync(CHROME))(
         120_000,
       );
     });
+
+    // Reproduction G5-1: another client edits a message 40 back, which only
+    // loaded history holds. The live delta must change that row on screen.
+    it('shows a live edit to a landed message older than the newest 30', async () => {
+      const page = (await proof(
+        'warm-edit',
+        `&warm=1&deep=1&target=${DEEP_TARGET}&targetText=TARGET%20MESSAGE` +
+          `&targetAt=${BASE + 30 * 60}&author=${encodeURIComponent(JSON.stringify(ANN))}`,
+      )) as Proof & { edit: { before: boolean; after: boolean; stale: boolean } };
+      console.log(
+        `live edit 40 back: landed row "TARGET MESSAGE" rendered=${page.edit.before}; after the delta ` +
+          `"TARGET MESSAGE (edited)" rendered=${page.edit.after}, old text still rendered=${page.edit.stale}`,
+      );
+      expect(page.edit.before).toBe(true);
+      expect(page.edit.after).toBe(true);
+      expect(page.edit.stale).toBe(false);
+    }, 120_000);
 
     it('lands again on a second tap with a new response id for the same target', async () => {
       const page = (await proof('warm-retap', `&warm=1&target=${TARGET}`)) as Proof & {

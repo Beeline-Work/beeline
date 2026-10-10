@@ -46,22 +46,25 @@ type Measure = {
 function PhoneTranscript({
   tail,
   history,
+  connected = true,
   measureRef,
 }: {
   tail: readonly RoomViewMessage[];
   history: (roomId: string, before?: { createdAt: number; id: string }) => Promise<RoomHistoryView>;
+  connected?: boolean;
   measureRef: { current: Measure | null };
 }) {
+  const roomClient = React.useMemo(() => (connected ? { history } : null), [connected, history]);
   const page = useRoomMessageStore({
     roomId: 'room',
     tailMessages: tail,
-    roomClient: { history },
+    roomClient,
     enabled: true,
     initialVisibleCount: 30,
   });
   const rows = [...page.rows, ...tail].slice(-page.visibleMessageCount);
   measureRef.current = usePhoneUnderfillHistory({
-    enabled: rows.length > 0,
+    enabled: rows.length > 0 && Boolean(roomClient),
     status: page.fillStatus,
     historyRevision: page.visibleMessageCount,
     threshold: THRESHOLD,
@@ -70,21 +73,25 @@ function PhoneTranscript({
   return React.createElement('Transcript', { status: page.status, rows: rows.length });
 }
 
-function mount(history: ReturnType<typeof vi.fn>) {
+// A heavy PR day: the resident tail folds to one message and one lifecycle
+// card, far shorter than the screen.
+const TAIL = [message('a', 1), message('b', 2)];
+
+function mount(history: ReturnType<typeof vi.fn>, connected = true) {
   const measureRef: { current: Measure | null } = { current: null };
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(
-      React.createElement(PhoneTranscript, {
-        // A heavy PR day: the resident tail folds to one message and one
-        // lifecycle card, far shorter than the screen.
-        tail: [message('a', 1), message('b', 2)],
-        history,
-        measureRef,
-      }),
+      React.createElement(PhoneTranscript, { tail: TAIL, history, connected, measureRef }),
     );
   });
-  return { renderer, measure: () => measureRef.current! };
+  const connect = () =>
+    act(() => {
+      renderer.update(
+        React.createElement(PhoneTranscript, { tail: TAIL, history, connected: true, measureRef }),
+      );
+    });
+  return { renderer, measure: () => measureRef.current!, connect };
 }
 
 describe('phoneTranscriptUnderfilled', () => {
@@ -129,6 +136,24 @@ describe('phone transcript shorter than the screen', () => {
       } as unknown as RoomHistoryView);
     });
     act(() => measure().observeContentHeight(1400));
+    expect(history).toHaveBeenCalledTimes(1);
+    renderer.unmount();
+  });
+
+  it('waits for the Room connection, then requests exactly one page', () => {
+    const history = vi.fn(() => new Promise<RoomHistoryView>(() => {}));
+    // The saved copy shows and measures short before the connection exists.
+    const { renderer, measure, connect } = mount(history, false);
+    act(() => {
+      measure().observeListHeight(LIST_HEIGHT);
+      measure().observeContentHeight(240);
+    });
+    expect(history).not.toHaveBeenCalled();
+
+    // The connection arrives with no new height report: the check runs once.
+    connect();
+    expect(history).toHaveBeenCalledTimes(1);
+    act(() => measure().observeContentHeight(240));
     expect(history).toHaveBeenCalledTimes(1);
     renderer.unmount();
   });
@@ -231,6 +256,7 @@ describe('phone transcript shorter than the screen', () => {
       'utf8',
     );
     expect(surface).toContain('usePhoneUnderfillHistory({');
+    expect(surface).toMatch(/usePhoneUnderfillHistory\(\{\s*enabled:[^}]*Boolean\(roomClient\)/);
     expect(surface).toContain('phoneUnderfill.observeListHeight(event.nativeEvent.layout.height)');
     expect(surface).toContain('phoneUnderfill.observeContentHeight(height)');
   });

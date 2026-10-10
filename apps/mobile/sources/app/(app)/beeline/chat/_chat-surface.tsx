@@ -2647,8 +2647,14 @@ export function BuzzChatSurface({
     const offset = Math.max(0, height - heldLandingFromOldestRef.current);
     if (Math.abs(offset - phoneScrollOffsetRef.current) > 1) scrollController.holdLanding(offset);
   };
+  // The fill waits for the Room connection: the store drops a page request
+  // made without one, and nothing else would re-check a short saved copy.
   const phoneUnderfill = usePhoneUnderfillHistory({
-    enabled: !desktopTranscript && transcriptMessages.length > 0,
+    enabled:
+      !desktopTranscript &&
+      transcriptMessages.length > 0 &&
+      Boolean(roomClient) &&
+      Boolean(cacheViewerPubkey),
     status: transcriptFillStatus,
     historyRevision: visibleMessageCount,
     threshold: TAIL_PIN_THRESHOLD,

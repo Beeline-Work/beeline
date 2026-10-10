@@ -418,6 +418,7 @@ interface RoomReadRow {
   turns: AgentTurnRow[];
   transcript: MessageRow[];
   activity: MessageRow[];
+  allow_auto_merge?: boolean;
   corner: {
     parent: RoomRow | null;
     facts: {
@@ -1904,7 +1905,7 @@ export class PhoneService {
           viewerId,
         )
       : initialMessageResult;
-    const allowAutoMerge = enrichment?.allow_auto_merge ?? undefined;
+    const allowAutoMerge = enrichment?.allow_auto_merge ?? rows.allow_auto_merge;
     const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
     const { messages, toolRows } = messageResult;
     const boundManifest = readCornerAppManifest(boundApp?.manifest);
@@ -2612,7 +2613,8 @@ export class PhoneService {
         reviveDates(message, ['created_at']);
       return row;
     }
-    const [cursor, presence, tags] = await Promise.all([
+    const repositoryId = row.room.repository_key?.match(/^github:(\d+)$/)?.[1];
+    const [cursor, presence, tags, autoMerge] = await Promise.all([
       this.optionalEnrichment(
         'read-cursor',
         this.enrichmentDatabase.query<{
@@ -2649,7 +2651,19 @@ export class PhoneService {
           [row.transcript.map((message) => message.id)],
         ),
       ),
+      repositoryId
+        ? this.optionalEnrichment(
+            'repository-auto-merge',
+            this.enrichmentDatabase
+              .query<{ allow_auto_merge: boolean | null }>(
+                `SELECT allow_auto_merge FROM github_repositories WHERE repository_id=$1`,
+                [repositoryId],
+              )
+              .then((result) => result.rows[0]?.allow_auto_merge ?? undefined),
+          )
+        : Promise.resolve(undefined),
     ]);
+    row.allow_auto_merge = autoMerge;
     row.room.read_cursor = cursor?.rows[0]?.read_cursor ?? null;
     const presenceByMember = new Map(presence?.rows.map((item) => [item.id, item]) ?? []);
     for (const member of row.members) {

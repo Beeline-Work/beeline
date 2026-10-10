@@ -35,8 +35,10 @@ vi.mock('./person-name', () => ({
   savePreferredPersonName: async (pubkey: string, name: string) => { savedNames.push([pubkey, name]); },
 }));
 
-const { applyPersonChanged, applyWorkspaceChanged, subscribeOwnIdentityChange } =
-  await import('./identity-live');
+const {
+  applyPersonChanged, applyWorkspaceChanged, patchIdentity, subscribeOwnIdentityChange,
+  subscribePersonChange,
+} = await import('./identity-live');
 const { mobileSurfaceCache, surfaceAddress } = await import('./surface-storage');
 const records = await import('./workspace-records');
 
@@ -100,6 +102,20 @@ describe('live Workspace and person changes', () => {
     expect(records.currentWorkspaceRecord(scope, mate)?.identity.name).toBe('Mate Renamed');
     expect(savedNames).toEqual([]);
     expect(savedLevels).toEqual([]);
+  });
+
+  it('tells an open Room session about another person\'s change so it can patch its bylines', async () => {
+    let room: unknown = {
+      members: [{ identity: mateIdentity, role: 'member' }],
+      messages: [{ id: 'm1', author: mateIdentity, text: 'hi' }],
+    };
+    const stop = subscribePersonChange((person) => { room = patchIdentity(room, person); });
+    await applyPersonChanged({ ...mateIdentity, name: 'Mate Again' });
+    stop();
+    expect(room).toEqual({
+      members: [{ identity: { ...mateIdentity, name: 'Mate Again' }, role: 'member' }],
+      messages: [{ id: 'm1', author: { ...mateIdentity, name: 'Mate Again' }, text: 'hi' }],
+    });
   });
 
   it('refreshes the viewer\'s own name and push level from another device', async () => {

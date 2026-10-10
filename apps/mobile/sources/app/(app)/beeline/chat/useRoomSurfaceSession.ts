@@ -44,6 +44,7 @@ import {
   type LiveDraftDrainStore,
 } from '@/buzz/live-draft-drain';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { patchIdentity, subscribePersonChange } from '@/buzz/identity-live';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import {
@@ -371,6 +372,18 @@ export function useRoomSurfaceSession({
   agentPresencesRef.current = heartbeatPresences;
   reconnectGraceRef.current = presenceReconnectGrace;
   liveOverlaysRef.current = liveOverlays;
+
+  // A rename, handle or face change of a member or author reaches this open
+  // Room without a refetch.
+  useEffect(() => subscribePersonChange((person) => {
+    setRoomSurface((current) => {
+      if (!current) return current;
+      const next = patchIdentity(current, person) as RoomView;
+      if (next === current) return current;
+      reconciledViewRef.current = next;
+      return next;
+    });
+  }), []);
 
   useEffect(() => {
     const traces = pendingPaintTracesRef.current;

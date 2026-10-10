@@ -76,6 +76,18 @@ export function patchIdentity(value: unknown, person: RoomViewIdentity): unknown
 }
 
 const ownIdentityListeners = new Set<(person: RoomViewIdentity) => void>();
+const personListeners = new Set<(person: RoomViewIdentity) => void>();
+
+/** Any person's or agent's server identity after a change; a mounted Room
+ * session patches its own members and bylines with it. */
+export function subscribePersonChange(
+  listener: (person: RoomViewIdentity) => void,
+): () => void {
+  personListeners.add(listener);
+  return () => {
+    personListeners.delete(listener);
+  };
+}
 
 /** The viewer's own server identity after a change on any device. */
 export function subscribeOwnIdentityChange(
@@ -117,6 +129,8 @@ export async function applyPersonChanged(
   recordIdentityChange(relayUrl, identity.publicKey, person);
   await mobileSurfaceCache.patchViewer(relayUrl, identity.publicKey,
     (value) => patchIdentity(value, person));
+  if (generation !== clientResetGeneration()) return;
+  for (const listener of personListeners) listener(person);
   if (person.pubkey !== identity.publicKey) return;
   await savePreferredPersonName(identity.publicKey, person.name).catch(() => undefined);
   if (pushLevel) await saveStoredPushLevel(identity.publicKey, pushLevel);

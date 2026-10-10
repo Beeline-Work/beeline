@@ -29,9 +29,22 @@ vi.mock('./HullActionSheet', async () => {
   };
 });
 
-vi.mock('react-native-reanimated', () => ({
-  useReducedMotion: () => false,
-}));
+vi.mock('react-native-reanimated', async () => {
+  const ReactModule = await import('react');
+  return {
+    default: { View: (props: any) => ReactModule.createElement('AnimatedView', props, props.children) },
+    cancelAnimation: () => undefined,
+    Easing: { out: (fn: unknown) => fn, cubic: () => undefined },
+    runOnJS: (fn: (...args: any[]) => void) => fn,
+    useAnimatedStyle: (style: () => unknown) => style(),
+    useReducedMotion: () => false,
+    useSharedValue: (value: number) => ReactModule.useRef({ value }).current,
+    withTiming: (value: number, _config: unknown, done?: (finished: boolean) => void) => {
+      done?.(true);
+      return value;
+    },
+  };
+});
 
 import {
   LedgerEntry,
@@ -42,7 +55,6 @@ import {
   LedgerSteer,
   LedgerDayCaption,
   withLedgerDayCaption,
-  typewriterFrame,
 } from './Ledger';
 import { groknight } from '@/buzz/groknight';
 import { identityPalette } from '@/buzz/identity-mark';
@@ -138,13 +150,6 @@ describe('the ledger — an agent turn', () => {
     });
     expect(digest.props.style.fontStyle).toBeUndefined();
     expect(digest.props.style.fontWeight).toBeUndefined();
-  });
-
-  it('can reveal a committed paragraph locally without changing its durable text', () => {
-    const paragraph = 'The relay committed this whole paragraph at once.';
-    expect(typewriterFrame(paragraph, 0)).toBe('');
-    expect(typewriterFrame(paragraph, 9)).toBe('The relay');
-    expect(typewriterFrame(paragraph, 999)).toBe(paragraph);
   });
 
   it('emphasizes the lead by weight and brightness at ONE size, never by size', () => {
@@ -749,11 +754,12 @@ describe('the ledger — the typewriter reveals each message at most once', () =
 
   const treeText = (renderer: ReactTestRenderer) => renderedText(renderer).join('');
 
-  it('types a genuinely new message out once, then never again on remount', () => {
+  it('reveals a genuinely new message without per-character React commits', () => {
     const first = render(typeOut('msg-1'));
-    // The reveal has not run yet: only the lead sentence is on the slab.
+    // The whole markdown tree mounts once; the native opacity clock reveals it.
     expect(treeText(first)).toContain('Found the cause.');
-    expect(treeText(first)).not.toContain('closes idle sockets');
+    expect(treeText(first)).toContain('closes idle sockets');
+    expect(vi.getTimerCount()).toBe(0);
 
     act(() => {
       vi.advanceTimersByTime(10_000);
@@ -787,7 +793,7 @@ describe('the ledger — the typewriter reveals each message at most once', () =
     act(() => first.unmount());
 
     const second = render(typeOut('msg-4'));
-    expect(treeText(second)).not.toContain('closes idle sockets');
+    expect(treeText(second)).toContain('closes idle sockets');
     act(() => {
       vi.advanceTimersByTime(10_000);
     });
@@ -809,7 +815,7 @@ describe('the ledger — the typewriter reveals each message at most once', () =
     // Nothing was marked, so a later typewriter mount still gets its reveal —
     // the gate is spent only by a mount that actually revealed the prose.
     const later = render(typeOut('msg-5'));
-    expect(treeText(later)).not.toContain('closes idle sockets');
+    expect(treeText(later)).toContain('closes idle sockets');
   });
 });
 

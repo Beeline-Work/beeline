@@ -10,7 +10,15 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useReducedMotion } from 'react-native-reanimated';
+import Animated, {
+  cancelAnimation,
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { hasMessageRevealed, markMessageRevealed } from '@/buzz/message-reveal';
 import { identityPalette, isGeneratedAgentAvatarUrl } from '@/buzz/identity-mark';
@@ -170,14 +178,7 @@ export function ledgerEntryRhythm({
   ];
 }
 
-const TYPEWRITER_TICK_MS = 20;
-const TYPEWRITER_CHARS_PER_TICK = 2;
-
-/** The text shown at a typewriter frame. Exported so the reveal contract stays
- * independently testable without pretending relay events arrive as tokens. */
-export function typewriterFrame(text: string, visibleCharacters: number): string {
-  return text.slice(0, Math.max(0, visibleCharacters));
-}
+const TYPEWRITER_MS_PER_CHARACTER = 10;
 
 /** Split a turn into its emphasized lead sentence and regular body copy. */
 export function splitLeadSentence(text: string): [string, string] {
@@ -210,7 +211,7 @@ function TypewriterMarkdown({
   markdown: string;
   textStyle: React.ComponentProps<typeof MonoMarkdown>['textStyle'];
   testID: string;
-  /** Stable id of the message this prose belongs to. The type-out plays at
+  /** Stable id of the message this prose belongs to. The reveal plays at
    *  most once per id per app session — the SAME consume-once registry the
    *  entrance fade uses (`NewMessageMaterialize`) — so warm revalidation or a
    *  WS replay re-stamping `isNew` on room open cannot re-run it over
@@ -226,7 +227,7 @@ function TypewriterMarkdown({
 }) {
   const reducedMotion = useReducedMotion();
   // Decided ONCE per mounted instance (same contract as `NewMessageMaterialize`):
-  // a re-render while the type-out is running — presence tick, roster update —
+  // a re-render while the reveal is running — presence tick, roster update —
   // must not flip the gate and cut the animation short. Cross-instance replay
   // (FlatList recycling the row, re-entering the Room) is closed by the shared
   // session reveal registry below.
@@ -236,10 +237,11 @@ function TypewriterMarkdown({
       !reducedMotion && (revealId === undefined || !hasMessageRevealed(revealId));
   }
   const animate = animateRef.current;
-  const [visibleCharacters, setVisibleCharacters] = useState(() => (animate ? 0 : markdown.length));
+  const opacity = useSharedValue(animate ? 0 : 1);
+  const revealStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
 
   // Mark after commit, not during render: a render React discards must not
-  // spend the message's one type-out. Reduced motion shows everything at once,
+  // spend the message's one reveal. Reduced motion shows everything at once,
   // but the reveal still counts — the message was seen.
   useEffect(() => {
     if (revealId !== undefined) markMessageRevealed(revealId);
@@ -248,32 +250,30 @@ function TypewriterMarkdown({
   useEffect(() => {
     if (!animate) return;
     if (reducedMotion) {
-      setVisibleCharacters(markdown.length);
+      opacity.value = 1;
       return;
     }
-    setVisibleCharacters(0);
-    const timer = setInterval(() => {
-      setVisibleCharacters((current) => {
-        const next = Math.min(markdown.length, current + TYPEWRITER_CHARS_PER_TICK);
-        if (next === markdown.length) clearInterval(timer);
-        return next;
-      });
-    }, TYPEWRITER_TICK_MS);
-    return () => clearInterval(timer);
-  }, [markdown, reducedMotion, animate]);
+    opacity.value = withTiming(1, {
+      duration: Math.min(900, markdown.length * TYPEWRITER_MS_PER_CHARACTER),
+      easing: Easing.out(Easing.cubic),
+    });
+    return () => cancelAnimation(opacity);
+  }, [markdown, reducedMotion, animate, opacity]);
 
   return (
-    <MonoMarkdown
-      markdown={typewriterFrame(markdown, visibleCharacters)}
-      mentionHandles={mentionHandles}
-      onMention={onMention}
-      channelIndex={channelIndex}
-      onChannelReference={onChannelReference}
-      codeSource={codeRoomId && revealId ? { roomId: codeRoomId, messageId: revealId } : undefined}
-      onOpenCode={onOpenCode}
-      testID={testID}
-      textStyle={textStyle}
-    />
+    <Animated.View style={revealStyle}>
+      <MonoMarkdown
+        markdown={markdown}
+        mentionHandles={mentionHandles}
+        onMention={onMention}
+        channelIndex={channelIndex}
+        onChannelReference={onChannelReference}
+        codeSource={codeRoomId && revealId ? { roomId: codeRoomId, messageId: revealId } : undefined}
+        onOpenCode={onOpenCode}
+        testID={testID}
+        textStyle={textStyle}
+      />
+    </Animated.View>
   );
 }
 
@@ -434,7 +434,6 @@ function Byline({ byline }: { byline: LedgerByline }) {
 /** One short transition. Long enough to read as a dissolve, short enough that
  *  nobody waits for the words they were already reading. */
 const SETTLE_MS = 220;
-const SETTLE_STEPS = 4;
 
 /**
  * The settle (C98): provisional out, settled in, at the same place on the page.
@@ -451,28 +450,28 @@ const SETTLE_STEPS = 4;
  */
 function SettleFade({ provisional, children }: { provisional: string; children: React.ReactNode }) {
   const reducedMotion = useReducedMotion();
-  const [progress, setProgress] = useState(() => (reducedMotion ? 1 : 0));
+  const [complete, setComplete] = useState(reducedMotion);
+  const progress = useSharedValue(reducedMotion ? 1 : 0);
+  const settledStyle = useAnimatedStyle(() => ({ opacity: progress.value }));
+  const ghostStyle = useAnimatedStyle(() => ({ opacity: 1 - progress.value }));
   useEffect(() => {
     if (reducedMotion) return;
-    let step = 0;
-    const timer = setInterval(() => {
-      step += 1;
-      setProgress(step / SETTLE_STEPS);
-      if (step >= SETTLE_STEPS) clearInterval(timer);
-    }, SETTLE_MS / SETTLE_STEPS);
-    return () => clearInterval(timer);
-  }, [reducedMotion]);
-  if (progress >= 1) return <>{children}</>;
+    progress.value = withTiming(1, { duration: SETTLE_MS }, (finished) => {
+      if (finished) runOnJS(setComplete)(true);
+    });
+    return () => cancelAnimation(progress);
+  }, [reducedMotion, progress]);
+  if (complete || reducedMotion) return <>{children}</>;
   return (
     <View testID="ledger-settle">
-      <View style={{ opacity: progress }}>{children}</View>
-      <View pointerEvents="none" style={[styles.settleGhost, { opacity: 1 - progress }]}>
+      <Animated.View style={settledStyle}>{children}</Animated.View>
+      <Animated.View pointerEvents="none" style={[styles.settleGhost, ghostStyle]}>
         <MonoMarkdown
           markdown={provisional}
           testID="ledger-settle-ghost"
           textStyle={styles.ledgerProvisional}
         />
-      </View>
+      </Animated.View>
     </View>
   );
 }

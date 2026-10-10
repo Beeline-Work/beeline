@@ -76,6 +76,7 @@ import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
 import { startDesktopNotifications } from '@/push/desktop-notifications';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { afterInteractions } from '@/buzz/defer-interaction';
 
 const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
 
@@ -277,14 +278,17 @@ export default function RootLayout() {
         console.log('Failed to clear legacy presented notifications:', error);
       },
     );
-    reconcileBadge();
+    // Badge reconciliation can read identity and make a phone request. Keep it
+    // behind the first navigation interaction instead of competing with paint.
+    const cancelInitialBadge = afterInteractions(reconcileBadge);
     const subscription = AppState.addEventListener('change', reconcileBadge);
-    return () => subscription.remove();
+    return () => { cancelInitialBadge(); subscription.remove(); };
   }, []);
 
-  React.useEffect(
-    () =>
-      startPushRegistrationLifecycle({
+  React.useEffect(() => {
+    let stop: (() => void) | undefined;
+    const cancelStart = afterInteractions(() => {
+      stop = startPushRegistrationLifecycle({
         loadIdentity: loadBuzzIdentity,
         subscribeIdentityChange: (listener) => monolithSession.subscribeIdentityChange(listener),
         subscribeForeground: (listener) => {
@@ -302,9 +306,10 @@ export default function RootLayout() {
             '[beeline-push] lifecycle:',
             error instanceof Error ? error.message : String(error),
           ),
-      }),
-    [],
-  );
+      });
+    });
+    return () => { cancelStart(); stop?.(); };
+  }, []);
 
   React.useEffect(
     () => (Platform.OS === 'web' ? installWebPushForegroundResponder() : undefined),
@@ -343,7 +348,7 @@ export default function RootLayout() {
   //
   // Init sequence
   //
-  const [initialized, setInitialized] = React.useState(false);
+  const [, setFontsReady] = React.useState(false);
   const navigationRef = useNavigationContainerRef();
   const notificationNavigator = React.useMemo(
     () => createNotificationNavigator(navigationRef),
@@ -357,19 +362,21 @@ export default function RootLayout() {
   }
   React.useEffect(() => {
     void loadFonts()
-      .catch((error) => console.error('Error initializing:', error))
-      .finally(() => setInitialized(true));
+      .then(() => setFontsReady(true))
+      .catch((error) => console.error('Error initializing:', error));
   }, []);
 
   React.useEffect(() => {
-    if (initialized) launchSplash.release();
-  }, [initialized]);
-  React.useEffect(() => {
-    if (navigationRef.isReady()) {
+    const ready = () => {
       rootReady.current?.resolve();
+      // The navigator, rather than a font file read, owns first paint.
+      launchSplash.release();
+    };
+    if (navigationRef.isReady()) {
+      ready();
       return;
     }
-    return navigationRef.addListener('ready', () => rootReady.current?.resolve());
+    return navigationRef.addListener('ready', ready);
   }, [navigationRef]);
 
   const handledNotificationIds = React.useRef<Set<string>>(new Set());

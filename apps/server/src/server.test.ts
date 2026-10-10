@@ -1274,6 +1274,30 @@ describe('phone committed-row live delivery', () => {
     expect(project).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps sending corner status after the Room history restarts its sequence', async () => {
+    const status = (cornerCount: number) => ({ cornerCount, waitingCornerCount: 0,
+      openCorners: [], agentState: null });
+    const project = vi.fn()
+      .mockResolvedValueOnce(status(1))
+      .mockResolvedValueOnce(status(2))
+      .mockResolvedValueOnce(status(3));
+    const { live, roomId, socket } = await connect(
+      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false, undefined,
+      project as PhoneService['liveChatCornerStatus']);
+    let frame = nextSocketMessage(socket, 'corner-status');
+    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
+    await expect(frame).resolves.toMatchObject({ cornerCount: 1, sequence: 1 });
+    frame = nextSocketMessage(socket, 'corner-status');
+    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
+    await expect(frame).resolves.toMatchObject({ cornerCount: 2, sequence: 2 });
+    // Busier Rooms evict this Room's history; its next event starts at 1.
+    for (let index = 0; index < 257; index++)
+      live.publish({ type: 'invalidate', roomId: `other-${index}`, reason: 'x' });
+    frame = nextSocketMessage(socket, 'corner-status');
+    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
+    await expect(frame).resolves.toMatchObject({ cornerCount: 3, sequence: 1 });
+  });
+
   it.each([1, 2, 8])('reads a cross-process row once for %i sockets', async (count) => {
     const roomId = 'room-live';
     const delta = { type: 'message-delta' as const, roomId,
@@ -1306,6 +1330,97 @@ describe('phone committed-row live delivery', () => {
     expect(batch).toHaveBeenCalledTimes(1);
     expect(read).not.toHaveBeenCalled();
     await Promise.all(viewers.map((viewer) => expectNoSocketMessage(viewer, 50)));
+  });
+
+  it('sends a same-machine turn with the rolled-up agent state of the row read', async () => {
+    const roomId = 'room-live';
+    const turnDelta = { type: 'turn-delta' as const, roomId, agentState: 'working' as const,
+      turn: { agentId: 'agent', requestId: 'request', status: 'working' as const,
+        startedAt: 1, createdAt: 1 } };
+    const batch = vi.fn(async (_roomId: string, viewers: string[]) =>
+      new Map(viewers.map((viewer) => [viewer, turnDelta])));
+    const { live, socket } = await connect(
+      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,
+      undefined, undefined, batch as unknown as PhoneService['readLiveDeltas']);
+    const frame = nextSocketMessage(socket, 'turn-delta');
+    live.publish({ type: 'invalidate', roomId, reason: 'turn', agentId: 'agent',
+      requestId: 'request', committedRow: { type: 'turn', row: {
+        room_id: roomId, request_id: 'request', agent_id: 'agent', status: 'working',
+        started_at: new Date(1), created_at: new Date(1), generation_id: null,
+        requested_by: null } } });
+    await expect(frame).resolves.toMatchObject({ type: 'turn-delta', agentState: 'working' });
+    expect(batch).toHaveBeenCalledTimes(1);
+  });
+
+  it('never sends an older projection of a message after a newer one', async () => {
+    const roomId = 'room-live';
+    const delta = (text: string, version: number) => ({ type: 'message-delta' as const, roomId,
+      version, message: { id: 'edited', text, createdAt: 1,
+        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Agent' },
+        presentation: 'message' as const } });
+    let releaseOlder!: () => void;
+    const olderRead = new Promise<void>((resolve) => { releaseOlder = resolve; });
+    // The first edit's read starts first but finishes after the second edit's read.
+    const batch = vi.fn()
+      .mockImplementationOnce(async (_roomId, viewers: string[]) => {
+        await olderRead;
+        return new Map(viewers.map((viewer) => [viewer, delta('first edit', 1)]));
+      })
+      .mockImplementationOnce(async (_roomId, viewers: string[]) =>
+        new Map(viewers.map((viewer) => [viewer, delta('second edit', 2)])));
+    const { live, socket } = await connect(
+      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,
+      undefined, undefined, batch as PhoneService['readLiveDeltas']);
+    const newer = nextSocketMessage(socket, 'message-delta');
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages', messageId: 'edited' });
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages', messageId: 'edited' });
+    await expect(newer).resolves.toMatchObject({ version: 2, message: { text: 'second edit' } });
+    const nothingOlder = expectNoSocketMessageOfType(socket, 'message-delta', 100);
+    releaseOlder();
+    await nothingOlder;
+    expect(batch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a message version while its older read is in flight past 256 other rows', async () => {
+    const roomId = 'room-live';
+    const delta = (id: string, text: string, version: number) => ({
+      type: 'message-delta' as const, roomId, version, message: { id, text, createdAt: 1,
+        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Agent' },
+        presentation: 'message' as const } });
+    let releaseOlder!: () => void;
+    const olderRead = new Promise<void>((resolve) => { releaseOlder = resolve; });
+    const batch = vi.fn()
+      .mockImplementationOnce(async (_roomId, viewers: string[]) => {
+        await olderRead;
+        return new Map(viewers.map((viewer) => [viewer, delta('edited', 'first edit', 1)]));
+      })
+      .mockImplementationOnce(async (_roomId, viewers: string[]) =>
+        new Map(viewers.map((viewer) => [viewer, delta('edited', 'second edit', 2)])))
+      .mockImplementation(async (_roomId, viewers: string[], target: { messageId: string }) =>
+        new Map(viewers.map((viewer) => [viewer, delta(target.messageId, 'other', 1)])));
+    const { live, socket } = await connect(
+      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,
+      undefined, undefined, batch as PhoneService['readLiveDeltas']);
+    const newer = nextSocketMessage(socket, 'message-delta');
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages', messageId: 'edited' });
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages', messageId: 'edited' });
+    await expect(newer).resolves.toMatchObject({ version: 2, message: { text: 'second edit' } });
+    const others: unknown[] = [];
+    const sawOthers = new Promise<void>((resolve) => {
+      socket.on('message', (raw) => {
+        const frame = JSON.parse(raw.toString());
+        if (frame.type !== 'message-delta') return;
+        others.push(frame);
+        if (others.length === 256) resolve();
+      });
+    });
+    for (let index = 0; index < 256; index++)
+      live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages',
+        messageId: `other-${index}` });
+    await sawOthers;
+    const nothingOlder = expectNoSocketMessageOfType(socket, 'message-delta', 100);
+    releaseOlder();
+    await nothingOlder;
   });
 
   it('sends owner-scoped resource changes on the shared phone socket', async () => {

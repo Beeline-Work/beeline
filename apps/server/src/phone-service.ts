@@ -384,6 +384,7 @@ interface MessageRow {
   card: Record<string, unknown> | null;
   system_event: SystemEvent | null;
   created_at: Date;
+  version?: number;
   author_kind: 'human' | 'agent';
   author_name: string;
   author_handle: string | null;
@@ -1053,24 +1054,35 @@ export class PhoneService {
 
   /** Project a row the daemon's committing transaction already returned. The
    * socket subscription performed the Room access check; cross-process hints
-   * still use readLiveDelta, which rechecks current membership. */
-  projectCommittedLiveDelta(
+   * still use readLiveDelta, which rechecks current membership. Attachments
+   * get the same decoration as readLiveDeltas, read once per committed row. */
+  async projectCommittedLiveDelta(
     roomId: string,
     committed:
       | { type: 'message'; row: CommittedMessageLiveRow }
       | { type: 'turn'; row: CommittedTurnLiveRow },
-  ): RoomLiveDelta | null {
+    viewerId?: string,
+  ): Promise<RoomLiveDelta | null> {
     if (committed.row.room_id !== roomId) return null;
     if (committed.type === 'turn') {
       const turn = this.projectAgentTurns([committed.row])[0];
       return turn ? { type: 'turn-delta', roomId, turn } : null;
     }
+    const message = projectedMessage(committed.row, this.publicOrigin, viewerId);
+    let facts = this.committedAttachmentFacts.get(committed.row);
+    if (!facts) {
+      facts = this.attachmentFacts([message]);
+      this.committedAttachmentFacts.set(committed.row, facts);
+    }
     return {
       type: 'message-delta',
       roomId,
-      message: projectedMessage(committed.row, this.publicOrigin),
+      message: decorateAttachments([message], await facts)[0]!,
+      ...(typeof committed.row.version === 'number' ? { version: committed.row.version } : {}),
     };
   }
+  private readonly committedAttachmentFacts =
+    new WeakMap<CommittedMessageLiveRow, Promise<AttachmentFacts>>();
 
   /** One committed row for the live paint path, behind the same two membership
    * bounds as a full Room read. A missing/hidden row falls back to the ordinary
@@ -1246,6 +1258,7 @@ export class PhoneService {
       deltas.set(viewer, {
         type: 'message-delta', roomId,
         message: decorateAttachments([message], facts)[0]!,
+        ...(typeof row.version === 'number' ? { version: row.version } : {}),
         ...(row.deleted_at ? { deckPreview: preview ? {
           ...preview,
           ...(row.deck_latest_tagged_ids?.includes(viewer) ? { mentionsViewer: true as const } : {}),
@@ -1967,7 +1980,7 @@ export class PhoneService {
                 },
               }
             : {}),
-          unread: row.unread,
+          ...(cursors ? { unread: row.unread } : {}),
           ...(row.repository_key
             ? {
                 repositoryName:

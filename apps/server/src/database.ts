@@ -959,6 +959,20 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS system_event jsonb;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_by text REFERENCES identities(id);
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS reactions jsonb NOT NULL DEFAULT '{}'::jsonb;
+-- Per-message write counter. A live delta carries it so a socket never sends
+-- an older projection of a row after a newer one. A constant default adds the
+-- column without rewriting the table.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 0;
+CREATE OR REPLACE FUNCTION messages_bump_version() RETURNS trigger
+LANGUAGE plpgsql AS $messages_version$
+BEGIN
+  NEW.version := OLD.version + 1;
+  RETURN NEW;
+END
+$messages_version$;
+DROP TRIGGER IF EXISTS messages_bump_version ON messages;
+CREATE TRIGGER messages_bump_version BEFORE UPDATE ON messages
+  FOR EACH ROW EXECUTE FUNCTION messages_bump_version();
 -- A GENERATED ... STORED column rewrites every row of the busiest table under
 -- ACCESS EXCLUSIVE, so the release migration would stall the live fleet before
 -- the machine roll. An ordinary nullable column is metadata-only; the trigger

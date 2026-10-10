@@ -200,6 +200,9 @@ CREATE TABLE IF NOT EXISTS corner_owed (
   PRIMARY KEY (message_id, person_id)
 );
 CREATE INDEX IF NOT EXISTS corner_owed_corner_person_idx ON corner_owed(corner_id, person_id);
+-- The leader's owed expiry job finds due and next expiries by this index.
+CREATE INDEX IF NOT EXISTS corner_owed_expires_idx ON corner_owed(expires_at)
+  WHERE expires_at IS NOT NULL;
 
 -- Every item one person is owed in one corner, recomputed from messages.
 CREATE OR REPLACE FUNCTION corner_owed_refresh(p_corner uuid, p_person text) RETURNS void

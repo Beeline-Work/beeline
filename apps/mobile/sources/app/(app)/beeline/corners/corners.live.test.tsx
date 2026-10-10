@@ -364,6 +364,32 @@ describe('Corner list live path', () => {
     expect(painted(renderer)).toEqual(['corner-1:waiting']);
   });
 
+  it('Reproduction G3-R1: re-reads the archived list when a corner closes during its first read', async () => {
+    const renderer = await mountList();
+    server.status(1, [corner('corner-2', 'working'), corner('corner-1', 'waiting')]);
+    await settle();
+    // The first archived read starts while corner-2 is still open, so its
+    // answer is empty.
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => (release = resolve));
+    let shown!: Promise<void>;
+    await act(async () => {
+      shown = renderer.root.findByType('RoomCornersList').props.onShowArchived();
+    });
+    await vi.waitFor(() => expect(list.reads.at(-1)?.options).toEqual({ archived: true }));
+    // corner-2 closes before that read lands.
+    list.archived = ['corner-2'];
+    server.status(2, [corner('corner-1', 'waiting')]);
+    await settle();
+    list.readGate = null;
+    await act(async () => { release(); await shown; });
+    await settle();
+    await vi.waitFor(() => expect(
+      renderer.root.findByType('RoomCornersList').props.archived.corners
+        .map((item: CornerListItem) => item.corner.id),
+    ).toEqual(['corner-2']));
+  });
+
   it('creates and opens a randomly named corner from the plus button', async () => {
     const renderer = await mountList();
     const header = renderer.root.findByType('RoomCornersHeader');

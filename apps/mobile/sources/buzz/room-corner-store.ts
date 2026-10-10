@@ -70,6 +70,9 @@ type Entry = RoomCorners & {
   readonly sequence?: number;
   /** The lane epoch whose frame sent the full summary. */
   readonly summaryEpoch?: number;
+  /** The clock value when a corner last left the open set, or the open set
+   *  changed unseen. An archived read started before it may miss that corner. */
+  readonly archivedChangedAt: number;
   /** Bumped when the lane is lost or restarts, so a read across it is not current. */
   readonly laneEpoch: number;
   readonly laneHeld: boolean;
@@ -89,6 +92,7 @@ const EMPTY: Entry = {
   openMoreStale: false,
   archivedStale: false,
   changedAt: 0,
+  archivedChangedAt: 0,
   laneEpoch: 0,
   laneHeld: false,
 };
@@ -217,7 +221,10 @@ export function acceptCornerStatusFrame(frame: CornerStatusFrame): boolean {
   };
   if (!frame.corners) {
     // An older server names the change but not the rows.
-    write(frame.roomId, { ...current, ...summary, current: false, wantsRead: true });
+    write(frame.roomId, {
+      ...current, ...summary, current: false, wantsRead: true, archivedChangedAt: clock,
+      archivedStale: current.archived !== undefined,
+    });
     emitFacts(frame.roomId);
     return true;
   }
@@ -233,6 +240,7 @@ export function acceptCornerStatusFrame(frame: CornerStatusFrame): boolean {
     wantsRead: false,
     openMoreStale: current.openMoreStale || next.openMore.length > 0,
     archivedStale: current.archivedStale || (closed && current.archived !== undefined),
+    ...(closed ? { archivedChangedAt: clock } : {}),
   });
   if (current.rows && rowsFacts(current.rows) !== rowsFacts(frame.corners)) emitFacts(frame.roomId);
   return true;
@@ -256,6 +264,7 @@ export function noteCornerLaneSubscribed(roomId: string, resumed: boolean): void
     laneHeld: true,
     laneEpoch: current.laneEpoch + 1,
     changedAt: clock,
+    archivedChangedAt: clock,
     current: false,
     wantsRead: true,
     openMoreStale: current.openMore.length > 0,
@@ -285,6 +294,7 @@ export function noteRoomCornersChanged(roomId: string): void {
   write(roomId, {
     ...current,
     changedAt: clock,
+    archivedChangedAt: clock,
     current: false,
     wantsRead: true,
     openMoreStale: current.openMore.length > 0,
@@ -350,21 +360,27 @@ export function applyOpenCornerPage(
   });
 }
 
-/** Archived rows landed: a first page replaces the held ones, a later page appends. */
+/**
+ * Archived rows landed: a first page replaces the held ones, a later page
+ * appends. A read that started before a corner left the open set may miss it,
+ * so its rows stay stale and the reader reads again.
+ */
 export function applyArchivedCorners(
   roomId: string,
   rows: readonly CornerListItem[],
   next: string | undefined,
   append: boolean,
+  readStartedAt: number,
 ): void {
   const current = entry(roomId);
+  const missed = current.archivedChangedAt > readStartedAt;
   write(roomId, {
     ...current,
     archived: {
       corners: withoutRows([...(append ? current.archived?.corners ?? [] : []), ...rows], []),
       ...(next ? { next } : {}),
     },
-    ...(append ? {} : { archivedStale: false }),
+    archivedStale: missed || (append && current.archivedStale),
   });
 }
 

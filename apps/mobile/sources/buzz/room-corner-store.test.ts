@@ -135,11 +135,22 @@ describe('room corner store', () => {
     // Nothing loaded the archived rows yet, so nothing is stale.
     acceptCornerStatusFrame(frame(2, [row('a'), row('b'), row('c')]));
     expect(getRoomCorners(ROOM).archivedStale).toBe(false);
-    applyArchivedCorners(ROOM, [], undefined, false);
+    applyArchivedCorners(ROOM, [], undefined, false, cornerStoreClock());
     acceptCornerStatusFrame(frame(3, [row('a'), row('c')]));
     expect(getRoomCorners(ROOM).archivedStale).toBe(true);
-    applyArchivedCorners(ROOM, [row('b', 'archived')], undefined, false);
+    applyArchivedCorners(ROOM, [row('b', 'archived')], undefined, false, cornerStoreClock());
     expect(getRoomCorners(ROOM)).toMatchObject({ archivedStale: false });
+  });
+
+  it('keeps an archived read stale when a corner closed while it ran', () => {
+    noteCornerLaneSubscribed(ROOM, false);
+    acceptCornerStatusFrame(frame(1, [row('a'), row('b')]));
+    const started = cornerStoreClock();
+    acceptCornerStatusFrame(frame(2, [row('a')]));
+    applyArchivedCorners(ROOM, [], undefined, false, started);
+    expect(getRoomCorners(ROOM)).toMatchObject({ archived: { corners: [] }, archivedStale: true });
+    applyArchivedCorners(ROOM, [row('b', 'archived')], undefined, false, cornerStoreClock());
+    expect(getRoomCorners(ROOM).archivedStale).toBe(false);
   });
 
   it('applies a Room list summary only where no frame came since the read started', () => {

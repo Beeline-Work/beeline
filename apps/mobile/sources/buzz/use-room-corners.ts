@@ -15,6 +15,7 @@ import {
   applyCornerListRead,
   applyOpenCornerPage,
   cornerReadMark,
+  cornerStoreClock,
   getRoomCorners,
   hydrateRoomCorners,
   noteCornerReadStarted,
@@ -99,6 +100,7 @@ async function rereadOpenPages(roomId: string, reader: Reader): Promise<void> {
 /** Read archived pages until they hold as many rows as before. */
 async function rereadArchivedPages(roomId: string, reader: Reader): Promise<void> {
   const target = Math.max(1, getRoomCorners(roomId).archived?.corners.length ?? 0);
+  const startedAt = cornerStoreClock();
   let next: string | undefined;
   const rows: CornerListItem[] = [];
   do {
@@ -109,7 +111,7 @@ async function rereadArchivedPages(roomId: string, reader: Reader): Promise<void
     rows.push(...page.corners);
     next = page.nextArchived;
   } while (next && rows.length < target);
-  applyArchivedCorners(roomId, rows, next, false);
+  applyArchivedCorners(roomId, rows, next, false, startedAt);
 }
 
 export type RoomCornersHandle = {
@@ -222,11 +224,12 @@ export function useRoomCorners(
     if (!roomId) return;
     const before = more ? getRoomCorners(roomId).archived?.next : undefined;
     if (more && !before) return;
+    const startedAt = cornerStoreClock();
     const page = await (await reader()).client.corners(roomId, {
       archived: true,
       ...(before ? { before } : {}),
     });
-    applyArchivedCorners(roomId, page.corners, page.nextArchived, more);
+    applyArchivedCorners(roomId, page.corners, page.nextArchived, more, startedAt);
   }, [reader, roomId]);
 
   const view = useMemo(() => (record ? roomCornerListView(record) : undefined), [record]);

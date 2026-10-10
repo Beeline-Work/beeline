@@ -237,7 +237,7 @@ describe('presented notification dismissal', () => {
 
   it('runs badge reconciliation at launch and on app foreground', () => {
     expect(appLayoutSource).toContain('clearLegacyPresentedNotificationsOnce(');
-    expect(appLayoutSource).toContain('reconcileBadge();');
+    expect(appLayoutSource).toContain('afterFirstFrame(reconcileBadge)');
     expect(appLayoutSource).toContain("AppState.addEventListener('change', reconcileBadge)");
     expect(appLayoutSource).toContain('loadStoredPushLevel(identity.publicKey)');
     expect(appLayoutSource).toContain("pushLevel !== 'off' && getOpenBuzzChannelId()");

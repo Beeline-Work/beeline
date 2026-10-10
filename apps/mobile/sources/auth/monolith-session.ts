@@ -86,6 +86,13 @@ export class MonolithSessionRequiredError extends Error {
   }
 }
 
+export class MonolithRefreshError extends Error {
+  constructor(readonly status: number) {
+    super('Could not renew the session. Try again.');
+    this.name = 'MonolithRefreshError';
+  }
+}
+
 export class GitHubAccountMismatchError extends Error {
   constructor() {
     super('Reconnect the GitHub account already linked to this identity.');
@@ -473,10 +480,11 @@ export class MonolithSession {
     } finally {
       clearTimeout(timer);
     }
-    if (!response.ok) {
+    if (response.status === 401) {
       await this.clear();
       throw new MonolithSessionRequiredError();
     }
+    if (!response.ok) throw new MonolithRefreshError(response.status);
     const tokens = (await response.json()) as MonolithTokens;
     await this.accept(tokens);
     return tokens.accessToken;

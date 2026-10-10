@@ -18,6 +18,7 @@ import {
   MONOLITH_REQUEST_TIMEOUT_MS,
   MONOLITH_STALL_PROBE_MS,
   MonolithRequestTimeoutError,
+  MonolithRefreshError,
   MonolithSession,
   MonolithSessionRequiredError,
   monolithOrigins,
@@ -335,12 +336,63 @@ describe('monolith phone session', () => {
 
   it('clears a rejected refresh so launch routes to one sign-in', async () => {
     secure.set('buzzy.monolith.refresh.v1', 'stale');
+    secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
+    secure.set('buzzy.monolith.access.v1', JSON.stringify({
+      token: 'expired', expiresAt: Date.now() - 1, identityId: 'a'.repeat(64),
+    }));
     const fetcher = vi.fn(async () => new Response('{}', { status: 401 }));
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     await expect(session.authorization()).rejects.toBeInstanceOf(MonolithSessionRequiredError);
     expect(secure.has('buzzy.monolith.refresh.v1')).toBe(false);
+    expect(await session.identityId()).toBeNull();
+    expect(secure.has('buzzy.monolith.access.v1')).toBe(false);
     await expect(session.authorization()).rejects.toBeInstanceOf(MonolithSessionRequiredError);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([503, 502, 429, 403])(
+    'keeps the session after refresh HTTP %i and succeeds on the next request',
+    async (status) => {
+      secure.set('buzzy.monolith.refresh.v1', 'refresh-old');
+      secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
+      secure.set('buzzy.monolith.access.v1', JSON.stringify({
+        token: 'expired', expiresAt: Date.now() - 1, identityId: 'a'.repeat(64),
+      }));
+      const fetcher = vi.fn()
+        .mockResolvedValueOnce(new Response(null, { status }))
+        .mockResolvedValueOnce(new Response(JSON.stringify(tokens(2)), { status: 200 }));
+      const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+      const identityChanged = vi.fn();
+      session.subscribeIdentityChange(identityChanged);
+
+      await expect(session.authorization()).rejects.toMatchObject({
+        name: MonolithRefreshError.name, status,
+      });
+      expect(await session.identityId()).toBe('a'.repeat(64));
+      expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-old');
+      expect(secure.get('buzzy.monolith.access.v1')).toContain('expired');
+      expect(identityChanged).not.toHaveBeenCalled();
+
+      await expect(session.authorization()).resolves.toBe('access-2');
+      expect(fetcher.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ refreshToken: 'refresh-old' }));
+      expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-2');
+    },
+  );
+
+  it('keeps the session after a refresh network error and succeeds on the next request', async () => {
+    secure.set('buzzy.monolith.refresh.v1', 'refresh-old');
+    secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Network request failed'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(tokens(2)), { status: 200 }));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+
+    await expect(session.authorization()).rejects.toThrow('Network request failed');
+    expect(await session.identityId()).toBe('a'.repeat(64));
+    expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-old');
+
+    await expect(session.authorization()).resolves.toBe('access-2');
+    expect(fetcher.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ refreshToken: 'refresh-old' }));
   });
 
   describe('a connection that goes silent', () => {

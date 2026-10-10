@@ -6,7 +6,8 @@ import {
   type OutgoingHttpHeaders,
 } from 'node:http2';
 import { createHash, createPrivateKey, sign } from 'node:crypto';
-import type { PushSender } from './background.js';
+import type { PushSender, ReadClearCursor } from './background.js';
+import { readClearPushData } from '@beeline/api-contract/phone';
 import { pushAlert, pushMessageData, type PushDeliveryMessage } from './firebase-push.js';
 
 const APNS_PRODUCTION_AUTHORITY = 'https://api.push.apple.com';
@@ -103,6 +104,56 @@ export function apnsPushRequest(
   };
 }
 
+/** Apple rejects a push whose JSON payload is larger than this. */
+export const APNS_MAX_PAYLOAD_BYTES = 4096;
+
+function readClearPayload(reads: readonly ReadClearCursor[]): Record<string, unknown> {
+  return { aps: { 'content-available': 1 }, ...readClearPushData(reads) };
+}
+
+/**
+ * The longest prefix of these reads whose read-clear payload fits APNs's size
+ * limit; the caller leaves the rest for a later push. A first read too large
+ * on its own keeps its cursor and as many of its newest read ids as fit.
+ */
+export function apnsReadClearBatch(reads: readonly ReadClearCursor[]): ReadClearCursor[] {
+  const fits = (batch: readonly ReadClearCursor[]) =>
+    Buffer.byteLength(JSON.stringify(readClearPayload(batch))) <= APNS_MAX_PAYLOAD_BYTES;
+  const batch: ReadClearCursor[] = [];
+  for (const read of reads) {
+    if (!fits([...batch, read])) break;
+    batch.push(read);
+  }
+  if (batch.length > 0 || reads.length === 0) return batch;
+  const first = { ...reads[0]!, readMessageIds: [...reads[0]!.readMessageIds] };
+  while (first.readMessageIds.length > 0 && !fits([first])) first.readMessageIds.pop();
+  return [first];
+}
+
+/**
+ * A background push that wakes the app to clear these conversations from the
+ * shade. Low priority and no alert: Apple throttles it, so the caller batches.
+ */
+export function apnsReadClearRequest(
+  token: string,
+  reads: readonly ReadClearCursor[],
+  bundleId: string,
+  providerToken: string,
+): { headers: OutgoingHttpHeaders; payload: Record<string, unknown> } {
+  return {
+    headers: {
+      [http2Constants.HTTP2_HEADER_METHOD]: 'POST',
+      [http2Constants.HTTP2_HEADER_PATH]: `/3/device/${encodeURIComponent(token)}`,
+      authorization: `bearer ${providerToken}`,
+      'apns-topic': bundleId,
+      'apns-push-type': 'background',
+      'apns-priority': '5',
+      'apns-expiration': '0',
+    },
+    payload: readClearPayload(reads),
+  };
+}
+
 export function classifyApnsResponse(status: number, reason = ''): ApnsResponseClassification {
   if (status >= 200 && status < 300) return 'success';
   if (
@@ -173,7 +224,20 @@ export class ApnsPushProvider implements PushSender {
   }
 
   async send(token: string, message: PushDeliveryMessage): Promise<void> {
-    const request = apnsPushRequest(token, message, this.#bundleId, this.#token());
+    await this.#post(apnsPushRequest(token, message, this.#bundleId, this.#token()));
+  }
+
+  async clearRead(
+    token: string,
+    reads: readonly ReadClearCursor[],
+  ): Promise<void> {
+    await this.#post(apnsReadClearRequest(token, reads, this.#bundleId, this.#token()));
+  }
+
+  async #post(request: {
+    headers: OutgoingHttpHeaders;
+    payload: Record<string, unknown>;
+  }): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const fail = (error: unknown) => {

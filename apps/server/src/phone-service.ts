@@ -4636,10 +4636,11 @@ export class PhoneService {
            AND workspace_member.removed_at IS NULL
          WHERE message.id=$3 AND room.id=$1
        ), written AS (
-         INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-         SELECT $1,$2,created_at,id FROM eligible
+         INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
+         SELECT $1,$2,created_at,id,now() FROM eligible
          ON CONFLICT(room_id,identity_id) DO UPDATE
-           SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()
+           SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,
+             updated_at=now(),read_at=now()
          WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
            (room_read_marks.message_created_at,room_read_marks.message_id)
          RETURNING message_id

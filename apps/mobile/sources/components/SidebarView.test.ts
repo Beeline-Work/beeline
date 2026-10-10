@@ -24,7 +24,7 @@ describe('desktop sidebar workspace synchronization', () => {
   });
 
   it('formats nested corners with the grouped title formatter', () => {
-    expect(corners).toContain('displayGroupedCornerTitle(');
+    expect(corners).toContain('cornerShortTitle(');
     expect(corners).toContain('item.room.name,');
   });
 

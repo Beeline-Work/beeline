@@ -2089,6 +2089,20 @@ ALTER TABLE push_devices ALTER COLUMN registered_at SET DEFAULT now();
 ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
+-- One row per iOS device: the last read mark, by (read_at, room_id), already
+-- sent to it as a silent shade clear, and when (PushDeliveryLoop.sendReadClears).
+CREATE TABLE IF NOT EXISTS push_read_clears (
+  device_token text PRIMARY KEY REFERENCES push_devices(token) ON DELETE CASCADE,
+  cleared_through timestamptz NOT NULL,
+  cleared_through_room text NOT NULL DEFAULT '',
+  sent_at timestamptz NOT NULL DEFAULT now()
+);
+-- When the mark last moved forward (PhoneService.markRead). updated_at also
+-- moves on markUnread, which must not clear a phone's shade.
+ALTER TABLE room_read_marks ADD COLUMN IF NOT EXISTS read_at timestamptz;
+CREATE INDEX IF NOT EXISTS room_read_marks_identity_read_idx
+  ON room_read_marks(identity_id,read_at);
+
 CREATE TABLE IF NOT EXISTS push_delivery_floors (
   id text PRIMARY KEY,
   started_at timestamptz NOT NULL DEFAULT now()
@@ -2166,6 +2180,9 @@ CREATE TABLE IF NOT EXISTS push_delivery_claims (
 );
 ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 1;
 ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS next_retry_at timestamptz;
+-- When a read-clear push named this delivered message (sendReadClears). Read
+-- messages a push left out stay NULL and go in a later push.
+ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS read_cleared_at timestamptz;
 -- Content-free observations written only when a real client operation ends.
 -- The dashboard reads a bounded recent window; no timer produces samples.
 CREATE TABLE IF NOT EXISTS operator_function_events (
@@ -3299,6 +3316,9 @@ export async function compactPushClaims(database: SqlDatabase): Promise<void> {
        SELECT old.message_id,old.device_token FROM push_delivery_claims old
        WHERE old.status IN ('delivered','suppressed','failed')
          AND old.completed_at<now()-interval '1 hour'
+         AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
+           AND EXISTS (SELECT 1 FROM push_devices device
+             WHERE device.token=old.device_token AND device.platform='ios'))
          AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
            WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
        ORDER BY old.completed_at LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);

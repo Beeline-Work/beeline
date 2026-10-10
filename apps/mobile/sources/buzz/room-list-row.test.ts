@@ -24,12 +24,9 @@ vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }
 
 import type { CornerSummary } from './corners';
 import type { CornerState } from '@beeline/api-contract/phone';
-import { cornerName } from './corners';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import {
   roomRowShowsCornerMark,
-  displayCornerTitle,
-  displayGroupedCornerTitle,
   displayRoomIndexTitle,
   expandedCornerRefreshAction,
   isRoomAlive,
@@ -44,7 +41,6 @@ import {
   personLastSeen,
   roomListFeed,
   roomRowPresentation,
-  fullCornerTitle,
 } from './room-list-row';
 
 describe('expanded corner watch refresh', () => {
@@ -752,76 +748,6 @@ describe('Room row presentation', () => {
       expect(displayRoomIndexTitle('   ')).toBeUndefined();
     });
   });
-
-  describe('displayCornerTitle (the corner half of the same convention)', () => {
-    it('composes #<room>/<corner> from stored names', () => {
-      expect(displayCornerTitle('Roadmap', 'fix ledger drift', 'abc12345')).toBe(
-        '#Roadmap/fix ledger drift',
-      );
-    });
-
-    it('never double-prefixes either part', () => {
-      expect(displayCornerTitle('#Roadmap', 'fix ledger drift', 'abc12345')).toBe(
-        '#Roadmap/fix ledger drift',
-      );
-      // cornerName strips leading marks from a stored corner slug too.
-      expect(displayCornerTitle('Roadmap', '#fix-ledger-drift', 'abc12345')).toBe(
-        '#Roadmap/fix-ledger-drift',
-      );
-    });
-
-    it('degrades to the honest #<corner> when the parent Room name is unknown or unresolved', () => {
-      expect(displayCornerTitle(undefined, 'fix ledger drift', 'abc12345')).toBe(
-        '#fix ledger drift',
-      );
-      expect(displayCornerTitle(null, 'fix ledger drift', 'abc12345')).toBe('#fix ledger drift');
-      expect(displayCornerTitle('   ', 'fix ledger drift', 'abc12345')).toBe('#fix ledger drift');
-    });
-
-    it('falls through to the id-slug fallback instead of an empty label', () => {
-      expect(displayCornerTitle('Roadmap', undefined, 'abc12345ffff')).toBe(
-        '#Roadmap/corner-abc12345',
-      );
-      expect(displayCornerTitle('Roadmap', '   ', 'abc12345ffff')).toBe('#Roadmap/corner-abc12345');
-    });
-
-    it('mutates nothing: the returned string is fresh and the inputs are untouched', () => {
-      const room = 'Roadmap';
-      const corner = 'fix ledger drift';
-      const display = displayCornerTitle(room, corner, 'abc12345');
-      expect(display).toBe('#Roadmap/fix ledger drift');
-      expect(room).toBe('Roadmap');
-      expect(corner).toBe('fix ledger drift');
-    });
-
-    // C89: a corner is named at open_corner and that name is at most three
-    // words. A corner opened before the name existed stored the whole
-    // objective in the same slot, so the row shows its first three words
-    // rather than a paragraph.
-    it('shows a stored corner name exactly as written', () => {
-      expect(displayCornerTitle('Roadmap', 'fix-ledger-drift', 'abc12345')).toBe(
-        '#Roadmap/fix-ledger-drift',
-      );
-      expect(cornerName('fix-ledger-drift', 'abc12345')).toBe('fix-ledger-drift');
-    });
-  });
-
-  describe('displayGroupedCornerTitle', () => {
-    it('shows only the short title when the parent Room is already visible', () => {
-      expect(displayGroupedCornerTitle('beeline', 'iOS Composer Overflow', 'abc12345')).toBe(
-        'iOS Composer Overflow',
-      );
-      expect(
-        displayGroupedCornerTitle('#My Room', '#My Room/iOS Composer Overflow', 'abc12345'),
-      ).toBe('iOS Composer Overflow');
-    });
-
-    it('leaves the flat-context formatter namespaced with its parent Room', () => {
-      expect(displayCornerTitle('beeline', 'iOS Composer Overflow', 'abc12345')).toBe(
-        '#beeline/iOS Composer Overflow',
-      );
-    });
-  });
 });
 
 // ── The Speakeasy index row (captain decision 2026-09-03) ────────────────────
@@ -1026,48 +952,6 @@ describe('roomRowNeedsAttention — the one brass square', () => {
 
   it('keeps a corner waiting on a human lit after the Room is read', () => {
     expect(roomRowNeedsAttention({ unread: false, agentState: 'needs-you' })).toBe(true);
-  });
-});
-
-describe('fullCornerTitle', () => {
-  it('never doubles the parent when a legacy name already carries it', () => {
-    // The stored name of an older corner can already be `#room/corner`. Both
-    // composing titles strip that exact segment, case-insensitively, so the
-    // room is named once.
-    expect(fullCornerTitle('#alpha', '#alpha/Fix fixture', 'abcdef0123')).toBe(
-      '#alpha/Fix fixture',
-    );
-    expect(fullCornerTitle('alpha', 'ALPHA/Fix fixture', 'abcdef0123')).toBe('#alpha/Fix fixture');
-    expect(displayGroupedCornerTitle('#alpha', '#alpha/Fix fixture', 'abcdef0123')).toBe(
-      'Fix fixture',
-    );
-  });
-
-  it('keeps a name that merely resembles the room, since only an exact segment is stripped', () => {
-    expect(fullCornerTitle('alpha', 'alphabet soup and then some', 'abcdef0123')).toBe(
-      '#alpha/alphabet soup and then some',
-    );
-    expect(fullCornerTitle('alpha', 'alpha-two/Fix fixture', 'abcdef0123')).toBe(
-      '#alpha/alpha-two/Fix fixture',
-    );
-  });
-
-  it('keeps the shared mark rules: one prefix, no double mark, room optional', () => {
-    expect(fullCornerTitle('#alpha', '#Fix the fixture now', 'abcdef0123')).toBe(
-      '#alpha/Fix the fixture now',
-    );
-    expect(fullCornerTitle(undefined, 'Fix the fixture now', 'abcdef0123')).toBe(
-      '#Fix the fixture now',
-    );
-  });
-
-  it('falls back to the shared id slug for an unnamed or generated corner', () => {
-    expect(fullCornerTitle('alpha', undefined, 'abcdef0123')).toBe(
-      displayCornerTitle('alpha', undefined, 'abcdef0123'),
-    );
-    expect(fullCornerTitle('alpha', 'sub-9f9f9f', 'abcdef0123')).toBe(
-      displayCornerTitle('alpha', 'sub-9f9f9f', 'abcdef0123'),
-    );
   });
 });
 

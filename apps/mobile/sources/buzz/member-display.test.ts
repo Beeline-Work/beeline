@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { directMessageTitle } from '@beeline/api-contract/phone';
+import { roomRowName } from './room-list-row';
 import {
   directMessageHeaderName,
   directMessagePeer,
@@ -10,71 +12,103 @@ import {
 const pubkey = 'a'.repeat(64);
 
 describe('direct-message member display', () => {
-  it('uses the cached Trusty Squire peer name for a grant DM header', () => {
+  it('titles a grant DM header with the shared connector title', () => {
     expect(
       directMessageHeaderName(
         { pubkey: 's'.repeat(64), kind: 'human', name: 'Trusty Squire', handle: 'trusty-squire' },
         undefined,
         's'.repeat(64),
-        'none',
         true,
       ),
-    ).toBe('Trusty Squire');
+    ).toBe('@Trusty Squire');
   });
-  it('uses the server connector name over an older Lena profile', () => {
+  it('uses the server connector identity over an older Lena profile', () => {
     expect(
       directMessageHeaderName(
         { pubkey: 's'.repeat(64), kind: 'human', name: 'Trusty Squire', handle: 'trusty-squire' },
         { name: 'Lena', handle: 'lena', nip05: 'lena@example.com' },
         's'.repeat(64),
-        'verified',
         false,
       ),
-    ).toBe('Trusty Squire');
+    ).toBe('@Trusty Squire');
   });
   it('uses another server connector name without hardcoding it', () => {
     expect(
       directMessageHeaderName(
-        { pubkey: 'g'.repeat(64), kind: 'human', name: 'Google Drive', handle: 'google-drive' },
+        {
+          pubkey: 'g'.repeat(64),
+          kind: 'human',
+          name: 'Google Drive',
+          handle: 'google-drive',
+          avatar: 'https://server.test/v1/connectors/logo/google-drive.svg',
+        },
         { name: 'Lena' },
         'g'.repeat(64),
-        'none',
         false,
       ),
-    ).toBe('Google Drive');
+    ).toBe('@Google Drive');
   });
-  it('keeps the profile label for an ordinary writable DM', () => {
+  it('titles an ordinary DM from the same peer identity as the Room list row', () => {
     expect(
       directMessageHeaderName(
         { pubkey, kind: 'human', name: 'Ada', handle: 'ada' },
         { name: 'Lena', handle: 'lena' },
         pubkey,
-        'none',
         false,
       ),
-    ).toBe('@lena');
+    ).toBe('@ada');
   });
-  it('uses the indexed System name for an announcements-only DM header', () => {
+  // G9-R4: a connector header showed `Trusty Squire` while its notification
+  // title is `@Trusty Squire`.
+  it('titles a connector header like its notification', () => {
+    const peer = {
+      pubkey: 'b'.repeat(64),
+      kind: 'human' as const,
+      name: 'Trusty Squire',
+      handle: 'trusty-squire',
+    };
+    expect(directMessageHeaderName(peer, undefined, peer.pubkey, false)).toBe(
+      directMessageTitle(peer),
+    );
+  });
+  // G9-R4: the header showed `@alice@host` while the shared title is `@alice`.
+  it('uses the shared title rules for a domain handle', () => {
+    const peer = { pubkey, kind: 'human' as const, name: 'Alice', handle: 'alice@host' };
+    expect(directMessageHeaderName(peer, undefined, pubkey, false)).toBe(directMessageTitle(peer));
+    expect(directMessageHeaderName(peer, undefined, pubkey, false)).toBe('@alice');
+    expect(roomRowName({ room: { id: 'dm' }, directMessage: { peer } } as never)).toEqual({
+      sigil: '@',
+      name: 'alice',
+    });
+  });
+  it('falls back to the profile, then a friendly name', () => {
+    expect(
+      directMessageHeaderName(undefined, { name: 'Lena', handle: 'lena' }, pubkey, false),
+    ).toBe('@lena');
+    expect(directMessageHeaderName(undefined, undefined, pubkey, false)).toBe(
+      fallbackMemberName(pubkey),
+    );
+  });
+  it('titles an announcements-only DM header from its System peer', () => {
     expect(
       directMessageHeaderName(
         { pubkey: 's'.repeat(64), kind: 'human', name: 'System', handle: 'system' },
         undefined,
         's'.repeat(64),
-        'none',
         true,
       ),
-    ).toBe('System');
+    ).toBe('@system');
   });
 
   it('uses the indexed announcement author when the hidden System peer is absent', () => {
     expect(
-      directMessageHeaderName(undefined, undefined, 's'.repeat(64), 'none', true, {
+      directMessageHeaderName(undefined, undefined, 's'.repeat(64), true, {
         pubkey: 's'.repeat(64),
         kind: 'human',
         name: 'System',
         handle: 'system',
       }),
-    ).toBe('System');
+    ).toBe('@system');
   });
 
   it('resolves the other participant', () => {

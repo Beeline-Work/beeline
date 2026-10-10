@@ -1,5 +1,4 @@
 import {
-  cornerName,
   cornerStatusPresentation,
   cornerSuperState,
   cornerVisualState,
@@ -11,7 +10,12 @@ import {
   type CornerSuperState,
   type CornerVisualState,
 } from '@/buzz/corners';
-import type { CornerState } from '@beeline/api-contract/phone';
+import {
+  identityHandle,
+  isConnectorIdentity,
+  roomTitle,
+  type CornerState,
+} from '@beeline/api-contract/phone';
 import { isMachinePreview } from '@/buzz/room-list-summary';
 import { displayModel } from '@/buzz/model-display';
 import {
@@ -211,29 +215,16 @@ export type RoomRowName = {
   name: string;
 };
 
-function isSystemBot(
-  identity: Pick<RoomViewIdentity, 'name' | 'handle'> & Partial<Pick<RoomViewIdentity, 'avatar'>>,
-): boolean {
-  return Boolean(
-    (identity.avatar && /\/v1\/connectors\/logo\/[a-z0-9-]+\.svg(?:\?|$)/.test(identity.avatar)) ||
-    (identity.name === 'Trusty Squire' && identity.handle?.replace(/^@/, '') === 'trusty-squire'),
-  );
-}
-
 /**
  * The short form of an identity for an `@` prefix: the local part of a
  * `name@domain` handle, else the display name. Never carries a leading `@`,
- * because the sigil is drawn separately in brass.
+ * because the sigil is drawn separately in brass. One rule with every other
+ * title surface: `identityHandle` in the contract's chat-title module.
  */
 export function previewHandle(
   identity: Pick<RoomViewIdentity, 'name' | 'handle'> & Partial<Pick<RoomViewIdentity, 'avatar'>>,
 ): string {
-  // Connector DMs use their display name as the sender and heading. Their
-  // machine handle is an address, not the name shown to the person.
-  if (isSystemBot(identity)) return identity.name;
-  const handle = identity.handle?.trim().replace(/^@+/, '');
-  const local = handle?.split('@')[0]?.trim();
-  return local || identity.name.trim();
+  return identityHandle(identity);
 }
 
 export function roomRowName(item: Pick<ChatListItem, 'room' | 'directMessage'>): RoomRowName {
@@ -244,8 +235,7 @@ export function roomRowName(item: Pick<ChatListItem, 'room' | 'directMessage'>):
       name: previewHandle(peer),
     };
   }
-  const stored = item.room.name.trim().replace(/^#+/, '');
-  return { sigil: '#', name: stored || item.room.id };
+  return { sigil: '#', name: roomTitle(item.room.name)?.slice(1) ?? item.room.id };
 }
 
 /**
@@ -273,7 +263,7 @@ export function roomRowPreview(
   // Older cached grant cards may still carry the asking agent as author.
   // The connector DM itself is the authority for the sender shown in the list.
   const peer = item.directMessage?.peer;
-  const author = peer && isSystemBot(peer) ? peer : latest.author;
+  const author = peer && isConnectorIdentity(peer) ? peer : latest.author;
   return { attribution: 'other', handle: previewHandle(author), text: preview };
 }
 
@@ -608,88 +598,16 @@ function projectEntries<T extends RoomRowInput>(
 /**
  * Captain's channel-mark convention (2026-08): Room index rows display
  * `#<name>`. Extended across flat surfaces that expose a room or corner name
- * (2026-08): chat headers, breadcrumbs, cross-Room
- * lists, Workspace settings, and Members references render through this
- * derivation or `displayCornerTitle` below. Grouped corner rows use
- * `displayGroupedCornerTitle`. Strictly presentation — the
- * stored name, search keys, sorting, unread state, navigation params, cache
- * writes, and identity never see the prefix. A Room whose title fell back to
- * the placeholder id gains no mark: nothing fabricated is decorated.
+ * (2026-08): chat headers, breadcrumbs, cross-Room lists, Workspace settings,
+ * and Members references render through this derivation, or `cornerTitle` /
+ * `cornerShortTitle` from the contract's chat-title module for a corner.
+ * Strictly presentation — the stored name, search keys, sorting, unread
+ * state, navigation params, cache writes, and identity never see the prefix.
+ * A Room whose title fell back to the placeholder id gains no mark: nothing
+ * fabricated is decorated.
  */
 export function displayRoomIndexTitle(storedTitle: string | undefined): string | undefined {
-  const trimmed = storedTitle?.trim();
-  if (!trimmed) return undefined;
-  // Idempotent: a name that already carries the mark is never double-prefixed.
-  return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-}
-
-/**
- * The corner half of the same convention: a corner renders as
- * `#<room>/<corner>`, composed from STORED names at render time. When the
- * parent Room's name has not resolved yet the corner still gets its own mark
- * (`#<corner>`) rather than blocking the label — honest about what is known.
- *
- * Presentation-only like `displayRoomIndexTitle`: nothing here mutates a
- * stored name, a navigation param, or a cache entry. Leading marks on either
- * stored part are stripped before composing, so an already-decorated name can
- * never double-prefix. A missing corner name falls through `cornerName`'s own
- * id-slug fallback so the label is never empty.
- */
-export function displayCornerTitle(
-  parentRoomName: string | undefined | null,
-  cornerStoredName: string | undefined,
-  cornerId: string,
-): string {
-  const corner = cornerName(cornerStoredName, cornerId);
-  const room = parentRoomName?.trim().replace(/^#+/, '');
-  return room ? `#${room}/${corner}` : `#${corner}`;
-}
-
-/**
- * The same `#room/corner` composition for the Room's corners list, which also
- * drops a legacy stored `<room>/` prefix.
- */
-export function fullCornerTitle(
-  parentRoomName: string | undefined | null,
-  cornerStoredName: string | undefined,
-  cornerId: string,
-): string {
-  const room = parentRoomName?.trim().replace(/^#+/, '');
-  const corner = cornerName(withoutParentPrefix(room, cornerStoredName), cornerId);
-  return room ? `#${room}/${corner}` : `#${corner}`;
-}
-
-/**
- * A corner grouped directly beneath its parent Room needs only its short name:
- * the surrounding Room row or work-pane header already supplies the namespace.
- * Accept legacy pre-decorated names so old cached/server rows cannot reintroduce
- * the redundant `#room/` prefix on grouped surfaces.
- */
-export function displayGroupedCornerTitle(
-  parentRoomName: string | undefined | null,
-  cornerStoredName: string | undefined,
-  cornerId: string,
-): string {
-  const room = parentRoomName?.trim().replace(/^#+/, '');
-  return cornerName(withoutParentPrefix(room, cornerStoredName), cornerId);
-}
-
-/**
- * Drop a stored name's own `<room>/` prefix, case-insensitively, so a legacy
- * row saved as `#alpha/Fix fixture` never composes to `#alpha/alpha/Fix
- * fixture`. Shared by both composing titles: a stored name that merely starts
- * with a similar word keeps it, because only an exact `<room>/` segment is
- * stripped.
- */
-function withoutParentPrefix(
-  room: string | undefined,
-  cornerStoredName: string | undefined,
-): string | undefined {
-  const stored = cornerStoredName?.trim().replace(/^#+/, '');
-  const prefix = room ? `${room}/` : undefined;
-  return prefix && stored?.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())
-    ? stored.slice(prefix.length)
-    : stored;
+  return roomTitle(storedTitle);
 }
 
 /**

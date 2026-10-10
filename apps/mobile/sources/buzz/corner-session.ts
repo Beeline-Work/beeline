@@ -1,6 +1,7 @@
 import { resolveCornerCardAgentPubkey } from '@/buzz/agent-display';
 import { cornerName } from '@/buzz/corners';
-import { displayCornerTitle, displayRoomIndexTitle } from '@/buzz/room-list-row';
+import { cornerTitle } from '@beeline/api-contract/phone';
+import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import type { ChatDisplayMessage, CornerProcessState } from '@/buzz/room-view-presentation';
 
@@ -33,8 +34,8 @@ export function cachedChannelKind(
  * (2026-08, extended to every surface): a Room renders `#<name>`, a Corner
  * renders `#<room>/<corner>` composed from stored names at render time.
  * Presentation only — the stored name, cache entries, and navigation params
- * never see the mark; see `displayRoomIndexTitle` / `displayCornerTitle` in
- * `buzz/room-list-row.ts` for the one naming model.
+ * never see the mark; `roomTitle` / `cornerTitle` in the contract's
+ * chat-title module are the one naming model.
  *
  * `null` when the screen should show a skeleton. `resolvedName` is `null`
  * only while the channel's own metadata read is still in flight; an empty
@@ -70,7 +71,7 @@ export function channelHeaderTitle(
   if (kind === 'corner') {
     if (resolvedName === null) return null;
     if (options.directMessage) return cornerName(resolvedName, channelId);
-    return displayCornerTitle(options.parentRoomName, resolvedName, channelId);
+    return cornerTitle(options.parentRoomName, resolvedName, channelId);
   }
   if (resolvedName !== null && resolvedName.trim()) {
     const trimmed = resolvedName.trim();

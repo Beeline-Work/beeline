@@ -58,7 +58,9 @@ vi.mock('@/sync/transport', () => ({
         chats: [
           {
             room: { id: 'room-1', name: 'Test room' },
-            directMessage: {},
+            directMessage: {
+              peer: { pubkey: 'other', name: 'Test sender', handle: 'tester@example.com' },
+            },
             cornerCount: 1,
             unread: true,
           },
@@ -111,7 +113,8 @@ describe('signed-in desktop native notification delivery', () => {
     fixture.roomListener?.(event);
     await vi.waitFor(() => expect(fixture.send).toHaveBeenCalledTimes(1));
     expect(fixture.send).toHaveBeenCalledWith({
-      title: 'Test sender',
+      // The in-app DM title: `@` and the peer's handle local part.
+      title: '@tester',
       body: 'Desktop test message',
     });
     stop();
@@ -138,7 +141,8 @@ describe('signed-in desktop native notification delivery', () => {
     });
     await vi.waitFor(() =>
       expect(fixture.send).toHaveBeenCalledWith({
-        title: 'Test corner',
+        // The in-app corner title, composed with its parent Room.
+        title: '#Test room/Test corner',
         body: 'Test sender: Review this',
       }),
     );

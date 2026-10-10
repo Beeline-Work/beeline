@@ -4,6 +4,7 @@ import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-re
 import { FlatList, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { CornerListItem, RoomView, RoomViewMessage } from '@beeline/buzz-client';
+import { cornerTitle } from '@beeline/api-contract/phone';
 import type { RoomViewClient } from '@/sync/transport/room-view-client';
 import {
   clampDesktopPaneWidth,
@@ -215,6 +216,7 @@ export function DesktopRoomInspector({
             channelIndex={channelIndex}
             onChannelReference={onChannelReference}
             roomId={content.cornerId}
+            parentRoomName={room.room.name}
             detail={detail}
             loading={loading}
             summary={summary}
@@ -252,6 +254,7 @@ function CornerCockpit({
   channelIndex: workspaceChannelIndex,
   onChannelReference,
   roomId,
+  parentRoomName,
   detail,
   loading,
   summary,
@@ -265,6 +268,7 @@ function CornerCockpit({
   channelIndex?: ChannelReferenceIndex;
   onChannelReference?: (target: ChannelReferenceTarget, text?: string) => void;
   roomId: string;
+  parentRoomName: string;
   detail: RoomView | null;
   loading: boolean;
   summary?: CornerListItem;
@@ -504,8 +508,10 @@ function CornerCockpit({
     },
     [bylineOpeners, channelIndex, detail, focusMessageId, messages, onOpenCorner, onChannelReference],
   );
-  const title = summary?.corner.name ?? detail?.room.name ?? 'Corner';
-  const objective = summary?.corner.about ?? detail?.room.about ?? title;
+  const storedName = summary?.corner.name ?? detail?.room.name;
+  const cornerId = summary?.corner.id ?? detail?.room.id;
+  const title = cornerId ? cornerTitle(parentRoomName, storedName, cornerId) : 'Corner';
+  const objective = summary?.corner.about ?? detail?.room.about ?? storedName ?? title;
   const cornerBrief = detail?.cornerBrief;
   return (
     <View style={styles.cockpit} testID="desktop-work-cockpit">

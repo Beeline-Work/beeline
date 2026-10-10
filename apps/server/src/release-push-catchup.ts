@@ -119,9 +119,11 @@ export const RELEASE_CATCHUP_CANDIDATES_SQL = `
     -- A release notice lives in the read-only @system DM: no inline action.
     NULL::text action,NULL::text grant_id,NULL::text grant_kind,NULL::text grant_target,
     NULL::text grant_agent_name,NULL::text author_name,
-    CASE WHEN r.direct_participants IS NULL AND parent.direct_participants IS NULL
+    CASE WHEN r.direct_participants IS NULL
       THEN COALESCE(parent.name,r.name) END room_name,
-    CASE WHEN parent.id IS NOT NULL THEN r.name END corner_name
+    CASE WHEN parent.id IS NOT NULL THEN r.name END corner_name,
+    CASE WHEN r.direct_participants IS NOT NULL THEN jsonb_build_object(
+      'name',author.name,'handle',author.handle,'avatar',author.avatar) END dm_peer
   FROM push_release_catchups catchup
   JOIN push_devices d ON d.token=catchup.device_token AND d.identity_id=catchup.identity_id
   JOIN identities recipient ON recipient.id=d.identity_id AND recipient.push_level<>'off'

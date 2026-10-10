@@ -269,24 +269,36 @@ it('replaces an activity slot without losing its unique message destination', ()
 });
 
 describe('push title', () => {
-  it('names the Room, or the Room and corner, and nothing for a DM', () => {
-    expect(pushTitleFor('beeline-dev', null)).toEqual({ title: 'beeline-dev' });
-    expect(pushTitleFor('beeline-dev', 'push-title-room-name')).toEqual({
-      title: 'beeline-dev › push-title-room-name',
+  const corner = '44444444-4444-4444-8444-444444444444';
+
+  it('uses the in-app title: #room, #room/corner, or @peer for a DM', () => {
+    expect(pushTitleFor('beeline-dev', null, null)).toEqual({ title: '#beeline-dev' });
+    expect(pushTitleFor('beeline-dev', 'push-title', corner)).toEqual({
+      title: '#beeline-dev/push-title',
     });
-    expect(pushTitleFor(null, null)).toEqual({});
-    expect(pushTitleFor('  ', 'corner')).toEqual({});
+    expect(pushTitleFor(null, null, null)).toEqual({});
+    expect(pushTitleFor('  ', 'corner', corner)).toEqual({});
+    expect(
+      pushTitleFor(null, null, null, { name: 'Maya', handle: 'maya@usebeeline.app' }),
+    ).toEqual({ title: '@maya' });
+  });
+
+  // Audit 9.1/9.2: a legacy `room/` corner name reads as it does in the app.
+  it('drops a legacy room prefix and falls back to the id slug', () => {
+    expect(pushTitleFor('alpha', 'alpha/fix-auth', corner).title).toBe('#alpha/fix-auth');
+    expect(pushTitleFor('alpha', '', corner).title).toBe('#alpha/corner-44444444');
   });
 
   it('cuts long names so the title stays on one line', () => {
-    const room = pushTitleFor('a'.repeat(60), null).title!;
-    expect(room).toBe(`${'a'.repeat(39)}…`);
-    const corner = pushTitleFor(
+    const room = pushTitleFor('a'.repeat(60), null, null).title!;
+    expect(room).toBe(`#${'a'.repeat(38)}…`);
+    const title = pushTitleFor(
       'workspace-operations-room',
       'reviewer-wake-checks-and-merge-webhook',
+      corner,
     ).title!;
-    expect(corner).toBe('workspace-opera… › reviewer-wake-checks…');
-    expect(Array.from(corner)).toHaveLength(40);
-    expect(pushTitleFor('🐝'.repeat(50), null).title).toBe(`${'🐝'.repeat(39)}…`);
+    expect(title).toBe('#workspace-oper…/reviewer-wake-checks-a…');
+    expect(Array.from(title)).toHaveLength(40);
+    expect(pushTitleFor('🐝'.repeat(50), null, null).title).toBe(`#${'🐝'.repeat(38)}…`);
   });
 });

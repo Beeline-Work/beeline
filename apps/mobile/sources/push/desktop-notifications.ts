@@ -1,4 +1,5 @@
 import type { ChatListItem, RoomViewMessage } from '@beeline/buzz-client';
+import { cornerTitle, directMessageTitle, roomTitle } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { monolithSession } from '@/auth/monolith-session';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
@@ -10,6 +11,21 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { chatWatchFiltersKey } from '@/buzz/chat-list-delta';
 import { isTauri } from '@/utils/isTauri';
+
+/**
+ * The notification's title, from the same chat-title module as the in-app
+ * header and list: `@peer` for a DM, `#room/corner` for a corner (when its
+ * parent Room is known), `#room` for a Room.
+ */
+export function desktopNotificationTitle(
+  room: Pick<ChatListItem, 'room' | 'directMessage'>,
+  parentRoomName?: string,
+): string {
+  if (room.directMessage) return directMessageTitle(room.directMessage.peer);
+  if (parentRoomName !== undefined)
+    return cornerTitle(parentRoomName, room.room.name, room.room.id);
+  return roomTitle(room.room.name) ?? room.room.name;
+}
 
 /** The Tauri process must remain running and connected. A quit app has no desktop remote token. */
 export function startDesktopNotifications(): () => void {
@@ -37,6 +53,7 @@ export function startDesktopNotifications(): () => void {
     const relay = await transport.ensureClient();
     const reader = new RoomViewClient({ baseUrl: await getEffectiveRelayUrl(), identity });
     let rooms = new Map<string, ChatListItem>();
+    let cornerParentNames = new Map<string, string>();
     let watchKey = '';
     let refreshing = false;
     let pendingRefresh = false;
@@ -93,7 +110,7 @@ export function startDesktopNotifications(): () => void {
       const notification = await import('@tauri-apps/plugin-notification');
       if (!(await notification.isPermissionGranted()) || disposed || current !== generation) return;
       notification.sendNotification({
-        title: room.directMessage ? message.author.name : room.room.name,
+        title: desktopNotificationTitle(room, cornerParentNames.get(roomId)),
         body: (room.directMessage ? message.text : `${message.author.name}: ${message.text}`).slice(
           0,
           240,
@@ -117,14 +134,24 @@ export function startDesktopNotifications(): () => void {
         // A corner is its own Room and its messages do not ride the parent's
         // socket filter. Read each active parent with corners so the same
         // signed-in member can receive an exact tag there too.
+        const cornerParents = parents.filter(
+          (room) => (room.cornerCount ?? room.openCorners?.length ?? 0) > 0,
+        );
         const cornerReads = await Promise.allSettled(
-          parents
-            .filter((room) => (room.cornerCount ?? room.openCorners?.length ?? 0) > 0)
-            .map((room) => reader.corners(room.room.id)),
+          cornerParents.map((room) => reader.corners(room.room.id)),
         );
         if (disposed || current !== generation) return;
-        const corners = cornerReads.flatMap((result) =>
-          result.status === 'fulfilled' ? result.value.corners : [],
+        const cornerReadsWithParent = cornerReads.flatMap((result, index) =>
+          result.status === 'fulfilled'
+            ? result.value.corners.map((item) => ({
+                item,
+                parentName: cornerParents[index]!.room.name,
+              }))
+            : [],
+        );
+        const corners = cornerReadsWithParent.map(({ item }) => item);
+        cornerParentNames = new Map(
+          cornerReadsWithParent.map(({ item, parentName }) => [item.corner.id, parentName]),
         );
         rooms = new Map([
           ...parents.map((room) => [room.room.id, room] as const),

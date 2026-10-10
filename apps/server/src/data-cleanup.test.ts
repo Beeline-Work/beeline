@@ -66,15 +66,17 @@ describe('release data cleanup', () => {
       VALUES('device',$1,'ios','physical')`, [HUMAN]);
     await db.query(`INSERT INTO push_release_catchups(device_token,identity_id,message_id)
       VALUES('device',$1,'catchup')`, [HUMAN]);
+    // An iOS delivered claim no read-clear push has named stays (sendReadClears).
     await db.query(`INSERT INTO push_delivery_claims
-      (message_id,device_token,status,completed_at) VALUES
-      ('old','device','delivered',now()-interval '2 hours'),
-      ('fresh','device','delivered',now()),
-      ('catchup','device','failed',now()-interval '2 hours')`);
+      (message_id,device_token,status,completed_at,read_cleared_at) VALUES
+      ('old','device','delivered',now()-interval '2 hours',now()-interval '2 hours'),
+      ('unnamed','device','delivered',now()-interval '2 hours',NULL),
+      ('fresh','device','delivered',now(),NULL),
+      ('catchup','device','failed',now()-interval '2 hours',NULL)`);
     await compactPushClaims(db);
     expect((await db.query(`SELECT message_id FROM push_delivery_claims
       ORDER BY message_id`)).rows).toEqual([
-      { message_id: 'catchup' }, { message_id: 'fresh' },
+      { message_id: 'catchup' }, { message_id: 'fresh' }, { message_id: 'unnamed' },
     ]);
   });
 });

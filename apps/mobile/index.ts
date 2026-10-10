@@ -8,7 +8,10 @@ import './sources/push/early-room-prefetch-bootstrap';
 import './sources/unistyles';
 import 'expo-router/entry';
 import { installNotificationActions } from './sources/push/notification-action-runtime';
+import { installReadClearTask } from './sources/push/read-clear-runtime';
 
 // Android answers a notification action in a headless JS runtime that never
 // mounts a screen, so the task is defined while the bundle loads.
 installNotificationActions();
+// iOS clears a Room's notifications when the server says it was read elsewhere.
+installReadClearTask();

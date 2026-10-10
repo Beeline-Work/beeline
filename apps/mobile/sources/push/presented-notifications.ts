@@ -99,12 +99,53 @@ export async function dismissPresentedNotificationsForChannel(
   api: PresentedNotificationApi,
   platform: string,
 ): Promise<void> {
-  const openedChannelId = channelId.trim();
-  if (!openedChannelId) return;
+  await dismissPresentedNotificationsForChannels([{ channelId }], api, platform);
+}
+
+function presentedMessageId(notification: PresentedNotification): string | null {
+  const data = notification.request.content?.data;
+  if (!data || typeof data !== 'object') return null;
+  const messageId = (data as Record<string, unknown>).messageId;
+  return typeof messageId === 'string' && messageId ? messageId : null;
+}
+
+type ChannelRead = {
+  channelId: string;
+  /** The server read cursor: the last read message. Absent = clear everything. */
+  messageId?: string | null;
+  /** The other read messages the server pushed to this device. */
+  readMessageIds?: readonly string[];
+};
+
+/**
+ * Dismiss presented pushes for these Rooms or corners — the ones opened here,
+ * or read on another device — and recount iOS's badge from the shade. With a
+ * read cursor, only the read messages' notifications go: the cursor's own and
+ * those the server lists as read. The server orders messages, so a newer one
+ * stays unread even when iOS presented it at the same second.
+ */
+export async function dismissPresentedNotificationsForChannels(
+  reads: readonly ChannelRead[],
+  api: PresentedNotificationApi,
+  platform: string,
+): Promise<void> {
+  const readChannels = reads.flatMap((read) => {
+    const channelId = read.channelId.trim();
+    return channelId ? [{ ...read, channelId }] : [];
+  });
+  if (readChannels.length === 0) return;
 
   const presented = await api.getPresentedNotificationsAsync();
   const matchingIds = presented.flatMap((notification) =>
-    presentedNotificationMatchesChannel(notification, openedChannelId)
+    readChannels.some((read) => {
+      if (!presentedNotificationMatchesChannel(notification, read.channelId)) return false;
+      if (!read.messageId) return true;
+      const messageId = presentedMessageId(notification);
+      return (
+        messageId !== null &&
+        (messageId === read.messageId || (read.readMessageIds ?? []).includes(messageId))
+      );
+    })
       ? [notification.request.identifier]
       : [],
   );

@@ -191,6 +191,27 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('replays the held corner status to a late join', async () => {
+    const { connection } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A,
+      epoch: 'epoch-1', cursor: 0, resumed: false });
+    const status = (state: string) => ({ type: 'corner-status', roomId: ROOM_A,
+      cornerCount: 1, waitingCornerCount: 0, openCorners: [], agentState: 'working',
+      corners: [{ corner: { id: 'corner-1' }, state }] });
+    sockets[0]!.emit(status('waiting'));
+    sockets[0]!.emit(status('working'));
+    const late: unknown[] = [];
+    await connection.register([{ '#h': [ROOM_A] }], (event) => late.push(event));
+    expect(late).toEqual([
+      { monolithLive: { type: 'subscribed', roomId: ROOM_A,
+        epoch: 'epoch-1', cursor: 0, resumed: true } },
+      { monolithLive: status('working') },
+    ]);
+    connection.dispose();
+  });
+
   it('batches a large Room watch under the server frame limit', async () => {
     const { connection } = createConnection();
     const roomIds = Array.from({ length: 65 }, (_, index) => `room-${index}`);

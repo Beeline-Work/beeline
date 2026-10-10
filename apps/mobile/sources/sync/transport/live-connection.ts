@@ -16,6 +16,7 @@ type SurfaceListener = (event: NostrEvent | MonolithSurfaceEvent) => void;
 type DraftEvent = Extract<LiveWireEvent, { type: 'draft' | 'thought' }>;
 type ThoughtEvent = DraftEvent;
 type PresenceEvent = Extract<LiveWireEvent, { type: 'presence' }>;
+type CornerStatusEvent = Extract<LiveWireEvent, { type: 'corner-status' }>;
 
 type CachedOverlay<Event> = { readonly event: Event; readonly receivedAt: number };
 
@@ -23,6 +24,8 @@ type RoomOverlayCache = {
   drafts: Map<string, CachedOverlay<DraftEvent>>;
   thoughts: Map<string, CachedOverlay<ThoughtEvent>>;
   presence: Map<string, PresenceEvent>;
+  /** The newest corner list this socket heard, for a Corners page that joins later. */
+  cornerStatus?: CornerStatusEvent;
 };
 
 type Registration = {
@@ -449,6 +452,7 @@ export class LiveConnection {
     for (const entry of cache.thoughts.values())
       registration.listener({ monolithLive: entry.event });
     for (const event of cache.presence.values()) registration.listener({ monolithLive: event });
+    if (cache.cornerStatus) registration.listener({ monolithLive: cache.cornerStatus });
   }
 
   private dispatch(live: LiveWireEvent | { type: 'pong' }, generation: WebSocket): void {
@@ -564,6 +568,14 @@ export class LiveConnection {
     if (live.type === 'presence') {
       const cache = this.overlayCache(live.roomId);
       cache.presence.set(live.agentId, live);
+      return;
+    }
+    if (live.type === 'corner-status') {
+      if (!live.corners) return;
+      const cache = this.overlayCache(live.roomId);
+      const held = cache.cornerStatus?.sequence;
+      if (held !== undefined && live.sequence !== undefined && live.sequence <= held) return;
+      cache.cornerStatus = live;
       return;
     }
     if (live.type === 'retract') {

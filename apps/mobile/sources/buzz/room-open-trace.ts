@@ -36,6 +36,8 @@ let pageStartedAt: number | null = null;
 let pageReported = false;
 let pageRoomId: string | undefined;
 let roomReadNetwork: { requestToFirstByteMs: number; serverProcessingMs: number } | undefined;
+let successfulPagesSinceReport = 0;
+const SUCCESS_SAMPLE_RATE = 8;
 
 /** The successful Room GET's wire timing, kept locally until the existing page observation. */
 export function recordRoomReadNetworkTiming(
@@ -44,6 +46,19 @@ export function recordRoomReadNetworkTiming(
 ): void {
   if (pageStartedAt !== null && !pageReported && pageRoomId === roomId)
     roomReadNetwork = timing;
+}
+
+function observePage(durationMs: number, failed: boolean): void {
+  // Preserve the mainline one-in-eight success sample; failures report at once.
+  // The matched wire timings ride the same observation, never another request.
+  if (!failed && ++successfulPagesSinceReport < SUCCESS_SAMPLE_RATE) return;
+  if (!failed) successfulPagesSinceReport = 0;
+  const network = roomReadNetwork;
+  void import('./room-page-observation').then(({ reportRoomPageObservation }) =>
+    network
+      ? reportRoomPageObservation(durationMs, failed, network)
+      : reportRoomPageObservation(durationMs, failed),
+  () => undefined);
 }
 
 /** The first mark of an open. Everything after it belongs to the same run. */
@@ -85,12 +100,7 @@ export function markRoomOpen(phase: string, detail?: string): void {
     pageReported = true;
     const durationMs = Math.max(0, Math.min(600_000, Math.round(performance.now() - pageStartedAt)));
     if (typeof process === 'undefined' || (process.env.NODE_ENV !== 'test' && !process.env.VITEST)) {
-      const network = roomReadNetwork;
-      void import('./room-page-observation').then(({ reportRoomPageObservation }) =>
-        network
-          ? reportRoomPageObservation(durationMs, phase === 'room-read-error', network)
-          : reportRoomPageObservation(durationMs, phase === 'room-read-error'),
-      () => undefined);
+      observePage(durationMs, phase === 'room-read-error');
     }
   }
   if (tracingOff()) return;

@@ -3,6 +3,22 @@ export const latencyFrameTraceEnabled =
   typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_LATENCY_RIG_TRACE === '1';
 
 let touchSequence = 0;
+let currentRoute: string | undefined;
+const routeListeners = new Set<() => void>();
+
+export function latencyRouteMatches(template: string, actual = currentRoute): boolean {
+  if (!actual) return false;
+  const expected = template.split('/');
+  const observed = actual.split('/');
+  return expected.length === observed.length && expected.every((part, index) =>
+    /^\[[^/]+\]$/.test(part) || part === observed[index]);
+}
+
+/** Observe root pathname commits without importing native navigation in route probes. */
+export function subscribeLatencyRoute(listener: () => void): () => void {
+  routeListeners.add(listener);
+  return () => { routeListeners.delete(listener); };
+}
 
 function mark(payload: Record<string, string | number>): void {
   if (!latencyFrameTraceEnabled) return;
@@ -24,7 +40,10 @@ export function markLatencyTouch(): void {
 
 /** The pathname committed; a deep-link driver can pair this with its intent start. */
 export function markLatencyRouteNavigation(route: string): void {
+  if (!latencyFrameTraceEnabled) return;
+  currentRoute = route;
   mark({ kind: 'route', phase: 'navigation-commit', route });
+  for (const listener of routeListeners) listener();
 }
 
 /** Route-specific content code calls this only after its meaningful view commits. */

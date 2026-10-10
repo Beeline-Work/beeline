@@ -17,12 +17,13 @@ import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
  * against the bezel itself; both now derive their seat from the same rule.
  */
 function seatShims(mobile: string): Record<string, string> {
+  // Settings now validates and caches the Workspace response; its id must match the server's UUID contract.
   return {
     ...webProofShims(mobile),
     'expo-router': `import React from 'react';
     export const router = { back: () => undefined, push: () => undefined, replace: () => undefined };
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
-    export const useLocalSearchParams = () => ({ communityId: 'alpha' });
+    export const useLocalSearchParams = () => ({ communityId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' });
     export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
     '@/modal': `export const Modal = { actionSheet: async () => undefined, alert: async () => undefined,
       confirm: async () => false };`,
@@ -42,17 +43,27 @@ function seatShims(mobile: string): Record<string, string> {
       async workspace() {
         return {
           workspace: {
-            id: 'alpha',
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
             name: 'Alpha',
             avatar: new URLSearchParams(location.search).get('picture'),
             visibility: 'public',
             createdAt: 1700000000,
           },
-          viewer: { role: 'owner', permissions: { manage: true } },
-          managerSettings: { rooms: [] },
+          viewer: {
+            identity: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Proof viewer' },
+            role: 'owner',
+            permissions: { send: true, manage: true },
+          },
+          managerSettings: { visibility: 'public', rooms: [] },
         };
       }
-      async chats() { return { chats: [] }; }
+      async chats() {
+        return {
+          workspace: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Alpha' },
+          viewer: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Proof viewer' },
+          chats: [],
+        };
+      }
     }`,
   };
 }

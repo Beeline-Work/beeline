@@ -6,6 +6,7 @@ import type { ObjectStorage } from './object-storage.js';
 import type { ObjectService } from './object-service.js';
 import { addressedToPersonSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
+import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 import {
   claimReleaseCatchup,
   PUSH_MAX_ATTEMPTS,
@@ -510,7 +511,14 @@ export class PushDeliveryLoop {
          SELECT 1 FROM memberships member WHERE member.room_id=$4 AND member.identity_id=$2
            AND member.push_muted AND NOT $5::boolean
          UNION ALL
-         SELECT 1 FROM room_push_views WHERE room_id=$1 AND identity_id=$2 AND expires_at>now()
+         SELECT 1 FROM room_push_views view
+         WHERE view.room_id=$1 AND view.identity_id=$2 AND (
+           view.expires_at>now() OR EXISTS (
+             SELECT 1 FROM live_server_instances server
+             WHERE server.instance_id=view.instance_id
+               AND server.renewed_at>clock_timestamp()-make_interval(secs=>$6::double precision/1000)
+           )
+         )
          UNION ALL
          SELECT 1 FROM room_read_marks mark WHERE mark.room_id=$1 AND mark.identity_id=$2
            AND (mark.updated_at>now()-interval '30 seconds' OR EXISTS (
@@ -523,6 +531,7 @@ export class PushDeliveryLoop {
               candidate.message_id,
               candidate.room_id,
               candidate.direct_attention,
+              SERVER_LEASE_EXPIRY_MS,
             ],
           )
         ).rowCount;
@@ -800,7 +809,7 @@ export class BackgroundLeader {
 
   constructor(
     private readonly database: { connectDedicated(): Promise<LeaderConnection> },
-    private readonly cycle: () => Promise<number | void>,
+    private readonly cycle: (newLeader: boolean) => Promise<number | void>,
     private readonly reconciliationMs = 60_000,
   ) {}
 
@@ -819,10 +828,12 @@ export class BackgroundLeader {
           await this.wait();
           continue;
         }
+        let newLeader = true;
         while (!this.#stopped) {
           // Detect a dead lock-owning connection before any work can fire.
           await client.query('SELECT 1');
-          const nextDelay = await this.cycle();
+          const nextDelay = await this.cycle(newLeader);
+          newLeader = false;
           await this.wait(
             typeof nextDelay === 'number'
               ? Math.max(0, Math.min(nextDelay, this.reconciliationMs))

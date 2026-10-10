@@ -58,6 +58,8 @@ export type SquireApprovalRelay = SquireApprovalLink & {
   readonly tool: string;
   readonly title: string;
   readonly detail: string;
+  /** Squire's expires_at, as Unix milliseconds. */
+  readonly expiresAt?: number;
 };
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -328,7 +330,29 @@ export function squireApprovalFromMcp(
   const link = approvalLinkIn(response.result, 0, true) ?? approvalLinkIn(response.result);
   if (!link) return undefined;
   const args = record(params?.arguments) ?? {};
-  return { tool, ...squireApprovalCopy(tool, args), ...link };
+  const expiresAt = approvalExpiryIn(response.result);
+  return { tool, ...squireApprovalCopy(tool, args), ...link,
+    ...(expiresAt !== undefined ? { expiresAt } : {}) };
+}
+
+/** Read Squire's structured expiry, including JSON inside MCP text blocks. */
+function approvalExpiryIn(value: unknown, depth = 0): number | undefined {
+  if (depth > 6) return undefined;
+  if (typeof value === 'string') {
+    if (value.length > 20_000 || !/^[{[]/.test(value.trim())) return undefined;
+    try { return approvalExpiryIn(JSON.parse(value), depth + 1); } catch { return undefined; }
+  }
+  if (Array.isArray(value))
+    return value.map((entry) => approvalExpiryIn(entry, depth + 1)).find((expiry) => expiry !== undefined);
+  const item = record(value);
+  if (!item) return undefined;
+  const raw = item.expires_at ?? item.expiresAt;
+  if (typeof raw === 'string') {
+    const parsed = Date.parse(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return Object.values(item).map((entry) => approvalExpiryIn(entry, depth + 1))
+    .find((expiry) => expiry !== undefined);
 }
 
 export type SquireLoginWallSignal = {

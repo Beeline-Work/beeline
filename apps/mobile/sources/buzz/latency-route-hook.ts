@@ -1,14 +1,21 @@
 /** A content-ready frame hook kept separate from the pure marker/logging module. */
 import * as React from 'react';
-import { useIsFocused } from '@react-navigation/native';
-import { latencyFrameTraceEnabled, markLatencyRouteFrame } from './latency-frame-trace';
+import {
+  latencyFrameTraceEnabled, latencyRouteMatches, markLatencyRouteFrame,
+  subscribeLatencyRoute,
+} from './latency-frame-trace';
 
 function useLatencyRouteFrameEnabled(route: string, ready = true, meaningful = false): void {
-  const focused = useIsFocused();
   React.useEffect(() => {
-    if (!focused || !ready) return;
-    markLatencyRouteFrame(route, meaningful ? 'meaningful-frame' : 'frame-candidate');
-  }, [focused, meaningful, ready, route]);
+    if (!ready) return;
+    const emit = () => {
+      if (latencyRouteMatches(route))
+        markLatencyRouteFrame(route, meaningful ? 'meaningful-frame' : 'frame-candidate');
+    };
+    const unsubscribe = subscribeLatencyRoute(emit);
+    emit();
+    return unsubscribe;
+  }, [meaningful, ready, route]);
 }
 
 // The selected implementation is fixed at bundle evaluation. Ordinary release

@@ -104,21 +104,18 @@ describe('Room→repo corner-open lazy prompt', () => {
 });
 
 describe('Room→repo write confirmation', () => {
-  it('retries the indexed read and only errors on a definitive competing write', () => {
+  it('applies the canonical write response without a confirmation read loop', () => {
     const apply = blockFrom(
       chatSource,
       'const applyRoomRepository = useCallback(',
       'room repository apply',
     );
     expect(apply).toContain('const published = await transport.roomRepositorySet');
-    expect(apply).toContain('await confirmRoomRepositoryLink(');
-    expect(apply).toContain('published.updatedAt');
-    expect(apply).toContain("confirmation === 'contradicted'");
-    expect(apply).toContain("confirmation === 'pending'");
-    expect(apply).toContain('Repo link accepted. The Room is still syncing.');
-    expect(apply).not.toContain('Room did not confirm it');
+    expect(apply).toContain('applyRoomRepositoryResult(published)');
+    expect(apply).not.toContain('confirmRoomRepositoryLink');
+    expect(apply).not.toContain('refreshSignal.force()');
     expect(apply.indexOf('setShowRoomRepoPicker(false)')).toBeGreaterThan(
-      apply.indexOf('await confirmRoomRepositoryLink('),
+      apply.indexOf('applyRoomRepositoryResult(published)'),
     );
   });
 });

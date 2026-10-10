@@ -17,6 +17,7 @@ import {
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -145,6 +146,7 @@ export default function WorkspaceSettings() {
   const communityId = firstParam(params.communityId);
   const [client, setClient] = useState<BuzzClient | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView | null>(null);
+  const paintedWorkspaceId = useRef<string | null>(null);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
   const [workspaceName, setWorkspaceName, workspaceDraft] = useTextDraft(`workspace-name:${communityId}`,
     '',
@@ -206,10 +208,12 @@ export default function WorkspaceSettings() {
       let unsubscribe: (() => void) | undefined;
       let workspaceScheduler: SurfaceRefreshScheduler<WorkspaceView> | undefined;
       let chatsScheduler: SurfaceRefreshScheduler<ChatListView> | undefined;
-      setLoading(true);
-      setClient(null);
-      setWorkspaceView(null);
-      setChatList(null);
+      if (paintedWorkspaceId.current !== communityId) {
+        setLoading(true);
+        setWorkspaceView(null);
+        setChatList(null);
+        paintedWorkspaceId.current = communityId ?? null;
+      }
       setError(null);
       void (async () => {
         if (!communityId) {
@@ -218,19 +222,33 @@ export default function WorkspaceSettings() {
           return;
         }
         try {
-          const currentIdentity = await loadBuzzIdentity();
+          const [currentIdentity, currentRelayUrl] = await Promise.all([
+            loadBuzzIdentity(), getEffectiveRelayUrl(),
+          ]);
           if (!currentIdentity) {
             router.replace('/beeline/onboarding');
             return;
           }
-          const currentRelayUrl = await getEffectiveRelayUrl();
+          const workspaceAddress = surfaceAddress(currentRelayUrl, currentIdentity.publicKey, '/workspace/:id', { workspaceId: communityId });
+          const chatsAddress = surfaceAddress(currentRelayUrl, currentIdentity.publicKey, '/workspace/:id/chats', { workspaceId: communityId });
+          const [cachedWorkspace, cachedChats] = await Promise.all([
+            mobileSurfaceCache.read(workspaceAddress, isWorkspaceView),
+            mobileSurfaceCache.read(chatsAddress, isChatListView),
+          ]);
+          if (cancelled) return;
+          if (cachedWorkspace) {
+            setWorkspaceView(cachedWorkspace);
+            workspaceDraft.initialize(cachedWorkspace.workspace.name);
+            setLoading(false);
+          }
+          if (cachedChats) setChatList(cachedChats);
           const transport = new BuzzRigTransport(currentIdentity);
           const currentClient = await transport.ensureClient();
           if (cancelled) return;
           setClient(currentClient);
           const http = new RoomViewClient({ baseUrl: currentRelayUrl, identity: currentIdentity });
           workspaceScheduler = new SurfaceRefreshScheduler({
-            fetch: () => http.workspace(communityId),
+            fetch: () => mobileSurfaceCache.fetch(workspaceAddress, isWorkspaceView, () => http.workspace(communityId)),
             apply: (value) => {
               setWorkspaceView(value);
               workspaceDraft.initialize(value.workspace.name);
@@ -243,7 +261,7 @@ export default function WorkspaceSettings() {
             },
           });
           chatsScheduler = new SurfaceRefreshScheduler({
-            fetch: () => http.chats(communityId),
+            fetch: () => mobileSurfaceCache.fetch(chatsAddress, isChatListView, () => http.chats(communityId)),
             apply: (value) => {
               setChatList(value);
               setError(null);

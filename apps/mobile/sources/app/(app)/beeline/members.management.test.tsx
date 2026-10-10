@@ -12,6 +12,13 @@ const MEMBER = 'c'.repeat(64);
 const AGENT = 'd'.repeat(64);
 
 const state = vi.hoisted(() => ({ workspace: null as any, agent: null as any }));
+const liveListeners = vi.hoisted(() => new Set<(event: any) => void>());
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
+  register: async (_filters: unknown, listener: (event: any) => void) => {
+    liveListeners.add(listener);
+    return () => liveListeners.delete(listener);
+  },
+}) }));
 const roomView = vi.hoisted(() => ({
   workspace: vi.fn(),
   agent: vi.fn(),
@@ -60,6 +67,7 @@ const client = vi.hoisted(() => ({
       selected: { ...state.agent.selected, ...input },
       ...(typeof input.fastMode === 'boolean' ? { fastMode: input.fastMode } : {}),
     };
+    return state.agent;
   }),
   refreshAgentModelCatalog: vi.fn(async () => {
     const model = state.agent.selected?.model ?? 'sonnet';
@@ -98,6 +106,7 @@ const client = vi.hoisted(() => ({
           : member,
       ),
     };
+    return state.agent;
   }),
   removeAgent: vi.fn(async (_workspaceId: string, pubkey: string) => {
     const agents = state.workspace.agents.filter(
@@ -128,7 +137,7 @@ const phoneOperation = vi.hoisted(() =>
     if (['addWorkspaceMember', 'removeWorkspaceMember'].includes(name)) return;
     if (name === 'updateAgentAccessPolicy') {
       state.agent = { ...state.agent, access: { ...state.agent.access, policy: input.policy } };
-      return;
+      return state.agent;
     }
     if (name !== 'updateAgentYolo') throw new Error(`unexpected operation ${name}`);
     state.agent = {
@@ -140,6 +149,7 @@ const phoneOperation = vi.hoisted(() =>
         setAt: 1_756_684_800,
       },
     };
+    return state.agent;
   }),
 );
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
@@ -233,7 +243,11 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: VIEWER, secretKey: new Uint8Array(32) })),
 }));
 vi.mock('@/buzz/surface-storage', () => ({
-  mobileSurfaceCache: { read: vi.fn(async () => null), write: vi.fn(async () => undefined) },
+  mobileSurfaceCache: {
+    read: vi.fn(async () => null),
+    write: vi.fn(async () => undefined),
+    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
+  },
   surfaceAddress: vi.fn(() => 'surface-address'),
 }));
 vi.mock('@/buzz/room-view-presentation', () => ({ workspaceRailItem: (value: any) => value }));
@@ -460,6 +474,15 @@ async function press(renderer: ReactTestRenderer, testID: string): Promise<void>
   });
 }
 
+async function agentChanged(): Promise<void> {
+  await act(async () => {
+    for (const listener of liveListeners) listener({ monolithLive: {
+      type: 'resource-change', roomId: '', resource: 'agent', resourceId: AGENT,
+    } });
+    await Promise.resolve();
+  });
+}
+
 async function openAgentProfile(renderer: ReactTestRenderer): Promise<void> {
   await act(async () => {
     renderer.update(<MembersScreen profileAgentId={AGENT} workspaceIdOverride={WORKSPACE} />);
@@ -472,6 +495,7 @@ async function openAgentManagement(renderer: ReactTestRenderer): Promise<void> {
 }
 
 beforeEach(() => {
+  liveListeners.clear();
   vi.clearAllMocks();
   platform.OS = 'ios';
   navigation.beforeRemove = null;
@@ -942,6 +966,7 @@ describe('Members workspace management', () => {
     });
     // After a model switch the row requests that model's live effort catalog.
     await press(renderer, 'model-axis-effort');
+    await agentChanged();
     expect(renderer.root.findAllByProps({ testID: 'model-option-effort-high' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'model-option-effort-xhigh' })).toBeDefined();
     expect(client.refreshAgentModelCatalog).toHaveBeenCalledWith(WORKSPACE, AGENT);
@@ -1031,6 +1056,7 @@ describe('Members workspace management', () => {
     const renderer = await render();
     await openAgentManagement(renderer);
     await press(renderer, 'model-axis-effort');
+    await agentChanged();
     expect(client.refreshAgentModelCatalog).toHaveBeenCalledWith(WORKSPACE, AGENT);
     expect(renderer.root.findByProps({ testID: 'model-option-effort-low' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'model-option-effort-xhigh' })).toHaveLength(0);
@@ -1058,6 +1084,7 @@ describe('Members workspace management', () => {
   });
 
   it('edits the human-authored soul fields through setAgentSoul', async () => {
+    state.agent.configVersion = '123';
     const renderer = await render();
     await openAgentProfile(renderer);
     expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' })).toBeDefined();
@@ -1068,7 +1095,16 @@ describe('Members workspace management', () => {
         .findByProps({ testID: 'agent-soul-instructions' })
         .props.onChangeText('Look for regressions before shipping.');
     });
+    const readsBeforeSave = roomView.agent.mock.calls.length;
     await press(renderer, 'save-agent-soul');
+    expect(roomView.agent.mock.calls.length).toBe(readsBeforeSave);
+    await act(async () => {
+      for (const listener of liveListeners) listener({ monolithLive: {
+        type: 'resource-change', roomId: '', resource: 'agent', resourceId: AGENT,
+        version: '123',
+      } });
+    });
+    expect(roomView.agent.mock.calls.length).toBe(readsBeforeSave);
 
     expect(client.setAgentSoul).toHaveBeenCalledWith(WORKSPACE, AGENT, {
       name: 'Scout',

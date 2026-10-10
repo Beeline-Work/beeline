@@ -9,6 +9,7 @@ import {
   fallbackPersonName,
   lookupManagedIdentity,
   personHandle,
+  isWorkspaceListView,
   type Identity,
   type ManagedIdentity,
 } from '@beeline/buzz-client';
@@ -54,7 +55,7 @@ import { useLocalSettingMutable } from '@/sync/storage';
 import { roomOpenTraceEnabled } from '@/buzz/room-open-trace';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { monolithSession } from '@/auth/monolith-session';
-import { clearMobileSurfaceStorage } from '@/buzz/surface-storage';
+import { clearMobileSurfaceStorage, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { saveStoredPushLevel } from '@/push/push-level-storage';
 import { reconcilePresentedNotificationBadge } from '@/push/presented-notifications';
 import { loadAppConfig } from '@/sync/appConfig';
@@ -184,10 +185,20 @@ export default function BuzzIdentitySettings() {
         }
         const relayUrl = await getEffectiveRelayUrl();
         const transport = new BuzzRigTransport(identity);
-        const client = await transport.ensureClient();
+        const clientPromise = transport.ensureClient();
+        const workspaceAddress = surfaceAddress(relayUrl, identity.publicKey, '/workspaces');
+        const workspacePromise = mobileSurfaceCache.fetch(workspaceAddress, isWorkspaceListView, () =>
+          new RoomViewClient({ baseUrl: relayUrl, identity }).workspaces());
+        const cachedWorkspaces = await mobileSurfaceCache.read(workspaceAddress, isWorkspaceListView);
+        if (cachedWorkspaces && !cancelled) {
+          const activeId = await loadActiveCommunityId(identity.publicKey);
+          const selected = cachedWorkspaces.workspaces.find((item) => item.id === activeId) ?? cachedWorkspaces.workspaces[0];
+          setWorkspaceRole(selected?.role ?? null);
+        }
+        const client = await clientPromise;
         const [workspaceList, activeCommunityId, preferredName, enabled, registration, permission] =
           await Promise.all([
-            new RoomViewClient({ baseUrl: relayUrl, identity }).workspaces(),
+            workspacePromise,
             loadActiveCommunityId(identity.publicKey),
             loadPreferredPersonName(identity.publicKey),
             getBuzzPushEnabled(identity.publicKey),

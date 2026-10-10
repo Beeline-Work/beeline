@@ -37,12 +37,17 @@ const withEnv = async (value: string | undefined, isDev: boolean) => {
 afterEach(() => { vi.restoreAllMocks(); reportPage.mockClear(); });
 
 describe('room open trace', () => {
-  it('reports a real first frame once and a failed read as a failed page load', async () => {
+  it('samples successful first frames and reports a failed read immediately', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { mod, restore } = await withEnv(undefined, false);
     mod.markRoomOpen('nav-dispatch');
     mod.markRoomOpen('newest-frame');
     mod.markRoomOpen('newest-frame');
+    expect(reportPage).not.toHaveBeenCalled();
+    for (let i = 0; i < 7; i++) {
+      mod.markRoomOpen('nav-dispatch');
+      mod.markRoomOpen('newest-frame');
+    }
     await vi.waitFor(() => expect(reportPage).toHaveBeenCalledTimes(1));
     expect(reportPage).toHaveBeenCalledWith(expect.any(Number), false);
     mod.markRoomOpen('nav-dispatch');
@@ -53,6 +58,10 @@ describe('room open trace', () => {
   });
   it('attaches only the matching successful Room read to the existing observation', async () => {
     const { mod, restore } = await withEnv(undefined, false);
+    for (let i = 0; i < 7; i++) {
+      mod.markRoomOpen('nav-dispatch', 'sampled-away-room');
+      mod.markRoomOpen('newest-frame');
+    }
     mod.markRoomOpen('nav-dispatch', 'room-a');
     mod.recordRoomReadNetworkTiming('room-b', { requestToFirstByteMs: 80, serverProcessingMs: 10 });
     mod.recordRoomReadNetworkTiming('room-a', { requestToFirstByteMs: 95, serverProcessingMs: 14 });

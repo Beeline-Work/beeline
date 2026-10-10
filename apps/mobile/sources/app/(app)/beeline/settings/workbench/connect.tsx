@@ -109,8 +109,8 @@ function ConnectToolFlow() {
     };
   }, [offerCeremony, workspaceId]);
 
-  const stopPolling = useCallback(() => setObservedId(undefined), []);
-  const startPolling = useCallback((id: string) => {
+  const stopObserving = useCallback(() => setObservedId(undefined), []);
+  const startObserving = useCallback((id: string) => {
     setObservedId(id);
     if (id === observedId) observed.retry();
   }, [observedId, observed.retry]);
@@ -124,12 +124,12 @@ function ConnectToolFlow() {
 
   const pair = useCallback(
     async (helperId: string) => {
-      stopPolling();
+      stopObserving();
       setError(null);
       pairedHelperRef.current = helperId;
       setSelectedHelperName(helpers?.find((helper) => helper.id === helperId)?.name ?? null);
       // The pair POST has no transport timeout; if it never settles, say so
-      // while the await continues — a late resolve still starts the poll.
+      // while the await continues — a late resolve still starts the observer.
       let feedbackShown = false;
       const feedback = setTimeout(() => {
         feedbackShown = true;
@@ -142,7 +142,7 @@ function ConnectToolFlow() {
           helperId,
         });
         if (feedbackShown) setError(null);
-        startPolling(pairedConnectorId);
+        startObserving(pairedConnectorId);
       } catch (cause) {
         if (!feedbackShown) {
           setError(cause instanceof Error ? cause.message : 'Pairing failed');
@@ -151,7 +151,7 @@ function ConnectToolFlow() {
         clearTimeout(feedback);
       }
     },
-    [connectorId, helpers, startPolling, stopPolling, workspaceId],
+    [connectorId, helpers, startObserving, stopObserving, workspaceId],
   );
 
   useEffect(() => {
@@ -168,12 +168,12 @@ function ConnectToolFlow() {
       void observed.retry();
       return;
     }
-    stopPolling();
+    stopObserving();
     setInstall(null);
     if (offerId) {
       void monolithPhoneOperation('acceptConnectorOffer', { offerId })
         .then((accepted) => {
-          if (accepted.status !== 'accepted') startPolling(accepted.connectorId);
+          if (accepted.status !== 'accepted') startObserving(accepted.connectorId);
         })
         .catch((cause) => {
           setError(cause instanceof Error ? cause.message : 'Pairing failed');
@@ -182,7 +182,7 @@ function ConnectToolFlow() {
     }
     const helperId = pairedHelperRef.current;
     if (helperId) void pair(helperId);
-  }, [observed.error, observed.installMissing, observed.retry, offerId, pair, startPolling, stopPolling]);
+  }, [observed.error, observed.installMissing, observed.retry, offerId, pair, startObserving, stopObserving]);
 
   const connectorName = connectorNameFor(connectorId);
   const machineName = install?.helperName ?? selectedHelperName;
@@ -319,7 +319,7 @@ function ConnectToolFlow() {
                       params: {
                         workspaceId,
                         viewerId,
-                        // The paired ROW id, so the overlay polls this
+                        // The paired ROW id, so the overlay observes this
                         // machine's connector — not any row of the type.
                         connectorId: install.connectorId,
                         connectorName,

@@ -35,10 +35,20 @@ export default function Home() {
   const [buzzStorageError, setBuzzStorageError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    void Promise.all([loadBuzzIdentity(), initialAuthUrl().catch(() => null)])
-      .then(async ([identity, initialUrl]) => {
+    // Local onboarding state is independent of secure identity restoration.
+    // Start both reads while the initial URL is being resolved.
+    void Promise.all([
+      loadBuzzIdentity(),
+      initialAuthUrl().catch(() => null),
+      isPersonNameOnboardingPending().then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      ),
+    ])
+      .then(([identity, initialUrl, onboardingRead]) => {
+        if (identity && 'error' in onboardingRead) throw onboardingRead.error;
         setHasBuzzIdentity(identity !== null);
-        setPersonNameOnboardingPending(identity ? await isPersonNameOnboardingPending() : false);
+        setPersonNameOnboardingPending(identity && 'value' in onboardingRead ? onboardingRead.value : false);
         setInitialUrl(initialUrl);
         setInitialInviteToken(parseCommunityInviteToken(initialUrl ?? undefined));
         setInitialReviewSecret(parseReviewSecret(initialUrl ?? undefined));

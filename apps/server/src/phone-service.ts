@@ -19,7 +19,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { composioToolkitForApp, type ComposioApps } from './composio-apps.js';
 import { appIdentity } from '@beeline/api-contract/workbench';
 import { beginComposioAppSignIn, completeComposioSignIn } from './app-connections.js';
-import { currentCornerBrief } from './corner-brief.js';
+import { projectCornerBrief, type CornerBriefRow } from './corner-brief.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
 import { queueLatestReleasePush } from './release-push-catchup.js';
@@ -117,7 +117,7 @@ import {
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { clearNeedsYouQuestions, needsYouExpiresAt, needsYouItems } from './needs-you.js';
+import { clearNeedsYouQuestions, countNeedsYouItems, needsYouItems } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyConnectorAssignment,
@@ -407,7 +407,7 @@ interface CornerRow extends RoomRow {
   /** The corner's latest brief revision; null when it has no brief. */
   brief_revision: number | null;
 }
-interface TopLevelRoomReadRow {
+interface RoomReadRow {
   room: RoomRow & {
     viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
     viewer_push_muted: boolean;
@@ -418,6 +418,36 @@ interface TopLevelRoomReadRow {
   turns: AgentTurnRow[];
   transcript: MessageRow[];
   activity: MessageRow[];
+  allow_auto_merge?: boolean;
+  corner: {
+    parent: RoomRow | null;
+    facts: {
+      plan: RoomView['cornerPlan'] | null;
+      objective: string;
+      owner_agent_id: string | null;
+      lifecycle: NonNullable<RoomView['cornerLifecycle']> | null;
+    } | null;
+    owed: boolean;
+    brief: CornerBriefRow | null;
+    bound_app: {
+      id: string;
+      instance_id: string;
+      manifest: unknown;
+      developer_agent_id: string | null;
+      developer_name: string | null;
+      developer_handle: string | null;
+    } | null;
+    apps: Array<{
+      definition: unknown;
+      author_agent_id: string;
+      author_name: string;
+      author_handle: string | null;
+      revision: number;
+      updated_at: Date;
+    }>;
+    briefing: MessageRow[];
+    tools: MessageRow[];
+  } | null;
 }
 interface RoomScheduleRow {
   id: string;
@@ -738,7 +768,10 @@ function projectedMessage(
     case 'permission':
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
     case 'webhook-request':
-      return { ...base, webhookRequest: row.card as NonNullable<RoomViewMessage['webhookRequest']> };
+      return {
+        ...base,
+        webhookRequest: row.card as NonNullable<RoomViewMessage['webhookRequest']>,
+      };
     case 'grant-request':
       return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
     case 'squire-approval':
@@ -997,10 +1030,11 @@ export class PhoneService {
     viewerId: string,
     target:
       { type: 'message'; messageId: string } | { type: 'turn'; agentId: string; requestId: string },
+    database: SqlDatabase = this.database,
   ): Promise<RoomLiveDelta | null> {
     if (target.type === 'turn') {
       const row = (
-        await this.database.query<AgentTurnRow>(
+        await database.query<AgentTurnRow>(
           `SELECT turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
              requester.id requested_by
            FROM rooms room
@@ -1022,7 +1056,7 @@ export class PhoneService {
       return { type: 'turn-delta', roomId, turn: this.projectAgentTurns([row])[0]! };
     }
     const row = (
-      await this.database.query<MessageRow>(
+      await database.query<MessageRow>(
         `SELECT message.*,author.kind author_kind,author.name author_name,
            author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
            ${reactionIdentitiesSql('message')} reaction_identities,
@@ -1102,7 +1136,9 @@ export class PhoneService {
               agentId: row.agent_id,
               turnId: row.turn_id,
               text,
-              ...(typeof row.body?.latestChunk === 'string' ? { latestChunk: row.body.latestChunk } : {}),
+              ...(typeof row.body?.latestChunk === 'string'
+                ? { latestChunk: row.body.latestChunk }
+                : {}),
             },
           ]
         : [];
@@ -1322,7 +1358,10 @@ export class PhoneService {
   }
 
   /** Project only the parent deck fields a child-corner status changes. */
-  async liveChatCornerStatus(parentRoomId: string, viewerId: string): Promise<{
+  async liveChatCornerStatus(
+    parentRoomId: string,
+    viewerId: string,
+  ): Promise<{
     cornerCount: number;
     waitingCornerCount: number;
     openCorners: ChatListCorner[];
@@ -1331,7 +1370,8 @@ export class PhoneService {
     const parent = await this.database.query<{
       needs_you: boolean;
       working: boolean;
-    }>(`SELECT
+    }>(
+      `SELECT
          EXISTS(SELECT 1 FROM permission_authority p
            WHERE (p.room_id=r.id OR p.room_id IN
              (SELECT id FROM rooms WHERE parent_id=r.id)) AND p.status='pending') needs_you,
@@ -1342,15 +1382,25 @@ export class PhoneService {
        FROM rooms r JOIN memberships member ON member.room_id=r.id
          AND member.identity_id=$2 AND member.removed_at IS NULL
        WHERE r.id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL`,
-    [parentRoomId, viewerId]);
+      [parentRoomId, viewerId],
+    );
     if (!parent.rows[0]) return null;
     const corners = await this.database.query<{
-      id: string; name: string; parent_id: string; archived_at: Date | null;
-      lifecycle: CornerLifecycleView | null; workflow_state: string | null;
-      workflow_outcome: string | null; latest_turn_status: string | null;
-      follows_viewer: boolean | null; latest_created_at: Date | null;
-      owed: boolean; owed_viewer: boolean; attention: boolean;
-    }>(`SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
+      id: string;
+      name: string;
+      parent_id: string;
+      archived_at: Date | null;
+      lifecycle: CornerLifecycleView | null;
+      workflow_state: string | null;
+      workflow_outcome: string | null;
+      latest_turn_status: string | null;
+      follows_viewer: boolean | null;
+      latest_created_at: Date | null;
+      owed: boolean;
+      owed_viewer: boolean;
+      attention: boolean;
+    }>(
+      `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
          turn.status latest_turn_status,
          ${followsCornerSql('c', '$2')} follows_viewer,
          lm.created_at latest_created_at,
@@ -1364,13 +1414,22 @@ export class PhoneService {
        WHERE c.parent_id=$1 AND c.archived_at IS NULL AND EXISTS (
          SELECT 1 FROM memberships member WHERE member.room_id=c.id
            AND member.identity_id=$2 AND member.removed_at IS NULL)
-       ORDER BY c.created_at DESC,c.id`, [parentRoomId, viewerId]);
+       ORDER BY c.created_at DESC,c.id`,
+      [parentRoomId, viewerId],
+    );
     const counts = chatCornerCounts(corners.rows).get(parentRoomId) ?? {
-      cornerCount: 0, waitingCornerCount: 0, openCorners: [],
+      cornerCount: 0,
+      waitingCornerCount: 0,
+      openCorners: [],
     };
-    return { ...counts,
-      agentState: parent.rows[0].needs_you ? 'needs-you'
-        : parent.rows[0].working ? 'working' : null };
+    return {
+      ...counts,
+      agentState: parent.rows[0].needs_you
+        ? 'needs-you'
+        : parent.rows[0].working
+          ? 'working'
+          : null,
+    };
   }
 
   async readChats(workspaceId: string, viewerId: string): Promise<ChatListView | null> {
@@ -1781,173 +1840,73 @@ export class PhoneService {
         spans.set(operation, performance.now() - startedAt);
       }
     };
-    const topLevelRows = await measured('data', this.topLevelRoomRows(roomId, viewerId));
-    const room =
-      topLevelRows?.room ?? (await measured('access', this.roomAccess(roomId, viewerId)));
-    if (!room) return null;
-    if (!topLevelRows && !room.parent_id) {
-      const cursor = await this.optionalEnrichment(
-        'read-cursor',
-        this.enrichmentDatabase.query<{
-          read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
-        }>(`SELECT ${VIEWER_READ_CURSOR_SQL} read_cursor FROM rooms room WHERE room.id=$1`, [
-          roomId,
-          viewerId,
-        ]),
-      );
-      room.read_cursor = cursor?.rows[0]?.read_cursor ?? null;
+    const rows = await measured('data', this.roomRows(roomId, viewerId));
+    if (!rows) return null;
+    const room = rows.room;
+    const corner = rows.corner;
+    const parent = corner?.parent ?? undefined;
+    const facts = corner?.facts ?? undefined;
+    const cornerBrief = corner?.brief ? projectCornerBrief(roomId, corner.brief) : undefined;
+    const boundApp = corner?.bound_app ?? undefined;
+    const cornerAppRows = corner?.apps ?? [];
+    const briefingRows = corner?.briefing ?? [];
+    const cornerLifecycle = corner
+      ? {
+          lifecycle: facts?.lifecycle ?? {
+            lifecycle: 'unknown' as const,
+            checks: 'unknown' as const,
+          },
+          owed: corner.owed,
+        }
+      : undefined;
+    const latestAgentTurns = this.projectAgentTurns(rows.turns);
+    const initialMessageResult = this.projectRoomMessages(
+      rows.transcript,
+      rows.activity,
+      corner?.tools ?? [],
+      latestAgentTurns,
+      Boolean(corner),
+      viewerId,
+    );
+    const enrichment = corner
+      ? await measured(
+          'enrichment',
+          this.cornerRoomEnrichment(room, rows, initialMessageResult, viewerId),
+        )
+      : undefined;
+    if (enrichment) {
+      const presenceByMember = new Map(enrichment.presence.map((item) => [item.id, item]));
+      for (const member of rows.members) {
+        const item = presenceByMember.get(member.id);
+        member.presence_body = item?.presence_body ?? null;
+        member.presence_updated_at = item?.presence_updated_at ?? null;
+      }
+      const tagsByMessage = new Map(enrichment.tags.map((item) => [item.id, item.tagged_ids]));
+      const bookmarked = new Set(enrichment.bookmarks.map((item) => item.message_id));
+      const reported = new Set(enrichment.reports.map((item) => item.trigger_message_id));
+      for (const message of [
+        ...rows.transcript,
+        ...briefingRows,
+        ...rows.activity,
+        ...(corner?.tools ?? []),
+      ]) {
+        message.tagged_ids = tagsByMessage.get(message.id) ?? [];
+        message.bookmarked = bookmarked.has(message.id);
+        message.feedback_reported = reported.has(message.id);
+      }
     }
-    // A corner's reads depend only on its access row, never on each other.
-    // Start every one now so a corner open costs one round trip after access,
-    // not one per query. A top-level Room has no parent and skips them all.
-    const cornerRead = <T>(operation: string, work: () => Promise<T>, absent: T): Promise<T> =>
-      room.parent_id ? measured(operation, work()) : Promise.resolve(absent);
-    const parentPromise = cornerRead(
-      'parent',
-      async () =>
-        (await this.database.query<RoomRow>(`SELECT * FROM rooms WHERE id=$1`, [room.parent_id]))
-          .rows[0],
-      undefined,
-    );
-    // Lives apart from the repository binding on the room row: it tracks
-    // GitHub's own setting, refreshed independently by the installation sync.
-    const allowAutoMergePromise = parentPromise.then((parent) => {
-      const repositoryId = (parent ?? room).repository_key?.match(/^github:(\d+)$/)?.[1];
-      if (!repositoryId) return undefined;
-      return this.optionalEnrichment(
-        'repository-auto-merge',
-        this.enrichmentDatabase
-          .query<{ allow_auto_merge: boolean | null }>(
-            `SELECT allow_auto_merge FROM github_repositories WHERE repository_id=$1`,
-            [repositoryId],
-          )
-          .then((result) => result.rows[0]?.allow_auto_merge ?? undefined),
-      );
-    });
-    const factsPromise = cornerRead(
-      'facts',
-      async () =>
-        (
-          await this.database.query<{
-            plan: RoomView['cornerPlan'] | null;
-            objective: string;
-            owner_agent_id: string | null;
-          }>(`SELECT plan,objective,owner_agent_id FROM corner_facts WHERE corner_id=$1`, [roomId])
-        ).rows[0],
-      undefined,
-    );
-    const cornerBriefPromise = cornerRead(
-      'brief',
-      () => currentCornerBrief(this.database, roomId).catch(() => undefined),
-      undefined,
-    );
-    const boundAppPromise = cornerRead(
-      'bound-app',
-      async () =>
-        (
-          await this.database.query<{
-            id: string;
-            instance_id: string;
-            manifest: unknown;
-            developer_agent_id: string | null;
-            developer_name: string | null;
-            developer_handle: string | null;
-          }>(
-            `SELECT installation.id,binding.instance_id,installation.manifest,
-                    installation.developer_agent_id,developer.name developer_name,
-                    developer.handle developer_handle
-             FROM corner_app_bindings binding
-             JOIN corner_app_installations installation ON installation.id=binding.installation_id
-             LEFT JOIN identities developer ON developer.id=installation.developer_agent_id
-             WHERE binding.corner_id=$1`,
-            [roomId],
-          )
-        ).rows[0],
-      undefined,
-    );
-    const cornerAppRowsPromise = cornerRead(
-      'corner-apps',
-      async () =>
-        (
-          await this.database.query<{
-            definition: unknown;
-            author_agent_id: string;
-            author_name: string;
-            author_handle: string | null;
-            revision: number;
-            updated_at: Date;
-          }>(
-            `SELECT app.definition,app.author_agent_id,author.name author_name,
-                    author.handle author_handle,app.revision,app.updated_at
-             FROM corner_apps app JOIN identities author ON author.id=app.author_agent_id
-             WHERE app.corner_id=$1 ORDER BY app.updated_at DESC,app.slug`,
-            [roomId],
-          )
-        ).rows,
-      [],
-    );
-    const briefingRowsPromise = cornerRead(
-      'briefing',
-      async () =>
-        (
-          await this.database.query<MessageRow>(
-            `SELECT m.*,
-               i.kind author_kind,i.name author_name,i.handle author_handle,
-               i.avatar author_avatar,i.face_id author_face,
-               ${reactionIdentitiesSql('m')} reaction_identities,
-               '{}'::text[] tagged_ids
-             FROM messages m JOIN identities i ON i.id=m.author_id
-             WHERE m.room_id=$1 AND m.created_at<=$2
-               AND (
-                 NOT EXISTS(SELECT 1 FROM legacy_room_events all_legacy WHERE all_legacy.room_id=$1)
-                 OR m.id IN(
-                   SELECT page.id FROM legacy_room_events page
-                   WHERE page.room_id=$1 AND page.kind=9 AND page.raw_page_candidate=true
-                     AND page.created_at<=$2
-                   ORDER BY page.created_at DESC,page.id ASC LIMIT 40
-                 )
-               )
-             ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}`,
-            [room.parent_id, room.created_at],
-          )
-        ).rows,
-      [] as MessageRow[],
-    );
-    const cornerLifecyclePromise = cornerRead(
-      'lifecycle',
-      () => this.cornerLifecycle(room.id, viewerId),
-      undefined,
-    );
-    // One await for every read, so none can reject unobserved behind another.
-    const [
-      [allMembers, latestAgentTurns, messageResult],
-      parent,
-      allowAutoMerge,
-      facts,
-      cornerBrief,
-      boundApp,
-      cornerAppRows,
-      briefingRows,
-      cornerLifecycle,
-    ] = await Promise.all([
-      topLevelRows
-        ? this.projectTopLevelRoom(topLevelRows, roomId, viewerId)
-        : this.readCornerMessages(
-            room.workspace_id,
-            roomId,
-            viewerId,
-            measured,
-            briefingRowsPromise,
-          ),
-      parentPromise,
-      allowAutoMergePromise,
-      factsPromise,
-      cornerBriefPromise,
-      boundAppPromise,
-      cornerAppRowsPromise,
-      briefingRowsPromise,
-      cornerLifecyclePromise,
-    ]);
+    const allMembers = this.projectMembers(rows.members, roomId);
+    const messageResult = enrichment
+      ? this.projectRoomMessages(
+          rows.transcript,
+          rows.activity,
+          corner?.tools ?? [],
+          latestAgentTurns,
+          true,
+          viewerId,
+        )
+      : initialMessageResult;
+    const allowAutoMerge = enrichment?.allow_auto_merge ?? rows.allow_auto_merge;
     const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
     const { messages, toolRows } = messageResult;
     const boundManifest = readCornerAppManifest(boundApp?.manifest);
@@ -1982,7 +1941,11 @@ export class PhoneService {
       briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
     );
     const [attachmentFacts, appMessages] = await Promise.all([
-      measured('media', this.attachmentFacts(messages, toolRows, briefing)),
+      corner
+        ? Promise.resolve(
+            enrichment?.attachmentFacts ?? { expired: new Set<string>(), artifacts: new Map() },
+          )
+        : measured('media', this.attachmentFacts(messages, toolRows, briefing)),
       measured('app-metadata', this.decorateAppSignInCards(messages)),
     ]);
     const projectionStartedAt = performance.now();
@@ -2452,89 +2415,7 @@ export class PhoneService {
     };
   }
 
-  private projectTopLevelRoom(
-    rows: TopLevelRoomReadRow,
-    roomId: string,
-    viewerId: string,
-  ): [
-    RoomViewMember[],
-    RoomView['latestAgentTurns'],
-    { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] },
-  ] {
-    const latestAgentTurns = this.projectAgentTurns(rows.turns);
-    return [
-      this.projectMembers(rows.members, roomId),
-      latestAgentTurns,
-      this.projectRoomMessages(
-        rows.transcript,
-        rows.activity,
-        [],
-        latestAgentTurns,
-        false,
-        viewerId,
-      ),
-    ];
-  }
-
-  private async readCornerMessages(
-    workspaceId: string,
-    roomId: string,
-    viewerId: string,
-    measured: <T>(operation: string, work: Promise<T>) => Promise<T>,
-    briefingRows: Promise<MessageRow[]>,
-  ): Promise<
-    [
-      RoomViewMember[],
-      RoomView['latestAgentTurns'],
-      { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] },
-    ]
-  > {
-    const latestAgentTurnsPromise = this.latestAgentTurns(roomId);
-    return Promise.all([
-      measured('members', this.members(workspaceId, roomId)),
-      measured('turns', latestAgentTurnsPromise),
-      measured(
-        'messages',
-        this.roomMessages(roomId, latestAgentTurnsPromise, true, viewerId, briefingRows),
-      ),
-    ]);
-  }
-
-  /**
-   * A top-level Room's five paint inputs are independent, but production's
-   * transaction pool can serialize five simultaneous requests behind one
-   * another. Ask PostgreSQL for the same rows in one statement, then keep the
-   * existing TypeScript projection as the sole DTO authority.
-   */
-  private async roomAccess(roomId: string, viewerId: string) {
-    return (
-      await this.database.query<
-        RoomRow & {
-          viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
-          viewer_push_muted: boolean;
-          workspace_role: 'owner' | 'admin' | 'member' | 'spectator';
-          read_cursor: RoomView['viewer']['readCursor'] | null;
-        }
-      >(
-        `SELECT room.*,membership.role viewer_role,membership.push_muted viewer_push_muted,
-           workspace_member.role workspace_role,
-           NULL::jsonb read_cursor
-         FROM rooms room
-         JOIN memberships membership ON membership.room_id=room.id
-           AND membership.identity_id=$2 AND membership.removed_at IS NULL
-         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
-           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
-           AND workspace_member.removed_at IS NULL
-         WHERE room.id=$1`,
-        [roomId, viewerId],
-      )
-    ).rows[0];
-  }
-
-  private async topLevelRoomRows(
-    roomId: string,
-    viewerId: string,
-  ): Promise<TopLevelRoomReadRow | undefined> {
+  private async roomRows(roomId: string, viewerId: string): Promise<RoomReadRow | undefined> {
     const eligible = `m.id IN (
       (SELECT raw.id FROM legacy_room_events raw WHERE raw.room_id=$1 AND raw.kind=9
          AND raw.raw_page_candidate=true
@@ -2547,7 +2428,7 @@ export class PhoneService {
       (SELECT plan.id FROM legacy_room_events plan WHERE plan.room_id=$1 AND plan.kind=30078)
     )`;
     const row = (
-      await this.database.query<TopLevelRoomReadRow>(
+      await this.database.query<RoomReadRow>(
         `WITH authorized_room AS (
            SELECT room.*,membership.role viewer_role,membership.push_muted viewer_push_muted,
              workspace_member.role workspace_role,
@@ -2568,7 +2449,7 @@ export class PhoneService {
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
              AND workspace_member.removed_at IS NULL
-           WHERE room.id=$1 AND room.parent_id IS NULL
+           WHERE room.id=$1
          ), member_rows AS (
            SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
              membership.role,NULL::jsonb presence_body,
@@ -2578,6 +2459,8 @@ export class PhoneService {
              AND membership.room_id=room.id
            JOIN identities i ON i.id=membership.identity_id
            WHERE membership.removed_at IS NULL AND i.hidden_from_roster=false
+           ORDER BY (i.id<>$2),i.id LIMIT (SELECT CASE WHEN parent_id IS NULL THEN 2147483647
+             ELSE ${ROOM_VIEW_MEMBER_LIMIT} END FROM authorized_room)
          ), turn_rows AS (
            SELECT DISTINCT ON(turn.agent_id)
              turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
@@ -2597,10 +2480,10 @@ export class PhoneService {
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
              ${reactionIdentitiesSql('m')} reaction_identities,
-             EXISTS(SELECT 1 FROM message_bookmarks bookmark
-               WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
-             EXISTS(SELECT 1 FROM feedback_items report
-               WHERE report.source_kind='human' AND report.trigger_message_id=m.id) feedback_reported,
+             (room.parent_id IS NULL AND EXISTS(SELECT 1 FROM message_bookmarks bookmark
+               WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id)) bookmarked,
+             (room.parent_id IS NULL AND EXISTS(SELECT 1 FROM feedback_items report
+               WHERE report.source_kind='human' AND report.trigger_message_id=m.id)) feedback_reported,
              '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
@@ -2615,10 +2498,10 @@ export class PhoneService {
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
              ${reactionIdentitiesSql('m')} reaction_identities,
-             EXISTS(SELECT 1 FROM message_bookmarks bookmark
-               WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id) bookmarked,
-             EXISTS(SELECT 1 FROM feedback_items report
-               WHERE report.source_kind='human' AND report.trigger_message_id=m.id) feedback_reported,
+             (room.parent_id IS NULL AND EXISTS(SELECT 1 FROM message_bookmarks bookmark
+               WHERE bookmark.identity_id=$2 AND bookmark.message_id=m.id)) bookmarked,
+             (room.parent_id IS NULL AND EXISTS(SELECT 1 FROM feedback_items report
+               WHERE report.source_kind='human' AND report.trigger_message_id=m.id)) feedback_reported,
              '{}'::text[] tagged_ids
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
@@ -2629,7 +2512,36 @@ export class PhoneService {
              AND (NOT EXISTS(
                SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
              ) OR ${eligible})
-           ORDER BY m.created_at DESC,m.id DESC
+           ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
+         ), corner_tool_rows AS (
+           SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+             i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
+             false bookmarked,false feedback_reported,'{}'::text[] tagged_ids
+           FROM authorized_room room
+           JOIN messages m ON m.room_id=room.id
+           JOIN identities i ON i.id=m.author_id
+           WHERE room.parent_id IS NOT NULL AND m.presentation='activity'
+             AND m.durable_fact IS NULL AND EXISTS(
+               SELECT 1 FROM jsonb_array_elements(m.activity) item
+               WHERE item->>'kind' IN ('tool','output'))
+           ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_TOOL_ROW_LIMIT}
+         ), corner_briefing_rows AS (
+           SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
+             i.avatar author_avatar,i.face_id author_face,
+             ${reactionIdentitiesSql('m')} reaction_identities,
+             false bookmarked,false feedback_reported,'{}'::text[] tagged_ids
+           FROM authorized_room room
+           JOIN messages m ON m.room_id=room.parent_id
+           JOIN identities i ON i.id=m.author_id
+           WHERE room.parent_id IS NOT NULL AND m.created_at<=room.created_at
+             AND (NOT EXISTS(SELECT 1 FROM legacy_room_events all_legacy
+               WHERE all_legacy.room_id=room.parent_id)
+               OR m.id IN(SELECT page.id FROM legacy_room_events page
+                 WHERE page.room_id=room.parent_id AND page.kind=9
+                   AND page.raw_page_candidate=true AND page.created_at<=room.created_at
+                 ORDER BY page.created_at DESC,page.id ASC LIMIT 40))
+           ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}
          )
          SELECT
            (to_jsonb(authorized_room) - 'github_installation_id')
@@ -2643,13 +2555,67 @@ export class PhoneService {
              FROM transcript_rows),'[]'::jsonb) transcript,
            COALESCE((SELECT jsonb_agg(to_jsonb(activity_rows)
              ORDER BY activity_rows.created_at DESC,activity_rows.id DESC)
-             FROM activity_rows),'[]'::jsonb) activity
+             FROM activity_rows),'[]'::jsonb) activity,
+           CASE WHEN authorized_room.parent_id IS NOT NULL THEN jsonb_build_object(
+             'parent',(SELECT (to_jsonb(parent) - 'github_installation_id') ||
+               jsonb_build_object('github_installation_id',parent.github_installation_id::text)
+               FROM rooms parent WHERE parent.id=authorized_room.parent_id),
+             'facts',(SELECT to_jsonb(f) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
+             'owed',(SELECT owed.owed FROM rooms c
+               ${cornerOwedLookupSql('c', '$2')} WHERE c.id=authorized_room.id),
+             'brief',(SELECT to_jsonb(brief) || jsonb_build_object('approver_name',approver.name)
+               FROM corner_brief_revisions brief
+               LEFT JOIN identities approver ON approver.id=brief.approval_basis->>'approvedBy'
+               WHERE brief.corner_id=authorized_room.id
+               ORDER BY brief.revision DESC LIMIT 1),
+             'bound_app',(SELECT jsonb_build_object(
+               'id',installation.id,'instance_id',binding.instance_id,
+               'manifest',installation.manifest,'developer_agent_id',installation.developer_agent_id,
+               'developer_name',developer.name,'developer_handle',developer.handle)
+               FROM corner_app_bindings binding
+               JOIN corner_app_installations installation ON installation.id=binding.installation_id
+               LEFT JOIN identities developer ON developer.id=installation.developer_agent_id
+               WHERE binding.corner_id=authorized_room.id),
+             'apps',COALESCE((SELECT jsonb_agg(to_jsonb(app_row)
+               ORDER BY app_row.updated_at DESC,app_row.slug)
+               FROM (SELECT app.definition,app.author_agent_id,author.name author_name,
+                 author.handle author_handle,app.revision,app.updated_at,app.slug
+                 FROM corner_apps app JOIN identities author ON author.id=app.author_agent_id
+                 WHERE app.corner_id=authorized_room.id) app_row),'[]'::jsonb),
+             'briefing',COALESCE((SELECT jsonb_agg(to_jsonb(corner_briefing_rows)
+               ORDER BY corner_briefing_rows.created_at DESC,corner_briefing_rows.id ASC)
+               FROM corner_briefing_rows),'[]'::jsonb),
+             'tools',COALESCE((SELECT jsonb_agg(to_jsonb(corner_tool_rows)
+               ORDER BY corner_tool_rows.created_at DESC,corner_tool_rows.id DESC)
+               FROM corner_tool_rows),'[]'::jsonb)
+           ) END corner
          FROM authorized_room`,
         [roomId, viewerId],
       )
     ).rows[0];
     if (!row) return undefined;
-    const [cursor, presence, tags] = await Promise.all([
+    if (row.corner) {
+      reviveDates(row.room, ['archived_at', 'repository_updated_at', 'created_at', 'updated_at']);
+      if (row.corner.parent)
+        reviveDates(row.corner.parent, [
+          'archived_at',
+          'repository_updated_at',
+          'created_at',
+          'updated_at',
+        ]);
+      for (const turn of row.turns) reviveDates(turn, ['started_at', 'created_at']);
+      for (const app of row.corner.apps) reviveDates(app, ['updated_at']);
+      for (const message of [
+        ...row.transcript,
+        ...row.activity,
+        ...row.corner.briefing,
+        ...row.corner.tools,
+      ])
+        reviveDates(message, ['created_at']);
+      return row;
+    }
+    const repositoryId = row.room.repository_key?.match(/^github:(\d+)$/)?.[1];
+    const [cursor, presence, tags, autoMerge] = await Promise.all([
       this.optionalEnrichment(
         'read-cursor',
         this.enrichmentDatabase.query<{
@@ -2686,7 +2652,19 @@ export class PhoneService {
           [row.transcript.map((message) => message.id)],
         ),
       ),
+      repositoryId
+        ? this.optionalEnrichment(
+            'repository-auto-merge',
+            this.enrichmentDatabase
+              .query<{ allow_auto_merge: boolean | null }>(
+                `SELECT allow_auto_merge FROM github_repositories WHERE repository_id=$1`,
+                [repositoryId],
+              )
+              .then((result) => result.rows[0]?.allow_auto_merge ?? undefined),
+          )
+        : Promise.resolve(undefined),
     ]);
+    row.allow_auto_merge = autoMerge;
     row.room.read_cursor = cursor?.rows[0]?.read_cursor ?? null;
     const presenceByMember = new Map(presence?.rows.map((item) => [item.id, item]) ?? []);
     for (const member of row.members) {
@@ -2702,6 +2680,123 @@ export class PhoneService {
     for (const message of [...row.transcript, ...row.activity])
       reviveDates(message, ['created_at']);
     return row;
+  }
+
+  /** One independently failing statement for facts that do not authorize a corner read. */
+  private async cornerRoomEnrichment(
+    room: RoomReadRow['room'],
+    rows: RoomReadRow,
+    messageResult: { messages: RoomViewMessage[]; toolRows: RoomViewMessage[] },
+    viewerId: string,
+  ): Promise<
+    | {
+        presence: Array<{
+          id: string;
+          presence_body: MemberRow['presence_body'];
+          presence_updated_at: Date | null;
+        }>;
+        tags: Array<{ id: string; tagged_ids: string[] }>;
+        bookmarks: Array<{ message_id: string }>;
+        reports: Array<{ trigger_message_id: string }>;
+        attachmentFacts: AttachmentFacts;
+        allow_auto_merge: boolean | null;
+      }
+    | undefined
+  > {
+    const messageIds = [
+      ...new Set([...rows.transcript, ...rows.corner!.briefing].map((message) => message.id)),
+    ];
+    const visibleIds = [
+      ...new Set(
+        [...rows.transcript, ...rows.activity, ...rows.corner!.tools].map((message) => message.id),
+      ),
+    ];
+    const mediaIds = new Set<string>();
+    for (const message of [
+      ...messageResult.messages,
+      ...messageResult.toolRows,
+      ...rows.corner!.briefing.map((row) => projectedMessage(row, this.publicOrigin)),
+    ]) {
+      for (const attachment of message.attachments ?? []) {
+        const id = mediaIdFromUrl(attachment.url);
+        if (id) mediaIds.add(id);
+      }
+    }
+    const repositoryId =
+      (rows.corner?.parent ?? room).repository_key?.match(/^github:(\d+)$/)?.[1] ?? null;
+    const result = await this.optionalEnrichment(
+      'corner-room',
+      this.enrichmentDatabase.query<{
+        presence: Array<{
+          id: string;
+          presence_body: MemberRow['presence_body'];
+          presence_updated_at: Date | null;
+        }>;
+        tags: Array<{ id: string; tagged_ids: string[] }>;
+        bookmarks: Array<{ message_id: string }>;
+        reports: Array<{ trigger_message_id: string }>;
+        expired: Array<{ id: string }>;
+        objects: Array<{ id: string; title: string; mime: string; size: string; author: string }>;
+        allow_auto_merge: boolean | null;
+      }>(
+        `SELECT
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('id',member.identity_id,
+             'presence_body',presence.body,'presence_updated_at',presence.updated_at))
+             FROM memberships member LEFT JOIN LATERAL(
+               SELECT body,updated_at FROM live_outputs
+               WHERE agent_id=member.identity_id AND kind='presence'
+               ORDER BY updated_at DESC LIMIT 1) presence ON true
+             WHERE member.room_id=$1 AND member.removed_at IS NULL
+               AND member.identity_id=ANY($3::text[])),'[]'::jsonb) presence,
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,
+             'tagged_ids',${taggedIdentityIdsSql('m')}))
+             FROM messages m WHERE m.id=ANY($4::text[])),'[]'::jsonb) tags,
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('message_id',message_id))
+             FROM message_bookmarks WHERE identity_id=$2
+               AND message_id=ANY($5::text[])),'[]'::jsonb) bookmarks,
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('trigger_message_id',trigger_message_id))
+             FROM feedback_items WHERE source_kind='human'
+               AND trigger_message_id=ANY($5::text[])),'[]'::jsonb) reports,
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('id',id::text))
+             FROM object_expirations WHERE id=ANY($6::uuid[])),'[]'::jsonb) expired,
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('id',o.id::text,
+             'title',COALESCE(o.title,''),'mime',o.mime,'size',o.size::text,
+             'author',COALESCE(i.handle,i.name)))
+             FROM objects o JOIN identities i ON i.id=o.owner_id
+             WHERE o.state='ready' AND o.id=ANY($6::uuid[])),'[]'::jsonb) objects,
+           (SELECT allow_auto_merge FROM github_repositories WHERE repository_id=$7) allow_auto_merge`,
+        [
+          room.id,
+          viewerId,
+          rows.members.map((member) => member.id),
+          messageIds,
+          visibleIds,
+          [...mediaIds],
+          repositoryId,
+        ],
+      ),
+    );
+    const value = result?.rows[0];
+    if (!value) return undefined;
+    for (const member of value.presence) reviveDates(member, ['presence_updated_at']);
+    return {
+      ...value,
+      attachmentFacts: {
+        expired: new Set(value.expired.map((item) => item.id)),
+        artifacts: new Map(
+          value.objects.map((item) => [
+            item.id,
+            {
+              kind: 'artifact' as const,
+              title: item.title,
+              mimeType: item.mime,
+              size: Number(item.size),
+              author: item.author,
+            },
+          ]),
+        ),
+      },
+    };
   }
 
   private async cornerRows(
@@ -2907,8 +3002,10 @@ export class PhoneService {
         owner_id: string | null;
         owner_name: string | null;
         owner_handle: string | null;
+        config_version: string;
       }>(
         `SELECT a.harness,a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,a.fast_mode,a.model_unavailable,
+                floor(extract(epoch FROM a.updated_at)*1000000)::bigint::text config_version,
                 (SELECT id::text FROM agent_avatars WHERE agent_id=a.agent_id) avatar_generation_id,
                 EXISTS(SELECT 1 FROM agent_commands c WHERE c.agent_id=a.agent_id AND c.avatar_job AND c.state IN ('pending','claimed')) avatar_generation_pending,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
@@ -2965,6 +3062,7 @@ export class PhoneService {
     const lastWork = workPage.at(-1);
     return {
       workspaceId,
+      ...(config?.config_version ? { configVersion: config.config_version } : {}),
       ...(config?.avatar_generation_id ? { avatarGenerationId: config.avatar_generation_id } : {}),
       avatarGenerationPending: config?.avatar_generation_pending ?? false,
       recentWork: workPage.map(({ title, url }) => ({ title, url })),
@@ -3689,7 +3787,7 @@ export class PhoneService {
       )
     )
       throw new Error('valid Workspace ID required');
-    if ((scope.workspaceId || scope.roomId) && !SPECTATOR_READ_OPERATIONS.has(name)) {
+    if ((scope.workspaceId || scope.roomId) && !SPECTATOR_READ_OPERATIONS.has(name) && name !== 'sendRoomMessage') {
       const spectator = await this.database.query(
         `SELECT 1 FROM memberships m WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
          AND m.role='spectator' AND (m.workspace_id=$2::uuid OR m.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3::uuid))`,
@@ -3699,14 +3797,28 @@ export class PhoneService {
     }
     switch (name) {
       case 'readRoomWebhooks':
-        return await new RoomWebhooks(this.database, this.publicOrigin).list((input as Input<'readRoomWebhooks'>).roomId, viewerId) as Output<Name>;
+        return (await new RoomWebhooks(this.database, this.publicOrigin).list(
+          (input as Input<'readRoomWebhooks'>).roomId,
+          viewerId,
+        )) as Output<Name>;
       case 'manageRoomWebhook': {
         const i = input as Input<'manageRoomWebhook'>;
-        return await new RoomWebhooks(this.database, this.publicOrigin).manage(i.roomId, viewerId, i) as Output<Name>;
+        return (await new RoomWebhooks(this.database, this.publicOrigin).manage(
+          i.roomId,
+          viewerId,
+          i,
+        )) as Output<Name>;
       }
       case 'decideWebhookRequest': {
         const i = input as Input<'decideWebhookRequest'>;
-        return await new RoomWebhooks(this.database, this.publicOrigin).decide(i.roomId, viewerId, i.webhookRequestId, i.approve, i.signingSecret, i.revealSecret) as Output<Name>;
+        return (await new RoomWebhooks(this.database, this.publicOrigin).decide(
+          i.roomId,
+          viewerId,
+          i.webhookRequestId,
+          i.approve,
+          i.signingSecret,
+          i.revealSecret,
+        )) as Output<Name>;
       }
       case 'readWelcomeCards':
         return (await this.readWelcomeCards(viewerId)) as Output<Name>;
@@ -3732,11 +3844,9 @@ export class PhoneService {
         return sent as Output<Name>;
       }
       case 'reactToMessage':
-        await this.reactToMessage(input as Input<'reactToMessage'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.reactToMessage(input as Input<'reactToMessage'>, viewerId)) as Output<Name>;
       case 'deleteRoomMessage':
-        await this.deleteRoomMessage(input as Input<'deleteRoomMessage'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.deleteRoomMessage(input as Input<'deleteRoomMessage'>, viewerId)) as Output<Name>;
       case 'reportMessageIssue':
         return (await reportMessageIssue(
           this.database,
@@ -3958,10 +4068,12 @@ export class PhoneService {
       }
       case 'updateAgentSoul':
         await this.updateAgentSoul(input as Input<'updateAgentSoul'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentSoul'>).workspaceId,
+          (input as Input<'updateAgentSoul'>).agentId, viewerId)) as Output<Name>;
       case 'updateAgentModelSelection':
         await this.updateAgentModel(input as Input<'updateAgentModelSelection'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentModelSelection'>).workspaceId,
+          (input as Input<'updateAgentModelSelection'>).agentId, viewerId)) as Output<Name>;
       case 'refreshAgentModelCatalog':
         await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);
         return undefined as Output<Name>;
@@ -3972,10 +4084,12 @@ export class PhoneService {
         )) as Output<Name>;
       case 'updateAgentYolo':
         await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentYolo'>).workspaceId,
+          (input as Input<'updateAgentYolo'>).agentId, viewerId)) as Output<Name>;
       case 'updateAgentAccessPolicy':
         await this.updateAgentAccessPolicy(input as Input<'updateAgentAccessPolicy'>, viewerId);
-        return undefined as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentAccessPolicy'>).workspaceId,
+          (input as Input<'updateAgentAccessPolicy'>).agentId, viewerId)) as Output<Name>;
       case 'removeAgent':
         await this.removeAgent(input as Input<'removeAgent'>, viewerId);
         return undefined as Output<Name>;
@@ -4255,20 +4369,30 @@ export class PhoneService {
   }
 
   async markRead(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
-    const message = await this.database.query<{ exists: boolean }>(
-      `SELECT true exists FROM messages WHERE id=$1 AND room_id=$2`,
-      [messageIdValue, roomId],
-    );
-    if (!message.rows[0] || !(await this.hasRoomAccess(roomId, viewerId)))
-      throw new Error('message not found');
-    const written = await this.database.query(
-      `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-      SELECT $1,$2,message.created_at,$3 FROM messages message WHERE message.id=$3 AND message.room_id=$1
-      ON CONFLICT(room_id,identity_id) DO UPDATE SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()
-      WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>(room_read_marks.message_created_at,room_read_marks.message_id)`,
+    const result = (await this.database.query<{ eligible: boolean; changed: boolean }>(
+      `WITH eligible AS (
+         SELECT message.id,message.created_at FROM messages message
+         JOIN rooms room ON room.id=message.room_id
+         JOIN memberships room_member ON room_member.room_id=room.id
+           AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+           AND workspace_member.removed_at IS NULL
+         WHERE message.id=$3 AND room.id=$1
+       ), written AS (
+         INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT $1,$2,created_at,id FROM eligible
+         ON CONFLICT(room_id,identity_id) DO UPDATE
+           SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()
+         WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
+           (room_read_marks.message_created_at,room_read_marks.message_id)
+         RETURNING message_id
+       ) SELECT EXISTS(SELECT 1 FROM eligible) eligible,
+           EXISTS(SELECT 1 FROM written) changed`,
       [roomId, viewerId, messageIdValue],
-    );
-    if (written.rowCount) {
+    )).rows[0];
+    if (!result?.eligible) throw new Error('message not found');
+    if (result.changed) {
       this.live?.publish({ type: 'invalidate', roomId, reason: 'read-mark', readerId: viewerId });
     }
   }
@@ -4288,48 +4412,47 @@ export class PhoneService {
    * drew a NEW MESSAGES divider at the chosen row (review 2026-09-22).
    */
   async markUnread(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
-    const message = await this.database.query<{ exists: boolean }>(
-      `SELECT true exists FROM messages WHERE id=$1 AND room_id=$2`,
-      [messageIdValue, roomId],
-    );
-    if (!message.rows[0] || !(await this.hasRoomAccess(roomId, viewerId)))
-      throw new Error('message not found');
-    const countable = await this.database.query<{ exists: boolean }>(
-      `SELECT true exists FROM messages message
-       WHERE message.id=$1 AND message.room_id=$3 AND ${unreadMessageSql('message')}`,
-      [messageIdValue, viewerId, roomId],
-    );
-    // 'invalid' is what the router reads as a 400 — the row is real and
-    // readable, it is simply not something this viewer can hold unread.
-    if (!countable.rows[0])
-      throw new Error(
-        'messageId is invalid: only a row that counts as unread can be marked unread',
-      );
-    const previous = (
-      await this.database.query<{ id: string; created_at: Date }>(
-        `SELECT earlier.id,earlier.created_at FROM messages target
+    const result = (await this.database.query<{ accessible: boolean; countable: boolean }>(
+      `WITH accessible AS (
+         SELECT message.* FROM messages message
+         JOIN rooms room ON room.id=message.room_id
+         JOIN memberships room_member ON room_member.room_id=room.id
+           AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+         JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+           AND workspace_member.removed_at IS NULL
+         WHERE message.id=$1 AND room.id=$3
+       ), target AS (
+         SELECT * FROM accessible message WHERE ${unreadMessageSql('message')}
+       ), previous AS (
+         SELECT earlier.id,earlier.created_at FROM target
          JOIN messages earlier ON earlier.room_id=target.room_id
            AND (earlier.created_at,earlier.id)<(target.created_at,target.id)
            AND ${visibleChatMessageSql('earlier')}
-         WHERE target.id=$1 AND target.room_id=$2
-         ORDER BY earlier.created_at DESC,earlier.id DESC LIMIT 1`,
-        [messageIdValue, roomId],
-      )
-    ).rows[0];
-    if (previous) {
-      await this.database.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
-         VALUES($1,$2,$3,$4)
+         ORDER BY earlier.created_at DESC,earlier.id DESC LIMIT 1
+       ), written AS (
+         INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT $3,$2,created_at,id FROM previous
          ON CONFLICT(room_id,identity_id) DO UPDATE
-           SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,updated_at=now()`,
-        [roomId, viewerId, previous.created_at, previous.id],
+           SET message_created_at=EXCLUDED.message_created_at,
+               message_id=EXCLUDED.message_id,updated_at=now()
+         RETURNING message_id
+       ), cleared AS (
+         DELETE FROM room_read_marks
+         WHERE room_id=$3 AND identity_id=$2 AND EXISTS(SELECT 1 FROM target)
+           AND NOT EXISTS(SELECT 1 FROM previous)
+         RETURNING message_id
+       ) SELECT EXISTS(SELECT 1 FROM accessible) accessible,
+           EXISTS(SELECT 1 FROM target) countable`,
+      [messageIdValue, viewerId, roomId],
+    )).rows[0];
+    if (!result?.accessible) throw new Error('message not found');
+    // 'invalid' is what the router reads as a 400 — the row is real and
+    // readable, it is simply not something this viewer can hold unread.
+    if (!result.countable)
+      throw new Error(
+        'messageId is invalid: only a row that counts as unread can be marked unread',
       );
-    } else {
-      await this.database.query(`DELETE FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`, [
-        roomId,
-        viewerId,
-      ]);
-    }
     this.live?.publish({ type: 'invalidate', roomId, reason: 'read-mark', readerId: viewerId });
   }
 
@@ -4368,46 +4491,91 @@ export class PhoneService {
           true,
         ).sendMessage(input, author),
       );
-    if (!(await this.hasRoomAccess(input.roomId, author))) throw new Error('room access denied');
-    await this.assertRoomIsWritable(input.roomId, author);
     const id = input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
-    const noticeAgentIds = await this.unansweredMentionTargets(input.roomId, author, input.text);
-    const values = [id, input.roomId, author, input.text, attachments];
     return this.database.transaction(async (database) => {
-      const inserted = await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,attachments)
-       VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT(id) DO NOTHING`,
-        values,
-      );
-      if (!inserted.rowCount) {
-        const retry = await database.query(
-          `SELECT 1 FROM messages
-         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND text=$4
-           AND attachments=$5::jsonb
-           AND reply_to_message_id IS NULL`,
-          values,
-        );
-        if (!retry.rowCount) throw new Error('messageId is invalid');
+      const write = (await database.query<{
+        inserted: boolean;
+        retry: boolean;
+        writable: boolean;
+        system_dm: boolean;
+        connector_dm: boolean;
+        direct: boolean;
+        corner: boolean;
+        author_kind: 'human' | 'agent';
+      }>(
+        `WITH access AS (
+           SELECT room.id,room.parent_id,room.direct_participants,identity.kind author_kind,
+             COALESCE(room.direct_participants ? $6,false) system_dm,
+             COALESCE(room.direct_participants ?| $7::text[],false) connector_dm,
+             COALESCE(workspace_member.role<>'spectator',$3=$6) writable
+           FROM rooms room
+           JOIN memberships room_member ON room_member.room_id=room.id
+             AND room_member.identity_id=$3 AND room_member.removed_at IS NULL
+           LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+             AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
+             AND workspace_member.removed_at IS NULL
+           JOIN identities identity ON identity.id=$3
+           WHERE room.id=$2 AND ($3=$6 OR workspace_member.identity_id IS NOT NULL)
+         ), inserted AS (
+           INSERT INTO messages(id,room_id,author_id,text,attachments)
+           SELECT $1,$2,$3,$4,$5::jsonb FROM access
+           WHERE writable AND ($3=$6 OR NOT (system_dm OR connector_dm))
+           ON CONFLICT(id) DO NOTHING
+           RETURNING id,room_id,created_at
+         ), read_mark AS (
+           INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
+           SELECT room_id,$3,created_at,id,'epoch'::timestamptz FROM inserted
+           ON CONFLICT(room_id,identity_id) DO UPDATE
+             SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id
+           WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
+             (room_read_marks.message_created_at,room_read_marks.message_id)
+           RETURNING 1
+         )
+         SELECT EXISTS(SELECT 1 FROM inserted) inserted,
+           EXISTS(SELECT 1 FROM messages message
+             WHERE message.id=$1 AND message.room_id=$2 AND message.author_id=$3
+               AND message.text=$4 AND message.attachments=$5::jsonb
+               AND message.reply_to_message_id IS NULL) retry,
+           access.writable,access.system_dm,access.connector_dm,
+           access.direct_participants IS NOT NULL direct,
+           access.parent_id IS NOT NULL corner,access.author_kind
+         FROM access`,
+        [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID, connectorIdentityIds()],
+      )).rows[0];
+      if (!write) throw new Error('room access denied');
+      if (!write.writable) throw new Error('spectator access is read-only (access denied)');
+      if (author !== SYSTEM_IDENTITY_ID && write.system_dm)
+        throw new Error('this is a read-only system announcements channel; only @system may post here (access denied)');
+      if (author !== SYSTEM_IDENTITY_ID && write.connector_dm)
+        throw new Error('this is a read-only connector receipts channel; only the connector identity may post there (access denied)');
+      const mayRoute = write.direct || write.corner || input.text.includes('@');
+      if (!write.inserted) {
+        if (!write.retry) throw new Error('messageId is invalid');
         return {
           messageId: id,
-          activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+          activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
+          ...(await this.receiptMessage(input.roomId, author, id, database)),
         };
       }
-      await advanceAuthorReadMark(database, input.roomId, author, id);
-      const lifecycleCommand = await routeHumanMessage(database, id);
+      const noticeAgentIds = write.author_kind === 'human' && mayRoute
+        ? await this.unansweredMentionTargets(input.roomId, author, input.text)
+        : [];
+      const lifecycleCommand = mayRoute ? await routeHumanMessage(database, id) : undefined;
       if (!lifecycleCommand)
         await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
-      await recordSystemReportMention(database, {
-        roomId: input.roomId,
-        messageId: id,
-        authorId: author,
-        text: input.text,
-      });
+      if (input.text.includes('@'))
+        await recordSystemReportMention(database, {
+          roomId: input.roomId,
+          messageId: id,
+          authorId: author,
+          text: input.text,
+        });
       return {
         messageId: id,
-        activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+        activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
+        ...(await this.receiptMessage(input.roomId, author, id, database)),
       };
     });
   }
@@ -4522,6 +4690,7 @@ export class PhoneService {
         return {
           messageId: id,
           activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+          ...(await this.receiptMessage(input.roomId, author, id, database)),
         };
       }
       await advanceAuthorReadMark(database, input.roomId, author, id);
@@ -4537,11 +4706,12 @@ export class PhoneService {
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+        ...(await this.receiptMessage(input.roomId, author, id, database)),
       };
     });
   }
 
-  private async reactToMessage(input: Input<'reactToMessage'>, viewerId: string): Promise<void> {
+  private async reactToMessage(input: Input<'reactToMessage'>, viewerId: string): Promise<RoomViewMessage | null> {
     if (!MESSAGE_REACTION_EMOJIS.includes(input.emoji)) throw new Error('reaction is invalid');
     await this.database.transaction(async (database) => {
       const row = (
@@ -4577,12 +4747,16 @@ export class PhoneService {
         JSON.stringify(reactions),
       ]);
     });
+    const delta = await this.readLiveDelta(input.roomId, viewerId, {
+      type: 'message', messageId: input.messageId,
+    });
+    return delta?.type === 'message-delta' ? delta.message : null;
   }
 
   private async deleteRoomMessage(
     input: Input<'deleteRoomMessage'>,
     viewerId: string,
-  ): Promise<void> {
+  ): Promise<RoomViewMessage | null> {
     if (!/^[0-9a-f]{64}$/.test(input.messageId)) throw new Error('messageId is invalid');
     await this.database.transaction(async (database) => {
       const deleted = await database.query<{ author_id: string; deleted_by: string }>(
@@ -4621,6 +4795,10 @@ export class PhoneService {
         input.messageId,
       ]);
     });
+    const delta = await this.readLiveDelta(input.roomId, viewerId, {
+      type: 'message', messageId: input.messageId,
+    });
+    return delta?.type === 'message-delta' ? delta.message : null;
   }
 
   private async setMessageBookmark(
@@ -4698,39 +4876,20 @@ export class PhoneService {
     input: Input<'readNeedsYou'>,
     viewerId: string,
   ): Promise<Output<'readNeedsYou'>> {
-    await this.requireWorkspaceMember(input.workspaceId, viewerId);
-    const { items, unseen } = await needsYouItems(
+    const { items } = await needsYouItems(
       this.database,
       input.workspaceId,
       viewerId,
       (row) => identity(row, this.publicOrigin),
     );
-    if (!unseen.length) return { items };
-    const started = await this.database.query<{ message_id: string; first_seen_at: Date }>(
-      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
-       SELECT $1,message_id,$3 FROM unnest($2::text[]) message_id
-       ON CONFLICT(identity_id,message_id) DO UPDATE SET first_seen_at=needs_you_marks.first_seen_at
-       RETURNING message_id,first_seen_at`,
-      [viewerId, unseen, input.workspaceId],
-    );
-    const clocks = new Map(started.rows.map((row) => [row.message_id, row.first_seen_at]));
-    return {
-      items: items.map((item) => {
-        const firstSeen = clocks.get(item.messageId);
-        return firstSeen ? { ...item, expiresAt: needsYouExpiresAt(firstSeen) } : item;
-      }),
-    };
+    return { items };
   }
 
   private async countNeedsYou(
     input: Input<'countNeedsYou'>,
     viewerId: string,
   ): Promise<Output<'countNeedsYou'>> {
-    await this.requireWorkspaceMember(input.workspaceId, viewerId);
-    const { items } = await needsYouItems(this.database, input.workspaceId, viewerId, (row) =>
-      identity(row, this.publicOrigin),
-    );
-    return { count: items.length };
+    return { count: await countNeedsYouItems(this.database, input.workspaceId, viewerId) };
   }
 
   /** A tap or a dismissal: the cell is handled, on every device. */
@@ -4757,7 +4916,22 @@ export class PhoneService {
     viewerId: string,
   ): Promise<void> {
     await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    // Approval cards are dismissed for this viewer only. Their decision and
+    // the paused agent's authority remain untouched.
+    const { items } = await needsYouItems(this.database, input.workspaceId, viewerId, (row) =>
+      identity(row, this.publicOrigin),
+    );
     await clearNeedsYouQuestions(this.database, input.workspaceId, viewerId);
+    const approvalIds = items.filter((item) => item.approval).map((item) => item.messageId);
+    if (approvalIds.length) {
+      await this.database.query(
+        `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at)
+         SELECT $1,id,$3,now() FROM unnest($2::text[]) id
+         ON CONFLICT(identity_id,message_id)
+           DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now())`,
+        [viewerId, approvalIds, input.workspaceId],
+      );
+    }
   }
 
   private async listMessageBookmarks(
@@ -4839,6 +5013,13 @@ export class PhoneService {
    * in one transaction, so the phone can distinguish a server-accepted steer
    * from text that merely looked addressed locally.
    */
+  private async receiptMessage(roomId: string, viewerId: string, messageIdValue: string, database: SqlDatabase) {
+    const delta = await this.readLiveDelta(roomId, viewerId, {
+      type: 'message', messageId: messageIdValue,
+    }, database);
+    return delta?.type === 'message-delta' ? { message: delta.message } : {};
+  }
+
   private async activeSteerAgentIds(database: SqlDatabase, messageIdValue: string) {
     const commands = await database.query<{ agent_id: string }>(
       `SELECT DISTINCT command.agent_id
@@ -6095,21 +6276,32 @@ export class PhoneService {
     });
   }
   private async addRoomMember(input: Input<'addRoomMember'>, viewerId: string) {
+    const memberIds = [...new Set(input.memberIds ?? (input.memberId ? [input.memberId] : []))];
+    if (!memberIds.length || memberIds.length > ROOM_VIEW_MEMBER_LIMIT)
+      throw new Error('invalid Room member list');
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
-    const workspaceMember = await this.database.query(
-      `SELECT 1 FROM memberships
-       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
-      [room.workspace_id, input.memberId],
+    const workspaceMembers = await this.database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=ANY($2::text[])
+         AND removed_at IS NULL`,
+      [room.workspace_id, memberIds],
     );
-    if (!workspaceMember.rowCount) throw new Error('workspace membership required');
-    const result = await joinRooms(this.database, {
-      workspaceId: room.workspace_id,
-      identityId: input.memberId,
-      invitedById: viewerId,
-      rooms: { type: 'rooms', roomIds: [input.roomId] },
+    if (workspaceMembers.rowCount !== memberIds.length)
+      throw new Error('workspace membership required');
+    return this.database.transaction(async (database) => {
+      const joinedIds: string[] = [];
+      for (const memberId of memberIds) {
+        const result = await joinRooms(database, {
+          workspaceId: room.workspace_id,
+          identityId: memberId,
+          invitedById: viewerId,
+          rooms: { type: 'rooms', roomIds: [input.roomId] },
+        });
+        if (result.roomIds.length) joinedIds.push(memberId);
+      }
+      return { joined: joinedIds.length > 0, ...(input.memberIds ? { joinedIds } : {}) };
     });
-    return { joined: result.roomIds.length > 0 };
   }
   private async removeRoomMember(input: Input<'removeRoomMember'>, viewerId: string) {
     const room = await this.requireTopLevelRoom(input.roomId);
@@ -7305,12 +7497,16 @@ export class PhoneService {
       const closingCorners = await database.query<{ id: string }>(
         `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
            AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1))
-         ORDER BY id FOR UPDATE`, [gone]);
+         ORDER BY id FOR UPDATE`,
+        [gone],
+      );
       for (const corner of closingCorners.rows)
         await cancelCornerAgentCommands(database, corner.id);
       await database.query(
         `UPDATE rooms SET archived_at=now(),updated_at=now()
-         WHERE id=ANY($1::uuid[])`, [closingCorners.rows.map((corner) => corner.id)]);
+         WHERE id=ANY($1::uuid[])`,
+        [closingCorners.rows.map((corner) => corner.id)],
+      );
       await database.query(
         `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,
            lifecycle=lifecycle||$2::jsonb,updated_at=now()
@@ -7446,7 +7642,10 @@ export class PhoneService {
       // Object bytes are personal data: the rows go, and a tombstone keeps the
       // readers' story the one media-ttl.ts already tells (expired, not lost).
       if (this.objects) await this.objects.deleteOwnedBytes(gone, database);
-      else if ((await database.query(`SELECT 1 FROM objects WHERE owner_id=ANY($1) LIMIT 1`, [gone])).rowCount)
+      else if (
+        (await database.query(`SELECT 1 FROM objects WHERE owner_id=ANY($1) LIMIT 1`, [gone]))
+          .rowCount
+      )
         throw new Error('object storage is not configured');
       await database.query(
         `WITH swept AS (DELETE FROM objects WHERE owner_id=ANY($1) RETURNING id,kind)
@@ -7967,11 +8166,15 @@ export class PhoneService {
       const identity = appIdentity(row.name);
       if (!identity || composioToolkitForApp(identity.key) !== row.slug) return [];
       const domain = row.appUrl ? new URL(row.appUrl).hostname : undefined;
-      return [{ appKey: identity.key, name: row.name,
-        ...(domain ? { domain } : {}),
-        ...(row.description ? { description: row.description } : {}),
-        ...(row.logo ? { logo: row.logo } : {}),
-      }];
+      return [
+        {
+          appKey: identity.key,
+          name: row.name,
+          ...(domain ? { domain } : {}),
+          ...(row.description ? { description: row.description } : {}),
+          ...(row.logo ? { logo: row.logo } : {}),
+        },
+      ];
     });
   }
 
@@ -8376,13 +8579,17 @@ export class PhoneService {
     if (existing.rows.length === 0) {
       if (!this.composio) throw new Error('Select an app from search results');
       let catalogEntry;
-      try { catalogEntry = await this.composio.toolkit(composioToolkitForApp(identity.key)); }
-      catch (error) {
+      try {
+        catalogEntry = await this.composio.toolkit(composioToolkitForApp(identity.key));
+      } catch (error) {
         if ((error as { status?: number }).status === 404)
           throw new Error('Select an app from search results');
         throw error;
       }
-      if (catalogEntry.slug !== composioToolkitForApp(identity.key) || catalogEntry.enabled === false)
+      if (
+        catalogEntry.slug !== composioToolkitForApp(identity.key) ||
+        catalogEntry.enabled === false
+      )
         throw new Error('Select an app from search results');
     }
     const { matched, machineId, ws } = await this.resolveViewerHelper(
@@ -9277,26 +9484,6 @@ export class PhoneService {
     const tagsByMessage = new Map(tags?.rows.map((item) => [item.id, item.tagged_ids]) ?? []);
     for (const message of rows) message.tagged_ids = tagsByMessage.get(message.id) ?? [];
   }
-  private async latestAgentTurns(roomId: string): Promise<RoomView['latestAgentTurns']> {
-    // `requested_by` is the command chain's root human requester — the
-    // one person who may stop this turn. It is resolved HERE, from the row, and
-    // never from the transcript window: a long turn's request scrolls out of
-    // that window while it is still running, and a control that disappears
-    // because the question scrolled away is a control nobody can rely on. A
-    // relayed turn keeps the initiating human through its command chain.
-    const turns = await this.database.query<AgentTurnRow>(
-      `SELECT DISTINCT ON(turn.agent_id)
-         turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,turn.generation_id,
-         requester.id requested_by
-       FROM agent_turns turn
-       LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('turn')}
-       LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
-       WHERE turn.room_id=$1
-       ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC`,
-      [roomId],
-    );
-    return this.projectAgentTurns(turns.rows);
-  }
   private projectAgentTurns(turns: readonly AgentTurnRow[]): RoomView['latestAgentTurns'] {
     return turns
       .map((turn) => ({
@@ -9313,109 +9500,6 @@ export class PhoneService {
           right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
       )
       .slice(0, ROOM_VIEW_AGENT_LIMIT);
-  }
-  private async roomMessages(
-    roomId: string,
-    latestAgentTurns: RoomView['latestAgentTurns'] | Promise<RoomView['latestAgentTurns']>,
-    isCorner = false,
-    viewerId?: string,
-    alsoTag: Promise<MessageRow[]> = Promise.resolve([]),
-  ): Promise<{ messages: RoomViewMessage[]; toolRows: RoomViewMessage[] }> {
-    const eligible = `m.id IN (
-      (SELECT raw.id FROM legacy_room_events raw WHERE raw.room_id=$1 AND raw.kind=9
-         AND raw.raw_page_candidate=true
-       ORDER BY raw.created_at DESC,raw.id ASC LIMIT 180)
-      UNION
-      (SELECT conversation.id FROM legacy_room_events conversation
-       WHERE conversation.room_id=$1 AND conversation.conversation_candidate=true
-       ORDER BY conversation.created_at DESC,conversation.id ASC LIMIT 30)
-      UNION
-      (SELECT plan.id FROM legacy_room_events plan WHERE plan.room_id=$1 AND plan.kind=30078)
-    )`;
-    const transcriptRowsPromise = this.database.query<MessageRow>(
-      `SELECT m.*,
-         i.kind author_kind,i.name author_name,i.handle author_handle,
-         i.avatar author_avatar,i.face_id author_face,
-         ${reactionIdentitiesSql('m')} reaction_identities,
-         '{}'::text[] tagged_ids
-       FROM messages m JOIN identities i ON i.id=m.author_id
-       WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-         AND ${hiddenWakeCardSql('m')}
-         AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
-       ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}`,
-      [roomId],
-    );
-    const liveRowsPromise = this.database.query<MessageRow>(
-      `SELECT m.*,
-         i.kind author_kind,i.name author_name,i.handle author_handle,
-         i.avatar author_avatar,i.face_id author_face,
-         ${reactionIdentitiesSql('m')} reaction_identities,
-         '{}'::text[] tagged_ids
-       FROM messages m JOIN identities i ON i.id=m.author_id
-       -- Only the displayed agents' current working turns project activity
-       -- (projectRoomMessages); a long corner's settled rows are never read here.
-       JOIN (
-         SELECT agent_id,created_at FROM (
-           SELECT agent_id,status,created_at FROM (
-             SELECT DISTINCT ON(turn.agent_id) turn.agent_id,turn.status,turn.created_at
-             FROM agent_turns turn WHERE turn.room_id=$1
-             ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC
-           ) latest
-           ORDER BY date_trunc('second',created_at) DESC,agent_id ASC
-           LIMIT ${ROOM_VIEW_AGENT_LIMIT}
-         ) projected
-         WHERE projected.status='working'
-       ) turn ON turn.agent_id=m.author_id
-         AND date_trunc('second',m.created_at)>=date_trunc('second',turn.created_at)
-       WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
-         AND (NOT EXISTS(SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1) OR ${eligible})
-       ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}`,
-      [roomId],
-    );
-    const cornerActivityRowsPromise = isCorner
-      ? this.database.query<MessageRow>(
-          `SELECT m.*,
-             i.kind author_kind,i.name author_name,i.handle author_handle,
-             i.avatar author_avatar,i.face_id author_face,
-             ${reactionIdentitiesSql('m')} reaction_identities,
-             '{}'::text[] tagged_ids
-           FROM messages m JOIN identities i ON i.id=m.author_id
-           WHERE m.room_id=$1 AND m.presentation='activity' AND m.durable_fact IS NULL
-             AND EXISTS(
-               SELECT 1 FROM jsonb_array_elements(m.activity) item
-               WHERE item->>'kind' IN ('tool','output')
-             )
-           ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_TOOL_ROW_LIMIT}`,
-          [roomId],
-        )
-      : Promise.resolve({ rows: [] as MessageRow[], rowCount: 0 });
-    const [transcriptRows, liveRows, cornerActivityRows, resolvedAgentTurns, extraTagRows] =
-      await Promise.all([
-        transcriptRowsPromise,
-        liveRowsPromise,
-        cornerActivityRowsPromise,
-        latestAgentTurns,
-        alsoTag,
-      ]);
-    // One mention pass covers this Room's transcript and the caller's rows
-    // (a corner's parent briefing); the tag regex is the slow part of a read.
-    await Promise.all([
-      viewerId
-        ? this.enrichMessageBookmarks(
-            [...transcriptRows.rows, ...liveRows.rows, ...cornerActivityRows.rows],
-            viewerId,
-          )
-        : undefined,
-      this.enrichMessageTags([...transcriptRows.rows, ...extraTagRows]),
-    ]);
-    return this.projectRoomMessages(
-      transcriptRows.rows,
-      liveRows.rows,
-      cornerActivityRows.rows,
-      resolvedAgentTurns,
-      isCorner,
-      viewerId,
-    );
   }
   private async enrichMessageBookmarks(
     rows: readonly MessageRow[],
@@ -9489,24 +9573,6 @@ export class PhoneService {
         )
         .slice(-ROOM_VIEW_MESSAGE_LIMIT),
       toolRows: cornerActivityMessages,
-    };
-  }
-  private async cornerLifecycle(roomId: string, viewerId: string) {
-    const row = (
-      await this.database.query<{
-        lifecycle: NonNullable<RoomView['cornerLifecycle']> | null;
-        owed: boolean;
-      }>(
-        `SELECT f.lifecycle,owed.owed FROM rooms c
-         LEFT JOIN corner_facts f ON f.corner_id=c.id
-         ${cornerOwedLookupSql('c', '$2')}
-         WHERE c.id=$1`,
-        [roomId, viewerId],
-      )
-    ).rows[0];
-    return {
-      lifecycle: row?.lifecycle ?? { lifecycle: 'unknown' as const, checks: 'unknown' as const },
-      ...(row ? { owed: row.owed } : {}),
     };
   }
 }

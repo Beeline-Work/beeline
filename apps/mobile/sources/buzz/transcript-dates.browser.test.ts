@@ -26,8 +26,11 @@ it.skipIf(!existsSync(chrome))(
       export const useReducedMotion = () => true;
       export const useSharedValue = initial => ({ value: initial });
       export const useAnimatedStyle = factory => factory();
+      export const Easing = { out: fn => fn, cubic: value => value };
       export const withTiming = toValue => toValue;
       export const withDelay = (_delayMs, animation) => animation;
+      export const cancelAnimation = () => undefined;
+      export const runOnJS = fn => fn;
       export default { View: props => React.createElement(View, props) };`,
       '@expo/vector-icons': 'export const Ionicons = () => null;',
       'react-native-svg': `import React from 'react';

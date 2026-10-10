@@ -168,7 +168,7 @@ async function advance(ms: number) {
 }
 
 describe('Reproduction R1: open Room whose live socket goes silent', () => {
-  it('reads nothing while the Room sits idle, and the next send finds what the socket missed', async () => {
+  it('reads nothing while idle or after a send whose receipt paints locally', async () => {
     let latest: UseRoomSurfaceSessionResult | undefined;
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -188,21 +188,22 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     await advance(10 * 60_000);
     expect(controls.roomReads).toBe(openingReads);
 
-    // The reader sends. Its own delta never arrives either, so one read
-    // confirms it, and that read paints what the socket missed.
+    // The reader sends. Its own delta never arrives, but the write response
+    // carries the canonical row without starting a Room read timer.
     controls.serverMessages = [
       ...controls.serverMessages,
       message('5e7d', 1_791_248_000, 'Thanks — looks good'),
     ];
-    latest!.outbox.scheduleConfirmation('5e7d');
+    await act(async () => latest!.applyRoomMessageResult(
+      message('5e7d', 1_791_248_000, 'Thanks — looks good'),
+    ));
     await advance(5_000);
 
     const newest = latest?.roomSurface?.messages.map((item) => item.id).slice(-2);
     console.log(`[R1] room reads=${controls.roomReads} newest painted=${newest}`);
-    expect(newest).toEqual(['adf6a0c9', '5e7d']);
-    expect(controls.roomReads).toBe(openingReads + 1);
-    // The read that found it also proves the socket missed it, so the socket is replaced.
-    expect(controls.reconnects).toBe(1);
+    expect(newest).toEqual(['m-2042', '5e7d']);
+    expect(controls.roomReads).toBe(openingReads);
+    expect(controls.reconnects).toBe(0);
     await act(async () => renderer.unmount());
   });
 

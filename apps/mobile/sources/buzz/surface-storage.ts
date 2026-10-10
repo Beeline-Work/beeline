@@ -10,6 +10,7 @@ import {
 } from '@beeline/buzz-client';
 import { stripRetiredAgentNotices } from './retired-agent-notices';
 import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
+import { SurfaceRegistry } from './surface-registry';
 
 const browserStorage = typeof window !== 'undefined' && typeof localStorage !== 'undefined' ? localStorage : undefined;
 const responses = browserStorage ? webStringStorage(browserStorage, 'beeline.surface.') : new MMKV({ id: 'buzz-surface-responses' });
@@ -30,7 +31,7 @@ function decodedStorageKey(key: string): string | null {
   }
 }
 
-export const mobileSurfaceCache = new SurfaceResponseCache(
+const durableSurfaceCache = new SurfaceResponseCache(
   {
     get: async (key) => responses.getString(storageKey(key)) ?? null,
     set: async (key, value) => {
@@ -47,6 +48,7 @@ export const mobileSurfaceCache = new SurfaceResponseCache(
   },
   stripRetiredAgentNotices,
 );
+export const mobileSurfaceCache = new SurfaceRegistry(durableSurfaceCache, stripRetiredAgentNotices);
 
 export function surfaceAddress(
   relayOrigin: string,
@@ -95,6 +97,7 @@ export async function evictMobileSurfaceViewer(relayOrigin: string, viewerPubkey
 }
 
 export function clearMobileSurfaceStorage(): void {
+  mobileSurfaceCache.clear();
   for (const key of responses.getAllKeys()) {
     if (key.startsWith(RESPONSE_PREFIX)) responses.delete(key);
   }

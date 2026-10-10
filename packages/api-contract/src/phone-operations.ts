@@ -12,12 +12,14 @@ import type {
 } from './workflow-contracts.js';
 import type { GrantWalletDelegationInput, GrantWalletDelegationResult } from './wallet.js';
 import type {
+  AgentDetailView,
   AgentModelSelection,
   AgentPairingClaimView,
   AttachmentReference,
   InviteView,
   MessageBookmarkView,
   MessageReactionEmoji,
+  RoomViewMessage,
   NeedsYouItemView,
 } from './phone-types.js';
 import type {
@@ -88,8 +90,8 @@ export type PhoneOperationMap = {
   answerStarPrompt: { input: AnswerStarPromptInput; output: AnswerStarPromptResult };
   sendRoomMessage: { input: SendRoomMessageInput; output: AgentMessageWriteResult };
   sendRoomReply: { input: SendRoomReplyInput; output: AgentMessageWriteResult };
-  reactToMessage: { input: ReactToMessageInput; output: void };
-  deleteRoomMessage: { input: DeleteRoomMessageInput; output: void };
+  reactToMessage: { input: ReactToMessageInput; output: RoomViewMessage | null };
+  deleteRoomMessage: { input: DeleteRoomMessageInput; output: RoomViewMessage | null };
   setMessageBookmark: { input: SetMessageBookmarkInput; output: SetMessageBookmarkResult };
   /** Clear every bookmark in one Workspace for this viewer. */
   clearMessageBookmarks: { input: WorkspaceInput; output: void };
@@ -148,7 +150,7 @@ export type PhoneOperationMap = {
   leaveRoom: { input: RoomInput & { readonly confirmDelete?: true }; output: void };
   closeChat: { input: RoomInput; output: void };
   reopenChat: { input: RoomInput; output: void };
-  addRoomMember: { input: RoomMemberInput; output: MembershipResult };
+  addRoomMember: { input: AddRoomMembersInput; output: MembershipResult & { readonly joinedIds?: readonly string[] } };
   removeRoomMember: { input: RoomMemberInput; output: void };
   resolveDirectMessage: { input: ResolveDirectMessageInput; output: DirectMessageResult };
   createInvite: { input: WorkspaceInput; output: InviteTokenResult };
@@ -156,13 +158,13 @@ export type PhoneOperationMap = {
   redeemInvite: { input: InviteTokenInput; output: InviteMembershipResult };
   createAgentPairingCode: { input: WorkspaceInput; output: PairingCodeResult };
   claimAgentPairing: { input: PairingCodeInput; output: AgentPairingClaimView };
-  updateAgentSoul: { input: UpdateAgentSoulInput; output: void };
-  updateAgentModelSelection: { input: UpdateAgentModelInput; output: void };
+  updateAgentSoul: { input: UpdateAgentSoulInput; output: AgentDetailView };
+  updateAgentModelSelection: { input: UpdateAgentModelInput; output: AgentDetailView };
   refreshAgentModelCatalog: { input: WorkspaceAgentInput; output: void };
   /** Owner-only: relay the code pasted into an `@agent /login` card to the agent's machine. */
   completeAgentSignIn: { input: CompleteAgentSignInInput; output: CompleteAgentSignInResult };
-  updateAgentYolo: { input: UpdateAgentYoloInput; output: void };
-  updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: void };
+  updateAgentYolo: { input: UpdateAgentYoloInput; output: AgentDetailView };
+  updateAgentAccessPolicy: { input: UpdateAgentAccessPolicyInput; output: AgentDetailView };
   removeAgent: { input: WorkspaceAgentInput; output: void };
   updatePersonProfile: { input: UpdatePersonProfileInput; output: PersonProfileResult };
   updateIdentityFace: { input: UpdateIdentityFaceInput; output: void };
@@ -315,6 +317,10 @@ export type RoomWorkflowListResult = {
 export type DispatchRoomWorkflowInput = RoomInput & { readonly workflowName: string };
 export type WorkspaceAgentInput = WorkspaceInput & { readonly agentId: string };
 export type RoomMemberInput = RoomInput & { readonly memberId: string };
+export type AddRoomMembersInput = RoomInput & (
+  | { readonly memberId: string; readonly memberIds?: never }
+  | { readonly memberIds: readonly string[]; readonly memberId?: never }
+);
 export type WorkspaceMemberInput = WorkspaceInput & {
   readonly memberId: string;
   readonly role: 'owner' | 'admin' | 'member' | 'spectator';
@@ -336,6 +342,8 @@ export type MessageWriteResult = { readonly messageId: string };
 export type AgentMessageWriteResult = MessageWriteResult & {
   /** Optional so a newer phone remains compatible during a rolling server deploy. */
   readonly activeSteerAgentIds?: readonly string[];
+  /** Canonical row for local settlement when the write commits before its live delta. */
+  readonly message?: RoomViewMessage;
 };
 export type RoomScheduleCadence =
   | { readonly kind: 'cron'; readonly expression: string; readonly timeZone?: string }

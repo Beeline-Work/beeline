@@ -5,6 +5,7 @@ import type { AgentDetailView } from '@beeline/buzz-client';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal/ModalManager';
 import { runAvatarGeneration, useAvatarGeneration } from '@/buzz/avatar-generation';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { SettingsRow } from './SettingsRow';
 
 export function SoulPortraitControls({
@@ -26,11 +27,13 @@ export function SoulPortraitControls({
   const error = job.error;
   const generation = useRef(0);
   const requestActive = useRef(false);
+  const cancelWaitRef = useRef<(() => void) | null>(null);
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
   useEffect(
     () => () => {
       generation.current += 1;
+      cancelWaitRef.current?.();
     },
     [],
   );
@@ -38,21 +41,20 @@ export function SoulPortraitControls({
   useEffect(() => {
     if (!detail.avatarGenerationPending || job.pending) return;
     let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        await refreshRef.current();
-      } catch {
-        /* Keep the server-owned job disabled until a read settles it. */
-      }
-      if (!disposed) timer = setTimeout(poll, 2000);
-    };
-    timer = setTimeout(poll, 2000);
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
-  }, [detail.avatarGenerationPending, job.pending]);
+    let stop: (() => void) | undefined;
+    void sharedLiveConnection().register([], (event) => {
+      if (disposed || !('monolithLive' in event)) return;
+      const live = event.monolithLive;
+      if ((live.type === 'resource-change' && live.resource === 'agent' &&
+          live.resourceId === agentId) ||
+          (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect'))
+        void refreshRef.current().catch(() => undefined);
+    }).then((release) => {
+      if (disposed) release();
+      else stop = release;
+    });
+    return () => { disposed = true; stop?.(); };
+  }, [agentId, detail.avatarGenerationPending, job.pending]);
 
   const draw = async () => {
     if (pending || requestActive.current || disabled || !soul.trim()) return;
@@ -67,19 +69,50 @@ export function SoulPortraitControls({
         );
         if (!confirmed || attempt !== generation.current) return;
         const previous = detail.avatarGenerationId;
-        await generate(soul.trim());
-        for (let i = 0; i < 90; i += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          const next = await refreshRef.current();
-          if (next.avatarGenerationId && next.avatarGenerationId !== previous) return;
-          if (next.avatarGenerationPending === false)
-            throw new Error(
-              'The avatar job ended without saving a new avatar. Check the agent’s DM and retry.',
-            );
+        let stop: (() => void) | undefined;
+        let settle: (() => void) | undefined;
+        let fail: ((reason: Error) => void) | undefined;
+        let reading = false;
+        let queued = false;
+        let accepted = false;
+        let earlySignal = false;
+        const completed = new Promise<void>((resolve, reject) => {
+          settle = resolve;
+          fail = reject;
+        });
+        cancelWaitRef.current = () => settle?.();
+        const check = () => {
+          if (attempt !== generation.current) return;
+          if (reading) { queued = true; return; }
+          reading = true;
+          void refreshRef.current().then((next) => {
+            if (next.avatarGenerationId && next.avatarGenerationId !== previous) settle?.();
+            else if (next.avatarGenerationPending === false)
+              fail?.(new Error('The avatar job ended without saving a new avatar. Check the agent’s DM and retry.'));
+          }).catch(() => undefined).finally(() => {
+            reading = false;
+            if (queued) { queued = false; check(); }
+          });
+        };
+        try {
+          stop = await sharedLiveConnection().register([], (event) => {
+            if (!('monolithLive' in event) || attempt !== generation.current) return;
+            const live = event.monolithLive;
+            if (!((live.type === 'resource-change' && live.resource === 'agent' &&
+                live.resourceId === agentId) ||
+                (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')))
+              return;
+            if (!accepted) earlySignal = true;
+            else check();
+          });
+          await generate(soul.trim());
+          accepted = true;
+          if (earlySignal) check();
+          await completed;
+        } finally {
+          cancelWaitRef.current = null;
+          stop?.();
         }
-        throw new Error(
-          'The agent has not saved a new avatar yet. Check its DM. An active job must finish before retrying.',
-        );
       });
     } finally {
       requestActive.current = false;

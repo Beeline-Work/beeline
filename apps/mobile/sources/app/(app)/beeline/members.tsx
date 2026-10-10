@@ -51,6 +51,7 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { MEMBERS_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
@@ -64,9 +65,6 @@ import { Modal } from '@/modal/ModalManager';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { PageHeader } from '@/components/buzz/PageHeader';
 
-const INDEX_CONFIRM_ATTEMPTS = 60;
-const INDEX_CONFIRM_DELAY_MS = 250;
-const MODEL_CATALOG_CONFIRM_ATTEMPTS = 140;
 
 async function copyText(value: string): Promise<void> {
   await (await import('expo-clipboard')).setStringAsync(value);
@@ -89,9 +87,6 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function appendUniqueMembers<T extends { identity: { pubkey: string } }>(
   current: readonly T[],
@@ -108,18 +103,9 @@ function countedKindLabel(
   return total === undefined ? kind : [`${kind} `, total];
 }
 
-async function waitForIndexedSurface<T>(
-  read: () => Promise<T>,
-  accepts: (value: T) => boolean,
-  attempts = INDEX_CONFIRM_ATTEMPTS,
-): Promise<T> {
-  let latest: T | undefined;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    latest = await read();
-    if (accepts(latest)) return latest;
-    if (attempt + 1 < attempts) await delay(INDEX_CONFIRM_DELAY_MS);
-  }
-  throw new Error('The change was published, but the indexed Workspace view did not confirm it.');
+function newerConfigVersion(candidate: string, current: string | undefined): boolean {
+  return !current || candidate.length > current.length ||
+    (candidate.length === current.length && candidate > current);
 }
 
 function ownerByline(
@@ -291,25 +277,16 @@ export default function BuzzMembers({
   const agentRequestGenerationRef = useRef(0);
   const allowProfileNavigationRef = useRef(false);
   const requestedActionHandledRef = useRef(false);
+  const waitingForEffortCatalogRef = useRef(false);
+  const latestConfigVersionRef = useRef<string | undefined>(undefined);
+  const pendingConfigWriteRef = useRef(false);
+  const queuedConfigVersionRef = useRef<string | undefined>(undefined);
+  latestConfigVersionRef.current = selectedAgent?.configVersion;
   const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
   const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
   const selectedAgentOwnerByline = selectedAgent?.owner
     ? ownerByline(selectedAgent.owner)
     : undefined;
-
-  const workspaceAddress = (nextIdentity = identity, nextRelayUrl = relayUrl) =>
-    nextIdentity && nextRelayUrl && workspaceId
-      ? surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id', { workspaceId })
-      : null;
-
-  const readWorkspace = async (): Promise<WorkspaceView> => {
-    if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
-    const value = await new RoomViewClient({ baseUrl: relayUrl, identity }).workspace(workspaceId);
-    setSurface(value);
-    const address = workspaceAddress();
-    if (address) await mobileSurfaceCache.write(address, value, isWorkspaceView);
-    return value;
-  };
 
   const readAgent = async (agentPubkey: string): Promise<AgentDetailView> => {
     const generation = agentRequestGenerationRef.current;
@@ -327,6 +304,69 @@ export default function BuzzMembers({
     await mobileSurfaceCache.write(address, value, isAgentDetailView);
     return value;
   };
+
+  const applyAgentReceipt = (value: AgentDetailView) => {
+    agentRequestGenerationRef.current += 1;
+    latestConfigVersionRef.current = value.configVersion;
+    setSelectedAgent(value);
+    const queued = queuedConfigVersionRef.current;
+    queuedConfigVersionRef.current = undefined;
+    if (queued && newerConfigVersion(queued, value.configVersion))
+      void readAgent(value.agent.identity.pubkey).catch(() => undefined);
+    if (identity && relayUrl && workspaceId) {
+      const address = surfaceAddress(relayUrl, identity.publicKey,
+        '/workspace/:id/agents/:agentId', {
+          workspaceId, agentPubkey: value.agent.identity.pubkey,
+        });
+      void mobileSurfaceCache.write(address, value, isAgentDetailView);
+    }
+  };
+
+  const finishConfigWrite = (agentId: string) => {
+    pendingConfigWriteRef.current = false;
+    const queued = queuedConfigVersionRef.current;
+    queuedConfigVersionRef.current = undefined;
+    if (queued && newerConfigVersion(queued, latestConfigVersionRef.current))
+      void readAgent(agentId).catch(() => undefined);
+  };
+
+  useEffect(() => {
+    if (!selectedAgent || !identity || !relayUrl) return;
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    const agentId = selectedAgent.agent.identity.pubkey;
+    void sharedLiveConnection().register([], (event) => {
+      if (cancelled || !('monolithLive' in event)) return;
+      const live = event.monolithLive;
+      if (!((live.type === 'resource-change' && live.resource === 'agent' &&
+          live.resourceId === agentId) ||
+          (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')))
+        return;
+      if (live.type === 'resource-change' && live.version) {
+        if (!newerConfigVersion(live.version, latestConfigVersionRef.current)) return;
+        if (pendingConfigWriteRef.current) {
+          if (newerConfigVersion(live.version, queuedConfigVersionRef.current))
+            queuedConfigVersionRef.current = live.version;
+          return;
+        }
+      }
+      void readAgent(agentId).then((detail) => {
+        if (!waitingForEffortCatalogRef.current) return;
+        const effort = effortConfigAxis(detail.catalog.filter((candidate) =>
+          isAllowedAgentModelConfigCategory(candidate.category, candidate.id) &&
+          candidate.options.length > 0));
+        if (effort) {
+          waitingForEffortCatalogRef.current = false;
+          setWorking(null);
+          setOpenModelAxis('effort');
+        }
+      }).catch((reason) => { if (!cancelled) setError(String(reason)); });
+    }).then((release) => {
+      if (cancelled) release();
+      else stop = release;
+    });
+    return () => { cancelled = true; stop?.(); };
+  }, [identity, relayUrl, selectedAgent?.agent.identity.pubkey]);
 
   const writeClient = async () => {
     if (!identity || !relayUrl) throw new Error('Workspace connection unavailable');
@@ -379,12 +419,13 @@ export default function BuzzMembers({
     let subscribedFilters = '';
     let subscriptionChange = Promise.resolve();
     void (async () => {
-      const nextIdentity = await loadBuzzIdentity();
+      const [nextIdentity, nextRelayUrl] = await Promise.all([
+        loadBuzzIdentity(), getEffectiveRelayUrl(),
+      ]);
       if (!nextIdentity) {
         router.replace('/beeline/onboarding');
         return;
       }
-      const nextRelayUrl = await getEffectiveRelayUrl();
       const address = surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id', {
         workspaceId,
       });
@@ -420,11 +461,10 @@ export default function BuzzMembers({
         return subscriptionChange;
       };
       scheduler = new SurfaceRefreshScheduler({
-        fetch: () => http.workspace(workspaceId),
+        fetch: () => mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
         apply: (value) => {
           setSurface(value);
           setWorkspaceError(null);
-          void mobileSurfaceCache.write(address, value, isWorkspaceView);
           // The bootstrap subscription cannot name an agent paired after the
           // screen opened. The indexed Workspace response is authoritative for
           // the Room-scoped presence filters that can refresh its roster.
@@ -723,31 +763,20 @@ export default function BuzzMembers({
     const clearName = nameDraft.capture(false);
     const clearSoul = soulDraft.capture(false);
     setWorking('save-agent-soul');
+    pendingConfigWriteRef.current = true;
     setError(null);
     try {
       const pubkey = selectedAgent.agent.identity.pubkey;
       const client = await writeClient();
-      await client.setAgentSoul(workspaceId, pubkey, {
+      const receipt = await client.setAgentSoul(workspaceId, pubkey, {
         name,
         soul,
         avatarSeed: selectedAgent.soul?.avatarSeed ?? pubkey,
         ...(selectedAgent.soul?.avatar ? { avatar: selectedAgent.soul.avatar } : {}),
       });
+      applyAgentReceipt(receipt as unknown as AgentDetailView);
       clearName();
       clearSoul();
-      await Promise.all([
-        waitForIndexedSurface(
-          () => readAgent(pubkey),
-          (value) => value.agent.identity.name === name && value.soul?.name === name,
-        ),
-        waitForIndexedSurface(
-          readWorkspace,
-          (value) =>
-            value.agents.some(
-              (member) => member.identity.pubkey === pubkey && member.identity.name === name,
-            ) || !value.agents.some((member) => member.identity.pubkey === pubkey),
-        ),
-      ]);
       setRosterAgents((current) =>
         current
           ? current.map((member) =>
@@ -761,6 +790,7 @@ export default function BuzzMembers({
     } catch (reason) {
       setError(`Could not save agent settings: ${String(reason)}`);
     } finally {
+      finishConfigWrite(selectedAgent.agent.identity.pubkey);
       setWorking(null);
     }
   };
@@ -786,23 +816,19 @@ export default function BuzzMembers({
     const input: AgentModelConfigInput =
       kind === 'model' ? modelSelectionInput(selectedAgent, axis, choiceId) : { effort: choiceId };
     setWorking('model-config');
+    pendingConfigWriteRef.current = true;
     setError(null);
     try {
       const pubkey = selectedAgent.agent.identity.pubkey;
       const client = await writeClient();
-      await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey, input);
-      await waitForIndexedSurface(
-        () => readAgent(pubkey),
-        (value) =>
-          kind === 'model'
-            ? value.selected?.model === choiceId
-            : value.selected?.effort === choiceId,
-      );
+      const receipt = await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey, input);
+      applyAgentReceipt(receipt as unknown as AgentDetailView);
       setOpenModelAxis(null);
       showModelAppliesNote(kind);
     } catch (reason) {
       setError(`Could not set ${kind}: ${String(reason)}`);
     } finally {
+      finishConfigWrite(selectedAgent.agent.identity.pubkey);
       setWorking(null);
     }
   };
@@ -810,18 +836,18 @@ export default function BuzzMembers({
   const setFastMode = async (enabled: boolean) => {
     if (!selectedAgent || !ownsSelectedAgent || !modelAxes.fast) return;
     setWorking('model-config');
+    pendingConfigWriteRef.current = true;
     setError(null);
     try {
       const pubkey = selectedAgent.agent.identity.pubkey;
       const client = await writeClient();
-      await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey, { fastMode: enabled });
-      await waitForIndexedSurface(
-        () => readAgent(pubkey),
-        (value) => value.fastMode === enabled,
-      );
+      const receipt = await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey,
+        { fastMode: enabled });
+      applyAgentReceipt(receipt as unknown as AgentDetailView);
     } catch (reason) {
       setError(`Could not set Fast mode: ${String(reason)}`);
     } finally {
+      finishConfigWrite(selectedAgent.agent.identity.pubkey);
       setWorking(null);
     }
   };
@@ -846,34 +872,14 @@ export default function BuzzMembers({
     try {
       const pubkey = selectedAgent.agent.identity.pubkey;
       const client = await writeClient();
+      waitingForEffortCatalogRef.current = true;
       await client.refreshAgentModelCatalog(selectedAgent.workspaceId, pubkey);
-      const refreshed = await waitForIndexedSurface(
-        () => readAgent(pubkey),
-        (value) => {
-          const selectedModel = value.selected?.model ?? value.runtimeSelection?.model;
-          const catalogModel = value.catalog.find((candidate) => candidate.category === 'model');
-          return Boolean(
-            catalogModel && (!selectedModel || catalogModel.currentValue === selectedModel),
-          );
-        },
-        MODEL_CATALOG_CONFIRM_ATTEMPTS,
-      );
-      const effort = effortConfigAxis(
-        refreshed.catalog.filter(
-          (candidate) =>
-            isAllowedAgentModelConfigCategory(candidate.category, candidate.id) &&
-            candidate.options.length > 0,
-        ),
-      );
-      if (!effort) {
-        setModelAxisError('effort');
-        return;
-      }
-      setOpenModelAxis('effort');
+      // The helper's catalog write has its own committed agent change event.
     } catch {
+      waitingForEffortCatalogRef.current = false;
       setModelAxisError('effort');
     } finally {
-      setWorking(null);
+      if (!waitingForEffortCatalogRef.current) setWorking(null);
     }
   };
 
@@ -886,21 +892,20 @@ export default function BuzzMembers({
     // catch below rolls back with the server's own message inline.
     setSelectedAgent({ ...previous, yolo: { ...yolo, enabled } });
     setWorking('agent-yolo');
+    pendingConfigWriteRef.current = true;
     setYoloError(null);
     try {
-      await monolithPhoneOperation('updateAgentYolo', {
+      const receipt = await monolithPhoneOperation('updateAgentYolo', {
         workspaceId: previous.workspaceId,
         agentId: pubkey,
         enabled,
       });
-      await waitForIndexedSurface(
-        () => readAgent(pubkey),
-        (value) => value.yolo?.enabled === enabled,
-      );
+      applyAgentReceipt(receipt);
     } catch (reason) {
       setSelectedAgent(previous);
       setYoloError(operationMessage(reason));
     } finally {
+      finishConfigWrite(pubkey);
       setWorking(null);
     }
   };
@@ -915,21 +920,20 @@ export default function BuzzMembers({
     // confirms, or the catch rolls it back with the server's own message inline.
     setSelectedAgent({ ...previous, access: { ...access, policy } });
     setWorking('agent-access');
+    pendingConfigWriteRef.current = true;
     setAccessError(null);
     try {
-      await monolithPhoneOperation('updateAgentAccessPolicy', {
+      const receipt = await monolithPhoneOperation('updateAgentAccessPolicy', {
         workspaceId: previous.workspaceId,
         agentId: pubkey,
         policy,
       });
-      await waitForIndexedSurface(
-        () => readAgent(pubkey),
-        (value) => value.access?.policy === policy,
-      );
+      applyAgentReceipt(receipt);
     } catch (reason) {
       setSelectedAgent(previous);
       setAccessError(operationMessage(reason));
     } finally {
+      finishConfigWrite(pubkey);
       setWorking(null);
     }
   };
@@ -951,10 +955,6 @@ export default function BuzzMembers({
     try {
       const client = await writeClient();
       await client.removeAgent(workspaceId, pubkey);
-      await waitForIndexedSurface(
-        readWorkspace,
-        (value) => !value.agents.some((member) => member.identity.pubkey === pubkey),
-      );
       setRosterAgents((current) =>
         current ? current.filter((member) => member.identity.pubkey !== pubkey) : current,
       );

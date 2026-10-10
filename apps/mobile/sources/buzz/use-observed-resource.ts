@@ -9,8 +9,6 @@ type Options<T> = {
   load(): Promise<T>;
   subscribe?: (invalidate: () => void, reconnect: () => void,
     replace: (data: T) => void) => Promise<() => void>;
-  /** Only resources without a live signal use completion-paced refresh. */
-  refreshAfter?: (data: T | undefined) => number | false;
   missLimit?: number;
 };
 class InstallMissingError extends Error {}
@@ -26,7 +24,6 @@ class Resource<T> {
   waiters: Array<() => void> = [];
   misses = 0;
   version = 0;
-  timer?: ReturnType<typeof setTimeout>;
   stop?: () => void;
   constructor(
     readonly key: string,
@@ -40,7 +37,6 @@ class Resource<T> {
     if (!this.listeners.size) return;
     this.version += 1;
     this.dirty = false;
-    clearTimeout(this.timer);
     this.publish({ data, loading: false, error: null,
       successVersion: this.snapshot.successVersion + 1 });
   };
@@ -59,7 +55,6 @@ class Resource<T> {
   };
   async read() {
     if (this.flight || !this.listeners.size) return;
-    clearTimeout(this.timer);
     this.flight = true;
     const version = this.version;
     this.dirty = false;
@@ -91,9 +86,6 @@ class Resource<T> {
         this.publish({ ...this.snapshot, error: null });
         void this.read();
         return;
-      } else if (!this.snapshot.error) {
-        const delay = this.options.refreshAfter?.(this.snapshot.data);
-        if (delay) this.timer = setTimeout(this.invalidate, delay);
       }
       this.waiters.splice(0).forEach((resolve) => resolve());
     }
@@ -129,7 +121,6 @@ class Resource<T> {
     return () => {
       this.listeners.delete(listener);
       if (!this.listeners.size) {
-        clearTimeout(this.timer);
         this.stop?.();
         this.stop = undefined;
         this.dirty = false;
@@ -193,7 +184,7 @@ export function observeRoomResource(
   };
 }
 
-/** Install state has no room-scoped invalidation: refresh only after a settled read. */
+/** Owner-scoped commit notices refresh an install; reconnect covers any missed notice. */
 export function useInstallObserver(workspaceId: string, connectorId: string | undefined) {
   return useObservedResource<ConnectorInstallState>(
     connectorId ? `install:${workspaceId}:${connectorId}` : undefined,
@@ -207,9 +198,15 @@ export function useInstallObserver(workspaceId: string, connectorId: string | un
         if (!state) throw new InstallMissingError('Lost track of the install — retry to reconnect');
         return state;
       },
-      missLimit: 8,
-      refreshAfter: (state) =>
-        state?.connected || state?.steps?.some((step) => step.status === 'failed') ? false : 700,
+      subscribe: async (invalidate, reconnect) =>
+        sharedLiveConnection().register([], (event) => {
+          if (!('monolithLive' in event)) return;
+          const live = event.monolithLive;
+          if (live.type === 'resource-change' && live.resource === 'install' &&
+              live.resourceId === connectorId) void invalidate();
+          else if (live.type === 'invalidate' && live.roomId === '' &&
+              live.reason === 'reconnect') void reconnect();
+        }),
     },
   );
 }

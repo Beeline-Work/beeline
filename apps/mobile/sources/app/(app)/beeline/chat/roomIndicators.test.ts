@@ -119,12 +119,14 @@ describe('the turn indicator is the Room’s only line above the composer', () =
     // turn's WORKING receipt lights `thinking` on its own.
     const at = chatSource.indexOf('await sendTransport.publishPreparedMessage(preparedEvent);');
     expect(at).toBeGreaterThan(0);
-    const settled = chatSource.indexOf('scheduleOutboxConfirmation(preparedEvent.id);', at);
+    const settled = chatSource.indexOf('acknowledgeReadMark(preparedEvent.id);', at);
     expect(settled).toBeGreaterThan(at);
     const bridge = chatSource.slice(at, settled);
+    expect(bridge).toContain('applyRoomMessageResult(writeResult.message)');
     expect(bridge).toContain('setPendingAck((current) =>');
     expect(bridge).toContain('current.requestId === ackedRequestId');
     expect(bridge).toContain('? null');
+    expect(chatSource).not.toContain('scheduleOutboxConfirmation');
   });
 
   it('shows received only from the server response for the currently active corner turn', () => {

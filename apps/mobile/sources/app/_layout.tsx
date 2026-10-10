@@ -80,6 +80,18 @@ import { latencyFrameTraceEnabled, markLatencyRouteNavigation, markLatencyTouch 
 
 const consumedNotificationResponses = createConsumedNotificationResponseStore(AsyncStorage);
 
+/** Run once after a frame has had a chance to paint, even if navigation has an active interaction. */
+function afterFirstFrame(run: () => void): () => void {
+  let secondFrame: number | undefined;
+  const firstFrame = requestAnimationFrame(() => {
+    secondFrame = requestAnimationFrame(run);
+  });
+  return () => {
+    cancelAnimationFrame(firstFrame);
+    if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+  };
+}
+
 // Foreground OS-banner policy: while the app is active, pushes for other
 // conversations are shown and listed silently. Native background display and
 // response routing are untouched; see push/foreground-policy.ts.
@@ -278,14 +290,19 @@ export default function RootLayout() {
         console.log('Failed to clear legacy presented notifications:', error);
       },
     );
-    reconcileBadge();
+    // Begin after the first frame without waiting for a tap or navigation to end.
+    const cancelInitialBadge = afterFirstFrame(reconcileBadge);
     const subscription = AppState.addEventListener('change', reconcileBadge);
-    return () => subscription.remove();
+    return () => {
+      cancelInitialBadge();
+      subscription.remove();
+    };
   }, []);
 
-  React.useEffect(
-    () =>
-      startPushRegistrationLifecycle({
+  React.useEffect(() => {
+    let stop: (() => void) | undefined;
+    const cancelStart = afterFirstFrame(() => {
+      stop = startPushRegistrationLifecycle({
         loadIdentity: loadBuzzIdentity,
         subscribeIdentityChange: (listener) => monolithSession.subscribeIdentityChange(listener),
         subscribeForeground: (listener) => {
@@ -303,9 +320,13 @@ export default function RootLayout() {
             '[beeline-push] lifecycle:',
             error instanceof Error ? error.message : String(error),
           ),
-      }),
-    [],
-  );
+      });
+    });
+    return () => {
+      cancelStart();
+      stop?.();
+    };
+  }, []);
 
   React.useEffect(
     () => (Platform.OS === 'web' ? installWebPushForegroundResponder() : undefined),

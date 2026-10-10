@@ -60,7 +60,7 @@ describe('channel reference links — workspace-scoped exact resolution', () => 
     expect(chatSource).not.toContain('persistChannelReferenceIndex');
   });
 
-  it('navigates a corner reference: resolve on tap, then the existing Room read', () => {
+  it('navigates a corner reference without a duplicate destination preflight', () => {
     const handler = blockFrom(
       chatSource,
       'handleOpenChannelReference',
@@ -69,7 +69,9 @@ describe('channel reference links — workspace-scoped exact resolution', () => 
     expect(handler).toContain("resolved.kind === 'corner' && !resolved.channelId");
     expect(handler).toContain('roomClient.corners(resolved.parentChannelId)');
     expect(handler).toContain('resolveCornerFromList');
-    expect(handler).toContain('await roomClient.room(resolved.channelId)');
+    // The destination route performs the one Room read and reports access
+    // denial there; the opener must not spend a second request first.
+    expect(handler).not.toContain('roomClient.room(resolved.channelId)');
     expect(handler).toContain('isUnavailableChannelReferenceError(error)');
     expect(handler).toContain("'Access denied'");
     expect(handler).toContain('openDesktopCorner(resolved.parentChannelId, resolved.channelId)');

@@ -4,6 +4,13 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const storedReturn = vi.hoisted(() => new Map<string, string>());
+const liveListeners = vi.hoisted(() => new Set<(event: any) => void>());
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
+  register: async (_filters: unknown, listener: (event: any) => void) => {
+    liveListeners.add(listener);
+    return () => liveListeners.delete(listener);
+  },
+}) }));
 const appStateListeners = vi.hoisted(() => new Set<(state: string) => void>());
 
 const searchParams = vi.hoisted(() => ({
@@ -237,6 +244,12 @@ describe('ConnectorSignInScreen', () => {
       await loop.runOnce();
       await vi.waitFor(() => expect(row.status, operations.join('\n')).toBe('connected'));
       expect(operations.some((operation) => operation.startsWith('installConnector'))).toBe(true);
+      await act(async () => {
+        for (const listener of liveListeners) listener({ monolithLive: {
+          type: 'resource-change', roomId: '', resource: 'install',
+          resourceId: searchParams.connectorId,
+        } });
+      });
       await vi.waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1), { timeout: 2500 });
     } finally {
       if (renderer) await act(async () => renderer.unmount());

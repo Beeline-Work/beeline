@@ -901,7 +901,10 @@ describe('monolith integration', () => {
       avatarSeed: AGENT,
       avatar: 'https://example.com/old-avatar.png',
     });
-    expect(soulSave.status).toBe(204);
+    expect(soulSave.status).toBe(200);
+    const committedSoul = await soulSave.json();
+    expect(isAgentDetailView(committedSoul)).toBe(true);
+    expect(committedSoul.agent.identity.avatar).toBe(url);
     expect((await phone.readAgent(WORKSPACE, AGENT, HUMAN))?.agent.identity.avatar).toBe(url);
     const context = await daemonOperation('getAgentAvatar', { roomId: ROOM });
     expect((await context.json()).drawing).toEqual(drawing);
@@ -1431,6 +1434,30 @@ describe('monolith integration', () => {
         )
       ).rows,
     ).toEqual([{ role: 'admin', removed: false }]);
+  });
+
+  it('adds several current Workspace members with one phone write', async () => {
+    const memberIds = ['batch-room-0', 'batch-room-1'].map((name) =>
+      createHash('sha256').update(`github:${name}`).digest('hex'),
+    );
+    for (const [index, memberId] of memberIds.entries()) {
+      await phoneToken(`batch-room-${index}`);
+      await operation('addWorkspaceMember', { workspaceId: WORKSPACE, memberId, role: 'member' });
+    }
+    const room = (await (
+      await operation('createRoom', {
+        workspaceId: WORKSPACE,
+        name: 'batch-room-members',
+        visibility: 'invite-only',
+      })
+    ).json()) as { id: string };
+    expect(await (await operation('addRoomMember', { roomId: room.id, memberIds })).json())
+      .toEqual({ joined: true, joinedIds: memberIds });
+    expect((await database.query<{ identity_id: string }>(
+      `SELECT identity_id FROM memberships WHERE room_id=$1 AND identity_id=ANY($2::text[])
+         AND removed_at IS NULL ORDER BY identity_id`,
+      [room.id, memberIds],
+    )).rows.map((row) => row.identity_id)).toEqual([...memberIds].sort());
   });
 
   it('reserves workspace and Room management for workspace owners and admins', async () => {
@@ -2562,9 +2589,11 @@ describe('monolith integration', () => {
     expect(
       (await operation('sendRoomMessage', { roomId: ROOM, messageId, text: 'React here' })).status,
     ).toBe(200);
-    expect(
-      (await operation('reactToMessage', { roomId: ROOM, messageId, emoji: '👍' })).status,
-    ).toBe(204);
+    const reactionReceipt = await operation('reactToMessage', { roomId: ROOM, messageId, emoji: '👍' });
+    expect(reactionReceipt.status).toBe(200);
+    expect((await reactionReceipt.json()).reactions).toEqual([
+      expect.objectContaining({ emoji: '👍', count: 1, reacted: true }),
+    ]);
 
     const reacted = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
     expect(reacted.messages.find((message) => message.id === messageId)?.reactions).toEqual([
@@ -2602,7 +2631,7 @@ describe('monolith integration', () => {
 
     expect(
       (await operation('reactToMessage', { roomId: ROOM, messageId, emoji: '👍' })).status,
-    ).toBe(204);
+    ).toBe(200);
     const cleared = (await (await request(`/v1/phone/rooms/${ROOM}`, 'GET')).json()) as RoomView;
     expect(cleared.messages.find((message) => message.id === messageId)?.reactions).toBeUndefined();
   });
@@ -2632,7 +2661,8 @@ describe('monolith integration', () => {
       `INSERT INTO institutional_memory_item_sources(item_id,message_id) VALUES($1,$2)`,
       [memoryItemId, authorMessageId],
     );
-    await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: authorMessageId }, AGENT);
+    const deleteReceipt = await phone.execute('deleteRoomMessage', { roomId: ROOM, messageId: authorMessageId }, AGENT);
+    expect(deleteReceipt).toMatchObject({ id: authorMessageId, deleted: true, presentation: 'system' });
 
     const authorDeleted = (await phone.readRoom(ROOM, HUMAN))!.messages.find(
       (message) => message.id === authorMessageId,
@@ -5206,11 +5236,13 @@ describe('monolith integration', () => {
     ]);
 
     expect([foreground.status, outbox.status]).toEqual([200, 200]);
-    expect(await foreground.json()).toEqual({
+    expect(await foreground.json()).toMatchObject({
       messageId: payload.messageId,
       activeSteerAgentIds: [],
+      message: { id: payload.messageId, text: payload.text },
     });
-    expect(await outbox.json()).toEqual({ messageId: payload.messageId, activeSteerAgentIds: [] });
+    expect(await outbox.json()).toMatchObject({ messageId: payload.messageId, activeSteerAgentIds: [],
+      message: { id: payload.messageId, text: payload.text } });
     const stored = await database.query<{ count: string }>(
       `SELECT count(*)::text FROM messages WHERE id=$1`,
       [payload.messageId],
@@ -6922,8 +6954,10 @@ describe('monolith integration', () => {
       instructions: 'Be precise and practical.',
       avatarSeed: 'honeybee-seed',
     });
-    expect(soul.status).toBe(204);
-    expect(await soul.text()).toBe('');
+    expect(soul.status).toBe(200);
+    expect(await soul.json()).toEqual(expect.objectContaining({
+      soul: expect.objectContaining({ name: 'Honeybee', avatarSeed: 'honeybee-seed' }),
+    }));
     expect(
       (await database.query(`SELECT name,handle FROM identities WHERE id=$1`, [AGENT])).rows,
     ).toEqual([{ name: 'Honeybee', handle: 'honeybee' }]);
@@ -6950,22 +6984,30 @@ describe('monolith integration', () => {
       model: 'gpt-5.6',
       effort: 'high',
     });
-    expect(model.status).toBe(204);
-    expect(await model.text()).toBe('');
+    expect(model.status).toBe(200);
+    expect(await model.json()).toEqual(expect.objectContaining({
+      selected: { model: 'gpt-5.6', effort: 'high' },
+    }));
 
     const effortOnly = await request('/v1/phone/operations/updateAgentModelSelection', 'POST', {
       workspaceId: WORKSPACE,
       agentId: AGENT,
       effort: 'max',
     });
-    expect(effortOnly.status).toBe(204);
+    expect(effortOnly.status).toBe(200);
+    expect(await effortOnly.json()).toEqual(expect.objectContaining({
+      selected: { model: 'gpt-5.6', effort: 'max' },
+    }));
 
     const modelAndClearEffort = await request(
       '/v1/phone/operations/updateAgentModelSelection',
       'POST',
       { workspaceId: WORKSPACE, agentId: AGENT, model: 'gpt-5.6-codex', effort: null },
     );
-    expect(modelAndClearEffort.status).toBe(204);
+    expect(modelAndClearEffort.status).toBe(200);
+    expect(await modelAndClearEffort.json()).toEqual(expect.objectContaining({
+      selected: { model: 'gpt-5.6-codex' },
+    }));
 
     const agent = await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`);
     expect(agent.status).toBe(200);
@@ -7170,7 +7212,10 @@ describe('monolith integration', () => {
       instructions: 'Keep handles unambiguous.',
       avatarSeed: 'goosy-seed',
     });
-    expect(renamed.status).toBe(204);
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toEqual(expect.objectContaining({
+      soul: expect.objectContaining({ name: 'Goosy', avatarSeed: 'goosy-seed' }),
+    }));
     expect(
       (await database.query(`SELECT handle FROM identities WHERE id=$1`, [AGENT])).rows,
     ).toEqual([{ handle: 'goosy_2' }]);
@@ -10805,7 +10850,10 @@ describe('monolith integration', () => {
       agentId: AGENT,
       enabled: true,
     });
-    expect(owner.status).toBe(204);
+    expect(owner.status).toBe(200);
+    expect(await owner.json()).toEqual(expect.objectContaining({
+      yolo: expect.objectContaining({ enabled: true }),
+    }));
     const on = (await (
       await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
     ).json()) as {
@@ -10862,7 +10910,7 @@ describe('monolith integration', () => {
           enabled: true,
         })
       ).status,
-    ).toBe(204);
+    ).toBe(200);
     expect(
       (
         await database.query(
@@ -12703,6 +12751,7 @@ describe('monolith integration', () => {
       approvalUrl: 'https://approve.trustysquire.test/approval/purchase-1',
       approvalId: 'purchase-1',
       linkKind: 'approval',
+      expiresAt: Date.now() + 10 * 60_000,
     };
     const first = await daemonOperation('postSquireApproval', payload);
     expect(first.status).toBe(200);
@@ -12719,6 +12768,7 @@ describe('monolith integration', () => {
         detail: string;
         sourceRoomId: string;
         sourceMessageId: string;
+        expiresAt: number;
       };
     }>(`SELECT room_id,author_id,card FROM messages WHERE card_type='squire-approval'`);
     expect(rows.rows).toHaveLength(1);
@@ -12731,6 +12781,7 @@ describe('monolith integration', () => {
       detail: payload.detail,
       sourceRoomId: ROOM,
       sourceMessageId: requestId,
+      expiresAt: payload.expiresAt,
     });
     const view = await phone.readRoom(row.room_id, HUMAN);
     expect(view?.messages.find((message) => message.squireApproval)?.squireApproval).toEqual(

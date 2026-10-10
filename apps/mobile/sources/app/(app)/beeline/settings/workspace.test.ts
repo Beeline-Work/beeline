@@ -16,6 +16,11 @@ const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefine
 const modal = vi.hoisted(() => ({ actionSheet: vi.fn() }));
 const phoneOperation = vi.hoisted(() => vi.fn());
 const runtime = vi.hoisted(() => ({ monolithEnabled: true }));
+// The shared registry entries settings reads, keyed by endpoint.
+const hotSurfaces = vi.hoisted(() => ({
+  values: new Map<string, unknown>(),
+  listeners: new Map<string, Set<() => void>>(),
+}));
 const roomViews = vi.hoisted(() => ({ workspace: vi.fn(), chats: vi.fn(), room: vi.fn() }));
 const client = vi.hoisted(() => ({
   surfaceSubscribe: vi.fn(async () => vi.fn()),
@@ -68,10 +73,17 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 vi.mock('@/auth/buzz-identity-storage', () => auth);
 vi.mock('@/buzz/surface-storage', () => ({
-  surfaceAddress: () => 'workspace-surface',
+  surfaceAddress: (_relay: string, _viewer: string, endpoint: string) => endpoint,
   mobileSurfaceCache: {
     read: vi.fn(async () => null),
     fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
+    peek: (address: string) => hotSurfaces.values.get(address) ?? null,
+    subscribe: (address: string, listener: () => void) => {
+      const listeners = hotSurfaces.listeners.get(address) ?? new Set<() => void>();
+      listeners.add(listener);
+      hotSurfaces.listeners.set(address, listeners);
+      return () => listeners.delete(listener);
+    },
   },
 }));
 vi.mock('@/buzz/avatar-upload', () => avatarUpload);
@@ -182,6 +194,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   vi.clearAllMocks();
+  hotSurfaces.values.clear();
+  hotSurfaces.listeners.clear();
   roomViews.workspace.mockResolvedValue(workspaceView());
   roomViews.chats.mockResolvedValue(chatListView());
   phoneOperation.mockResolvedValue(undefined);
@@ -440,6 +454,27 @@ describe('Workspace Settings authority', () => {
 
     expect(client.renameCommunity).toHaveBeenCalledWith('workspace-1', 'Atlas');
     expect(renderer.root.findAllByProps({ testID: 'workspace-name-editor' })).toHaveLength(0);
+  });
+
+  it('repaints a rename and picture change from another session without a read', async () => {
+    const renderer = await render();
+    expect(renderer.root.findByProps({ testID: 'workspace-name-row' }).props.value).toBe('Hull');
+    const reads = roomViews.workspace.mock.calls.length;
+
+    // Another session renames the Workspace; its `workspace-changed` frame
+    // patches the shared `/workspace/:id` entry and notifies its readers.
+    const changed = workspaceView('owner', 'https://example.test/media/atlas.png');
+    changed.workspace.name = 'Atlas';
+    act(() => {
+      hotSurfaces.values.set('/workspace/:id', changed);
+      for (const listener of hotSurfaces.listeners.get('/workspace/:id') ?? []) listener();
+    });
+
+    expect(renderer.root.findByProps({ testID: 'workspace-name-row' }).props.value).toBe('Atlas');
+    expect(renderer.root.findByType('IdentityMark').props.avatarUrl).toBe(
+      'https://example.test/media/atlas.png',
+    );
+    expect(roomViews.workspace).toHaveBeenCalledTimes(reads);
   });
 
   it('opens the unified Members page', async () => {

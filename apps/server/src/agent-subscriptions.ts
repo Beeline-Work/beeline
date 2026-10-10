@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS agent_subscriptions (
  source text NOT NULL CHECK(source IN ('room','repository')),
  event text NOT NULL,
  repository text,
+ reason text NOT NULL,
+ fired_count integer NOT NULL DEFAULT 0 CHECK(fired_count>=0),
  created_at timestamptz NOT NULL DEFAULT now(),
  last_fired_at timestamptz,
  CHECK ((source='room' AND repository IS NULL) OR (source='repository' AND repository IS NOT NULL))
@@ -28,7 +30,8 @@ CREATE INDEX IF NOT EXISTS agent_subscriptions_repository ON agent_subscriptions
 
 type Row = {
   id: string; room_id: string; agent_id: string; source: SubscriptionSource;
-  event: string; repository: string | null; created_at: Date; last_fired_at: Date | null;
+  event: string; repository: string | null; reason: string; fired_count: number;
+  created_at: Date; last_fired_at: Date | null;
   parent_id?: string | null; room_name?: string | null;
 };
 function view(row: Row): RoomSubscriptionView {
@@ -36,6 +39,7 @@ function view(row: Row): RoomSubscriptionView {
     id: row.id, roomId: row.room_id, agentId: row.agent_id,
     source: row.source, event: row.event,
     ...(row.repository ? { repository: row.repository } : {}),
+    reason: row.reason, firedCount: row.fired_count,
     createdAt: Math.floor(row.created_at.getTime() / 1000),
     ...(row.last_fired_at ? { lastFiredAt: Math.floor(row.last_fired_at.getTime() / 1000) } : {}),
     ...(row.parent_id ? { corner: { id: row.room_id, name: row.room_name ?? 'Corner' } } : {}),
@@ -85,8 +89,10 @@ function validEvent(source: SubscriptionSource, event: string): boolean {
 /** Agent writes need only current Room membership. Repository scope is checked against the installed app catalog. */
 export async function createAgentSubscription(
   db: SqlDatabase, agentId: string,
-  input: { roomId: string; source: SubscriptionSource; event: string; repository?: string },
+  input: { roomId: string; source: SubscriptionSource; event: string; repository?: string; reason: string },
 ): Promise<RoomSubscriptionView> {
+  const reason = input.reason?.trim();
+  if (!reason || reason.length > 500) throw new Error('reason must be 1–500 characters');
   if (!['room', 'repository'].includes(input.source) || !validEvent(input.source, input.event))
     throw new Error('event is not available for this subscription source');
   const repository = input.source === 'repository' ? input.repository?.trim().toLowerCase() : undefined;
@@ -113,12 +119,12 @@ export async function createAgentSubscription(
     if (!covered.rowCount) throw new Error('repository is not covered by this Workspace connection');
   }
   const rows = await db.query<Row>(
-    `INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,repository)
-     VALUES($1,$2,$3,$4,$5,$6,$7)
+    `INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,repository,reason)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8)
      ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,'')) DO UPDATE
-       SET event=EXCLUDED.event
+       SET reason=EXCLUDED.reason
      RETURNING *`,
-    [randomUUID(), room.rows[0]!.workspace_id, input.roomId, agentId, input.source, input.event, repository ?? null],
+    [randomUUID(), room.rows[0]!.workspace_id, input.roomId, agentId, input.source, input.event, repository ?? null, reason],
   );
   return view(rows.rows[0]!);
 }
@@ -235,16 +241,18 @@ export async function fireRepositorySubscriptions(
   };
   for (const row of rows.rows) {
     const id = createHash('sha256').update(`subscription:${deliveryId}:${row.id}`).digest('hex');
-    const line = await systemLine(db, {
-      id, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' },
-      verb: 'received', object: 'a repository event', consequence: eventName,
-      kind: 'subscription-fired', payload, wakes: [row.agent_id],
+    const inserted = await db.transaction(async (tx) => {
+      const line = await systemLine(tx, {
+        id, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,
+        subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' },
+        verb: 'received', object: 'a repository event', consequence: eventName,
+        kind: 'subscription-fired', payload, wakes: [row.agent_id],
+      });
+      if (line.inserted) await tx.query(`UPDATE agent_subscriptions
+        SET last_fired_at=now(),fired_count=fired_count+1 WHERE id=$1`, [row.id]);
+      return line.inserted;
     });
-    if (line.inserted) {
-      changed.push(row.room_id);
-      await db.query(`UPDATE agent_subscriptions SET last_fired_at=now() WHERE id=$1`, [row.id]);
-    }
+    if (inserted) changed.push(row.room_id);
   }
   return changed;
 }

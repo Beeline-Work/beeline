@@ -81,9 +81,30 @@ export function subscriptionWhere(subscription: RoomSubscriptionView): string {
 }
 
 export function subscriptionRuns(subscription: RoomSubscriptionView): string {
-  return subscription.lastFiredAt
-    ? `Last event ${NEXT_RUN.format(new Date(subscription.lastFiredAt * 1_000))}`
-    : 'Waiting for first event';
+  if (subscription.source === 'repository') {
+    const repository = subscription.repository ?? 'this repository';
+    const when: Record<string, string> = {
+      'issue.opened': `Each time a new issue opens in ${repository}`,
+      'issue.closed': `Each time an issue closes in ${repository}`,
+      'issue.reopened': `Each time an issue reopens in ${repository}`,
+      'pull_request.opened': `Each time a new pull request opens in ${repository}`,
+      'pull_request.closed': `Each time a pull request closes in ${repository}`,
+      'pull_request.reopened': `Each time a pull request reopens in ${repository}`,
+      'star.created': `Each time someone stars ${repository}`,
+      'star.deleted': `Each time someone removes a star from ${repository}`,
+    };
+    return when[subscription.event] ?? `Each time an event arrives in ${repository}`;
+  }
+  const when: Record<string, string> = {
+    joined: 'Each time someone joins this Room',
+    'schedule-ran': 'Each time a schedule runs in this Room',
+    'corner-opened': 'Each time a corner opens in this Room',
+    'check-passed': 'Each time corner checks pass',
+    'check-failed': 'Each time corner checks fail',
+    merged: 'Each time a corner merges',
+    'workflow-handoff': 'Each time a workflow moves to its next step',
+  };
+  return when[subscription.event] ?? 'Each time an event arrives in this Room';
 }
 
 export type ScheduledWork = {

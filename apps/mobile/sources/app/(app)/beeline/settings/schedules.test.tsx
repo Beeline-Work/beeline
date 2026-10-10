@@ -8,7 +8,7 @@ const operation = vi.hoisted(() => vi.fn(async (name: string, _input?: unknown) 
   { id: 'daily', roomId: 'room', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Morning summary', nextRunAt: 1790000000, runCount: 14 },
   { id: 'video', roomId: 'corner-1', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 1440 }, message: 'Start the workflow', nextRunAt: 1790000000, runCount: 2, workflowSlug: 'post_youtube_video', corner: { id: 'corner-1', name: 'video' } },
 ] }
-  : name === 'listRoomSubscriptions' ? { subscriptions: [{ id: 'sub', roomId: 'room', agentId: 'agent-1', source: 'repository', event: 'issue.opened', repository: 'owner/widgets' }] } : {}));
+  : name === 'listRoomSubscriptions' ? { subscriptions: [{ id: 'sub', roomId: 'room', agentId: 'agent-1', source: 'repository', event: 'issue.opened', repository: 'owner/widgets', reason: 'Triage new issues.', firedCount: 3 }] } : {}));
 const params = vi.hoisted(() => ({ value: { roomId: 'room', workspaceId: 'ws' } as Record<string, string> }));
 const router = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 vi.mock('expo-router', () => ({ router, useLocalSearchParams: () => params.value, useFocusEffect: (effect: any) => React.useEffect(effect, [effect]) }));
@@ -61,7 +61,7 @@ it('lists every entry as one row in the shared grammar, each opening its own pag
     expect(row('scheduled-work-video').props).toMatchObject({ title: 'post_youtube_video workflow · Every day', description: '@Hoots · #video' });
     expect(row('scheduled-work-video').props.leading).toBeTruthy();
     expect(row('scheduled-work-daily').props.leading).toBeUndefined();
-    expect(row('subscription-sub').props).toMatchObject({ title: 'New issue in owner/widgets', description: '@Hoots · this Room' });
+    expect(row('subscription-sub').props).toMatchObject({ title: 'New issue in owner/widgets · Each time', description: '@Hoots · this Room' });
     act(() => row('scheduled-work-daily').props.onPress());
     act(() => row('scheduled-work-video').props.onPress());
     act(() => row('subscription-sub').props.onPress());
@@ -93,7 +93,9 @@ it('stops a subscription from its page only after the same confirm step', async 
   params.value = { roomId: 'room', subscriptionId: 'sub' };
   const tree = await render(<Subscription />);
   try {
-    expect(tree.root.findByProps({ testID: 'subscription-trigger' }).props.children).toBe('New issue in owner/widgets.');
+    expect(tree.root.findByProps({ testID: 'scheduled-work-facts-runs' }).props.description).toBe('Each time a new issue opens in owner/widgets');
+    expect(tree.root.findByProps({ testID: 'subscription-why' }).props.children).toEqual(['Triage new issues.', ' · Set up by @Hoots']);
+    expect(tree.root.findByProps({ testID: 'subscription-fire-count' }).props).toMatchObject({ title: 'Fired so far', value: '3' });
     await act(async () => press(tree, 'stop-subscription'));
     expect(operation.mock.calls.filter(([name]) => name === 'deleteRoomSubscription')).toHaveLength(0);
     await act(async () => press(tree, 'stop-subscription-confirm'));

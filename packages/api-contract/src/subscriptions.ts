@@ -7,6 +7,9 @@ export type RoomSubscriptionView = {
   readonly source: SubscriptionSource;
   readonly event: string;
   readonly repository?: string;
+  readonly reason?: string;
+  /** Absent for older Room event subscriptions whose earlier firings were not tracked. */
+  readonly firedCount?: number;
   readonly createdAt: number;
   readonly lastFiredAt?: number;
   readonly corner?: { readonly id: string; readonly name: string };

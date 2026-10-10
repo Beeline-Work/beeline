@@ -513,7 +513,8 @@ export async function systemLine(
       });
       if (input.kind && isSubscribableEventKind(input.kind) && wakes.length)
         await db.query(
-          `UPDATE agent_subscriptions SET last_fired_at=now()
+          `UPDATE agent_subscriptions
+           SET last_fired_at=now(),fired_count=fired_count+1
            WHERE room_id=$1 AND source='room' AND event=$2 AND agent_id=ANY($3::text[])`,
           [input.roomId, input.kind, wakes],
         );

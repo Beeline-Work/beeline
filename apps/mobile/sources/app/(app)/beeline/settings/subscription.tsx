@@ -7,12 +7,12 @@ import { StyleSheet } from 'react-native-unistyles';
 import {
   stopSubscription,
   subscriptionRuns,
-  subscriptionTitle,
   subscriptionWhere,
   useScheduledWork,
 } from '@/buzz/scheduled-work';
 import { PageHeader } from '@/components/buzz/PageHeader';
-import { DetailCopy, DetailSection, ScheduledWorkFacts, StopScheduledWork } from '@/components/buzz/ScheduledWorkDetail';
+import { DetailRailLine, DetailSection, ScheduledWorkFacts, StopScheduledWork } from '@/components/buzz/ScheduledWorkDetail';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -30,6 +30,7 @@ export default function Subscription() {
   useLatencyRouteFrame('/beeline/settings/subscription', !loading, true);
   const [working, setWorking] = useState(false);
   const subscription = work?.subscriptions.find((candidate) => candidate.id === subscriptionId);
+  const creatorName = subscription ? work?.agentNames.get(subscription.agentId) ?? 'Agent' : 'Agent';
 
   const stop = async () => {
     if (!roomId || !subscription) return;
@@ -63,19 +64,21 @@ export default function Subscription() {
       ) : subscription ? (
         <ScrollView contentContainerStyle={{ paddingBottom: 24 + insets.bottom }} testID="subscription-page">
           <ScheduledWorkFacts
-            agents={[work?.agentNames.get(subscription.agentId) ?? 'Agent']}
+            agents={[creatorName]}
             runs={subscriptionRuns(subscription)}
-            runsLabel="Activity"
             where={subscriptionWhere(subscription)}
           />
-          <DetailSection testID="subscription-trigger-header" title="Trigger" />
-          <DetailCopy testID="subscription-trigger">
-            {`${subscriptionTitle(subscription)}.`}
-          </DetailCopy>
-          <DetailSection testID="subscription-payload-header" title="Event" />
-          <DetailCopy testID="subscription-payload">
-            When this event arrives, the agent wakes with its details.
-          </DetailCopy>
+          <DetailSection testID="subscription-why-header" title="Why" />
+          <DetailRailLine testID="subscription-why">
+            {subscription.reason || 'No reason was recorded.'}{` · Set up by @${creatorName}`}
+          </DetailRailLine>
+          <View style={styles.rows}>
+            <SettingsRow
+              testID="subscription-fire-count"
+              title="Fired so far"
+              value={subscription.firedCount === undefined ? '—' : String(subscription.firedCount)}
+            />
+          </View>
           <View style={styles.stop}>
             <StopScheduledWork
               label="Stop subscription"
@@ -96,6 +99,7 @@ const styles = StyleSheet.create((theme) => ({
   screen: { flex: 1, backgroundColor: theme.buzz.bgBase },
   loading: { padding: theme.buzz.space.xl, alignItems: 'center', justifyContent: 'center' },
   stop: { marginTop: theme.buzz.space.md },
+  rows: { paddingHorizontal: theme.buzz.space.sm },
   gone: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, padding: theme.buzz.space.md },
   error: { minHeight: 44, justifyContent: 'center', paddingHorizontal: theme.buzz.space.md, backgroundColor: theme.buzz.bgHighlight },
   errorText: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary },

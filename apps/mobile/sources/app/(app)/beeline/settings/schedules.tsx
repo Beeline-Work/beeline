@@ -93,7 +93,7 @@ export default function ScheduledWork() {
         })
       }
       testID={`subscription-${subscription.id}`}
-      title={subscriptionTitle(subscription)}
+      title={`${subscriptionTitle(subscription)} · Each time`}
     />
   );
 

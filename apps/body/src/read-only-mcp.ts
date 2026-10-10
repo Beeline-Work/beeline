@@ -1047,11 +1047,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_subscription',
-    description: `Wake yourself in this Room when an event arrives. No approval or URL setup. Room events: ${eventKindCatalogLines().join('; ')}. Repository events: ${REPOSITORY_SUBSCRIPTION_EVENTS.join(', ')}. A repository must be covered by this Workspace's installed connection.`,
-    inputSchema: { type: 'object', required: ['source', 'event'], properties: {
+    description: `Wake yourself in this Room when an event arrives. Give a short reason so Room managers can see why it was set up. No approval or URL setup. Room events: ${eventKindCatalogLines().join('; ')}. Repository events: ${REPOSITORY_SUBSCRIPTION_EVENTS.join(', ')}. A repository must be covered by this Workspace's installed connection.`,
+    inputSchema: { type: 'object', required: ['source', 'event', 'reason'], properties: {
       source: { type: 'string', enum: ['room', 'repository'] },
       event: { type: 'string' },
       repository: { type: 'string', description: 'For repository events, owner/name of a covered repository.' },
+      reason: { type: 'string', description: 'One sentence explaining why this event should wake you.' },
     }, additionalProperties: false },
   },
   {
@@ -4780,10 +4781,12 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     case 'create_subscription': {
       const source = stringArg(args, 'source');
       const event = stringArg(args, 'event');
+      const reason = stringArg(args, 'reason');
       if (source !== 'room' && source !== 'repository') throw new Error('source must be room or repository');
       if (!event) throw new Error('event is required');
+      if (!reason) throw new Error('reason is required');
       const result = await daemonExecute('createAgentSubscription', {
-        roomId: agentScheduleRoomId(), source, event,
+        roomId: agentScheduleRoomId(), source, event, reason,
         ...(typeof args.repository === 'string' ? { repository: args.repository } : {}),
       });
       return `Subscription ${String(result.id)} created for ${source} ${event}. It wakes you when the event arrives.`;

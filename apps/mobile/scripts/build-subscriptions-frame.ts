@@ -11,7 +11,7 @@ const shims: Record<string, string> = {
   ...webProofShims(mobile),
   'expo-router': `import React from 'react';
     export const useFocusEffect = effect => React.useEffect(effect, [effect]);
-    export const useLocalSearchParams = () => ({roomId:'room-1',workspaceId:'workspace-1'});
+    export const useLocalSearchParams = () => ({roomId:'room-1',workspaceId:'workspace-1',subscriptionId:'repo-1'});
     export const router = {push:()=>undefined,replace:()=>undefined,back:()=>undefined};`,
   '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async name => {
     if (name === 'listRoomSchedules') return {schedules: location.search.includes('empty') ? [] : [
@@ -22,8 +22,9 @@ const shims: Record<string, string> = {
         nextRunAt:1790000000,corner:{id:'corner-1',name:'quiet amber corner'}}]};
     if (name === 'listRoomSubscriptions') return {subscriptions: location.search.includes('empty') ? [] : [
       {id:'repo-1',roomId:'room-1',agentId:'agent-1',source:'repository',event:'issue.opened',
-        repository:'owner/widgets',lastFiredAt:1790000000},
-      {id:'room-1',roomId:'room-1',agentId:'agent-1',source:'room',event:'joined'}]};
+        repository:'owner/widgets',reason:'Triage new issues before the team standup.',firedCount:3,lastFiredAt:1790000000},
+      {id:'room-1',roomId:'room-1',agentId:'agent-1',source:'room',event:'joined',
+        reason:'Welcome new members.',firedCount:1}]};
     return {};
   };`,
   '@/sync/transport/room-view-client': `export class RoomViewClient {async room() {return {

@@ -24,7 +24,7 @@ function shims(mobile: string): Record<string, string> {
       if (name === 'listRoomSubscriptions') return {
         subscriptions: [{ id: 'sub-1', roomId: 'room-1', agentId: 'agent-2',
           source: 'repository', event: 'pull_request.opened', repository: 'owner/widgets',
-          createdAt: 0, lastFiredAt: ${NEXT_RUN} }],
+          createdAt: 0, lastFiredAt: ${NEXT_RUN}, reason: 'Triage incoming work.', firedCount: 3 }],
       };
       if (name === 'deleteRoomSubscription' || name === 'deleteRoomSchedule') return {};
       if (name === 'readWorkflowDefinition') return { contract: ${contract}, runs: [] };
@@ -122,7 +122,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       'feedback-triage workflow · Daily at 14:00 America/New_York',
       '@Ruby · #issues-triage',
       'SUBSCRIPTIONS',
-      'New pull request in owner/widgets',
+      'New pull request in owner/widgets · Each time',
       '@Ruby · this Room',
     ]);
     // Only the workflow schedule wears a glyph.
@@ -164,16 +164,16 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     const page = await proof('?page=subscription&roomId=room-1&subscriptionId=sub-1');
     expect(page.text.slice(0, 2)).toEqual(['Schedules and subscriptions', 'Subscription']);
     expect(page.text.slice(2)).toEqual([
-      'Activity',
-      expect.stringMatching(/^Last event /),
+      'Runs',
+      'Each time a new pull request opens in owner/widgets',
       'Agent',
       '@Ruby',
       'Where',
       'this Room',
-      'Trigger',
-      'New pull request in owner/widgets.',
-      'Event',
-      'When this event arrives, the agent wakes with its details.',
+      'Why',
+      'Triage incoming work. · Set up by @Ruby',
+      'Fired so far',
+      '3',
       'Stop subscription',
     ]);
     expect(page.afterStop.slice(-2)).toEqual(['Confirm: Stop subscription', 'Cancel']);
@@ -220,7 +220,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     );
     expect(page.beforeRetry).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/^Could not load schedules and webhooks: .*schedule read unavailable · Retry$/),
+        expect.stringMatching(/^Could not load schedules and subscriptions: .*schedule read unavailable · Retry$/),
         'Steps',
       ]),
     );

@@ -69,7 +69,7 @@ describe('resource observers in the desktop web renderer', () => {
         '@expo/vector-icons': `export const Ionicons = () => null; export const FontAwesome = () => null;`,
         'expo-web-browser': `export const openBrowserAsync = async () => undefined;`,
         'expo-router': `export const useLocalSearchParams = () => ({ workspaceId: 'workspace', connectorId: 'install', connectorName: 'Squire', pairedConnectorId: 'install', offerId: 'offer', roomId: 'parent', url: 'https://example.test', method: 'oauth' }); export const router = { back() { globalThis.__backs = (globalThis.__backs ?? 0) + 1; }, replace() {}, push() {} };`,
-        '@/sync/transport/live-connection': `globalThis.__roomListeners = {}; export const sharedLiveConnection = () => ({ register: async (filters, listener) => { const id = filters[0]['#h'][0]; globalThis.__roomListeners[id] = listener; return () => { delete globalThis.__roomListeners[id]; }; } });`,
+        '@/sync/transport/live-connection': `globalThis.__roomListeners = {}; export const sharedLiveConnection = () => ({ register: async (filters, listener) => { const id = filters[0]['#h'][0]; globalThis.__roomListeners[id] = listener; return () => { delete globalThis.__roomListeners[id]; }; }, whenSubscribed: async () => undefined });`,
         '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readInstallState: ({ connectorId }) => {
           globalThis.__installReads = (globalThis.__installReads ?? 0) + 1;
           if (connectorId === 'fresh-row') return Promise.resolve({ connectorId, connected: true, steps: [] });
@@ -81,15 +81,17 @@ describe('resource observers in the desktop web renderer', () => {
           if (operation === 'acceptConnectorOffer') { globalThis.__repaired = true; return { connectorId: 'fresh-row' }; }
           globalThis.__workflowReads = (globalThis.__workflowReads ?? 0) + 1;
           return { workflows: [{ runId: 'run', roomId: 'corner', workflowSlug: 'corner', state: 'implement', status: 'live' }] };
-        };`,
+        };
+        export const phoneOperationFailureReason = (reason) => String(reason);`,
         '@/buzz/app-sign-in': `export const takeAppSignInReturn = async () => null;`,
         '@/components/AnimatedOverlay': `export const AnimatedBlurBackdrop = () => null;`,
         '@/components/buzz/sandbox-webview': `export const useSandboxWebView = () => null;`,
-        '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ pubkey: 'a' });`,
+        '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ pubkey: 'a' }); export const getEffectiveRelayUrl = async () => 'https://relay.test';`,
         '@/sync/transport': `export class BuzzRigTransport { async composeMessage() { return {}; } async publishPreparedMessage() {} }`,
         '@/components/buzz/DesktopArtifactPane': `export const DesktopArtifactPane = () => null;`,
         '@/components/buzz/corner-brief-viewer': `export const openCornerBriefViewer = () => undefined;`,
         '@/components/buzz/IdentityMark': `export const IdentityMark = () => null;`,
+        '@/sync/transport/room-view-client': `export class RoomViewClient {}`,
         '@/components/buzz/ConversationComposer': `export const COMPOSER_MAX_INPUT_HEIGHT = 115; export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26; export const ConversationComposer = props => { globalThis.__composer = props; return null; };`,
         '@/app/(app)/beeline/chat/RoomMessageVariants': `export const DaemonFactCard = () => null; export const GitHubEventCard = () => null; export const NotificationLifecycleCard = () => null; export const OrdinaryLedgerMessage = ({ message }) => <span>{message.text}</span>;`,
         '@/buzz/desktop-workbench-state': `export const DESKTOP_INSPECTOR_DEFAULT_WIDTH = 400; export const DESKTOP_INSPECTOR_MIN_WIDTH = 320; export const DESKTOP_TRANSCRIPT_MIN_WIDTH = 300;

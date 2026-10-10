@@ -3,6 +3,7 @@ import { isSystemOrCardMessage, useObservedResource } from './use-observed-resou
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { subscribeRoomCornerFacts } from '@/buzz/room-corner-store';
 
 const NO_RUNS: readonly WorkflowRunSummaryView[] = [];
 
@@ -25,12 +26,15 @@ export function pickRoomWorkflowRun(
 }
 
 /** Use a typed workflow projection when the socket has one, and one shared
- * covering read when a relevant system/card change has no projection. */
+ * covering read when a relevant system/card change has no projection. A
+ * handoff inside a corner reaches the parent only as a change to that
+ * corner's row in the Room's corner record, so that change reads too. */
 function observeWorkflowRuns(roomId: string) {
-  return (invalidate: () => void, reconnect: () => void,
+  return async (invalidate: () => void, reconnect: () => void,
     replace: (runs: readonly WorkflowRunSummaryView[]) => void) => {
     let subscribed = false;
-    return sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
+    const stopCorners = subscribeRoomCornerFacts(roomId, invalidate);
+    const stopLive = await sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
       if (!('monolithLive' in event)) return;
       const live = event.monolithLive;
       if (!('roomId' in live) || live.roomId !== roomId) return;
@@ -45,6 +49,10 @@ function observeWorkflowRuns(roomId: string) {
         invalidate();
       }
     });
+    return () => {
+      stopCorners();
+      stopLive();
+    };
   };
 }
 

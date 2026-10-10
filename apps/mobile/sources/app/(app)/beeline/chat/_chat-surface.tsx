@@ -124,6 +124,8 @@ import {
 } from '@/buzz/room-indicators';
 import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnBandSlot, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
+import { useRoomCorners } from '@/buzz/use-room-corners';
+import { roomOpenCornerRows, useCurrentCornerRow } from '@/buzz/room-corner-store';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { openAppSignIn } from '@/buzz/app-sign-in';
@@ -2029,33 +2031,29 @@ export function BuzzChatSurface({
   const channelMenuKey = activeChannel
     ? `#${inputText}:${activeChannel.start}:${activeChannel.end}`
     : null;
-  // The current Room's open corners, read once the first `#` opens the menu.
+  // The current Room's open corners from its corner record, held once the
+  // first `#` opens the menu; frames keep it current from then on.
   const channelCornerRoomId = isDirectMessage ? null : (parentChannelId ?? decodedId);
-  const [channelCorners, setChannelCorners] = useState<{
-    roomId: string;
-    room: { name: string };
-    corners: readonly { id: string; name: string }[];
-  } | null>(null);
-  const channelCornersWanted = Boolean(activeChannel && channelCornerRoomId);
+  const [channelCornersRoomId, setChannelCornersRoomId] = useState<string | null>(null);
   useEffect(() => {
-    if (!channelCornersWanted || !channelCornerRoomId || !roomClient) return;
-    if (channelCorners?.roomId === channelCornerRoomId) return;
-    let cancelled = false;
-    void roomClient
-      .corners(channelCornerRoomId)
-      .then((list) => {
-        if (cancelled) return;
-        setChannelCorners({
-          roomId: channelCornerRoomId,
-          room: { name: list.room.name },
-          corners: list.corners.map((item) => ({ id: item.corner.id, name: item.corner.name })),
-        });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
+    if (activeChannel && channelCornerRoomId && roomClient) setChannelCornersRoomId(channelCornerRoomId);
+  }, [activeChannel, channelCornerRoomId, roomClient]);
+  const channelCornerRecord = useRoomCorners(
+    channelCornersRoomId === channelCornerRoomId ? (channelCornerRoomId ?? undefined) : undefined,
+    roomClient,
+  );
+  const channelCorners = useMemo(() => {
+    const view = channelCornerRecord.view;
+    if (!view || !channelCornerRecord.record) return null;
+    return {
+      roomId: view.room.id,
+      room: { name: view.room.name },
+      corners: roomOpenCornerRows(channelCornerRecord.record).map((item) => ({
+        id: item.corner.id,
+        name: item.corner.name,
+      })),
     };
-  }, [channelCornersWanted, channelCornerRoomId, channelCorners?.roomId, roomClient]);
+  }, [channelCornerRecord.record, channelCornerRecord.view]);
   const channelSuggestions = useMemo(() => {
     if (!activeChannel) return { matches: [], overflow: 0 };
     const corners = channelCorners?.roomId === channelCornerRoomId ? channelCorners : null;
@@ -2518,10 +2516,19 @@ export function BuzzChatSurface({
   const dismissComposerKeyboard = useCallback(() => {
     Keyboard.dismiss();
   }, []);
+  // The server's state for this corner, from its parent Room's corner record:
+  // the same row the Corners screen and Room list paint. Only before that
+  // record is current does the header fall back to this Room's own facts.
+  const parentCornerRow = useCurrentCornerRow(
+    isCorner ? (parentChannelId ?? undefined) : undefined,
+    isCorner ? decodedId : undefined,
+  );
   const canonicalCornerItem =
-    isCorner && roomSurface
-      ? cornerDisplayFromRoomView({ ...roomSurface, latestAgentTurns: activeAgentTurns })
-      : undefined;
+    isCorner && parentCornerRow && !isArchived
+      ? parentCornerRow
+      : isCorner && roomSurface
+        ? cornerDisplayFromRoomView({ ...roomSurface, latestAgentTurns: activeAgentTurns })
+        : undefined;
   const cornerHeaderDisplay = cornerDisplayState(
     canonicalCornerItem ?? {
       state: isArchived ? 'archived' : 'waiting',

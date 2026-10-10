@@ -5,6 +5,14 @@ import type { NostrEvent } from '@beeline/nostr';
 import type { LiveWireEvent, MonolithSurfaceEvent } from './monolith-rig-transport';
 import { noteLiveFrame } from './live-frame-epoch';
 import { applyNeedsYouLiveDelta } from '@/buzz/needs-you';
+import {
+  acceptCornerStatusFrame,
+  noteCornerLaneReleased,
+  noteCornerLaneSubscribed,
+  noteCornerSocketDropped,
+  noteRoomCornersChanged,
+  resetRoomCornerStore,
+} from '@/buzz/room-corner-store';
 
 type SurfaceFilters = readonly {
   readonly '#h'?: readonly string[];
@@ -24,7 +32,7 @@ type RoomOverlayCache = {
   drafts: Map<string, CachedOverlay<DraftEvent>>;
   thoughts: Map<string, CachedOverlay<ThoughtEvent>>;
   presence: Map<string, PresenceEvent>;
-  /** The newest corner list this socket heard, for a Corners page that joins later. */
+  /** The newest corner status this socket heard, for a Room list that joins later. */
   cornerStatus?: CornerStatusEvent;
 };
 
@@ -54,6 +62,8 @@ const LIVE_CONNECT_TIMEOUT_MS = 15_000;
 const PUSH_MISS_GRACE_MS = 5_000;
 /** Message ids recently delivered by the socket, to judge a later push. */
 const HEARD_MESSAGE_LIMIT = 256;
+/** Parent-Room invalidations that name a corner change without its rows. */
+const CORNER_LIST_REASONS: ReadonlySet<string> = new Set(['corner-status', 'corner', 'resync']);
 /** The same window the server's own `liveDraftSnapshot` is gated on: past it a
  *  cached draft is no longer live text, so a late join must not paint it. A
  *  turn that ends `failed` or `cancelled` leaves no `retract` behind, so this
@@ -289,6 +299,7 @@ export class LiveConnection {
     this.viewing.clear();
     this.heardMessages.clear();
     this.reconnectDelayMs = 1_000;
+    resetRoomCornerStore();
   }
 
   private stop(registration: Registration): void {
@@ -307,6 +318,7 @@ export class LiveConnection {
         const acknowledged = this.seenSubscribed.delete(roomId);
         this.overlays.delete(roomId);
         this.roomCursors.delete(roomId);
+        noteCornerLaneReleased(roomId);
         if (acknowledged && this.socket && isSocketOpen(this.socket))
           this.socket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
       }
@@ -379,6 +391,7 @@ export class LiveConnection {
     this.foregroundSyncTimer = undefined;
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
+    noteCornerSocketDropped();
     // Keep the last painted overlays and Room cursors across a transport
     // reconnect. A resumed server lane only replays what changed.
     this.traceOwners.clear();
@@ -508,13 +521,16 @@ export class LiveConnection {
     if (live.type === 'subscribed') {
       this.pendingSubscribe.delete(live.roomId);
       this.seenSubscribed.add(live.roomId);
+      let resumed = Boolean(live.resumed);
       if (typeof live.epoch === 'string' && Number.isSafeInteger(live.cursor)) {
         const previous = this.roomCursors.get(live.roomId);
-        if (!live.resumed || previous?.epoch !== live.epoch) {
+        resumed = Boolean(live.resumed) && previous?.epoch === live.epoch;
+        if (!resumed) {
           this.roomCursors.set(live.roomId, { epoch: live.epoch, base: live.cursor!, seen: new Set() });
           this.overlays.delete(live.roomId);
         }
       }
+      noteCornerLaneSubscribed(live.roomId, resumed);
       for (const waiter of [...this.subscribeWaiters]) waiter();
     } else if (typeof live.sequence === 'number') {
       const cursor = this.roomCursors.get(live.roomId);
@@ -528,6 +544,9 @@ export class LiveConnection {
         while (cursor.seen.delete(cursor.base + 1)) cursor.base += 1;
       }
     }
+    if (live.type === 'corner-status' && !acceptCornerStatusFrame(live)) return;
+    if (live.type === 'invalidate' && !live.deliveryId && CORNER_LIST_REASONS.has(live.reason))
+      noteRoomCornersChanged(live.roomId);
     this.rememberOverlay(live);
     for (const registration of this.registrations.values()) {
       if (registration.closed || !registration.roomIds.has(live.roomId)) continue;
@@ -571,11 +590,8 @@ export class LiveConnection {
       return;
     }
     if (live.type === 'corner-status') {
-      if (!live.corners) return;
-      const cache = this.overlayCache(live.roomId);
-      const held = cache.cornerStatus?.sequence;
-      if (held !== undefined && live.sequence !== undefined && live.sequence <= held) return;
-      cache.cornerStatus = live;
+      // The corner store already refused an older sequence.
+      this.overlayCache(live.roomId).cornerStatus = live;
       return;
     }
     if (live.type === 'retract') {

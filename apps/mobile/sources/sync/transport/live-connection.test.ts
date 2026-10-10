@@ -6,6 +6,7 @@ vi.mock('react-native', () => ({
 
 import { LiveConnection } from './live-connection';
 import { liveFrameEpoch } from './live-frame-epoch';
+import { getRoomCorners } from '@/buzz/room-corner-store';
 
 const ROOM_A = 'room-a';
 const ROOM_B = 'room-b';
@@ -209,6 +210,48 @@ describe('LiveConnection', () => {
         epoch: 'epoch-1', cursor: 0, resumed: true } },
       { monolithLive: status('working') },
     ]);
+    connection.dispose();
+  });
+
+  it('writes every corner status into the corner store and delivers no older sequence', async () => {
+    const { connection, changeIdentity } = createConnection();
+    const heard: unknown[] = [];
+    await connection.register([{ '#h': [ROOM_A] }], (event) => heard.push(event));
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A,
+      epoch: 'epoch-1', cursor: 0, resumed: false });
+    const status = (sequence: number, state: string) => ({ type: 'corner-status', roomId: ROOM_A,
+      sequence, cornerCount: 1, waitingCornerCount: 0, openCorners: [], agentState: null,
+      corners: [{ corner: { id: 'corner-1' }, state }] });
+    sockets[0]!.emit(status(2, 'review'));
+    sockets[0]!.emit(status(1, 'working'));
+    expect(heard.filter((event: any) => event.monolithLive.type === 'corner-status'))
+      .toEqual([{ monolithLive: status(2, 'review') }]);
+    expect(getRoomCorners(ROOM_A)).toMatchObject({ current: true,
+      rows: [{ corner: { id: 'corner-1' }, state: 'review' }] });
+    // A fresh lane restarts the sequence.
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A,
+      epoch: 'epoch-2', cursor: 0, resumed: false });
+    expect(getRoomCorners(ROOM_A).current).toBe(false);
+    sockets[0]!.emit(status(1, 'working'));
+    expect(getRoomCorners(ROOM_A).rows?.[0]?.state).toBe('working');
+    // A new identity never sees the last one's corners.
+    changeIdentity();
+    expect(getRoomCorners(ROOM_A).rows).toBeUndefined();
+    connection.dispose();
+  });
+
+  it('marks a Room\'s corners unproven when the server names a change without rows', async () => {
+    const { connection } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A,
+      epoch: 'epoch-1', cursor: 0, resumed: false });
+    sockets[0]!.emit({ type: 'corner-status', roomId: ROOM_A, cornerCount: 0,
+      waitingCornerCount: 0, openCorners: [], agentState: null, corners: [] });
+    expect(getRoomCorners(ROOM_A)).toMatchObject({ current: true, wantsRead: false });
+    sockets[0]!.emit({ type: 'invalidate', roomId: ROOM_A, reason: 'corner-status' });
+    expect(getRoomCorners(ROOM_A)).toMatchObject({ current: false, wantsRead: true });
     connection.dispose();
   });
 

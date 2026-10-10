@@ -29,7 +29,7 @@ function shims(mobile: string): Record<string, string> {
       export const ImpactFeedbackStyle = { Light: 'light' };`,
     '@/modal': 'export const Modal = { alert: () => undefined };',
     '@/sync/transport/live-connection':
-      'export const sharedLiveConnection = () => ({ register: () => () => undefined });',
+      'export const sharedLiveConnection = () => ({ register: async () => () => undefined, whenSubscribed: async () => undefined });',
     '@/components/buzz/corner-brief-viewer': 'export const openCornerBriefViewer = () => undefined;',
     '@/sync/transport/monolith-operation': `export const phoneOperationFailureReason = (reason) => String(reason);
       export const monolithPhoneOperation = async () => ({ workflows: [] });`,

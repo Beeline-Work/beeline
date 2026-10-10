@@ -233,7 +233,11 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: VIEWER, secretKey: new Uint8Array(32) })),
 }));
 vi.mock('@/buzz/surface-storage', () => ({
-  mobileSurfaceCache: { read: vi.fn(async () => null), write: vi.fn(async () => undefined) },
+  mobileSurfaceCache: {
+    read: vi.fn(async () => null),
+    write: vi.fn(async () => undefined),
+    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
+  },
   surfaceAddress: vi.fn(() => 'surface-address'),
 }));
 vi.mock('@/buzz/room-view-presentation', () => ({ workspaceRailItem: (value: any) => value }));

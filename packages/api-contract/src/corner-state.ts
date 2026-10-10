@@ -73,7 +73,8 @@ export function cornerRunFromLifecycle(input: {
 }
 
 /**
- * The phone badge, from the workflow run plus whether a turn is running:
+ * The phone badge, from the workflow run plus whether a turn is running. A
+ * run without an outcome uses the outcome `cornerRunFromLifecycle` reads:
  *
  * | run state                                   | badge                      |
  * | ------------------------------------------- | -------------------------- |
@@ -87,8 +88,14 @@ export function cornerRunFromLifecycle(input: {
  * | the same, nothing owed to anyone            | idle                       |
  */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
-  const run =
-    facts.run ?? cornerRunFromLifecycle({ archived: facts.archived, lifecycle: facts.lifecycle });
+  const fallback = cornerRunFromLifecycle({ archived: facts.archived, lifecycle: facts.lifecycle });
+  // A run with no recorded outcome takes the lifecycle's: a corner in
+  // `implement` whose PR checks fail reads checks-failed on every surface.
+  const run = !facts.run
+    ? fallback
+    : facts.run.outcome === undefined && fallback.outcome !== undefined
+      ? { state: facts.run.state, outcome: fallback.outcome }
+      : facts.run;
   if (facts.archived || run.state === 'landed' || run.state === 'closed')
     return { state: 'archived' };
   if (facts.turnRunning) return { state: 'working' };

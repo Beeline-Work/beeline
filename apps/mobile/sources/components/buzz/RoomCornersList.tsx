@@ -4,7 +4,6 @@ import { StyleSheet } from 'react-native-unistyles';
 import { router } from 'expo-router';
 import type { CornerListItem } from '@beeline/buzz-client';
 import { cornerTitle, type WorkflowRunSummaryView } from '@beeline/api-contract/phone';
-import { isMineCorner } from '@/buzz/mine-corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
 import { CornerWaitingPulse } from './CornerWaitingPulse';
@@ -82,7 +81,6 @@ export function RoomCornersList({
   onMoreArchived,
   onMoreOpen,
   moreOpen = false,
-  viewerPubkey,
   nowMs,
   desktop = false,
   liveRuns,
@@ -105,8 +103,6 @@ export function RoomCornersList({
   onMoreOpen?: () => void;
   /** A later open page exists, including when a desktop filter hides this page's rows. */
   moreOpen?: boolean;
-  /** Whose corners make up the Mine section. */
-  viewerPubkey?: string;
   /** Clock for the closure stamps; defaults to now at paint. */
   nowMs?: number;
   /** One cell per corner with filters, instead of the phone rows and folds. */
@@ -137,15 +133,15 @@ export function RoomCornersList({
               filter === 'waiting'
                 ? item.state === 'waiting'
                 : filter === 'mine'
-                  ? isMineCorner(item, viewerPubkey)
+                  ? item.mine === true
                   : filter === 'others'
-                    ? !isMineCorner(item, viewerPubkey)
+                    ? item.mine !== true
                     : true,
             );
       return rows.map((item): Entry => ({ kind: 'row', item }));
     }
-    const mine = corners.filter((item) => isMineCorner(item, viewerPubkey));
-    const others = corners.filter((item) => !isMineCorner(item, viewerPubkey));
+    const mine = corners.filter((item) => item.mine === true);
+    const others = corners.filter((item) => item.mine !== true);
     const section = (
       key: 'mine' | 'others',
       title: string,
@@ -162,7 +158,7 @@ export function RoomCornersList({
       ...section('mine', 'Mine', mine, mineOpen),
       ...section('others', 'Others', others, othersOpen ?? mine.length === 0),
     ];
-  }, [corners, viewerPubkey, mineOpen, othersOpen, desktop, filter, archived]);
+  }, [corners, mineOpen, othersOpen, desktop, filter, archived]);
   const stampedAt = nowMs ?? Date.now();
   // On desktop the Archived filter carries the closed rows inside `data`.
   const archivedRows =
@@ -346,9 +342,9 @@ export function RoomCornersList({
                   : option.key === 'waiting'
                     ? corners.filter((item) => item.state === 'waiting').length
                     : option.key === 'mine'
-                      ? corners.filter((item) => isMineCorner(item, viewerPubkey)).length
+                      ? corners.filter((item) => item.mine === true).length
                       : option.key === 'others'
-                        ? corners.filter((item) => !isMineCorner(item, viewerPubkey)).length
+                        ? corners.filter((item) => item.mine !== true).length
                         : corners.length;
               return (
                 <Button

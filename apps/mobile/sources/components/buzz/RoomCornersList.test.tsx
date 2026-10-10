@@ -89,7 +89,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 
 const VIEWER = 'viewer-pubkey';
 
-/** A corner the viewer commissioned, so it lands in the open Mine section. */
+/** A corner the server marks Mine, so it lands in the open Mine section. */
 function corner(id: string, state: CornerListItem['state'], name = id): CornerListItem {
   return {
     corner: {
@@ -105,12 +105,14 @@ function corner(id: string, state: CornerListItem['state'], name = id): CornerLi
     stateAt: 2,
     agent: { pubkey: `agent-${id}`, name: `Opener ${id}`, kind: 'agent' },
     initiator: { pubkey: VIEWER, name: 'Viewer', kind: 'human' },
+    mine: true,
   } as CornerListItem;
 }
 
-/** A corner someone else commissioned, which lands in the folded Others section. */
+/** A corner the server does not mark Mine, which lands in the folded Others section. */
 function theirs(id: string, state: CornerListItem['state'] = 'working'): CornerListItem {
-  return { ...corner(id, state), initiator: { pubkey: 'someone', name: 'Sam', kind: 'human' } };
+  const { mine: _mine, ...item } = corner(id, state);
+  return { ...item, initiator: { pubkey: 'someone', name: 'Sam', kind: 'human' } };
 }
 
 function text(tree: ReactTestRenderer): string {
@@ -132,7 +134,6 @@ function render(
         corners={corners}
         parentRoomName="#alpha"
         parentRoomId="room-1"
-        viewerPubkey={VIEWER}
         {...extra}
       />,
     );
@@ -194,22 +195,14 @@ describe('RoomCornersList', () => {
     ]);
   });
 
-  it('counts a corner waiting on the viewer as Mine and one waiting on someone else as Others', () => {
+  it("sorts by the server's Mine flag alone, not by follow, ask or initiator facts", () => {
     const tree = render([
+      { ...theirs('posted-in', 'working'), mine: true },
       { ...theirs('asks-me', 'waiting'), awaitsViewer: true },
-      theirs('asks-them', 'waiting'),
-    ]);
-    expect(rowIds(tree)).toEqual(['room-corner-asks-me']);
-    expect(pressable(tree, 'room-corners-others').props.accessibilityLabel).toBe('Others · 1');
-  });
-
-  it('counts a corner the viewer follows as Mine though someone else started it', () => {
-    const tree = render([
-      { ...theirs('posted-in', 'working'), followsViewer: true },
-      theirs('untouched', 'working'),
+      { ...theirs('follows', 'working'), followsViewer: true },
     ]);
     expect(rowIds(tree)).toEqual(['room-corner-posted-in']);
-    expect(pressable(tree, 'room-corners-others').props.accessibilityLabel).toBe('Others · 1');
+    expect(pressable(tree, 'room-corners-others').props.accessibilityLabel).toBe('Others · 2');
   });
 
   it('does not remember a fold: a fresh screen starts with Mine open and Others folded', () => {
@@ -242,7 +235,6 @@ describe('RoomCornersList', () => {
           corners={[theirs('loaded')]}
           parentRoomName="#alpha"
           parentRoomId="room-1"
-          viewerPubkey={VIEWER}
         />,
       );
     });
@@ -314,7 +306,7 @@ describe('RoomCornersList', () => {
         agent: undefined,
         initiator: { pubkey: 'person-1', kind: 'human', name: 'Avery' },
       },
-    ], { viewerPubkey: 'person-1' });
+    ]);
     const row = tree.root.findByProps({ testID: 'room-corner-notes' });
     expect(row.props.accessibilityLabel).toContain('Opened by Avery');
     expect(row.findByType('IdentityMark' as any).props).toMatchObject({
@@ -332,7 +324,6 @@ describe('RoomCornersList', () => {
           corners={[corner('live', 'working')]}
           parentRoomName="#alpha"
           parentRoomId="room-1"
-          viewerPubkey={VIEWER}
           bottomInset={bottomInset}
         />,
       );
@@ -439,7 +430,7 @@ describe('RoomCornersList on desktop', () => {
   const corners = [
     { ...corner('c-waits', 'waiting'), corner: { ...corner('c-waits', 'waiting').corner, about: 'Ship the corners overview for desktop.' }, briefRevision: 4 },
     { ...theirs('c-theirs', 'working'), corner: { ...theirs('c-theirs', 'working').corner, about: 'Fix the clipped Settings title.' } },
-    { ...theirs('c-asks-me', 'waiting'), awaitsViewer: true as const },
+    { ...theirs('c-asks-me', 'waiting'), awaitsViewer: true as const, mine: true as const },
   ] as CornerListItem[];
   const run = { runId: 'run-1', roomId: 'c-theirs', status: 'live' } as never;
 
@@ -496,7 +487,6 @@ describe('RoomCornersList on desktop', () => {
           corners={corners}
           parentRoomName="#alpha"
           parentRoomId="room-1"
-          viewerPubkey={VIEWER}
           desktop
           onShowArchived={onShowArchived}
           archived={{ status: 'loading' }}
@@ -513,7 +503,6 @@ describe('RoomCornersList on desktop', () => {
           corners={corners}
           parentRoomName="#alpha"
           parentRoomId="room-1"
-          viewerPubkey={VIEWER}
           desktop
           onShowArchived={onShowArchived}
           onMoreArchived={onMoreArchived}
@@ -702,7 +691,6 @@ describe('RoomCornersList archived footer', () => {
           corners={[]}
           parentRoomName="#alpha"
           parentRoomId="room-1"
-          viewerPubkey={VIEWER}
           nowMs={NOW_MS}
           onMoreArchived={onMoreArchived}
           archived={{ status: 'ready', corners: page, next: 'cursor', more: { status: 'loading' } }}
@@ -718,7 +706,6 @@ describe('RoomCornersList archived footer', () => {
           corners={[]}
           parentRoomName="#alpha"
           parentRoomId="room-1"
-          viewerPubkey={VIEWER}
           nowMs={NOW_MS}
           onMoreArchived={onMoreArchived}
           archived={{
@@ -740,7 +727,6 @@ describe('RoomCornersList archived footer', () => {
           corners={[]}
           parentRoomName="#alpha"
           parentRoomId="room-1"
-          viewerPubkey={VIEWER}
           nowMs={NOW_MS}
           archived={{ status: 'ready', corners: [...page, closed('last', 'Last', 86_400)] }}
         />,

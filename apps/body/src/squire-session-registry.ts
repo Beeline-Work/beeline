@@ -27,11 +27,15 @@ export type SquireSessionOwner = {
 
 const owners = new Map<string, SquireSessionOwner>();
 
-/** Record one live session. Re-registering the same id replaces its provenance. */
+/**
+ * Record one live session. A response that echoes a session its own connection
+ * already holds keeps the recorded provenance; only a new owner replaces it.
+ */
 export function registerSquireSession(
   sessionId: string,
   owner: Omit<SquireSessionOwner, 'scheduleIds'>,
 ): void {
+  if (owners.get(sessionId)?.client === owner.client) return;
   owners.set(sessionId, { ...owner, scheduleIds: new Set() });
 }
 

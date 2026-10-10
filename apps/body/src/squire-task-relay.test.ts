@@ -766,4 +766,21 @@ describe('scheduled runs inherit a live Squire session', () => {
       name: 'operate_observe', arguments: { sessionId: 'browser-a1', target: { sessionId: 'browser-a2' } },
     })).status).toBe(400);
   });
+
+  it('keeps schedule provenance when an ordinary call echoes the session id', async () => {
+    const owner = relayFor('room', 'agent', 'browser-1');
+    owner.activate(scheduled('room', 'agent', 'root', 'turn-one', 'sched-1'), 'generation');
+    await call(owner, 'room', 'root', 'turn-one', 'tools/call', { name: 'operate_start' });
+
+    // An ordinary turn whose response echoes the existing session id.
+    owner.activate(scheduled('room', 'agent', 'root-2', 'turn-two'), 'generation');
+    expect((await call(owner, 'room', 'root-2', 'turn-two', 'tools/call', {
+      name: 'operate_start',
+    })).status).toBe(200);
+
+    owner.activate(scheduled('room', 'agent', 'root-3', 'turn-three', 'sched-2'), 'generation');
+    expect((await call(owner, 'room', 'root-3', 'turn-three', 'tools/call', {
+      name: 'operate_observe', arguments: { sessionId: 'browser-1' },
+    })).status).toBe(400);
+  });
 });

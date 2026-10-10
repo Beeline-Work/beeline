@@ -34,6 +34,7 @@ import {
   reconcileRoomTurnDelta,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
+import { writeRoomMessage } from '@/buzz/room-message-records';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { ReadCursorAdvancer } from '@/buzz/read-cursor-advance';
 import { liveDraftRowId } from '@/buzz/draft-settle';
@@ -58,6 +59,7 @@ import { takePrefetchedPushRoom } from '@/push/push-room-prefetch';
 
 /** A socket that never answers must not hold the open's one Room read. */
 const SUBSCRIBE_HANDSHAKE_TIMEOUT_MS = 2_000;
+const LIVE_CACHE_WRITE_DELAY_MS = 1_000;
 /**
  * Invalidations that change nothing this Room read shows, so they read
  * nothing: a child corner's list status; a stored draft, thought or presence
@@ -319,6 +321,8 @@ export function useRoomSurfaceSession({
     });
   }, []);
   const applyRoomMessageResult = useCallback((message: RoomViewMessage) => {
+    // The record first: a row older than the tail lives only in loaded history.
+    writeRoomMessage(channelIdRef.current, message);
     setRoomSurface((current) => {
       if (!current) return current;
       const next = reconcileRoomMessageDelta(current, message);
@@ -566,6 +570,8 @@ export function useRoomSurfaceSession({
     let reopenedChat = false;
     let pendingReadTraces: ReceivedLiveTrace[] = [];
     let capturedUnreadBoundary = false;
+    let cacheAddress: ReturnType<typeof surfaceAddress> | undefined;
+    let cacheWriteTimer: ReturnType<typeof setTimeout> | undefined;
 
     agentPresencesRef.current = {};
     reconnectGraceRef.current = {};
@@ -717,13 +723,22 @@ export function useRoomSurfaceSession({
         const next = new Set([...current].filter((id) => !authoritativeIds.has(id)));
         return next.size === current.size ? current : next;
       });
+      cacheAddress = surfaceAddress(relayUrl, identityPubkey, `/room/${channelId}`);
       if (fresh) {
-        void mobileSurfaceCache.write(
-          surfaceAddress(relayUrl, identityPubkey, `/room/${channelId}`),
-          stableView,
-          isRoomView,
-        );
+        void mobileSurfaceCache.write(cacheAddress, stableView, isRoomView);
       }
+    };
+
+    // Live deltas reach disk too, so a cold open never paints a tail older
+    // than what this screen last showed. One write per burst of deltas.
+    const scheduleCacheWrite = () => {
+      if (cacheWriteTimer || !cacheAddress) return;
+      cacheWriteTimer = setTimeout(() => {
+        cacheWriteTimer = undefined;
+        const view = reconciledViewRef.current;
+        if (cancelled || !view || !cacheAddress) return;
+        void mobileSurfaceCache.write(cacheAddress, view, isRoomView);
+      }, LIVE_CACHE_WRITE_DELAY_MS);
     };
 
     const applyView = (
@@ -805,7 +820,11 @@ export function useRoomSurfaceSession({
                 : undefined;
               if (received) logLiveTrace('socket-receipt', [received], received.receivedAt);
               if (live.type === 'turn-delta') turnDeltasDuringRead?.push(live.turn);
-              else messageDeltasDuringRead?.push(live.message);
+              else {
+                messageDeltasDuringRead?.push(live.message);
+                // A row older than the tail lives only in loaded history.
+                writeRoomMessage(channelId, live.message);
+              }
               const current = reconciledViewRef.current;
               if (!current) {
                 // The opening read is already in flight. Its snapshot will be
@@ -829,6 +848,7 @@ export function useRoomSurfaceSession({
                   received,
                 ];
               setRoomSurface(next);
+              scheduleCacheWrite();
               if (live.type === 'message-delta') {
                 void outboxRef.current?.reconcile(
                   new Set(next.messages.map((message) => message.id)),
@@ -1243,6 +1263,11 @@ export function useRoomSurfaceSession({
     })();
 
     return () => {
+      if (cacheWriteTimer) {
+        clearTimeout(cacheWriteTimer);
+        const view = reconciledViewRef.current;
+        if (view && cacheAddress) void mobileSurfaceCache.write(cacheAddress, view, isRoomView);
+      }
       cancelled = true;
       watchGeneration += 1;
       abandonHandshakeWait?.();

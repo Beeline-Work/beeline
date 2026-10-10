@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 
@@ -54,6 +54,14 @@ export function useRoomSendFrame(
   committedIds: ReadonlySet<string>,
 ) {
   const [optimisticMessages, setOptimisticMessages] = useState<ChatDisplayMessage[]>([]);
+  // A committed row is the server's from here on. Drop its optimistic copy,
+  // or it returns once the committed row leaves the newest rows.
+  useEffect(() => {
+    setOptimisticMessages((current) => {
+      const pending = current.filter((message) => !committedIds.has(message.id));
+      return pending.length === current.length ? current : pending;
+    });
+  }, [committedIds]);
   const frame = useMemo(
     () => projectRoomSendFrame(transcript, optimisticMessages, committedIds),
     [committedIds, optimisticMessages, transcript],

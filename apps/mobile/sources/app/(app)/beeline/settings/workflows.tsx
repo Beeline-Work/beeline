@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
@@ -22,12 +23,14 @@ const LAST_RUN = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeS
 
 /** Repository workflows remain a Room-manager action; this route is only an entry surface. */
 export default function RoomWorkflows() {
+  useLatencyRouteFrame('/beeline/settings/workflows');
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ roomId?: string | string[] }>();
   const roomId = first(params.roomId);
   const [roomName, setRoomName] = useState('Room');
   const [list, setList] = useState<RoomWorkflowListResult | null>(null);
   const [loading, setLoading] = useState(true);
+  useLatencyRouteFrame('/beeline/settings/workflows', !loading, true);
   const [running, setRunning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 

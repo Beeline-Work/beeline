@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -22,6 +23,7 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
  * The picture, invites and agents all live in the Workspace itself.
  */
 export default function CreateWorkspace() {
+  useLatencyRouteFrame('/beeline/create-workspace', true, true);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const workspaceId = useRef(Crypto.randomUUID()).current;

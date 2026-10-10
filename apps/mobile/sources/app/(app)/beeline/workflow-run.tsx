@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
@@ -39,6 +40,7 @@ const LIVE_HALO = 20;
  * are links.
  */
 export default function WorkflowRun() {
+  useLatencyRouteFrame('/beeline/workflow-run');
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ roomId?: string | string[]; runId?: string | string[] }>();
   const roomId = first(params.roomId);
@@ -56,6 +58,7 @@ export default function WorkflowRun() {
       subscribe: roomId ? observeRoomResource(roomId) : undefined,
     },
   );
+  useLatencyRouteFrame('/beeline/workflow-run', detail !== null, true);
   const liveDrafts = useRoomLiveDrafts(detail?.run.status === 'live' ? roomId : undefined);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1_000));
   useEffect(() => {

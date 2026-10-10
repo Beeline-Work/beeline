@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import React, { useCallback, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
@@ -13,6 +14,7 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
 /** One workflow's runs, reached from a run's "All runs" link. */
 export default function Workflow() {
+  useLatencyRouteFrame('/beeline/workflow');
   const params = useLocalSearchParams<{ roomId: string; name: string }>();
   const roomId = Array.isArray(params.roomId) ? params.roomId[0] : params.roomId;
   const name = Array.isArray(params.name) ? params.name[0] : params.name;
@@ -20,6 +22,7 @@ export default function Workflow() {
   const [detail, setDetail] = useState<
     PhoneOperationMap['readWorkflowDefinition']['output'] | null
   >(null);
+  useLatencyRouteFrame('/beeline/workflow', detail !== null, true);
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(async () => {
     try {

@@ -217,6 +217,7 @@ function historyRead(result: RoomHistoryView | null, compact: boolean): unknown 
 
 /** What each request accepts for a JSON answer, read once where it arrives. */
 const jsonEncodings = new WeakMap<ServerResponse, JsonEncoding>();
+const roomRequestStartedAt = new WeakMap<ServerResponse, number>();
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   const { bytes, encoding } = encodeJsonBody(body, jsonEncodings.get(response));
@@ -225,6 +226,9 @@ function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
     'content-type': 'application/json',
     'cache-control': 'private, no-store',
+    ...(roomRequestStartedAt.has(response)
+      ? { 'server-timing': `app;dur=${(performance.now() - roomRequestStartedAt.get(response)!).toFixed(1)}` }
+      : {}),
     ...(encoding
       ? {
           'content-encoding': encoding,
@@ -508,6 +512,8 @@ export function createBeelineServer(options: ServerOptions): Server {
   const server = createServer((request, response) => {
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
+    if (method === 'GET' && /^\/v1\/phone\/rooms\/[^/]+$/.test(url.pathname))
+      roomRequestStartedAt.set(response, performance.now());
     const encoding = acceptedJsonEncoding(request.headers['accept-encoding']);
     if (encoding) jsonEncodings.set(response, encoding);
     const observedFunction =
@@ -2235,11 +2241,23 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   if (method === 'POST' && url.pathname === '/v1/phone/observations/page-load') {
     const input = await body(request);
     const duration = input.durationMs;
+    const network = input.network;
+    const validNetwork = network === undefined || (
+      network !== null && typeof network === 'object' &&
+      Number.isFinite((network as { requestToFirstByteMs?: unknown }).requestToFirstByteMs) &&
+      Number.isFinite((network as { serverProcessingMs?: unknown }).serverProcessingMs) &&
+      (network as { requestToFirstByteMs: number }).requestToFirstByteMs >= 0 &&
+      (network as { requestToFirstByteMs: number }).requestToFirstByteMs <= 15_000 &&
+      (network as { serverProcessingMs: number }).serverProcessingMs >= 0 &&
+      (network as { serverProcessingMs: number }).serverProcessingMs <=
+        (network as { requestToFirstByteMs: number }).requestToFirstByteMs
+    );
     if (
       !Number.isInteger(duration) ||
       (duration as number) < 0 ||
       (duration as number) > 600_000 ||
-      typeof input.failed !== 'boolean'
+      typeof input.failed !== 'boolean' ||
+      !validNetwork
     ) {
       json(response, 400, { error: 'invalid_observation' });
       return;
@@ -2249,6 +2267,9 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       'page_load',
       duration as number,
       input.failed,
+      network === undefined ? undefined :
+        Math.round((network as { requestToFirstByteMs: number }).requestToFirstByteMs -
+          (network as { serverProcessingMs: number }).serverProcessingMs),
     );
     response.writeHead(204, { 'cache-control': 'private, no-store' });
     response.end();

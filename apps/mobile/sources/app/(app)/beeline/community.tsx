@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -29,11 +30,13 @@ function first(value: string | string[] | undefined): string | undefined {
  * reaches this screen: it goes straight to its own confirmation.
  */
 export default function WorkspaceChoice() {
+  useLatencyRouteFrame('/beeline/community');
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const requestedMode = first(useLocalSearchParams<{ mode?: string | string[] }>().mode);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [workspaceList, setWorkspaceList] = useState<WorkspaceListView | null>(null);
+  useLatencyRouteFrame('/beeline/community', workspaceList !== null, true);
   const [joinOpen, setJoinOpen] = useState(requestedMode === 'join');
   const [inviteInput, setInviteInput] = useState('');
   const [error, setError] = useState<string | null>(null);

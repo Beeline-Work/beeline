@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -35,6 +36,7 @@ const inviteIsGone = (reason: unknown) =>
   reason instanceof RoomViewHttpError && reason.status === 404;
 
 export default function CommunityInviteJoin() {
+  useLatencyRouteFrame('/join/[token]');
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { token: routeToken } = useLocalSearchParams<{ token?: string | string[] }>();

@@ -29,11 +29,21 @@ export async function recordOperatorFunctionEvent(
   name: 'page_load' | 'message_delivery' | 'corner_open' | 'attachment_upload',
   durationMs: number,
   failed: boolean,
+  networkRttResidualMs?: number,
 ): Promise<void> {
-  await database.query(
-    `INSERT INTO operator_function_events(function_name,duration_ms,failed) VALUES($1,$2,$3)`,
-    [name, Math.max(0, Math.min(600_000, Math.round(durationMs))), failed],
-  );
+  const boundedDuration = Math.max(0, Math.min(600_000, Math.round(durationMs)));
+  if (networkRttResidualMs === undefined) {
+    await database.query(
+      `INSERT INTO operator_function_events(function_name,duration_ms,failed) VALUES($1,$2,$3)`,
+      [name, boundedDuration, failed],
+    );
+  } else {
+    await database.query(
+      `INSERT INTO operator_function_events(function_name,duration_ms,failed,network_rtt_residual_ms)
+       VALUES($1,$2,$3,$4)`,
+      [name, boundedDuration, failed, networkRttResidualMs],
+    );
+  }
   // Event-triggered retention keeps the operational ledger bounded without a
   // periodic collector. The read path remains read-only.
   if (++functionEventsWritten % 100 === 0) {

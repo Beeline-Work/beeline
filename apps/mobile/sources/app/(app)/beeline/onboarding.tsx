@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 /** Native GitHub-first onboarding. OAuth proves lookup only; the Nostr key remains device-held. */
 import React, { useEffect, useRef, useState } from 'react';
@@ -125,6 +126,7 @@ const INPUT_BORDER_WIDTH = 1;
 const INPUT_FOCUSED_BORDER_WIDTH = 2;
 
 export default function BuzzOnboarding() {
+  useLatencyRouteFrame('/beeline/onboarding', true, true);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const pendingBind = useRef<PendingBind | null>(null);

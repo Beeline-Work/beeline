@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { Typography } from '@/constants/Typography';
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -42,6 +43,7 @@ export function HumanProfile({
   const [viewer, setViewer] = useState<RoomViewer | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  useLatencyRouteFrame('/beeline/human-profile', !loading, true);
   const [busy, setBusy] = useState(false);
   const [connectedAgents, setConnectedAgents] = useState<WorkspaceView['agents']>([]);
   const [grants, setGrants] = useState<readonly WorkspaceMemberGrantView[]>([]);
@@ -372,6 +374,7 @@ export function HumanProfile({
   );
 }
 export default function HumanProfileRoute() {
+  useLatencyRouteFrame('/beeline/human-profile');
   const { communityId, memberId } = useLocalSearchParams<{
     communityId: string;
     memberId: string;

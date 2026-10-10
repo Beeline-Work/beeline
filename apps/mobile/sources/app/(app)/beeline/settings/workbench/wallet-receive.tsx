@@ -1,3 +1,4 @@
+import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Text, View } from 'react-native';
@@ -20,6 +21,7 @@ function firstParam(value: string | string[] | undefined): string | undefined {
  * `WalletQr` the dashboard also renders.
  */
 export default function WalletReceiveScreen() {
+  useLatencyRouteFrame('/beeline/settings/workbench/wallet-receive');
   const params = useLocalSearchParams<{ workspaceId?: string | string[] }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const insets = useSafeAreaInsets();

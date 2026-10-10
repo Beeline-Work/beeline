@@ -14,6 +14,7 @@ if [[ "$server_url" != http://10.0.2.2:* && "$server_url" != https://10.0.2.2:* 
 fi
 export EXPO_PUBLIC_BUZZY_MONOLITH_URL="$server_url"
 export EXPO_PUBLIC_ROOM_OPEN_TRACE=1
+export EXPO_PUBLIC_LATENCY_RIG_TRACE=1
 export EXPO_UPDATES_CHANNEL=latency-rig
 export BEELINE_ANDROID_KEEP_DEVICE=1
 # The dedicated AVD is x86_64; skip three unused native ABI builds.

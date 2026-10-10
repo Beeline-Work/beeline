@@ -56,6 +56,21 @@ describe('room open trace', () => {
     expect(reportPage).toHaveBeenLastCalledWith(expect.any(Number), true);
     restore();
   });
+  it('attaches only the matching successful Room read to the existing observation', async () => {
+    const { mod, restore } = await withEnv(undefined, false);
+    for (let i = 0; i < 7; i++) {
+      mod.markRoomOpen('nav-dispatch', 'sampled-away-room');
+      mod.markRoomOpen('newest-frame');
+    }
+    mod.markRoomOpen('nav-dispatch', 'room-a');
+    mod.recordRoomReadNetworkTiming('room-b', { requestToFirstByteMs: 80, serverProcessingMs: 10 });
+    mod.recordRoomReadNetworkTiming('room-a', { requestToFirstByteMs: 95, serverProcessingMs: 14 });
+    mod.markRoomOpen('newest-frame');
+    await vi.waitFor(() => expect(reportPage).toHaveBeenCalledTimes(1));
+    expect(reportPage).toHaveBeenCalledWith(expect.any(Number), false,
+      { requestToFirstByteMs: 95, serverProcessingMs: 14 });
+    restore();
+  });
   it('reports elapsed milliseconds from the first mark, not absolute clocks', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { mod, restore } = await withEnv('1', false);

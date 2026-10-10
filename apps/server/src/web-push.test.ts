@@ -116,7 +116,7 @@ describe('web push transport', () => {
       channelId: 'room',
       target: 'message',
       text: 'hello',
-      title: 'beeline-dev › push-title',
+      title: '#beeline-dev/push-title',
       recipientIdentityId: 'person-1',
     });
     expect(query).toHaveBeenCalledWith(expect.stringContaining('identity_id=$2'), [
@@ -132,7 +132,7 @@ describe('web push transport', () => {
     expect(sent).toMatchObject({
       channelId: 'room',
       roomId: 'room',
-      title: 'beeline-dev › push-title',
+      title: '#beeline-dev/push-title',
     });
   });
 

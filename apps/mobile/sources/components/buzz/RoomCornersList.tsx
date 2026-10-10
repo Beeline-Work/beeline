@@ -3,7 +3,7 @@ import { FlatList, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router } from 'expo-router';
 import type { CornerListItem } from '@beeline/buzz-client';
-import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+import { cornerTitle, type WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { isMineCorner } from '@/buzz/mine-corners';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { cornerDisplayState } from '@/buzz/corner-display-state';
@@ -13,7 +13,6 @@ import {
   cornerClosedStamp,
   type ArchivedCornersState,
 } from '@/buzz/archived-corners';
-import { fullCornerTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { StateCircle } from '@/components/buzz/MonoHull';
@@ -217,7 +216,7 @@ export function RoomCornersList({
   // The desktop cell. The face is the corner's own agent, the one its page
   // header shows (`owner_agent_id`), falling back to the person who opened it.
   const cell = (item: CornerListItem) => {
-    const label = fullCornerTitle(parentRoomName, item.corner.name, item.corner.id);
+    const label = cornerTitle(parentRoomName, item.corner.name, item.corner.id);
     const display = cornerDisplayState(item);
     const objective = inspectorCornerObjective(label, item.corner.about);
     const runs = liveRuns?.(item.corner.id) ?? [];
@@ -251,7 +250,7 @@ export function RoomCornersList({
 
   const row = (item: CornerListItem) => {
     if (desktop) return cell(item);
-    const label = fullCornerTitle(parentRoomName, item.corner.name, item.corner.id);
+    const label = cornerTitle(parentRoomName, item.corner.name, item.corner.id);
     const display = cornerDisplayState(item);
     const owner = item.agent ?? item.initiator;
     const opener = owner ? `Opened by ${owner.name}` : item.latestMessage?.text;

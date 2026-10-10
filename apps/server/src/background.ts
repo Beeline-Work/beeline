@@ -1,6 +1,12 @@
 import type { SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import type { PushActionPayload } from '@beeline/api-contract/phone';
+import {
+  cornerShortTitle,
+  directMessageTitle,
+  roomTitle,
+  type ChatTitleIdentity,
+  type PushActionPayload,
+} from '@beeline/api-contract/phone';
 import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
 import type { ObjectService } from './object-service.js';
@@ -63,12 +69,19 @@ export interface PushSender {
           cornerId?: string;
           target: 'message' | 'corner';
           type: 'message';
-          /** The Room, or `Room › corner`; absent for a DM. */
+          /** The in-app title: `#room`, `#room/corner` or `@peer`. */
           title?: string;
         }
     ),
   ): Promise<void>;
+  /** iOS only: a silent push that clears these conversations from the shade. */
+  clearRead?(token: string, channelIds: readonly string[]): Promise<void>;
 }
+
+/** At most one read-clear push per device in this window; reads inside it batch. */
+export const READ_CLEAR_INTERVAL_SECONDS = 30;
+/** Channel ids one read-clear push names; the newest reads win. */
+export const READ_CLEAR_MAX_CHANNELS = 50;
 
 const PUSH_TITLE_LENGTH = 40;
 const PUSH_TITLE_ROOM_LENGTH = 16;
@@ -83,18 +96,26 @@ function cutPushTitle(name: string, length: number): string {
     : characters.join('');
 }
 
-/** Name the Room a push came from, cut so the title stays on one line. */
+/**
+ * Name the conversation a push came from with the in-app title — `#room`,
+ * `#room/corner` or `@peer` from the contract's chat-title module — cut so
+ * the title stays on one line. `cornerName` is non-null only for a corner,
+ * whose id is `channelId`.
+ */
 export function pushTitleFor(
   roomName: string | null,
   cornerName: string | null,
+  channelId: string | null,
+  dmPeer: ChatTitleIdentity | null = null,
 ): { title?: string } {
-  const room = roomName?.trim();
+  if (dmPeer) return { title: cutPushTitle(directMessageTitle(dmPeer), PUSH_TITLE_LENGTH) };
+  const room = roomTitle(roomName);
   if (!room) return {};
-  const corner = cornerName?.trim();
-  if (!corner) return { title: cutPushTitle(room, PUSH_TITLE_LENGTH) };
+  if (cornerName === null || !channelId) return { title: cutPushTitle(room, PUSH_TITLE_LENGTH) };
   const roomPart = cutPushTitle(room, PUSH_TITLE_ROOM_LENGTH);
+  const corner = cornerShortTitle(roomName, cornerName, channelId);
   return {
-    title: `${roomPart} › ${cutPushTitle(corner, PUSH_TITLE_LENGTH - Array.from(roomPart).length - 3)}`,
+    title: `${roomPart}/${cutPushTitle(corner, PUSH_TITLE_LENGTH - Array.from(roomPart).length - 1)}`,
   };
 }
 
@@ -174,7 +195,81 @@ export class PushDeliveryLoop {
   async runOnce(): Promise<number> {
     let delivered = 0;
     do { delivered += await this.runUnthrottled(); } while (this.#repeatBatch);
+    await this.sendReadClears();
     return delivered;
+  }
+
+  /**
+   * A Room read on any device leaves its notifications in this phone's shade
+   * and in its badge until the phone opens the Room itself. Each iOS device
+   * gets one silent push naming the Rooms and corners whose read mark moved
+   * since its last one, at most once per READ_CLEAR_INTERVAL_SECONDS, so a
+   * burst of reads costs one push.
+   */
+  private async sendReadClears(): Promise<void> {
+    const sender = this.iosSender;
+    if (!sender?.clearRead) return;
+    const due = await this.database.query<{
+      token: string;
+      cleared_through: string;
+      cleared_through_room: string;
+      channel_ids: string[];
+    }>(
+      // Each push takes the oldest READ_CLEAR_MAX_CHANNELS marks past the
+      // device's (updated_at, room_id) cursor and moves the cursor to the last
+      // one sent, so overflow and marks tied on updated_at go in later pushes.
+      // Text, not a JS Date: a Date drops microseconds, and the next pass
+      // would see the same mark as newer than the boundary forever.
+      `SELECT device.token,batch.cleared_through,batch.cleared_through_room,batch.channel_ids
+       FROM push_devices device
+       LEFT JOIN push_read_clears clear ON clear.device_token=device.token
+       CROSS JOIN LATERAL (
+         SELECT array_agg(pending.room_id ORDER BY pending.updated_at,pending.room_id) channel_ids,
+           (array_agg(pending.updated_at::text
+             ORDER BY pending.updated_at DESC,pending.room_id DESC))[1] cleared_through,
+           (array_agg(pending.room_id
+             ORDER BY pending.updated_at DESC,pending.room_id DESC))[1] cleared_through_room
+         FROM (
+           SELECT mark.room_id::text room_id,mark.updated_at FROM room_read_marks mark
+           WHERE mark.identity_id=device.identity_id
+             AND mark.updated_at>GREATEST(device.registered_at,now()-interval '1 day')
+             AND (mark.updated_at,mark.room_id::text)
+               >(COALESCE(clear.cleared_through,'-infinity'::timestamptz),
+                 COALESCE(clear.cleared_through_room,''))
+           ORDER BY mark.updated_at,mark.room_id::text
+           LIMIT ${READ_CLEAR_MAX_CHANNELS}
+         ) pending
+       ) batch
+       WHERE device.platform='ios' AND batch.channel_ids IS NOT NULL
+         AND COALESCE(clear.sent_at,'-infinity'::timestamptz)
+           <now()-interval '${READ_CLEAR_INTERVAL_SECONDS} seconds'
+       LIMIT 100`,
+    );
+    for (const row of due.rows) {
+      try {
+        await sender.clearRead(row.token, row.channel_ids);
+        await this.database.query(
+          `INSERT INTO push_read_clears(device_token,cleared_through,cleared_through_room,sent_at)
+           VALUES($1,$2::timestamptz,$3,now())
+           ON CONFLICT(device_token) DO UPDATE
+             SET cleared_through=EXCLUDED.cleared_through,
+               cleared_through_room=EXCLUDED.cleared_through_room,sent_at=EXCLUDED.sent_at`,
+          [row.token, row.cleared_through, row.cleared_through_room],
+        );
+      } catch (error) {
+        if (isUnregisteredPushToken(error)) {
+          await this.database.query(`DELETE FROM push_devices WHERE token=$1`, [row.token]);
+          continue;
+        }
+        // Keep the boundary so the same reads retry after the interval.
+        await this.database.query(
+          `INSERT INTO push_read_clears(device_token,cleared_through,sent_at)
+           VALUES($1,'-infinity'::timestamptz,now())
+           ON CONFLICT(device_token) DO UPDATE SET sent_at=EXCLUDED.sent_at`,
+          [row.token],
+        );
+      }
+    }
   }
 
   private async runUnthrottled(): Promise<number> {
@@ -217,6 +312,7 @@ export class PushDeliveryLoop {
       direct_attention: boolean;
       room_name: string | null;
       corner_name: string | null;
+      dm_peer: ChatTitleIdentity | null;
     }>(`
       -- Bound message/device pairs before the current-roster tag subquery.
       -- Without this barrier the planner can resolve tags across all history.
@@ -319,10 +415,14 @@ export class PushDeliveryLoop {
           ELSE CASE WHEN author.kind='human' THEN room.id::text ELSE 'agent:'||room.id::text END
           END collapse_id,
           COALESCE(attention.direct,false) direct_attention,
-          -- A DM has no title of its own: the body already names the sender.
+          -- A DM takes its title from dm_peer below, not from a Room name.
           CASE WHEN room.direct_participants IS NULL AND parent.direct_participants IS NULL
             THEN COALESCE(parent.name,room.name) END room_name,
-          CASE WHEN parent.id IS NOT NULL THEN room.name END corner_name
+          CASE WHEN parent.id IS NOT NULL THEN room.name END corner_name,
+          -- A DM is titled by its peer, who is this message's author.
+          CASE WHEN room.direct_participants IS NOT NULL THEN jsonb_build_object(
+            'name',COALESCE(NULLIF(author.name,''),'Someone'),
+            'handle',author.handle,'avatar',author.avatar) END dm_peer
         FROM recent_messages m
         JOIN rooms room ON room.id=m.room_id
         LEFT JOIN rooms parent ON parent.id=room.parent_id
@@ -367,7 +467,7 @@ export class PushDeliveryLoop {
           false is_release_catchup,notification.created_at,
           NULL::text action,NULL::text grant_id,NULL::text grant_kind,NULL::text grant_target,
           NULL::text grant_agent_name,NULL::text author_name,NULL::text collapse_id,
-          false direct_attention,NULL::text room_name,NULL::text corner_name
+          false direct_attention,NULL::text room_name,NULL::text corner_name,NULL::jsonb dm_peer
         FROM workspace_join_notifications notification
         JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
         JOIN push_devices push_device ON push_device.token=device.device_token
@@ -387,7 +487,7 @@ export class PushDeliveryLoop {
           catchup.identity_id,catchup.is_release_catchup,catchup.created_at,catchup.action,
           catchup.grant_id,catchup.grant_kind,catchup.grant_target,catchup.grant_agent_name,
           catchup.author_name,NULL::text collapse_id,false direct_attention,
-          catchup.room_name,catchup.corner_name
+          catchup.room_name,catchup.corner_name,catchup.dm_peer
         FROM (${RELEASE_CATCHUP_CANDIDATES_SQL}) catchup
       ), unclaimed AS (
         SELECT DISTINCT ON (candidate.message_id,candidate.token)
@@ -397,7 +497,7 @@ export class PushDeliveryLoop {
           candidate.is_release_catchup,candidate.created_at,device.platform,
           candidate.action,candidate.grant_id,candidate.grant_kind,candidate.grant_target,
           candidate.grant_agent_name,candidate.author_name,candidate.collapse_id,
-          candidate.direct_attention,candidate.room_name,candidate.corner_name
+          candidate.direct_attention,candidate.room_name,candidate.corner_name,candidate.dm_peer
         FROM candidates candidate
         JOIN push_devices device ON device.token=candidate.token
           AND device.platform IN (${[this.sender && "'android'", this.iosSender && "'ios'", this.webSender && "'web'"].filter(Boolean).join(',') || "'none'"})
@@ -410,7 +510,7 @@ export class PushDeliveryLoop {
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
         notification_type,text,token,identity_id,is_release_catchup,platform,
         action,grant_id,grant_kind,grant_target,grant_agent_name,author_name,collapse_id,
-        direct_attention,room_name,corner_name
+        direct_attention,room_name,corner_name,dm_peer
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
     let delivered = 0;
@@ -563,7 +663,12 @@ export class PushDeliveryLoop {
                 type: 'message' as const,
                 text: candidate.text,
                 ...(candidate.collapse_id ? { collapseId: candidate.collapse_id } : {}),
-                ...pushTitleFor(candidate.room_name, candidate.corner_name),
+                ...pushTitleFor(
+                  candidate.room_name,
+                  candidate.corner_name,
+                  candidate.channel_id,
+                  candidate.dm_peer,
+                ),
                 ...pushActionFor(candidate),
                 // Only a grant-request card carries `grants`, so its first
                 // grant id marks a permission ask.

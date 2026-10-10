@@ -51,3 +51,49 @@ export function grantDecisionForPushAction(actionId: string): AgentGrantDecision
     if (id === actionId) return decision as AgentGrantDecision;
   return null;
 }
+
+/**
+ * A silent iOS push: the recipient read these Rooms or corners on some
+ * device, so the phone removes their notifications from the shade and
+ * recounts its badge. It carries ids only, never text.
+ */
+export const READ_CLEAR_PUSH_TYPE = 'read-clear';
+
+export function readClearPushData(channelIds: readonly string[]): {
+  type: typeof READ_CLEAR_PUSH_TYPE;
+  channelIds: string[];
+} {
+  return { type: READ_CLEAR_PUSH_TYPE, channelIds: [...channelIds] };
+}
+
+/**
+ * The channel ids a read-clear push names, or `null` for any other push. The
+ * phone's background task may hand the payload over flat, under `data`, or
+ * as a `dataString` JSON body, so each of those shapes is searched.
+ */
+export function readClearChannelIds(payload: unknown, depth = 0): string[] | null {
+  if (!payload || typeof payload !== 'object' || depth > 3) return null;
+  const record = payload as Record<string, unknown>;
+  if (record.type === READ_CLEAR_PUSH_TYPE) {
+    const ids = Array.isArray(record.channelIds)
+      ? record.channelIds
+      : typeof record.channelIds === 'string'
+        ? record.channelIds.split(',')
+        : [];
+    return ids.filter((id): id is string => typeof id === 'string' && id.trim() !== '');
+  }
+  if (typeof record.dataString === 'string') {
+    try {
+      const parsed = readClearChannelIds(JSON.parse(record.dataString), depth + 1);
+      if (parsed) return parsed;
+    } catch {
+      // Not JSON: fall through to the nested shapes.
+    }
+  }
+  for (const key of ['data', 'body', 'notification'])
+    if (key in record) {
+      const parsed = readClearChannelIds(record[key], depth + 1);
+      if (parsed) return parsed;
+    }
+  return null;
+}

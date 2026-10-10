@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ChatListItem } from '@beeline/buzz-client';
-import { displayGroupedCornerTitle } from '@/buzz/room-list-row';
+import { cornerShortTitle } from '@beeline/api-contract/phone';
 import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
 import { CornerWaitingPulse } from './CornerWaitingPulse';
 
@@ -42,7 +42,7 @@ export function DesktopRoomCorners({
             <CornerGlyph size={CORNER_META_SIZE} testID={`desktop-corner-glyph-${corner.id}`} />
             <Text numberOfLines={1} style={styles.name}>
               <Text style={styles.sigil}>#</Text>
-              {displayGroupedCornerTitle(item.room.name, corner.name, corner.id)}
+              {cornerShortTitle(item.room.name, corner.name, corner.id)}
             </Text>
             <CornerWaitingPulse state={corner.state}>
               <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>

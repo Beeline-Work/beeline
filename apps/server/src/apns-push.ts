@@ -7,6 +7,7 @@ import {
 } from 'node:http2';
 import { createHash, createPrivateKey, sign } from 'node:crypto';
 import type { PushSender } from './background.js';
+import { readClearPushData } from '@beeline/api-contract/phone';
 import { pushAlert, pushMessageData, type PushDeliveryMessage } from './firebase-push.js';
 
 const APNS_PRODUCTION_AUTHORITY = 'https://api.push.apple.com';
@@ -103,6 +104,30 @@ export function apnsPushRequest(
   };
 }
 
+/**
+ * A background push that wakes the app to clear these conversations from the
+ * shade. Low priority and no alert: Apple throttles it, so the caller batches.
+ */
+export function apnsReadClearRequest(
+  token: string,
+  channelIds: readonly string[],
+  bundleId: string,
+  providerToken: string,
+): { headers: OutgoingHttpHeaders; payload: Record<string, unknown> } {
+  return {
+    headers: {
+      [http2Constants.HTTP2_HEADER_METHOD]: 'POST',
+      [http2Constants.HTTP2_HEADER_PATH]: `/3/device/${encodeURIComponent(token)}`,
+      authorization: `bearer ${providerToken}`,
+      'apns-topic': bundleId,
+      'apns-push-type': 'background',
+      'apns-priority': '5',
+      'apns-expiration': '0',
+    },
+    payload: { aps: { 'content-available': 1 }, ...readClearPushData(channelIds) },
+  };
+}
+
 export function classifyApnsResponse(status: number, reason = ''): ApnsResponseClassification {
   if (status >= 200 && status < 300) return 'success';
   if (
@@ -173,7 +198,17 @@ export class ApnsPushProvider implements PushSender {
   }
 
   async send(token: string, message: PushDeliveryMessage): Promise<void> {
-    const request = apnsPushRequest(token, message, this.#bundleId, this.#token());
+    await this.#post(apnsPushRequest(token, message, this.#bundleId, this.#token()));
+  }
+
+  async clearRead(token: string, channelIds: readonly string[]): Promise<void> {
+    await this.#post(apnsReadClearRequest(token, channelIds, this.#bundleId, this.#token()));
+  }
+
+  async #post(request: {
+    headers: OutgoingHttpHeaders;
+    payload: Record<string, unknown>;
+  }): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const fail = (error: unknown) => {

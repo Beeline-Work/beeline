@@ -52,21 +52,15 @@ describe('the # channel-mark convention on the chat surface', () => {
     expect(chatSource).not.toContain("roomName: `#${'");
   });
 
-  it('composes a corner name through displayCornerTitle, from the Room that owns it', () => {
-    // The Room's retired pinned line was one caller; the corners list is the
-    // other, and it is the one that survives. Both forms stay one model.
-    // The corners list composes the same `#room/corner` mark, but through
-    // `fullCornerTitle`: that screen exists to tell corners apart, so its
-    // name is uncapped (captain, 2026-09-20) while every inline surface keeps
-    // `displayCornerTitle`'s three-word form.
+  it('composes a corner name through the contract cornerTitle, from the Room that owns it', () => {
+    // The header and the Corners page compose the same `#room/corner` title
+    // from one helper, so a legacy `room/` prefix reads the same on both.
+    expect(sessionSource).toContain('cornerTitle(options.parentRoomName, resolvedName, channelId)');
     expect(cornersListSource).toContain(
-      "import { fullCornerTitle } from '@/buzz/room-list-row'",
-    );
-    expect(cornersListSource).toContain(
-      'fullCornerTitle(parentRoomName, item.corner.name, item.corner.id)',
+      'cornerTitle(parentRoomName, item.corner.name, item.corner.id)',
     );
     expect(chatSource).not.toContain('displayCornerTitle');
-    expect(rowSource).toContain('export function displayCornerTitle(');
+    expect(rowSource).not.toContain('export function displayCornerTitle(');
     expect(rowSource).toContain('export function displayRoomIndexTitle(');
   });
 });

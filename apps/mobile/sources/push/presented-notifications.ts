@@ -99,12 +99,24 @@ export async function dismissPresentedNotificationsForChannel(
   api: PresentedNotificationApi,
   platform: string,
 ): Promise<void> {
-  const openedChannelId = channelId.trim();
-  if (!openedChannelId) return;
+  await dismissPresentedNotificationsForChannels([channelId], api, platform);
+}
+
+/**
+ * Dismiss every presented push for these Rooms or corners — the ones opened
+ * here, or read on another device — and recount iOS's badge from the shade.
+ */
+export async function dismissPresentedNotificationsForChannels(
+  channelIds: readonly string[],
+  api: PresentedNotificationApi,
+  platform: string,
+): Promise<void> {
+  const readChannelIds = channelIds.map((id) => id.trim()).filter(Boolean);
+  if (readChannelIds.length === 0) return;
 
   const presented = await api.getPresentedNotificationsAsync();
   const matchingIds = presented.flatMap((notification) =>
-    presentedNotificationMatchesChannel(notification, openedChannelId)
+    readChannelIds.some((channelId) => presentedNotificationMatchesChannel(notification, channelId))
       ? [notification.request.identifier]
       : [],
   );

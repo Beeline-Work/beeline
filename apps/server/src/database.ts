@@ -2089,16 +2089,17 @@ ALTER TABLE push_devices ALTER COLUMN registered_at SET DEFAULT now();
 ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
--- One row per iOS device: the last read mark, by (read_at, room_id), already
--- sent to it as a silent shade clear, and when (PushDeliveryLoop.sendReadClears).
+-- One row per iOS device: when it was last sent a silent shade clear
+-- (PushDeliveryLoop.sendReadClears). cleared_through and cleared_through_room
+-- are no longer read or written; they stay for rolling-update compatibility.
 CREATE TABLE IF NOT EXISTS push_read_clears (
   device_token text PRIMARY KEY REFERENCES push_devices(token) ON DELETE CASCADE,
   cleared_through timestamptz NOT NULL,
   cleared_through_room text NOT NULL DEFAULT '',
   sent_at timestamptz NOT NULL DEFAULT now()
 );
--- When the mark last moved forward (PhoneService.markRead). updated_at also
--- moves on markUnread, which must not clear a phone's shade.
+ALTER TABLE push_read_clears ALTER COLUMN cleared_through DROP NOT NULL;
+-- No longer read or written; it stays for rolling-update compatibility.
 ALTER TABLE room_read_marks ADD COLUMN IF NOT EXISTS read_at timestamptz;
 CREATE INDEX IF NOT EXISTS room_read_marks_identity_read_idx
   ON room_read_marks(identity_id,read_at);
@@ -3317,6 +3318,7 @@ export async function compactPushClaims(database: SqlDatabase): Promise<void> {
        WHERE old.status IN ('delivered','suppressed','failed')
          AND old.completed_at<now()-interval '1 hour'
          AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
+           AND old.completed_at>=now()-interval '7 days'
            AND EXISTS (SELECT 1 FROM push_devices device
              WHERE device.token=old.device_token AND device.platform='ios'))
          AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup

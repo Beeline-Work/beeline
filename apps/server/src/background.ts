@@ -50,7 +50,6 @@ export type PushAction = PushActionPayload;
  */
 export type ReadClearCursor = {
   channelId: string;
-  readAt: number;
   messageId: string;
   readMessageIds: string[];
 };
@@ -92,7 +91,7 @@ export interface PushSender {
 
 /** At most one read-clear push per device in this window; reads inside it batch. */
 export const READ_CLEAR_INTERVAL_SECONDS = 30;
-/** Channel ids one read-clear push names; the newest reads win. */
+/** Channel ids one read-clear push names, oldest read mark first; the rest go in a later push. */
 export const READ_CLEAR_MAX_CHANNELS = 50;
 /** Read message ids one channel names, newest first; older ones go in a later push. */
 export const READ_CLEAR_MAX_MESSAGE_IDS = 20;
@@ -216,8 +215,9 @@ export class PushDeliveryLoop {
   /**
    * A Room read on any device leaves its notifications in this phone's shade
    * and in its badge until the phone opens the Room itself. Each iOS device
-   * gets one silent push naming the Rooms and corners whose read mark moved
-   * since its last one, at most once per READ_CLEAR_INTERVAL_SECONDS, so a
+   * gets one silent push naming the Rooms and corners where it holds a
+   * delivered notification no read-clear push has named yet at or before the
+   * viewer's read mark, at most once per READ_CLEAR_INTERVAL_SECONDS, so a
    * burst of reads costs one push.
    */
   private async sendReadClears(): Promise<void> {
@@ -226,36 +226,29 @@ export class PushDeliveryLoop {
     const due = await this.database.query<{
       token: string;
       channel_ids: string[];
-      read_at_texts: string[];
-      read_ats: number[];
       message_ids: string[];
       read_message_ids: string[];
     }>(
-      // Each push takes the oldest READ_CLEAR_MAX_CHANNELS marks past the
-      // device's (read_at, room_id) cursor; the APNs size limit may cut it
-      // shorter. The cursor moves to the last mark sent, so overflow and marks
-      // tied on read_at go in later pushes. read_at moves only on markRead, so
-      // marking a Room unread sends nothing. read_at goes back as text, not a
-      // JS Date: a Date drops microseconds, and the next pass would see the
-      // same mark as newer than the boundary forever. Each mark names the
-      // messages at or before it that this device was pushed, in server
-      // order, so the phone keeps notifications for messages after the read.
-      // A message is named until a sent push includes it: ids left out by the
-      // per-Room cap or the APNs size limit, and an unnamed cursor message,
-      // keep their Room pending.
-      `SELECT device.token,batch.channel_ids,batch.read_at_texts,batch.read_ats,
-         batch.message_ids,batch.read_message_ids
+      // A mark is due while this device holds a delivered, unnamed claim at
+      // or before it, so any advance clears: markRead, or the viewer's own
+      // message from another device (advanceAuthorReadMark). markUnread moves
+      // the mark back, so it names nothing. Only claims for messages since the
+      // device registered count, so a token handed to another person keeps
+      // the last one's notifications out of it. Each mark names the messages
+      // at or before it that this device was pushed, in server order, so the
+      // phone keeps notifications for messages after the read. A message is
+      // named until a sent push includes it: ids left out by the per-Room cap,
+      // the channel cap or the APNs size limit keep their Room due.
+      `SELECT device.token,batch.channel_ids,batch.message_ids,batch.read_message_ids
        FROM push_devices device
        LEFT JOIN push_read_clears clear ON clear.device_token=device.token
        CROSS JOIN LATERAL (
-         SELECT array_agg(pending.room_id ORDER BY pending.read_at,pending.room_id) channel_ids,
-           array_agg(pending.read_at::text ORDER BY pending.read_at,pending.room_id) read_at_texts,
-           array_agg(ceil(extract(epoch FROM pending.read_at)*1000)::float8
-             ORDER BY pending.read_at,pending.room_id) read_ats,
-           array_agg(pending.message_id ORDER BY pending.read_at,pending.room_id) message_ids,
-           array_agg(pending.read_ids::text ORDER BY pending.read_at,pending.room_id) read_message_ids
+         SELECT array_agg(pending.room_id ORDER BY pending.message_created_at,pending.room_id) channel_ids,
+           array_agg(pending.message_id ORDER BY pending.message_created_at,pending.room_id) message_ids,
+           array_agg(pending.read_ids::text
+             ORDER BY pending.message_created_at,pending.room_id) read_message_ids
          FROM (
-           SELECT mark.room_id::text room_id,mark.read_at,mark.message_id,
+           SELECT mark.room_id::text room_id,mark.message_created_at,mark.message_id,
              COALESCE((
                SELECT jsonb_agg(pushed.id ORDER BY pushed.created_at DESC,pushed.id DESC)
                FROM (
@@ -264,7 +257,7 @@ export class PushDeliveryLoop {
                  JOIN messages message ON message.id=claim.message_id
                  WHERE claim.device_token=device.token AND claim.status='delivered'
                    AND claim.read_cleared_at IS NULL
-                   AND message.room_id=mark.room_id
+                   AND message.room_id=mark.room_id AND message.created_at>=device.registered_at
                    AND (message.created_at,message.id)<(mark.message_created_at,mark.message_id)
                  ORDER BY message.created_at DESC,message.id DESC
                  LIMIT ${READ_CLEAR_MAX_MESSAGE_IDS}
@@ -272,19 +265,14 @@ export class PushDeliveryLoop {
              ),'[]'::jsonb) read_ids
            FROM room_read_marks mark
            WHERE mark.identity_id=device.identity_id
-             AND mark.read_at>device.registered_at
-             AND ((mark.read_at>now()-interval '1 day'
-                 AND (mark.read_at,mark.room_id::text)
-                   >(COALESCE(clear.cleared_through,'-infinity'::timestamptz),
-                     COALESCE(clear.cleared_through_room,'')))
-               OR EXISTS (
-                 SELECT 1 FROM push_delivery_claims claim
-                 JOIN messages message ON message.id=claim.message_id
-                 WHERE claim.device_token=device.token AND claim.status='delivered'
-                   AND claim.read_cleared_at IS NULL
-                   AND message.room_id=mark.room_id
-                   AND (message.created_at,message.id)<=(mark.message_created_at,mark.message_id)))
-           ORDER BY mark.read_at,mark.room_id::text
+             AND EXISTS (
+               SELECT 1 FROM push_delivery_claims claim
+               JOIN messages message ON message.id=claim.message_id
+               WHERE claim.device_token=device.token AND claim.status='delivered'
+                 AND claim.read_cleared_at IS NULL
+                 AND message.room_id=mark.room_id AND message.created_at>=device.registered_at
+                 AND (message.created_at,message.id)<=(mark.message_created_at,mark.message_id))
+           ORDER BY mark.message_created_at,mark.room_id::text
            LIMIT ${READ_CLEAR_MAX_CHANNELS}
          ) pending
        ) batch
@@ -297,12 +285,10 @@ export class PushDeliveryLoop {
       const reads = apnsReadClearBatch(
         row.channel_ids.map((channelId, index) => ({
           channelId,
-          readAt: Number(row.read_ats[index]),
           messageId: row.message_ids[index]!,
           readMessageIds: JSON.parse(row.read_message_ids[index]!) as string[],
         })),
       );
-      const last = reads.length - 1;
       try {
         await sender.clearRead(row.token, reads);
         await this.database.query(
@@ -310,35 +296,18 @@ export class PushDeliveryLoop {
            WHERE device_token=$1 AND message_id=ANY($2::text[])`,
           [row.token, reads.flatMap((read) => [read.messageId, ...read.readMessageIds])],
         );
-        // A Room resent for left-out ids can sort before the boundary; the
-        // boundary never moves back.
-        await this.database.query(
-          `INSERT INTO push_read_clears(device_token,cleared_through,cleared_through_room,sent_at)
-           VALUES($1,$2::timestamptz,$3,now())
-           ON CONFLICT(device_token) DO UPDATE
-             SET (cleared_through,cleared_through_room)=(
-                 SELECT CASE WHEN (EXCLUDED.cleared_through,EXCLUDED.cleared_through_room)
-                     >(push_read_clears.cleared_through,push_read_clears.cleared_through_room)
-                   THEN EXCLUDED.cleared_through ELSE push_read_clears.cleared_through END,
-                   CASE WHEN (EXCLUDED.cleared_through,EXCLUDED.cleared_through_room)
-                     >(push_read_clears.cleared_through,push_read_clears.cleared_through_room)
-                   THEN EXCLUDED.cleared_through_room ELSE push_read_clears.cleared_through_room END),
-               sent_at=EXCLUDED.sent_at`,
-          [row.token, row.read_at_texts[last], row.channel_ids[last]],
-        );
       } catch (error) {
         if (isUnregisteredPushToken(error)) {
           await this.database.query(`DELETE FROM push_devices WHERE token=$1`, [row.token]);
           continue;
         }
-        // Keep the boundary so the same reads retry after the interval.
-        await this.database.query(
-          `INSERT INTO push_read_clears(device_token,cleared_through,sent_at)
-           VALUES($1,'-infinity'::timestamptz,now())
-           ON CONFLICT(device_token) DO UPDATE SET sent_at=EXCLUDED.sent_at`,
-          [row.token],
-        );
+        // The claims stay unnamed, so the same reads retry after the interval.
       }
+      await this.database.query(
+        `INSERT INTO push_read_clears(device_token,sent_at) VALUES($1,now())
+         ON CONFLICT(device_token) DO UPDATE SET sent_at=EXCLUDED.sent_at`,
+        [row.token],
+      );
     }
   }
 
@@ -350,14 +319,16 @@ export class PushDeliveryLoop {
     );
     // Candidate messages expire after an hour. A terminal claim outside that
     // window cannot suppress a future push, except an explicit release catchup.
-    // An iOS delivered claim stays until a read-clear push names it, so a read
-    // hours after delivery still clears that notification (sendReadClears).
+    // An iOS delivered claim stays until a read-clear push names it or for a
+    // week, so a read days after delivery still clears that notification
+    // (sendReadClears) and a Room never read cannot grow claims forever.
     await this.database.query(`DELETE FROM push_delivery_claims claim
       WHERE (claim.message_id,claim.device_token) IN (
         SELECT old.message_id,old.device_token FROM push_delivery_claims old
         WHERE old.status IN ('delivered','suppressed','failed')
           AND old.completed_at<now()-interval '1 hour'
           AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
+            AND old.completed_at>=now()-interval '7 days'
             AND EXISTS (SELECT 1 FROM push_devices device
               WHERE device.token=old.device_token AND device.platform='ios'))
           AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup

@@ -304,8 +304,8 @@ describe('APNs read-clear request', () => {
     const request = apnsReadClearRequest(
       'device',
       [
-        { channelId: 'room-a', readAt: 2, messageId: 'm1', readMessageIds: ['m0'] },
-        { channelId: 'corner-b', readAt: 3, messageId: 'm2', readMessageIds: [] },
+        { channelId: 'room-a', messageId: 'm1', readMessageIds: ['m0'] },
+        { channelId: 'corner-b', messageId: 'm2', readMessageIds: [] },
       ],
       'app.bundle',
       'jwt',
@@ -330,7 +330,6 @@ describe('APNs read-clear request', () => {
   it('cuts a batch to the reads whose payload fits the APNs size limit', () => {
     const reads = Array.from({ length: 50 }, (_, index) => ({
       channelId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
-      readAt: index,
       messageId: index.toString(16).padStart(2, '0').repeat(32),
       readMessageIds: [],
     }));
@@ -350,7 +349,6 @@ describe('APNs read-clear request', () => {
   it('keeps the cursor and the newest read ids of one Room too large alone', () => {
     const read = {
       channelId: 'room-a',
-      readAt: 1,
       messageId: 'f'.repeat(64),
       readMessageIds: Array.from({ length: 80 }, (_, index) => String(index).padStart(64, '0')),
     };

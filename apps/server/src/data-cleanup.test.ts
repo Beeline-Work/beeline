@@ -66,11 +66,13 @@ describe('release data cleanup', () => {
       VALUES('device',$1,'ios','physical')`, [HUMAN]);
     await db.query(`INSERT INTO push_release_catchups(device_token,identity_id,message_id)
       VALUES('device',$1,'catchup')`, [HUMAN]);
-    // An iOS delivered claim no read-clear push has named stays (sendReadClears).
+    // An iOS delivered claim no read-clear push has named stays (sendReadClears)
+    // for a week, so a Room never read cannot grow claims forever.
     await db.query(`INSERT INTO push_delivery_claims
       (message_id,device_token,status,completed_at,read_cleared_at) VALUES
       ('old','device','delivered',now()-interval '2 hours',now()-interval '2 hours'),
       ('unnamed','device','delivered',now()-interval '2 hours',NULL),
+      ('stale','device','delivered',now()-interval '8 days',NULL),
       ('fresh','device','delivered',now(),NULL),
       ('catchup','device','failed',now()-interval '2 hours',NULL)`);
     await compactPushClaims(db);

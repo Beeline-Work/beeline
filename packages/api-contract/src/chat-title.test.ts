@@ -107,10 +107,11 @@ describe('read-clear push data', () => {
     expect(readClearReads({ data: { dataString: JSON.stringify(data) } })).toEqual(reads);
   });
 
-  it('keeps ids without a read cursor', () => {
-    expect(readClearReads({ type: 'read-clear', channelIds: ids.join(',') })).toEqual(
-      ids.map((channelId) => ({ channelId, messageId: null, readMessageIds: [] })),
-    );
+  it('drops ids without a read cursor', () => {
+    expect(readClearReads({ type: 'read-clear', channelIds: ids.join(',') })).toEqual([]);
+    expect(
+      readClearReads({ type: 'read-clear', channelIds: ids, messageIds: ['', '2'.repeat(64)] }),
+    ).toEqual([{ channelId: ids[1], messageId: '2'.repeat(64), readMessageIds: [] }]);
   });
 
   it('ignores every other push', () => {

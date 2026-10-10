@@ -40,7 +40,9 @@ export class AcpResourceScope {
         '--user', '--scope', '--quiet', '--same-dir', `--unit=${this.unit}`,
         `--property=MemoryMax=${this.memoryMaxBytes}`,
         '--property=MemorySwapMax=0',
-        '--property=OOMPolicy=kill',
+        // Let the kernel kill one offending process. `kill` sets
+        // memory.oom.group=1 and ends the ACP runtime with the command.
+        '--property=OOMPolicy=continue',
         '--property=KillMode=control-group',
         '--property=TimeoutStopSec=1s',
         ...(owner ? [`--property=BindsTo=${owner}`, `--property=After=${owner}`] : []),
@@ -52,17 +54,6 @@ export class AcpResourceScope {
       ],
       env,
     };
-  }
-
-  /** An OOM result survives process exit until reset-failed unloads the unit. */
-  async exceededMemoryLimit(): Promise<boolean> {
-    try {
-      const { stdout } = await execFileAsync('systemctl',
-        ['--user', 'show', this.unit, '--property=Result', '--value'], { timeout: 5_000 });
-      return stdout.trim() === 'oom-kill';
-    } catch {
-      return false;
-    }
   }
 
   async stop(): Promise<void> {

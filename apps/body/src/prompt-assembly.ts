@@ -1,6 +1,7 @@
 import { boundReplyExcerpt, quoteOutsideData, WORKSPACE_CORE_SKILL_SLUG, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { CornerGitHubCli } from './corner-github-auth.js';
+import { ACP_SESSION_MEMORY_MAX_BYTES } from './acp-resource-scope.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
 
@@ -87,6 +88,8 @@ export interface SessionPromptContext {
   readonly soul?: { readonly name: string; readonly instructions: string };
   /** The ACP command; decides whether session text must also ride every turn. */
   readonly agentCommand?: string;
+  /** Defaults to the cap shared with the ACP scope; override only for deterministic fixtures. */
+  readonly memoryMaxBytes?: number;
   /** A Room's bound repository and branch (read-only checkout). */
   readonly repository?: { readonly name: string; readonly branch: string };
   readonly shell?: RoomShellState;
@@ -311,6 +314,16 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'Your voice never changes the facts: never trim, soften, exaggerate, or invent a detail for style. Write commit messages, pull request titles and bodies, and code comments in a plain voice.',
   },
   {
+    id: 'core.memory',
+    topic: 'memory',
+    why: 'A command can exhaust the session cgroup before the agent can adapt its workload.',
+    budgetBytes: 160,
+    layer: 'core',
+    surfaces: EVERYWHERE,
+    render: ({ memoryMaxBytes }) =>
+      `Memory cap: ${Number(((memoryMaxBytes ?? ACP_SESSION_MEMORY_MAX_BYTES) / 1024 ** 3).toFixed(2))} GiB per session. Size builds, tests and data jobs to fit it; split heavy work. Exit 137/signal 9 likely means a command hit this cap.`,
+  },
+  {
     id: 'core.proactive',
     topic: 'proactivity',
     why: 'Agents answered a reported problem by restating it instead of fixing it or offering to.',
@@ -328,7 +341,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Finish the work before you end the turn. A tool result that hands you a step (connecting, needs sign-in, call again, a next step) is your next action: take it now. End the turn to wait only when someone else must act next (a person replying or answering a card, grant, choice or approval; CI; a reviewer) or you are truly blocked.',
+      'Finish the work before you end the turn. Take the next step a tool result gives you, including sign-in or retry. Wait only for a person, CI, a reviewer, or a real block.',
   },
   {
     id: 'core.truth',

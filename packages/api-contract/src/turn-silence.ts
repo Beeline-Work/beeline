@@ -164,7 +164,7 @@ export function classifyTurnSilence(
     return { kind: 'context-overflow' };
   }
 
-  if (/\bresource_limit: ACP session exceeded its \d+ MiB memory limit\b/i.test(text)) {
+  if (/\bresource_limit: ACP session (?:exceeded|likely hit) its \d+ MiB memory limit\b/i.test(text)) {
     return { kind: 'resource-limit' };
   }
 
@@ -356,7 +356,7 @@ export function phraseTurnSilence(
       return capLine(
         agent,
         'could not answer',
-        'the session exceeded its memory limit. Run fewer tools at once or split the task.',
+        'the session likely hit its memory limit. Run fewer tools at once or split the task.',
       );
     case 'hiccup': {
       const fault = (classified.fault ?? 'the turn stalled').replace(/\s+/g, ' ').trim();

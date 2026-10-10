@@ -22,7 +22,7 @@ describe('ACP session memory ceiling', () => {
 const agentSource = `
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
 createInterface({ input: process.stdin }).on('line', (line) => {
   const request = JSON.parse(line);
@@ -30,11 +30,26 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   if (request.method === 'initialize') reply({ protocolVersion: 1 });
   if (request.method === 'session/new') reply({ sessionId: 'test' });
   if (request.method === 'session/prompt') {
-    if (request.params.prompt[0].text === 'spawn') {
+    const text = request.params.prompt[0].text;
+    if (text === 'spawn') {
       const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],
         { detached: true, stdio: 'ignore' });
       writeFileSync(process.env.GRANDCHILD_PID_FILE, String(child.pid));
       reply({ stopReason: 'end_turn' });
+    } else if (text === 'allocate-child') {
+      const path = readFileSync('/proc/self/cgroup', 'utf8').match(/^0::(.*)$/m)?.[1];
+      writeFileSync(process.env.CGROUP_STATE_FILE,
+        readFileSync('/sys/fs/cgroup' + path + '/memory.oom.group', 'utf8'));
+      const child = spawn(process.execPath,
+        ['-e', 'const blocks = []; while (true) blocks.push(Buffer.alloc(16 * 1024 * 1024, 1));'],
+        { stdio: 'ignore' });
+      child.on('exit', (code, signal) => {
+        send({ jsonrpc: '2.0', method: 'session/update', params: {
+          sessionId: 'test', update: { sessionUpdate: 'tool_call_update',
+            toolCallId: 'memory-command', kind: 'execute', status: 'failed',
+            rawOutput: 'command exited code=' + code + ' signal=' + signal } } });
+        reply({ stopReason: 'end_turn' });
+      });
     } else {
       const blocks = [];
       while (true) blocks.push(Buffer.alloc(16 * 1024 * 1024, 1));
@@ -108,6 +123,7 @@ describe.skipIf(!systemdAvailable)('managed ACP resource scope', () => {
       agentEnv: {
         PATH: process.env.PATH ?? '/usr/bin:/bin',
         GRANDCHILD_PID_FILE: pidFile,
+        CGROUP_STATE_FILE: join(root, 'oom-group'),
       },
       resourceScope: 'systemd',
       resourceScopeMemoryMaxBytes: memoryMaxBytes,
@@ -125,10 +141,22 @@ describe.skipIf(!systemdAvailable)('managed ACP resource scope', () => {
     await waitForDead(pid);
   }, 15_000);
 
-  it('reports a per-session memory kill as a resource limit', async () => {
+  it('keeps the session ceiling as a backstop and describes a runtime kill as likely memory', async () => {
     const session = await start(128 * 1024 * 1024);
     const error = await client!.sessionPrompt(session, 'allocate').catch((failure) => failure);
     expect(error).toBeInstanceOf(AcpResourceLimitError);
-    expect(error.message).toContain('128 MiB memory limit');
+    expect(error.message).toContain('likely hit its 128 MiB memory limit');
+  }, 15_000);
+
+  it('kills an over-budget command while the ACP session survives', async () => {
+    const session = await start(128 * 1024 * 1024);
+    const result = await client!.sessionPrompt(session, 'allocate-child');
+    expect((await readFile(join(root!, 'oom-group'), 'utf8')).trim()).toBe('0');
+    expect(result.toolCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'memory-command', status: 'failed',
+        rawOutput: 'command exited code=null signal=SIGKILL' }),
+    ]));
+    expect(client!.isAlive).toBe(true);
+    expect((await client!.sessionPrompt(session, 'spawn')).stopReason).toBe('end_turn');
   }, 15_000);
 });

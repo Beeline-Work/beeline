@@ -14,12 +14,15 @@ const roomB = '33333333-3333-4333-8333-333333333333';
 const READ_AT = 1_760_000_000;
 const BEFORE_READ = READ_AT - 60;
 
-/** The server read cursor: the last read message and its creation time (ms). */
-function cursor(channelId: string, identifier: string, createdAtSeconds = BEFORE_READ) {
+/**
+ * The server read cursor (the last read message) and the other read messages
+ * the server pushed to this device.
+ */
+function cursor(channelId: string, identifier: string, readIdentifiers: string[] = []) {
   return {
     channelId,
     messageId: `${identifier}-message`,
-    messageCreatedAt: createdAtSeconds * 1000,
+    readMessageIds: readIdentifiers.map((read) => `${read}-message`),
   };
 }
 
@@ -60,7 +63,7 @@ describe('read-clear push on iOS', () => {
     const api = shade();
     const payload = {
       data: {
-        dataString: JSON.stringify(readClearPushData([cursor(roomA, 'a2'), cursor(cornerA, 'c1')])),
+        dataString: JSON.stringify(readClearPushData([cursor(roomA, 'a2', ['a1']), cursor(cornerA, 'c1')])),
       },
     };
 
@@ -93,12 +96,21 @@ describe('read-clear push on iOS', () => {
     expect(api.setBadgeCountAsync).toHaveBeenCalledWith(1);
   });
 
-  it('falls back to the read message time when its notification is gone', async () => {
+  // G9-R3 again: iOS dates both notifications to the same second, so only the
+  // server's message order can tell the read one from the unread one.
+  it('keeps the unread message when both were presented at the same second', async () => {
+    const api = shade([push('a1', roomA, roomA, READ_AT), push('a2', roomA, roomA, READ_AT)]);
+    await handleReadClearPayload(readClearPushData([cursor(roomA, 'a1')]), api, 'ios');
+    expect(api.dismissNotificationAsync.mock.calls).toEqual([['a1']]);
+    expect(api.setBadgeCountAsync).toHaveBeenCalledWith(1);
+  });
+
+  it('dismisses the read messages the server names when the cursor is gone', async () => {
     const api = shade([
       push('a0', roomA, roomA, BEFORE_READ - 30),
-      push('a2', roomA, roomA, BEFORE_READ + 30),
+      push('a2', roomA, roomA, BEFORE_READ - 30),
     ]);
-    await handleReadClearPayload(readClearPushData([cursor(roomA, 'a1')]), api, 'ios');
+    await handleReadClearPayload(readClearPushData([cursor(roomA, 'a1', ['a0'])]), api, 'ios');
     expect(api.dismissNotificationAsync.mock.calls).toEqual([['a0']]);
     expect(api.setBadgeCountAsync).toHaveBeenCalledWith(1);
   });

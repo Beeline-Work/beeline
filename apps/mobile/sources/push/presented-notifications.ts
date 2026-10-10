@@ -2,8 +2,6 @@ import { getBuzzNotificationTargetFromData } from '@/utils/notificationRouting';
 import type { PushLevel } from '@beeline/api-contract/phone';
 
 export type PresentedNotification = {
-  /** When iOS presented it: epoch seconds on iOS, milliseconds on Android. */
-  date?: number;
   request: {
     identifier: string;
     content?: { data?: unknown };
@@ -104,14 +102,6 @@ export async function dismissPresentedNotificationsForChannel(
   await dismissPresentedNotificationsForChannels([{ channelId }], api, platform);
 }
 
-/** A presented notification's time in epoch milliseconds, or null when unknown. */
-function presentedAtMs(notification: PresentedNotification): number | null {
-  const date = notification.date;
-  if (typeof date !== 'number' || !Number.isFinite(date) || date <= 0) return null;
-  // Expo reports seconds on iOS and milliseconds on Android.
-  return date < 1e11 ? date * 1000 : date;
-}
-
 function presentedMessageId(notification: PresentedNotification): string | null {
   const data = notification.request.content?.data;
   if (!data || typeof data !== 'object') return null;
@@ -123,15 +113,16 @@ type ChannelRead = {
   channelId: string;
   /** The server read cursor: the last read message. Absent = clear everything. */
   messageId?: string | null;
-  messageCreatedAt?: number | null;
+  /** The other read messages the server pushed to this device. */
+  readMessageIds?: readonly string[];
 };
 
 /**
  * Dismiss presented pushes for these Rooms or corners — the ones opened here,
  * or read on another device — and recount iOS's badge from the shade. With a
- * read cursor, only notifications up to the read message go: the cursor's own
- * notification and any presented no later than it (or, when it is not in the
- * shade, no later than its creation time). A newer message stays unread.
+ * read cursor, only the read messages' notifications go: the cursor's own and
+ * those the server lists as read. The server orders messages, so a newer one
+ * stays unread even when iOS presented it at the same second.
  */
 export async function dismissPresentedNotificationsForChannels(
   reads: readonly ChannelRead[],
@@ -145,24 +136,15 @@ export async function dismissPresentedNotificationsForChannels(
   if (readChannels.length === 0) return;
 
   const presented = await api.getPresentedNotificationsAsync();
-  const cutoffs = readChannels.map((read) => {
-    if (!read.messageId && read.messageCreatedAt == null) return null;
-    const cursorNotification = presented.find(
-      (notification) =>
-        presentedNotificationMatchesChannel(notification, read.channelId) &&
-        presentedMessageId(notification) === read.messageId,
-    );
-    const cursorAt = cursorNotification ? presentedAtMs(cursorNotification) : null;
-    return { messageId: read.messageId ?? null, at: cursorAt ?? read.messageCreatedAt ?? null };
-  });
   const matchingIds = presented.flatMap((notification) =>
-    readChannels.some((read, index) => {
+    readChannels.some((read) => {
       if (!presentedNotificationMatchesChannel(notification, read.channelId)) return false;
-      const cutoff = cutoffs[index];
-      if (!cutoff) return true;
-      if (cutoff.messageId && presentedMessageId(notification) === cutoff.messageId) return true;
-      const presentedAt = presentedAtMs(notification);
-      return cutoff.at !== null && presentedAt !== null && presentedAt <= cutoff.at;
+      if (!read.messageId) return true;
+      const messageId = presentedMessageId(notification);
+      return (
+        messageId !== null &&
+        (messageId === read.messageId || (read.readMessageIds ?? []).includes(messageId))
+      );
     })
       ? [notification.request.identifier]
       : [],

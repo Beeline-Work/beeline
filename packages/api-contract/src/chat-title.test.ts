@@ -89,8 +89,8 @@ describe('directMessageTitle', () => {
 describe('read-clear push data', () => {
   const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
   const reads = [
-    { channelId: ids[0]!, messageId: '1'.repeat(64), messageCreatedAt: 1_760_000_000_000 },
-    { channelId: ids[1]!, messageId: '2'.repeat(64), messageCreatedAt: 1_760_000_001_500 },
+    { channelId: ids[0]!, messageId: '1'.repeat(64), readMessageIds: ['0'.repeat(64)] },
+    { channelId: ids[1]!, messageId: '2'.repeat(64), readMessageIds: [] },
   ];
 
   it('round-trips flat, nested and dataString payloads', () => {
@@ -102,7 +102,7 @@ describe('read-clear push data', () => {
 
   it('keeps ids without a read cursor', () => {
     expect(readClearReads({ type: 'read-clear', channelIds: ids.join(',') })).toEqual(
-      ids.map((channelId) => ({ channelId, messageId: null, messageCreatedAt: null })),
+      ids.map((channelId) => ({ channelId, messageId: null, readMessageIds: [] })),
     );
   });
 

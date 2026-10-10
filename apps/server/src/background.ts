@@ -9,6 +9,7 @@ import {
 } from '@beeline/api-contract/phone';
 import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
+import { apnsReadClearBatch } from './apns-push.js';
 import type { ObjectService } from './object-service.js';
 import { addressedToPersonSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
@@ -43,12 +44,15 @@ function isRetryableApnsFailure(error: unknown): boolean {
 /** What a person can do from the notification itself; see `push-actions.ts`. */
 export type PushAction = PushActionPayload;
 
-/** One read Room or corner for a read-clear push, with its read cursor. */
+/**
+ * One read Room or corner for a read-clear push: its read cursor and the
+ * other read messages already pushed to the device, newest first.
+ */
 export type ReadClearCursor = {
   channelId: string;
   readAt: number;
   messageId: string;
-  messageCreatedAt: number;
+  readMessageIds: string[];
 };
 
 export interface PushSender {
@@ -90,6 +94,8 @@ export interface PushSender {
 export const READ_CLEAR_INTERVAL_SECONDS = 30;
 /** Channel ids one read-clear push names; the newest reads win. */
 export const READ_CLEAR_MAX_CHANNELS = 50;
+/** Read message ids one channel names, newest first; older ones stay in the shade. */
+export const READ_CLEAR_MAX_MESSAGE_IDS = 20;
 
 const PUSH_TITLE_LENGTH = 40;
 const PUSH_TITLE_ROOM_LENGTH = 16;
@@ -219,38 +225,48 @@ export class PushDeliveryLoop {
     if (!sender?.clearRead) return;
     const due = await this.database.query<{
       token: string;
-      cleared_through: string;
-      cleared_through_room: string;
       channel_ids: string[];
+      read_at_texts: string[];
       read_ats: number[];
       message_ids: string[];
-      message_created_ats: number[];
+      read_message_ids: string[];
     }>(
       // Each push takes the oldest READ_CLEAR_MAX_CHANNELS marks past the
-      // device's (read_at, room_id) cursor and moves the cursor to the last
-      // one sent, so overflow and marks tied on read_at go in later pushes.
-      // read_at moves only on markRead, so marking a Room unread sends nothing.
-      // Text, not a JS Date: a Date drops microseconds, and the next pass
-      // would see the same mark as newer than the boundary forever. Each
-      // mark's message cursor (id, created_at in epoch ms) lets the phone keep
-      // notifications for messages after the read one.
-      `SELECT device.token,batch.cleared_through,batch.cleared_through_room,batch.channel_ids,
-         batch.read_ats,batch.message_ids,batch.message_created_ats
+      // device's (read_at, room_id) cursor; the APNs size limit may cut it
+      // shorter. The cursor moves to the last mark sent, so overflow and marks
+      // tied on read_at go in later pushes. read_at moves only on markRead, so
+      // marking a Room unread sends nothing. read_at goes back as text, not a
+      // JS Date: a Date drops microseconds, and the next pass would see the
+      // same mark as newer than the boundary forever. Each mark names the
+      // messages at or before it that this device was pushed, in server
+      // order, so the phone keeps notifications for messages after the read.
+      `SELECT device.token,batch.channel_ids,batch.read_at_texts,batch.read_ats,
+         batch.message_ids,batch.read_message_ids
        FROM push_devices device
        LEFT JOIN push_read_clears clear ON clear.device_token=device.token
        CROSS JOIN LATERAL (
          SELECT array_agg(pending.room_id ORDER BY pending.read_at,pending.room_id) channel_ids,
+           array_agg(pending.read_at::text ORDER BY pending.read_at,pending.room_id) read_at_texts,
            array_agg(ceil(extract(epoch FROM pending.read_at)*1000)::float8
              ORDER BY pending.read_at,pending.room_id) read_ats,
            array_agg(pending.message_id ORDER BY pending.read_at,pending.room_id) message_ids,
-           array_agg(ceil(extract(epoch FROM pending.message_created_at)*1000)::float8
-             ORDER BY pending.read_at,pending.room_id) message_created_ats,
-           (array_agg(pending.read_at::text
-             ORDER BY pending.read_at DESC,pending.room_id DESC))[1] cleared_through,
-           (array_agg(pending.room_id
-             ORDER BY pending.read_at DESC,pending.room_id DESC))[1] cleared_through_room
+           array_agg(pending.read_ids::text ORDER BY pending.read_at,pending.room_id) read_message_ids
          FROM (
-           SELECT mark.room_id::text room_id,mark.read_at,mark.message_id,mark.message_created_at
+           SELECT mark.room_id::text room_id,mark.read_at,mark.message_id,
+             COALESCE((
+               SELECT jsonb_agg(pushed.id ORDER BY pushed.created_at DESC,pushed.id DESC)
+               FROM (
+                 SELECT message.id,message.created_at
+                 FROM push_delivery_claims claim
+                 JOIN messages message ON message.id=claim.message_id
+                 WHERE claim.device_token=device.token AND claim.status='delivered'
+                   AND claim.claimed_at>now()-interval '1 day'
+                   AND message.room_id=mark.room_id
+                   AND (message.created_at,message.id)<(mark.message_created_at,mark.message_id)
+                 ORDER BY message.created_at DESC,message.id DESC
+                 LIMIT ${READ_CLEAR_MAX_MESSAGE_IDS}
+               ) pushed
+             ),'[]'::jsonb) read_ids
            FROM room_read_marks mark
            WHERE mark.identity_id=device.identity_id
              AND mark.read_at>GREATEST(device.registered_at,now()-interval '1 day')
@@ -267,23 +283,24 @@ export class PushDeliveryLoop {
        LIMIT 100`,
     );
     for (const row of due.rows) {
+      const reads = apnsReadClearBatch(
+        row.channel_ids.map((channelId, index) => ({
+          channelId,
+          readAt: Number(row.read_ats[index]),
+          messageId: row.message_ids[index]!,
+          readMessageIds: JSON.parse(row.read_message_ids[index]!) as string[],
+        })),
+      );
+      const last = reads.length - 1;
       try {
-        await sender.clearRead(
-          row.token,
-          row.channel_ids.map((channelId, index) => ({
-            channelId,
-            readAt: Number(row.read_ats[index]),
-            messageId: row.message_ids[index]!,
-            messageCreatedAt: Number(row.message_created_ats[index]),
-          })),
-        );
+        await sender.clearRead(row.token, reads);
         await this.database.query(
           `INSERT INTO push_read_clears(device_token,cleared_through,cleared_through_room,sent_at)
            VALUES($1,$2::timestamptz,$3,now())
            ON CONFLICT(device_token) DO UPDATE
              SET cleared_through=EXCLUDED.cleared_through,
                cleared_through_room=EXCLUDED.cleared_through_room,sent_at=EXCLUDED.sent_at`,
-          [row.token, row.cleared_through, row.cleared_through_room],
+          [row.token, row.read_at_texts[last], row.channel_ids[last]],
         );
       } catch (error) {
         if (isUnregisteredPushToken(error)) {

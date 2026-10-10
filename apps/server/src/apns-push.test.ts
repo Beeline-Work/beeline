@@ -7,6 +7,8 @@ import {
   buildApnsProviderToken,
   classifyApnsResponse,
   createApnsPushSender,
+  APNS_MAX_PAYLOAD_BYTES,
+  apnsReadClearBatch,
   apnsReadClearRequest,
 } from './apns-push.js';
 
@@ -302,8 +304,8 @@ describe('APNs read-clear request', () => {
     const request = apnsReadClearRequest(
       'device',
       [
-        { channelId: 'room-a', readAt: 2, messageId: 'm1', messageCreatedAt: 1_760_000_000_000 },
-        { channelId: 'corner-b', readAt: 3, messageId: 'm2', messageCreatedAt: 1_760_000_001_000 },
+        { channelId: 'room-a', readAt: 2, messageId: 'm1', readMessageIds: ['m0'] },
+        { channelId: 'corner-b', readAt: 3, messageId: 'm2', readMessageIds: [] },
       ],
       'app.bundle',
       'jwt',
@@ -319,7 +321,47 @@ describe('APNs read-clear request', () => {
       type: 'read-clear',
       channelIds: ['room-a', 'corner-b'],
       messageIds: ['m1', 'm2'],
-      messageCreatedAts: [1_760_000_000_000, 1_760_000_001_000],
+      readMessageIds: [['m0'], []],
     });
+  });
+
+  // G9-R5: 50 Rooms with 64-character message ids made a 6,103-byte payload,
+  // over APNs's 4,096-byte limit, so Apple rejected the whole push.
+  it('cuts a batch to the reads whose payload fits the APNs size limit', () => {
+    const reads = Array.from({ length: 50 }, (_, index) => ({
+      channelId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      readAt: index,
+      messageId: index.toString(16).padStart(2, '0').repeat(32),
+      readMessageIds: [],
+    }));
+    const full = apnsReadClearRequest('device', reads, 'app.bundle', 'jwt');
+    expect(Buffer.byteLength(JSON.stringify(full.payload))).toBeGreaterThan(APNS_MAX_PAYLOAD_BYTES);
+
+    const batch = apnsReadClearBatch(reads);
+    expect(batch.length).toBeGreaterThan(0);
+    expect(batch.length).toBeLessThan(reads.length);
+    expect(batch).toEqual(reads.slice(0, batch.length));
+    const request = apnsReadClearRequest('device', batch, 'app.bundle', 'jwt');
+    expect(Buffer.byteLength(JSON.stringify(request.payload))).toBeLessThanOrEqual(
+      APNS_MAX_PAYLOAD_BYTES,
+    );
+  });
+
+  it('keeps the cursor and the newest read ids of one Room too large alone', () => {
+    const read = {
+      channelId: 'room-a',
+      readAt: 1,
+      messageId: 'f'.repeat(64),
+      readMessageIds: Array.from({ length: 80 }, (_, index) => String(index).padStart(64, '0')),
+    };
+    const [only, ...rest] = apnsReadClearBatch([read, { ...read, channelId: 'room-b' }]);
+    expect(rest).toEqual([]);
+    expect(only!.messageId).toBe(read.messageId);
+    expect(only!.readMessageIds).toEqual(read.readMessageIds.slice(0, only!.readMessageIds.length));
+    expect(only!.readMessageIds.length).toBeGreaterThan(0);
+    const request = apnsReadClearRequest('device', [only!], 'app.bundle', 'jwt');
+    expect(Buffer.byteLength(JSON.stringify(request.payload))).toBeLessThanOrEqual(
+      APNS_MAX_PAYLOAD_BYTES,
+    );
   });
 });

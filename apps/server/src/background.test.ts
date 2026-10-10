@@ -23,7 +23,7 @@ import {
 } from './media-ttl.js';
 import { ObjectService } from './object-service.js';
 import { PhoneService } from './phone-service.js';
-import { ApnsPushError } from './apns-push.js';
+import { APNS_MAX_PAYLOAD_BYTES, ApnsPushError, apnsReadClearRequest } from './apns-push.js';
 import { ensureSystemDirectMessageRoom, ensureSystemIdentity } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
@@ -612,7 +612,9 @@ describe('background advisory-lock ownership', () => {
   });
   // G9-R1: a push names at most READ_CLEAR_MAX_CHANNELS Rooms. Overflow,
   // including marks tied on read_at, must go out in later pushes.
-  it('clears every read Room across throttled pushes when more than one batch is pending', async () => {
+  // G9-R5: each push must also fit APNs's 4,096-byte payload limit; 50 Rooms
+  // with 64-character message ids made 6,103 bytes.
+  it('clears every read Room across throttled pushes that each fit the APNs limit', async () => {
     const db = new PgliteDatabase();
     try {
       await migrate(db);
@@ -659,21 +661,23 @@ describe('background advisory-lock ownership', () => {
           `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
         );
 
-      await loop.runOnce();
-      expect(clearRead).toHaveBeenCalledTimes(1);
-      expect(clearRead.mock.calls[0]![1]).toHaveLength(READ_CLEAR_MAX_CHANNELS);
-      // The throttle still holds the overflow inside the interval.
-      await loop.runOnce();
-      expect(clearRead).toHaveBeenCalledTimes(1);
-
-      await ageThrottle();
-      await loop.runOnce();
-      expect(clearRead).toHaveBeenCalledTimes(2);
-      expect(clearRead.mock.calls[1]![1]).toHaveLength(1);
-
-      await ageThrottle();
-      await loop.runOnce();
-      expect(clearRead).toHaveBeenCalledTimes(2);
+      // Push until the backlog is empty; the throttle holds each next batch.
+      for (let pass = 0; pass < count; pass += 1) {
+        const before = clearRead.mock.calls.length;
+        await loop.runOnce();
+        if (clearRead.mock.calls.length === before) break;
+        await loop.runOnce();
+        expect(clearRead).toHaveBeenCalledTimes(before + 1);
+        await ageThrottle();
+      }
+      expect(clearRead.mock.calls.length).toBeGreaterThan(1);
+      for (const [token, reads] of clearRead.mock.calls) {
+        expect(reads.length).toBeLessThanOrEqual(READ_CLEAR_MAX_CHANNELS);
+        const { payload } = apnsReadClearRequest(token, reads, 'app.bundle', 'jwt');
+        expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThanOrEqual(
+          APNS_MAX_PAYLOAD_BYTES,
+        );
+      }
       const cleared = clearRead.mock.calls.flatMap((call) =>
         call[1].map((read: { channelId: string }) => read.channelId),
       );
@@ -736,21 +740,15 @@ describe('background advisory-lock ownership', () => {
       expect(clearRead).toHaveBeenCalledTimes(1);
       // G9-R3: the push carries the server read cursor, so the phone keeps
       // notifications for messages after the read one.
-      const mark = (
-        await db.query<{ read_at: number; message_created_at: number }>(
-          `SELECT ceil(extract(epoch FROM read_at)*1000)::float8 read_at,
-             ceil(extract(epoch FROM message_created_at)*1000)::float8 message_created_at
+      const readAt = (
+        await db.query<{ read_at: number }>(
+          `SELECT ceil(extract(epoch FROM read_at)*1000)::float8 read_at
            FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`,
           [room, human],
         )
-      ).rows[0]!;
+      ).rows[0]!.read_at;
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
-        {
-          channelId: room,
-          readAt: mark.read_at,
-          messageId: second,
-          messageCreatedAt: mark.message_created_at,
-        },
+        { channelId: room, readAt, messageId: second, readMessageIds: [] },
       ]);
 
       await ageThrottle();
@@ -765,6 +763,78 @@ describe('background advisory-lock ownership', () => {
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
         expect.objectContaining({ channelId: room }),
+      ]);
+    } finally {
+      await db.close();
+    }
+  });
+  // G9-R3: two messages presented at the same second must not both clear when
+  // only the first is read. The push names read messages in server order.
+  it('names only the pushed messages at or before the read cursor, in server order', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        zero = '0'.repeat(64),
+        first = '1'.repeat(64),
+        second = '2'.repeat(64),
+        ios = 'c0ffee'.repeat(10) + 'abcd';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      // One shared created_at: only (created_at, id) orders these messages.
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
+         ($1,$4,$5,'zero',now()-interval '1 minute'),($2,$4,$5,'one',now()-interval '1 minute'),
+         ($3,$4,$5,'two',now()-interval '1 minute')`,
+        [zero, first, second, room, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical')`,
+        [ios, human],
+      );
+      await db.query(
+        `INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES
+         ($1,$4,'delivered'),($2,$4,'delivered'),($3,$4,'delivered')`,
+        [zero, first, second, ios],
+      );
+      const clearRead = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(
+        db,
+        undefined,
+        { send: vi.fn().mockResolvedValue(undefined), clearRead },
+      );
+      const read = (messageId: string) =>
+        db.query(
+          `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
+           SELECT room_id,$2,created_at,id,clock_timestamp() FROM messages WHERE id=$1
+           ON CONFLICT(room_id,identity_id) DO UPDATE SET message_id=EXCLUDED.message_id,
+             message_created_at=EXCLUDED.message_created_at,read_at=clock_timestamp()`,
+          [messageId, human],
+        );
+
+      await read(first);
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenLastCalledWith(ios, [
+        expect.objectContaining({ channelId: room, messageId: first, readMessageIds: [zero] }),
+      ]);
+
+      await db.query(
+        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+      );
+      await read(second);
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenLastCalledWith(ios, [
+        expect.objectContaining({ channelId: room, messageId: second, readMessageIds: [first, zero] }),
       ]);
     } finally {
       await db.close();

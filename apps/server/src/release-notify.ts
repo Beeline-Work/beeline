@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
+import type { LiveHub } from './live.js';
 import { ensureSystemDirectMessageRoom } from './system-line.js';
 
 export { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -161,6 +162,7 @@ export async function notifyReleaseDelivered(
 export interface ReleaseNotifierOptions {
   /** Absent = the notify endpoint refuses like any wrong secret. */
   readonly secret?: string;
+  readonly live?: LiveHub;
 }
 
 /**
@@ -171,7 +173,8 @@ export interface ReleaseNotifierOptions {
 export class ReleaseNotifier {
   readonly secret: string | undefined;
   private readonly listeners = new Set<(release: HelperRelease) => void>();
-  private pollTimer: NodeJS.Timeout | undefined;
+  private readInFlight?: Promise<void>;
+  private initialized = false;
   private lastSeenRelease: string | undefined;
   private lastRelease: HelperRelease | undefined;
 
@@ -180,6 +183,10 @@ export class ReleaseNotifier {
     options: ReleaseNotifierOptions = {},
   ) {
     this.secret = options.secret;
+    options.live?.subscribeAll((event) => {
+      if (event.type === 'helper-release') this.accept(event);
+    });
+    options.live?.subscribeResync(() => this.readOnce(true));
   }
 
   async notifyReleaseDelivered(input: ReleaseNotifyInput): Promise<ReleaseNotifyResult> {
@@ -190,11 +197,11 @@ export class ReleaseNotifier {
       version: required(input.version, 'version'),
       sha: required(input.sha, 'sha'),
     });
-    await this.poll();
+    this.accept({ version: input.version.trim(), sha: input.sha.trim() });
     return notifyReleaseDelivered(this.database, input);
   }
 
-  /** One database read per server process, including servers other than the notify recipient. */
+  /** One initial read per process; commit notifications and reconnects carry later changes. */
   subscribeHelperRelease(listener: (release: HelperRelease) => void): () => void {
     this.listeners.add(listener);
     if (this.lastRelease) {
@@ -204,23 +211,30 @@ export class ReleaseNotifier {
         console.error('[release] helper socket send failed', error);
       }
     }
-    if (!this.pollTimer) {
-      this.pollTimer = setInterval(() => void this.poll().catch(console.error), 15_000);
-      this.pollTimer.unref?.();
-    }
-    void this.poll().catch(console.error);
+    this.readOnce(false);
     return () => {
       this.listeners.delete(listener);
-      if (!this.listeners.size && this.pollTimer) {
-        clearInterval(this.pollTimer);
-        this.pollTimer = undefined;
-      }
     };
   }
 
-  private async poll(): Promise<void> {
+  private readOnce(force: boolean): void {
+    if (this.readInFlight || (!force && this.initialized)) return;
+    this.readInFlight = this.reconcile().then(() => {
+      this.initialized = true;
+    }).catch((error) => console.error('[release] reconcile failed', error)).finally(() => {
+      this.readInFlight = undefined;
+    });
+  }
+
+  private async reconcile(): Promise<void> {
+    const seenBeforeRead = this.lastSeenRelease;
     const release = await latestHelperRelease(this.database);
-    if (!release || `${release.version}:${release.sha}` === this.lastSeenRelease) return;
+    // A commit may reach LISTEN while this covering read is in flight.
+    if (release && this.lastSeenRelease === seenBeforeRead) this.accept(release);
+  }
+
+  private accept(release: HelperRelease): void {
+    if (`${release.version}:${release.sha}` === this.lastSeenRelease) return;
     this.lastSeenRelease = `${release.version}:${release.sha}`;
     this.lastRelease = release;
     for (const listener of this.listeners) {

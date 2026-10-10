@@ -216,6 +216,30 @@ describe('composer trailing control is mic XOR send', () => {
     expect(hosts(root, 'chat-mic')).toHaveLength(1);
   });
 
+  it('keeps the mic and a chip for a leading human tag, then shows send for typed text', () => {
+    const props = {
+      focused: true,
+      tagHandles: new Set(['bananaman614305', 'ruby']),
+    };
+    const root = render({ ...props, value: '@bananaman614305 ' });
+    expect(hosts(root, 'chat-tag-bananaman614305')).toHaveLength(1);
+    expect(hosts(root, 'chat-mic')).toHaveLength(1);
+    expect(hosts(root, 'chat-send')).toHaveLength(0);
+
+    const renderer = renderers[renderers.length - 1];
+    act(() =>
+      renderer.update(
+        <ConversationComposer
+          {...renderer.root.findByType(ConversationComposer).props}
+          value="@bananaman614305 hello"
+        />,
+      ),
+    );
+    expect(hosts(root, 'chat-tag-bananaman614305')).toHaveLength(1);
+    expect(hosts(root, 'chat-mic')).toHaveLength(0);
+    expect(hosts(root, 'chat-send')).toHaveLength(1);
+  });
+
   it('lowers the keyboard when the mic starts a take', async () => {
     const root = render({ value: '', focused: true });
     await act(async () => hosts(root, 'chat-mic')[0].props.onPress());

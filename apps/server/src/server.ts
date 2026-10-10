@@ -888,6 +888,9 @@ export function createBeelineServer(options: ServerOptions): Server {
       // still reaches this socket and identical local/PG copies do not.
       const sentDeltas = new Map<string, string>();
       const sentMessageVersions = new Map<string, number>();
+      // Reads still running per row. A row with a read in flight keeps its
+      // sent version, so the size bound never lets a delayed older read through.
+      const pendingRowReads = new Map<string, number>();
       const sentCornerStatus = new Map<string,
         { fingerprint: string; sequence: number; epoch?: string }>();
       const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>,
@@ -1152,6 +1155,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                   // controlled ids; the canonical PostgreSQL hint remains the
                   // independent recovery path for the real Room.
                   if (committedRow?.type === 'message' && committedRow.row.room_id !== roomId) return;
+                  const rowKey = target.type === 'message'
+                    ? `${roomId}:message:${target.messageId}`
+                    : `${roomId}:turn:${target.agentId}:${target.requestId}`;
+                  pendingRowReads.set(rowKey, (pendingRowReads.get(rowKey) ?? 0) + 1);
                   const pendingDelta = (
                     committedRow &&
                       (committedRow.type === 'message' || !options.phone.readLiveDeltas)
@@ -1187,9 +1194,6 @@ export function createBeelineServer(options: ServerOptions): Server {
                       }
                       const publicDelta = { ...result.delta,
                         ...(workflowRuns ? { workflowRuns } : {}) };
-                      const rowKey = target.type === 'message'
-                        ? `${roomId}:message:${target.messageId}`
-                        : `${roomId}:turn:${target.agentId}:${target.requestId}`;
                       // Row reads run concurrently and can finish out of order.
                       // A projection older than one this socket already sent
                       // would roll the row back on the phone.
@@ -1198,8 +1202,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                         if (sentVersion !== undefined && publicDelta.version < sentVersion) return;
                         sentMessageVersions.delete(rowKey);
                         sentMessageVersions.set(rowKey, publicDelta.version);
-                        if (sentMessageVersions.size > 256)
-                          sentMessageVersions.delete(sentMessageVersions.keys().next().value!);
+                        for (const key of sentMessageVersions.keys()) {
+                          if (sentMessageVersions.size <= 256) break;
+                          if (!pendingRowReads.has(key)) sentMessageVersions.delete(key);
+                        }
                       }
                       const fingerprint = createHash('sha256')
                         .update(JSON.stringify(publicDelta)).digest('hex');
@@ -1227,6 +1233,11 @@ export function createBeelineServer(options: ServerOptions): Server {
                         rememberPaintTrace(wireTrace, target.type);
                         sendFrame(fallback);
                       }
+                    })
+                    .finally(() => {
+                      const reads = pendingRowReads.get(rowKey)! - 1;
+                      if (reads > 0) pendingRowReads.set(rowKey, reads);
+                      else pendingRowReads.delete(rowKey);
                     });
               };
               const subscription = options.live.subscribeReplay(roomId, resume, forwardEvent);

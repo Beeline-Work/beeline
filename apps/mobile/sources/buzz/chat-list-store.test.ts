@@ -8,6 +8,9 @@ const disk = vi.hoisted(() => ({
   rows: new Map<string, unknown>(),
   writes: [] as unknown[],
 }));
+const server = vi.hoisted(() => ({
+  chats: (async () => { throw new Error('no read served'); }) as () => Promise<unknown>,
+}));
 const live = vi.hoisted(() => ({
   registrations: [] as Array<{ filters: unknown; listener: (event: unknown) => void; closed: boolean }>,
   reconnects: 0,
@@ -29,13 +32,9 @@ vi.mock('./surface-storage', () => ({
     remove: async (key: string) => {
       disk.rows.delete(key);
     },
-    fetch: async (key: string, _guard: unknown, request: () => Promise<unknown>) => {
-      const value = await request();
-      disk.rows.set(key, value);
-      return value;
-    },
   },
 }));
+vi.mock('./chat-list-read', () => ({ readChatListFromServer: () => server.chats() }));
 vi.mock('@/modal', async () => ({ Modal: (await import('@/modal/ModalManager')).Modal }));
 // The real ModalProvider and confirm dialog render; only the native Hull
 // primitives under them become host elements so a test can press a button.
@@ -107,6 +106,12 @@ function openWatches(): number {
 
 const visible = { visible: () => true };
 
+/** Open the list with the server answering `chats`. */
+function join(chats: () => Promise<ChatListView>, consumer: { visible: () => boolean }) {
+  server.chats = chats;
+  return acquireChatList(key, consumer);
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   resetChatListStoresForTest();
@@ -126,13 +131,13 @@ describe('app-level Room list store', () => {
     const server = listOf([row('room-a', 10), row('room-b', 5)]);
     const chats = vi.fn(async () => server);
     // The Sidebar opens the list on its own: no deck is mounted.
-    const sidebar = acquireChatList(key, { chats }, visible);
+    const sidebar = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     expect(sidebar.current()?.chats.map((item) => item.room.id)).toEqual(['room-a', 'room-b']);
     expect(openWatches()).toBe(1);
 
     // The Room screen joins the same store: no second read, no second watch.
-    const roomScreen = acquireChatList(key, { chats }, visible);
+    const roomScreen = join(chats, visible);
     expect(roomScreen.current()).toBe(sidebar.current());
     expect(chats).toHaveBeenCalledTimes(1);
     expect(openWatches()).toBe(1);
@@ -175,7 +180,7 @@ describe('app-level Room list store', () => {
     disk.rows.set(address, listOf([row('room-a', 10, { unread: false }), row('room-b', 5)]));
     const server = listOf([row('room-a', 30, { unread: true }), row('room-b', 5)]);
     const chats = vi.fn(async () => server);
-    const handle = acquireChatList(key, { chats }, visible);
+    const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(0);
     // Every Room reports a resumed lane before the read lands.
     emit({ monolithLive: { type: 'subscribed', roomId: 'room-a', resumed: true } });
@@ -191,9 +196,49 @@ describe('app-level Room list store', () => {
     handle.release();
   });
 
+  it('reads for a Room the watch gained after the last read, even when its lane resumes', async () => {
+    const reads = [listOf([row('room-a', 10)]), listOf([row('room-a', 10), row('room-b', 5)])];
+    const chats = vi.fn(async () => reads.shift() ?? listOf([row('room-a', 10), row('room-b', 5)]));
+    const handle = join(chats, visible);
+    await vi.advanceTimersByTimeAsync(10);
+    handle.force();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(chats).toHaveBeenCalledTimes(2);
+    // The second read added room-b, so the store re-installed its watch.
+    expect(live.registrations.at(-1)?.filters).toEqual([{ '#h': ['room-a', 'room-b'] }]);
+
+    // room-a was watched while the last read ran: its resumed lane replays nothing new.
+    emit({ monolithLive: { type: 'subscribed', roomId: 'room-a', resumed: true } });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(chats).toHaveBeenCalledTimes(2);
+
+    // room-b was not: this list heard none of its deltas since that read.
+    emit({ monolithLive: { type: 'subscribed', roomId: 'room-b', resumed: true } });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(chats).toHaveBeenCalledTimes(3);
+
+    // The read that ran with room-b watched covers it from then on.
+    emit({ monolithLive: { type: 'subscribed', roomId: 'room-b', resumed: true } });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(chats).toHaveBeenCalledTimes(3);
+    handle.release();
+  });
+
+  it('drops a pending live write when the Workspace is removed', async () => {
+    const address = '/workspace/:id/chats:workspace';
+    const handle = join(async () => listOf([row('room-a', 10)]), visible);
+    await vi.advanceTimersByTimeAsync(10);
+    const writesAfterRead = disk.writes.length;
+    emit(agentMessage('room-a', 'm-late', 40));
+    await handle.remove();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(disk.writes.length).toBe(writesAfterRead);
+    expect(disk.rows.has(address)).toBe(false);
+  });
+
   it('writes live deltas through to disk, so a reopened list starts current', async () => {
     const chats = vi.fn(async () => listOf([row('room-a', 10)]));
-    const first = acquireChatList(key, { chats }, visible);
+    const first = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     const writesAfterRead = disk.writes.length;
     emit({
@@ -209,7 +254,7 @@ describe('app-level Room list store', () => {
 
     // The next open paints the delta from disk before its covering read lands.
     let answer!: (value: ChatListView) => void;
-    const second = acquireChatList(key, { chats: () => new Promise((resolve) => { answer = resolve; }) }, visible);
+    const second = join(() => new Promise((resolve) => { answer = resolve; }), visible);
     await vi.advanceTimersByTimeAsync(0);
     expect(second.current()?.chats[0]?.latestMessage?.text).toBe('late');
     answer(listOf([row('room-a', 10)]));
@@ -219,7 +264,7 @@ describe('app-level Room list store', () => {
   it('reads nothing while no screen is on view, then catches up once', async () => {
     let onView = true;
     const chats = vi.fn(async () => listOf([row('room-a', 10)]));
-    const handle = acquireChatList(key, { chats }, { visible: () => onView });
+    const handle = join(chats, { visible: () => onView });
     await vi.advanceTimersByTimeAsync(10);
     onView = false;
     emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'activity' } });
@@ -239,11 +284,7 @@ describe('app-level Room list store', () => {
     // Disk still shows the Room open; the reader dismissed it since.
     disk.rows.set('/workspace/:id/chats:workspace', listOf([row('room-a', 10)]));
     let answer!: (value: ChatListView) => void;
-    const handle = acquireChatList(
-      key,
-      { chats: () => new Promise((resolve) => { answer = resolve; }) },
-      visible,
-    );
+    const handle = join(() => new Promise((resolve) => { answer = resolve; }), visible);
     await vi.advanceTimersByTimeAsync(0);
     expect(handle.current()?.chats[0]?.closed).toBeUndefined();
     expect(liveChatList(key)).toBeNull();
@@ -255,7 +296,7 @@ describe('app-level Room list store', () => {
 
   it('drops the list and its watch on an identity or relay change', async () => {
     const chats = vi.fn(async () => listOf([row('room-a', 10)]));
-    const handle = acquireChatList(key, { chats }, visible);
+    const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     const seen = vi.fn();
     handle.subscribe(seen);
@@ -275,7 +316,7 @@ describe('app-level Room list store', () => {
     expect(handle.current()).toBeNull();
 
     // The next screen opens a fresh store with its own read and watch.
-    const next = acquireChatList(key, { chats }, visible);
+    const next = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     expect(chats).toHaveBeenCalledTimes(2);
     expect(next.current()?.chats.map((item) => item.room.id)).toEqual(['room-a']);
@@ -300,7 +341,7 @@ describe('unread follows the server read cursor in every arrival order', () => {
   it('delta then read mark: lights once, then the read clears it', async () => {
     let server = listOf([row('room-a', 10)]);
     const chats = vi.fn(async () => server);
-    const handle = acquireChatList(key, { chats }, visible);
+    const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     const seen: Array<boolean | undefined> = [];
     handle.subscribe(() => seen.push(handle.current()!.chats[0]!.unread));
@@ -320,7 +361,7 @@ describe('unread follows the server read cursor in every arrival order', () => {
   it('read mark then late delta: the delta for a covered message leaves the dot off', async () => {
     let server = listOf([row('room-a', 10)]);
     const chats = vi.fn(async () => server);
-    const handle = acquireChatList(key, { chats }, visible);
+    const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     // The read already shows m2, read on another device.
     server = listOf([row('room-a', 20, { latestMessage: {
@@ -338,7 +379,7 @@ describe('unread follows the server read cursor in every arrival order', () => {
   it('delta during a read in flight: the read that covers it decides', async () => {
     const answers: Array<(value: ChatListView) => void> = [];
     const chats = vi.fn(() => new Promise<ChatListView>((resolve) => { answers.push(resolve); }));
-    const handle = acquireChatList(key, { chats }, visible);
+    const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(0);
     // The opening read is in flight when m2 lands and another device reads it.
     emit(agentMessage('room-a', 'm2', 20));
@@ -362,7 +403,7 @@ describe('unread follows the server read cursor in every arrival order', () => {
 
   it('never lights the dot for a message in the Room on screen', async () => {
     const chats = vi.fn(async () => listOf([row('room-a', 10), row('room-b', 5)]));
-    const handle = acquireChatList(key, { chats }, visible);
+    const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     live.viewing.add('room-b');
     const seen: Array<boolean | undefined> = [];
@@ -388,7 +429,7 @@ describe('a read that cannot say unread', () => {
   it('keeps the held value in memory and on disk when a row omits unread', async () => {
     const reads = [listOf([row('room-a', 10, { unread: true })]), listOf([omitted('room-a', 12)])];
     const chats = vi.fn(async () => reads.shift()!);
-    const handle = acquireChatList(key, { chats }, visible);
+    const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     handle.force();
     await vi.advanceTimersByTimeAsync(10);
@@ -404,7 +445,7 @@ describe('a read that cannot say unread', () => {
     });
     const reads = [incomplete(10), incomplete(12)];
     const chats = vi.fn(async () => reads.shift()!);
-    const handle = acquireChatList(key, { chats }, visible);
+    const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     handle.force();
     await vi.advanceTimersByTimeAsync(10);
@@ -422,7 +463,7 @@ describe('the Room screen reads the live list', () => {
   it('warns on a repository change after a corner opens live, and Cancel blocks the write', async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const chats = vi.fn(async () => listOf([row('room-a', 10, { cornerCount: 0 })]));
-    const source = { chats };
+    server.chats = chats;
     const repository: RoomRepository = {
       channelId: 'room-a',
       communityId: 'workspace',
@@ -437,7 +478,7 @@ describe('the Room screen reads the live list', () => {
     const createRepository = vi.fn(async () => undefined);
     let selectCandidate!: (candidate: RepoCandidate) => void;
     function RoomScreen() {
-      const list = useChatList(key, source);
+      const list = useChatList(key);
       selectCandidate = useRoomRepoReplacementGuard(list?.chats ?? [], 'room-a', repository, {
         link: roomRepositorySet,
         create: createRepository,

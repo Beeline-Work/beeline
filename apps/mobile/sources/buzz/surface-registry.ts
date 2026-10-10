@@ -7,7 +7,7 @@ const MAX_HOT_SURFACES = 128;
 export class SurfaceRegistry {
   private readonly values = new Map<string, unknown>();
   private readonly reads = new Map<string, Promise<unknown | null>>();
-  private readonly fetches = new Map<string, Promise<unknown>>();
+  private readonly fetches = new Map<string, Promise<unknown | null>>();
   private readonly listeners = new Map<string, Set<() => void>>();
   private readonly revisions = new Map<string, number>();
   private epoch = 0;
@@ -100,17 +100,21 @@ export class SurfaceRegistry {
     return normalized;
   }
 
-  /** Coalesce simultaneous route reads of the same authorized projection. */
-  fetch<T>(address: SurfaceCacheAddress, guard: Guard<T>, request: () => Promise<T>): Promise<T> {
+  /**
+   * Coalesce simultaneous route reads of the same authorized projection.
+   * Resolves null when a publish or removal overtook the response and no
+   * current value is held: the caller must not paint.
+   */
+  fetch<T>(address: SurfaceCacheAddress, guard: Guard<T>, request: () => Promise<T>): Promise<T | null> {
     const key = surfaceCacheKey(address);
     const existing = this.fetches.get(key);
-    if (existing) return existing as Promise<T>;
+    if (existing) return existing as Promise<T | null>;
     const epoch = this.epoch;
     const revision = this.revisions.get(key) ?? 0;
-    const pending = request().then(async (value) => {
+    const pending = request().then(async (value): Promise<T | null> => {
       // A live publish or removal after the request started is newer than this response.
       if (this.epoch !== epoch || (this.revisions.get(key) ?? 0) !== revision) {
-        return this.peek(address, guard) ?? value;
+        return this.peek(address, guard);
       }
       await this.write(address, value, guard);
       return value;

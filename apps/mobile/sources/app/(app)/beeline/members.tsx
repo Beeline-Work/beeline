@@ -283,7 +283,7 @@ export default function BuzzMembers({
   const [peopleHasMore, setPeopleHasMore] = useState(false);
   const [agentsHasMore, setAgentsHasMore] = useState(false);
   const [rosterLoading, setRosterLoading] = useState(false);
-  const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
+  const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView | null> | null>(null);
   const agentRequestGenerationRef = useRef(0);
   const allowProfileNavigationRef = useRef(false);
   const requestedActionHandledRef = useRef(false);
@@ -434,7 +434,7 @@ export default function BuzzMembers({
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     let stopSurface: (() => void) | undefined;
-    let scheduler: SurfaceRefreshScheduler<WorkspaceView> | undefined;
+    let scheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
     let subscribedFilters = '';
     let subscriptionChange = Promise.resolve();
     void (async () => {
@@ -489,6 +489,8 @@ export default function BuzzMembers({
       scheduler = new SurfaceRefreshScheduler({
         fetch: () => mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
         apply: (value) => {
+          // Null: an eviction overtook the read; there is nothing to paint.
+          if (!value) return;
           recordWorkspaceView(recordScopeForRead, value);
           setSurface(value);
           setWorkspaceError(null);

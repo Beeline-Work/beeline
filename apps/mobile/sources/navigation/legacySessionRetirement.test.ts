@@ -30,7 +30,8 @@ describe('legacy session retirement', () => {
   it('uses the server-indexed Beeline Room list in the persistent sidebar', () => {
     const sidebar = source('components/SidebarView.tsx');
     expect(sidebar).toContain('RoomViewClient');
-    expect(sidebar).toMatch(/client\s*\.\s*chats\(workspaceId\)/);
+    // The Room list comes from the app-level store, which reads `/workspace/:id/chats`.
+    expect(sidebar).toContain('useChatList(chatListKey');
     expect(sidebar).toContain('filteredChatSections.map');
     expect(sidebar).toContain('dispatchRoomOpenTap');
     expect(sidebar).toContain('navigateToRoom');

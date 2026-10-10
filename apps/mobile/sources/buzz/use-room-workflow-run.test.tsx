@@ -129,3 +129,31 @@ it('R12k: the chat surface carries the error and Retry inline without a modal', 
   expect(source).toContain('workflowError={workflowError}');
   expect(source).toContain('onRetryWorkflow={retryWorkflow}');
 });
+
+it('re-reads a parent Room\'s runs when a corner handoff changes that corner\'s row', async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  const store = await import('./room-corner-store');
+  store.resetRoomCornerStore();
+  const row = (state: string) => ({
+    corner: { id: 'corner-a', name: 'a' }, lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
+    state,
+  }) as any;
+  const frame = (sequence: number, state: string) => ({
+    roomId: 'parent-room', sequence, cornerCount: 1, waitingCornerCount: 0, openCorners: [],
+    corners: [row(state)],
+  });
+  function Parent() { useRoomWorkflowRuns('parent-room'); return null; }
+  let tree: any;
+  try {
+    store.noteCornerLaneSubscribed('parent-room', false);
+    store.acceptCornerStatusFrame(frame(1, 'working'));
+    await act(async () => { tree = create(<Parent />); });
+    expect(read).toHaveBeenCalledTimes(1);
+    // The same rows again change nothing a cell shows.
+    await act(async () => { store.acceptCornerStatusFrame(frame(2, 'working')); });
+    expect(read).toHaveBeenCalledTimes(1);
+    // The corner handed off to review.
+    await act(async () => { store.acceptCornerStatusFrame(frame(3, 'review')); });
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally { await act(async () => tree.unmount()); }
+});

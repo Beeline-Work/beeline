@@ -21,6 +21,7 @@ import {
 } from '@/buzz/workflow-run-copy';
 import { identityPalette, isGeneratedAgentAvatarUrl } from '@/buzz/identity-mark';
 import { previewHandle } from '@/buzz/room-list-row';
+import { roomOpenCornerRows, useRoomCornerRecord } from '@/buzz/room-corner-store';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import { IdentityMark } from './IdentityMark';
@@ -219,22 +220,44 @@ function OpenedCorners({
   return (
     <View style={styles.corners} testID={`${testID}-corners`}>
       {corners.map((corner) => (
-        <Pressable
-          accessibilityLabel={`Open corner ${corner.name}`}
-          accessibilityRole="link"
-          key={corner.id}
-          onPress={() => onOpenCorner(corner)}
-          style={({ pressed }) => [styles.cornerLink, pressed && styles.pressed]}
-          testID={`workflow-run-corner-${corner.id}`}
-        >
-          <CornerGlyph size={CORNER_META_SIZE} />
-          <Text numberOfLines={1} style={styles.cornerName}>
-            {corner.name}
-          </Text>
-          <Text style={styles.cornerArrow}>→</Text>
-        </Pressable>
+        <OpenedCorner corner={corner} key={corner.id} onOpenCorner={onOpenCorner} />
       ))}
     </View>
+  );
+}
+
+/**
+ * The run names which corners a step opened; the parent Room's corner record
+ * names them now. The run's saved name shows only when the record has no row
+ * for the corner.
+ */
+function OpenedCorner({
+  corner,
+  onOpenCorner,
+}: {
+  corner: WorkflowOpenedCornerView;
+  onOpenCorner: (corner: WorkflowOpenedCornerView) => void;
+}) {
+  const record = useRoomCornerRecord(corner.parentRoomId);
+  const row = record
+    ? [...roomOpenCornerRows(record), ...(record.archived?.corners ?? [])]
+        .find((item) => item.corner.id === corner.id)
+    : undefined;
+  const named = row ? { ...corner, name: row.corner.name } : corner;
+  return (
+    <Pressable
+      accessibilityLabel={`Open corner ${named.name}`}
+      accessibilityRole="link"
+      onPress={() => onOpenCorner(named)}
+      style={({ pressed }) => [styles.cornerLink, pressed && styles.pressed]}
+      testID={`workflow-run-corner-${corner.id}`}
+    >
+      <CornerGlyph size={CORNER_META_SIZE} />
+      <Text numberOfLines={1} style={styles.cornerName}>
+        {named.name}
+      </Text>
+      <Text style={styles.cornerArrow}>→</Text>
+    </Pressable>
   );
 }
 

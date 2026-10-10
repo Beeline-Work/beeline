@@ -87,8 +87,9 @@ describe('the chat surface unread-divider wiring', () => {
     expect(storeSource).toContain('boundaryRowIndex(anchored, firstNewMessageId)');
   });
 
-  it('derives corner state from the same fresh turn receipts as the turn line', () => {
-    expect(chatSource).toContain('latestAgentTurns: activeAgentTurns');
+  it('reads corner state from the parent Room record, never from turn receipts', () => {
+    expect(chatSource).toContain('useCornerHeaderItem(');
+    expect(chatSource).not.toContain('latestAgentTurns: activeAgentTurns');
   });
 
   it('reports the newest row from chronological order so both lists agree', () => {

@@ -599,4 +599,39 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     expect(headerText(header)).toBe('RUBY · idle');
     expect(dropdownStates()).toEqual(['Open corner corner-1, idle']);
   });
+
+  it('Reproduction G3-R2: a corner closed before Corners opens leaves the dropdown too', async () => {
+    // The Room list read saw both corners waiting; corner-closed then closed unheard.
+    const chat = {
+      room: { id: 'room-a', name: 'general' },
+      cornerCount: 2,
+      waitingCornerCount: 2,
+      openCorners: [
+        { id: 'corner-closed', name: 'corner-closed', state: 'waiting' as const, mine: true as const },
+        { id: 'corner-1', name: 'corner-1', state: 'waiting' as const, mine: true as const },
+      ],
+    } as unknown as import('@beeline/buzz-client').ChatListItem;
+    applyChatListCorners([chat], cornerStoreClock());
+    let dropdown!: ReactTestRenderer;
+    await act(async () => {
+      dropdown = create(React.createElement(DesktopRoomCorners, { item: chat, onOpen: () => undefined }));
+    });
+    const dropdownStates = () => dropdown.root
+      .findAll((node: { type: unknown }) => node.type === 'Pressable')
+      .map((node: { props: { accessibilityLabel: string } }) => node.props.accessibilityLabel);
+    expect(dropdownStates()).toEqual([
+      'Open corner corner-closed, waiting',
+      'Open corner corner-1, waiting',
+    ]);
+    // The Corners read holds every open corner: corner-1 idle, no next page.
+    list.state = 'idle';
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:idle']));
+    const closed = await mountHeader({ cornerId: 'corner-closed', archived: true });
+    expect(headerText(closed)).toBe('RUBY · archived');
+    expect(dropdownStates()).toEqual(['Open corner corner-1, idle']);
+  });
 });

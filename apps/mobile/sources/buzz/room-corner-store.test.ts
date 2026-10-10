@@ -220,7 +220,8 @@ describe('room corner store', () => {
         { id: 'corner-2', name: 'corner-2', state: 'working', mine: true },
       ],
     }], started);
-    applyCornerListRead(ROOM, view([row('corner-1', 'idle')]), cornerReadMark(ROOM));
+    // A first page with more after it: corner-2 may be on a later page.
+    applyCornerListRead(ROOM, view([row('corner-1', 'idle')], 'cursor'), cornerReadMark(ROOM));
     expect(getRoomCorners(ROOM)).toMatchObject({
       summary: 'preview',
       cornerCount: 9,
@@ -238,6 +239,37 @@ describe('room corner store', () => {
       openCorners: [{ id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true }],
     }], started);
     expect(getRoomCorners(ROOM).openCorners?.[0]?.state).toBe('idle');
+  });
+
+  it('Reproduction G3-R2: a complete corners read drops a closed corner from the summary', () => {
+    applyChatListCorners([{
+      room: { id: ROOM } as never,
+      cornerCount: 2,
+      waitingCornerCount: 2,
+      openCorners: [
+        { id: 'corner-closed', name: 'corner-closed', state: 'waiting', mine: true },
+        { id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true },
+      ],
+    }], cornerStoreClock());
+    applyCornerListRead(ROOM, view([row('corner-1', 'idle')]), cornerReadMark(ROOM));
+    expect(getRoomCorners(ROOM)).toMatchObject({
+      summary: 'preview',
+      cornerCount: 2,
+      waitingCornerCount: 2,
+    });
+    expect(getRoomCorners(ROOM).openCorners).toEqual([
+      { id: 'corner-1', name: 'corner-1', state: 'idle', mine: true },
+    ]);
+  });
+
+  it('keeps a summary corner a Room list read named after the corners read started', () => {
+    const mark = cornerReadMark(ROOM);
+    applyChatListCorners([{
+      room: { id: ROOM } as never,
+      openCorners: [{ id: 'opened-later', name: 'opened-later', state: 'working', mine: true }],
+    }], cornerStoreClock());
+    applyCornerListRead(ROOM, view([row('corner-1', 'idle')]), mark);
+    expect(getRoomCorners(ROOM).openCorners?.map((item) => item.id)).toEqual(['opened-later']);
   });
 
   it('keeps a frame summary newer than a corners read', () => {

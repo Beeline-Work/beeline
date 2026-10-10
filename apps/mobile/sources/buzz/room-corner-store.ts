@@ -70,6 +70,8 @@ type Entry = RoomCorners & {
   readonly sequence?: number;
   /** The clock value when a corners read last brought the summary up to its rows. */
   readonly summaryReadAt?: number;
+  /** The clock value when a Room list read last set the summary. */
+  readonly summaryListAt?: number;
   /** The lane epoch whose frame sent the full summary. */
   readonly summaryEpoch?: number;
   /** The clock value when a corner last left the open set, or the open set
@@ -139,29 +141,36 @@ function withoutRows(
 /**
  * The summary with each corner a read just carried brought up to its row. A
  * summary corner leaves the waiting state with its `waitingSince` and
- * `attention`, which the server sends only on waiting corners. The counts and
- * the preview cap stay the server's.
+ * `attention`, which the server sends only on waiting corners. When the read
+ * holds every open corner, a summary corner it does not hold has closed and
+ * leaves. The counts and the preview cap stay the server's.
  */
 function summaryWithRows(
   summary: readonly ChatListCorner[] | undefined,
   rows: readonly CornerListItem[],
+  complete: boolean,
 ): readonly ChatListCorner[] | undefined {
   if (!summary) return summary;
   const byId = new Map(rows.map((item) => [item.corner.id, item]));
   let changed = false;
-  const next = summary.map((corner) => {
+  const next = summary.flatMap((corner) => {
     const row = byId.get(corner.id);
-    if (!row || row.state === 'archived') return corner;
+    if (complete && (!row || row.state === 'archived')) {
+      changed = true;
+      return [];
+    }
+    if (!row || row.state === 'archived') return [corner];
+    if (row.state === corner.state && row.corner.name === corner.name) return [corner];
     if (row.state === corner.state && row.corner.name === corner.name) return corner;
     changed = true;
     const { waitingSince, attention, ...rest } = corner;
-    return {
+    return [{
       ...rest,
       name: row.corner.name,
       state: row.state,
       ...(row.state === 'waiting' && waitingSince !== undefined ? { waitingSince } : {}),
       ...(row.state === 'waiting' && attention ? { attention } : {}),
-    };
+    }];
   });
   return changed ? next : summary;
 }
@@ -364,10 +373,12 @@ export function applyCornerListRead(
   }
   const next = withRows(current, corners, nextOpen);
   const changed = Boolean(current.rows) && rowsFacts(current.rows) !== rowsFacts(corners);
-  // A frame since the read started holds a newer summary; keep it.
+  // A frame since the read started holds a newer summary; keep it. A Room
+  // list read since then may name a corner opened after this read started.
   const openCorners = current.changedAt > mark.clock
     ? current.openCorners
-    : summaryWithRows(current.openCorners, corners);
+    : summaryWithRows(current.openCorners, corners,
+      !nextOpen && (current.summaryListAt ?? 0) <= mark.clock);
   if (openCorners !== current.openCorners) clock += 1;
   write(roomId, {
     ...next,
@@ -449,9 +460,11 @@ export function applyChatListCorners(
     if ((current.summaryReadAt ?? 0) > readStartedAt) continue;
     if (current.summary === 'full' && current.laneHeld &&
         current.summaryEpoch === current.laneEpoch) continue;
+    clock += 1;
     write(item.room.id, {
       ...current,
       summary: 'preview',
+      summaryListAt: clock,
       openCorners: item.openCorners,
       ...(item.cornerCount !== undefined ? { cornerCount: item.cornerCount } : {}),
       ...(item.waitingCornerCount !== undefined

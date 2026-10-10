@@ -28,6 +28,7 @@ import { PhoneService } from './phone-service.js';
 import { APNS_MAX_PAYLOAD_BYTES, ApnsPushError, apnsReadClearRequest } from './apns-push.js';
 import { ensureSystemDirectMessageRoom, ensureSystemIdentity } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { cornerTitle } from '@beeline/api-contract/phone';
 
 describe('background advisory-lock ownership', () => {
   it('records a failed job and still runs the next independent job', async () => {
@@ -1394,6 +1395,34 @@ describe('background advisory-lock ownership', () => {
           title: '#Room/Corner',
         }),
       );
+      // G9-R9: a corner under a DM takes the same `#<parent>/<corner>` title
+      // the app gives it, not a DM peer title and not none.
+      const dmCorner = '55555555-5555-4555-8555-555555555555';
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'fix-auth')`,
+        [dmCorner, workspace, directRoom],
+      );
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,$2,$3,'member')`,
+        [workspace, dmCorner, human],
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text)
+         VALUES($1,$2,$3,'@owner Review this DM corner')`,
+        ['a1'.repeat(32), dmCorner, agent],
+      );
+      expect(await loop.runOnce()).toBe(1);
+      expect(send).toHaveBeenLastCalledWith(
+        'owner-device-token-12345678901234567890',
+        expect.objectContaining({
+          messageId: 'a1'.repeat(32),
+          channelId: dmCorner,
+          cornerId: dmCorner,
+          title: cornerTitle('Direct', 'fix-auth', dmCorner),
+        }),
+      );
+      expect(cornerTitle('Direct', 'fix-auth', dmCorner)).toBe('#Direct/fix-auth');
     } finally {
       await db.close();
     }

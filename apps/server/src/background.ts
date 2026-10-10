@@ -490,8 +490,9 @@ export class PushDeliveryLoop {
           ELSE CASE WHEN author.kind='human' THEN room.id::text ELSE 'agent:'||room.id::text END
           END collapse_id,
           COALESCE(attention.direct,false) direct_attention,
-          -- A DM takes its title from dm_peer below, not from a Room name.
-          CASE WHEN room.direct_participants IS NULL AND parent.direct_participants IS NULL
+          -- A DM takes its title from dm_peer below, not from a Room name. A
+          -- corner under a DM is titled from the DM's stored name, as in the app.
+          CASE WHEN room.direct_participants IS NULL
             THEN COALESCE(parent.name,room.name) END room_name,
           CASE WHEN parent.id IS NOT NULL THEN room.name END corner_name,
           -- A DM is titled by its peer, who is this message's author.

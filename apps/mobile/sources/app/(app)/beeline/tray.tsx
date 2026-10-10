@@ -13,10 +13,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import type { MessageBookmarkView, NeedsYouItemView } from '@beeline/api-contract/phone';
-import type { RoomView } from '@beeline/buzz-client';
+import type { MessageBookmarkListResult, MessageBookmarkView, NeedsYouItemView, NeedsYouListResult } from '@beeline/api-contract/phone';
+import { isWorkspaceListView, isWorkspaceView, type RoomView } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
+import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { cornerHref } from '@/buzz/corner-navigation';
 import { announceNeedsYouChanged, subscribeNeedsYouActivity } from '@/buzz/needs-you';
 import { compactRelativeTime } from '@/buzz/relative-time';
@@ -45,6 +46,24 @@ function first(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isNeedsYouList(value: unknown): value is NeedsYouListResult {
+  return isRecord(value) && Array.isArray(value.items) && value.items.every((item: unknown) =>
+    isRecord(item) && typeof item.messageId === 'string' && typeof item.workspaceId === 'string' &&
+    typeof item.roomId === 'string' && typeof item.roomName === 'string' && typeof item.text === 'string' &&
+    typeof item.createdAt === 'number');
+}
+
+function isBookmarkList(value: unknown): value is MessageBookmarkListResult {
+  return isRecord(value) && Array.isArray(value.bookmarks) && value.bookmarks.every((item: unknown) =>
+    isRecord(item) && typeof item.messageId === 'string' && typeof item.workspaceId === 'string' &&
+    typeof item.roomId === 'string' && typeof item.roomName === 'string' &&
+    typeof item.bookmarkedAt === 'number' && typeof item.available === 'boolean');
+}
+
 function sourceTitle(bookmark: MessageBookmarkView): string {
   return bookmark.roomName.replace(/^#/, '');
 }
@@ -54,7 +73,7 @@ function sourceLabel(bookmark: MessageBookmarkView): string {
 }
 
 function clearedLabel(clear: PendingClear): string {
-  if (clear.kind === 'saved') return 'Cleared saved bookmarks';
+  if (clear.kind === 'saved' && clear.more) return 'Cleared saved bookmarks';
   const count = clear.items.length;
   const noun = clear.kind === 'needs' ? 'item' : 'bookmark';
   return `Cleared ${count} ${noun}${count === 1 ? '' : 's'}`;
@@ -70,7 +89,7 @@ type Target = {
 /** A section clear held back until its own Undo window closes. */
 type PendingClear = { readonly id: number; readonly expiresAt: number; readonly workspaceId: string } & (
   | { readonly kind: 'needs'; readonly items: readonly NeedsYouItemView[] }
-  | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[] }
+  | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[]; readonly more: boolean }
 );
 
 type Row =
@@ -97,7 +116,7 @@ export default function TrayScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const desktop = useIsDesktop();
-  const params = useLocalSearchParams<{ communityId?: string | string[] }>();
+  const params = useLocalSearchParams<{ communityId?: string | string[]; workspaceName?: string | string[] }>();
   const routeWorkspaceId = first(params.communityId);
   // A link without a Workspace id opens the Workspace the Rooms list treats
   // as active. `undefined` while resolving; `null` when there is none.
@@ -122,15 +141,18 @@ export default function TrayScreen() {
   const pendingRef = useRef<readonly PendingClear[]>([]);
   const nextClearId = useRef(0);
   const [client, setClient] = useState<RoomViewClient | null>(null);
-  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
+  const [workspaceName, setWorkspaceName] = useState<string | null>(first(params.workspaceName) || null);
   const [inspectRoom, setInspectRoom] = useState<RoomView | null>(null);
   const [paneCornerId, setPaneCornerId] = useState<string | null>(null);
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const loadedSections = useRef({ workspaceId: '', needs: false, bookmarks: false });
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
     savedScroll.current = false;
+    if (loadedSections.current.workspaceId !== workspaceId)
+      loadedSections.current = { workspaceId, needs: false, bookmarks: false };
     setError(null);
     setNow(Date.now());
     // Each section reads on its own: a failed Saved read must not hide what
@@ -148,19 +170,38 @@ export default function TrayScreen() {
     ) {
       lostWorkspaceRef.current = workspaceId;
       setLostWorkspaceId(workspaceId);
+      loadedSections.current = { workspaceId, needs: true, bookmarks: true };
       setNeeds([]);
       setBookmarks([]);
       setSavedNext(undefined);
       setSelected(null);
       setLoading(false);
+      void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
+        if (!identity) return;
+        void mobileSurfaceCache.remove(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/needs-you', { workspaceId }));
+        void mobileSurfaceCache.remove(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/bookmarks', { workspaceId }));
+      });
       return;
     }
     lostWorkspaceRef.current = null;
     setLostWorkspaceId(null);
-    if (needsResult.status === 'fulfilled') setNeeds(needsResult.value.items);
+    if (needsResult.status === 'fulfilled') {
+      loadedSections.current.needs = true;
+      setNeeds(needsResult.value.items);
+    }
     if (savedResult.status === 'fulfilled') {
+      loadedSections.current.bookmarks = true;
       setBookmarks(savedResult.value.bookmarks);
       setSavedNext(savedResult.value.next);
+    }
+    if (needsResult.status === 'fulfilled' || savedResult.status === 'fulfilled') {
+      void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
+        if (!identity) return;
+        if (needsResult.status === 'fulfilled')
+          void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/needs-you', { workspaceId }), needsResult.value, isNeedsYouList);
+        if (savedResult.status === 'fulfilled')
+          void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/bookmarks', { workspaceId }), savedResult.value, isBookmarkList);
+      });
     }
     const failed = [needsResult, savedResult].find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected')
@@ -186,6 +227,30 @@ export default function TrayScreen() {
       loadingSaved.current = false;
     }
   }, [workspaceId, savedNext]);
+  useEffect(() => {
+    if (!workspaceId) return;
+    if (loadedSections.current.workspaceId !== workspaceId)
+      loadedSections.current = { workspaceId, needs: false, bookmarks: false };
+    let cancelled = false;
+    void (async () => {
+      const [identity, relayUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
+      if (!identity || cancelled) return;
+      const needsAddress = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/needs-you', { workspaceId });
+      const bookmarksAddress = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/bookmarks', { workspaceId });
+      const [savedNeeds, savedBookmarks] = await Promise.all([
+        mobileSurfaceCache.read(needsAddress, isNeedsYouList),
+        mobileSurfaceCache.read(bookmarksAddress, isBookmarkList),
+      ]);
+      if (cancelled) return;
+      if (savedNeeds && !loadedSections.current.needs) setNeeds(savedNeeds.items);
+      if (savedBookmarks && !loadedSections.current.bookmarks) {
+        setBookmarks(savedBookmarks.bookmarks);
+        setSavedNext(savedBookmarks.next);
+      }
+      if (savedNeeds || savedBookmarks) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
   // An open tray reads when it opens, when the app comes back to the
   // foreground (another device may have cleared a cell meanwhile), and when
@@ -219,16 +284,17 @@ export default function TrayScreen() {
         if (!cancelled) setActiveWorkspaceId(null);
         return;
       }
-      const http = new RoomViewClient({ baseUrl: await getEffectiveRelayUrl(), identity });
-      const [list, stored] = await Promise.all([
-        http.workspaces(),
+      const [relayUrl, stored] = await Promise.all([
+        getEffectiveRelayUrl(),
         loadActiveCommunityId(identity.publicKey),
       ]);
+      const list = await mobileSurfaceCache.read(
+        surfaceAddress(relayUrl, identity.publicKey, '/workspaces'), isWorkspaceListView);
       if (cancelled) return;
       setActiveWorkspaceId(
-        list.workspaces.some((workspace) => workspace.id === stored)
+        list?.workspaces.some((workspace) => workspace.id === stored)
           ? stored
-          : (list.workspaces[0]?.id ?? null),
+          : (list?.workspaces[0]?.id ?? stored),
       );
     })().catch(() => {
       if (!cancelled) setActiveWorkspaceId(null);
@@ -247,26 +313,26 @@ export default function TrayScreen() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const identity = await loadBuzzIdentity();
+      const [identity, relayUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
       if (!identity || cancelled) return;
       const http = new RoomViewClient({
-        baseUrl: await getEffectiveRelayUrl(),
+        baseUrl: relayUrl,
         identity,
       });
       if (cancelled) return;
       if (desktop) setClient(http);
       if (!workspaceId) return;
-      try {
-        const workspace = await http.workspace(workspaceId);
-        if (!cancelled) setWorkspaceName(workspace.workspace.name);
-      } catch {
-        if (!cancelled) setWorkspaceName(null);
-      }
+      const [list, workspace] = await Promise.all([
+        mobileSurfaceCache.read(surfaceAddress(relayUrl, identity.publicKey, '/workspaces'), isWorkspaceListView),
+        mobileSurfaceCache.read(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', { workspaceId }), isWorkspaceView),
+      ]);
+      if (!cancelled) setWorkspaceName(first(params.workspaceName) ||
+        (list?.workspaces.find((item) => item.id === workspaceId)?.name ?? workspace?.workspace.name ?? null));
     })();
     return () => {
       cancelled = true;
     };
-  }, [desktop, workspaceId]);
+  }, [desktop, workspaceId, params.workspaceName]);
 
   const selectedUnavailable = selected
     ? bookmarks.some((bookmark) => bookmark.messageId === selected.messageId && !bookmark.available)
@@ -449,13 +515,13 @@ export default function TrayScreen() {
       const clear: PendingClear =
         kind === 'needs'
           ? { ...held, kind, items: visibleNeeds }
-          : { ...held, kind, items: visibleBookmarks };
+          : { ...held, kind, items: visibleBookmarks, more: !!savedNext };
       if (!clear.items.length) return;
       pendingRef.current = [...pendingRef.current, clear];
       setPending(pendingRef.current);
       AccessibilityInfo.announceForAccessibility(`${clearedLabel(clear)}. Undo available.`);
     },
-    [visibleBookmarks, visibleNeeds, workspaceId],
+    [visibleBookmarks, visibleNeeds, workspaceId, savedNext],
   );
 
   /** Undo the newest held clear; an older one still in its window shows next. */

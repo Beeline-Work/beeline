@@ -61,6 +61,39 @@ const workspaces = vi.hoisted(() => vi.fn(async () => ({
   ],
   viewer: { pubkey: 'viewer', kind: 'human', name: 'Ada Lovelace' },
 })));
+const surfaceRows = vi.hoisted(() => new Map<string, unknown>());
+const surfaceListeners = vi.hoisted(() => new Map<string, Set<() => void>>());
+vi.mock('@/buzz/surface-storage', () => {
+  const notify = (key: string) => {
+    for (const listener of surfaceListeners.get(key) ?? []) listener();
+  };
+  return {
+    surfaceAddress: (_relay: string, _viewer: string, endpoint: string, params?: { workspaceId?: string }) =>
+      `${endpoint}:${params?.workspaceId ?? ''}`,
+    mobileSurfaceCache: {
+      peek: (key: string) => surfaceRows.get(key) ?? null,
+      read: async (key: string) => {
+        if (!surfaceRows.has(key)) {
+          if (key.startsWith('/workspaces:')) surfaceRows.set(key, await workspaces());
+          else if (key.startsWith('/workspace/:id/chats:')) surfaceRows.set(key, await chats(key.split(':').at(-1)!));
+        }
+        return surfaceRows.get(key) ?? null;
+      },
+      fetch: async (key: string, _guard: unknown, request: () => Promise<unknown>) => {
+        const value = await request();
+        surfaceRows.set(key, value);
+        notify(key);
+        return value;
+      },
+      subscribe: (key: string, listener: () => void) => {
+        const listeners = surfaceListeners.get(key) ?? new Set<() => void>();
+        listeners.add(listener);
+        surfaceListeners.set(key, listeners);
+        return () => listeners.delete(listener);
+      },
+    },
+  };
+});
 const windowListeners = new Map<string, (event: any) => void>();
 const viewport = vi.hoisted(() => ({ width: 1280 }));
 const desktopShell = vi.hoisted(() => ({ current: false }));
@@ -305,13 +338,15 @@ afterAll(() => {
 describe('desktop Workspace navigation', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    surfaceRows.clear();
+    surfaceListeners.clear();
     workspaceLive.deleted = false;
     workspaceLive.empty = false;
     workspaceLive.listeners.clear();
     windowListeners.clear();
     route.communityId = undefined;
     route.parent = undefined;
-    route.pathname = '/beeline/channels';
+    route.pathname = '/beeline/chat/room-a';
     workspaceSummary.attention = true;
     workspaceSummary.roomCount = 3;
     openCornerState.current = 'working';
@@ -347,11 +382,12 @@ describe('desktop Workspace navigation', () => {
     expect(routerReplace).toHaveBeenCalledWith('/beeline/community');
   });
 
-  it('R12e: reads chats only for the active Workspace on mount and navigation', async () => {
+  it('keeps one shared projection across route hops without another GET', async () => {
     expect(chats.mock.calls.every(([id]) => id === 'workspace-a')).toBe(true);
     const rail = tree.root.findByType('DesktopWorkspaceRail');
     expect(rail.props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: true, roomCount: 3 });
     const initialReads = workspaces.mock.calls.length;
+    const initialChatReads = chats.mock.calls.length;
     workspaceSummary.attention = false;
     workspaceSummary.roomCount = 2;
     route.pathname = '/beeline/tray';
@@ -360,8 +396,8 @@ describe('desktop Workspace navigation', () => {
       tree.update(<SidebarView />);
     });
     await settle();
-    expect(workspaces).toHaveBeenCalledTimes(initialReads + 1);
-    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: false, roomCount: 2 });
+    expect(workspaces).toHaveBeenCalledTimes(initialReads);
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: true, roomCount: 3 });
 
     workspaceSummary.attention = true;
     workspaceSummary.roomCount = 4;
@@ -371,13 +407,24 @@ describe('desktop Workspace navigation', () => {
       tree.update(<SidebarView />);
     });
     await settle();
-    expect(workspaces).toHaveBeenCalledTimes(initialReads + 2);
-    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: true, roomCount: 4 });
-    expect(chats).toHaveBeenCalledTimes(3);
+    expect(workspaces).toHaveBeenCalledTimes(initialReads);
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: true, roomCount: 3 });
+    expect(chats).toHaveBeenCalledTimes(initialChatReads);
     expect(chats.mock.calls.every(([id]) => id === 'workspace-a')).toBe(true);
     expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe('Alpha Workspace');
+    const hopStarted = performance.now();
+    for (let hop = 0; hop < 10; hop += 1) {
+      route.pathname = hop % 2 ? '/beeline/chat/room-a' : '/beeline/tray';
+      await act(async () => {
+        pathnameListeners.forEach((listener) => listener());
+        tree.update(<SidebarView />);
+      });
+      expect(control('desktop-room-room-a')).toBeDefined();
+    }
+    expect(workspaces).toHaveBeenCalledTimes(initialReads);
+    expect(chats).toHaveBeenCalledTimes(initialChatReads);
     expect(saveActiveCommunityId).not.toHaveBeenCalled();
-    console.log('R12e Demonstrated: mounted Sidebar navigation clears and lights the other Workspace mark, updates room counts 3 → 2 → 4, and reads chats only for workspace-a.');
+    console.log(`Shared Sidebar projection: 10 route hops kept first row with zero extra GETs in ${Math.round(performance.now() - hopStarted)} ms (test renderer).`);
   });
 
   it('keeps both Mac workspace headers below the overlay title bar', async () => {
@@ -452,6 +499,11 @@ describe('desktop Workspace navigation', () => {
 
     await act(async () => {
       tree.root.findByType('DesktopWorkspaceRail').props.onSelect('workspace-empty');
+      expect(routerPush).toHaveBeenCalledWith({
+        pathname: '/beeline/channels',
+        params: { communityId: 'workspace-empty' },
+      });
+      expect(chats.mock.calls.some(([id]) => id === 'workspace-empty')).toBe(false);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -554,7 +606,7 @@ describe('desktop Workspace navigation', () => {
     act(() => control('workspace-menu-tray').props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/tray',
-      params: { communityId: 'workspace-a' },
+      params: { communityId: 'workspace-a', workspaceName: 'Alpha Workspace' },
     });
   });
 

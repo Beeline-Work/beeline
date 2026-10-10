@@ -1,5 +1,5 @@
 import { readWorkspaceListView } from '@beeline/api-contract/phone';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { backfillSquireApprovalExpiry, migrate } from './database.js';
 import { PhoneService } from './phone-service.js';
 import {
@@ -237,6 +237,33 @@ describe('PhoneService Needs-you tray', () => {
     expect(await count()).toBe(0);
   });
 
+  it('uses one database statement and one pool checkout for each tray read and badge count', async () => {
+    const id = await post(ROOM, PEER, '@ada please review this');
+    const query = vi.spyOn(database, 'query');
+    expect(await count()).toBe(1);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0]?.[0]).toContain('SELECT count(*)::text count,');
+    query.mockClear();
+
+    const { items } = await read();
+    expect(items.map((item) => item.messageId)).toEqual([id]);
+    expect(items[0]?.expiresAt).toBeDefined();
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0]?.[0]).toContain('INSERT INTO needs_you_marks');
+    query.mockRestore();
+  });
+
+  it('rejects a viewer whose Workspace membership was removed even if Room membership remains', async () => {
+    await post(ROOM, PEER, '@ada please review this');
+    await database.query(
+      `UPDATE memberships SET removed_at=now()
+       WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [WORKSPACE, VIEWER],
+    );
+    await expect(read()).rejects.toThrow('workspace membership required');
+    await expect(count()).rejects.toThrow('workspace membership required');
+  });
+
   it('clears on tap or dismiss, and when the reader replies in that Room', async () => {
     const tapped = await post(ROOM, PEER, '@ada please check the build', 30);
     await post(CORNER, AGENT, '@ada which cohort?', 20);
@@ -259,6 +286,7 @@ describe('PhoneService Needs-you tray', () => {
       [ROOM, PEER],
     );
     expect((await read()).items).toHaveLength(500);
+    expect(await count()).toBe(500);
 
     await phone.execute('clearNeedsYouSection', { workspaceId: WORKSPACE }, VIEWER);
 
@@ -367,6 +395,7 @@ describe('PhoneService Needs-you tray', () => {
       ],
     );
     const [item] = (await read()).items;
+    expect(await count()).toBe(1);
     expect(item).toMatchObject({
       messageId: card,
       text: 'Hoots asks to run gh pr checks',
@@ -414,10 +443,11 @@ describe('PhoneService Needs-you tray', () => {
     return id;
   }
   const hoots = { pubkey: AGENT, kind: 'agent', name: 'Hoots' };
-  const approvals = async (viewer = VIEWER) =>
-    (await phone.execute('readNeedsYou', { workspaceId: WORKSPACE }, viewer)).items
-      .filter((item) => item.approval)
-      .map((item) => item.approval);
+  const approvals = async (viewer = VIEWER) => {
+    const items = (await phone.execute('readNeedsYou', { workspaceId: WORKSPACE }, viewer)).items;
+    expect((await phone.execute('countNeedsYou', { workspaceId: WORKSPACE }, viewer)).count).toBe(items.length);
+    return items.filter((item) => item.approval).map((item) => item.approval);
+  };
 
   it('shows a pending write-access request to the person asked, until it is decided', async () => {
     await database.query(
@@ -466,6 +496,7 @@ describe('PhoneService Needs-you tray', () => {
       [ROOM, WORKSPACE, AGENT, id, VIEWER, PEER, closesAt],
     );
     const [item] = (await read()).items;
+    expect(await count()).toBe(1);
     expect(item).toMatchObject({
       messageId: id,
       expiresAt: closesAt,
@@ -529,6 +560,7 @@ describe('PhoneService Needs-you tray', () => {
     );
 
     const items = (await read()).items;
+    expect(await count()).toBe(items.length);
     // The webhook request expires, so it leads; then the oldest.
     expect(items.map((item) => item.approval?.kind)).toEqual(['webhook', 'connector', 'sign-in']);
     expect(items.map((item) => item.approval)).toEqual([

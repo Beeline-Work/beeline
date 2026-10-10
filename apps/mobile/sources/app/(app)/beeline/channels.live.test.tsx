@@ -143,10 +143,20 @@ vi.mock('@/buzz/community-storage', () => ({
   loadActiveCommunityId: vi.fn(async () => 'workspace'),
   saveActiveCommunityId: vi.fn(async () => undefined),
 }));
-vi.mock('@/buzz/surface-storage', () => ({
-  mobileSurfaceCache: { read: vi.fn(async () => null), write: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) },
-  surfaceAddress: vi.fn(() => 'surface-address'),
-}));
+vi.mock('@/buzz/surface-storage', () => {
+  const cache = {
+    read: vi.fn(async () => null),
+    write: vi.fn(async (_address: unknown, _value: unknown, _guard: unknown) => undefined),
+    remove: vi.fn(async () => undefined),
+    publish: vi.fn((_address: unknown, value: unknown) => value),
+    fetch: vi.fn(async (address: unknown, guard: unknown, request: () => Promise<unknown>) => {
+      const value = await request();
+      await cache.write(address, value, guard);
+      return value;
+    }),
+  };
+  return { mobileSurfaceCache: cache, surfaceAddress: vi.fn(() => 'surface-address') };
+});
 vi.mock('@/buzz/room-open-prefetch', () => ({ dispatchRoomOpenTap: vi.fn() }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));

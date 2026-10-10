@@ -2896,6 +2896,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     return result;
   };
   const searchDocuments = await backfillMessageSearchDocuments(database, 200, true);
+  await dataStep('Squire approval expiry backfill', () => backfillSquireApprovalExpiry(database));
   await dataStep('webhook payload and retention', () =>
     workflowBackfillOnce(database, 'webhook-retention-v1', compactWebhookDeliveries));
   await dataStep('archived corner assignments', () =>
@@ -3024,6 +3025,28 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   const withdrawn = await dataStep('superseded grant asks', () =>
     withdrawSupersededGrantAsks(database));
   if (withdrawn) console.log(`withdrawSupersededGrantAsks: withdrew ${withdrawn} pending ask(s)`);
+}
+
+/** Give pre-expiry Squire cards a bounded life, retaining their message history. */
+export async function backfillSquireApprovalExpiry(database: SqlDatabase): Promise<number> {
+  const result = await database.query(
+    `UPDATE messages approval SET card=approval.card || jsonb_build_object(
+       'expiresAt',floor(extract(epoch FROM approval.created_at + interval '24 hours')*1000)::bigint,
+       'status',CASE WHEN approval.created_at <= now()-interval '24 hours'
+         THEN 'expired' ELSE COALESCE(approval.card->>'status','pending') END)
+     WHERE approval.card_type='squire-approval'
+       AND approval.deleted_at IS NULL
+       AND approval.card->>'approvalId' IS NOT NULL
+       AND approval.card->>'sourceRoomId' ~ '^[0-9a-f-]{36}$'
+       AND approval.card->>'expiresAt' IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM messages decision
+         WHERE decision.room_id=(approval.card->>'sourceRoomId')::uuid
+           AND decision.card_type='squire-approval-decision'
+           AND decision.card->>'approvalId'=approval.card->>'approvalId'
+       )`,
+  );
+  return result.rowCount;
 }
 
 /** The first distinct words of a body that can serve as its keywords. */

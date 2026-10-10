@@ -4582,6 +4582,7 @@ export class DaemonService {
           ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}) },
         tool: 'Link', title, detail, approvalUrl, approvalId: requestId,
         linkKind: 'approval', sourceRoomId: input.roomId,
+        expiresAt: Date.now() + 24 * 60 * 60_000,
         ...(sourceMessageId ? { sourceMessageId } : {}),
       },
     });
@@ -4599,6 +4600,9 @@ export class DaemonService {
       (!input.approvalId.trim() || input.approvalId.length > 240)
     )
       throw new Error('Squire approval id is invalid');
+    if (input.expiresAt !== undefined &&
+      (!Number.isSafeInteger(input.expiresAt) || input.expiresAt <= 0))
+      throw new Error('Squire approval expiry is invalid');
     if (
       input.signInUrl !== undefined &&
       (!input.signInUrl.trim() || input.signInUrl.length > 2_048)
@@ -4681,6 +4685,7 @@ export class DaemonService {
         detail: input.detail.trim(),
         approvalUrl: approvalUrl.toString(),
         ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),
+        expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60_000,
         linkKind: input.linkKind,
         sourceRoomId: input.roomId,
         ...(sourceMessageId ? { sourceMessageId } : {}),

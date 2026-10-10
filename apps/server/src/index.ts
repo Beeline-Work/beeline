@@ -22,6 +22,7 @@ import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
 import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { ConnectionPresence } from './connection-presence.js';
+import { clearStalePhoneViews } from './phone-viewing.js';
 import { createFirebasePushSender } from './firebase-push.js';
 import { createApnsPushSender } from './apns-push.js';
 import { createBeelineServer, DEFAULT_MEDIA_MAXIMUM_BYTES } from './server.js';
@@ -426,10 +427,14 @@ async function main() {
     )
       leader.wake();
   });
-  void leader.run();
   const port = Number(process.env.PORT ?? '8080');
   const host = process.env.HOST ?? '127.0.0.1';
-  await listenAfterBestEffortRecovery(server, () => connectionPresence.start(), port, host);
+  await listenAfterBestEffortRecovery(server, async () => {
+    await clearStalePhoneViews(database, connectionPresence.instanceId);
+    await connectionPresence.renewLease();
+    await connectionPresence.start();
+  }, port, host);
+  void leader.run();
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
     leader.stop();

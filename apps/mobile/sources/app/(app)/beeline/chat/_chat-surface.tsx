@@ -276,6 +276,7 @@ import {
 } from '@/buzz/composer-prefill';
 import {
   composerFieldSelection,
+  roomComposerTagHandles,
   splitComposerTags,
   toggleComposerTag,
 } from '@/buzz/composer-tags';
@@ -1953,10 +1954,10 @@ export function BuzzChatSurface({
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
     [roomParticipants],
   );
-  // A leading `@agent ` in the composer shows as a chip (`buzz/composer-tags.ts`).
+  // A leading `@member ` in the composer shows as a chip (`buzz/composer-tags.ts`).
   const composerTagHandles = useMemo(
-    () => new Set(roomAgents.map((agent) => agent.handle).filter(Boolean)),
-    [roomAgents],
+    () => roomComposerTagHandles(roomParticipants),
+    [roomParticipants],
   );
   const composerTagHandlesRef = useRef(composerTagHandles);
   composerTagHandlesRef.current = composerTagHandles;

@@ -12732,6 +12732,7 @@ describe('monolith integration', () => {
       approvalUrl: 'https://approve.trustysquire.test/approval/purchase-1',
       approvalId: 'purchase-1',
       linkKind: 'approval',
+      expiresAt: Date.now() + 10 * 60_000,
     };
     const first = await daemonOperation('postSquireApproval', payload);
     expect(first.status).toBe(200);
@@ -12748,6 +12749,7 @@ describe('monolith integration', () => {
         detail: string;
         sourceRoomId: string;
         sourceMessageId: string;
+        expiresAt: number;
       };
     }>(`SELECT room_id,author_id,card FROM messages WHERE card_type='squire-approval'`);
     expect(rows.rows).toHaveLength(1);
@@ -12760,6 +12762,7 @@ describe('monolith integration', () => {
       detail: payload.detail,
       sourceRoomId: ROOM,
       sourceMessageId: requestId,
+      expiresAt: payload.expiresAt,
     });
     const view = await phone.readRoom(row.room_id, HUMAN);
     expect(view?.messages.find((message) => message.squireApproval)?.squireApproval).toEqual(

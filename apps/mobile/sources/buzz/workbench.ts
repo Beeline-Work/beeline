@@ -706,17 +706,6 @@ export function ledgerBytes(bytes: number): string | undefined {
   return `${(bytes / 1024).toFixed(1)} kB`;
 }
 
-/** How an app row's trailing state reads: the word beside its dot. */
-export function appInstrument(status: WorkbenchApp['status']): {
-  value: 'connected' | 'connecting' | 'error';
-  glyph: 'live' | 'pulse' | 'failed';
-  valueTone?: 'danger' | 'accent';
-} {
-  if (status === 'connected') return { value: 'connected', glyph: 'live' };
-  if (status === 'connecting') return { value: 'connecting', glyph: 'pulse', valueTone: 'accent' };
-  return { value: 'error', glyph: 'failed', valueTone: 'danger' };
-}
-
 /** What serves the app, in the words the row states it. */
 function appRouteLabel(transport: WorkbenchApp['transport']): string {
   switch (transport) {
@@ -744,16 +733,4 @@ export function appDetailLine(app: WorkbenchApp): string {
   ]
     .filter(Boolean)
     .join(' · ');
-}
-
-/** Squire API rows are vault pointers: their keys stay in the Keys section. */
-export function keysOutsideApps(
-  view: Pick<WorkbenchView, 'apps'>,
-  connections: readonly WorkbenchConnection[],
-): readonly WorkbenchConnection[] {
-  const held = new Set(
-    view.apps.flatMap((app) => (app.transport !== 'squire-api' && app.connectionReference
-      ? [app.connectionReference] : [])),
-  );
-  return connections.filter((connection) => !held.has(connection.ref));
 }

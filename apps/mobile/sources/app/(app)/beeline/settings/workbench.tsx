@@ -316,7 +316,7 @@ export default function WorkbenchScreen() {
             valueTone={squireState === 'offline' ? 'danger' : undefined}
             statusGlyph={squireState === 'offline' ? 'failed' : undefined}
             onPress={() => router.push({ pathname: '/beeline/settings/workbench/service', params: { workspaceId, viewerId, service: group.key } } as unknown as Href)} />)}
-          {apps.map(app => <SettingsRow appBoard chevron="right" key={app.id} title={app.name}
+          {apps.map(app => <SettingsRow appBoard chevron="right" key={app.id} testID={`connectors-app-${app.id}`} title={app.name}
             description="Signed in" leading={<AppMark name={app.name} domain={app.domain} logo={app.logo} />}
             value={app.status === 'connected' ? 'Connected' : app.status === 'error' ? 'Offline' : 'Connecting'}
             statusGlyph={app.status === 'connected' ? 'live' : app.status === 'error' ? 'failed' : 'pulse'}
@@ -328,7 +328,7 @@ export default function WorkbenchScreen() {
           {connectors.filter(connector => connector.id === 'tailscale' && connector.status === 'connected').map(connector =>
             <SettingsRow appBoard chevron="right" key={connector.id} title="Tailscale" description="Network · Tailscale" leading={<ServiceMark company="Tailscale" domain="tailscale.com" />}
               value="Connected" statusGlyph="live" onPress={() => void connectConnector(connector.id)} />)}
-          {connectors.some(connector => connector.id === 'wallet' && connector.status === 'connected') ? <SettingsRow appBoard chevron="right" title="Coinbase wallet" description="Wallet" leading={<ServiceMark company="Coinbase" domain="coinbase.com" />}
+          {connectors.some(connector => connector.id === 'wallet' && connector.status === 'connected') ? <SettingsRow appBoard chevron="right" testID="connectors-wallet" title="Coinbase wallet" description="Wallet" leading={<ServiceMark company="Coinbase" domain="coinbase.com" />}
             value="Connected" statusGlyph="live" onPress={() => void openWallet()} /> : null}
           {view?.linkAccount?.connected ? <SettingsRow appBoard chevron="right" title="Link" description="Approve agent purchases with Link" leading={<ServiceMark company="Link" domain="link.com" />}
             value="Connected" statusGlyph="live" trailingPress={{ accessibilityLabel: 'Change Link connection', onPress: () => setStatusAction({ title: 'Link', disconnect: () => void disconnectLink() }) }} /> : null}
@@ -343,7 +343,7 @@ export default function WorkbenchScreen() {
           {RECOMMENDED_CONNECTIONS.filter(item => !apps.some(app => app.key === item.key) && !keyGroups.some(group => group.key === item.key) &&
             !(item.key === 'link' && view?.linkAccount?.connected) && !(item.key === 'wallet' && connectors.some(connector => connector.id === 'wallet' && connector.status === 'connected')) &&
             !(item.key === 'tailscale' && connectors.some(connector => connector.id === 'tailscale' && connector.status === 'connected'))).map(item =>
-            <SettingsRow appBoard chevron="right" key={item.key} title={item.name}
+            <SettingsRow appBoard chevron="right" key={item.key} testID={`connectors-recommended-${item.key}`} title={item.name}
               description={item.key === 'link' && linkError ? linkError : item.subtitle}
               descriptionTone={item.key === 'link' && linkError ? 'danger' : undefined}
               value={item.key === 'link' && linkConnecting ? 'Connecting…' : undefined}
@@ -381,7 +381,7 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row', alignItems: 'center', paddingHorizontal: hull.space.md, gap: hull.space.sm },
     searchIcon: { ...hull.type.hero, color: board.quiet },
     searchPlaceholder: { ...Typography.ledger(), ...hull.type.body, color: board.quiet },
-    squireHero: { backgroundColor: board.card, borderColor: board.strongBorder, borderWidth: 1, borderRadius: 12, padding: hull.space.sm },
+    squireHero: { backgroundColor: board.card, borderColor: board.strongBorder, borderWidth: 1, borderRadius: hull.radius, padding: hull.space.sm },
     sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: board.quiet, paddingBottom: hull.space.sm },
     appsNote: { ...Typography.ledger(), ...hull.type.meta, marginTop: hull.space.md, color: board.quiet },
     squireMark: { width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: TOOL_BRAND_MARKS.squire.ground },

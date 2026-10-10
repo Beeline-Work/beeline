@@ -29,10 +29,10 @@ describe('wallet connect in the desktop web renderer', () => {
         const first = createRoot(document.getElementById('root'));
         first.render(<><Workbench /><Wallet /></>);
         setTimeout(() => {
-          output.rowBefore = text('workbench-connector-wallet');
+          output.rowBefore = text('connectors-recommended-wallet');
           output.pageBefore = text('wallet-screen');
           output.addressBefore = !!document.querySelector('[data-testid="wallet-address"]');
-          document.querySelector('[data-testid="workbench-connector-wallet-connect"]').click();
+          document.querySelector('[data-testid="connectors-recommended-wallet"]').click();
         }, 1200);
         setTimeout(() => {
           output.ops = globalThis.__server.ops;
@@ -40,7 +40,7 @@ describe('wallet connect in the desktop web renderer', () => {
           createRoot(document.getElementById('root')).render(<><Workbench /><Wallet /></>);
         }, 2400);
         setTimeout(() => {
-          output.rowAfter = text('workbench-connector-wallet');
+          output.rowAfter = text('connectors-wallet');
           output.addressAfter = !!document.querySelector('[data-testid="wallet-address"]');
           output.connectRowAfter = !!document.querySelector('[data-testid="wallet-connect-row"]');
           document.getElementById('result').textContent = JSON.stringify(output);
@@ -85,12 +85,12 @@ describe('wallet connect in the desktop web renderer', () => {
       expect(result.status, result.stderr).toBe(0);
       console.log('Wallet connect desktop web:', result.result);
       const proof = JSON.parse(result.result);
-      expect(proof.rowBefore).toContain('Connect');
-      expect(proof.rowBefore).not.toContain('connected');
+      expect(proof.rowBefore).toContain('Coinbase wallet');
+      expect(proof.rowBefore).not.toContain('Connected');
       expect(proof.pageBefore).toContain('Wallet not connected');
       expect(proof.addressBefore).toBe(false);
       expect(proof.ops).toEqual(['createWallet', 'grantWalletDelegation']);
-      expect(proof.rowAfter).toContain('connected');
+      expect(proof.rowAfter).toContain('Connected');
       expect(proof.addressAfter).toBe(true);
       expect(proof.connectRowAfter).toBe(false);
     } finally {

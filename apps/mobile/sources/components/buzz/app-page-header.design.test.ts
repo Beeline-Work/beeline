@@ -30,14 +30,14 @@ describe('App-board sub-pages share the ordinary PageHeader scale', () => {
   });
 
   it('the app detail page reads its text sizes from the shared type roles', () => {
-    expect(workbenchApp).toContain('<AppPageHeader');
+    expect(workbenchApp).toContain('<PageHeader');
     expect(workbenchApp).not.toContain('appBoardType');
     expect(workbenchApp).toContain('hull.type.body');
     expect(workbenchApp).toContain('hull.type.meta');
   });
 
   it('Connect an app reads its row text sizes from the shared type roles', () => {
-    expect(connectApp).toContain('<AppPageHeader');
+    expect(connectApp).toContain('<PageHeader');
     expect(connectApp).toContain('hull.type.body');
     expect(connectApp).toContain('hull.type.meta');
     expect(connectApp).not.toContain('appBoardType');

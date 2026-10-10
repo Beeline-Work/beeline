@@ -27,8 +27,9 @@ describe('Workbench row text matches the standard body/meta sizes', () => {
   });
 
   it('the Workbench Apps rows read the shared type roles', () => {
-    expect(workbench).toContain('rowTitle: { ...Typography.ledger(), ...hull.type.body');
-    expect(workbench).toContain('rowValue: { ...Typography.ledger(), ...hull.type.meta');
+    expect(workbench).toContain('<SettingsRow appBoard');
+    expect(workbench).toContain('hull.type.body');
+    expect(workbench).toContain('hull.type.meta');
     expect(workbench).not.toContain('appBoardType');
   });
 

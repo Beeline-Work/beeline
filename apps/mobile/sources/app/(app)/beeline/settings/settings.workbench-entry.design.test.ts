@@ -14,7 +14,7 @@ describe('Settings Workbench entry', () => {
 
   it('heads that row with its own section', () => {
     expect(settings).toContain('testID="workbench-section"');
-    expect(settings).toMatch(/sectionLabel}>Workbench</);
+    expect(settings).toMatch(/sectionLabel}>Connectors</);
   });
 
   // Captain ruling 2026-09-15 (mock 91aa0358328d716e) and the 2026-09-20
@@ -22,7 +22,7 @@ describe('Settings Workbench entry', () => {
   // keys. Option B (mock 644e6683): it states both counts and names a
   // broken tool in the danger subtitle, from `workbenchSummary`.
   it('names the row Tools and keys and shows the Workbench summary', () => {
-    expect(settings).toContain('title="Tools and keys"');
+    expect(settings).toContain('title="Your connections"');
     expect(settings).toContain('value={workbench?.value}');
     expect(settings).toContain('description={workbench?.attention}');
     expect(settings).toContain("descriptionTone={workbench?.attention ? 'danger' : undefined}");

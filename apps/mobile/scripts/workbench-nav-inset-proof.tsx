@@ -23,7 +23,7 @@ const report = (text: string) => {
 async function read() {
   const source = new MockWorkbenchSource();
   source.setApps(
-    ['Slack', 'Linear', 'Notion', 'Figma', 'Stripe', 'Vercel', 'Sentry', 'Asana'].map((name) => ({
+    ['Link', 'Linear', 'Instagram', 'Slack', 'Calendar', 'Drive', 'Jira', 'TikTok', 'Tailscale', 'Wallet'].map((name) => ({
       id: `app-${name.toLowerCase()}`,
       key: name.toLowerCase(),
       name,
@@ -50,14 +50,11 @@ async function read() {
   scroll.scrollTop = scroll.scrollHeight;
   await pause();
 
-  const apps = Array.from(scroll.querySelectorAll<HTMLElement>('[data-testid^="workbench-app-"]'));
+  const apps = Array.from(scroll.querySelectorAll<HTMLElement>('[data-testid^="connectors-app-"]'))
+    .filter(row => !row.dataset.testid?.includes('-glyph-') && !row.dataset.testid?.endsWith('-mark'));
   const last = apps.at(-1);
   if (!last) return report('FAIL the Workbench painted no app rows');
-  const rows = Array.from(
-    scroll.querySelectorAll<HTMLElement>(
-      '[data-testid^="workbench-app-"], [data-testid="workbench-connect-app"], [data-testid^="workbench-connection-"]:not([data-testid$="-mark"])',
-    ),
-  );
+  const rows = apps;
   const bottomMost = rows.reduce((a, b) =>
     b.getBoundingClientRect().bottom > a.getBoundingClientRect().bottom ? b : a,
   );

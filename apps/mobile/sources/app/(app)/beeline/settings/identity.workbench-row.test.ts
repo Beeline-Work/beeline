@@ -372,11 +372,11 @@ describe('Reproduction R-1: the Settings Workbench row re-reads on focus', () =>
       .mockResolvedValueOnce(view(0, googleError))
       .mockResolvedValue(view(57, googleError));
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 tool · 0 keys'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connection · 0 keys'));
 
     await refocus();
 
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 tool · 57 keys'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connection · 57 keys'));
     expect(workbench.readWorkbench).toHaveBeenLastCalledWith({
       workspaceId: 'workspace-1',
       viewerId: VIEWER,
@@ -386,9 +386,9 @@ describe('Reproduction R-1: the Settings Workbench row re-reads on focus', () =>
   it('names the one broken tool in a danger subtitle', async () => {
     workbench.readWorkbench.mockResolvedValue(view(57, googleError));
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 tool · 57 keys'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connection · 57 keys'));
     expect(workbenchRow(renderer).props).toMatchObject({
-      title: 'Tools and keys',
+      title: 'Your connections',
       chevron: 'right',
       description: 'Google Workspace needs attention',
       descriptionTone: 'danger',
@@ -400,12 +400,12 @@ describe('Reproduction R-1: the Settings Workbench row re-reads on focus', () =>
       .mockResolvedValueOnce(view(57, googleError))
       .mockRejectedValue(new Error('offline'));
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 tool · 57 keys'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connection · 57 keys'));
 
     await refocus();
 
     await vi.waitFor(() => expect(workbench.readWorkbench).toHaveBeenCalledTimes(2));
-    expect(workbenchRow(renderer).props.value).toBe('1 tool · 57 keys');
+    expect(workbenchRow(renderer).props.value).toBe('1 connection · 57 keys');
     expect(workbenchRow(renderer).props.description).toBe('Google Workspace needs attention');
     expect(headings(renderer).some((text) => text.startsWith('Could not load'))).toBe(false);
   });

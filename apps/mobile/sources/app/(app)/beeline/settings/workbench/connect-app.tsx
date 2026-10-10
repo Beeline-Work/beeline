@@ -144,7 +144,7 @@ const styles = StyleSheet.create(theme => {
   list: { paddingHorizontal: hull.space.lg },
   row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: hull.space.md, paddingVertical: hull.space.sm, borderBottomWidth: 1, borderBottomColor: board.border },
   recommendation: { minHeight: 88, flexDirection: 'row', alignItems: 'center', gap: hull.space.md,
-    borderWidth: 1, borderColor: board.strongBorder, borderRadius: 12, backgroundColor: board.card,
+    borderWidth: 1, borderColor: board.strongBorder, borderRadius: hull.radius, backgroundColor: board.card,
     paddingHorizontal: hull.space.md, marginBottom: hull.space.md },
   name: { flex: 1 },
   nameText: { ...Typography.ledger(), ...hull.type.body, color: board.ink },

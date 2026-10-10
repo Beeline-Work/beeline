@@ -108,6 +108,9 @@ export default function TrayScreen() {
   const noWorkspace = (!routeWorkspaceId && activeWorkspaceId === null) || workspaceLost;
   const [needs, setNeeds] = useState<readonly NeedsYouItemView[]>([]);
   const [bookmarks, setBookmarks] = useState<readonly MessageBookmarkView[]>([]);
+  const [savedNext, setSavedNext] = useState<string | undefined>();
+  const loadingSaved = useRef(false);
+  const savedScroll = useRef(false);
   const [selected, setSelected] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +128,7 @@ export default function TrayScreen() {
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
+    savedScroll.current = false;
     setError(null);
     setNow(Date.now());
     // Each section reads on its own: a failed Saved read must not hide what
@@ -144,6 +148,7 @@ export default function TrayScreen() {
       setLostWorkspaceId(workspaceId);
       setNeeds([]);
       setBookmarks([]);
+      setSavedNext(undefined);
       setSelected(null);
       setLoading(false);
       return;
@@ -151,12 +156,34 @@ export default function TrayScreen() {
     lostWorkspaceRef.current = null;
     setLostWorkspaceId(null);
     if (needsResult.status === 'fulfilled') setNeeds(needsResult.value.items);
-    if (savedResult.status === 'fulfilled') setBookmarks(savedResult.value.bookmarks);
+    if (savedResult.status === 'fulfilled') {
+      setBookmarks(savedResult.value.bookmarks);
+      setSavedNext(savedResult.value.next);
+    }
     const failed = [needsResult, savedResult].find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected')
       setError(failed.reason instanceof Error ? failed.reason.message : String(failed.reason));
     setLoading(false);
   }, [workspaceId]);
+
+  const loadMoreSaved = useCallback(async () => {
+    if (!workspaceId || !savedNext || loadingSaved.current) return;
+    loadingSaved.current = true;
+    try {
+      const page = await monolithPhoneOperation('listMessageBookmarks', {
+        workspaceId, before: savedNext,
+      });
+      setBookmarks((current) => {
+        const seen = new Set(current.map((item) => item.messageId));
+        return [...current, ...page.bookmarks.filter((item) => !seen.has(item.messageId))];
+      });
+      setSavedNext(page.next);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      loadingSaved.current = false;
+    }
+  }, [workspaceId, savedNext]);
 
   // An open tray reads when it opens, when the app comes back to the
   // foreground (another device may have cleared a cell meanwhile), and when
@@ -359,7 +386,8 @@ export default function TrayScreen() {
     setBookmarks((current) => current.filter((item) => !ids.has(item.messageId)));
     try {
       await monolithPhoneOperation('clearMessageBookmarks', { workspaceId: clear.workspaceId });
-      await load();
+      setBookmarks([]);
+      setSavedNext(undefined);
     } catch (cause) {
       setBookmarks((current) =>
         [...clear.items, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
@@ -587,6 +615,9 @@ export default function TrayScreen() {
 
   const list = (
     <FlatList
+      onScroll={(event) => { if (event.nativeEvent.contentOffset.y > 20) savedScroll.current = true; }}
+      onEndReached={() => { if (savedScroll.current) void loadMoreSaved(); }}
+      onEndReachedThreshold={0.5}
       contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}
       data={rows}
       keyExtractor={(row) => row.key}

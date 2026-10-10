@@ -33,11 +33,16 @@ CREATE TABLE IF NOT EXISTS github_star_prompts (
   reached_milestone integer NOT NULL DEFAULT 0,
   reached_at timestamptz,
   answered_milestone integer NOT NULL DEFAULT 0,
+  checked_milestone integer NOT NULL DEFAULT 0,
   last_win_at timestamptz,
   closed text CHECK (closed IN ('dismissed','starred')),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE github_star_prompts ADD COLUMN IF NOT EXISTS checked_milestone integer NOT NULL DEFAULT 0;
 `;
+
+/** Deduplicate rare due-milestone checks while their GitHub request is pending. */
+const starChecks = new Set<string>();
 
 interface StarPromptGitHub {
   repositoryStarred(viewerId: string, fullName: string): Promise<boolean | 'unknown'>;
@@ -117,35 +122,27 @@ export async function readStarPrompt(
     await database.query<{
       reached_milestone: number;
       answered_milestone: number;
+      checked_milestone: number;
       due: boolean;
+      held: boolean;
     }>(
-      `SELECT prompt.reached_milestone,prompt.answered_milestone,
+      `WITH rooms AS (
+         SELECT room_id FROM memberships
+         WHERE identity_id=$1 AND room_id IS NOT NULL AND removed_at IS NULL
+       )
+       SELECT prompt.reached_milestone,prompt.answered_milestone,prompt.checked_milestone,
          GREATEST(prompt.last_win_at,(
            SELECT max(card.created_at) FROM corner_facts corner
            JOIN messages card ON card.room_id=corner.corner_id
              AND card.card_type='corner-workflow-handoff'
              AND card.card->>'toState' IN ('landed','closed')
            WHERE corner.commissioned_by=prompt.identity_id
-         ))>prompt.reached_at due
-       FROM github_star_prompts prompt
-       WHERE prompt.identity_id=$1 AND prompt.closed IS NULL
-         AND prompt.reached_milestone>prompt.answered_milestone`,
-      [viewerId],
-    )
-  ).rows[0];
-  if (!row?.due) return { prompt: null };
-  const held = (
-    await database.query<{ held: boolean }>(
-      `WITH rooms AS (
-         SELECT room_id FROM memberships
-         WHERE identity_id=$1 AND room_id IS NOT NULL AND removed_at IS NULL
-       )
-       SELECT EXISTS(
+         ))>prompt.reached_at due,
+         EXISTS(
            SELECT 1 FROM rooms JOIN messages message ON message.room_id=rooms.room_id
            WHERE message.author_id=$1
              AND message.created_at>now()-make_interval(secs=>$2)
-         )
-         OR COALESCE((
+         ) OR COALESCE((
            SELECT turn.status='failed' FROM rooms
            CROSS JOIN LATERAL (
              SELECT status,created_at FROM agent_turns
@@ -153,8 +150,7 @@ export async function readStarPrompt(
              ORDER BY created_at DESC LIMIT 1
            ) turn
            ORDER BY turn.created_at DESC LIMIT 1
-         ),false)
-         OR EXISTS(
+         ),false) OR EXISTS(
            SELECT 1 FROM institutional_memory_correction_events correction
            WHERE correction.requester_identity_id=$1
              AND correction.workspace_id IN (
@@ -162,17 +158,35 @@ export async function readStarPrompt(
                WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL
              )
              AND correction.created_at>now()-make_interval(mins=>$3)
-         ) held`,
+         ) held
+       FROM github_star_prompts prompt
+       WHERE prompt.identity_id=$1 AND prompt.closed IS NULL
+         AND prompt.reached_milestone>prompt.answered_milestone`,
       [viewerId, MID_CONVERSATION_SECONDS, CORRECTION_WINDOW_MINUTES],
     )
-  ).rows[0]?.held;
-  if (held) return { prompt: null };
-  if ((await github?.repositoryStarred(viewerId, STAR_PROMPT_REPOSITORY)) === true) {
-    await database.query(
-      `UPDATE github_star_prompts SET closed='starred',updated_at=now() WHERE identity_id=$1`,
-      [viewerId],
-    );
-    return { prompt: null };
+  ).rows[0];
+  if (!row?.due || row.held) return { prompt: null };
+  if (github && row.checked_milestone < row.reached_milestone) {
+    const key = `${viewerId}:${row.reached_milestone}`;
+    if (!starChecks.has(key)) {
+      starChecks.add(key);
+      // Eligibility is the paint-path answer. GitHub can be slow or down; its
+      // once-per-milestone check only changes future eligibility, never this read.
+      void github.repositoryStarred(viewerId, STAR_PROMPT_REPOSITORY)
+        .then(async (starred) => {
+          if (starred === 'unknown') return;
+          await database.query(
+            `UPDATE github_star_prompts
+             SET checked_milestone=GREATEST(checked_milestone,$2),
+                 closed=CASE WHEN $3::boolean THEN 'starred' ELSE closed END,
+                 updated_at=now()
+             WHERE identity_id=$1 AND reached_milestone=$2 AND closed IS NULL`,
+            [viewerId, row.reached_milestone, starred],
+          );
+        })
+        .catch(() => undefined)
+        .finally(() => starChecks.delete(key));
+    }
   }
   return {
     prompt: {

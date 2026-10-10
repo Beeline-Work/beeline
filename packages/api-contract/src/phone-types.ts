@@ -1096,6 +1096,8 @@ export type CornerListView = {
   readonly corners: readonly CornerListItem[];
   /** On an archived page: the cursor that reads the next page. Absent on the last one. */
   readonly nextArchived?: string;
+  /** Cursor for the next page of open corners. */
+  readonly nextOpen?: string;
   /** Apps connected to this Workspace and available for a new corner. */
   readonly apps?: readonly CornerAppInstallationView[];
   readonly viewer: RoomViewer;

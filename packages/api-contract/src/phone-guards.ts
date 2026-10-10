@@ -1901,6 +1901,8 @@ export function readCornerListView(value: unknown): CornerListView | null {
         ? item.nextArchived
         : undefined,
     ),
+    ...field('nextOpen', typeof item.nextOpen === 'string' && item.nextOpen.length <= 128
+      ? item.nextOpen : undefined),
     ...field('apps', readList(item.apps, readCornerAppInstallation, 100)),
     viewer: readViewer(item.viewer),
     watchFilters: readWatchFilters(item.watchFilters),

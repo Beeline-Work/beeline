@@ -383,8 +383,8 @@ describe('PhoneService.readRoom latency', () => {
     expect(view?.unavailable).toEqual(['unread', 'corners']);
     expect(room && 'cornerCount' in room).toBe(false);
     expect(room && 'openCorners' in room).toBe(false);
-    // Presence, read cursor, and corner counts each degrade independently.
-    expect(warning).toHaveBeenCalledTimes(3);
+    // The deck's one optional enrichment fails alone; the core list survives.
+    expect(warning).toHaveBeenCalledTimes(1);
     warning.mockRestore();
   });
 

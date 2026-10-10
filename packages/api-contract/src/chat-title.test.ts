@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   cornerShortTitle,
   cornerTitle,
+  cutCornerTitle,
+  cutTitle,
   directMessageTitle,
   identityHandle,
   isConnectorLogoUrl,
@@ -90,6 +92,30 @@ describe('directMessageTitle', () => {
     expect(isConnectorLogoUrl('https://x/v1/connectors/logo/google-drive.svg?v=2')).toBe(true);
     expect(isConnectorLogoUrl('https://x/v1/connectors/logo/github.png')).toBe(false);
     expect(isConnectorLogoUrl(undefined)).toBe(false);
+  });
+});
+
+describe('cutTitle', () => {
+  it('cuts by character with a trailing ellipsis', () => {
+    expect(cutTitle('#Roadmap', 40)).toBe('#Roadmap');
+    expect(cutTitle(`#${'a'.repeat(60)}`, 40)).toBe(`#${'a'.repeat(38)}…`);
+    expect(cutTitle('🐝'.repeat(50), 4)).toBe('🐝🐝🐝…');
+  });
+
+  it('cuts a corner title Room half first', () => {
+    expect(cutCornerTitle('Roadmap', 'fix-ledger-drift', 'abc12345', 40, 16)).toBe(
+      cornerTitle('Roadmap', 'fix-ledger-drift', 'abc12345'),
+    );
+    const title = cutCornerTitle(
+      'workspace-operations-room',
+      'reviewer-wake-checks-and-merge-webhook',
+      'abc12345',
+      40,
+      16,
+    );
+    expect(title).toBe('#workspace-oper…/reviewer-wake-checks-a…');
+    expect(Array.from(title)).toHaveLength(40);
+    expect(cutCornerTitle(null, 'fix-ledger-drift', 'abc12345', 10, 4)).toBe('#fix-ledg…');
   });
 });
 

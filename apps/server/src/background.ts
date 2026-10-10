@@ -1,7 +1,8 @@
 import type { SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
-  cornerShortTitle,
+  cutCornerTitle,
+  cutTitle,
   directMessageTitle,
   roomTitle,
   type ChatTitleIdentity,
@@ -99,16 +100,6 @@ export const READ_CLEAR_MAX_MESSAGE_IDS = 20;
 const PUSH_TITLE_LENGTH = 40;
 const PUSH_TITLE_ROOM_LENGTH = 16;
 
-function cutPushTitle(name: string, length: number): string {
-  const characters = Array.from(name.trim());
-  return characters.length > length
-    ? `${characters
-        .slice(0, length - 1)
-        .join('')
-        .trimEnd()}…`
-    : characters.join('');
-}
-
 /**
  * Name the conversation a push came from with the in-app title — `#room`,
  * `#room/corner` or `@peer` from the contract's chat-title module — cut so
@@ -121,14 +112,18 @@ export function pushTitleFor(
   channelId: string | null,
   dmPeer: ChatTitleIdentity | null = null,
 ): { title?: string } {
-  if (dmPeer) return { title: cutPushTitle(directMessageTitle(dmPeer), PUSH_TITLE_LENGTH) };
+  if (dmPeer) return { title: cutTitle(directMessageTitle(dmPeer), PUSH_TITLE_LENGTH) };
   const room = roomTitle(roomName);
   if (!room) return {};
-  if (cornerName === null || !channelId) return { title: cutPushTitle(room, PUSH_TITLE_LENGTH) };
-  const roomPart = cutPushTitle(room, PUSH_TITLE_ROOM_LENGTH);
-  const corner = cornerShortTitle(roomName, cornerName, channelId);
+  if (cornerName === null || !channelId) return { title: cutTitle(room, PUSH_TITLE_LENGTH) };
   return {
-    title: `${roomPart}/${cutPushTitle(corner, PUSH_TITLE_LENGTH - Array.from(roomPart).length - 1)}`,
+    title: cutCornerTitle(
+      roomName,
+      cornerName,
+      channelId,
+      PUSH_TITLE_LENGTH,
+      PUSH_TITLE_ROOM_LENGTH,
+    ),
   };
 }
 

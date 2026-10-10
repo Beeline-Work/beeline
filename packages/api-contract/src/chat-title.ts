@@ -60,6 +60,38 @@ export function cornerTitle(
   return room ? `#${room}/${corner}` : `#${corner}`;
 }
 
+/**
+ * A title cut to at most `length` characters, ending in `…` when cut, so it
+ * stays on one line. Counts characters, not UTF-16 units.
+ */
+export function cutTitle(title: string, length: number): string {
+  const characters = Array.from(title.trim());
+  return characters.length > length
+    ? `${characters
+        .slice(0, length - 1)
+        .join('')
+        .trimEnd()}…`
+    : characters.join('');
+}
+
+/**
+ * `cornerTitle` cut to at most `length` characters, its Room half first cut
+ * to `roomLength`, so a long Room name still leaves the corner readable.
+ */
+export function cutCornerTitle(
+  parentRoomName: string | null | undefined,
+  cornerStoredName: string | null | undefined,
+  cornerId: string,
+  length: number,
+  roomLength: number,
+): string {
+  const room = roomTitle(parentRoomName);
+  const corner = cornerShortTitle(parentRoomName, cornerStoredName, cornerId);
+  if (!room) return cutTitle(`#${corner}`, length);
+  const roomPart = cutTitle(room, roomLength);
+  return `${roomPart}/${cutTitle(corner, length - Array.from(roomPart).length - 1)}`;
+}
+
 export type ChatTitleIdentity = {
   name: string;
   handle?: string | null;

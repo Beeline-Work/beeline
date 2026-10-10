@@ -930,7 +930,12 @@ export function createBeelineServer(options: ServerOptions): Server {
       // projected public row, rather than the NOTIFY origin, so a changed row
       // still reaches this socket and identical local/PG copies do not.
       const sentDeltas = new Map<string, string>();
-      const sentCornerStatus = new Map<string, { fingerprint: string; sequence: number }>();
+      const sentMessageVersions = new Map<string, number>();
+      // Reads still running per row. A row with a read in flight keeps its
+      // sent version, so the size bound never lets a delayed older read through.
+      const pendingRowReads = new Map<string, number>();
+      const sentCornerStatus = new Map<string,
+        { fingerprint: string; sequence: number; epoch?: string }>();
       const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>,
         sequence?: number) => {
         const key = `${event.roomId}:${event.agentId}:${event.turnId}:${event.type}`;
@@ -1109,7 +1114,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                 ? { epoch: cursor.epoch, base: cursor.base,
                     seen: cursor.seen.filter((value): value is number => typeof value === 'number') }
                 : undefined;
-              const forwardEvent = (event: LiveEvent, sequence?: number) => {
+              const forwardEvent = (event: LiveEvent, sequence?: number, epoch?: string) => {
                   const sendFrame = (payload: Record<string, unknown>) => sendLive(JSON.stringify({
                     ...payload, ...(sequence !== undefined ? { sequence } : {}),
                   }));
@@ -1156,9 +1161,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                           if (!status) { sendFrame(wireEvent); return; }
                           const fingerprint = JSON.stringify(status);
                           const previous = sentCornerStatus.get(roomId);
-                          if (previous && ((sequence !== undefined && sequence <= previous.sequence) ||
+                          if (previous && ((sequence !== undefined && epoch === previous.epoch &&
+                              sequence <= previous.sequence) ||
                               previous.fingerprint === fingerprint)) return;
-                          sentCornerStatus.set(roomId, { fingerprint, sequence: sequence ?? 0 });
+                          sentCornerStatus.set(roomId, { fingerprint, sequence: sequence ?? 0, epoch });
                           sendFrame({ type: 'corner-status', roomId, ...status });
                         })
                         .catch(() => {
@@ -1187,27 +1193,24 @@ export function createBeelineServer(options: ServerOptions): Server {
                   // longer than an arbitrary UI deadline, and one slow/bad read
                   // cannot hold later committed messages behind it. The client
                   // reconciler restores causal order from createdAt/id.
-                  let projectionError: unknown;
-                  let committedDelta;
-                  try {
-                    committedDelta = committedRow &&
-                      (committedRow.type === 'message' || !options.phone.readLiveDeltas)
-                      ? options.phone.projectCommittedLiveDelta(roomId, committedRow)
-                      : undefined;
-                  } catch (error) {
-                    projectionError = error;
-                  }
                   // An internal row must agree with the Room-scoped bus key. A
                   // mismatch is neither serialized nor retried against attacker-
                   // controlled ids; the canonical PostgreSQL hint remains the
                   // independent recovery path for the real Room.
-                  if (committedRow?.type === 'message' && !committedDelta && !projectionError) return;
+                  if (committedRow?.type === 'message' && committedRow.row.room_id !== roomId) return;
+                  const rowKey = target.type === 'message'
+                    ? `${roomId}:message:${target.messageId}`
+                    : `${roomId}:turn:${target.agentId}:${target.requestId}`;
+                  pendingRowReads.set(rowKey, (pendingRowReads.get(rowKey) ?? 0) + 1);
                   const pendingDelta = (
-                    projectionError
-                      ? Promise.reject(projectionError)
-                      : committedDelta
-                        ? Promise.resolve(committedDelta)
-                        : readLiveRowForViewer(event, roomId, principal.identityId, target)
+                    committedRow &&
+                      (committedRow.type === 'message' || !options.phone.readLiveDeltas)
+                      ? (async () => (await options.phone.projectCommittedLiveDelta(
+                          roomId, committedRow, principal.identityId)) ??
+                          (committedRow.type === 'turn'
+                            ? readLiveRowForViewer(event, roomId, principal.identityId, target)
+                            : null))()
+                      : readLiveRowForViewer(event, roomId, principal.identityId, target)
                   ).then(
                     (delta) => ({ delta }) as const,
                     (error: unknown) => ({ error }) as const,
@@ -1234,9 +1237,19 @@ export function createBeelineServer(options: ServerOptions): Server {
                       }
                       const publicDelta = { ...result.delta,
                         ...(workflowRuns ? { workflowRuns } : {}) };
-                      const rowKey = target.type === 'message'
-                        ? `${roomId}:message:${target.messageId}`
-                        : `${roomId}:turn:${target.agentId}:${target.requestId}`;
+                      // Row reads run concurrently and can finish out of order.
+                      // A projection older than one this socket already sent
+                      // would roll the row back on the phone.
+                      if (publicDelta.type === 'message-delta' && publicDelta.version !== undefined) {
+                        const sentVersion = sentMessageVersions.get(rowKey);
+                        if (sentVersion !== undefined && publicDelta.version < sentVersion) return;
+                        sentMessageVersions.delete(rowKey);
+                        sentMessageVersions.set(rowKey, publicDelta.version);
+                        for (const key of sentMessageVersions.keys()) {
+                          if (sentMessageVersions.size <= 256) break;
+                          if (!pendingRowReads.has(key)) sentMessageVersions.delete(key);
+                        }
+                      }
                       const fingerprint = createHash('sha256')
                         .update(JSON.stringify(publicDelta)).digest('hex');
                       if (sentDeltas.get(rowKey) === fingerprint) return;
@@ -1263,6 +1276,11 @@ export function createBeelineServer(options: ServerOptions): Server {
                         rememberPaintTrace(wireTrace, target.type);
                         sendFrame(fallback);
                       }
+                    })
+                    .finally(() => {
+                      const reads = pendingRowReads.get(rowKey)! - 1;
+                      if (reads > 0) pendingRowReads.set(rowKey, reads);
+                      else pendingRowReads.delete(rowKey);
                     });
               };
               const subscription = options.live.subscribeReplay(roomId, resume, forwardEvent);
@@ -1272,7 +1290,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                 cursor: subscription.resumed ? resume!.base : subscription.sequence,
                 resumed: subscription.resumed }));
               if (subscription.resumed) {
-                for (const { event, sequence } of subscription.replay) forwardEvent(event, sequence);
+                for (const { event, sequence } of subscription.replay)
+                  forwardEvent(event, sequence, subscription.epoch);
                 continue;
               }
               // A live lane carries only what is written after this point, so a

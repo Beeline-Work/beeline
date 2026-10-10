@@ -601,6 +601,11 @@ export type RoomLiveDelta =
       readonly type: 'message-delta';
       readonly roomId: string;
       readonly message: RoomViewMessage;
+      /**
+       * The row's write counter. It grows with every committed change to
+       * this message; a delta with a lower one is older than one already seen.
+       */
+      readonly version?: number;
       /** Present on deletion: the deck's next visible preview, or null. */
       readonly deckPreview?: ChatListItem['latestMessage'] | null;
     }
@@ -858,7 +863,7 @@ export type ChatListView = {
   /**
    * Per-row facts the server could not read this time (a timed-out
    * enrichment). Each row's value for them is unknown, not empty: `unread`
-   * reads false and the corner fields are absent. Keep the last known values.
+   * and the corner fields are absent. Keep the last known values.
    */
   readonly unavailable?: readonly ChatListUnavailable[];
   readonly watchFilters: readonly SurfaceWatchFilter[];

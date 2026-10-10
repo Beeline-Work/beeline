@@ -7,6 +7,7 @@ import {
   buildApnsProviderToken,
   classifyApnsResponse,
   createApnsPushSender,
+  apnsReadClearRequest,
 } from './apns-push.js';
 
 function privateKey(): string {
@@ -294,4 +295,21 @@ it('uses the same activity slot for APNs collapse and grouping, separate from at
   expect(activity.headers['apns-collapse-id']).toBe(next.headers['apns-collapse-id']);
   expect((activity.payload.aps as Record<string, unknown>)['thread-id']).toBe('agent:corner');
   expect(mention.headers['apns-collapse-id']).toBe('mention');
+});
+
+describe('APNs read-clear request', () => {
+  it('is a low-priority background push carrying only channel ids', () => {
+    const request = apnsReadClearRequest('device', ['room-a', 'corner-b'], 'app.bundle', 'jwt');
+    expect(request.headers).toMatchObject({
+      'apns-push-type': 'background',
+      'apns-priority': '5',
+      'apns-topic': 'app.bundle',
+    });
+    expect(request.headers).not.toHaveProperty('apns-collapse-id');
+    expect(request.payload).toEqual({
+      aps: { 'content-available': 1 },
+      type: 'read-clear',
+      channelIds: ['room-a', 'corner-b'],
+    });
+  });
 });

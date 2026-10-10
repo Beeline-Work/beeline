@@ -204,7 +204,6 @@ vi.mock('expo-haptics', () => ({
 }));
 vi.mock('@/buzz/room-list-row', () => ({
   roomRowShowsCornerMark: (item: any) => !item.directMessage && (item.cornerCount ?? 0) > 0,
-  displayGroupedCornerTitle: vi.fn(() => ''),
   NO_ACTIVITY_PREVIEW: 'No activity',
   roomListSections: vi.fn((items) => {
     const rooms = items.filter((item: any) => !item.directMessage);

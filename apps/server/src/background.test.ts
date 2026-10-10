@@ -6,6 +6,7 @@ import {
   MediaExpiryLoop,
   PUSH_DELIVERY_CONCURRENCY,
   PushDeliveryLoop,
+  READ_CLEAR_INTERVAL_SECONDS,
   runMaintenance,
   type LeaderConnection,
 } from './background.js';
@@ -527,6 +528,82 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+  // Audit 9.3: a Room read on another device must clear the phone's shade
+  // and badge, not only a Room the phone opens itself.
+  it('sends one batched silent read-clear push per iOS device when Rooms are read elsewhere', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        corner = '33333333-3333-4333-8333-333333333333',
+        android = 'android-device-token-12345678901234567890',
+        ios = 'c0ffee'.repeat(10) + 'abcd';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$3,NULL,'Room'),($2,$3,$1,'fix-auth')`,
+        [room, corner, workspace],
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$4,'hello'),($3,$5,$4,'hi')`,
+        ['1'.repeat(64), room, '2'.repeat(64), agent, corner],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+         ($1,$3,'android','physical'),($2,$3,'ios','physical')`,
+        [android, ios, human],
+      );
+      const firebaseSend = vi.fn().mockResolvedValue(undefined);
+      const clearRead = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(
+        db,
+        { send: firebaseSend },
+        { send: vi.fn().mockResolvedValue(undefined), clearRead },
+      );
+      await loop.runOnce();
+      expect(clearRead).not.toHaveBeenCalled();
+
+      const read = (roomId: string, messageId: string) =>
+        db.query(
+          `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+           SELECT room_id,$2,created_at,id FROM messages WHERE id=$1
+           ON CONFLICT(room_id,identity_id) DO UPDATE SET updated_at=clock_timestamp()`,
+          [messageId, human],
+        ).then(() => roomId);
+      await read(room, '1'.repeat(64));
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(1);
+      expect(clearRead).toHaveBeenLastCalledWith(ios, [room]);
+
+      // Reads inside the interval wait and then go out together, once.
+      await read(corner, '2'.repeat(64));
+      await read(room, '1'.repeat(64));
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(1);
+      await db.query(
+        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+      );
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(2);
+      expect(clearRead.mock.calls[1]![0]).toBe(ios);
+      expect([...clearRead.mock.calls[1]![1]].sort()).toEqual([room, corner].sort());
+
+      await db.query(
+        `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
+      );
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledTimes(2);
+      expect(firebaseSend).not.toHaveBeenCalled();
+    } finally {
+      await db.close();
+    }
+  });
   it('retries an APNs timeout durably and records acceptance on the same message claim', async () => {
     const db = new PgliteDatabase();
     try {
@@ -821,16 +898,16 @@ describe('background advisory-lock ownership', () => {
       expect(send).toHaveBeenCalledTimes(2);
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
-        expect.objectContaining({ text: 'Bee: @owner Please review', title: 'Room' }),
+        expect.objectContaining({ text: 'Bee: @owner Please review', title: '#Room' }),
       );
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',
         expect.objectContaining({ text: 'Bee: A direct message' }),
       );
-      // A DM keeps the app's title: its body already names the sender.
+      // A DM is titled as the Room list names it: `@` and the peer's handle.
       expect(
         send.mock.calls.find(([, message]) => message.text === 'Bee: A direct message')![1],
-      ).not.toHaveProperty('title');
+      ).toHaveProperty('title', '@bee');
       expect(send).not.toHaveBeenCalledWith(
         'other-device-token-12345678901234567890',
         expect.objectContaining({ text: 'Untargeted' }),
@@ -861,7 +938,7 @@ describe('background advisory-lock ownership', () => {
           roomId: room,
           channelId: corner,
           cornerId: corner,
-          title: 'Room › Corner',
+          title: '#Room/Corner',
         }),
       );
     } finally {

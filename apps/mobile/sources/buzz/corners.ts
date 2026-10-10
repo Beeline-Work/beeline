@@ -1,4 +1,8 @@
-import type { CornerState, CornerStateReason } from '@beeline/api-contract/phone';
+import {
+  cornerShortTitle,
+  type CornerState,
+  type CornerStateReason,
+} from '@beeline/api-contract/phone';
 
 export type CornerSuperState = 'working' | 'needs-human' | 'finished';
 
@@ -74,9 +78,7 @@ export function resolveCornerLifecycleStatus(
  * An empty or `sub-` name falls back to an id slug.
  */
 export function cornerName(name: string | undefined, id: string): string {
-  const candidate = name?.trim().replace(/^#+/, '');
-  if (!candidate || candidate.startsWith('sub-')) return `corner-${id.slice(0, 8)}`;
-  return candidate;
+  return cornerShortTitle(undefined, name, id);
 }
 
 /**

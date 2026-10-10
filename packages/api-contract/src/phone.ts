@@ -16,6 +16,7 @@ export * from './outside-data.js';
 export * from './room-webhooks.js';
 export * from './default-workspace.js';
 export * from './corner-text.js';
+export * from './chat-title.js';
 export * from './corner-state.js';
 export * from './chat-activity.js';
 export * from './push-level.js';

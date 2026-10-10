@@ -1157,6 +1157,7 @@ export async function readAgentCommands(
       turnRequestId: r.turn_request_id,
       action: r.action,
       reason: r.reason,
+      ...(r.system_event?.scheduleId ? { scheduleId: r.system_event.scheduleId } : {}),
       rootCommandId: r.root_command_id,
       ...(r.parent_command_id ? { parentCommandId: r.parent_command_id } : {}),
       rootSourceMessageId: r.root_source_message_id,

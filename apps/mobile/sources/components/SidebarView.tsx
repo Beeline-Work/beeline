@@ -1,5 +1,5 @@
 import { useTextDraft } from '@/buzz/use-text-draft';
-import { useNeedsYouCount } from '@/buzz/needs-you';
+import { useNeedsYouCount } from '@/buzz/needs-you-store';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import {

@@ -8,6 +8,19 @@ uncommitted during capture. Each profile requested 30 serial opens of the same
 Room on `emulator-5580` at a 200% host CPU quota. The proxy applied 10 Mbps,
 ±12 ms jitter and 1% whole-request failure. It did not simulate packet loss.
 
+**Measured on the emulator:** warm Room and channels first frames under the
+configured local network profiles. **Pending after release:** a production
+phone/server timing distribution from the new observation, then a device
+verdict for A15-class Android with TLS and physical wire capture. Cold routes,
+the other route variants, and all tap feedback frames also remain pending.
+
+The quota is an operating setting, not a CPU calibration. A 46% whole-emulator
+quota derived from published i9-10900K and Galaxy A16 single-core scores made
+Android System UI unresponsive. Five warm Room opens at 100% yielded 268, 269,
+271, 792, and 993 ms; five at 200% yielded 94, 121, 156, 229, and 232 ms.
+The 200% setting kept this x86 emulator usable but does not establish A15
+equivalence. The source scores and setup are in `README.md`.
+
 | Configured RTT | Frames | p50 | p95 | Prepaint HTTP max | Budget |
 |---:|---:|---:|---:|---:|---|
 | 50 ms | 30/30 | 133 ms | 231 ms | 0 | <450 ms: pass |

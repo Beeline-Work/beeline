@@ -7,7 +7,6 @@ import {
   KIND_AGENT_DRAFT,
   LiveOverlayDecoder,
   SurfaceRefreshScheduler,
-  isChatListView,
   isRoomView,
   type LiveOverlay,
   type RoomView,
@@ -44,6 +43,7 @@ import {
   type LiveDraftDrainStore,
 } from '@/buzz/live-draft-drain';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { liveChatList } from '@/buzz/chat-list-store';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import {
@@ -189,7 +189,11 @@ function readFoundUnheardMessage(previous: RoomView | null, next: RoomView): boo
 
 type RoomOutbox = ReturnType<typeof createRoomOutbox>;
 
-/** Clear the reader's dismissal of this Room, unless the Room list shows none. */
+/**
+ * Clear the reader's dismissal of this Room, unless the live Room list shows
+ * it open. A stored copy can predate a dismissal, so without a live list the
+ * server decides.
+ */
 async function reopenIfDismissed(
   transport: BuzzRigTransport,
   view: RoomView,
@@ -198,10 +202,7 @@ async function reopenIfDismissed(
 ): Promise<void> {
   const workspaceId = view.room.workspaceId;
   if (workspaceId) {
-    const list = await mobileSurfaceCache.read(
-      surfaceAddress(relayUrl, viewerPubkey, '/workspace/:id/chats', { workspaceId }),
-      isChatListView,
-    );
+    const list = liveChatList({ relayUrl, viewerPubkey, workspaceId });
     const row = list?.chats.find((item) => item.room.id === view.room.id);
     if (row && !row.closed) return;
   }
@@ -1163,7 +1164,7 @@ export function useRoomSurfaceSession({
             if (!view.parent && !reopenedChat) {
               reopenedChat = true;
               // Only a Room the reader dismissed from the list needs reopening;
-              // the list's own last response says which.
+              // the live Room list says which, or else the server decides.
               void reopenIfDismissed(nextTransport, view, relayUrl, identity.publicKey).catch(
                 () => {
                   reopenedChat = false;

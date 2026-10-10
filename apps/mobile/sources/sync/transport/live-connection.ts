@@ -176,6 +176,11 @@ export class LiveConnection {
     };
   }
 
+  /** Whether any screen holds this Room on view. */
+  isViewing(roomId: string): boolean {
+    return this.viewing.has(roomId);
+  }
+
   /**
    * Settles once the server confirmed every Room these filters name, or after
    * `timeoutMs`. A read started after that misses nothing the subscription

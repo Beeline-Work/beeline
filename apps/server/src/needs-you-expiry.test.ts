@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BackgroundLeader } from './background.js';
 import { migrate } from './database.js';
 import { LiveHub, type LiveEvent } from './live.js';
-import { NeedsYouExpiryLoop } from './needs-you-expiry.js';
+import { DeadlineExpiry } from './deadline-expiry.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { PgliteDatabase } from './test-support.js';
@@ -144,7 +144,7 @@ describe('Needs-you expiry sweep', () => {
     );
     events.length = 0;
     client.payloads.length = 0;
-    await new NeedsYouExpiryLoop(database).runOnce();
+    await new DeadlineExpiry(database).runOnce();
     await eventually(() => markWakes().length > 0);
     expect(markWakes()).toEqual([
       expect.objectContaining({ roomId: '', readerId: VIEWER, sourceRoomId: ROOM }),
@@ -162,7 +162,7 @@ describe('Needs-you expiry sweep', () => {
     const badge = await phone.execute('countNeedsYou', { workspaceId: WORKSPACE }, VIEWER);
     expect(badge).toEqual(expect.objectContaining({ count: 1 }));
     expect((await database.query(`SELECT 1 FROM needs_you_marks`)).rows).toEqual([]);
-    const loop = new NeedsYouExpiryLoop(database);
+    const loop = new DeadlineExpiry(database);
     await loop.runOnce();
     expect(markWakes()).toEqual([]);
     await new Promise((resolve) => setTimeout(resolve, 350));
@@ -186,7 +186,7 @@ describe('Needs-you expiry sweep', () => {
        VALUES($1,$2,$3,now()-interval '1 hour')`, [VIEWER, question, WORKSPACE],
     );
     events.length = 0;
-    await new NeedsYouExpiryLoop(database).runOnce();
+    await new DeadlineExpiry(database).runOnce();
     await eventually(() => markWakes().length > 0);
     expect(markWakes()).toEqual([
       expect.objectContaining({ readerId: VIEWER, sourceRoomId: ROOM }),
@@ -203,7 +203,7 @@ describe('Needs-you expiry sweep', () => {
        VALUES($1,$2,$3,'Done.',now()-interval '6 days')`, ['f'.repeat(64), ROOM, VIEWER],
     );
     client.payloads.length = 0;
-    await new NeedsYouExpiryLoop(database).runOnce();
+    await new DeadlineExpiry(database).runOnce();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(expiryWakes()).toEqual([]);
   });
@@ -217,9 +217,12 @@ describe('Needs-you expiry sweep', () => {
        WHERE message_id=$1`, [question],
     );
     client.payloads.length = 0;
-    await new NeedsYouExpiryLoop(database).runOnce(Date.now() + 10 * 60_000);
+    // The sweep takes no app time: the database decides what is due and how soon.
+    const loop = new DeadlineExpiry(database);
+    const dueIn = await loop.runOnce();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(expiryWakes()).toEqual([]);
+    expect(dueIn).toBeGreaterThan(4 * 60_000);
     expect((await delta()).items.map((item) => item.messageId)).toEqual([question]);
   });
 
@@ -228,8 +231,10 @@ describe('Needs-you expiry sweep', () => {
     const signIn = await card('agent-sign-in', {
       agentId: AGENT, ownerId: VIEWER, harness: 'claude', status: 'pending', expiresAt,
     });
-    const loop = new NeedsYouExpiryLoop(database);
-    expect(await loop.runOnce()).toBe(expiresAt);
+    const loop = new DeadlineExpiry(database);
+    const dueIn = await loop.runOnce();
+    expect(dueIn).toBeGreaterThan(0);
+    expect(dueIn).toBeLessThanOrEqual(200);
     expect((await delta()).items.map((item) => item.messageId)).toEqual([signIn]);
     await new Promise((resolve) => setTimeout(resolve, expiresAt - Date.now() + 20));
     await loop.runOnce();
@@ -249,7 +254,7 @@ describe('Needs-you expiry sweep', () => {
       approvalUrl: 'https://squire.example/approve/1', approvalId: 'approval-1',
       expiresAt, linkKind: 'passkey', sourceRoomId: OTHER_ROOM,
     });
-    const loop = new NeedsYouExpiryLoop(database);
+    const loop = new DeadlineExpiry(database);
     await loop.runOnce();
     expect((await delta()).items.map((item) => item.messageId)).toEqual([approval]);
     await new Promise((resolve) => setTimeout(resolve, expiresAt - Date.now() + 20));
@@ -269,7 +274,7 @@ describe('Needs-you expiry sweep', () => {
       `UPDATE needs_you_marks SET first_seen_at=now()-interval '24 hours 1 second'
        WHERE message_id=$1`, [expired],
     );
-    const loop = new NeedsYouExpiryLoop(database, 0);
+    const loop = new DeadlineExpiry(database);
     client.payloads.length = 0;
     const next = await loop.runOnce();
     await eventually(() => expiryWakes().length === 1);
@@ -277,15 +282,16 @@ describe('Needs-you expiry sweep', () => {
     const firstSeen = (await database.query<{ first_seen_at: Date }>(
       `SELECT first_seen_at FROM needs_you_marks WHERE message_id=$1`, [fresh],
     )).rows[0]!.first_seen_at;
-    expect(next).toBe(new Date(firstSeen).getTime() + 24 * 3600_000);
+    const dueAt = new Date(firstSeen).getTime() + 24 * 3600_000;
+    expect(Math.abs(next! - (dueAt - Date.now()))).toBeLessThan(1_000);
     await loop.runOnce();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(expiryWakes()).toHaveLength(1);
   });
 
   it('sweeps only on the process that holds the background lock', async () => {
-    const runOnce = vi.spyOn(NeedsYouExpiryLoop.prototype, 'runOnce');
-    const loop = new NeedsYouExpiryLoop(database);
+    const runOnce = vi.spyOn(DeadlineExpiry.prototype, 'runOnce');
+    const loop = new DeadlineExpiry(database);
     let released = false;
     const leader = new BackgroundLeader({
       connectDedicated: async () => ({

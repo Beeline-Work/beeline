@@ -32,6 +32,21 @@ import { backfillInheritedCornerMemberships } from './membership-join.js';
 import { PgliteDatabase } from './test-support.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
 
+it('indexes delivered claims still awaiting a read-clear push', async () => {
+  const database = new PgliteDatabase();
+  try {
+    await migrate(database);
+    const index = await database.query<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes WHERE indexname='push_delivery_claims_read_clear_idx'`,
+    );
+    expect(index.rows[0]?.indexdef).toContain('(device_token, message_id)');
+    expect(index.rows[0]?.indexdef).toContain("status = 'delivered'");
+    expect(index.rows[0]?.indexdef).toContain('read_cleared_at IS NULL');
+  } finally {
+    await database.close();
+  }
+});
+
 function result<Row>(rows: Row[]) {
   return { rows, rowCount: rows.length };
 }

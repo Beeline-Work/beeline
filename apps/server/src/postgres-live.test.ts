@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { migrate, type SqlDatabase } from './database.js';
-import { CornerOwedExpiry } from './corner-owed-expiry.js';
+import { DeadlineExpiry } from './deadline-expiry.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import {
   announceAgentLifecycle,
@@ -893,7 +893,7 @@ describe('Postgres live fanout', () => {
     );
   });
 
-  it('nudges the parent Room for workflow, owed, follow, name, archive and membership changes', async () => {
+  it('nudges the parent Room for every projected corner-row change', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
     const listener = new PostgresLiveListener(database, live, () => client, 1);
@@ -954,10 +954,43 @@ describe('Postgres live fanout', () => {
     await expectNudge(() => database.query(
       `UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]));
 
-    // A write that changes no corner-list input stays off the parent.
+    // Every other projected column: objective, initiator, owner, row stamp,
+    // brief revision, app binding and the newest chat message.
+    await expectNudge(() => database.query(
+      `UPDATE corner_facts SET objective='still fix it' WHERE corner_id=$1`, [corner]));
+    await expectNudge(() => database.query(
+      `UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [corner, reader]));
+    await expectNudge(() => database.query(
+      `UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [corner]));
+    await expectNudge(() => database.query(
+      `UPDATE corner_facts SET owner_agent_id=NULL WHERE corner_id=$1`, [corner]));
+    await expectNudge(() => database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]));
+    await expectNudge(() => database.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+       VALUES($1,1,'brief',$2,$3)`, [corner, agent, ROOM]));
+    const installation = '99999999-9999-4999-8999-999999999999';
+    await database.query(
+      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,manifest)
+       VALUES($1,$2,$3,'{}'::jsonb)`, [installation, WORKSPACE, AUTHOR]);
+    await expectNudge(() => database.query(
+      `INSERT INTO corner_app_bindings(corner_id,installation_id,instance_id,bound_by)
+       VALUES($1,$2,gen_random_uuid(),$3)`, [corner, installation, AUTHOR]));
+    await expectNudge(() => database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('latest-1',$1,$2,'done')`,
+      [corner, agent]));
+    await expectNudge(() => database.query(
+      `UPDATE messages SET text='done, edited' WHERE id='latest-1'`));
+    await expectNudge(() => database.query(
+      `UPDATE messages SET presentation='activity' WHERE id='latest-1'`));
+
+    // A write that changes no corner-row column stays off the parent.
     await settle(parent);
-    await database.query(`UPDATE corner_facts SET objective='still fix it' WHERE corner_id=$1`, [corner]);
-    await database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]);
+    await database.query(`UPDATE corner_facts SET close_requested=true WHERE corner_id=$1`, [corner]);
+    await database.query(
+      `UPDATE rooms SET github_events_enabled=NOT github_events_enabled WHERE id=$1`, [corner]);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES('step-1',$1,$2,'step','activity')`,
+      [corner, agent]);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(nudges()).toEqual([]);
   });
@@ -1037,22 +1070,22 @@ describe('Postgres live fanout', () => {
     // A new owed row wakes the leader so it can re-arm for the new deadline.
     await eventually(() => wakes.every((count) => count >= 1));
     const clock = new SkewedClockDatabase(database);
-    const expiry = new CornerOwedExpiry(clock);
-    expect(await expiry.msUntilNextDue()).toBeGreaterThan(50_000);
-    expect(await expiry.runOnce(true)).toBe(0);
+    const expiry = new DeadlineExpiry(clock);
+    expect(await expiry.runOnce(true)).toBeGreaterThan(50_000);
     await settle(parents[0]!);
     await settle(parents[1]!);
 
     // No write happens at expiry: only the leader's job announces it.
     clock.offsetMs = 60_000;
-    expect(await expiry.runOnce()).toBe(1);
+    await expiry.runOnce();
     for (const parent of parents)
       await eventually(() => parent.some((event) =>
         event.type === 'invalidate' && event.reason === 'corner-status'));
     // The same expiry is announced once per leader.
     clock.offsetMs = 61_000;
-    expect(await expiry.runOnce()).toBe(0);
-    expect(await expiry.msUntilNextDue()).toBeNull();
+    await settle(parents[0]!);
+    await expiry.runOnce();
+    expect(parents[0]).toEqual([]);
   });
 
   it('decides an owed expiry by the database clock when the app clock runs ahead', async () => {
@@ -1075,20 +1108,21 @@ describe('Postgres live fanout', () => {
     try {
       vi.setSystemTime(Date.now() + skewMs);
       expect(Date.now()).toBeGreaterThan(expiresAt.getTime());
-      const expiry = new CornerOwedExpiry(clock);
-      expect(await expiry.runOnce(true)).toBe(0);
-      expect(await expiry.msUntilNextDue()).toBeGreaterThan(50_000);
+      const expiry = new DeadlineExpiry(clock);
+      expect(await expiry.runOnce(true)).toBeGreaterThan(50_000);
       await settle(parent);
-      expect(await expiry.runOnce()).toBe(0);
+      await expiry.runOnce();
+      expect(parent).toEqual([]);
 
       // The database reaches the expiry: announced once, then never again.
       clock.offsetMs = -skewMs + 60_000;
-      expect(await expiry.runOnce()).toBe(1);
+      await expiry.runOnce();
       await eventually(() => parent.some((event) =>
         event.type === 'invalidate' && event.reason === 'corner-status'));
       clock.offsetMs = -skewMs + 61_000;
-      expect(await expiry.runOnce()).toBe(0);
-      expect(await expiry.msUntilNextDue()).toBeNull();
+      await settle(parent);
+      await expiry.runOnce();
+      expect(parent).toEqual([]);
     } finally {
       vi.useRealTimers();
     }

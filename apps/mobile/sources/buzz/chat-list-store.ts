@@ -30,6 +30,10 @@ const stores = new Map<string, ChatListStore>();
 const idOf = (key: ChatListKey) => JSON.stringify([key.relayUrl, key.viewerPubkey, key.workspaceId]);
 const addressOf = (key: ChatListKey): SurfaceCacheAddress => surfaceAddress(key.relayUrl, key.viewerPubkey, '/workspace/:id/chats', { workspaceId: key.workspaceId });
 const roomIds = (filters: Filters) => new Set(filters.flatMap((filter) => filter['#h'] ?? []));
+const deltaContext = {
+  viewing: (id: string) => sharedLiveConnection().isViewing(id),
+  openCorners: (id: string) => getRoomCornerSummary(id)?.openCorners,
+};
 
 /** One live watch and one registry value for every viewer's Workspace list. */
 class ChatListStore {
@@ -74,12 +78,9 @@ class ChatListStore {
       apply: (read) => {
         if (this.closed) return;
         const held = this.current();
-        const value = this.deltasDuringRead.reduce((view, delta) => applyChatListDelta(view, delta, {
-          viewing: (id) => sharedLiveConnection().isViewing(id),
-          openCorners: (id) => getRoomCornerSummary(id)?.openCorners,
-        }), withoutCornerFacts(keepUnavailableChatFacts(held, read)));
-        const missedLive = this.confirmedRead && held !== null &&
-          roomsMissedByLive(held, read, this.heard).length > 0;
+        const value = this.deltasDuringRead.reduce((view, delta) => applyChatListDelta(view, delta, deltaContext),
+          withoutCornerFacts(keepUnavailableChatFacts(held, read)));
+        const missedLive = this.confirmedRead && held !== null && roomsMissedByLive(held, read, this.heard);
         this.confirmedRead = true;
         this.missed = false;
         this.heard.clear();
@@ -114,17 +115,11 @@ class ChatListStore {
   force(): void { this.missed = false; this.scheduler.force(); }
   catchUp(): void { if (this.missed) this.force(); }
   async remove(): Promise<void> {
-    if (this.durableTimer) clearTimeout(this.durableTimer);
-    this.durableTimer = undefined;
     const removal = mobileSurfaceCache.remove(this.address);
-    this.close();
+    this.close(false);
     await removal;
   }
-  reset(): void {
-    if (this.durableTimer) clearTimeout(this.durableTimer);
-    this.durableTimer = undefined;
-    this.close();
-  }
+  reset(): void { this.close(false); }
 
   private saved(value: ChatListView): ChatListView {
     return withCornerFacts(value, (roomId) => {
@@ -178,10 +173,7 @@ class ChatListStore {
       const held = this.current();
       if (!held) { this.requestRead(); return; }
       const needsRead = chatListDeltaNeedsRead(held, live);
-      const next = applyChatListDelta(held, live, {
-        viewing: (id) => sharedLiveConnection().isViewing(id),
-        openCorners: (id) => getRoomCornerSummary(id)?.openCorners,
-      });
+      const next = applyChatListDelta(held, live, deltaContext);
       if (next !== held) { mobileSurfaceCache.publish(this.address, next, isChatListView); this.persistSoon(); }
       if (needsRead) this.requestRead();
       return;
@@ -190,10 +182,10 @@ class ChatListStore {
     if (live?.type === 'subscribed' && (!this.confirmedRead || (live.resumed && this.covered.has(live.roomId)))) return;
     this.requestRead();
   }
-  private close(): void {
+  private close(persist = true): void {
     if (this.closed) return;
     if (this.durableTimer) { clearTimeout(this.durableTimer); this.durableTimer = undefined;
-      const value = this.current(); if (value) void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView); }
+      const value = this.current(); if (persist && value) void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView); }
     this.closed = true;
     this.scheduler.dispose();
     this.stopWatch?.();

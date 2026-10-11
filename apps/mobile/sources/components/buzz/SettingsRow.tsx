@@ -49,6 +49,8 @@ type SettingsRowProps = {
   /** The quiet line under the title. A full sentence wraps here rather than
    *  ellipsizing beside the title, exactly as the sheet row's does. */
   description?: string;
+  /** A short fact kept whole before a one-line, ellipsized description tail. */
+  descriptionLead?: string;
   /** A second quiet line under `description`, for a row whose subject needs
    *  one provenance fact stated beneath it (the profile grant ledger's
    *  `grantProvenanceLine`). Same quiet tier as `description`; never used for
@@ -113,6 +115,7 @@ export function SettingsRow({
   actionControl,
   chevron,
   description,
+  descriptionLead,
   descriptionDetail,
   descriptionTone,
   descriptionAction,
@@ -127,7 +130,9 @@ export function SettingsRow({
   value,
   valueTone,
 }: SettingsRowProps) {
-  const spoken = [value ?? action ?? actionControl?.label, description, descriptionDetail]
+  const spoken = [value ?? action ?? actionControl?.label,
+    descriptionLead ? `${descriptionLead} ${description ?? ''}`.trim() : description,
+    descriptionDetail]
     .filter(Boolean)
     .join('. ');
   const trailingMark =
@@ -206,10 +211,17 @@ export function SettingsRow({
           {title}
         </Text>
         {description ? (
-          <View style={styles.descriptionRow}>
+          <View style={[styles.descriptionRow, descriptionLead && styles.descriptionLeadRow]}>
+            {descriptionLead ? (
+              <Text numberOfLines={1} style={styles.descriptionLead}
+                testID={testID ? `${testID}-description-lead` : undefined}>
+                {descriptionLead}
+              </Text>
+            ) : null}
             <Text
-              numberOfLines={descriptionAction ? 1 : undefined}
-              style={[styles.description, descriptionTone === 'danger' && styles.descriptionDanger]}
+              numberOfLines={descriptionLead || descriptionAction ? 1 : undefined}
+              style={[descriptionLead ? styles.descriptionTail : styles.description,
+                descriptionTone === 'danger' && styles.descriptionDanger]}
             >
               {description}
             </Text>
@@ -297,6 +309,15 @@ const styles = StyleSheet.create((theme) => {
     actionTitle: { color: hull.accent },
     destructive: { color: hull.dialogDanger },
     descriptionRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
+    descriptionLeadRow: { gap: hull.space.xs },
+    descriptionLead: {
+      ...Typography.default(), ...hull.type.meta,
+      flexShrink: 0, color: hull.textMuted,
+    },
+    descriptionTail: {
+      ...Typography.default(), ...hull.type.meta,
+      flex: 1, minWidth: 0, color: hull.textMuted,
+    },
     // `flex: 1` rather than a shrink: it fills the copy column, so an
     // affordance hanging off its end lands on one edge down the list instead
     // of chasing the width of each row's text.

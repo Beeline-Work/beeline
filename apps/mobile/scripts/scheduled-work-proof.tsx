@@ -59,6 +59,18 @@ async function run() {
     .filter((row): row is Element => Boolean(row))
     .map((row) => [...row.querySelectorAll('[dir=auto]')].slice(0, 2)
       .map((label) => label.getBoundingClientRect().x));
+  const listLines = ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1', 'subscription-sub-2']
+    .map((id) => {
+      const row = document.querySelector(`[data-testid="${id}"]`);
+      const lead = document.querySelector(`[data-testid="${id}-description-lead"]`);
+      const tail = lead?.nextElementSibling;
+      return row && lead && tail ? {
+        height: row.getBoundingClientRect().height,
+        leadVisible: lead.scrollWidth <= lead.clientWidth + 1,
+        sameLine: Math.abs(lead.getBoundingClientRect().y - tail.getBoundingClientRect().y) < 1,
+        tailOneLine: tail.getBoundingClientRect().height <= lead.getBoundingClientRect().height + 1,
+      } : null;
+    });
   const detailAxis = [
     'scheduled-work-facts-when', 'scheduled-work-facts-agents', 'scheduled-work-facts-where',
     'scheduled-work-does-header', 'scheduled-work-prompt', 'scheduled-work-workflow',
@@ -88,6 +100,7 @@ async function run() {
       glyphs,
       loadedFonts: [...document.fonts].filter((face) => face.status === 'loaded').map((face) => face.family),
       listAxes,
+      listLines,
       detailAxis,
       steps,
       pendingCircles,

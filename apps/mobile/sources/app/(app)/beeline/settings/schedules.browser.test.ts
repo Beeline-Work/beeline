@@ -84,6 +84,7 @@ type Page = {
   glyphs: string[];
   loadedFonts: string[];
   listAxes: number[][];
+  listLines: Array<{ height: number; leadVisible: boolean; sameLine: boolean; tailOneLine: boolean } | null>;
   detailAxis: number[];
   steps: string[];
   pendingCircles: number;
@@ -132,18 +133,23 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.text.slice(2)).toEqual([
       'SCHEDULES',
       "Summarize yesterday's merged PRs for the Room…",
-      'Weekdays at 09:00 UTC · @Hoots · this Room',
+      'Weekdays at 09:00 UTC',
+      '· @Hoots · this Room',
       'Feedback triage',
-      'Daily at 14:00 America/New_York · @Ruby · #issues-triage',
+      'Daily at 14:00 America/New_York',
+      '· @Ruby · #issues-triage',
       'SUBSCRIPTIONS',
       'Triage incoming work',
-      'On new pull request in owner/widgets · @Ruby · this Room',
+      'On new pull request in owner/widgets',
+      '· @Ruby · this Room',
       'Feedback triage',
-      'On someone joining this Room · @Ruby · #issues-triage',
+      'On someone joining this Room',
+      '· @Ruby · #issues-triage',
     ]);
     expect(page.glyphs).toEqual(['scheduled-work-glyph-video', 'subscription-glyph-sub-2']);
     expect(page.loadedFonts).toEqual(expect.arrayContaining(['SpaceGrotesk-Regular', 'SpaceGrotesk-Medium', 'SpaceGrotesk-SemiBold']));
     expect(page.listAxes).toEqual([[45, 45], [45, 45], [45, 45], [45, 45]]);
+    expect(page.listLines).toEqual(Array(4).fill({ height: 64, leadVisible: true, sameLine: true, tailOneLine: true }));
     expect(page.text.join(' ')).not.toMatch(/LAST|NEVER FIRED|STOP|REVOKE/);
     expect(page.pushed).toEqual([
       { pathname: '/beeline/settings/schedule', params: { roomId: 'room-1', scheduleId: 'daily' } },

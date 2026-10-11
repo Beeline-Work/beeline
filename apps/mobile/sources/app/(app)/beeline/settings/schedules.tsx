@@ -54,7 +54,8 @@ export default function ScheduledWork() {
   const renderSchedule = (schedule: RoomScheduleView) => (
     <SettingsRow
       chevron="right"
-      description={`${scheduleCadenceLabel(schedule.cadence)} · @${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule)}`}
+      description={`· @${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule)}`}
+      descriptionLead={scheduleCadenceLabel(schedule.cadence)}
       key={schedule.id}
       leading={<View style={styles.leadingSlot}>
         {schedule.workflowSlug ? (
@@ -70,7 +71,8 @@ export default function ScheduledWork() {
   const renderSubscription = (subscription: RoomSubscriptionView) => (
     <SettingsRow
       chevron="right"
-      description={`${subscriptionWhen(subscription)} · @${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
+      description={`· @${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
+      descriptionLead={subscriptionWhen(subscription)}
       key={subscription.id}
       leading={<View style={styles.leadingSlot}>
         {subscription.workflowSlug ? (

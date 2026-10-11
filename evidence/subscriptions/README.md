@@ -3,7 +3,7 @@
 These 390 × 900 frames render the real list and detail components with sample Room responses:
 
 - `main-baseline.png`: the merged main Schedules list rendered with the same font setup for comparison.
-- `list.png`: one item in each trigger/action quadrant, grouped as Schedules and Subscriptions. Line one ellipsizes only the action; line two starts with the complete cadence or event and then names the agent and Room.
+- `list.png`: one item in each trigger/action quadrant, grouped as Schedules and Subscriptions. Line one ellipsizes the action; line two keeps the complete cadence or event and ellipsizes the agent and Room tail. All rows stay 64 px tall.
 - `schedule-prompt.png`, `schedule-workflow.png`, `subscription-prompt.png`, `subscription-workflow.png`: the common When, Agent, Where, Does, Stop detail grammar. Workflow actions show the saved steps on the workflow rail.
 - `stop-confirm.png`: the second step before stopping a subscription.
 - `empty.png`: first-use list.

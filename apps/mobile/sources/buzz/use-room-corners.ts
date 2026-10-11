@@ -107,6 +107,7 @@ export function useRoomCorners(
   const [accountEpoch, setAccountEpoch] = useState(0);
   const readerRef = useRef<Promise<Reader> | null>(null);
   const readyRef = useRef(false);
+  const loadingOpen = useRef(false);
   const refreshingOpen = useRef(false);
   const refreshingArchived = useRef(false);
 
@@ -184,16 +185,23 @@ export function useRoomCorners(
   }, [read, reader, record, roomId]);
 
   const loadMoreOpen = useCallback(async () => {
-    if (!roomId) return;
+    if (!roomId || loadingOpen.current) return;
     const cursor = getRoomCorners(roomId).nextOpen;
     if (!cursor) return;
-    const mark = cornerReadMark(roomId);
-    const source = await reader();
-    if (source.generation !== mark.generation) return;
-    const page = await source.client.corners(roomId, { openBefore: cursor });
-    // A frame or another page may have moved the cursor while this one read.
-    if (getRoomCorners(roomId).nextOpen !== cursor) return;
-    applyOpenCornerPage(roomId, page.corners, page.nextOpen, mark);
+    loadingOpen.current = true;
+    try {
+      const mark = cornerReadMark(roomId);
+      const source = await reader();
+      if (source.generation !== mark.generation) return;
+      const page = await source.client.corners(roomId, { openBefore: cursor });
+      // A frame or another page may have moved the cursor while this one read.
+      if (getRoomCorners(roomId).nextOpen !== cursor) return;
+      applyOpenCornerPage(roomId, page.corners, page.nextOpen, mark);
+    } catch (reason) {
+      setError(phoneOperationFailureReason(reason));
+    } finally {
+      loadingOpen.current = false;
+    }
   }, [reader, roomId]);
 
   const loadArchived = useCallback(async (more: boolean) => {

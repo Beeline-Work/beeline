@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
-import { splitViewerContext, viewerAgentHandle, viewerContext } from './viewer-conversation';
+import { splitViewerContext, viewerAgentHandle, viewerContext, viewerContextLabel } from './viewer-conversation';
 
 it('keeps the selected viewer context bounded and separate from visible message prose', () => {
   const context = viewerContext('artifact', 'Checkout [draft]\nstep');
@@ -22,4 +22,9 @@ it('addresses an artifact author only when that handle belongs to an agent', () 
   expect(viewerAgentHandle('artifact', '@moth', messages)).toBe('moth');
   expect(viewerAgentHandle('artifact', 'play-review', [])).toBeUndefined();
   expect(viewerAgentHandle('computer', '@moth', [])).toBe('moth');
+});
+
+it('shortens the visible context without changing the saved envelope', () => {
+  expect(viewerContextLabel('Viewing artifact: Brief · revision 1')).toBe('Viewing Brief · revision 1');
+  expect(viewerContextLabel('Viewing browser: Checkout')).toBe('Viewing shared browser');
 });

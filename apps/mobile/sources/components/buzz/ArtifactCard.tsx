@@ -44,6 +44,42 @@ import { Modal } from '@/modal';
 
 const PREVIEW_SNAPSHOT_DELAY_MS = 1200;
 
+/** Reopen the same artifact surface from a card or transcript reference. */
+export function openArtifactViewer(attachment: AttachmentReference, isDesktop = false,
+  roomId = currentViewerConversation()?.roomId, authorHandle = attachment.author,
+  photoAttachments?: readonly AttachmentReference[]) {
+  const format = artifactFormat(attachment.mimeType);
+  // A picture is not a document: every surface opens the same centered
+  // full-screen viewer, so desktop reads an image the way mobile does. The
+  // work pane keeps its documents — its sandboxed iframe is the right shape
+  // for markup and PDFs, not for a raster.
+  // When no second pane can take it (a narrow window, a direct message),
+  // the document opens in the same full-screen viewer.
+  if (
+    isDesktop &&
+    format !== 'image' &&
+    openArtifactInDesktopWorkPane({
+      attachment,
+      authorHandle,
+      roomId,
+    })
+  )
+    return;
+  Modal.show({
+    component: ArtifactViewerScreen,
+    props: {
+      attachment,
+      authorHandle,
+      roomId,
+      ...(photoAttachments && photoAttachments.length > 1 ? { photoAttachments } : {}),
+    },
+    // The viewer is a full-screen surface: the default centered placement
+    // constrains width to 460 and no height, collapsing its flex:1 root to
+    // nothing — a dimmed room with an invisible viewer.
+    placement: 'fill',
+  });
+}
+
 /**
  * The artifact card IS the preview (mock 1b): the page itself rendered on the
  * device, cropped to a fixed height, script off, non-interactive, rendered
@@ -88,36 +124,9 @@ export const ArtifactCard = React.memo(function ArtifactCard({
     [activeAttachment],
   );
   const openFull = useCallback(() => {
-    // A picture is not a document: every surface opens the same centered
-    // full-screen viewer, so desktop reads an image the way mobile does. The
-    // work pane keeps its documents — its sandboxed iframe is the right shape
-    // for markup and PDFs, not for a raster.
-    // When no second pane can take it (a narrow window, a direct message),
-    // the document opens in the same full-screen viewer.
-    if (
-      isDesktop &&
-      format !== 'image' &&
-      openArtifactInDesktopWorkPane({
-        attachment: activeAttachment,
-        authorHandle: activeAuthorHandle,
-        roomId: currentViewerConversation()?.roomId,
-      })
-    )
-      return;
-    Modal.show({
-      component: ArtifactViewerScreen,
-      props: {
-        attachment: activeAttachment,
-        authorHandle: activeAuthorHandle,
-        roomId: currentViewerConversation()?.roomId,
-        ...(isPhotoGroup ? { photoAttachments } : {}),
-      },
-      // The viewer is a full-screen surface: the default centered placement
-      // constrains width to 460 and no height, collapsing its flex:1 root to
-      // nothing — a dimmed room with an invisible viewer.
-      placement: 'fill',
-    });
-  }, [activeAttachment, activeAuthorHandle, format, isDesktop, isPhotoGroup, photoAttachments]);
+    openArtifactViewer(activeAttachment, isDesktop, currentViewerConversation()?.roomId,
+      activeAuthorHandle, isPhotoGroup ? photoAttachments : undefined);
+  }, [activeAttachment, activeAuthorHandle, isDesktop, isPhotoGroup, photoAttachments]);
 
   // What is left external is what nothing on the device can paint — a ZIP, an
   // octet-stream, anything unrecognized. Those keep the file-style row and the

@@ -13,6 +13,9 @@ import { resetProvisionalDrafts } from '@/buzz/draft-settle';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { beelineThemes } from '@/buzz/groknight';
 import { Platform } from 'react-native';
+import { openArtifactViewer } from '@/components/buzz/ArtifactCard';
+import { openComputerSessionViewer } from '@/components/buzz/ComputerSession';
+import { publishViewerConversation, removeViewerConversation } from '@/buzz/viewer-conversation';
 
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
 const modal = vi.hoisted(() => ({ alert: vi.fn(), show: vi.fn() }));
@@ -110,8 +113,9 @@ const openExternal = vi.hoisted(() => ({ openExternalUrl: vi.fn(async () => unde
 vi.mock('@/utils/open-external-url', () => openExternal);
 vi.mock('@/components/buzz/ArtifactCard', async () => {
   const ReactModule = await import('react');
-  return { ArtifactCard: (props: any) => ReactModule.createElement('ArtifactCard', props) };
+  return { ArtifactCard: (props: any) => ReactModule.createElement('ArtifactCard', props), openArtifactViewer: vi.fn() };
 });
+vi.mock('@/components/buzz/ComputerSession', () => ({ openComputerSessionViewer: vi.fn() }));
 vi.mock('@/components/buzz/ArtifactViewer', async () => {
   const ReactModule = await import('react');
   return {
@@ -379,7 +383,7 @@ describe('Workbench identities', () => {
 });
 
 describe('Room message variant components', () => {
-  it('renders a viewer send as prose plus a context chip without duplicating its artifact card', () => {
+  it('renders a viewer send as prose plus an actionable viewing reference without duplicating its artifact card', () => {
     const renderer = render(<OrdinaryLedgerMessage
       message={message({
         id: 'viewer-send', isUser: true,
@@ -394,9 +398,36 @@ describe('Room message variant components', () => {
     />);
     const steer = renderer.root.findByType('LedgerSteer' as never).props;
     expect(steer.bodyText).toBe('@moth Could we simplify this?');
-    expect(steer.attachments[0].props.children)
-      .toEqual(['◉ ', 'Viewing artifact: Checkout mock']);
-    expect(steer.attachments.slice(1)).toEqual([null]);
+    expect(steer.attachments).toEqual([null]);
+    const reference = render(steer.replyReference).root.findByProps({ testID: 'viewer-context-viewer-send', accessibilityRole: 'button' });
+    expect(reference.findByType('Text' as never).props.children).toBe('Viewing Checkout mock');
+    act(() => reference.props.onPress());
+    expect(openArtifactViewer).toHaveBeenCalledWith(expect.objectContaining({ name: 'mock.html' }), false, undefined);
+  });
+
+  it('opens the browser session viewed at send time instead of a later session with the same title', () => {
+    const session = { id: 'original-browser', title: 'Checkout', status: 'live', url: 'https://example.test/browser' };
+    publishViewerConversation({ roomId: 'viewer-room', send: vi.fn(), messages: [
+      { createdAt: 10, computerSession: session },
+      { createdAt: 30, computerSession: { ...session, id: 'later-browser' } },
+    ] as any });
+    try {
+      const renderer = render(<OrdinaryLedgerMessage
+        message={message({ id: 'browser-send', isUser: true, timestamp: 20,
+          text: 'Please review this\n\n[Viewing browser: Checkout]' })}
+        codeRoomId="viewer-room"
+        participantsHydrated viewerPubkey="viewer" speakerWorking={false} continued={false}
+        participantHandles={[]} channelIndex={{ rooms: [], corners: [] }} deliveryFailed={false}
+        onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()} onRetry={vi.fn()} onDismiss={vi.fn()}
+      />);
+      const steer = renderer.root.findByType('LedgerSteer' as never).props;
+      const reference = render(steer.replyReference).root.findByProps({
+        testID: 'viewer-context-browser-send', accessibilityRole: 'button',
+      });
+      expect(reference.findByType('Text' as never).props.children).toBe('Viewing shared browser');
+      act(() => reference.props.onPress());
+      expect(openComputerSessionViewer).toHaveBeenCalledWith(session, false, 'viewer-room');
+    } finally { removeViewerConversation('viewer-room'); }
   });
 
   it('replaces the AGENT label with the model, falling back when no model is known', () => {

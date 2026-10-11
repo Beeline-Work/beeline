@@ -7,6 +7,11 @@ const variants = readFileSync(
   'utf8',
 );
 
+const transcriptReference = readFileSync(
+  fileURLToPath(new URL('../../../../components/buzz/TranscriptReference.tsx', import.meta.url)),
+  'utf8',
+);
+
 function styleBlock(text: string, name: string): string {
   const start = text.indexOf(`  ${name}: {`);
   expect(start, `missing style ${name}`).toBeGreaterThanOrEqual(0);
@@ -25,10 +30,10 @@ describe('quoted reply/forward excerpt design contract', () => {
   it('reads the quoted reply reference at the lifted quiet tier', () => {
     // The ↳ reference quotes a parent message a reader may actually open, so
     // it is provenance that still gets read — never the gutter's ghost tier.
-    expect(styleBlock(variants, 'replyReferenceText')).toContain(
+    expect(styleBlock(transcriptReference, 'text')).toContain(
       'color: theme.buzz.ledgerQuiet',
     );
-    expect(styleBlock(variants, 'replyReferenceText')).not.toContain('ledgerGhost');
+    expect(styleBlock(transcriptReference, 'text')).not.toContain('ledgerGhost');
   });
 
   it('reads the forward caption at the lifted quiet tier', () => {

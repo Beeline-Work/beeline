@@ -54,6 +54,7 @@ function Transcript({
 }) {
   const page = useRoomMessageStore({
     roomId: 'corner',
+    recordScope: 'test-scope',
     tailMessages: tail,
     roomClient: { history },
     enabled: true,

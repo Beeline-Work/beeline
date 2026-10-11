@@ -214,8 +214,15 @@ function shims(mobile: string): Record<string, string> {
       fail: async () => undefined, retry: async () => undefined, remove: async () => undefined, attempted: async () => undefined,
       get: () => undefined, add: async () => undefined });`,
     '@/buzz/community-storage': `export const saveActiveCommunityId = async () => undefined; export const saveLastViewedChannel = async () => undefined;`,
-    '@/sync/transport': `export class BuzzRigTransport {
-      async ensureClient() { return { surfaceSubscribe: async (_filters, emit) => { globalThis.__emit = emit; setTimeout(() => emit({ monolithLive: { type: 'subscribed', roomId: '${ROOM}' } }), 0); return () => undefined; } }; }
+    // Like the live connection, a delta reaches the Room's records before any listener.
+    '@/sync/transport': `import { applyRoomMessage, roomDeltaMessage, roomRecordScope } from '@/buzz/room-message-records';
+    export class BuzzRigTransport {
+      async ensureClient() { return { surfaceSubscribe: async (_filters, emit) => {
+        globalThis.__emit = (event) => {
+          const live = event.monolithLive;
+          if (live?.type === 'message-delta') applyRoomMessage(roomRecordScope('https://relay.test', '${VIEWER}'), live.roomId, roomDeltaMessage(live));
+          emit(event);
+        }; setTimeout(() => emit({ monolithLive: { type: 'subscribed', roomId: '${ROOM}' } }), 0); return () => undefined; } }; }
       async publishPreparedMessage() {}
       reconnectLive() {}
       async reopenChat() {}

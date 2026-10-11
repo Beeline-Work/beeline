@@ -86,7 +86,7 @@ describe('resource observers in the desktop web renderer', () => {
         '@/buzz/app-sign-in': `export const takeAppSignInReturn = async () => null;`,
         '@/components/AnimatedOverlay': `export const AnimatedBlurBackdrop = () => null;`,
         '@/components/buzz/sandbox-webview': `export const useSandboxWebView = () => null;`,
-        '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ pubkey: 'a' }); export const getEffectiveRelayUrl = async () => 'https://relay.test';`,
+        '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ pubkey: 'a' }); export const getEffectiveRelayUrl = async () => 'https://relay.test'; export const loadBuzzViewerPubkey = async () => 'a';`,
         '@/sync/transport': `export class BuzzRigTransport { async composeMessage() { return {}; } async publishPreparedMessage() {} }`,
         '@/components/buzz/DesktopArtifactPane': `export const DesktopArtifactPane = () => null;`,
         '@/components/buzz/corner-brief-viewer': `export const openCornerBriefViewer = () => undefined;`,

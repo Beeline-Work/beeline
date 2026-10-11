@@ -143,7 +143,11 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
     SurfaceGlyphLoader: (props: any) => ReactModule.createElement('SurfaceGlyphLoader', props),
   };
 });
-vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: vi.fn() }));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  loadBuzzIdentity: vi.fn(),
+  loadBuzzViewerPubkey: vi.fn(async () => 'viewer'),
+  getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
+}));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     async composeMessage({ text }: { sessionId: string; text: string }) {

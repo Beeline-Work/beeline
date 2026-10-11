@@ -298,7 +298,11 @@ import {
   hostRowIndex,
   useRoomMessageStore,
 } from '@/buzz/room-message-store';
-import { roomMessageRecord, useRoomMessageRecords } from '@/buzz/room-message-records';
+import {
+  heldRoomMessages,
+  applyRoomBookmark,
+  useRoomRecordRevision,
+} from '@/buzz/room-message-records';
 import {
   markRoomOpen,
   useRoomSurfaceSession,
@@ -811,6 +815,7 @@ export function BuzzChatSurface({
     adoptTransport: setSessionTransport,
     roomClient,
     roomSurface,
+    recordScope,
     applyRoomRepositoryResult,
     clearRoomRepository,
     applyRoomMessageResult,
@@ -1443,17 +1448,17 @@ export function BuzzChatSurface({
     reset: resetTranscriptHistory,
   } = useRoomMessageStore({
     roomId: decodedId,
+    recordScope,
     tailMessages: roomSurface?.room.id === decodedId ? roomSurface.messages : undefined,
     roomClient,
-    enabled: Boolean(cacheViewerPubkey),
+    enabled: Boolean(cacheViewerPubkey && recordScope),
     initialVisibleCount: isCorner ? INITIAL_CORNER_MESSAGE_WINDOW : INITIAL_MESSAGE_WINDOW,
   });
-  // The tail and history are windows; each row's content comes from the
-  // Room's one record for that message id.
-  const [tailRows, historyRows] = useRoomMessageRecords(decodedId, [
-    serverTailRows,
-    serverHistoryRows,
-  ]);
+  // The tail and history are windows of ids; each row's content comes from
+  // the Room's one record for that message id.
+  const tailRows = serverTailRows;
+  const historyRows = serverHistoryRows;
+  const recordRevision = useRoomRecordRevision(recordScope, decodedId);
   const cachedMessages = useMemo(
     () => (cacheViewerPubkey ? roomMessageProjector.project(tailRows, cacheViewerPubkey) : []),
     [cacheViewerPubkey, roomMessageProjector, tailRows],
@@ -1462,12 +1467,18 @@ export function BuzzChatSurface({
     () => new Set(cachedMessages.map((message) => message.id)),
     [cachedMessages],
   );
+  // A draft settles against any committed row this Room holds, in any window.
+  // `recordRevision` changes whenever those records do.
   const liveMessages = useMemo<ChatDisplayMessage[]>(
     () =>
       roomSurface
-        ? liveDraftMessages(liveOverlays, roomSurface.messages, roomSurface.latestAgentTurns)
+        ? liveDraftMessages(
+            liveOverlays,
+            heldRoomMessages(recordScope, decodedId),
+            roomSurface.latestAgentTurns,
+          )
         : [],
-    [liveOverlays, roomSurface],
+    [decodedId, liveOverlays, recordRevision, recordScope, roomSurface],
   );
   // A detached window (a jump target far from the newest rows) shows only its
   // own rows until `loadNewer` walks it back to the live tail.
@@ -3751,23 +3762,24 @@ export function BuzzChatSurface({
       AccessibilityInfo.announceForAccessibility(
         bookmarked ? 'Message bookmarked' : 'Bookmark removed',
       );
+      // The overlay only bridges the wait. Once the call settles the row's
+      // own value shows, whichever way it went.
+      const settle = () =>
+        setOptimisticBookmarks((current) => {
+          const updated = { ...current };
+          delete updated[messageId];
+          return updated;
+        });
       try {
         const result = await monolithPhoneOperation('setMessageBookmark', {
           roomId: decodedId,
           messageId,
           bookmarked,
         });
-        const row = roomMessageRecord(decodedId, messageId);
-        // The server value now lives on its row; the overlay only bridged the wait.
-        if (row) applyRoomMessageResult({ ...row, bookmarked: result.bookmarked });
-        setOptimisticBookmarks((current) => {
-          if (!row) return { ...current, [messageId]: result.bookmarked };
-          const updated = { ...current };
-          delete updated[messageId];
-          return updated;
-        });
+        if (recordScope) applyRoomBookmark(recordScope, decodedId, messageId, result.bookmarked);
+        settle();
       } catch (error) {
-        setOptimisticBookmarks((current) => ({ ...current, [messageId]: previous }));
+        settle();
         AccessibilityInfo.announceForAccessibility('Bookmark change failed');
         Modal.alert(
           bookmarked ? 'Could not bookmark message' : 'Could not remove bookmark',
@@ -3775,7 +3787,7 @@ export function BuzzChatSurface({
         );
       }
     },
-    [applyRoomMessageResult, decodedId, messageIsBookmarked],
+    [decodedId, messageIsBookmarked, recordScope],
   );
 
   const messageIsReported = useCallback(

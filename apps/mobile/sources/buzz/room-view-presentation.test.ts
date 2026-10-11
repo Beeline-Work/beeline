@@ -9,13 +9,48 @@ import {
   displayRoomMessages,
   foldSettledActivityRuns,
   memberAgent,
+  keepsTurnActivity,
   mergeDisplayPages,
-  reconcileRoomMessageDelta,
   reconcileRoomTurnDelta,
   reconcileRoomView,
+  roomSurfaceHeader,
   roomViewTranscriptMessages,
   type ChatDisplayMessage,
 } from './room-view-presentation';
+import {
+  applyRoomMessage,
+  applyRoomTailRead,
+  holdRoomMessages,
+  pruneRoomTail,
+  roomTail,
+  selectRoomMessages,
+} from './room-message-records';
+
+const scope = 'test-scope';
+let tailCount = 0;
+
+/** A surface tail over the Room's message records, as the session keeps one. */
+function openTail(view: RoomView) {
+  const holder = `tail-${(tailCount += 1)}`;
+  const roomId = view.room.id;
+  applyRoomTailRead(scope, roomId, holder, view, Boolean(view.parent));
+  const ids = () => roomTail(scope, roomId, holder)?.ids ?? [];
+  return {
+    ids,
+    read: (next: RoomView) => applyRoomTailRead(scope, roomId, holder, next, Boolean(next.parent)),
+    deliver: (message: RoomViewMessage) => applyRoomMessage(scope, roomId, message),
+    turn: (turn: Parameters<typeof keepsTurnActivity>[1]) =>
+      pruneRoomTail(scope, roomId, holder, (message) => keepsTurnActivity(message, turn)),
+    view: (): Pick<RoomView, 'messages' | 'toolRows'> => {
+      const held = roomTail(scope, roomId, holder);
+      return {
+        messages: selectRoomMessages(scope, roomId, held?.ids ?? []),
+        ...(held?.toolIds ? { toolRows: selectRoomMessages(scope, roomId, held.toolIds) } : {}),
+      };
+    },
+    close: () => holdRoomMessages(scope, roomId, holder, null),
+  };
+}
 
 describe('Room view presentation', () => {
   const emptyRoom = (): RoomView => ({
@@ -47,16 +82,23 @@ describe('Room view presentation', () => {
       author: { pubkey: 'agent', kind: 'agent', name: 'Greeter' },
       presentation: 'message',
     });
-    const newestFirst = reconcileRoomMessageDelta(emptyRoom(), message('message-2', 2));
-    const ordered = reconcileRoomMessageDelta(newestFirst, message('message-1', 1));
-    const duplicate = reconcileRoomMessageDelta(ordered, message('message-2', 2));
+    const tail = openTail({ ...emptyRoom(), room: { ...emptyRoom().room, id: 'room-order' } });
+    tail.deliver(message('message-2', 2));
+    tail.deliver(message('message-1', 1));
+    const ordered = tail.ids();
+    tail.deliver(message('message-2', 2));
 
-    expect(ordered.messages.map((item) => item.id)).toEqual(['message-1', 'message-2']);
-    expect(duplicate).toBe(ordered);
+    expect(ordered).toEqual(['message-1', 'message-2']);
+    expect(tail.ids()).toBe(ordered);
+    tail.close();
   });
 
   it('keeps earlier corner work rows on screen while live updates arrive', () => {
-    const corner: RoomView = { ...emptyRoom(), parent: { id: 'parent', name: 'Parent' } };
+    const corner: RoomView = {
+      ...emptyRoom(),
+      room: { ...emptyRoom().room, id: 'corner-work' },
+      parent: { id: 'parent', name: 'Parent' },
+    };
     const output = (id: string, createdAt: number): RoomViewMessage => ({
       id,
       text: '',
@@ -66,34 +108,25 @@ describe('Room view presentation', () => {
       requestId: 'request',
       activity: [{ kind: 'output', title: 'Update', text: id }],
     });
+    const tail = openTail(corner);
     // Each saved row moves the working turn's timestamp forward on the server.
-    const live = [1, 2, 3].reduce(
-      (view, at) =>
-        reconcileRoomTurnDelta(reconcileRoomMessageDelta(view, output(`update-${at}`, at)), {
-          requestId: 'request',
-          agentPubkey: 'agent',
-          status: 'working',
-          createdAt: at,
-        }),
-      corner,
-    );
+    for (const at of [1, 2, 3]) {
+      tail.deliver(output(`update-${at}`, at));
+      tail.turn({ requestId: 'request', agentPubkey: 'agent', status: 'working', createdAt: at });
+    }
 
-    expect(roomViewTranscriptMessages(live).map((message) => message.id)).toEqual([
+    expect(roomViewTranscriptMessages(tail.view()).map((message) => message.id)).toEqual([
       'update-1',
       'update-2',
       'update-3',
     ]);
-    const settled = reconcileRoomTurnDelta(live, {
-      requestId: 'request',
-      agentPubkey: 'agent',
-      status: 'complete',
-      createdAt: 4,
-    });
-    expect(roomViewTranscriptMessages(settled).map((message) => message.id)).toEqual([
+    tail.turn({ requestId: 'request', agentPubkey: 'agent', status: 'complete', createdAt: 4 });
+    expect(roomViewTranscriptMessages(tail.view()).map((message) => message.id)).toEqual([
       'update-1',
       'update-2',
       'update-3',
     ]);
+    tail.close();
   });
 
   it('does not let a reordered working delta regress the same completed turn', () => {
@@ -125,10 +158,16 @@ describe('Room view presentation', () => {
       author: { pubkey: 'agent', kind: 'agent', name: 'Greeter' },
       presentation: 'message',
     };
-    const full = { ...emptyRoom(), messages: [reply], latestAgentTurns: [turn] };
-    const deltaFirst = reconcileRoomMessageDelta(reconcileRoomTurnDelta(emptyRoom(), turn), reply);
+    const room = { ...emptyRoom(), room: { ...emptyRoom().room, id: 'room-converge' } };
+    const full = { ...room, messages: [reply], latestAgentTurns: [turn] };
+    const tail = openTail(room);
+    tail.deliver(reply);
+    const deltaFirst = reconcileRoomTurnDelta(roomSurfaceHeader(room), turn);
+    tail.read(full);
 
-    expect(reconcileRoomView(deltaFirst, full)).toEqual(full);
+    expect(reconcileRoomView(deltaFirst, roomSurfaceHeader(full))).toEqual(roomSurfaceHeader(full));
+    expect(tail.view().messages).toEqual(full.messages);
+    tail.close();
   });
 
   it('does not let a stale full snapshot drop a newer committed live delta', () => {
@@ -146,13 +185,13 @@ describe('Room view presentation', () => {
       author: { pubkey: 'human', kind: 'human', name: 'Captain' },
       presentation: 'message',
     };
-    const openRoom = reconcileRoomMessageDelta({ ...emptyRoom(), messages: [older] }, newest);
-    const staleRead = { ...emptyRoom(), messages: [older] };
+    const room = { ...emptyRoom(), room: { ...emptyRoom().room, id: 'room-stale' } };
+    const tail = openTail({ ...room, messages: [older] });
+    tail.deliver(newest);
+    tail.read({ ...room, messages: [older] });
 
-    expect(reconcileRoomView(openRoom, staleRead).messages.map((message) => message.id)).toEqual([
-      'older',
-      'newest',
-    ]);
+    expect(tail.ids()).toEqual(['older', 'newest']);
+    tail.close();
   });
 
   it('does not let a stale full snapshot walk a newer turn delta backwards', () => {

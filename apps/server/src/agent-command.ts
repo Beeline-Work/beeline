@@ -205,8 +205,9 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     UPDATE agent_turns turn SET status='cancelled',failure_reason='Wake superseded or workflow attempt expired',created_at=now()
     FROM cancelled_wakes cancelled WHERE turn.room_id=cancelled.room_id AND turn.agent_id=cancelled.agent_id
       AND turn.request_id=cancelled.turn_request_id AND turn.status='working'
-      AND NOT EXISTS(SELECT 1 FROM recovery_scope survivor
-        WHERE survivor.turn_request_id=turn.request_id
+      AND NOT EXISTS(SELECT 1 FROM agent_commands survivor
+        WHERE survivor.room_id=turn.room_id AND survivor.agent_id=turn.agent_id
+          AND survivor.turn_request_id=turn.request_id AND survivor.state IN ('pending','claimed')
           AND NOT EXISTS(SELECT 1 FROM cancelled_wakes removed WHERE removed.id=survivor.id))
     RETURNING turn.request_id
   ), return_context AS (

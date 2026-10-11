@@ -29,27 +29,30 @@ import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
  * an app clock ahead of it cannot announce a cell before the read drops it.
  */
 const NEEDS_YOU_EXPIRY_SWEEP_INTERVAL_MS = 5_000;
-/** How far back a new leader looks for deadlines that passed during the handover. */
-export const NEEDS_YOU_EXPIRY_LOOKBACK_MS = 10 * 60_000;
+/** How far back a new leader looks for deadlines that passed during the handover; a repeat is harmless. */
+export const EXPIRY_TAKEOVER_LOOKBACK_MS = 10 * 60_000;
 
 type Due = { identity_id: string; workspace_id: string; room_id: string };
 
 export class NeedsYouExpiryLoop {
   #sweptThrough: number | undefined;
+  /** `performance.now()` readings: they only measure time since this process's own sweep. */
   #lastSweep = Number.NEGATIVE_INFINITY;
-  #nextDueAt: number | null = null;
+  #dueAt: number | null = null;
 
   constructor(
     private readonly database: Pick<SqlDatabase, 'query'>,
     private readonly intervalMs = NEEDS_YOU_EXPIRY_SWEEP_INTERVAL_MS,
-    private readonly lookbackMs = NEEDS_YOU_EXPIRY_LOOKBACK_MS,
+    private readonly lookbackMs = EXPIRY_TAKEOVER_LOOKBACK_MS,
   ) {}
 
-  /** Notifies every viewer whose cell expired since the last sweep; returns the next deadline. */
-  async runOnce(now = Date.now()): Promise<number | null> {
-    const due = this.#nextDueAt !== null && this.#nextDueAt <= now;
-    if (!due && now - this.#lastSweep < this.intervalMs) return this.#nextDueAt;
-    this.#lastSweep = now;
+  /** Notifies every viewer whose cell expired since the last sweep; returns ms until the next deadline. */
+  async runOnce(): Promise<number | null> {
+    const at = performance.now();
+    const due = this.#dueAt !== null && this.#dueAt <= at;
+    if (!due && at - this.#lastSweep < this.intervalMs)
+      return this.#dueAt === null ? null : this.#dueAt - at;
+    this.#lastSweep = at;
     const clock = await this.database.query<{ now_ms: string }>(
       `SELECT (extract(epoch FROM now())*1000)::bigint::text now_ms`,
     );
@@ -107,30 +110,23 @@ export class NeedsYouExpiryLoop {
         }),
       ]);
     this.#sweptThrough = through;
-    const next = (
-      await this.database.query<{
-        question_at: Date | null; lookback_at: Date | null; card_at: string | null;
-      }>(
-        `SELECT
+    const next = await this.database.query<{ ms: number | null }>(
+      `SELECT (extract(epoch FROM LEAST(
            (SELECT min(first_seen_at) FROM needs_you_marks
             WHERE cleared_at IS NULL
               AND first_seen_at>$1::timestamptz-interval '${NEEDS_YOU_EXPIRY_HOURS} hours')
-             +interval '${NEEDS_YOU_EXPIRY_HOURS} hours' question_at,
+             +interval '${NEEDS_YOU_EXPIRY_HOURS} hours',
            (SELECT min(created_at) FROM messages
             WHERE ${askingMessageSql()} AND created_at>$1::timestamptz-${NEEDS_YOU_LOOKBACK})
-             +${NEEDS_YOU_LOOKBACK} lookback_at,
-           (SELECT min(${cardExpiresAtSql()}) FROM messages
+             +${NEEDS_YOU_LOOKBACK},
+           to_timestamp((SELECT min(${cardExpiresAtSql()}) FROM messages
             WHERE ${EXPIRING_CARD_TYPES} AND deleted_at IS NULL
-              AND ${cardExpiresAtSql()}>$2)::text card_at`,
-        [new Date(through), through],
-      )
-    ).rows[0];
-    const candidates = [
-      next?.question_at ? new Date(next.question_at).getTime() : null,
-      next?.lookback_at ? new Date(next.lookback_at).getTime() : null,
-      next?.card_at ? Number(next.card_at) : null,
-    ].filter((value): value is number => value !== null);
-    this.#nextDueAt = candidates.length ? Math.min(...candidates) : null;
-    return this.#nextDueAt;
+              AND ${cardExpiresAtSql()}>$2)/1000.0)
+         )-now())*1000)::float8 ms`,
+      [new Date(through), through],
+    );
+    const ms = next.rows[0]?.ms ?? null;
+    this.#dueAt = ms === null ? null : performance.now() + ms;
+    return ms;
   }
 }

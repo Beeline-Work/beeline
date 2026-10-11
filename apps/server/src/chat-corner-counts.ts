@@ -44,6 +44,29 @@ export function cornerRowMine(row: Pick<CornerStateRow, 'follows_viewer' | 'owed
 }
 
 /**
+ * The columns a parent's corner row projects from each source table. The
+ * live triggers compare exactly these, so every projected change, and no
+ * other write, reaches the parent.
+ */
+export const CORNER_ROW_ROOM_COLUMNS = [
+  'parent_id', 'name', 'about', 'avatar', 'visibility', 'reviewer_agent_id',
+  'reviewer_fallback_ids', 'archived_at', 'created_at', 'updated_at',
+] as const;
+export const CORNER_ROW_FACT_COLUMNS = [
+  'lifecycle', 'workflow_state', 'workflow_outcome', 'commissioned_by', 'owner_agent_id', 'objective',
+] as const;
+/** The latest-message (`lm`) columns, including those its visibility rule reads. */
+export const CORNER_ROW_MESSAGE_COLUMNS = [
+  'id', 'room_id', 'author_id', 'text', 'created_at', 'presentation', 'deleted_at', 'card_type',
+] as const;
+
+/** For a row trigger: the row was inserted or deleted, or one of `columns` changed. */
+export function rowChangedSql(columns: readonly string[]): string {
+  const row = (record: string) => `ROW(${columns.map((column) => `${record}.${column}`).join(',')})`;
+  return `(TG_OP <> 'UPDATE' OR ${row('NEW')} IS DISTINCT FROM ${row('OLD')})`;
+}
+
+/**
  * The one source of corner facts for corner `c` and `viewerExpr`, shared by
  * the Room list and the Corners page so one frame cannot disagree with
  * itself. `columns` are the `CornerStateRow` facts plus the latest message

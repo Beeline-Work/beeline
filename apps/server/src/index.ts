@@ -451,7 +451,7 @@ async function main() {
         ...(nextDue.ok && nextDue.value ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
         ...(nextOwed.ok && nextOwed.value !== null ? [Math.max(0, nextOwed.value)] : []),
         ...(needsYouDue.ok && needsYouDue.value !== null
-          ? [Math.max(0, needsYouDue.value - Date.now())] : []),
+          ? [Math.max(0, needsYouDue.value)] : []),
       );
     },
     reconciliationMs,

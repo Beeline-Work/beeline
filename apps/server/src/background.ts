@@ -1,4 +1,4 @@
-import type { SqlDatabase } from './database.js';
+import { EXPIRE_PUSH_CLAIMS_SQL, type SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
   cutCornerTitle,
@@ -323,23 +323,7 @@ export class PushDeliveryLoop {
     await this.database.query(
       `INSERT INTO push_delivery_floors(id) VALUES('message-delivery') ON CONFLICT(id) DO NOTHING`,
     );
-    // Candidate messages expire after an hour. A terminal claim outside that
-    // window cannot suppress a future push, except an explicit release catchup.
-    // An iOS or Android delivered claim stays until a read-clear push names
-    // it or for a week, so a read days after delivery still clears that notification
-    // (sendReadClears) and a Room never read cannot grow claims forever.
-    await this.database.query(`DELETE FROM push_delivery_claims claim
-      WHERE (claim.message_id,claim.device_token) IN (
-        SELECT old.message_id,old.device_token FROM push_delivery_claims old
-        WHERE old.status IN ('delivered','suppressed','failed')
-          AND old.completed_at<now()-interval '1 hour'
-          AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
-            AND old.completed_at>=now()-interval '7 days'
-            AND EXISTS (SELECT 1 FROM push_devices device
-              WHERE device.token=old.device_token AND device.platform IN ('ios','android')))
-          AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
-            WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
-        ORDER BY old.completed_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
+    await this.database.query(EXPIRE_PUSH_CLAIMS_SQL, [1000]);
     await retireTerminalReleaseCatchups(this.database);
     const candidates = await this.database.query<{
       message_id: string;

@@ -893,7 +893,7 @@ describe('Postgres live fanout', () => {
     );
   });
 
-  it('nudges the parent Room for workflow, owed, follow, name, archive and membership changes', async () => {
+  it('nudges the parent Room for every projected corner-row change', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
     const listener = new PostgresLiveListener(database, live, () => client, 1);
@@ -954,10 +954,41 @@ describe('Postgres live fanout', () => {
     await expectNudge(() => database.query(
       `UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]));
 
-    // A write that changes no corner-list input stays off the parent.
+    // Every other projected column: objective, initiator, owner, row stamp,
+    // brief revision, app binding and the newest chat message.
+    await expectNudge(() => database.query(
+      `UPDATE corner_facts SET objective='still fix it' WHERE corner_id=$1`, [corner]));
+    await expectNudge(() => database.query(
+      `UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [corner, reader]));
+    await expectNudge(() => database.query(
+      `UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [corner]));
+    await expectNudge(() => database.query(
+      `UPDATE corner_facts SET owner_agent_id=NULL WHERE corner_id=$1`, [corner]));
+    await expectNudge(() => database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]));
+    await expectNudge(() => database.query(
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+       VALUES($1,1,'brief',$2,$3)`, [corner, agent, ROOM]));
+    const installation = '99999999-9999-4999-8999-999999999999';
+    await database.query(
+      `INSERT INTO corner_app_installations(id,workspace_id,installed_by,manifest)
+       VALUES($1,$2,$3,'{}'::jsonb)`, [installation, WORKSPACE, AUTHOR]);
+    await expectNudge(() => database.query(
+      `INSERT INTO corner_app_bindings(corner_id,installation_id,instance_id,bound_by)
+       VALUES($1,$2,gen_random_uuid(),$3)`, [corner, installation, AUTHOR]));
+    await expectNudge(() => database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES('latest-1',$1,$2,'done')`,
+      [corner, agent]));
+    await expectNudge(() => database.query(
+      `UPDATE messages SET text='done, edited' WHERE id='latest-1'`));
+
+    // A write that changes no corner-row column stays off the parent.
     await settle(parent);
-    await database.query(`UPDATE corner_facts SET objective='still fix it' WHERE corner_id=$1`, [corner]);
-    await database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]);
+    await database.query(`UPDATE corner_facts SET close_requested=true WHERE corner_id=$1`, [corner]);
+    await database.query(
+      `UPDATE rooms SET github_events_enabled=NOT github_events_enabled WHERE id=$1`, [corner]);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES('step-1',$1,$2,'step','activity')`,
+      [corner, agent]);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(nudges()).toEqual([]);
   });

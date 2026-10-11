@@ -217,9 +217,12 @@ describe('Needs-you expiry sweep', () => {
        WHERE message_id=$1`, [question],
     );
     client.payloads.length = 0;
-    await new NeedsYouExpiryLoop(database).runOnce(Date.now() + 10 * 60_000);
+    // The sweep takes no app time: the database decides what is due and how soon.
+    const loop = new NeedsYouExpiryLoop(database);
+    const dueIn = await loop.runOnce();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(expiryWakes()).toEqual([]);
+    expect(dueIn).toBeGreaterThan(4 * 60_000);
     expect((await delta()).items.map((item) => item.messageId)).toEqual([question]);
   });
 
@@ -229,7 +232,9 @@ describe('Needs-you expiry sweep', () => {
       agentId: AGENT, ownerId: VIEWER, harness: 'claude', status: 'pending', expiresAt,
     });
     const loop = new NeedsYouExpiryLoop(database);
-    expect(await loop.runOnce()).toBe(expiresAt);
+    const dueIn = await loop.runOnce();
+    expect(dueIn).toBeGreaterThan(0);
+    expect(dueIn).toBeLessThanOrEqual(200);
     expect((await delta()).items.map((item) => item.messageId)).toEqual([signIn]);
     await new Promise((resolve) => setTimeout(resolve, expiresAt - Date.now() + 20));
     await loop.runOnce();
@@ -277,7 +282,8 @@ describe('Needs-you expiry sweep', () => {
     const firstSeen = (await database.query<{ first_seen_at: Date }>(
       `SELECT first_seen_at FROM needs_you_marks WHERE message_id=$1`, [fresh],
     )).rows[0]!.first_seen_at;
-    expect(next).toBe(new Date(firstSeen).getTime() + 24 * 3600_000);
+    const dueAt = new Date(firstSeen).getTime() + 24 * 3600_000;
+    expect(Math.abs(next! - (dueAt - Date.now()))).toBeLessThan(1_000);
     await loop.runOnce();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(expiryWakes()).toHaveLength(1);

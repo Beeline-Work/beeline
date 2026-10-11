@@ -88,7 +88,6 @@ const MAX_LIVE_SOCKET_TASKS = 8_192;
 const MAX_LIVE_SOCKET_QUEUED_BYTES = 2 * 1024 * 1024;
 const MAX_LIVE_ROOMS_PER_SOCKET = 8_192;
 const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
-/** A phone pings its open socket while foreground; any answer proves the path is alive. */
 /** Rows one socket remembers for `admitRow`; rows with a read in flight stay. */
 const SENT_ROW_LIMIT = 256;
 /** A message's version, or the live epoch and sequence a corner status was read for. */
@@ -1187,7 +1186,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                         } as const)
                       : undefined;
                   if (!target) {
-                    if ((event.reason === 'corner-status' || event.reason === 'corner') &&
+                    if (event.reason === 'corner-status' &&
                         typeof options.phone.liveChatCornerStatus === 'function') {
                       const statusKey = `${roomId}:corner-status`;
                       beginRowRead(statusKey);
@@ -1337,7 +1336,10 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
-            sentRows.delete(`${item.roomId}:corner-status`);
+            // A read in flight keeps its count; a resubscribe starts from no frame.
+            const status = sentRows.get(`${item.roomId}:corner-status`);
+            if (status?.reads) sentRows.set(`${item.roomId}:corner-status`, { reads: status.reads });
+            else sentRows.delete(`${item.roomId}:corner-status`);
             for (const key of draftWire.keys())
               if (key.startsWith(`${item.roomId}:`)) draftWire.delete(key);
           }
@@ -2223,14 +2225,11 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       json(response, 400, { error: 'invalid_cursor' });
       return;
     }
-    const result = await options.phone.readCorners(
-      match[1]!,
-      identityId!,
-      false,
+    const result = await options.phone.readCorners(match[1]!, identityId!, {
       archived,
-      archivedBefore,
-      openBefore,
-    );
+      ...(archivedBefore ? { archivedBefore } : {}),
+      ...(openBefore ? { openBefore } : {}),
+    });
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }

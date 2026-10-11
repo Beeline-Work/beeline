@@ -594,6 +594,17 @@ function readSquireApproval(value: unknown): NonNullable<RoomViewMessage['squire
   };
 }
 
+function readComputerSession(value: unknown): NonNullable<RoomViewMessage['computerSession']> | null {
+  const item = record(value);
+  if (!item || typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(item.id) ||
+    !httpUrl(item.url) || !nonempty(item.title) ||
+    (item.status !== 'live' && item.status !== 'ended')) return null;
+  const url = new URL(item.url);
+  if (url.username || url.password || url.search || url.hash || url.pathname !== `/s/${item.id}/`)
+    return null;
+  return { id: item.id, url: item.url, title: item.title, status: item.status };
+}
+
 export function readConnectorOfferCardView(value: unknown): ConnectorOfferCardView | null {
   const item = record(value);
   const helper = record(item?.helper);
@@ -1106,6 +1117,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('permission', readPermission(item.permission)),
     ...field('grantRequest', readGrantRequest(item.grantRequest)),
     ...field('squireApproval', readSquireApproval(item.squireApproval)),
+    ...field('computerSession', readComputerSession(item.computerSession)),
     ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
     ...field('appSignIn', readAppSignInCard(item.appSignIn)),
     ...field('agentSignIn', readAgentSignInCard(item.agentSignIn)),

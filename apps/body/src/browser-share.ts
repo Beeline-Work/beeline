@@ -56,7 +56,10 @@ export async function shareChromiumPage(input: {
     let message: { method?: string; params?: { sessionId?: number } };
     try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
     if (message.method !== 'Page.screencastFrame') return;
-    if (relay.readyState === WebSocket.OPEN && relay.bufferedAmount < 4 * 1024 * 1024) relay.send(data);
+    // CDP frames are JSON text. `ws` passes incoming text as a Buffer, but
+    // sending that Buffer makes the viewer receive a binary Blob instead.
+    if (relay.readyState === WebSocket.OPEN && relay.bufferedAmount < 4 * 1024 * 1024)
+      relay.send(data.toString());
     if (message.params?.sessionId !== undefined)
       sendCdp('Page.screencastFrameAck', { sessionId: message.params.sessionId });
   });

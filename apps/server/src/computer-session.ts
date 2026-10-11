@@ -294,8 +294,9 @@ export function computerViewerHtml(id: string): string {
   const image=document.getElementById('screen'), stage=document.getElementById('stage'), ended=document.getElementById('ended'), keys=document.getElementById('keys');
   const socketUrl=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/s/${id}/ws'+location.search;
   let wire, serial=1, controlling=false, width=1, height=1, leaving=false, endedSession=false, reconnected=false;
-  function fit(){if(width<=1||height<=1)return;const scale=Math.max(stage.clientWidth/width,stage.clientHeight/height);
-    image.style.width=Math.ceil(width*scale)+'px';image.style.height=Math.ceil(height*scale)+'px';}
+  function fit(){if(width<=1||height<=1)return;const scale=(preview?Math.max:Math.min)(stage.clientWidth/width,stage.clientHeight/height);
+    image.style.width=Math.ceil(width*scale)+'px';image.style.height=Math.ceil(height*scale)+'px';
+    image.style.margin=preview?'0':'auto';}
   addEventListener('resize',fit);
   function send(value){if(wire.readyState===WebSocket.OPEN) wire.send(JSON.stringify(value));}
   function cdp(method,params={}){send({id:serial++,method,params});}
@@ -343,7 +344,7 @@ export function computerViewerHtml(id: string): string {
 }
 
 const computerWebSockets = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
-type BodyChannel = { source?: WebSocket; viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; pausedViewers: Set<WebSocket>; previewSentAt: Map<WebSocket, number>; controller?: WebSocket; handoffComplete?: boolean; pendingHandback?: ReturnType<typeof setTimeout>; ending?: boolean };
+type BodyChannel = { source?: WebSocket; lastFrame?: { data: Buffer; binary: boolean }; viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; pausedViewers: Set<WebSocket>; previewSentAt: Map<WebSocket, number>; controller?: WebSocket; handoffComplete?: boolean; pendingHandback?: ReturnType<typeof setTimeout>; ending?: boolean };
 const bodyChannels = new Map<string, BodyChannel>();
 type SquireChannel = { viewers: Set<WebSocket>; humanControl: boolean; handoffComplete: boolean; pendingHandback?: ReturnType<typeof setTimeout> };
 const squireChannels = new Map<string, SquireChannel>();
@@ -403,8 +404,11 @@ export async function upgradeBodyComputerSource(
     const channel = bodyChannel(id);
     channel.source?.close();
     channel.source = source;
+    channel.lastFrame = undefined;
     source.on('message', (data, binary) => {
       const frame = isFrameMessage(data);
+      // A quiet Chromium tab may emit its only frame before anyone opens the card.
+      if (frame) channel.lastFrame = { data: Buffer.from(data.toString()), binary };
       const now = Date.now();
       for (const viewer of channel.viewers) {
         if (frame && channel.pausedViewers.has(viewer)) continue;
@@ -442,6 +446,7 @@ function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffe
     if (row.handoff_count > 0) channel.handoffComplete = true;
     channel.viewers.add(viewer);
     if (!preview) channel.interactiveViewers.add(viewer);
+    if (channel.lastFrame) viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
     const handBack = () => {
       if (preview || channel.handoffComplete || channel.ending) return;
       if (channel.pendingHandback) { clearTimeout(channel.pendingHandback); channel.pendingHandback = undefined; }

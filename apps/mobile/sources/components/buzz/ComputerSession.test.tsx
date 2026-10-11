@@ -25,7 +25,7 @@ vi.mock('@/utils/open-external-url', () => ({ openExternalUrl }));
 vi.mock('@/buzz/desktop-computer-pane', () => ({ openComputerInDesktopWorkPane: () => false }));
 vi.mock('@/modal', () => ({ Modal: { show: vi.fn(), alert: vi.fn() } }));
 
-import { ComputerSessionViewer, type ComputerSessionView } from './ComputerSession';
+import { ComputerSessionCard, ComputerSessionViewer, type ComputerSessionView } from './ComputerSession';
 
 const session = {
   id: 'session-1', title: 'Browser', url: 'https://computer.usebeeline.app/s/session-1/',
@@ -33,6 +33,33 @@ const session = {
 } as ComputerSessionView;
 
 afterEach(() => { phoneOperation.mockClear(); openExternalUrl.mockClear(); });
+
+for (const isDesktop of [false, true]) {
+  it(`shows a live card and open button to a viewer who can steer on ${isDesktop ? 'desktop' : 'phone'}`, async () => {
+    let tree: ReturnType<typeof create>;
+    await act(async () => { tree = create(<ComputerSessionCard session={{ ...session, access: undefined }} isDesktop={isDesktop} />); });
+    expect(tree!.root.findAllByProps({ testID: 'computer-session-card-live' }).length).toBeGreaterThan(0);
+    expect(tree!.root.findAllByProps({ testID: 'computer-session-open' }).length).toBeGreaterThan(0);
+    await act(async () => tree!.unmount());
+  });
+
+  it(`shows the card without an open button when the viewer cannot steer on ${isDesktop ? 'desktop' : 'phone'}`, async () => {
+    phoneOperation.mockRejectedValueOnce(new Error('access denied'));
+    let tree: ReturnType<typeof create>;
+    await act(async () => { tree = create(<ComputerSessionCard session={{ ...session, access: undefined }} isDesktop={isDesktop} />); });
+    expect(tree!.root.findAllByProps({ testID: 'computer-session-card-live' }).length).toBeGreaterThan(0);
+    expect(tree!.root.findAllByProps({ testID: 'computer-session-open' })).toHaveLength(0);
+    await act(async () => tree!.unmount());
+  });
+}
+
+it('shows an ended card without an open button', async () => {
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionCard session={{ ...session, status: 'ended' }} />); });
+  expect(tree!.root.findAllByProps({ testID: 'computer-session-card-ended' }).length).toBeGreaterThan(0);
+  expect(tree!.root.findAllByProps({ testID: 'computer-session-open' })).toHaveLength(0);
+  await act(async () => tree!.unmount());
+});
 
 it('mints a fresh steering token before opening the system browser', async () => {
   let tree: ReturnType<typeof create>;

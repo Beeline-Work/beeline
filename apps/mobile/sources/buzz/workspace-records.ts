@@ -134,13 +134,26 @@ function recordWorkspaceView(scope: string, view: WorkspaceView, stamp: number):
   notify(scope);
 }
 
-/** A member profile read names the person and the agents they own; no person means removed. */
+/**
+ * A member profile read names the person and the agents they own; no person
+ * means removed. A complete agent list is every agent they own: an agent it
+ * leaves out, stored before the read, is no longer theirs.
+ */
 function recordMemberProfile(scope: string, memberId: string, view: WorkspaceMemberListView, stamp: number): void {
   const scoped = records(scope);
   const person = view.members.find((row) => row.identity.pubkey === memberId);
   storeRows(scoped, [...view.members, ...view.agents], stamp);
   const current = scoped.rows.get(memberId);
   if (!person && current?.record && current.stamp <= stamp) removeRow(scoped, memberId, stamp);
+  if (!view.agentsTruncated) {
+    const owned = new Set(view.agents.map((agent) => agent.identity.pubkey));
+    for (const [pubkey, row] of scoped.rows) {
+      const agent = row.record as AgentRecord | null;
+      if (!agent || owned.has(pubkey) || row.stamp > stamp || agent.owner?.pubkey !== memberId) continue;
+      const { owner: _owner, ...unowned } = agent;
+      scoped.rows.set(pubkey, { record: unowned as AgentRecord, stamp });
+    }
+  }
   notify(scope);
 }
 

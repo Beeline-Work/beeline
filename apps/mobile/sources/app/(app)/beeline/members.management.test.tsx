@@ -983,6 +983,52 @@ describe('Members workspace management', () => {
     list.unmount();
   });
 
+  it('Reproduction 2315-R6: a complete refresh without the owned agent drops it from the rendered profile', async () => {
+    const owned = {
+      ...state.workspace.agents[0],
+      owner: { pubkey: MEMBER, kind: 'human', name: 'Builder', handle: 'builder' },
+    };
+    state.workspace = { ...state.workspace, agents: [owned] };
+    const base = roomView.workspaceMembers.getMockImplementation()!;
+    roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
+      ...(await (base as any)(...args)), agents: [owned], agentsTruncated: false,
+    }));
+    const list = await render();
+    const renderer = await personProfile();
+    const shown = () => renderer.root.findAll((node: any) =>
+      node.props.title === '@clara').length;
+    expect(shown()).toBeGreaterThan(0);
+    roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
+      ...(await (base as any)(...args)), agents: [], agentsTruncated: false,
+    }));
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
+    await act(async () => subscribes.at(-1)![1]());
+    expect(shown()).toBe(0);
+    list.unmount();
+  });
+
+  it('keeps an owned agent a truncated profile refresh only leaves out', async () => {
+    const owned = {
+      ...state.workspace.agents[0],
+      owner: { pubkey: MEMBER, kind: 'human', name: 'Builder', handle: 'builder' },
+    };
+    state.workspace = { ...state.workspace, agents: [owned] };
+    const base = roomView.workspaceMembers.getMockImplementation()!;
+    roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
+      ...(await (base as any)(...args)), agents: [owned], agentsTruncated: false,
+    }));
+    const list = await render();
+    const renderer = await personProfile();
+    roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
+      ...(await (base as any)(...args)), agents: [], agentsTruncated: true,
+    }));
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
+    await act(async () => subscribes.at(-1)![1]());
+    expect(renderer.root.findAll((node: any) =>
+      node.props.title === '@clara').length).toBeGreaterThan(0);
+    list.unmount();
+  });
+
   it('keeps peers and owners outside admin role edit authority', async () => {
     state.workspace = baseWorkspace('admin');
     let renderer = await personProfile(OWNER);

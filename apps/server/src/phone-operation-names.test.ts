@@ -65,6 +65,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   listRoomSchedules: true,
   listRoomWorkflows: true,
   listRoomWorkflowRuns: true,
+  openComputerSession: true,
   pairConnector: true,
   reactToMessage: true,
   readConnectionDetail: true,

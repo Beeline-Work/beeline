@@ -9977,6 +9977,7 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 ]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
+  'openComputerSession',
   'readWelcomeCards',
   'completeWelcomeCards',
   'readStarPrompt',

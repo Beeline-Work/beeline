@@ -105,19 +105,21 @@ describe('computer session handoff', () => {
     expect(await page.text()).toContain('Page.screencastFrame');
     const source = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/source`);
     await opened(source);
+    const frame = JSON.stringify({ method: 'Page.screencastFrame', params: { data: 'abc', sessionId: 1 } });
+    source.send(frame); // A static tab can send its first frame before the phone opens it.
     let viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
+    const receivedFrame = next(viewer);
     await opened(viewer);
     const waiter = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/wait?since=0`);
     await opened(waiter);
-    const frame = JSON.stringify({ method: 'Page.screencastFrame', params: { data: 'abc', sessionId: 1 } });
-    const receivedFrame = next(viewer);
-    source.send(frame);
     expect(await receivedFrame).toBe(frame);
     viewer.close(); // A transport drop is not a deliberate handback.
     await new Promise<void>((resolve) => viewer.once('close', resolve));
     expect((await (await fetch(`${origin}/s/${share.id}/status?access=${access}`)).json()).status).toBe('live');
     viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
+    const reconnectFrame = next(viewer);
     await opened(viewer);
+    expect(await reconnectFrame).toBe(frame);
     await new Promise<void>((resolve) => setTimeout(resolve, 5_100));
     expect((await getComputerSession(database, share.id))?.handoff_count).toBe(0);
     const pausedFrames: string[] = [];
@@ -309,13 +311,17 @@ describe('computer session handoff', () => {
       await opened(viewer);
       const screen = await until(async () => {
         const message = await Promise.race([
-          next(viewer), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 500)),
+          new Promise<{ text: string; binary: boolean }>((resolve) =>
+            viewer.once('message', (data, binary) => resolve({ text: data.toString(), binary }))),
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 500)),
         ]);
         if (!message) return undefined;
-        const decoded = JSON.parse(message) as { method?: string; params?: { data?: string } };
-        return decoded.method === 'Page.screencastFrame' && decoded.params?.data ? decoded : undefined;
+        const decoded = JSON.parse(message.text) as { method?: string; params?: { data?: string } };
+        return decoded.method === 'Page.screencastFrame' && decoded.params?.data
+          ? { decoded, binary: message.binary } : undefined;
       });
-      expect(Buffer.from(screen.params!.data!, 'base64').subarray(0, 3).toString('hex')).toBe('ffd8ff');
+      expect(screen.binary).toBe(false);
+      expect(Buffer.from(screen.decoded.params!.data!, 'base64').subarray(0, 3).toString('hex')).toBe('ffd8ff');
       const agentWait = waitForComputerHandback({ serverBaseUrl: origin, shareId: share.id, daemonToken: 'test-token' });
       viewer.send(JSON.stringify({ type: 'takeover' }));
       viewer.send(JSON.stringify({ id: 1, method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: 30, y: 20, button: 'left', clickCount: 1 } }));

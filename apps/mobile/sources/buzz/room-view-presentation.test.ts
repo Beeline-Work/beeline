@@ -55,6 +55,25 @@ describe('Room view presentation', () => {
     expect(duplicate).toBe(ordered);
   });
 
+  it('projects the same computer card from a live delta and a later Room read', () => {
+    const computerSession = {
+      id: 'gQp5M3DgFFI04Qazuj5xVz1M6k8dCbvq8VQDbauwmfw',
+      url: 'https://server.usebeeline.app/s/gQp5M3DgFFI04Qazuj5xVz1M6k8dCbvq8VQDbauwmfw/',
+      title: 'Rig Agent Chrome', status: 'live' as const,
+    };
+    const card: RoomViewMessage = {
+      id: 'computer-card', text: '@rig-agent shared a live browser', createdAt: 2,
+      author: { pubkey: 'agent', kind: 'agent', name: 'Rig Agent' },
+      presentation: 'card', computerSession,
+    };
+    const live = reconcileRoomMessageDelta(emptyRoom(), card);
+    expect(displayRoomMessages(live.messages, 'viewer')[0]?.computerSession).toEqual(computerSession);
+    const read = reconcileRoomView(live, { ...emptyRoom(), messages: [{ ...card,
+      computerSession: { ...computerSession, status: 'ended' }, version: 1,
+    }] });
+    expect(displayRoomMessages(read.messages, 'viewer')[0]?.computerSession?.status).toBe('ended');
+  });
+
   it('keeps earlier corner work rows on screen while live updates arrive', () => {
     const corner: RoomView = { ...emptyRoom(), parent: { id: 'parent', name: 'Parent' } };
     const output = (id: string, createdAt: number): RoomViewMessage => ({

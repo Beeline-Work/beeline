@@ -506,6 +506,28 @@ describe('phone surface readers', () => {
     ).toBeUndefined();
   });
 
+  it('keeps a computer card in live messages, Room reads, and serialized cache reads for every reader', () => {
+    const id = 'gQp5M3DgFFI04Qazuj5xVz1M6k8dCbvq8VQDbauwmfw';
+    const computerSession = {
+      id, url: `https://server.usebeeline.app/s/${id}/`,
+      title: "Ruby's Chrome: TikTok QR sign-in", status: 'live' as const,
+    };
+    const cardMessage = { ...message, presentation: 'card', text: '@ruby shared a live browser', computerSession };
+    expect(readRoomViewMessage(cardMessage)?.computerSession).toEqual(computerSession);
+    for (const permissions of [{ send: true, manage: true }, { send: false, manage: false }]) {
+      const room = readRoomView(JSON.parse(JSON.stringify({
+        ...currentRoom, viewer: { ...viewer, permissions }, messages: [cardMessage],
+      })));
+      expect(room?.messages[0]?.computerSession).toEqual(computerSession);
+    }
+    expect(readRoomViewMessage({ ...cardMessage, computerSession: { ...computerSession, status: 'ended' } })
+      ?.computerSession?.status).toBe('ended');
+    expect(readRoomViewMessage({ ...cardMessage, computerSession: { ...computerSession,
+      url: 'javascript:alert(1)' } })?.computerSession).toBeUndefined();
+    expect(readRoomViewMessage({ ...cardMessage, computerSession: { ...computerSession,
+      url: `${computerSession.url}?access=secret` } })?.computerSession).toBeUndefined();
+  });
+
   it('keeps a native installed Corner App without a linked developer identity', () => {
     const app = {
       version: 1,

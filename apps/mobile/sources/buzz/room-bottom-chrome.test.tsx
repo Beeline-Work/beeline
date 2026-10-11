@@ -176,15 +176,19 @@ function newestMessageToComposerGap({ lineShown }: { lineShown: boolean }): numb
 }
 
 describe('the Room turn line paints the transcript margin', () => {
-  it('sits on the transcript surface, unfenced, above the fixed composer gap', () => {
-    const styles = roomBottomChromeStyles({ bgTerminal: '#111', border: '#333' });
-    // No rule and no second surface: the line is painted into space the
-    // transcript already owns, so fencing it off would read as a new panel.
+  it.each(['obsidian', 'bone'] as const)('joins the line and composer on one opaque %s surface', (name) => {
+    const theme = beelineThemes[name];
+    const styles = roomBottomChromeStyles(theme);
     expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopWidth');
     expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopColor');
-    expect(styles.hangingTurnChrome.backgroundColor).toBe('#111');
-    // The composer keeps its own border; that one separates two real surfaces.
+    expect(styles.hangingTurnChrome.backgroundColor).toBe(theme.bgTerminal);
+    expect(styles.stack).toMatchObject({ backgroundColor: theme.bgTerminal, zIndex: 1 });
+    expect(styles.composerRow.backgroundColor).toBe(theme.bgTerminal);
+    // The edge is canvas-colored, preserving the Room-open reserve and the
+    // spacing scale without drawing a separator or moving the newest row.
     expect(styles.composerRow.borderTopWidth).toBe(1);
+    expect(styles.composerRow.borderTopColor).toBe(theme.bgTerminal);
+    expect(styles.composerRow.paddingTop).toBe(8);
   });
 
   it('takes no in-flow height, so the newest message does not move', () => {

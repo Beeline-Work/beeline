@@ -62,15 +62,17 @@ export function roomBottomChromeStyles(hull: { bgTerminal: string; border: strin
   return {
     stack: {
       position: 'relative',
+      // Keep the hanging line and every gap around the field above the
+      // scrolling transcript, on the same opaque canvas in both themes.
+      zIndex: 1,
+      backgroundColor: hull.bgTerminal,
     },
     // The line hangs on the composer's top edge and paints over the list's
     // bottom margin. Absolute, so the list's viewport is the same height with
     // the line as without it; anchored to `bottom: '100%'` of the stack, so
-    // its own bottom lands exactly on the composer's border. The line's outer
-    // box includes the fixed gap below its ink row. No rule and no fill of its
-    // own beyond the canvas it sits on — a hairline or a second background
-    // would fence off space the transcript already owns. The composer keeps
-    // its top border; that one separates two real surfaces.
+    // its own bottom lands exactly on the composer's top edge. The line's
+    // outer box includes the fixed gap below its ink row. It and the composer
+    // share one opaque canvas, with no rule between them.
     hangingTurnChrome: {
       position: 'absolute',
       left: 0,
@@ -82,8 +84,10 @@ export function roomBottomChromeStyles(hull: { bgTerminal: string; border: strin
       paddingHorizontal: 16,
       position: 'relative',
       paddingTop: 8,
+      // Keep the Room-open geometry's 1px edge, painted as part of the same
+      // opaque canvas so it never separates the status line and composer.
       borderTopWidth: 1,
-      borderTopColor: hull.border,
+      borderTopColor: hull.bgTerminal,
       backgroundColor: hull.bgTerminal,
     },
   } as const;

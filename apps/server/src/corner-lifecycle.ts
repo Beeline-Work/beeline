@@ -155,7 +155,7 @@ function loopCap(state: string): number {
 export type CornerEvent =
   | { kind: 'open'; workspaceId: string; implementerAgentId: string }
   | { kind: 'push'; headSha: string; contents: Record<string, unknown> }
-  | { kind: 'checks'; result: 'passing' | 'failing'; sourceMessageId: string }
+  | { kind: 'checks'; result: 'passing' | 'failing'; sourceMessageId: string; followup?: boolean }
   | {
       kind: 'brief-revised';
       revision: number;
@@ -699,6 +699,14 @@ async function checksReported(
       // not a new review: the implementer still owes a push, so do not wake
       // the reviewer again.
       (plan.outcome !== 'failing' && transition.run.outcome === 'changes_requested');
+    if (repeat && plan.outcome === 'failing' && event.followup) {
+      if (!corner.worker_agent_id) return no('the corner has no implementer');
+      const command = await createAgentCommand(db, {
+        roomId: cornerId, agentId: corner.worker_agent_id,
+        sourceMessageId: event.sourceMessageId, reason: 'corner_check',
+      });
+      return command ? OK : no('the implementer cannot be woken');
+    }
     if (repeat) return no(`${plan.outcome} already holds on this head`);
   }
   const failingRound =

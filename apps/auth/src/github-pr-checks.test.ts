@@ -20,6 +20,15 @@ const response = (state: string, nodes: Record<string, unknown>[], totalCount = 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('GitHub PR check reads', () => {
+  it('reads a completed job log through the installation-token REST endpoint', async () => {
+    const fetchMock = vi.fn(async (_input: string, _init?: RequestInit) => new Response('context\n##[error]failed\n'));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(app().readJobLog('installation-token', 'owner/widgets', 123)).resolves.toContain('##[error]failed');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.github.test/repos/owner/widgets/actions/jobs/123/logs');
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: 'Bearer installation-token' });
+  });
+
   it("uses GitHub's combined rollup instead of reconstructing a verdict", async () => {
     const fetchMock = vi.fn(async (_input: string, init?: RequestInit) =>
       Response.json(

@@ -5,6 +5,7 @@ import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import type { QueryResultRow } from 'pg';
 import { PgliteDatabase } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
+import { readAgentCommands } from './agent-command.js';
 
 const HUMAN = 'a'.repeat(64);
 const REVIEWER = 'b'.repeat(64);
@@ -82,7 +83,9 @@ describe('GitHub phone operations', () => {
     });
     app.readCommitCheckRollup.mockImplementation(async (_token, _repository, sha) =>
       sha === oldHead
-        ? { state: 'failed', total: 1, failing: ['typecheck'], checks: [{ name: 'typecheck', status: 'failed' }] }
+        ? { state: 'pending', total: 2, failing: ['typecheck'], checks: [
+          { name: 'typecheck', status: 'failed' }, { name: 'desktop', status: 'pending' },
+        ] }
         : { state: 'passed', total: 1, failing: [], checks: [{ name: 'typecheck', status: 'passed' }] },
     );
     const operations = new GitHubOperations(
@@ -2238,6 +2241,63 @@ describe('GitHub phone operations', () => {
     ).rows[0];
     console.info(`Reproduction C2-1: failing wake body="${command?.body ?? ''}"`);
     expect(command?.body).toContain('typecheck');
+  });
+  it('wakes on the first failed job with its log and batches later failures once', async () => {
+    const { corners, headSha, app, payload } = await checksFixture();
+    const corner = corners[0]!;
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`, [corner, REVIEWER],
+    );
+    const checks = [
+      { name: 'TYPECHECK', status: 'failed' as const, url: 'https://github.com/owner/widgets/actions/runs/10/job/101', jobId: 101 },
+      { name: 'desktop', status: 'pending' as const },
+      { name: 'lint', status: 'pending' as const },
+    ];
+    app.readCommitCheckRollup.mockImplementation(async () => ({
+      state: checks.some(c => c.status === 'pending') ? 'pending' as const : 'failed' as const,
+      failing: checks.filter(c => c.status === 'failed').map(c => c.name), checks: [...checks],
+    }));
+    const readJobLog = vi.fn(async (_token: string, _repo: string, jobId: number) => {
+      if (jobId === 102) throw new Error('log temporarily unavailable');
+      return 'earlier context\n##[error]TS2345 bad type\n';
+    });
+    Object.assign(app, { readJobLog });
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const failure = (name: string) => ({ ...payload, check_run: {
+      ...payload.check_run, name, conclusion: 'failure',
+      details_url: `https://github.com/owner/widgets/actions/runs/10/job/${name === 'TYPECHECK' ? 101 : 102}`,
+    } });
+    const wakes = async () => (await database.query<{ body: string }>(
+      `SELECT message.text body FROM agent_commands command JOIN messages message
+       ON message.id=command.source_message_id WHERE command.room_id=$1 AND command.reason='corner_check'
+       ORDER BY message.created_at,message.id`, [corner],
+    )).rows;
+
+    await operations.processWebhook('check_run', failure('TYPECHECK'));
+    expect((await wakes())).toHaveLength(1);
+    expect((await wakes())[0]?.body).toContain('TYPECHECK');
+    expect((await database.query<{ body: string }>(
+      `SELECT system_event->'payload'->'failedJobs'->0->>'errorLines' body FROM messages
+       WHERE room_id=$1 AND system_event->>'kind'='check-failed'`, [corner],
+    )).rows[0]?.body).toContain('##[error]TS2345 bad type');
+    expect(readJobLog).toHaveBeenCalledWith('room-token', 'owner/widgets', 101);
+    const inbox = await readAgentCommands(database, corner, REVIEWER);
+    expect(inbox.commands[0]?.source.body).toContain('> ##[error]TS2345 bad type');
+    expect(inbox.commands[0]?.source.body).toContain('untrusted outside data');
+
+    checks[1] = { name: 'desktop', status: 'failed', url: 'https://github.com/owner/widgets/actions/runs/10/job/102', jobId: 102 };
+    await operations.processWebhook('check_run', failure('desktop'));
+    expect((await wakes())).toHaveLength(1);
+    checks[2] = { name: 'lint', status: 'passed' };
+    await operations.processWebhook('check_run', payload);
+    expect((await wakes())).toHaveLength(2);
+    expect((await wakes())[1]?.body).toContain('desktop');
+    const followupInbox = await readAgentCommands(database, corner, REVIEWER);
+    expect(followupInbox.commands.some(command => command.source.body.includes('https://github.com/owner/widgets/actions/runs/10/job/102'))).toBe(true);
+    await operations.processWebhook('check_run', payload);
+    expect((await wakes())).toHaveLength(2);
+    expect(readJobLog).toHaveBeenCalledTimes(2);
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

@@ -315,6 +315,7 @@ async function main() {
     github ? (cornerId) => github!.landCorner(cornerId) : undefined,
     github ? (cornerId) => github!.closeCornerPullRequest(cornerId) : undefined,
     github ? (cornerId) => github!.readCornerPullRequest(cornerId) : undefined,
+    `${publicOrigin}/v1/connectors/events/composio`,
   );
   // The Google Play review link. Absent secret = the endpoint refuses like any
   // wrong secret; rotating the value revokes every future use of the link.
@@ -348,6 +349,8 @@ async function main() {
     auth,
     phone,
     daemon,
+    composio,
+    composioReceiverUrl: `${publicOrigin}/v1/connectors/events/composio`,
     live,
     connectionPresence,
     review,

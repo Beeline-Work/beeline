@@ -95,6 +95,7 @@ describe('using-beeline Room guidance', () => {
     // agent could not subscribe, and someone edited a database row for it.
     const markdown = usingBeelineSkillMarkdown('test-release');
     expect(markdown).toContain('beeline-agent create_subscription');
+    expect(markdown).toContain('list_subscription_events');
     expect(markdown).toContain('list_subscriptions and delete_subscription');
     expect(markdown).toContain('No approval or URL setup is needed');
     expect(markdown).toContain('list_event_subscriptions');

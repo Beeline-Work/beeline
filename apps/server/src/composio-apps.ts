@@ -309,6 +309,7 @@ function customOAuthConfig(items: readonly Json[], toolkit: string): Json | unde
 }
 
 export class ComposioApps {
+  private readonly receiverSecrets = new Map<string, { secret: string; until: number }>();
   private readonly toolkitCache = new Map<string, { until: number; value: Promise<{
     slug: string; description?: string; logo?: string; appUrl?: string; enabled?: boolean;
     composio_managed_auth_schemes?: unknown }> }>();
@@ -381,6 +382,51 @@ export class ComposioApps {
     }
     if (method === 'DELETE') return {};
     return object(await response.json());
+  }
+
+  /** One project receiver serves every connected account. Never replace an unrelated receiver. */
+  async ensureTriggerReceiver(url: string): Promise<void> {
+    const page = await this.request('/webhook_subscriptions', 'GET', undefined, 'v3.1');
+    const subscriptions = Array.isArray(page.items) ? page.items as Json[] : [];
+    const existing = subscriptions[0];
+    if (existing) {
+      if (existing.webhook_url !== url || existing.version !== 'V3' ||
+        !Array.isArray(existing.enabled_events) ||
+        !existing.enabled_events.includes('composio.trigger.message'))
+        throw new Error('The connected service event receiver is unavailable');
+      if (typeof existing.secret === 'string' && existing.secret)
+        this.receiverSecrets.set(url, { secret: existing.secret, until: Date.now() + 60_000 });
+      return;
+    }
+    const created = await this.request('/webhook_subscriptions', 'POST', {
+      webhook_url: url, version: 'V3', enabled_events: ['composio.trigger.message'],
+    }, 'v3.1');
+    if (typeof created.secret === 'string' && created.secret)
+      this.receiverSecrets.set(url, { secret: created.secret, until: Date.now() + 60_000 });
+  }
+
+  async triggerReceiverSecret(url: string): Promise<string> {
+    const cached = this.receiverSecrets.get(url);
+    if (cached && cached.until > Date.now()) return cached.secret;
+    const page = await this.request('/webhook_subscriptions', 'GET', undefined, 'v3.1');
+    const items = Array.isArray(page.items) ? page.items as Json[] : [];
+    const receiver = items.find((item) => item.webhook_url === url && item.version === 'V3');
+    const secret = requiredString(receiver?.secret);
+    this.receiverSecrets.set(url, { secret, until: Date.now() + 60_000 });
+    return secret;
+  }
+
+  /** Only provider webhooks are eligible; scheduled-check trigger types are refused. */
+  async upsertWebhookTrigger(slug: string, accountId: string, config: Json): Promise<string> {
+    const type = await this.request(`/triggers_types/${encodeURIComponent(slug)}`, 'GET');
+    if (type.type !== 'webhook') throw new Error('This service event is not event-driven');
+    const result = await this.request(`/trigger_instances/${encodeURIComponent(slug)}/upsert`,
+      'POST', { connected_account_id: accountId, trigger_config: config }, 'v3.1');
+    return requiredString(result.trigger_id);
+  }
+
+  async deleteWebhookTrigger(triggerId: string): Promise<void> {
+    await this.request(`/trigger_instances/manage/${encodeURIComponent(triggerId)}`, 'DELETE');
   }
 
   async supportsOAuth(toolkit: string): Promise<boolean> {

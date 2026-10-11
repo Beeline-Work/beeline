@@ -38,6 +38,7 @@ import {
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
+import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
 import { cancelArchivedCornerAssignments } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
@@ -2936,9 +2937,7 @@ export async function migrate(
      ON messages(room_id)
      WHERE card_type IN ('agent-sign-in','app-sign-in','squire-approval') AND deleted_at IS NULL`,
   ));
-  // The Needs-you expiry sweep (needs-you-expiry.ts) finds the cells whose
-  // clock passed since its last run: open marks by first sight, questions by
-  // the lookback edge, and expiring approval cards by their `expiresAt`.
+  // Index the three deadlines read by DeadlineExpiry.
   await retryMigrationStep('needs-you mark expiry index', () => createIndexConcurrently(
     database, 'needs_you_marks_open_first_seen_idx',
     `CREATE INDEX CONCURRENTLY needs_you_marks_open_first_seen_idx
@@ -3329,18 +3328,7 @@ export async function compactWebhookDeliveries(database: SqlDatabase): Promise<v
 
 export async function compactPushClaims(database: SqlDatabase): Promise<void> {
   const cleared = await boundedMigrationUpdate(database, 'terminal push claims',
-    `DELETE FROM push_delivery_claims claim
-     WHERE (claim.message_id,claim.device_token) IN (
-       SELECT old.message_id,old.device_token FROM push_delivery_claims old
-       WHERE old.status IN ('delivered','suppressed','failed')
-         AND old.completed_at<now()-interval '1 hour'
-         AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
-           AND old.completed_at>=now()-interval '7 days'
-           AND EXISTS (SELECT 1 FROM push_devices device
-             WHERE device.token=old.device_token AND device.platform IN ('ios','android')))
-         AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
-           WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
-       ORDER BY old.completed_at LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);
+    TERMINAL_PUSH_CLAIMS_SQL, [], 1000);
   if (cleared) console.log(`compactPushClaims: expired ${cleared} claim(s)`);
 }
 

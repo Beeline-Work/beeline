@@ -54,15 +54,14 @@ export default function ScheduledWork() {
       chevron="right"
       description={`@${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule)}`}
       key={schedule.id}
-      leading={
-        schedule.workflowSlug ? (
+      leading={<View style={styles.leadingSlot}>
+        {schedule.workflowSlug ? (
           <WorkflowGlyph live={false} size={CORNER_META_SIZE} testID={`scheduled-work-glyph-${schedule.id}`} />
-        ) : undefined
-      }
+        ) : null}
+      </View>}
       onPress={() => openSchedule(schedule)}
       testID={`scheduled-work-${schedule.id}`}
       title={scheduleTitle(schedule)}
-      titleLines={2}
     />
   );
 
@@ -71,9 +70,11 @@ export default function ScheduledWork() {
       chevron="right"
       description={`@${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
       key={subscription.id}
-      leading={subscription.workflowSlug ? (
-        <WorkflowGlyph live={false} size={CORNER_META_SIZE} testID={`subscription-glyph-${subscription.id}`} />
-      ) : undefined}
+      leading={<View style={styles.leadingSlot}>
+        {subscription.workflowSlug ? (
+          <WorkflowGlyph live={false} size={CORNER_META_SIZE} testID={`subscription-glyph-${subscription.id}`} />
+        ) : null}
+      </View>}
       onPress={() =>
         router.push({
           pathname: '/beeline/settings/subscription',
@@ -82,7 +83,6 @@ export default function ScheduledWork() {
       }
       testID={`subscription-${subscription.id}`}
       title={subscriptionTitle(subscription)}
-      titleLines={2}
     />
   );
 
@@ -148,6 +148,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   // SettingsRow pads by `space.sm`; the section heads sit at 16.
   rows: { paddingHorizontal: theme.buzz.space.sm },
+  leadingSlot: { width: CORNER_META_SIZE, alignItems: 'center', justifyContent: 'center' },
   emptyBlock: { padding: theme.buzz.space.xl, alignItems: 'flex-start', justifyContent: 'center' },
   emptyIcon: { color: theme.buzz.accent },
   emptyTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary, marginTop: theme.buzz.space.sm },

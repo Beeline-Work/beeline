@@ -100,8 +100,10 @@ export function ScheduledWorkDoes({ roomId, prompt, workflowSlug }: {
               title={workflowDisplayName(workflowSlug)}
             />
           </View>
-          {contract ? <WorkflowRunLine detail={{ contract, roleHolders: {} }} now={0}
-            onOpenCorner={() => undefined} testID="scheduled-work-steps" /> : null}
+          {contract ? <View style={styles.workflowLine}>
+            <WorkflowRunLine detail={{ contract, roleHolders: {} }} now={0}
+              onOpenCorner={() => undefined} testID="scheduled-work-steps" />
+          </View> : null}
           {error ? <DetailCopy testID="scheduled-work-workflow-error">Could not load workflow steps: {error}</DetailCopy> : null}
         </>
       ) : <DetailRailLine testID="scheduled-work-prompt">{prompt}</DetailRailLine>}
@@ -172,11 +174,13 @@ const styles = StyleSheet.create((theme) => ({
   summaryLine: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: theme.buzz.space.sm,
     marginHorizontal: theme.buzz.space.md,
     marginVertical: theme.buzz.space.md,
   },
-  summaryRail: { alignSelf: 'stretch', width: 2, backgroundColor: theme.buzz.humanRail },
+  summaryRail: {
+    position: 'absolute', left: -theme.buzz.space.sm, top: 0, bottom: 0,
+    width: 2, backgroundColor: theme.buzz.humanRail,
+  },
   summary: {
     ...theme.buzz.type.meta,
     flex: 1,
@@ -191,4 +195,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   // SettingsRow pads by `space.sm`; the page's copy sits at `space.md`.
   facts: { paddingHorizontal: theme.buzz.space.sm },
+  // The workflow circle starts at x=18 on its own page. Bring its left edge to the 16pt detail axis.
+  workflowLine: { marginLeft: -2, marginRight: 2 },
 }));

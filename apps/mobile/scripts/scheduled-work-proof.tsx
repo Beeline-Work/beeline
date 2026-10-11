@@ -36,6 +36,7 @@ async function run() {
   const Page = PAGES[page];
   createRoot(document.getElementById('root')!).render(<Page />);
   for (let i = 0; i < 8; i += 1) await pause();
+  await document.fonts.ready;
   // A failed schedule read shows its error; Retry reads it again.
   const beforeRetry = leaves().map((node) => node.textContent);
   if (document.querySelector('[data-testid="workflow-schedule-error"]')) {
@@ -53,6 +54,19 @@ async function run() {
   const steps = ids(/^(workflow-steps|scheduled-work-steps)-step-[^-]+$/);
   const pendingCircles = ids(/^(workflow-steps|scheduled-work-steps)-step-.*-circle-pending$/).length;
   const allCircles = ids(/^(workflow-steps|scheduled-work-steps)-step-.*-circle-/).length;
+  const listAxes = ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1', 'subscription-sub-2']
+    .map((id) => document.querySelector(`[data-testid="${id}"]`))
+    .filter((row): row is Element => Boolean(row))
+    .map((row) => [...row.querySelectorAll('[dir=auto]')].slice(0, 2)
+      .map((label) => label.getBoundingClientRect().x));
+  const detailAxis = [
+    'scheduled-work-facts-when', 'scheduled-work-facts-agents', 'scheduled-work-facts-where',
+    'scheduled-work-does-header', 'scheduled-work-prompt', 'scheduled-work-workflow',
+    'scheduled-work-steps-step-notify-circle-pending',
+    page === 'subscription' ? 'stop-subscription' : 'stop-schedule',
+  ].map((id) => document.querySelector(`[data-testid="${id}"]`))
+    .filter((node): node is Element => Boolean(node))
+    .map((node) => (node.querySelector('[dir=auto]') ?? node).getBoundingClientRect().x);
   for (const id of ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1', 'subscription-sub-2']) click(id);
   const stopId = page === 'subscription' ? 'stop-subscription' : page === 'workflow' ? 'stop-workflow-schedule' : 'stop-schedule';
   click(stopId);
@@ -72,6 +86,9 @@ async function run() {
           ? eyebrow.getBoundingClientRect().bottom <= title.getBoundingClientRect().top + 1
           : null,
       glyphs,
+      loadedFonts: [...document.fonts].filter((face) => face.status === 'loaded').map((face) => face.family),
+      listAxes,
+      detailAxis,
       steps,
       pendingCircles,
       allCircles,

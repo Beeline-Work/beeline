@@ -68,6 +68,13 @@ function shims(mobile: string): Record<string, string> {
   };
 }
 
+function fontsCss(mobile: string): string {
+  return ['SpaceGrotesk-Regular', 'SpaceGrotesk-Medium', 'SpaceGrotesk-SemiBold',
+    'IBMPlexMono-Regular', 'IBMPlexMono-Italic', 'IBMPlexMono-SemiBold']
+    .map((name) => `@font-face{font-family:'${name}';src:url(data:font/ttf;base64,${readFileSync(path.join(mobile, 'sources/assets/fonts', `${name}.ttf`)).toString('base64')})}`)
+    .join('');
+}
+
 type Page = {
   beforeRetry: string[];
   text: string[];
@@ -75,6 +82,9 @@ type Page = {
   titleFont: string | null;
   eyebrowAboveTitle: boolean | null;
   glyphs: string[];
+  loadedFonts: string[];
+  listAxes: number[][];
+  detailAxis: number[];
   steps: string[];
   pendingCircles: number;
   allCircles: number;
@@ -94,6 +104,7 @@ async function proof(query: string): Promise<Page> {
     shims: shims(mobile),
     width: 390,
     query,
+    head: `<style>${fontsCss(mobile)}</style>`,
   });
   expect(status, stderr).toBe(0);
   if (process.env.PRINT_PROOF) console.log(result);
@@ -131,6 +142,8 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       '@Ruby · #issues-triage',
     ]);
     expect(page.glyphs).toEqual(['scheduled-work-glyph-video', 'subscription-glyph-sub-2']);
+    expect(page.loadedFonts).toEqual(expect.arrayContaining(['SpaceGrotesk-Regular', 'SpaceGrotesk-Medium', 'SpaceGrotesk-SemiBold']));
+    expect(page.listAxes).toEqual([[45, 45], [45, 45], [45, 45], [45, 45]]);
     expect(page.text.join(' ')).not.toMatch(/LAST|NEVER FIRED|STOP|REVOKE/);
     expect(page.pushed).toEqual([
       { pathname: '/beeline/settings/schedule', params: { roomId: 'room-1', scheduleId: 'daily' } },
@@ -156,6 +169,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       'Stop schedule',
     ]);
     expect(page.afterStop.slice(-2)).toEqual(['Confirm: Stop schedule', 'Cancel']);
+    expect(page.detailAxis).toEqual([16, 16, 16, 16, 16, 16]);
     stopped(page, 'deleteRoomSchedule');
     expect(page.inputs).toContainEqual(['deleteRoomSchedule', { roomId: 'room-1', scheduleId: 'daily' }]);
   }, 120_000);
@@ -169,6 +183,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       expect(page.text).toEqual(expect.arrayContaining(['When', 'Agent', 'Where', 'Does', 'Feedback triage']));
       expect(page.steps.length).toBeGreaterThan(2);
       expect(page.pendingCircles).toBe(page.allCircles);
+      expect(page.detailAxis).toEqual([16, 16, 16, 16, 16, 16, 16]);
       expect(page.inputs).toContainEqual(['readWorkflowDefinition', { roomId: 'corner-1', name: 'feedback-triage' }]);
       stopped(page, stop);
     }
@@ -189,6 +204,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       'Stop subscription',
     ]);
     expect(page.afterStop.slice(-2)).toEqual(['Confirm: Stop subscription', 'Cancel']);
+    expect(page.detailAxis).toEqual([16, 16, 16, 16, 16, 16]);
     stopped(page, 'deleteRoomSubscription');
     expect(page.inputs).toContainEqual([
       'deleteRoomSubscription',

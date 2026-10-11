@@ -61,7 +61,8 @@ it('lists every entry as one row in the shared grammar, each opening its own pag
     expect(row('scheduled-work-daily').props).toMatchObject({ title: 'Morning summary · Every hour', description: '@Hoots · this Room', chevron: 'right' });
     expect(row('scheduled-work-video').props).toMatchObject({ title: 'Post youtube video · Every day', description: '@Hoots · #video' });
     expect(row('scheduled-work-video').props.leading).toBeTruthy();
-    expect(row('scheduled-work-daily').props.leading).toBeUndefined();
+    expect(row('scheduled-work-daily').props.leading).toBeTruthy();
+    expect(row('subscription-sub').props.leading).toBeTruthy();
     expect(row('subscription-sub').props).toMatchObject({ title: 'Triage new issues · On new issue in owner/widgets', description: '@Hoots · this Room' });
     act(() => row('scheduled-work-daily').props.onPress());
     act(() => row('scheduled-work-video').props.onPress());

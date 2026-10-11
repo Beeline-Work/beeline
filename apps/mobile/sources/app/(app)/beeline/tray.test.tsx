@@ -1449,6 +1449,18 @@ describe('Tray section CLEAR', () => {
     expect(calls('clearMessageBookmarks')).toHaveLength(1);
   });
 
+  it('drops both held sections on account reset without sending either clear', async () => {
+    serve({ needs: [need()], bookmarks: [bookmark()] });
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-saved' }).props.onPress());
+    await act(async () => resetClientState());
+    expect(tree.root.findAllByProps({ testID: 'tray-clear-undo' })).toHaveLength(0);
+    await act(async () => { vi.advanceTimersByTime(6_000); });
+    expect(calls('clearNeedsYouSection')).toEqual([]);
+    expect(calls('clearMessageBookmarks')).toEqual([]);
+  });
+
   it('REMOVE during the Undo window does not send the held clear', async () => {
     layout.os = 'android';
     layout.width = 390;

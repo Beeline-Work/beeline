@@ -4044,7 +4044,7 @@ export class PhoneService {
         const i = input as Input<'deleteRoomSubscription'>;
         await this.requireTopLevelRoom(i.roomId);
         if (!(await humanRoomAdmin(this.database, i.roomId, viewerId))) throw new Error('room manager required');
-        await deleteRoomSubscription(this.database, i.roomId, i.subscriptionId);
+        await deleteRoomSubscription(this.database, i.roomId, i.subscriptionId, this.composio);
         return undefined as Output<Name>;
       }
       case 'readWelcomeCards':

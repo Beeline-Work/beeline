@@ -10,6 +10,36 @@ const ACCOUNT = 'ca_fixture';
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 
 describe('managed app provider boundary', () => {
+  it('registers one receiver and only webhook trigger types on an existing connected account', async () => {
+    const calls: { path: string; body?: Record<string, unknown> }[] = [];
+    let receiver = false;
+    const transport = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+      calls.push({ path, ...(body ? { body } : {}) });
+      if (path.endsWith('/webhook_subscriptions') && init?.method === 'GET')
+        return json({ items: receiver ? [{ webhook_url: 'https://beeline.test/events',
+          version: 'V3', enabled_events: ['composio.trigger.message'], secret: 'fixture-secret' }] : [] });
+      if (path.endsWith('/webhook_subscriptions') && init?.method === 'POST') {
+        receiver = true; return json({ id: 'whs_1', secret: 'fixture-secret' }, 201);
+      }
+      if (path.endsWith('/triggers_types/SLACK_NEW_MESSAGE')) return json({ type: 'webhook' });
+      if (path.endsWith('/triggers_types/GMAIL_NEW_GMAIL_MESSAGE')) return json({ type: 'poll' });
+      if (path.endsWith('/trigger_instances/SLACK_NEW_MESSAGE/upsert')) return json({ trigger_id: 'ti_1' });
+      if (path.endsWith('/trigger_instances/manage/ti_1')) return json({});
+      throw new Error(`unexpected request ${path}`);
+    });
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    await provider.ensureTriggerReceiver('https://beeline.test/events');
+    expect(await provider.triggerReceiverSecret('https://beeline.test/events')).toBe('fixture-secret');
+    expect(await provider.upsertWebhookTrigger('SLACK_NEW_MESSAGE', ACCOUNT,
+      { channel_id: 'C123ABC' })).toBe('ti_1');
+    await expect(provider.upsertWebhookTrigger('GMAIL_NEW_GMAIL_MESSAGE', ACCOUNT, {}))
+      .rejects.toThrow('not event-driven');
+    await provider.deleteWebhookTrigger('ti_1');
+    expect(calls.find((call) => call.path.endsWith('/trigger_instances/SLACK_NEW_MESSAGE/upsert'))?.body)
+      .toMatchObject({ connected_account_id: ACCOUNT, trigger_config: { channel_id: 'C123ABC' } });
+  });
   it('reads the toolkit description and HTTPS logo from provider metadata', async () => {
     const transport = vi.fn(async () => json({ slug: 'gmail', enabled: true,
       composio_managed_auth_schemes: ['OAUTH2'],

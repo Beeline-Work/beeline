@@ -41,6 +41,7 @@ import { roomReadStamp, stampRoomRead } from '@/buzz/room-message-records';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { recordRoomReadNetworkTiming } from '@/buzz/room-open-trace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { liveFrameEpoch } from './live-frame-epoch';
 
 export { RoomViewHttpError };
@@ -49,16 +50,25 @@ export { RoomViewHttpError };
  * Identical GETs in flight at once share one request: every screen mounting
  * on the same open asks for the same Workspace, Room list or Room. A caller
  * that asks after the live socket delivered anything new starts its own read,
- * because the shared one may predate the change that frame announced.
+ * because the shared one may predate the change that frame announced. Entries
+ * are keyed by server and fenced by the client reset generation, which moves
+ * on every identity or relay change, so one account never gets another's read.
  */
-const readsInFlight = new Map<string, { promise: Promise<unknown>; epoch: number }>();
+const readsInFlight = new Map<
+  string,
+  { promise: Promise<unknown>; epoch: number; generation: number }
+>();
+
+subscribeClientReset(() => readsInFlight.clear());
 
 function shareRead<T>(key: string, start: () => Promise<T>): Promise<T> {
   const epoch = liveFrameEpoch();
+  const generation = clientResetGeneration();
   const shared = readsInFlight.get(key);
-  if (shared && shared.epoch === epoch) return shared.promise as Promise<T>;
+  if (shared && shared.epoch === epoch && shared.generation === generation)
+    return shared.promise as Promise<T>;
   const promise = start();
-  const entry = { promise, epoch };
+  const entry = { promise, epoch, generation };
   readsInFlight.set(key, entry);
   const release = () => {
     if (readsInFlight.get(key) === entry) readsInFlight.delete(key);
@@ -210,7 +220,9 @@ class MonolithRoomViewClient {
   ): Promise<T> {
     // A read its caller can cancel (search) is never shared.
     if (signal) return this.checked(path, 'GET', guard, undefined, signal);
-    return shareRead(path, () => this.checked(path, 'GET', guard, undefined, undefined, headers));
+    return shareRead(`${this.baseUrl}${path}`, () =>
+      this.checked(path, 'GET', guard, undefined, undefined, headers),
+    );
   }
   private operation<T>(name: string, input: unknown, guard: Guard<T>): Promise<T> {
     return this.checked(`/v1/phone/operations/${name}`, 'POST', guard, input);

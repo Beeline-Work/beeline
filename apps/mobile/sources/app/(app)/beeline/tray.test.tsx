@@ -915,6 +915,21 @@ describe('Needs-you badge and tray', () => {
     }
   });
 
+  it('a client reset drops a held section clear without sending it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
+      const tree = await render(true);
+      await act(async () => tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress());
+      await act(async () => resetClientState());
+      await act(async () => { vi.advanceTimersByTime(6_000); });
+      await act(async () => tree.unmount());
+      expect(phoneOperation).not.toHaveBeenCalledWith('clearNeedsYouSection', expect.anything());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a client reset forgets the previous account\'s pending clears', async () => {
     const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
     serveNeeds(server);

@@ -233,11 +233,14 @@ export default function TrayScreen() {
     setLoading(false);
   }, [workspaceId]);
 
-  // The previous account's sections and lost Workspace do not carry over.
+  // The previous account's sections, lost Workspace and held clears do not
+  // carry over. A held clear is dropped unsent; emptying `pending` stops its timer.
   useEffect(() => subscribeClientReset(() => {
     loadedSections.current = { workspaceId: '', bookmarks: false };
     lostWorkspaceRef.current = null;
     setLostWorkspaceId(null);
+    pendingRef.current = [];
+    setPending([]);
   }), []);
 
   // Persist the reconciled Saved list, including later live changes, for a

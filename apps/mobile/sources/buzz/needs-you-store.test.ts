@@ -4,6 +4,7 @@ const fixture = vi.hoisted(() => ({
   viewer: 'viewer-a',
   disk: new Map<string, unknown>(),
   reads: [] as Array<(items: unknown[]) => void>,
+  registrations: [] as Array<{ answer: () => void; stopped: boolean }>,
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: async () => 'https://server.test',
@@ -24,7 +25,13 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
     : Promise.resolve(undefined),
 }));
 vi.mock('@/sync/transport/live-connection', () => ({
-  sharedLiveConnection: () => ({ register: async () => () => undefined }),
+  sharedLiveConnection: () => ({
+    register: () => new Promise<() => void>((resolve) => {
+      const registration = { answer: () => undefined, stopped: false };
+      registration.answer = () => resolve(() => { registration.stopped = true; });
+      fixture.registrations.push(registration);
+    }),
+  }),
 }));
 
 import { resetClientState } from '@/sync/client-reset';
@@ -52,6 +59,26 @@ beforeEach(() => {
   fixture.viewer = 'viewer-a';
   fixture.disk.clear();
   fixture.reads = [];
+  fixture.registrations = [];
+});
+
+describe('Needs-you live registration', () => {
+  it('registers for the next viewer when a reset lands while registering', async () => {
+    void loadNeedsYouList('ws');
+    await settle();
+    expect(fixture.registrations).toHaveLength(1);
+    fixture.viewer = 'viewer-b';
+    resetClientState();
+    void loadNeedsYouList('ws');
+    await settle();
+    expect(fixture.registrations).toHaveLength(2);
+    fixture.registrations[0]!.answer();
+    fixture.registrations[1]!.answer();
+    await settle();
+    expect(fixture.registrations.map((registration) => registration.stopped)).toEqual([true, false]);
+    resetClientState();
+    expect(fixture.registrations[1]!.stopped).toBe(true);
+  });
 });
 
 describe('Needs-you disk copy', () => {

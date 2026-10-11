@@ -1,5 +1,6 @@
 import { isWorkspaceView, type Identity, type WorkspaceView } from '@beeline/buzz-client';
 import { BuzzRigTransport } from '@/sync/transport';
+import { subscribeClientReset } from '@/sync/client-reset';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { workspaceRecordScope } from './workspace-records';
 
@@ -18,6 +19,18 @@ type Watch = {
 };
 
 const watches = new Map<string, Watch>();
+
+function closeWatch(watch: Watch): void {
+  watch.closed = true;
+  watch.stopEntry();
+  watch.release?.();
+}
+
+/** An identity or relay change closes every watch; a later release is a no-op. */
+subscribeClientReset(() => {
+  for (const watch of watches.values()) closeWatch(watch);
+  watches.clear();
+});
 
 /**
  * One relay watch per Workspace for every mounted roster reader (Members and
@@ -48,13 +61,12 @@ export function watchWorkspace(
       opened.listen();
     },
     release: () => {
+      if (opened.closed) return;
       opened.listeners.delete(listener);
       if (opened.rooms.delete(listener) && opened.listeners.size > 0) opened.listen();
       if (opened.listeners.size > 0) return;
-      opened.closed = true;
       watches.delete(key);
-      opened.stopEntry();
-      opened.release?.();
+      closeWatch(opened);
     },
   };
 }

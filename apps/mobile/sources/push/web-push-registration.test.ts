@@ -39,6 +39,7 @@ describe('Chrome push registration', () => {
     };
     const registration = { pushManager };
     vi.stubGlobal('window', {
+      document: {},
       isSecureContext: true,
       PushManager: function () {},
       Notification: function () {},
@@ -100,6 +101,16 @@ describe('Chrome push registration', () => {
     expect(old.unsubscribe).toHaveBeenCalledOnce();
     expect(subscribe).toHaveBeenCalledTimes(2);
     expect(local.get('@beeline/web-push/owner')).toBe('person-2');
+  });
+
+  it('signs out without throwing when the browser denies storage', async () => {
+    await registerWebPush(identity, false);
+    const denied = () => {
+      throw new DOMException('denied', 'SecurityError');
+    };
+    vi.stubGlobal('localStorage', { getItem: denied, setItem: denied, removeItem: denied });
+    await expect(unregisterWebPush()).resolves.toBeUndefined();
+    expect(operation).toHaveBeenCalledWith('unregisterPushDevice', expect.anything());
   });
 
   it('reports the currently open Room to the service worker and detaches on unmount', () => {

@@ -1,10 +1,17 @@
 import type { Identity } from '@beeline/buzz-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
+import { webStringStorage } from '@/sync/browser-string-storage';
+import { webRuntimeStorage } from '@/utils/web-storage';
 import type { BuzzPushRegistrationResult } from './buzz-push-registration';
 
 const WORKER_PATH = '/push-sw.js';
 const OWNER_KEY = '@beeline/web-push/owner';
+
+/** A browser that denies storage keeps the owner in memory, so logout never throws. */
+function ownerStorage() {
+  return webStringStorage(webRuntimeStorage()?.storage);
+}
 
 /** Let the worker make a bounded display decision for the focused web tab. */
 export function installWebPushForegroundResponder(): () => void {
@@ -46,7 +53,7 @@ export async function clearWebPushSubscription(): Promise<void> {
   const registration = await navigator.serviceWorker.getRegistration('/');
   const subscription = await registration?.pushManager.getSubscription();
   await subscription?.unsubscribe();
-  localStorage.removeItem(OWNER_KEY);
+  ownerStorage().delete(OWNER_KEY);
 }
 
 export async function unregisterWebPush(): Promise<void> {
@@ -91,7 +98,7 @@ export async function registerWebPush(
       };
     const registration = await worker();
     let subscription = await registration.pushManager.getSubscription();
-    const priorOwner = localStorage.getItem(OWNER_KEY);
+    const priorOwner = ownerStorage().getString(OWNER_KEY);
     const expectedKey = applicationKey(publicKey);
     const existingKey = subscription?.options?.applicationServerKey;
     const keyChanged =
@@ -115,7 +122,7 @@ export async function registerWebPush(
       environment: 'physical',
       keys: { p256dh: keys.p256dh, auth: keys.auth },
     });
-    localStorage.setItem(OWNER_KEY, identity.publicKey);
+    ownerStorage().set(OWNER_KEY, identity.publicKey);
     return { registered: true, retryable: false, phase: 'registered' };
   } catch {
     // Subscription endpoints and keys are secrets; never include vendor errors in UI or logs.

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { subscribeClientReset } from '@/sync/client-reset';
 
 /**
  * The one corner create in flight, or the last one that could not reach the
@@ -40,6 +41,9 @@ function set(next: CornerOpenStatus): void {
   current = next;
   for (const listener of listeners) listener();
 }
+
+// The previous account's pending or failed create does not carry over.
+subscribeClientReset(() => set({ status: 'idle' }));
 
 export function cornerOpenStatus(): CornerOpenStatus {
   return current;

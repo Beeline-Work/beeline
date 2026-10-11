@@ -160,7 +160,7 @@ export function WaitingForAgentLine({ handle, testID }: { handle: string; testID
     <View accessibilityLabel={label} accessibilityLiveRegion="polite" style={styles.bar} testID={testID}>
       <View style={styles.row}>
         <View style={styles.glyphCell}><BeelineMarkSpinner ink={theme.buzz.dim} /></View>
-        <Text numberOfLines={1} style={styles.waitingLabel}>{label}</Text>
+        <Text numberOfLines={1} style={[styles.label, styles.waitingLabel]}>{label}</Text>
       </View>
     </View>
   );
@@ -239,11 +239,7 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: TURN_LABEL_LINE_HEIGHT,
     },
     waitingLabel: {
-      ...groknight.type.machine,
-      flexShrink: 1,
-      minWidth: 0,
       color: groknight.dim,
-      lineHeight: TURN_LABEL_LINE_HEIGHT,
     },
     counter: {
       ...groknight.type.machine,

@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { SQUIRE_BROKER_FLAG, squireHostRewriteEnv, writeSquireBrokerUnitMarker } from './squire-host.js';
+import { SQUIRE_BROKER_FLAG, squireHostRewriteEnv, updateSquireBrokerInstall, writeSquireBrokerUnitMarker, type SquireInstallRunner } from './squire-host.js';
 import {
   DAEMON_DISTRESS_EXIT_STATUS,
   DELIBERATE_REMOVAL_EXIT_STATUS,
@@ -579,19 +579,25 @@ export async function installLaunchdTrustySquireBrokerService(
     run?: LaunchdRunner;
     invocationPath?: string;
     restart?: boolean;
+    squireInstallRun?: SquireInstallRunner;
+    squireUpdateMode?: 'latest' | 'minimum';
   } = {},
 ): Promise<void> {
   const env = options.env ?? process.env;
   assertCanonicalInstalledLauncher(env, options.invocationPath);
   const home = launchdHome(env);
   writeSquireBrokerUnitMarker(home);
+  const install = await updateSquireBrokerInstall(home, {
+    ...(options.squireInstallRun ? { run: options.squireInstallRun } : {}),
+    mode: options.squireUpdateMode ?? 'latest',
+  });
   await mkdir(resolve(home, 'Library', 'Logs', 'Beeline'), { recursive: true, mode: 0o700 });
   const plistPath = launchdBrokerPlistPath(env);
   const changed = await writeManagedFile(plistPath, launchdBrokerPlist(env), 0o600);
   const run = options.run ?? runLaunchctl;
   const domain = launchdUserDomain();
   const target = `${domain}/${LAUNCHD_BROKER_LABEL}`;
-  if (changed || options.restart) await bootoutIfLoaded(run, target);
+  if (changed || install.changed || options.restart) await bootoutIfLoaded(run, target);
   await run(['enable', target]);
   // `RunAtLoad` starts the job as part of bootstrap; a job that is still loaded
   // was not replaced here, so it is the one that needs starting.
@@ -613,7 +619,6 @@ export async function convergeLaunchdTrustySquireBrokerService(options: {
     await installLaunchdTrustySquireBrokerService({
       env: { ...env, BEELINE_LIB_DIR: options.libDir },
       invocationPath: resolve(options.libDir, 'lib', 'beeline', 'beeline-cli.mjs'),
-      restart: true,
       ...(options.run ? { run: options.run } : {}),
     });
     return true;

@@ -16,7 +16,7 @@ import {
   startLocalWatchdog,
   systemdBrokerUnitPath,
 } from './systemd.js';
-import { TRUSTY_SQUIRE_BROKER_UNIT_NAME, trustySquireBrokerUnit } from './squire-host.js';
+import { squireBrokerInstalledVersion, TRUSTY_SQUIRE_BROKER_UNIT_NAME, trustySquireBrokerUnit } from './squire-host.js';
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -358,13 +358,16 @@ describe('trusty squire host broker unit', () => {
       calls.push(args);
       return { stdout: '' };
     });
-    const squireInstallRun = vi.fn(async (_command: string, _args: readonly string[], installOptions: { cwd: string }) => {
+    let published = '1.1.32';
+    const squireInstallRun = vi.fn(async (_command: string, args: readonly string[], installOptions: { cwd: string }) => {
+      if (args[0] === 'view') return { code: 0, stderr: '', stdout: published };
       const entryDir = join(installOptions.cwd, 'node_modules', '@trusty-squire', 'mcp', 'dist');
       await mkdir(entryDir, { recursive: true });
       await writeFile(join(entryDir, 'bin.js'), '');
+      await writeFile(join(entryDir, '..', 'package.json'), JSON.stringify({ version: published }));
       return { code: 0, stderr: '' };
     });
-    await installTrustySquireBrokerService({
+    const options = {
       env: {
         HOME: home,
         BEELINE_LIB_DIR: `${home}/.local/lib/beeline`,
@@ -373,8 +376,9 @@ describe('trusty squire host broker unit', () => {
       invocationPath: `${home}/.local/lib/beeline/lib/beeline/beeline-cli.mjs`,
       run,
       squireInstallRun,
-    });
-    expect(squireInstallRun).toHaveBeenCalledTimes(1);
+    };
+    await installTrustySquireBrokerService(options);
+    expect(squireInstallRun).toHaveBeenCalledTimes(2);
     expect(calls).toEqual([
       ['daemon-reload'],
       ['enable', TRUSTY_SQUIRE_BROKER_UNIT_NAME],
@@ -387,5 +391,26 @@ describe('trusty squire host broker unit', () => {
       await readFile(join(home, '.trusty-squire', '.trusty-squire-broker-unit.json'), 'utf8'),
     );
     expect(marker.socket).toBe(join(home, '.trusty-squire', 'broker.sock'));
+
+    calls.length = 0;
+    await installTrustySquireBrokerService(options);
+    expect(squireInstallRun).toHaveBeenCalledTimes(3);
+    expect(calls).not.toContainEqual(['restart', '--no-block', TRUSTY_SQUIRE_BROKER_UNIT_NAME]);
+
+    published = '1.1.33';
+    calls.length = 0;
+    await installTrustySquireBrokerService(options);
+    expect(calls).toContainEqual(['restart', '--no-block', TRUSTY_SQUIRE_BROKER_UNIT_NAME]);
+
+    published = '1.1.34';
+    calls.length = 0;
+    await expect(installTrustySquireBrokerService({
+      ...options,
+      squireInstallRun: async (_command, args) => args[0] === 'view'
+        ? { code: 0, stderr: '', stdout: published }
+        : { code: 1, stderr: 'download failed' },
+    })).rejects.toThrow('download failed');
+    expect(calls).toEqual([]);
+    expect(squireBrokerInstalledVersion(home)).toBe('1.1.33');
   });
 });

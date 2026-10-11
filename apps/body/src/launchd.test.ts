@@ -183,6 +183,15 @@ async function canonicalEnv() {
   };
 }
 
+const squireInstallRun = async (_command: string, args: readonly string[], options: { cwd: string }) => {
+  if (args[0] === 'view') return { code: 0, stderr: '', stdout: '1.1.32' };
+  const packageDir = resolve(options.cwd, 'node_modules', '@trusty-squire', 'mcp');
+  await mkdir(resolve(packageDir, 'dist'), { recursive: true });
+  await writeFile(resolve(packageDir, 'dist', 'bin.js'), '');
+  await writeFile(resolve(packageDir, 'package.json'), JSON.stringify({ version: '1.1.32' }));
+  return { code: 0, stderr: '' };
+};
+
 describe('launchd supervision contract', () => {
   it('renders one login-persistent helper job for every agent, restarted on unsuccessful exit', () => {
     const env = { HOME: '/Users/operator' };
@@ -371,7 +380,7 @@ describe('launchd supervision contract', () => {
       if (args[0] === 'print') throw new Error('not loaded');
       return { stdout: '' };
     });
-    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run });
+    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run, squireInstallRun });
     // `RunAtLoad` starts the elector with bootstrap, so no kickstart follows it:
     // a second start would land mid socket bind.
     expect(calls).toEqual([
@@ -399,14 +408,14 @@ describe('launchd supervision contract', () => {
       if (args[0] === 'print') throw new Error('not loaded');
       return { stdout: '' };
     });
-    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run: first });
+    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run: first, squireInstallRun });
     const calls: string[][] = [];
     const run = vi.fn(async (args: string[]) => {
       calls.push(args);
       return { stdout: args[0] === 'print' ? 'state = running\npid = 321\n' : '' };
     });
 
-    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run });
+    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run, squireInstallRun });
 
     expect(calls).toEqual([
       ['enable', target],
@@ -415,11 +424,38 @@ describe('launchd supervision contract', () => {
     ]);
   });
 
+  it('restarts a loaded broker only after a newer Squire install is activated', async () => {
+    const { env, invocationPath } = await canonicalEnv();
+    let published = '1.1.32';
+    const installRun = async (_command: string, args: readonly string[], options: { cwd: string }) => {
+      if (args[0] === 'view') return { code: 0, stderr: '', stdout: published };
+      const packageDir = resolve(options.cwd, 'node_modules', '@trusty-squire', 'mcp');
+      await mkdir(resolve(packageDir, 'dist'), { recursive: true });
+      await writeFile(resolve(packageDir, 'dist', 'bin.js'), '');
+      await writeFile(resolve(packageDir, 'package.json'), JSON.stringify({ version: published }));
+      return { code: 0, stderr: '' };
+    };
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      return { stdout: args[0] === 'print' ? 'state = running\npid = 321\n' : '' };
+    });
+    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run, squireInstallRun: installRun });
+    calls.length = 0;
+    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run, squireInstallRun: installRun });
+    expect(calls.some((args) => args[0] === 'bootout')).toBe(false);
+    published = '1.1.33';
+    calls.length = 0;
+    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run, squireInstallRun: installRun });
+    expect(calls.some((args) => args[0] === 'bootout')).toBe(true);
+  });
+
   it('bootstraps the broker after a removal in progress instead of kickstarting a dying job', async () => {
     const { env, invocationPath } = await canonicalEnv();
     await installLaunchdTrustySquireBrokerService({
       env,
       invocationPath,
+      squireInstallRun,
       run: async (args) => {
         if (args[0] === 'print') throw new Error('not loaded');
         return { stdout: '' };
@@ -432,7 +468,7 @@ describe('launchd supervision contract', () => {
       return launchd(args);
     });
 
-    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run, restart: true });
+    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run, restart: true, squireInstallRun });
 
     expect(calls.some((args) => args[0] === 'kickstart')).toBe(false);
     expect(calls.filter((args) => args[0] === 'bootstrap')).toEqual([

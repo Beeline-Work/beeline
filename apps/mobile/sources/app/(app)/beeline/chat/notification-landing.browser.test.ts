@@ -208,8 +208,13 @@ function shims(mobile: string): Record<string, string> {
     const cached = new URLSearchParams(location.search).get('cache')
       ? (deep ? { ...saved, messages: deepSeries.slice(41) } : saved)
       : null;
-    export const mobileSurfaceCache = { read: async (address) => (address === '/room/${ROOM}' ? cached : null), write: async () => undefined, remove: async () => undefined };
-    export const surfaceAddress = (_relay, _viewer, path) => path;
+    export const mobileSurfaceCache = {
+      read: async (address) => (address.endpoint === '/room/${ROOM}' ? cached : null),
+      peek: () => null, subscribe: () => () => undefined, fetch: async () => null,
+      write: async () => undefined, remove: async () => undefined,
+    };
+    export const surfaceAddress = (relayOrigin, viewerPubkey, endpoint, params) =>
+      ({ relayOrigin, viewerPubkey, endpoint, params });
     export const createRoomOutbox = () => ({ restore: async () => undefined, list: () => [], reconcile: async () => undefined,
       fail: async () => undefined, retry: async () => undefined, remove: async () => undefined, attempted: async () => undefined,
       get: () => undefined, add: async () => undefined });`,

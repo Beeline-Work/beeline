@@ -744,6 +744,8 @@ export type RoomCursorInput = RoomInput & {
 export type RoomConversationWindow = 'recent' | 'earliest' | 'continuity';
 export type RoomConversationInput = RoomCursorInput & {
   readonly window?: RoomConversationWindow;
+  /** With the `recent` window: the newest page strictly older than this cursor. */
+  readonly before?: string;
   /** Include narration already saved for this turn, so a retry can avoid repeating it. */
   readonly narrationRequestId?: string;
 };
@@ -925,6 +927,17 @@ export type CornerRestoreResult = {
     readonly pullRequestNumber: number;
     readonly headSha: string;
   };
+  /** `running` while the corner has a working agent turn; otherwise `idle`. */
+  readonly activity?: 'running' | 'idle';
+  /** The newest visible message (activity rows excluded); excerpt is at most 280 characters. */
+  readonly lastMessage?: {
+    readonly authorId: string;
+    readonly createdAt: string;
+    readonly type: 'message' | 'system' | 'card';
+    readonly excerpt: string;
+  };
+  /** `reply` when the corner is idle, has no PR, and its newest message is from an agent. */
+  readonly awaiting?: 'reply';
 };
 export type RoomRepositoryStateResult = {
   readonly key?: string;

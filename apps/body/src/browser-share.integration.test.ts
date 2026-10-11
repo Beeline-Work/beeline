@@ -56,7 +56,9 @@ describe('agent-owned Chromium sharing', () => {
     }
     websocket.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    if (profile) await rm(profile, { recursive: true, force: true });
+    // Chromium's helper processes can finish writing the profile just after
+    // the parent exits. Retry the transient ENOTEMPTY race during cleanup.
+    if (profile) await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   });
 
   it('streams real screencast frames and tracks human control until release', async () => {

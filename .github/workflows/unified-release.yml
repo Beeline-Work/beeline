@@ -262,6 +262,22 @@ jobs:
               echo "stage_${component//-/_}=$stage"
             done
           } >> "$GITHUB_OUTPUT"
+      - name: Preflight the release record before any component ships
+        if: inputs.plan_only != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.release_version }}
+          RELEASE_SHA: ${{ steps.plan.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          . scripts/gh-release-retry.sh
+          # A draft is invisible to /releases/latest. Creating it here proves
+          # that this job token can create the record before deploy/OTA/store.
+          # Retries of the same identity reuse it; a different SHA must fail.
+          ghr_requested_version_guard "$RELEASE_VERSION" "$RELEASE_SHA"
+          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            ghr_create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes 'Release in progress.' --draft
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: unified-release-plan-${{ steps.plan.outputs.release_id }}
@@ -1578,23 +1594,12 @@ jobs:
           test -f "$manifest" || { echo 'desktop updater manifest is missing' >&2; exit 1; }
           mapfile -t assets < <(find "$RUNNER_TEMP/desktop-release" -maxdepth 1 -type f -name 'Beeline-*' ! -name 'Beeline-latest.json' | sort)
           previous="$RUNNER_TEMP/desktop-rollback/Beeline-latest.json"
-          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
-            # A retry first restores the last known-good manifest. The new
-            # manifest remains the final, independently verified commit point.
-            [ ! -f "$previous" ] || ghr_upload_verified "$RELEASE_VERSION" "$previous"
-            [ "${#assets[@]}" -eq 0 ] || ghr_upload_verified "$RELEASE_VERSION" "${assets[@]}"
-          else
-            release_assets=("${assets[@]}")
-            # Seed a newly published release with the last known-good
-            # manifest so /releases/latest never points at a half-published
-            # desktop update while the new manifest is being committed.
-            [ ! -f "$previous" ] || release_assets+=("$previous")
-            if [ "${#release_assets[@]}" -gt 0 ]; then
-              ghr_create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes" "${release_assets[@]}"
-            else
-              ghr_create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes-file "$notes"
-            fi
-          fi
+          # The release record was created as a draft in initialize, before
+          # any component shipped. A retry first restores the last known-good
+          # manifest; the new manifest remains the final commit point.
+          gh release view "$RELEASE_VERSION" >/dev/null
+          [ ! -f "$previous" ] || ghr_upload_verified "$RELEASE_VERSION" "$previous"
+          [ "${#assets[@]}" -eq 0 ] || ghr_upload_verified "$RELEASE_VERSION" "${assets[@]}"
           rollback_manifest() {
             if [ -f "$previous" ]; then
               ghr_upload_verified "$RELEASE_VERSION" "$previous#Beeline-latest.json" || true
@@ -1612,6 +1617,7 @@ jobs:
           # The manifest is the commit point: every URL and signature it names
           # is already present before clients can discover this version.
           ghr_upload_verified "$RELEASE_VERSION" "$manifest"
+          ghr_publish "$RELEASE_VERSION" "$notes"
           manifest_url='https://github.com/Beeline-Work/beeline/releases/latest/download/Beeline-latest.json'
           verified=false
           for _ in {1..12}; do

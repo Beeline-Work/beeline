@@ -62,13 +62,18 @@ case "$sub" in
       echo "release not found: $1" >&2
       exit 1
     fi
-    cat "$GHR_FAKE_ASSETS" 2>/dev/null
+    if [[ " $* " == *" --json isDraft "* ]]; then
+      [ -f "$GHR_FAKE_DRAFT" ] && echo true || echo false
+    else
+      cat "$GHR_FAKE_ASSETS" 2>/dev/null
+    fi
     exit 0
     ;;
   create)
     shift # release tag
     fail_or_pass "$GHR_FAKE_CREATE_FAILURES" || exit 1
     touch "$GHR_FAKE_RELEASE"
+    [[ " $* " == *" --draft "* ]] && touch "$GHR_FAKE_DRAFT"
     skip_next=false
     for f in "$@"; do
       if [ "$skip_next" = true ]; then skip_next=false; continue; fi
@@ -77,6 +82,12 @@ case "$sub" in
       esac
       [ -f "$f" ] && record_asset "$f"
     done
+    exit 0
+    ;;
+  edit)
+    shift # release tag
+    fail_or_pass "$GHR_FAKE_EDIT_FAILURES" || exit 1
+    [[ " $* " == *" --draft=false "* ]] && rm -f "$GHR_FAKE_DRAFT"
     exit 0
     ;;
   delete-asset)
@@ -96,6 +107,7 @@ const PRESET_COUNTERS = {
   uploadFailures: 'GHR_FAKE_UPLOAD_FAILURES',
   silentUploads: 'GHR_FAKE_SILENT_UPLOADS',
   createFailures: 'GHR_FAKE_CREATE_FAILURES',
+  editFailures: 'GHR_FAKE_EDIT_FAILURES',
   deleteFailures: 'GHR_FAKE_DELETE_FAILURES',
   apiFailures: 'GHR_FAKE_API_FAILURES',
   viewFailures: 'GHR_FAKE_VIEW_FAILURES',
@@ -111,6 +123,7 @@ function runHelper(t, body, presets = {}) {
     log: join(dir, 'calls.log'),
     assets: join(dir, 'assets.tsv'),
     release: join(dir, 'release-exists'),
+    draft: join(dir, 'release-draft'),
   };
   const env = {
     PATH: `${bin}:${process.env.PATH}`,
@@ -119,6 +132,7 @@ function runHelper(t, body, presets = {}) {
     GHR_FAKE_LOG: paths.log,
     GHR_FAKE_ASSETS: paths.assets,
     GHR_FAKE_RELEASE: paths.release,
+    GHR_FAKE_DRAFT: paths.draft,
     SHA: 'a'.repeat(40),
     GITHUB_REPOSITORY: 'o/r',
   };
@@ -139,6 +153,7 @@ function runHelper(t, body, presets = {}) {
   env.NOTES = notes;
   if (presets.tagSha) env.GHR_FAKE_TAG_SHA = presets.tagSha;
   if (presets.releaseExists) writeFileSync(paths.release, '');
+  if (presets.draftExists) writeFileSync(paths.draft, '');
   if (presets.assets) writeFileSync(paths.assets, presets.assets);
   const driver = join(dir, 'driver.sh');
   writeFileSync(driver, `set -euo pipefail\n. '${HELPER}'\n${body.trim()}\n`);
@@ -246,6 +261,32 @@ test('ghr_create: an assetless create over an existing release succeeds without 
   assert.equal(calls().filter((line) => line.startsWith('release upload')).length, 0);
 });
 
+test('ghr_create: persistent create denial leaves no release to ship against', (t) => {
+  const { result, calls } = runHelper(t, 'ghr_create myrel --target "$SHA" --draft', {
+    createFailures: 5,
+  });
+  assert.notEqual(result.status, 0);
+  assert.equal(calls().filter((line) => line.startsWith('release create myrel')).length, 5);
+  assert.match(result.stderr, /failed after 5 attempts/);
+});
+
+test('ghr_publish: retries a transient edit failure and confirms the draft became public', (t) => {
+  const { result, calls } = runHelper(t, 'ghr_publish myrel "$NOTES"', {
+    releaseExists: true, draftExists: true, editFailures: 1,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(calls().filter((line) => line.startsWith('release edit myrel')).length, 2);
+  assert.ok(calls().some((line) => line.includes('--draft=false --latest')));
+});
+
+test('ghr_publish: persistent edit denial fails while the release stays draft', (t) => {
+  const { result, calls } = runHelper(t, 'ghr_publish myrel "$NOTES"', {
+    releaseExists: true, draftExists: true, editFailures: 3,
+  });
+  assert.notEqual(result.status, 0);
+  assert.equal(calls().filter((line) => line.startsWith('release edit myrel')).length, 3);
+});
+
 test('ghr_delete_asset: retries a transient failure and removes the asset', (t) => {
   const { result, calls, assets } = runHelper(t, 'ghr_delete_asset myrel a.bin', {
     deleteFailures: 1,
@@ -327,11 +368,23 @@ test('release_result routes every release-mutating gh call through the retry wra
   assert.match(job, /\. scripts\/gh-release-retry\.sh/);
   // No bare release-mutating call may remain in the job (view/download are
   // read-only and stay bare; gh api does not appear in this job at all).
-  assert.doesNotMatch(job, /^\s*gh release (upload|create|delete-asset) /m);
+  assert.doesNotMatch(job, /^\s*gh release (upload|create|delete-asset|edit) /m);
   assert.doesNotMatch(job, /^\s*gh api /m);
   // The manifest remains the final, independently verified commit point, and
   // the rollback trap keeps its best-effort `|| true`.
   assert.match(job, /ghr_upload_verified "\$RELEASE_VERSION" "\$manifest"/);
+  assert.match(job, /ghr_publish "\$RELEASE_VERSION" "\$notes"/);
   assert.match(job, /ghr_upload_verified "\$RELEASE_VERSION" "\$previous#Beeline-latest\.json" \|\| true/);
   assert.match(job, /ghr_delete_asset "\$RELEASE_VERSION" 'Beeline-latest\.json' \|\| true/);
+});
+
+test('initialize preflights a draft release before dependent shipping jobs', () => {
+  const initialize = WORKFLOW.match(/^  initialize:[\s\S]*?^  [a-z][\w-]*:/m)?.[0];
+  assert.ok(initialize);
+  assert.match(initialize, /- name: Preflight the release record before any component ships\n\s*if: inputs\.plan_only != true/);
+  assert.match(initialize, /ghr_requested_version_guard "\$RELEASE_VERSION" "\$RELEASE_SHA"/);
+  assert.match(initialize, /ghr_create "\$RELEASE_VERSION"[^\n]*--draft/);
+  assert.ok(initialize.indexOf('Preflight the release record') < initialize.indexOf('name: unified-release-plan-'));
+  const releaseResult = WORKFLOW.match(/^  release_result:[\s\S]*?^  retry:/m)?.[0];
+  assert.doesNotMatch(releaseResult, /ghr_create/);
 });

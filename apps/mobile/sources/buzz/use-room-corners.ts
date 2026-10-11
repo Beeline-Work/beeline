@@ -16,6 +16,7 @@ import {
   applyCornerListRead,
   applyOpenCornerPage,
   cornerReadMark,
+  cornerStoreGeneration,
   findRoomCornerRow,
   getRoomCorners,
   hydrateRoomCorners,
@@ -62,7 +63,7 @@ async function roomReader(roomId: string, client: CornersClient | undefined): Pr
  * reads once more.
  */
 function readFirstPage(roomId: string, reader: Reader, force: boolean): Promise<void> {
-  const { generation } = cornerReadMark(roomId);
+  const generation = cornerStoreGeneration();
   const running = firstPageReads.get(roomId);
   // A read started before a store reset belongs to the previous account.
   if (running?.generation === generation) {
@@ -79,7 +80,7 @@ function readFirstPage(roomId: string, reader: Reader, force: boolean): Promise<
         if (mark.generation !== generation) return;
         const view = await reader.client.corners(roomId);
         applyCornerListRead(roomId, view, mark);
-        if (cornerReadMark(roomId).generation !== generation) return;
+        if (cornerStoreGeneration() !== generation) return;
         const held = roomCornerListView(getRoomCorners(roomId));
         if (held && reader.address)
           void mobileSurfaceCache.write(reader.address, held, isCornerListView);
@@ -97,7 +98,7 @@ function readFirstPage(roomId: string, reader: Reader, force: boolean): Promise<
  * again while a frame that landed mid-read left them unproven.
  */
 async function rereadOpenPages(roomId: string, reader: Reader): Promise<void> {
-  const { generation } = cornerReadMark(roomId);
+  const generation = cornerStoreGeneration();
   do {
     const mark = cornerReadMark(roomId);
     if (mark.generation !== generation) return;

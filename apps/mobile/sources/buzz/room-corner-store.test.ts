@@ -195,14 +195,68 @@ describe('room corner store', () => {
     expect(getRoomCorners(ROOM).header).not.toHaveProperty('summary');
   });
 
-  it('keeps a summary newer than a corners read, and one a read without a summary does not name', () => {
+  it('keeps a summary newer than a corners read', () => {
     const mark = cornerReadMark(ROOM);
     acceptCornerStatusFrame(frame(1, [row('corner-1', 'review')]));
     const summary = { cornerCount: 1, waitingCornerCount: 0, mineCornerCount: 1,
       openCorners: [{ id: 'corner-1', name: 'corner-1', state: 'idle' as const, mine: true as const }] };
     applyCornerListRead(ROOM, { ...view([row('corner-1', 'idle')]), summary }, mark);
     expect(getRoomCornerSummary(ROOM)?.openCorners[0]?.state).toBe('review');
-    applyCornerListRead(ROOM, view([row('corner-1', 'idle')]), cornerReadMark(ROOM));
+  });
+
+  it('E1: an older read that lands last never replaces a newer read with the same frames behind it', () => {
+    const waiting = { cornerCount: 2, waitingCornerCount: 2, mineCornerCount: 2, openCorners: [
+      { id: 'corner-1', name: 'corner-1', state: 'waiting' as const, mine: true as const, attention: true as const },
+      { id: 'corner-2', name: 'corner-2', state: 'waiting' as const, mine: true as const },
+    ] };
+    const idle = { cornerCount: 1, waitingCornerCount: 0, mineCornerCount: 1, openCorners: [
+      { id: 'corner-1', name: 'corner-1', state: 'idle' as const, mine: true as const },
+    ] };
+    // Two reads start with no frame between them; the newer lands first.
+    const older = cornerReadMark(ROOM);
+    const newer = cornerReadMark(ROOM);
+    applyCornerListRead(ROOM, { ...view([mineRow('corner-1', 'idle')]), summary: idle }, newer);
+    applyCornerListRead(ROOM, { ...view([mineRow('corner-1', 'waiting'),
+      mineRow('corner-2', 'waiting')]), summary: waiting }, older);
+    expect(getRoomCornerSummary(ROOM)).toEqual({ cornerCount: 1, openCorners: idle.openCorners });
+    expect(ids()).toEqual(['corner-1']);
+    expect(getRoomCorners(ROOM).rows?.[0]?.state).toBe('idle');
+    expect(newer.clock).toBeGreaterThan(older.clock);
+    // The same holds for a Room list read against a corners read.
+    const listed = [{ room: { id: ROOM }, cornerCount: 2, openCorners: waiting.openCorners }] as never;
+    const listStarted = cornerReadMark(ROOM).clock;
+    applyCornerListRead(ROOM, { ...view([mineRow('corner-1', 'idle')]), summary: idle },
+      cornerReadMark(ROOM));
+    applyChatListCorners(listed, listStarted);
+    expect(getRoomCornerSummary(ROOM)?.cornerCount).toBe(1);
+  });
+
+  it('PC1: a partial read patches the summary corners it names by id', () => {
+    applyChatListCorners([{ room: { id: ROOM } as never, cornerCount: 3, openCorners: [
+      { id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true, waitingSince: 50, attention: true },
+      { id: 'corner-2', name: 'corner-2', state: 'working' },
+      { id: 'corner-3', name: 'corner-3', state: 'working' },
+    ] }], cornerReadMark(ROOM).clock);
+    // A first page with no summary (an older server, or a child Room) patches.
+    applyCornerListRead(ROOM, view([mineRow('corner-1', 'idle')]), cornerReadMark(ROOM));
+    expect(getRoomCornerSummary(ROOM)).toEqual({ cornerCount: 3, openCorners: [
+      { id: 'corner-1', name: 'corner-1', state: 'idle', mine: true },
+      { id: 'corner-2', name: 'corner-2', state: 'working' },
+      { id: 'corner-3', name: 'corner-3', state: 'working' },
+    ] });
+    // A later open page patches the corners it names and leaves the rest.
+    const page = { ...mineRow('corner-3', 'waiting'),
+      latestMessage: { id: 'm', text: 'done', createdAt: 70, author: { pubkey: 'agent' } } } as CornerListItem;
+    applyOpenCornerPage(ROOM, [page, row('corner-9', 'idle')], undefined, cornerReadMark(ROOM));
+    expect(getRoomCornerSummary(ROOM)?.openCorners).toEqual([
+      { id: 'corner-1', name: 'corner-1', state: 'idle', mine: true },
+      { id: 'corner-2', name: 'corner-2', state: 'working' },
+      { id: 'corner-3', name: 'corner-3', state: 'waiting', mine: true, waitingSince: 70 },
+    ]);
+    // A partial read started before the held summary's source patches nothing.
+    const stale = cornerReadMark(ROOM);
+    acceptCornerStatusFrame(frame(1, [row('corner-2', 'review')]));
+    applyOpenCornerPage(ROOM, [row('corner-2', 'idle')], undefined, stale);
     expect(getRoomCornerSummary(ROOM)?.openCorners[0]?.state).toBe('review');
   });
 

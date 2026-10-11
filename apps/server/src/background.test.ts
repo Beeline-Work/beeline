@@ -930,8 +930,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   // G9-R7: read notifications delivered hours before the read must still
-  // clear. The one-hour claim cleanup keeps an iOS device's delivered claims
-  // until a read-clear push names them; other claims still expire.
+  // clear. The one-hour claim cleanup keeps an iOS or Android device's
+  // delivered claims until a read-clear push names them.
   it('clears read notifications delivered more than an hour before the read', async () => {
     const db = new PgliteDatabase();
     try {
@@ -1005,7 +1005,7 @@ describe('background advisory-lock ownership', () => {
             [android],
           )
         ).rows[0]?.count,
-      ).toBe(0);
+      ).toBe(readIds.length + 1);
     } finally {
       await db.close();
     }
@@ -1137,6 +1137,73 @@ describe('background advisory-lock ownership', () => {
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
         { channelId: room, messageId: reply, readMessageIds: [second, first] },
       ]);
+    } finally {
+      await db.close();
+    }
+  });
+  // Audit 9.3 Android: the same rule clears an Android phone's shade through FCM.
+  it('clears an Android device through its own sender with the same read rule', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        other = '33333333-3333-4333-8333-333333333333',
+        first = '1'.repeat(64),
+        second = '2'.repeat(64),
+        later = '3'.repeat(64),
+        elsewhere = '4'.repeat(64),
+        android = 'android-device-token-12345678901234567890';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Room'),($2,$3,'Other')`,
+        [room, other, workspace],
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
+         ($1,$5,$7,'one',now()-interval '3 minutes'),($2,$5,$7,'two',now()-interval '2 minutes'),
+         ($3,$5,$7,'three',now()-interval '1 minute'),($4,$6,$7,'there',now()-interval '2 minutes')`,
+        [first, second, later, elsewhere, room, other, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES($1,$2,'android','physical',now()-interval '1 hour')`,
+        [android, human],
+      );
+      await db.query(
+        `INSERT INTO push_delivery_claims(message_id,device_token,status)
+         SELECT id,$1,'delivered' FROM messages`,
+        [android],
+      );
+      const androidClear = vi.fn().mockResolvedValue(undefined);
+      const iosClear = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(
+        db,
+        { send: vi.fn().mockResolvedValue(undefined), clearRead: androidClear },
+        { send: vi.fn().mockResolvedValue(undefined), clearRead: iosClear },
+      );
+      await db.query(
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
+        [second, human],
+      );
+      await loop.runOnce();
+      expect(iosClear).not.toHaveBeenCalled();
+      expect(androidClear).toHaveBeenCalledOnce();
+      expect(androidClear).toHaveBeenLastCalledWith(android, [
+        { channelId: room, messageId: second, readMessageIds: [first] },
+      ]);
+      const unnamed = await db.query<{ message_id: string }>(
+        `SELECT message_id FROM push_delivery_claims WHERE read_cleared_at IS NULL ORDER BY message_id`,
+      );
+      // The newer message and the unread Room keep their notifications.
+      expect(unnamed.rows.map((row) => row.message_id)).toEqual([later, elsewhere]);
     } finally {
       await db.close();
     }

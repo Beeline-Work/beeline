@@ -8,7 +8,7 @@ import {
 import { createHash, createPrivateKey, sign } from 'node:crypto';
 import type { PushSender, ReadClearCursor } from './background.js';
 import { readClearPushData } from '@beeline/api-contract/phone';
-import { pushAlert, pushMessageData, type PushDeliveryMessage } from './firebase-push.js';
+import { pushAlert, pushMessageData, readClearBatch, type PushDeliveryMessage } from './firebase-push.js';
 
 const APNS_PRODUCTION_AUTHORITY = 'https://api.push.apple.com';
 const APNS_SANDBOX_AUTHORITY = 'https://api.sandbox.push.apple.com';
@@ -111,23 +111,10 @@ function readClearPayload(reads: readonly ReadClearCursor[]): Record<string, unk
   return { aps: { 'content-available': 1 }, ...readClearPushData(reads) };
 }
 
-/**
- * The longest prefix of these reads whose read-clear payload fits APNs's size
- * limit; the caller leaves the rest for a later push. A first read too large
- * on its own keeps its cursor and as many of its newest read ids as fit.
- */
+/** The longest prefix of these reads whose read-clear payload fits APNs's size limit. */
 export function apnsReadClearBatch(reads: readonly ReadClearCursor[]): ReadClearCursor[] {
-  const fits = (batch: readonly ReadClearCursor[]) =>
-    Buffer.byteLength(JSON.stringify(readClearPayload(batch))) <= APNS_MAX_PAYLOAD_BYTES;
-  const batch: ReadClearCursor[] = [];
-  for (const read of reads) {
-    if (!fits([...batch, read])) break;
-    batch.push(read);
-  }
-  if (batch.length > 0 || reads.length === 0) return batch;
-  const first = { ...reads[0]!, readMessageIds: [...reads[0]!.readMessageIds] };
-  while (first.readMessageIds.length > 0 && !fits([first])) first.readMessageIds.pop();
-  return [first];
+  return readClearBatch(reads, (batch) =>
+    Buffer.byteLength(JSON.stringify(readClearPayload(batch))) <= APNS_MAX_PAYLOAD_BYTES);
 }
 
 /**

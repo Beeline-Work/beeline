@@ -11,6 +11,7 @@ import {
 import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
 import { apnsReadClearBatch } from './apns-push.js';
+import { firebaseReadClearBatch } from './firebase-push.js';
 import type { ObjectService } from './object-service.js';
 import { addressedToPersonSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
@@ -86,7 +87,7 @@ export interface PushSender {
         }
     ),
   ): Promise<void>;
-  /** iOS only: a silent push that clears these conversations from the shade. */
+  /** iOS and Android: a silent push that clears these conversations from the shade. */
   clearRead?(token: string, reads: readonly ReadClearCursor[]): Promise<void>;
 }
 
@@ -209,17 +210,24 @@ export class PushDeliveryLoop {
 
   /**
    * A Room read on any device leaves its notifications in this phone's shade
-   * and in its badge until the phone opens the Room itself. Each iOS device
-   * gets one silent push naming the Rooms and corners where it holds a
+   * and in its badge until the phone opens the Room itself. Each iOS and
+   * Android device gets one silent push naming the Rooms and corners where it holds a
    * delivered notification no read-clear push has named yet at or before the
    * viewer's read mark, at most once per READ_CLEAR_INTERVAL_SECONDS, so a
    * burst of reads costs one push.
    */
   private async sendReadClears(): Promise<void> {
-    const sender = this.iosSender;
-    if (!sender?.clearRead) return;
+    // One rule for both platforms; each sender keeps its own size limit.
+    const platforms = {
+      ios: { sender: this.iosSender, batch: apnsReadClearBatch },
+      android: { sender: this.sender, batch: firebaseReadClearBatch },
+    };
+    const enabled = Object.entries(platforms).flatMap(([platform, { sender }]) =>
+      sender?.clearRead ? [platform] : []);
+    if (enabled.length === 0) return;
     const due = await this.database.query<{
       token: string;
+      platform: 'ios' | 'android';
       channel_ids: string[];
       message_ids: string[];
       read_message_ids: string[];
@@ -233,8 +241,8 @@ export class PushDeliveryLoop {
       // at or before it that this device was pushed, in server order, so the
       // phone keeps notifications for messages after the read. A message is
       // named until a sent push includes it: ids left out by the per-Room cap,
-      // the channel cap or the APNs size limit keep their Room due.
-      `SELECT device.token,batch.channel_ids,batch.message_ids,batch.read_message_ids
+      // the channel cap or the push size limit keep their Room due.
+      `SELECT device.token,device.platform,batch.channel_ids,batch.message_ids,batch.read_message_ids
        FROM push_devices device
        LEFT JOIN push_read_clears clear ON clear.device_token=device.token
        CROSS JOIN LATERAL (
@@ -271,13 +279,16 @@ export class PushDeliveryLoop {
            LIMIT ${READ_CLEAR_MAX_CHANNELS}
          ) pending
        ) batch
-       WHERE device.platform='ios' AND batch.channel_ids IS NOT NULL
+       WHERE device.platform=ANY($1::text[]) AND batch.channel_ids IS NOT NULL
          AND COALESCE(clear.sent_at,'-infinity'::timestamptz)
            <now()-interval '${READ_CLEAR_INTERVAL_SECONDS} seconds'
        LIMIT 100`,
+      [enabled],
     );
     for (const row of due.rows) {
-      const reads = apnsReadClearBatch(
+      const { sender, batch } = platforms[row.platform];
+      if (!sender?.clearRead) continue;
+      const reads = batch(
         row.channel_ids.map((channelId, index) => ({
           channelId,
           messageId: row.message_ids[index]!,
@@ -314,8 +325,8 @@ export class PushDeliveryLoop {
     );
     // Candidate messages expire after an hour. A terminal claim outside that
     // window cannot suppress a future push, except an explicit release catchup.
-    // An iOS delivered claim stays until a read-clear push names it or for a
-    // week, so a read days after delivery still clears that notification
+    // An iOS or Android delivered claim stays until a read-clear push names
+    // it or for a week, so a read days after delivery still clears that notification
     // (sendReadClears) and a Room never read cannot grow claims forever.
     await this.database.query(`DELETE FROM push_delivery_claims claim
       WHERE (claim.message_id,claim.device_token) IN (
@@ -325,7 +336,7 @@ export class PushDeliveryLoop {
           AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
             AND old.completed_at>=now()-interval '7 days'
             AND EXISTS (SELECT 1 FROM push_devices device
-              WHERE device.token=old.device_token AND device.platform='ios'))
+              WHERE device.token=old.device_token AND device.platform IN ('ios','android')))
           AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
             WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
         ORDER BY old.completed_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);

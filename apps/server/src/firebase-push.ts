@@ -8,8 +8,8 @@ import {
   type ServiceAccount,
 } from 'firebase-admin/app';
 import { getMessaging, type Message } from 'firebase-admin/messaging';
-import { pushActionData } from '@beeline/api-contract/phone';
-import type { PushSender } from './background.js';
+import { pushActionData, readClearPushData } from '@beeline/api-contract/phone';
+import type { PushSender, ReadClearCursor } from './background.js';
 
 export type PushDeliveryMessage = Parameters<PushSender['send']>[1];
 
@@ -134,6 +134,53 @@ export function firebasePushMessage(token: string, message: PushDeliveryMessage)
   };
 }
 
+/** FCM rejects a message whose data keys and values exceed this many bytes. */
+export const FCM_MAX_DATA_BYTES = 4096;
+
+/**
+ * The longest prefix of these reads whose read-clear payload `fits`; the
+ * caller leaves the rest for a later push. A first read too large on its own
+ * keeps its cursor and as many of its newest read ids as fit.
+ */
+export function readClearBatch(
+  reads: readonly ReadClearCursor[],
+  fits: (batch: readonly ReadClearCursor[]) => boolean,
+): ReadClearCursor[] {
+  const batch: ReadClearCursor[] = [];
+  for (const read of reads) {
+    if (!fits([...batch, read])) break;
+    batch.push(read);
+  }
+  if (batch.length > 0 || reads.length === 0) return batch;
+  const first = { ...reads[0]!, readMessageIds: [...reads[0]!.readMessageIds] };
+  while (first.readMessageIds.length > 0 && !fits([first])) first.readMessageIds.pop();
+  return [first];
+}
+
+/**
+ * Expo hands an Android data message's `body` to the background task as
+ * `dataString`, the same JSON shape iOS delivers, so one parser reads both.
+ */
+function firebaseReadClearData(reads: readonly ReadClearCursor[]): Record<string, string> {
+  return { body: JSON.stringify(readClearPushData(reads)) };
+}
+
+export function firebaseReadClearBatch(reads: readonly ReadClearCursor[]): ReadClearCursor[] {
+  return readClearBatch(reads, (batch) =>
+    Object.entries(firebaseReadClearData(batch)).reduce(
+      (bytes, [key, value]) => bytes + Buffer.byteLength(key) + Buffer.byteLength(value), 0,
+    ) <= FCM_MAX_DATA_BYTES);
+}
+
+/**
+ * A data-only Android push that wakes the app's background task to clear
+ * these conversations from the shade. It has no title or text, so Expo draws
+ * nothing. High priority, so a dozing phone still runs the task.
+ */
+export function firebaseReadClearMessage(token: string, reads: readonly ReadClearCursor[]): Message {
+  return { token, data: firebaseReadClearData(reads), android: { priority: 'high' } };
+}
+
 export async function createFirebasePushSender(
   environment: FirebaseCredentialEnvironment = process.env,
 ): Promise<PushSender> {
@@ -144,6 +191,9 @@ export async function createFirebasePushSender(
   return {
     async send(token, message) {
       await messaging.send(firebasePushMessage(token, message));
+    },
+    async clearRead(token, reads) {
+      await messaging.send(firebaseReadClearMessage(token, reads));
     },
   };
 }

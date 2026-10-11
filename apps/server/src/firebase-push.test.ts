@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Credential, ServiceAccount } from 'firebase-admin/app';
+import { readClearReads } from '@beeline/api-contract/phone';
 import {
+  FCM_MAX_DATA_BYTES,
   firebaseAppOptions,
   firebasePushMessage,
+  firebaseReadClearBatch,
+  firebaseReadClearMessage,
   requirePushDeliveryCredentials,
 } from './firebase-push.js';
 import { pushTitleFor } from './background.js';
@@ -300,5 +304,39 @@ describe('push title', () => {
     expect(title).toBe('#workspace-oper…/reviewer-wake-checks-a…');
     expect(Array.from(title)).toHaveLength(40);
     expect(pushTitleFor('🐝'.repeat(50), null, null).title).toBe(`#${'🐝'.repeat(38)}…`);
+  });
+});
+
+describe('Firebase read-clear payload', () => {
+  const read = (channelId: string, ids = 1) => ({
+    channelId,
+    messageId: `${channelId}-mark`,
+    readMessageIds: Array.from({ length: ids }, (_, index) => `${channelId}-${index}`.padEnd(64, '0')),
+  });
+
+  it('is a high-priority, data-only message the phone parses back to the same reads', () => {
+    const reads = [read('room-a', 2), read('room-b')];
+    const message = firebaseReadClearMessage('android-token', reads) as {
+      token: string; data: Record<string, string>; android: unknown; notification?: unknown;
+    };
+    expect(message.token).toBe('android-token');
+    expect(message.android).toEqual({ priority: 'high' });
+    expect(message.notification).toBeUndefined();
+    expect(message.data.title).toBeUndefined();
+    expect(message.data.message).toBeUndefined();
+    // Expo delivers `body` to the background task as `dataString`.
+    expect(readClearReads({ data: { dataString: message.data.body, ...message.data } })).toEqual(reads);
+  });
+
+  it('splits reads that exceed the FCM data limit into later pushes', () => {
+    const reads = Array.from({ length: 30 }, (_, index) => read(`room-${index}`, 20));
+    const batch = firebaseReadClearBatch(reads);
+    expect(batch.length).toBeGreaterThan(0);
+    expect(batch.length).toBeLessThan(reads.length);
+    const { data } = firebaseReadClearMessage('t', batch) as { data: Record<string, string> };
+    const bytes = Object.entries(data)
+      .reduce((total, [key, value]) => total + Buffer.byteLength(key) + Buffer.byteLength(value), 0);
+    expect(bytes).toBeLessThanOrEqual(FCM_MAX_DATA_BYTES);
+    expect(batch).toEqual(reads.slice(0, batch.length));
   });
 });

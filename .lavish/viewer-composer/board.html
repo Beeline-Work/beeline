@@ -34,35 +34,35 @@
   <header>
     <div class="kicker">Decision mock 2 · viewer conversation</div>
     <h1>One attention button becomes the composer</h1>
-    <p class="lead">A 42 × 42 rounded button sits above Android’s three-button navigation bar, outside the live browser stream. Its mark is the Room list’s brass circle and ring. Tap it and the control travels left as one pill grows leftward. Type or speak to Moth, the agent who owns this view. A translucent recent transcript sits immediately above the pill. Tap the same mark at the pill’s left edge to collapse both.</p>
-    <div class="notes"><span>One button, one pill</span><span>No separate sheet header</span><span>Artifact or screen context attaches silently</span><span>390 × 844 phone + 400 px desktop work pane</span></div>
+    <p class="lead">The live browser fills the phone above Android’s three-button navigation bar. Its existing keyboard button stays at bottom right; a matching 42 × 42 button with the Room list’s brass circle and ring sits directly above it. Tap the gold mark and the composer pill grows leftward from that position. The real Room composer handles typing, voice, recording, and send. A translucent recent transcript sits just above the pill. Tap the mark at the pill’s left edge to collapse both.</p>
+    <div class="notes"><span>No added bottom strip</span><span>Keyboard button retained</span><span>Real Room composer + waveform</span><span>Artifact or screen context attaches silently</span><span>390 × 844 phone + 400 px desktop pane</span></div>
   </header>
   <main>
     <h2>Artifact viewer · phone</h2>
     <section class="grid">
       <figure><figcaption><strong>1 · Collapsed</strong><span>Only the gold attention mark remains.</span></figcaption><img src="artifact-collapsed.png" alt="Artifact viewer with one gold attention button above navigation"></figure>
       <figure><figcaption><strong>2 · Expanding</strong><span>The button moves to the left edge while the pill grows from the right.</span></figcaption><img src="artifact-expanding.png" alt="Artifact composer pill midway through leftward expansion"></figure>
-      <figure><figcaption><strong>3 · Expanded, typing</strong><span>Text goes to Moth; the current artifact is attached without a visible chip.</span></figcaption><img src="artifact-typing.png" alt="Expanded artifact composer with typed feedback"></figure>
-      <figure><figcaption><strong>4 · Expanded, voice</strong><span>The same pill holds the dictation waveform and send control.</span></figcaption><img src="artifact-voice.png" alt="Expanded artifact composer recording voice"></figure>
+      <figure><figcaption><strong>3 · Expanded, typing</strong><span>The Room composer sends text to Moth; the artifact is attached without a visible chip.</span></figcaption><img src="artifact-typing.png" alt="Expanded artifact composer with typed feedback"></figure>
+      <figure><figcaption><strong>4 · Expanded, voice</strong><span>The Room composer’s own animated waveform and controls stay in the pill.</span></figcaption><img src="artifact-voice.png" alt="Expanded artifact composer recording voice"></figure>
       <figure><figcaption><strong>5 · Agent reply</strong><span>The newest exchange reads above the pill in a translucent transcript.</span></figcaption><img src="artifact-reply.png" alt="Artifact viewer with small reply transcript above composer"></figure>
       <figure><figcaption><strong>6 · Collapsed again</strong><span>The left glyph collapses pill and transcript back to the single button.</span></figcaption><img src="artifact-collapsed-again.png" alt="Artifact viewer returned to single attention button"></figure>
     </section>
     <h2>Live computer use · phone</h2>
     <section class="grid">
-      <figure><figcaption><strong>1 · Collapsed</strong><span>Browser taps still land in the stream; the button sits below it.</span></figcaption><img src="computer-collapsed.png" alt="Live browser with attention button outside stream"></figure>
+      <figure><figcaption><strong>1 · Collapsed</strong><span>Full-height browser stream. Gold button is stacked directly above the existing keyboard button.</span></figcaption><img src="computer-collapsed.png" alt="Live browser with gold attention button above keyboard control"></figure>
       <figure><figcaption><strong>2 · Expanding</strong><span>Same leftward pill motion while the computer page stays visible.</span></figcaption><img src="computer-expanding.png" alt="Computer composer pill midway through leftward expansion"></figure>
       <figure><figcaption><strong>3 · Expanded, typing</strong><span>A question to Moth silently carries a snapshot of this browser screen.</span></figcaption><img src="computer-typing.png" alt="Expanded computer composer with typed question"></figure>
-      <figure><figcaption><strong>4 · Expanded, voice</strong><span>Dictation happens in place without leaving the viewer.</span></figcaption><img src="computer-voice.png" alt="Expanded computer composer recording voice"></figure>
+      <figure><figcaption><strong>4 · Expanded, voice</strong><span>The real Room waveform and mic state run over the browser stream.</span></figcaption><img src="computer-voice.png" alt="Expanded computer composer recording voice"></figure>
       <figure><figcaption><strong>5 · Agent reply</strong><span>The latest answer sits directly above the expanded pill.</span></figcaption><img src="computer-reply.png" alt="Computer viewer with translucent reply transcript above composer"></figure>
-      <figure><figcaption><strong>6 · Collapsed again</strong><span>Returning to the single control reveals the full browser viewport.</span></figcaption><img src="computer-collapsed-again.png" alt="Computer viewer returned to single attention button"></figure>
+      <figure><figcaption><strong>6 · Collapsed again</strong><span>The pill and transcript leave; both stacked controls remain.</span></figcaption><img src="computer-collapsed-again.png" alt="Computer viewer returned to stacked attention and keyboard buttons"></figure>
     </section>
     <h2>Desktop work pane and Bone theme</h2>
     <section class="grid">
-      <figure class="wide" style="grid-column: 1 / -1"><figcaption><strong>Desktop · collapsed</strong><span>One control at the bottom of the 400 px work pane.</span></figcaption><img src="desktop-collapsed.png" alt="Desktop browser work pane with one attention button"></figure>
-      <figure><figcaption><strong>Bone · collapsed</strong><span>The same control inherits Bone colors and preserves the touch boundary.</span></figcaption><img src="computer-bone.png" alt="Bone themed computer viewer with gold attention control"></figure>
+      <figure class="wide" style="grid-column: 1 / -1"><figcaption><strong>Desktop · collapsed</strong><span>Gold and keyboard controls stack at the bottom of the full-height 400 px work pane.</span></figcaption><img src="desktop-collapsed.png" alt="Desktop browser work pane with attention button above keyboard"></figure>
+      <figure><figcaption><strong>Bone · collapsed</strong><span>Gold and keyboard controls remain stacked over the Bone viewer.</span></figcaption><img src="computer-bone.png" alt="Bone themed computer viewer with gold attention control above keyboard"></figure>
       <figure class="wide" style="grid-column: 1 / -1"><figcaption><strong>Desktop · reply</strong><span>Expanded pill and recent transcript occupy only the browser pane.</span></figcaption><img src="desktop-reply.png" alt="Desktop Beeline Room with browser work pane, composer pill and reply transcript"></figure>
     </section>
-    <p class="provenance">The frame harness renders the current <code>ArtifactViewerScreen</code> and <code>ComputerSessionViewer</code> from app source through React Native Web, with the app’s Space Grotesk and IBM Plex Mono fonts. The attention mark copies <code>ConversationRow</code>’s 14 px ring and 8 px brass dot exactly; implementation will extract that treatment for reuse after approval. The pill, transcript and sample artifact/browser pages are visual fixtures. Rebuild with <code>node .lavish/viewer-composer/build.mjs</code> and serve this directory. Production implementation waits for approval and the parallel computer-use viewer change.</p>
+    <p class="provenance">The frames render the current <code>ArtifactViewerScreen</code>, <code>ComputerSessionViewer</code>, <code>ConversationComposer</code>, and its animated <code>DictationWaveform</code> through React Native Web, using the app’s Space Grotesk and IBM Plex Mono fonts. A deterministic speech fixture drives the real composer’s voice states. The browser page and its keyboard control are local stream fixtures; the actual browser stream lives outside this repository. The attention mark copies <code>ConversationRow</code>’s 14 px ring and 8 px brass dot; implementation will extract that treatment for reuse after approval. Rebuild with <code>node .lavish/viewer-composer/build.mjs</code> and serve this directory. Production implementation waits for approval and the parallel computer-use viewer change.</p>
   </main>
 </body>
 </html>

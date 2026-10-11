@@ -10,6 +10,7 @@ import {
 import { settleDaemonStartFailure } from './daemon-failure.js';
 import { helperStatusPath, type AgentSlotState, type HelperStatusFile } from './helper-status.js';
 import { ForceUpdateCoordinator } from './force-update.js';
+import { journalInterruptedTurns } from './force-update-journal.js';
 import { HelperLifecycle, type HelperExitReason } from './helper-lifecycle.js';
 import { supervisor } from './helper-service.js';
 import {
@@ -310,23 +311,28 @@ export async function runMachineHelper(
       ],
     });
   }
-  // One update drain for the whole machine: every hosted agent finishes its
-  // turns, intake closes for all of them in one step, and the helper restarts
-  // once. A busy agent holds the restart; nothing cancels its turn.
+  // Close intake once across the machine, then let active work finish up to
+  // the absolute drain deadline. Journal any remaining turns for successor replay.
   const updateDrain = update
     ? new ManagedUpdateDrain({
         update,
-        quiesceIfIdle: () =>
-          !forceUpdate?.active && lifecycle.serving && quiesceHostedAgentsIfIdle([...hosted.values()]),
+        quiesce: () =>
+          !forceUpdate?.active && lifecycle.serving && quiesceHostedAgents([...hosted.values()]),
         activeTurnCount: () =>
           [...hosted.values()].reduce((sum, agent) => sum + agent.core.activeTurnCount(), 0),
+        interrupt: () => {
+          for (const agent of hosted.values()) {
+            const turns = agent.core.interruptForServerMinimum();
+            journalInterruptedTurns(agent.runtimeDir, turns);
+          }
+        },
         restart: async ({ desiredRelease, drainDeadlineAt }) => {
           for (const agent of hosted.values()) agent.core.setDrainDeadlineAt(drainDeadlineAt);
           const staggerMs = managedRestartStaggerMs(machineKey(), desiredRelease, drainDeadlineAt);
           if (staggerMs > 0) await sleep(staggerMs);
           stoppingStatus =
             `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
-            `desired_release=${desiredRelease}; active work drained; intake quiesced`;
+            `desired_release=${desiredRelease}; drain complete; intake quiesced`;
           await notifier.stopping(stoppingStatus).catch((error) =>
             console.error('[helper] stopping notification failed:', error));
           restartHelper('update');
@@ -334,7 +340,7 @@ export async function runMachineHelper(
         waiting: async ({ desiredRelease }) => {
           await notifier.progress(
             `loaded_release=${loadedRelease ?? 'unknown'}; update ready; ` +
-              `active agent work is still running; handoff deferred; ` +
+              `active agent work draining; handoff armed; ` +
               `desired_release=${desiredRelease}`,
           );
         },
@@ -527,22 +533,17 @@ export async function runMachineHelper(
 }
 
 /**
- * The machine's update gate: intake closes for every hosted agent in one step,
- * and only when none of them runs a turn. If any agent cannot close, the ones
- * already closed reopen, so a busy agent holds the whole restart and nothing
- * cancels its turn.
+ * Close intake across the machine before draining active turns.
  */
-export function quiesceHostedAgentsIfIdle(agents: readonly HostedAgent[]): boolean {
-  if (agents.some((agent) => !agent.lifecycle.serving || agent.core.activeTurnCount() > 0))
+export function quiesceHostedAgents(agents: readonly HostedAgent[]): boolean {
+  if (agents.some((agent) => !agent.lifecycle.serving &&
+      !(agent.lifecycle.state.kind === 'quiescing' && agent.lifecycle.state.reason === 'update')))
     return false;
-  const quiesced: HostedAgent[] = [];
   for (const agent of agents) {
-    if (!agent.lifecycle.quiesceUpdateIfIdle(() => agent.core.quiesceForUpdateIfIdle())) {
-      for (const done of quiesced)
-        done.lifecycle.resumeAfterFailedUpdate(() => done.core.resumeServing());
-      return false;
+    if (agent.lifecycle.serving) {
+      agent.core.quiesceForUpdate();
+      agent.lifecycle.quiesce('update');
     }
-    quiesced.push(agent);
   }
   return true;
 }

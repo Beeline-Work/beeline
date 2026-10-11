@@ -768,6 +768,11 @@ export class RoomRuntimeCoordinator {
     return true;
   }
 
+  /** Stop claiming new turns while existing turns drain for a managed update. */
+  quiesceForUpdate(): void {
+    this.restartRequested = true;
+  }
+
   /**
    * Undo `quiesceForUpdateIfIdle` after a managed restart failed: clear the
    * latch and let reconciliation start the Room loops the quiesce stopped.

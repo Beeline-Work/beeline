@@ -7,7 +7,7 @@ import type { AgentRuntimeHost, HostedAgent } from './agent-runtime.js';
 import { daemonFailurePath } from './daemon-failure.js';
 import { HelperLifecycle, type HelperExitReason } from './helper-lifecycle.js';
 import { helperStatusLines, helperStatusPath } from './helper-status.js';
-import { quiesceHostedAgentsIfIdle, runMachineHelper } from './machine-helper.js';
+import { quiesceHostedAgents, runMachineHelper } from './machine-helper.js';
 import {
   identityFromKey,
   readRuntimeRecord,
@@ -206,10 +206,8 @@ describe('one update drain for every hosted agent', () => {
     const lifecycle = new HelperLifecycle({ controller: new AbortController(), exitProcess: () => undefined });
     const core = {
       activeTurnCount: () => (busy ? 1 : 0),
-      quiesceForUpdateIfIdle: () => {
-        if (busy) return false;
+      quiesceForUpdate: () => {
         intakeClosed = true;
-        return true;
       },
       resumeServing: () => {
         intakeClosed = false;
@@ -218,15 +216,15 @@ describe('one update drain for every hosted agent', () => {
     return { agentId: 'a', runtimeDir: '/tmp', lifecycle, core, closed: () => intakeClosed };
   }
 
-  it('closes intake for every agent at once only when none of them runs a turn', () => {
+  it('closes intake for every agent at once', () => {
     const idle = [hosted(false), hosted(false)];
-    expect(quiesceHostedAgentsIfIdle(idle)).toBe(true);
+    expect(quiesceHostedAgents(idle)).toBe(true);
     expect(idle.every((agent) => agent.closed() && !agent.lifecycle.serving)).toBe(true);
   });
 
-  it('lets one busy agent hold the restart without closing anyone', () => {
+  it('closes intake on busy agents so new turns cannot prolong the drain', () => {
     const agents = [hosted(false), hosted(true), hosted(false)];
-    expect(quiesceHostedAgentsIfIdle(agents)).toBe(false);
-    expect(agents.every((agent) => !agent.closed() && agent.lifecycle.serving)).toBe(true);
+    expect(quiesceHostedAgents(agents)).toBe(true);
+    expect(agents.every((agent) => agent.closed() && !agent.lifecycle.serving)).toBe(true);
   });
 });

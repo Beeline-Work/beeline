@@ -140,18 +140,22 @@ describe('HelperLifecycle', () => {
     turn.busy = false;
     const { lifecycle: helper, controller } = lifecycle();
     const update = {
-      restartRequest: async (quiesceIfIdle: () => boolean) => {
-        if (!quiesceIfIdle()) return { kind: 'none' as const };
-        return {
-          kind: 'restart' as const,
-          request: { loadedRelease: 'a', desiredRelease: 'b', drainDeadlineAt: Date.now() },
-        };
+      restartRequest: async (readyToRestart: (request: {
+        loadedRelease: string; desiredRelease: string; drainDeadlineAt: number;
+      }) => boolean) => {
+        const request = { loadedRelease: 'a', desiredRelease: 'b', drainDeadlineAt: Date.now() };
+        if (!readyToRestart(request)) return { kind: 'none' as const };
+        return { kind: 'restart' as const, request };
       },
     } as unknown as ManagedUpdateHandoff;
     const drain = new ManagedUpdateDrain({
       update,
-      quiesceIfIdle: () => helper.quiesceUpdateIfIdle(() => core.quiesceForUpdateIfIdle()),
+      quiesce: () => {
+        core.quiesceForUpdate();
+        return helper.quiesce('update');
+      },
       activeTurnCount: () => core.activeTurnCount(),
+      interrupt: () => undefined,
       restart: async () => {
         throw new Error('staged release lost activation race');
       },

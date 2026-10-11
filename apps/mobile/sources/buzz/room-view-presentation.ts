@@ -179,7 +179,14 @@ export function reconcileRoomTurnDelta(
       message.author.pubkey !== turn.agentPubkey ||
       (turn.status === 'working' && message.createdAt >= turn.createdAt),
   );
-  return reconcileRoomView(view, { ...view, messages, latestAgentTurns });
+  return reconcileRoomView(view, {
+    ...view,
+    messages,
+    latestAgentTurns,
+    pendingAgentCommands: view.pendingAgentCommands?.filter(
+      (command) => command.requestId !== turn.requestId,
+    ),
+  });
 }
 
 export type RoomMessageProjector = {

@@ -482,6 +482,7 @@ interface RoomReadRow {
   };
   members: MemberRow[];
   turns: AgentTurnRow[];
+  pending_commands: Array<{ agent_id: string; turn_request_id: string; created_at: Date }>;
   transcript: MessageRow[];
   activity: MessageRow[];
   allow_auto_merge?: boolean;
@@ -2112,6 +2113,7 @@ export class PhoneService {
         }
       : undefined;
     const latestAgentTurns = this.projectAgentTurns(rows.turns);
+    const pendingAgentCommands = this.projectPendingAgentCommands(rows.pending_commands);
     const initialMessageResult = this.projectRoomMessages(
       rows.transcript,
       rows.activity,
@@ -2211,6 +2213,7 @@ export class PhoneService {
       ...(toolRows.length ? { toolRows: decorateAttachments(toolRows, attachmentFacts) } : {}),
       members,
       latestAgentTurns,
+      pendingAgentCommands,
       viewer: {
         ...(!room.parent_id && room.read_cursor ? { readCursor: room.read_cursor } : {}),
         identity: members.find((member) => member.identity.pubkey === viewerId)?.identity ?? {
@@ -2820,6 +2823,17 @@ export class PhoneService {
            LEFT JOIN messages trigger ON trigger.id=${turnRootMessageSql('turn')}
            LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
            ORDER BY turn.agent_id,turn.created_at DESC,turn.request_id DESC
+         ), pending_command_rows AS (
+           SELECT DISTINCT ON(command.agent_id)
+             command.agent_id,command.turn_request_id,command.created_at
+           FROM authorized_room room
+           JOIN agent_commands command ON command.room_id=room.id
+           JOIN messages source ON source.id=command.source_message_id AND source.room_id=room.id
+           JOIN identities author ON author.id=source.author_id AND author.kind='human'
+           WHERE command.state='pending' AND command.action='input'
+             AND command.reason IN ('human_tag','direct_message')
+           ORDER BY command.agent_id,command.created_at ASC,command.id ASC
+           LIMIT ${ROOM_VIEW_AGENT_LIMIT}
          ), projected_turn_rows AS (
            SELECT agent_id,status,created_at FROM turn_rows
            ORDER BY date_trunc('second',created_at) DESC,agent_id ASC
@@ -2900,6 +2914,8 @@ export class PhoneService {
              ) room,
            COALESCE((SELECT jsonb_agg(to_jsonb(member_rows)) FROM member_rows),'[]'::jsonb) members,
            COALESCE((SELECT jsonb_agg(to_jsonb(turn_rows)) FROM turn_rows),'[]'::jsonb) turns,
+           COALESCE((SELECT jsonb_agg(to_jsonb(pending_command_rows))
+             FROM pending_command_rows),'[]'::jsonb) pending_commands,
            COALESCE((SELECT jsonb_agg(to_jsonb(transcript_rows)
              ORDER BY transcript_rows.created_at DESC,transcript_rows.id DESC)
              FROM transcript_rows),'[]'::jsonb) transcript,
@@ -4860,6 +4876,8 @@ export class PhoneService {
         return {
           messageId: id,
           activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
+          pendingAgentCommands: mayRoute
+            ? await this.pendingAgentCommandsForMessage(database, input.roomId, id) : [],
           ...(await this.receiptMessage(input.roomId, author, id, database)),
         };
       }
@@ -4879,6 +4897,8 @@ export class PhoneService {
       return {
         messageId: id,
         activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
+        pendingAgentCommands: mayRoute
+          ? await this.pendingAgentCommandsForMessage(database, input.roomId, id) : [],
         ...(await this.receiptMessage(input.roomId, author, id, database)),
       };
     });
@@ -5014,6 +5034,7 @@ export class PhoneService {
         return {
           messageId: id,
           activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+          pendingAgentCommands: await this.pendingAgentCommandsForMessage(database, input.roomId, id),
           ...(await this.receiptMessage(input.roomId, author, id, database)),
         };
       }
@@ -5030,6 +5051,7 @@ export class PhoneService {
       return {
         messageId: id,
         activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
+        pendingAgentCommands: await this.pendingAgentCommandsForMessage(database, input.roomId, id),
         ...(await this.receiptMessage(input.roomId, author, id, database)),
       };
     });
@@ -5393,6 +5415,26 @@ export class PhoneService {
       [messageIdValue],
     );
     return commands.rows.map((command) => command.agent_id);
+  }
+  private async pendingAgentCommandsForMessage(
+    database: SqlDatabase,
+    roomId: string,
+    messageIdValue: string,
+  ): Promise<NonNullable<RoomView['pendingAgentCommands']>> {
+    const commands = await database.query<{
+      agent_id: string;
+      turn_request_id: string;
+      created_at: Date;
+    }>(
+      `SELECT command.agent_id,command.turn_request_id,command.created_at
+       FROM agent_commands command
+       WHERE command.room_id=$1 AND command.source_message_id=$2
+         AND command.state='pending' AND command.action='input'
+         AND command.reason IN ('human_tag','direct_message')
+       ORDER BY command.created_at,command.agent_id`,
+      [roomId, messageIdValue],
+    );
+    return this.projectPendingAgentCommands(commands.rows);
   }
   /**
    * Say out loud why a mentioned agent will not answer. ONE producer for every
@@ -9928,6 +9970,18 @@ export class PhoneService {
           right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
       )
       .slice(0, ROOM_VIEW_AGENT_LIMIT);
+  }
+  private projectPendingAgentCommands(
+    commands: readonly { agent_id: string; turn_request_id: string; created_at: Date | string }[],
+  ): NonNullable<RoomView['pendingAgentCommands']> {
+    return commands
+      .map((command) => ({
+        requestId: command.turn_request_id,
+        agentPubkey: command.agent_id,
+        createdAt: unix(new Date(command.created_at)),
+      }))
+      .sort((left, right) => left.createdAt - right.createdAt ||
+        left.agentPubkey.localeCompare(right.agentPubkey));
   }
   private async enrichMessageBookmarks(
     rows: readonly MessageRow[],

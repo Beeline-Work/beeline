@@ -22,6 +22,7 @@ import type {
   MessageBookmarkView,
   MessageReactionEmoji,
   RoomViewMessage,
+  RoomViewPendingAgentCommand,
   NeedsYouItemView,
 } from './phone-types.js';
 import type {
@@ -370,6 +371,8 @@ export type AgentMessageWriteResult = MessageWriteResult & {
   readonly activeSteerAgentIds?: readonly string[];
   /** Canonical row for local settlement when the write commits before its live delta. */
   readonly message?: RoomViewMessage;
+  /** Commands created with this write, so Waiting paints on the write acknowledgement. */
+  readonly pendingAgentCommands?: readonly RoomViewPendingAgentCommand[];
 };
 export type RoomScheduleCadence =
   | { readonly kind: 'cron'; readonly expression: string; readonly timeZone?: string }

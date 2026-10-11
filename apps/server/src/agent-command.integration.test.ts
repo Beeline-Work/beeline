@@ -8,6 +8,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import {
   createAgentCommand,
+  renudgeStrandedPendingCommands,
   nextAgentDepth,
   reconcileCornerMergeBlockers,
   reconcileConfiguredCornerReviewers,
@@ -28,6 +29,32 @@ let db: PgliteDatabase, phone: PhoneService, daemon: DaemonService, live: LiveHu
 const commands = (agentId = A, roomId = R) =>
   daemon.execute('getAgentCommands', { roomId }, agentId).then((r) => r.commands);
 const send = (text: string, roomId = R) => phone.execute('sendRoomMessage', { roomId, text }, H);
+
+it('shows an accepted tagged command until claim and re-nudges a connected idle helper once', async () => {
+  const sent = await send('@hoots Please check this');
+  const [command] = await commands(A);
+  const waiting = { requestId: command!.turnRequestId, agentPubkey: A };
+  expect(sent.pendingAgentCommands).toEqual([expect.objectContaining(waiting)]);
+  expect((await phone.readRoom(R, H))?.pendingAgentCommands).toEqual([
+    expect.objectContaining(waiting),
+  ]);
+
+  await db.query(`UPDATE agent_commands SET created_at=now()-interval '31 seconds' WHERE id=$1`, [command!.id]);
+  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('renudge-test') ON CONFLICT DO NOTHING`);
+  await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
+    VALUES($1,1,'renudge-test','renudge-test') ON CONFLICT(agent_id) DO UPDATE
+    SET instance_id=EXCLUDED.instance_id,released_at=NULL`, [A]);
+  const busySend = await send('@hoots An earlier task');
+  await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds'
+    WHERE source_message_id=$1`, [busySend.messageId]);
+  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  await db.query(`UPDATE agent_commands SET state='complete' WHERE source_message_id=$1`, [busySend.messageId]);
+  expect(await renudgeStrandedPendingCommands(db)).toBe(1);
+  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  await claim(command!);
+  expect((await phone.readRoom(R, H))?.pendingAgentCommands).toEqual([]);
+});
 async function claim(c: AgentCommand, generationId = 'g1') {
   await daemon.execute(
     'claimAgentCommand',

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { HullLivePulse } from './MonoHull';
 import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
@@ -19,7 +19,7 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * and has not answered yet. One transient line pinned above the composer,
  * gone the moment the reply lands.
  *
- * It is the ONLY line here, and it reports a turn and nothing else. A turn is
+ * It reports a turn and nothing else. A turn is
  * a thing the reader is *waiting* for, so this names nobody's corner, carries
  * no `view →`, and cannot be pressed — there is nowhere to go. The retired
  * pinned corner line used to sit beneath it; conflating the two is what once
@@ -41,8 +41,7 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * never recreates the transcript.
  *
  * The same live treatment also covers the short local "sending…" bridge. It
- * expires at its deadline; this component never presents an inferred waiting
- * state in the absence of a server receipt.
+ * expires at its deadline. Waiting has its own server-owned pending-command line.
  *
  * The LINE still goes nowhere — it has no `onPress` and no destination, which
  * is what keeps it from stranding a reader in a dead channel. `onStop` is a
@@ -153,6 +152,20 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
   );
 }
 
+/** The server accepted a tagged message; its helper has not claimed the command yet. */
+export function WaitingForAgentLine({ handle, testID }: { handle: string; testID?: string }) {
+  const { theme } = useUnistyles();
+  const label = `Waiting for @${handle}`;
+  return (
+    <View accessibilityLabel={label} accessibilityLiveRegion="polite" style={styles.bar} testID={testID}>
+      <View style={styles.row}>
+        <View style={styles.glyphCell}><BeelineMarkSpinner ink={theme.buzz.dim} /></View>
+        <Text numberOfLines={1} style={[styles.label, styles.waitingLabel]}>{label}</Text>
+      </View>
+    </View>
+  );
+}
+
 /**
  * Where the turn line lives: in the margin the transcript already leaves below
  * its newest message, painted over it rather than added beneath it.
@@ -224,6 +237,9 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
       color: groknight.accent,
       lineHeight: TURN_LABEL_LINE_HEIGHT,
+    },
+    waitingLabel: {
+      color: groknight.dim,
     },
     counter: {
       ...groknight.type.machine,

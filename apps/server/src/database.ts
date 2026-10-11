@@ -2829,6 +2829,18 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await retryMigrationStep('pending command re-nudge index', () => createIndexConcurrently(
+    database, 'agent_commands_pending_renudge',
+    `CREATE INDEX CONCURRENTLY agent_commands_pending_renudge ON agent_commands(created_at)
+     WHERE state='pending' AND action='input' AND renudged_at IS NULL`,
+  ));
+  await retryMigrationStep('room pending command index', () => createIndexConcurrently(
+    database, 'agent_commands_room_pending_status',
+    `CREATE INDEX CONCURRENTLY agent_commands_room_pending_status
+     ON agent_commands(room_id,agent_id,created_at,id)
+     WHERE state='pending' AND action='input'
+       AND reason IN ('human_tag','direct_message')`,
+  ));
   await ddlScript('agent subscriptions', AGENT_SUBSCRIPTIONS_SCHEMA);
   await ddlScript('provider webhooks', PROVIDER_WEBHOOKS_SCHEMA);
   await ddl('retire room webhooks', `

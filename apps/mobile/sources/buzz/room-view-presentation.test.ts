@@ -55,6 +55,13 @@ describe('Room view presentation', () => {
     expect(duplicate).toBe(ordered);
   });
 
+  it('replaces a pending command when its working receipt arrives', () => {
+    const pending = { requestId: 'request', agentPubkey: 'agent', createdAt: 1 };
+    const view = { ...emptyRoom(), pendingAgentCommands: [pending] };
+    const working = { requestId: 'request', agentPubkey: 'agent', status: 'working' as const, createdAt: 2 };
+    expect(reconcileRoomTurnDelta(view, working, [working]).pendingAgentCommands).toEqual([]);
+  });
+
   it('projects the same computer card from a live delta and a later Room read', () => {
     const computerSession = {
       id: 'gQp5M3DgFFI04Qazuj5xVz1M6k8dCbvq8VQDbauwmfw',

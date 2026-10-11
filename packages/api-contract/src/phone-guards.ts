@@ -45,6 +45,7 @@ import {
   type RoomView,
   type RoomViewActivity,
   type RoomViewAgentTurn,
+  type RoomViewPendingAgentCommand,
   type RoomViewHeader,
   type RoomViewIdentity,
   type RoomViewMember,
@@ -1197,6 +1198,17 @@ function readAgentTurn(value: unknown): RoomViewAgentTurn | null {
   };
 }
 
+function readPendingAgentCommand(value: unknown): RoomViewPendingAgentCommand | null {
+  const item = record(value);
+  if (!item || !nonempty(item.requestId) || !hex64(item.agentPubkey) || !integer(item.createdAt))
+    return null;
+  return {
+    requestId: item.requestId,
+    agentPubkey: item.agentPubkey,
+    createdAt: item.createdAt,
+  };
+}
+
 function readWorkspace(value: unknown): ChatListWorkspace | null {
   const item = record(value);
   if (!item || !uuid(item.id)) return null;
@@ -1637,6 +1649,8 @@ export function readRoomView(value: unknown): RoomView | null {
     ),
     members: readList(item.members, readMember, ROOM_VIEW_MEMBER_LIMIT) ?? [],
     latestAgentTurns: readList(item.latestAgentTurns, readAgentTurn, ROOM_VIEW_AGENT_LIMIT) ?? [],
+    pendingAgentCommands:
+      readList(item.pendingAgentCommands, readPendingAgentCommand, ROOM_VIEW_AGENT_LIMIT) ?? [],
     viewer,
     repositoryResolution: readRepositoryResolution(item.repositoryResolution) ?? 'unverified',
     watchFilters: readWatchFilters(item.watchFilters),

@@ -12,8 +12,8 @@ const chatSource = readFileSync(new URL('./_chat-surface.tsx', import.meta.url),
  *
  * The pinned line is retired outright (a Room holds many corners, so one line
  * above the composer could only ever name one of them), which settles that
- * conflation by subtraction: the Room's bottom chrome now carries the turn
- * indicator and nothing else, and the corners door in the header is the one
+ * conflation by subtraction: the Room's bottom chrome now carries command
+ * waiting and turn progress, and the corners door in the header is the one
  * way into corner state. What this file still holds is that the turn
  * indicator derives from turn facts alone and that the retired line does not
  * grow back.
@@ -34,7 +34,7 @@ function memoBody(name: string): string {
 
 const CORNER_STATE = ['pinnedCorner', 'pinnedCornerCard', 'cornerLifecycle'];
 
-describe('the turn indicator is the Room’s only line above the composer', () => {
+describe('server-owned composer status above the Room composer', () => {
   it('keeps the retired pinned corner line retired', () => {
     // A Room holds many corners at once, so no single line above the composer
     // can name "the" one. It is not dimmed or conditional — it is gone, and
@@ -138,7 +138,7 @@ describe('the turn indicator is the Room’s only line above the composer', () =
     expect(received).toContain('isCorner');
     expect(received).toContain('writeResult.activeSteerAgentIds?.includes');
     expect(received).toContain('turnRequestId: activeAgentTurn.requestId');
-    expect(chatSource).toContain('received={composerAck.received}');
+    expect(chatSource).toContain('received={shownComposerAck.received}');
     expect(chatSource).toContain('STEER_RECEIVED_VISIBLE_MS');
   });
 
@@ -159,9 +159,10 @@ describe('the turn indicator is the Room’s only line above the composer', () =
     // taller first band shrink the transcript once.
     expect(chatSource).not.toContain('minHeight: turnBandReserve');
     expect(chatSource).not.toContain('onLayout={onTurnBandLayout}');
-    expect(chatSource).toContain('{composerAck ? (');
+    expect(chatSource).toContain('{waitingAgents.map((agent) => (');
+    expect(chatSource).toContain('{shownComposerAck ? (');
     expect(chatSource).toContain('<TurnProgressLine');
-    expect(chatSource).toContain('label={composerAck.label}');
+    expect(chatSource).toContain('label={shownComposerAck.label}');
   });
 
   it('uses one optimistic-send overlay for both Rooms and corners', () => {

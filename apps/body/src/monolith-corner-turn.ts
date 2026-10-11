@@ -122,6 +122,7 @@ import type { RoomSupervisor } from './room-supervisor.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { installCornerGitHubWrappers, type CornerGitHubCli } from './corner-github-auth.js';
+import { agentGitIdentityEnv } from './agent-git-identity.js';
 import {
   harvestWarmNodeModules,
   mobileNodeModulesStoreDir,
@@ -980,6 +981,9 @@ export class MonolithCornerTurnLoop {
       ...this.options.config.agentEnv,
       ...homeOverlay,
       ...githubEnv,
+      // Git reads these before any config, so this session commits as itself
+      // no matter which session last prepared the shared corner worktree.
+      ...agentGitIdentityEnv(this.agent),
       npm_config_cache: npmCacheDir,
       // pnpm reads its settings from PNPM_CONFIG_* environment variables and
       // hardlinks packages out of this content-addressable store.
@@ -2022,8 +2026,13 @@ export class MonolithCornerTurnLoop {
                       this.options.repository.targetBranch,
                     )
                   : undefined;
+              // A reviewer session never gets the dirty-work delivery nudge,
+              // even when it also wrote the code: its main prompt already
+              // carries the delivery rules.
               const needsDeliveryNudge =
-                deliveryState !== undefined && deliveryState !== this.lastDeliveryNudgeState;
+                !this.reviewerInstructionInput &&
+                deliveryState !== undefined &&
+                deliveryState !== this.lastDeliveryNudgeState;
               let refreshedReviewerInstruction: string | undefined;
               let reviewerSecondPass = false;
               let reviewerTargetChanged = false;

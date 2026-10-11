@@ -26,6 +26,7 @@ import { turnTraceDirectory } from './turn-trace.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { preserveUnpublishedCornerWorktree } from './corner-disk-recovery.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
+import { agentGitIdentity } from './agent-git-identity.js';
 import { CORNER_SCRATCH_TTL_MS, sweepStaleCornerScratch } from './scratch-lifecycle.js';
 import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
 import { RoomSupervisor } from './room-supervisor.js';
@@ -231,13 +232,14 @@ export async function materializeCornerWorktree(input: {
     'credential.https://github.com.helper',
     '!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f',
   ]);
+  const identity = agentGitIdentity(input.committer);
   await execFileAsync('git', [
     '-C',
     path,
     'config',
     '--worktree',
     'user.name',
-    input.committer.name,
+    identity.name,
   ]);
   await execFileAsync('git', [
     '-C',
@@ -245,7 +247,7 @@ export async function materializeCornerWorktree(input: {
     'config',
     '--worktree',
     'user.email',
-    `${input.committer.publicKey.slice(0, 16)}@users.noreply.github.com`,
+    identity.email,
   ]);
   const top = (
     await execFileAsync('git', ['-C', path, 'rev-parse', '--show-toplevel'])

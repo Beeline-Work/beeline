@@ -138,26 +138,20 @@ export function applyChatListDelta(
     }
     return applyMessage(view, index, delta.message, context);
   }
-  if (delta.type === 'corner-status') {
-    // The corner store already holds the frame's summary; the row takes its
-    // state and moves to its corners' activity.
+  if (delta.type === 'corner-status' || 'agentState' in delta) {
     const { agentState: _oldState, attentionReason: _oldReason, ...rest } = item;
     const next: ChatListItem = { ...rest,
       ...(delta.agentState ? { agentState: delta.agentState } : {}),
       ...(delta.agentState === 'needs-you'
-        ? { attentionReason: delta.attentionReason ?? { kind: 'approval' } } : {}),
-    };
-    const chats = view.chats.filter((_, position) => position !== index);
-    return { ...view, chats: placed(chats, next, context) };
-  }
-  if ('agentState' in delta) {
-    const { agentState: _oldState, attentionReason: _oldReason, ...rest } = item;
-    const chats = [...view.chats];
-    chats[index] = { ...rest,
-      ...(delta.agentState ? { agentState: delta.agentState } : {}),
-      ...(delta.agentState === 'needs-you'
         ? { attentionReason: delta.attentionReason ?? { kind: 'approval' as const } } : {}),
     };
+    if (delta.type === 'corner-status') {
+      // The corner store holds the frame's summary, which can move the row.
+      const chats = view.chats.filter((_, position) => position !== index);
+      return { ...view, chats: placed(chats, next, context) };
+    }
+    const chats = [...view.chats];
+    chats[index] = next;
     return { ...view, chats };
   }
   if (delta.turn.status !== 'working' || item.agentState) return view;
@@ -178,7 +172,7 @@ export function chatListDeltaNeedsRead(view: ChatListView, delta: ChatListDelta)
 }
 
 /**
- * Rooms whose read shows a newer latest message than the deck held although
+ * Whether a read shows a newer latest message than the deck held although
  * the socket delivered nothing for them since the previous read: proof the
  * socket missed those events.
  */
@@ -186,19 +180,19 @@ export function roomsMissedByLive(
   held: ChatListView,
   read: ChatListView,
   heardRoomIds: ReadonlySet<string>,
-): string[] {
+): boolean {
   const heldById = new Map(held.chats.map((item) => [item.room.id, item]));
-  return read.chats.flatMap((item) => {
+  return read.chats.some((item) => {
     const before = heldById.get(item.room.id);
     const latest = item.latestMessage;
-    if (!before || !latest || heardRoomIds.has(item.room.id)) return [];
+    if (!before || !latest || heardRoomIds.has(item.room.id)) return false;
     const previous = before.latestMessage;
     // Times are whole seconds, so a different message in the same second is also new.
     const newer =
       !previous ||
       latest.createdAt > previous.createdAt ||
       (latest.createdAt === previous.createdAt && latest.id !== previous.id);
-    return newer ? [item.room.id] : [];
+    return newer;
   });
 }
 

@@ -77,6 +77,8 @@ vi.mock('@/buzz/surface-storage', () => {
         if (!surfaceRows.has(key)) {
           if (key.startsWith('/workspaces:')) surfaceRows.set(key, await workspaces());
           else if (key.startsWith('/workspace/:id/chats:')) surfaceRows.set(key, await chats(key.split(':').at(-1)!));
+          // The real registry wakes subscribers when a durable value is restored.
+          notify(key);
         }
         return surfaceRows.get(key) ?? null;
       },
@@ -337,6 +339,15 @@ async function settle() {
     await Promise.resolve();
   });
 }
+async function expectEmptyRoomList() {
+  await vi.waitFor(async () => {
+    await settle();
+    expect(tree.root.findAllByType('Text').some(
+      (node: { props: { children?: unknown } }) =>
+        node.props.children === 'No rooms or direct messages yet.',
+    )).toBe(true);
+  }, { timeout: 5_000 });
+}
 
 beforeAll(() => {
   (globalThis as any).window = {
@@ -540,21 +551,13 @@ describe('desktop Workspace navigation', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    await vi.waitFor(() => expect(chats).toHaveBeenCalledWith('workspace-empty'));
-    await settle();
+    await expectEmptyRoomList();
 
     expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe(
       'Empty Workspace',
     );
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
-    expect(
-      tree.root
-        .findAllByType('Text')
-        .some(
-          (node: { props: { children?: unknown } }) =>
-            node.props.children === 'No rooms or direct messages yet.',
-        ),
-    ).toBe(true);
+    expect(chats).toHaveBeenCalledWith('workspace-empty');
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/channels',
       params: { communityId: 'workspace-empty' },
@@ -864,20 +867,12 @@ describe('desktop Workspace navigation', () => {
     await act(async () => {
       tree.update(<SidebarView key="deep-linked-workspace" />);
     });
-    await vi.waitFor(() => expect(chats).toHaveBeenCalledWith('workspace-empty'));
-    await settle();
+    await expectEmptyRoomList();
 
     expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe(
       'Empty Workspace',
     );
-    expect(
-      tree.root
-        .findAllByType('Text')
-        .some(
-          (node: { props: { children?: unknown } }) =>
-            node.props.children === 'No rooms or direct messages yet.',
-        ),
-    ).toBe(true);
+    expect(chats).toHaveBeenCalledWith('workspace-empty');
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
   });
 });

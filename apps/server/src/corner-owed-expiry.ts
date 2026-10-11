@@ -1,8 +1,6 @@
 import type { SqlDatabase } from './database.js';
+import { EXPIRY_TAKEOVER_LOOKBACK_MS } from './needs-you-expiry.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
-
-/** A new leader re-announces expiries this far back; a repeat is harmless. */
-const TAKEOVER_LOOKBACK_MS = 5 * 60_000;
 
 /**
  * An owed item that expires changes its corner's row in the parent's corner
@@ -34,7 +32,7 @@ export class CornerOwedExpiry {
                  AND room.parent_id IS NOT NULL) due) notified,
          GREATEST(since, until) swept_at
        FROM bound`,
-      [since ?? null, TAKEOVER_LOOKBACK_MS, POSTGRES_LIVE_CHANNEL],
+      [since ?? null, EXPIRY_TAKEOVER_LOOKBACK_MS, POSTGRES_LIVE_CHANNEL],
     );
     const row = result.rows[0];
     if (row) this.#sweptAt = row.swept_at;

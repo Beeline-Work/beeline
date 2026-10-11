@@ -96,9 +96,9 @@ describe('readCorners', () => {
     expect(live.corners).toEqual(first.corners);
     expect(live.nextOpen).toBe(first.nextOpen);
     const cursor = first.nextOpen!.split(',');
-    const second = (await phone.readCorners(ROOM, VIEWER, false, false, undefined, {
+    const second = (await phone.readCorners(ROOM, VIEWER, { openBefore: {
       micros: cursor[0]!, id: cursor[1]!,
-    }))!;
+    } }))!;
     expect(second.corners).toHaveLength(2);
     expect(second.nextOpen).toBeUndefined();
     expect(new Set([...first.corners, ...second.corners].map((row) => row.corner.id)).size).toBe(32);
@@ -106,7 +106,7 @@ describe('readCorners', () => {
 
   it('answers the archived read with closed work alone, newest closure first', async () => {
     const phone = await fixture();
-    const view = await phone.readCorners(ROOM, VIEWER, false, true);
+    const view = await phone.readCorners(ROOM, VIEWER, { archived: true });
     expect(view?.corners.map((item) => item.corner.id)).toEqual([OPENED_FIRST, OPENED_SECOND]);
     expect(view?.corners.map((item) => item.state)).toEqual(['archived', 'archived']);
     expect(view?.corners.map((item) => item.closedAt)).toEqual([
@@ -125,13 +125,13 @@ describe('readCorners', () => {
     );
     const live = await phone.readCorners(ROOM, VIEWER);
     expect(live?.corners.map((item) => [item.corner.id, item.briefRevision])).toEqual([[LIVE, 2]]);
-    const archived = await phone.readCorners(ROOM, VIEWER, false, true);
+    const archived = await phone.readCorners(ROOM, VIEWER, { archived: true });
     expect(archived?.corners.every((item) => !('briefRevision' in item))).toBe(true);
   });
 
   it('keeps the Room header and viewer on the archived read', async () => {
     const phone = await fixture();
-    const view = await phone.readCorners(ROOM, VIEWER, false, true);
+    const view = await phone.readCorners(ROOM, VIEWER, { archived: true });
     expect(view?.room.id).toBe(ROOM);
     expect(view?.viewer.identity.pubkey).toBe(VIEWER);
   });

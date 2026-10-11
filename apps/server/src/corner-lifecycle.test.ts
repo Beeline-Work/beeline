@@ -379,7 +379,7 @@ describe.each([
   ['with a stale stored corner workflow an older server seeded', true],
 ])('%s, corners work exactly as before', (_name, stored) => {
   const badge = async (cornerId: string, archived = false) =>
-    (await phone.readCorners(R, H, false, archived))!.corners.find((row) => row.corner.id === cornerId)!.state;
+    (await phone.readCorners(R, H, { archived }))!.corners.find((row) => row.corner.id === cornerId)!.state;
   const STORED = '55555555-5555-4555-8555-555555555555';
 
   beforeEach(async () => {
@@ -2202,7 +2202,7 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
       .toBe(1);
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card->>'type'='corner-complete'`, [R])).rowCount)
       .toBe(1);
-    const visible = (await phone.readCorners(R, H, false, true))?.corners.find(row => row.corner.id === cornerId);
+    const visible = (await phone.readCorners(R, H, { archived: true }))?.corners.find(row => row.corner.id === cornerId);
     expect(visible).toMatchObject({ state: 'archived', lifecycle: { outcome: 'landed' } });
   }
 
@@ -3178,7 +3178,8 @@ describe('Reproduction IDLE-1: corner status says whether its agent runs or wait
       lifecycle: expect.objectContaining({ lifecycle: 'working' }),
       activity: 'running',
     });
-    const outline = `Outline for approval. ${'x'.repeat(400)}`;
+    // The outline asks the human, so the corner owes them a reply.
+    const outline = `@human Outline for approval. ${'x'.repeat(400)}`;
     await db.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
        VALUES($1,$2,$3,$4,'message',now()+interval '1 second'),

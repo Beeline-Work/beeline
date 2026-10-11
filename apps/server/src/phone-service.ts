@@ -2654,16 +2654,17 @@ export class PhoneService {
   async readCorners(
     roomId: string,
     viewerId: string,
-    roomViewFamilyOrder = false,
-    archived = false,
-    archivedBefore?: ArchivedCornerCursor,
-    openBefore?: ArchivedCornerCursor,
+    { archived = false, archivedBefore, openBefore }: {
+      archived?: boolean;
+      archivedBefore?: ArchivedCornerCursor;
+      openBefore?: ArchivedCornerCursor;
+    } = {},
   ): Promise<CornerListView | null> {
     // The first open page carries the Room list row's summary from the same
     // snapshot, so a reader replaces its summary whole.
     const firstPage = !archived && !archivedBefore && !openBefore;
     const loaded = await this.loadCorners(roomId, viewerId, {
-      roomViewFamilyOrder, archived, before: archivedBefore ?? openBefore, deck: firstPage,
+      archived, before: archivedBefore ?? openBefore, deck: firstPage,
     });
     if (!loaded) return null;
     return loaded.deck

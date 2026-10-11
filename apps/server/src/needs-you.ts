@@ -265,6 +265,7 @@ export function questionForSql(viewerId: string): string {
 
 /** Keep the section clear's candidate rule identical to the read, without its 500-row display bound. */
 const QUESTION_WHERE = `${questionForSql('$2')}
+  -- questionLeavesAtSql implies this bound; it stays as the (room_id, created_at) index range.
   AND m.created_at>now()-${NEEDS_YOU_LOOKBACK}
   AND ${questionLeavesAtSql()}>now()`;
 
@@ -374,8 +375,7 @@ const APPROVAL_BRANCHES: readonly string[] = [
    ${APPROVAL_JOINS}
    WHERE m.deleted_at IS NULL AND m.card->>'ownerId'=$2
      AND CASE m.card_type
-       WHEN 'agent-sign-in' THEN ${expiringCardForSql('m', '$2')}
-         AND m.card->>'status' IN ('starting','pending')
+       WHEN 'agent-sign-in' THEN m.card->>'status' IN ('starting','pending')
          AND (${cardExpiresAtSql('m.card')} IS NULL OR ${cardExpiresAtSql('m.card')}>${NOW_MS})
        ELSE m.card->>'status'='pending'
      END`,

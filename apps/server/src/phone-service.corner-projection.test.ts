@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
+import { CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS } from './chat-corner-counts.js';
 
 const VIEWER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
@@ -118,10 +119,9 @@ describe('one corner projection for the Room list read, the live frame and the C
       mineCornerCount: read.mineCornerCount,
       openCorners: read.openCorners,
     });
-    const archived = (await phone.readCorners(ROOM, VIEWER, false, true))!;
+    const archived = (await phone.readCorners(ROOM, VIEWER, { archived: true }))!;
     expect(archived).not.toHaveProperty('summary');
-    const later = (await phone.readCorners(ROOM, VIEWER, false, false, undefined,
-      { micros: String(Date.now() * 1000), id: 'ffffffff-ffff-4fff-bfff-ffffffffffff' }))!;
+    const later = (await phone.readCorners(ROOM, VIEWER, { openBefore: { micros: String(Date.now() * 1000), id: 'ffffffff-ffff-4fff-bfff-ffffffffffff' } }))!;
     expect(later).not.toHaveProperty('summary');
   });
 
@@ -165,5 +165,22 @@ describe('one corner projection for the Room list read, the live frame and the C
     );
     const page = (await phone.readCorners(ROOM, VIEWER))!;
     expect(page.corners.find((item) => item.corner.id === FAILING)?.latestMessage?.id).toBe('kept');
+  });
+});
+
+describe('corner row live trigger inputs', () => {
+  it('cover every corner-fact and latest-message column the corner row reads', () => {
+    const phone = new PhoneService(new PgliteDatabase(), 'https://beeline.test');
+    const sql = (phone as unknown as {
+      cornerRowsSql(order: boolean, archived: boolean): string;
+    }).cornerRowsSql(false, false);
+    const read = (alias: string) =>
+      new Set([...sql.matchAll(new RegExp(`\\b${alias}\\.(\\w+)`, 'g'))].map((match) => match[1]!));
+    expect([...read('f')].filter((column) =>
+      column !== 'corner_id' && !(CORNER_ROW_FACT_COLUMNS as readonly string[]).includes(column))).toEqual([]);
+    expect([...read('lm')].filter((column) =>
+      !(CORNER_ROW_MESSAGE_COLUMNS as readonly string[]).includes(column))).toEqual([]);
+    expect([...read('message')].filter((column) =>
+      !(CORNER_ROW_MESSAGE_COLUMNS as readonly string[]).includes(column))).toEqual([]);
   });
 });

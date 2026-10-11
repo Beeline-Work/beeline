@@ -2089,7 +2089,7 @@ ALTER TABLE push_devices ALTER COLUMN registered_at SET DEFAULT now();
 ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
--- One row per iOS device: when it was last sent a silent shade clear
+-- One row per iOS or Android device: when it was last sent a silent shade clear
 -- (PushDeliveryLoop.sendReadClears). cleared_through and cleared_through_room
 -- are no longer read or written; they stay for rolling-update compatibility.
 CREATE TABLE IF NOT EXISTS push_read_clears (
@@ -2101,8 +2101,7 @@ CREATE TABLE IF NOT EXISTS push_read_clears (
 ALTER TABLE push_read_clears ALTER COLUMN cleared_through DROP NOT NULL;
 -- No longer read or written; it stays for rolling-update compatibility.
 ALTER TABLE room_read_marks ADD COLUMN IF NOT EXISTS read_at timestamptz;
-CREATE INDEX IF NOT EXISTS room_read_marks_identity_read_idx
-  ON room_read_marks(identity_id,read_at);
+DROP INDEX IF EXISTS room_read_marks_identity_read_idx;
 
 CREATE TABLE IF NOT EXISTS push_delivery_floors (
   id text PRIMARY KEY,
@@ -2792,6 +2791,12 @@ export async function migrate(
      ON push_delivery_claims(completed_at)
      WHERE status IN ('delivered','suppressed','failed')`,
   ));
+  await retryMigrationStep('push read-clear index', () => createIndexConcurrently(
+    database, 'push_delivery_claims_read_clear_idx',
+    `CREATE INDEX CONCURRENTLY push_delivery_claims_read_clear_idx
+     ON push_delivery_claims(device_token,message_id)
+     WHERE status='delivered' AND read_cleared_at IS NULL`,
+  ));
   await ddl('wallet delegation',
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
@@ -3319,20 +3324,30 @@ export async function compactWebhookDeliveries(database: SqlDatabase): Promise<v
     console.log(`compactWebhookDeliveries: expired ${expired}, cleared ${cleared} payload(s)`);
 }
 
+/**
+ * Candidate messages expire after an hour. A terminal claim outside that
+ * window cannot suppress a future push, except an explicit release catchup.
+ * An iOS or Android delivered claim stays until a read-clear push names it or
+ * for a week, so a read days after delivery still clears that notification
+ * (sendReadClears) and a Room never read cannot grow claims forever. `$1` is
+ * the batch size.
+ */
+export const EXPIRE_PUSH_CLAIMS_SQL = `DELETE FROM push_delivery_claims claim
+  WHERE (claim.message_id,claim.device_token) IN (
+    SELECT old.message_id,old.device_token FROM push_delivery_claims old
+    WHERE old.status IN ('delivered','suppressed','failed')
+      AND old.completed_at<now()-interval '1 hour'
+      AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
+        AND old.completed_at>=now()-interval '7 days'
+        AND EXISTS (SELECT 1 FROM push_devices device
+          WHERE device.token=old.device_token AND device.platform IN ('ios','android')))
+      AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
+        WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
+    ORDER BY old.completed_at LIMIT $1 FOR UPDATE SKIP LOCKED)`;
+
 export async function compactPushClaims(database: SqlDatabase): Promise<void> {
   const cleared = await boundedMigrationUpdate(database, 'terminal push claims',
-    `DELETE FROM push_delivery_claims claim
-     WHERE (claim.message_id,claim.device_token) IN (
-       SELECT old.message_id,old.device_token FROM push_delivery_claims old
-       WHERE old.status IN ('delivered','suppressed','failed')
-         AND old.completed_at<now()-interval '1 hour'
-         AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
-           AND old.completed_at>=now()-interval '7 days'
-           AND EXISTS (SELECT 1 FROM push_devices device
-             WHERE device.token=old.device_token AND device.platform IN ('ios','android')))
-         AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
-           WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
-       ORDER BY old.completed_at LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);
+    EXPIRE_PUSH_CLAIMS_SQL, [], 1000);
   if (cleared) console.log(`compactPushClaims: expired ${cleared} claim(s)`);
 }
 

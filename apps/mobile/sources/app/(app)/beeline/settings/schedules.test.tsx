@@ -125,7 +125,7 @@ it('names empty and legacy corner names through the shared title grammar (J40)',
   params.value = { roomId: 'room', workspaceId: 'ws' };
   const original = operation.getMockImplementation()!;
   const base = { agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Check in', nextRunAt: 1790000000, runCount: 1 };
-  operation.mockImplementation(async (name: string) => name === 'listRoomSchedules' ? { schedules: [
+  operation.mockImplementation(async (name: string): Promise<any> => name === 'listRoomSchedules' ? { schedules: [
     { ...base, id: 'unnamed', roomId: 'abcdef12-3456', corner: { id: 'abcdef12-3456', name: '' } },
     { ...base, id: 'legacy', roomId: 'corner-2', corner: { id: 'corner-2', name: '#Room/fix-auth' } },
   ] } : name === 'listRoomSubscriptions' ? { subscriptions: [

@@ -661,7 +661,7 @@ describe('prompt assembly guards', () => {
       expect(session).toContain('Membership alone grants no turn');
       const turn = assembleTurnPrompt({
         surface,
-        corners: [{ cornerId: 'sibling-id', parentRoomId: 'room-id', objective: 'Other work' }],
+        corners: [{ cornerId: 'sibling-id', parentRoomId: 'room-id', createdBy: 'agent-id', archived: false, objective: 'Other work' }],
         task: { body: 'Steer the sibling' },
       }).text;
       expect(turn).toContain('sibling-id');
@@ -870,5 +870,43 @@ describe('corner:prepare is gated on the checkout script', () => {
       cornerPrepareScript: true,
     }).systemPrompt;
     expect(prompt).not.toContain('corner:prepare');
+  });
+});
+
+describe('corner lists render as compact lines without losing a field', () => {
+  const open = [
+    { cornerId: 'open-a', parentRoomId: 'room-1', createdBy: 'agent-a', archived: false, name: 'with-pr', objective: 'Ship the fix.', pullRequestNumber: 42 },
+    { cornerId: 'open-b', parentRoomId: 'room-1', createdBy: 'agent-b', archived: true, name: 'no-pr', objective: 'Plan the work.' },
+  ];
+  const closed = [
+    { cornerId: 'closed-a', name: 'merged', pullRequestNumber: 7, mergeCommitSha: 'abc123' },
+    { cornerId: 'closed-b', name: 'abandoned' },
+    { cornerId: 'closed-c' },
+  ];
+  const corners = () =>
+    assembleTurnPrompt({ surface: 'room', corners: open, closedCorners: closed, task: { body: 'Hi' } }).text;
+
+  it('renders each open corner as one line with every field and no JSON', () => {
+    const text = corners();
+    expect(text).not.toContain('{"cornerId"');
+    expect(text).toContain('- with-pr (open-a), parent Room room-1, created by agent-a, PR #42: Ship the fix.');
+    expect(text).toContain('- no-pr (open-b), parent Room room-1, created by agent-b, archived: Plan the work.');
+    const withPr = text.split('\n').find((line) => line.includes('(open-a)'))!;
+    expect(withPr).not.toContain('archived');
+    const noPr = text.split('\n').find((line) => line.includes('(open-b)'))!;
+    expect(noPr).not.toContain('PR #');
+  });
+
+  it('renders every closed corner as a short line, PR and merge commit only when present', () => {
+    const text = corners();
+    expect(text).toContain('- merged (closed-a): closed, PR #7, merge commit abc123');
+    expect(text).toContain('- abandoned (closed-b): closed\n');
+    expect(text).toMatch(/- closed-c \(closed-c\): closed$/m);
+    expect(text).not.toContain('unavailable');
+  });
+
+  it('keeps every input corner id', () => {
+    const text = corners();
+    for (const { cornerId } of [...open, ...closed]) expect(text).toContain(`(${cornerId})`);
   });
 });

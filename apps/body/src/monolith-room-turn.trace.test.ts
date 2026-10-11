@@ -411,6 +411,12 @@ describe('Room turn phase trace', () => {
     expect(activations).toBe(1);
     expect(traces[0]!.attempts[0]!.activation).toBe('cold');
     expect(traces[1]!.attempts[0]!.activation).toBe('warm');
+    // The cold turn has nothing to compare with; the warm one compares each
+    // section with what this same session was sent on the turn before.
+    expect(new Set(Object.values(traces[0]!.promptSectionChanges ?? {}))).toEqual(new Set(['no-baseline']));
+    expect(Object.keys(traces[1]!.promptSectionChanges ?? {})).toEqual(Object.keys(traces[1]!.promptSections ?? {}));
+    expect(traces[1]!.promptSectionChanges?.['turn.task']).toBe('changed');
+    expect(traces[1]!.promptSectionChanges?.['turn.session']).toBe('unchanged');
     for (const trace of traces) {
       const phases = trace.attempts[0]!.phases;
       // A complete timeline separates queue, activation, model and publish.

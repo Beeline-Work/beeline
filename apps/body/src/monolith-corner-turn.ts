@@ -133,6 +133,7 @@ import {
 } from './prompt-assembly.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
+import { PromptSectionBaseline } from './prompt-section-baseline.js';
 import type { RoomSupervisor } from './room-supervisor.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
@@ -497,6 +498,8 @@ export class MonolithCornerTurnLoop {
   private sessionCodegraphReady = false;
   /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
   private readonly warmTranscript = new WarmTranscript();
+  /** What each turn section last sent to this exact ACP session hashed to (`prompt-section-baseline.ts`). */
+  private readonly sectionBaseline = new PromptSectionBaseline();
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
   /**
@@ -836,6 +839,7 @@ export class MonolithCornerTurnLoop {
       return this.sessionId;
     }
     trace?.noteActivation('cold');
+    this.sectionBaseline.reset();
     const [configuration, roster, grants, restored] = await Promise.all([
       this.options.api.execute('getAgentConfiguration', {
         agentId: this.agent.publicKey,
@@ -1770,7 +1774,10 @@ export class MonolithCornerTurnLoop {
                     ),
                   },
                 });
-                trace.notePromptSections(assembled.report);
+                trace.notePromptSections(
+                  assembled.report,
+                  this.sectionBaseline.observe(this.sessionId, assembled.report),
+                );
                 this.commandContext.notePromptSections([
                   ...this.sessionPromptSectionIds,
                   ...assembled.report.map((section) => section.id),

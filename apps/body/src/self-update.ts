@@ -868,6 +868,8 @@ export interface UpdateAttemptRecord {
   releaseId: string;
   previousReleaseId: string | undefined;
   appliedAt: number;
+  /** First start on the candidate bundle; the confirmation clock begins here. */
+  startedAt?: number;
   confirmBy: number;
   status: 'pending' | 'confirmed' | 'reverted';
   failure?: string;
@@ -943,12 +945,13 @@ export async function writeUpdateAttemptFixture(
 }
 
 /**
- * How long a freshly-applied update is given to prove itself before the
+ * How long a freshly-started update is given to prove itself before the
  * daemon declares it healthy and stops keeping the rollback option hot. If
  * the supervisor throws fatally (or the process dies outright) inside this
  * window, the previous bundle comes back.
  */
 export const DEFAULT_UPDATE_CONFIRM_WINDOW_MS = 5 * 60_000;
+const NEVER_STARTED_FAILURE = 'update did not serve a verified turn before its confirmation deadline';
 
 export type UpdateAttemptSettle =
   | { kind: 'none' }
@@ -956,9 +959,8 @@ export type UpdateAttemptSettle =
   | { kind: 'rolled-back'; record: UpdateAttemptRecord };
 
 /**
- * Called at daemon start. An unconfirmed update older than the confirm
- * window can only mean the new bundle never became healthy (crash before JS
- * ran, or repeated fatal failure) — roll back before serving anything.
+ * Called at daemon start. Applying a bundle does not start its proof clock:
+ * a busy host may spend longer than the window draining the previous release.
  */
 export async function settleUpdateAttemptOnStart(
   layout: BeelineInstallLayout,
@@ -967,8 +969,20 @@ export async function settleUpdateAttemptOnStart(
   const record = await readUpdateAttempt(layout);
   if (!record || record.status !== 'pending') return { kind: 'none' };
   const now = opts.now ?? Date.now;
+  const active = await activeReleaseId(layout);
+  if (active && active !== record.releaseId) return { kind: 'none' };
+  if (record.startedAt === undefined) {
+    const startedAt = now();
+    const started = {
+      ...record,
+      startedAt,
+      confirmBy: startedAt + (opts.confirmWindowMs ?? DEFAULT_UPDATE_CONFIRM_WINDOW_MS),
+    };
+    await writeUpdateAttempt(layout, started);
+    return { kind: 'pending', confirmAt: started.confirmBy, record: started };
+  }
   const confirmAt = opts.confirmWindowMs
-    ? record.appliedAt + opts.confirmWindowMs
+    ? record.startedAt + opts.confirmWindowMs
     : record.confirmBy;
   if (now() <= confirmAt) {
     return { kind: 'pending', confirmAt, record };
@@ -991,7 +1005,7 @@ export async function settleUpdateAttemptOnStart(
     ...record,
     confirmBy: confirmAt,
     status: 'reverted',
-    failure: 'update did not serve a verified turn before its confirmation deadline',
+    failure: NEVER_STARTED_FAILURE,
   });
   return { kind: 'rolled-back', record };
 }
@@ -1119,7 +1133,9 @@ export class SelfUpdateManager {
     const { bundle } = parseUpdateManifest(raw, platform);
     const state = await readUpdateState(this.options.layout);
     const previousAttempt = await readUpdateAttempt(this.options.layout);
-    if (previousAttempt?.status === 'reverted' && !opts.force) {
+    if (previousAttempt?.status === 'reverted' &&
+        !(previousAttempt.failure === NEVER_STARTED_FAILURE && previousAttempt.startedAt === undefined) &&
+        !opts.force) {
       const sameCommit = Boolean(
         previousAttempt.to.commit && previousAttempt.to.commit === bundle.commit,
       );

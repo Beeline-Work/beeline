@@ -526,13 +526,14 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect(previousReleaseId).toBe('c1old');
     expect(await activeReleaseId(layout)).toBe(releaseB);
 
-    // Stale unconfirmed journal ⇒ the new bundle never proved itself ⇒ rollback.
+    // A bundle that started but never proved healthy still rolls back.
     await writeUpdateAttemptFixture(layout, {
       from: { commit: 'c1old', version: '1.0.0' },
       to: { commit: b.commit, version: b.version },
       releaseId: releaseB,
       previousReleaseId,
       appliedAt: Date.now() - 10 * 60_000,
+      startedAt: Date.now() - 10 * 60_000,
     });
     const settle = await settleUpdateAttemptOnStart(layout);
     expect(settle.kind).toBe('rolled-back');
@@ -571,8 +572,8 @@ describe('self-update end to end against a local fixture manifest', () => {
     // A FRESH journal is kept pending confirmation instead.
     await writeUpdateAttemptFixture(layout, {
       from: {},
-      to: { commit: b.commit },
-      releaseId: releaseB,
+      to: { commit: newer.commit },
+      releaseId: newer.commit,
       previousReleaseId,
       appliedAt: Date.now(),
     });
@@ -633,7 +634,7 @@ describe('self-update end to end against a local fixture manifest', () => {
     const base = {
       from: { commit: 'stable' },
       to: { commit: 'candidate' },
-      releaseId: 'candidate',
+      releaseId: 'legacy',
       previousReleaseId: undefined,
     };
 
@@ -650,11 +651,56 @@ describe('self-update end to end against a local fixture manifest', () => {
       kind: 'none',
     });
 
-    await writeUpdateAttemptFixture(layout, { ...base, appliedAt: 4_000, confirmBy: 5_000 });
+    await writeUpdateAttemptFixture(layout, { ...base, appliedAt: 4_000, startedAt: 4_000, confirmBy: 5_000 });
     expect(await settleUpdateAttemptOnStart(layout, { now: () => 5_001 })).toMatchObject({
       kind: 'rolled-back',
     });
     expect((await readUpdateAttempt(layout))?.status).toBe('reverted');
+  });
+
+  it('starts confirmation only when the new bundle runs after a long drain', async () => {
+    const { layout } = await makeLegacyInstall('old', '1.0.0');
+    const candidate = await buildFixtureBundle('new', '1.1.0');
+    const releaseId = await stageRelease(layout, serveManifest(candidate), {
+      file: candidate.tarballPath.split('/').pop()!,
+      sha256: candidate.sha256,
+      commit: candidate.commit,
+      version: candidate.version,
+    });
+    const { previousReleaseId } = await activateRelease(layout, releaseId);
+    await writeUpdateAttemptFixture(layout, {
+      from: { commit: 'old' }, to: { commit: candidate.commit }, releaseId,
+      previousReleaseId, appliedAt: 1_000, confirmBy: 2_000,
+    });
+    const started = await settleUpdateAttemptOnStart(layout, { now: () => 100_000 });
+    expect(started).toMatchObject({ kind: 'pending', confirmAt: 400_000 });
+    expect((await readUpdateAttempt(layout))?.startedAt).toBe(100_000);
+    expect(await settleUpdateAttemptOnStart(layout, { now: () => 400_001 })).toMatchObject({
+      kind: 'rolled-back',
+    });
+    expect(await activeReleaseId(layout)).toBe(previousReleaseId);
+  });
+
+  it('retries a release previously reverted before it ever started', async () => {
+    const { layout } = await makeLegacyInstall('old', '1.0.0');
+    const candidate = await buildFixtureBundle('retry', '1.1.0');
+    await writeUpdateAttemptFixture(layout, {
+      from: { commit: 'old' },
+      to: { commit: candidate.commit, version: candidate.version },
+      releaseId: candidate.commit,
+      previousReleaseId: 'legacy',
+      appliedAt: 1_000,
+      status: 'reverted',
+      failure: 'update did not serve a verified turn before its confirmation deadline',
+    });
+    const manager = new SelfUpdateManager({
+      layout,
+      env: { BEELINE_UPDATE_MANIFEST_URL: serveManifest(candidate), BEELINE_SYSTEMD_USER: '0' },
+      isIdle: () => true,
+    });
+    await manager.checkAndApply();
+    expect((await readUpdateAttempt(layout))?.status).toBe('pending');
+    expect(await activeReleaseId(layout)).toBe(candidate.commit);
   });
 
   it('lets an explicit update apply even when automatic checks are disabled', async () => {

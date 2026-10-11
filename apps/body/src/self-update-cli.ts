@@ -166,7 +166,10 @@ async function printStatus(layout: BeelineInstallLayout): Promise<void> {
   if (attempt) {
     console.log(
       `${pc.bold('update attempt')}      ${attempt.status}: ${describeIdentity(attempt.to)} ` +
-        `(previous: ${attempt.previousReleaseId ?? 'none'}, confirm by ${new Date(attempt.confirmBy).toISOString()})` +
+        `(previous: ${attempt.previousReleaseId ?? 'none'}, ` +
+        (attempt.startedAt === undefined
+          ? 'confirmation starts on successor launch)'
+          : `confirm by ${new Date(attempt.confirmBy).toISOString()})`) +
         `${attempt.failure ? ` — ${attempt.failure}` : ''}`,
     );
   }
@@ -180,7 +183,7 @@ async function runningDaemonProbeIds(): Promise<string[]> {
     if (runtime?.agent.publicKey) ids.push(runtime.agent.publicKey);
     console.log(
       `[beeline] daemon ${runtime?.agent.publicKey?.slice(0, 12) ?? configPath} is running; ` +
-        'it will observe the install anchor and restart once its current work finishes (never mid-turn).',
+        'it will observe the install anchor and restart after a bounded drain; unfinished work resumes.',
     );
   }
   return [...new Set(ids)].sort();

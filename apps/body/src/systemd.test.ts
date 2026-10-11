@@ -313,6 +313,25 @@ describe('systemd supervision contract', () => {
     ]);
   });
 
+  it('tries every agent when one unit cannot be enabled and keeps the helper available', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-systemd-restore-'));
+    roots.push(root);
+    const keys = ['a'.repeat(64), 'b'.repeat(64)];
+    const calls: string[][] = [];
+    const run = vi.fn(async (args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'enable' && args[1]?.includes(keys[0]!))
+        throw new Error('enable failed');
+      return { stdout: '' };
+    });
+    await expect(restoreLegacyAgentUnits(keys, { env: { XDG_CONFIG_HOME: root }, run }))
+      .rejects.toThrow('per-agent unit restore incomplete');
+    expect(calls).toContainEqual(['start', '--no-block', `beeline-agent@${keys[0]}.service`]);
+    expect(calls).toContainEqual(['enable', `beeline-agent@${keys[1]}.service`]);
+    expect(calls).toContainEqual(['start', '--no-block', `beeline-agent@${keys[1]}.service`]);
+    expect(calls).not.toContainEqual(['disable', 'beeline-helper.service']);
+  });
+
   it('clears a retired agent\'s leftover per-agent unit, and nothing when there is none', async () => {
     const calls: string[][] = [];
     const run = vi.fn(async (args: string[]) => {

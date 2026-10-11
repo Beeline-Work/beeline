@@ -472,12 +472,25 @@ export async function restoreLegacyAgentUnits(
   await mkdir(dirname(template), { recursive: true, mode: 0o700 });
   await writeFile(template, agentServiceUnit(), { mode: 0o600 });
   await run(['daemon-reload']);
+  const failures: Error[] = [];
   for (const publicKey of publicKeys) {
     if (!/^[0-9a-f]{64}$/i.test(publicKey)) continue;
     const unit = `beeline-agent@${publicKey.toLowerCase()}.service`;
-    await run(['enable', unit]);
-    await run(['start', '--no-block', unit]);
+    try {
+      await run(['enable', unit]);
+    } catch (error) {
+      failures.push(new Error(`${unit} enable: ${error instanceof Error ? error.message : String(error)}`));
+    }
+    try {
+      await run(['start', '--no-block', unit]);
+    } catch (error) {
+      failures.push(new Error(`${unit} start: ${error instanceof Error ? error.message : String(error)}`));
+    }
   }
+  // Keep the helper enabled if any per-agent handoff failed. The restored
+  // release can then retry through its normal supervisor instead of leaving
+  // an agent permanently without a service after this process exits.
+  if (failures.length) throw new AggregateError(failures, 'per-agent unit restore incomplete');
   await run(['disable', SYSTEMD_HELPER_UNIT_NAME]);
 }
 

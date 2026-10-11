@@ -92,6 +92,7 @@ describe('managed update handoff', () => {
       releaseId: 'new',
       previousReleaseId: 'old',
       appliedAt: 1_000,
+      startedAt: 1_000,
       forcedMinimum: 'v0.0.69',
       requiredProbeIds: ['agent', 'other'],
       confirmedProbeIds: [],
@@ -678,7 +679,7 @@ describe('managed update drain', () => {
   async function drainFixture(options: { activeTurns: number; drainDeadlineMs?: number }) {
     const { layout, runtimeDir } = await layoutFixture();
     const clock = new FakeClock();
-    const state = { activeTurns: options.activeTurns, intakeQuiesced: false };
+    const state = { activeTurns: options.activeTurns, intakeQuiesced: false, interrupted: 0 };
     const restarts: Array<{ release: string; mode: string; at: number }> = [];
     const logs: string[] = [];
     const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => clock.now, {
@@ -688,12 +689,15 @@ describe('managed update drain', () => {
     await symlink('beeline-releases/new', layout.libDir);
     const drain = new ManagedUpdateDrain({
       update,
-      quiesceIfIdle: () => {
-        if (state.activeTurns > 0) return false;
+      quiesce: () => {
         state.intakeQuiesced = true;
         return true;
       },
       activeTurnCount: () => state.activeTurns,
+      interrupt: () => {
+        state.interrupted += state.activeTurns;
+        state.activeTurns = 0;
+      },
       restart: async (request, mode) => {
         restarts.push({ release: request.desiredRelease, mode, at: clock.now });
       },
@@ -702,7 +706,7 @@ describe('managed update drain', () => {
       setTimer: clock.setTimer,
       clearTimer: clock.clearTimer,
     });
-    return { clock, state, restarts, logs, drain };
+    return { clock, state, restarts, logs, drain, layout, runtimeDir };
   }
 
   it('restarts an idle helper within one tick, arming no timer', async () => {
@@ -717,9 +721,8 @@ describe('managed update drain', () => {
     const { clock, state, restarts, logs, drain } = await drainFixture({ activeTurns: 1 });
     expect(await drain.tick()).toBe('waiting-for-idle');
     expect(restarts).toEqual([]);
-    expect(logs).toEqual([
-      '[thin-core] update restart waiting: 1 active turn(s); will resume after work finishes',
-    ]);
+    expect(state.intakeQuiesced).toBe(true);
+    expect(logs[0]).toContain('update restart waiting: 1 active turn(s)');
 
     await clock.advance(2 * MINUTE);
     expect(restarts).toEqual([]);
@@ -737,22 +740,24 @@ describe('managed update drain', () => {
     expect(restarts).toHaveLength(1);
   });
 
-  it('does not interrupt a stuck turn at the absolute deadline', async () => {
-    const { clock, state, restarts, logs, drain } = await drainFixture({ activeTurns: 2 });
+  it('restarts a continuously busy helper at the bounded deadline', async () => {
+    const { clock, state, restarts, drain, layout, runtimeDir } = await drainFixture({ activeTurns: 2 });
     expect(await drain.tick()).toBe('waiting-for-idle');
     const armedAt = clock.now;
-
-    // No further core tick: elapsed time alone must never interrupt work.
+    expect(state.intakeQuiesced).toBe(true);
     await clock.advance(UPDATE_DRAIN_DEADLINE_MS - 1);
     expect(restarts).toEqual([]);
     await clock.advance(1);
-    expect(restarts).toEqual([]);
-    expect(state.intakeQuiesced).toBe(false);
-    state.activeTurns = 0;
-    expect(await drain.tick()).toBe('restarting');
     expect(restarts).toEqual([
       { release: 'new', mode: 'drained', at: armedAt + UPDATE_DRAIN_DEADLINE_MS },
     ]);
+    expect(state.interrupted).toBe(2);
+    expect(await settleUpdateAttemptOnStart(layout, { now: () => clock.now })).toMatchObject({
+      kind: 'pending',
+    });
+    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new', { functionalProof }))
+      .toBe(true);
+    expect((await readUpdateAttempt(layout))?.status).toBe('confirmed');
   });
 
   it('logs one waiting line per minute with the current turn count', async () => {
@@ -763,11 +768,7 @@ describe('managed update drain', () => {
     await clock.advance(MINUTE);
     await drain.tick();
     await drain.tick();
-    expect(logs).toEqual([
-      '[thin-core] update restart waiting: 1 active turn(s); will resume after work finishes',
-      '[thin-core] update restart waiting: 1 active turn(s); will resume after work finishes',
-      '[thin-core] update restart waiting: 3 active turn(s); will resume after work finishes',
-    ]);
+    expect(logs.map((line) => line.match(/waiting: (\d+) active/)?.[1])).toEqual(['1', '1', '3']);
   });
 });
 

@@ -377,12 +377,10 @@ export class ManagedUpdateHandoff {
 
   /**
    * Resolve one handoff tick against the daemon's authoritative turn registry.
-   * Busy means a turn is executing right now; serving Rooms and corners with
-   * no turn in flight is idle. `quiesceIfIdle` closes intake in the same
-   * synchronous transition that proves idle, so a new turn cannot race
-   * activation. A staged release stays inert for as long as a turn runs.
+   * The coordinator closes intake before waiting for running turns and only
+   * activates a staged release after the drain or bounded interruption.
    */
-  async restartRequest(quiesceIfIdle: () => boolean): Promise<
+  async restartRequest(readyToRestart: (request: ManagedUpdateRestartRequest) => boolean): Promise<
     | { kind: 'none' }
     | { kind: 'waiting'; request: ManagedUpdateRestartRequest }
     | {
@@ -394,9 +392,7 @@ export class ManagedUpdateHandoff {
     if (!activeDrift && !this.#stagedReleaseId) return { kind: 'none' };
     const request = this.#restartRequest;
     if (!request) throw new Error('update drift was detected without an in-memory restart request');
-    if (!quiesceIfIdle()) {
-      // An update never cancels agent work. The next completed turn wakes the
-      // drain and installs the staged release through the same idle gate.
+    if (!readyToRestart(request)) {
       return { kind: 'waiting', request };
     }
     if (this.#stagedReleaseId) {
@@ -452,11 +448,11 @@ export type ManagedUpdateRestartMode = 'drained';
 /** One funnel from a completed core tick to the process handoff callback. */
 export async function coordinateManagedUpdateHandoff(
   update: ManagedUpdateHandoff,
-  quiesceIfIdle: () => boolean,
+  readyToRestart: (request: ManagedUpdateRestartRequest) => boolean,
   restart: (request: ManagedUpdateRestartRequest, mode: ManagedUpdateRestartMode) => Promise<void>,
   waiting: (request: ManagedUpdateRestartRequest) => Promise<void> = async () => undefined,
 ): Promise<ManagedUpdateHandoffProgress> {
-  const next = await update.restartRequest(quiesceIfIdle);
+  const next = await update.restartRequest(readyToRestart);
   if (next.kind === 'none') return 'none';
   if (next.kind === 'waiting') {
     await waiting(next.request);
@@ -470,10 +466,12 @@ export const UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS = 60_000;
 
 export interface ManagedUpdateDrainOptions {
   update: ManagedUpdateHandoff;
-  /** Closes intake and returns true only when no turn is executing right now. */
-  quiesceIfIdle: () => boolean;
+  /** Close intake before waiting for in-flight turns. */
+  quiesce: () => boolean;
   activeTurnCount: () => number;
-  /** Exits the process after every active turn has finished. */
+  /** Journal and interrupt turns still running at the absolute drain deadline. */
+  interrupt: () => void;
+  /** Exits the process after the drain or bounded interruption. */
   restart: (request: ManagedUpdateRestartRequest, mode: ManagedUpdateRestartMode) => Promise<void>;
   /** Progress report while a turn keeps the armed restart waiting (sd_notify STATUS). */
   waiting?: (request: ManagedUpdateRestartRequest) => Promise<void>;
@@ -484,10 +482,9 @@ export interface ManagedUpdateDrainOptions {
 }
 
 /**
- * The armed restart's clock. Each completed core tick calls `tick()`: an idle
- * helper restarts on that tick; a busy one restarts on the first tick after
- * its last turn ends. One log line per minute says how many turns still hold
- * the restart; no update timer cancels a running turn.
+ * The armed restart's clock. Each completed core tick calls `tick()`. The
+ * existing minute timer also enforces the absolute drain deadline, so a
+ * continuously busy helper can restart without waiting for another turn tick.
  */
 export class ManagedUpdateDrain {
   readonly #options: ManagedUpdateDrainOptions;
@@ -497,6 +494,7 @@ export class ManagedUpdateDrain {
   #waitLogTimer: unknown;
   #resolving: Promise<ManagedUpdateHandoffProgress> | undefined;
   #restarting = false;
+  #drainDeadlineAt: number | undefined;
 
   constructor(options: ManagedUpdateDrainOptions) {
     this.#options = options;
@@ -520,11 +518,18 @@ export class ManagedUpdateDrain {
   }
 
   async #step(): Promise<ManagedUpdateHandoffProgress> {
-    const { update, quiesceIfIdle } = this.#options;
+    const { update, quiesce, activeTurnCount, interrupt } = this.#options;
     let armed: ManagedUpdateRestartRequest | undefined;
     const progress = await coordinateManagedUpdateHandoff(
       update,
-      quiesceIfIdle,
+      (request) => {
+        if (!quiesce()) return false;
+        this.#drainDeadlineAt = request.drainDeadlineAt;
+        if (activeTurnCount() === 0) return true;
+        if ((this.#options.now ?? Date.now)() < request.drainDeadlineAt) return false;
+        interrupt();
+        return true;
+      },
       async (request, mode) => {
         this.#disarm();
         await this.#options.restart(request, mode);
@@ -547,18 +552,21 @@ export class ManagedUpdateDrain {
   }
 
   #scheduleWaitLog(): void {
+    const remaining = (this.#drainDeadlineAt ?? Number.POSITIVE_INFINITY) -
+      (this.#options.now ?? Date.now)();
     this.#waitLogTimer = this.#setTimer(() => {
       this.#waitLogTimer = undefined;
       if (this.#restarting) return;
-      this.#logWaiting();
-      this.#scheduleWaitLog();
-    }, UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS);
+      void this.#resolve().catch((error) => this.#log(`[thin-core] update drain failed: ${String(error)}`));
+    }, remaining > 0
+      ? Math.min(UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS, remaining)
+      : UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS);
   }
 
   #logWaiting(): void {
     this.#log(
       `[thin-core] update restart waiting: ${this.#options.activeTurnCount()} active turn(s); ` +
-        `will resume after work finishes`,
+        `draining until ${new Date(this.#drainDeadlineAt ?? 0).toISOString()}`,
     );
   }
 

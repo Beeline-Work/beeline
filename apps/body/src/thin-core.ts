@@ -76,6 +76,9 @@ export class ThinDaemonCore {
   quiesceForUpdateIfIdle(): boolean {
     return this.roomRuntime.quiesceForUpdateIfIdle();
   }
+  quiesceForUpdate(): void {
+    this.roomRuntime.quiesceForUpdate();
+  }
   /** A managed restart failed after intake closed: take turns again. */
   resumeServing(): void {
     this.roomRuntime.resumeServing();

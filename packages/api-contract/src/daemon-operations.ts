@@ -1,4 +1,4 @@
-import type { RoomSubscriptionListResult, RoomSubscriptionView, SubscriptionSource } from './subscriptions.js';
+import type { RoomSubscriptionListResult, RoomSubscriptionView, SubscriptionSource, SubscriptionEventCatalog } from './subscriptions.js';
 import type { AppRoute, AppTransport, ConnectAppStatus } from './app-connections.js';
 import type { CornerHoldInput, CornerMergeHold } from './phone-operations.js';
 import type { ServerEventKind, SystemEvent } from './system-events.js';
@@ -314,7 +314,9 @@ export type DaemonOperationMap = {
   listWorkSchedules: Operation<AgentInput, WorkScheduleListResult>;
   createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
   setEventSubscriptions: Operation<SetEventSubscriptionsInput, EventSubscriptionsResult>;
-  createAgentSubscription: Operation<RoomInput & { source: SubscriptionSource; event: string; repository?: string; prompt: string; workflowName?: string }, RoomSubscriptionView>;
+  createAgentSubscription: Operation<RoomInput & { source: SubscriptionSource; event: string; repository?: string;
+    channelId?: string; channelName?: string; prompt: string; workflowName?: string }, RoomSubscriptionView>;
+  listServiceSubscriptionEvents: Operation<RoomInput, SubscriptionEventCatalog>;
   listAgentSubscriptions: Operation<RoomInput, RoomSubscriptionListResult>;
   deleteAgentSubscription: Operation<RoomInput & { subscriptionId: string }, WriteResult>;
   watchCorner: Operation<

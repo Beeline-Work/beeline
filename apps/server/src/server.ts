@@ -7,6 +7,8 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Duplex } from 'node:stream';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
 import { isAppSignInLink } from './composio-apps.js';
+import type { ComposioApps } from './composio-apps.js';
+import { ingestComposioDelivery } from './composio-delivery.js';
 import { acceptedJsonEncoding, encodeJsonBody, type JsonEncoding } from './json-response.js';
 import { PhoneViewing } from './phone-viewing.js';
 import {
@@ -140,6 +142,8 @@ export interface ServerOptions {
    *  clear 503. */
   objectService?: ObjectService;
   github?: GitHubServerHooks;
+  composio?: ComposioApps;
+  composioReceiverUrl?: string;
   linkWallet?: LinkAgentWallet;
   registryMcpOAuth?: RegistryMcpOAuth;
   /** Absent when no review secret is configured; the endpoint then refuses like any wrong secret. */
@@ -1830,6 +1834,22 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const location = await options.github.completeInstallation(state, installationId);
     response.writeHead(302, { location, 'cache-control': 'no-store' });
     response.end();
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/v1/connectors/events/composio') {
+    if (!options.composio || !options.composioReceiverUrl) {
+      json(response, 404, { error: 'not_found' });
+      return;
+    }
+    const raw = await bytes(request, MAX_JSON_BYTES);
+    const secret = await options.composio.triggerReceiverSecret(options.composioReceiverUrl);
+    const accepted = await ingestComposioDelivery(options.database, raw, request.headers, secret);
+    if (!accepted) {
+      json(response, 401, { error: 'invalid_webhook_signature' });
+      return;
+    }
+    json(response, 200, { accepted: true });
     return;
   }
 

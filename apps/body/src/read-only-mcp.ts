@@ -3899,9 +3899,13 @@ async function squireShareEndpoint(sessionId: string): Promise<{ url: string; ex
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(`Squire share failed (${response.status})`);
-  const body = await response.json() as { result?: { isError?: boolean; content?: Array<{ type: string; text?: string }> } };
+  const body = await response.json() as { error?: string; result?: { isError?: boolean; content?: Array<{ type: string; text?: string }> } };
   const text = body.result?.content?.find((entry) => entry.type === 'text')?.text;
-  if (body.result?.isError || !text) throw new Error('Squire could not share this browser session');
+  if (body.result?.isError || !text) {
+    const cause = [text, body.error].find((value) => typeof value === 'string' && value.trim())
+      ?.replace(/\s+/g, ' ').trim().slice(0, 300);
+    throw new Error(`Squire could not share this browser session${cause ? `: ${cause}` : ''}`);
+  }
   const result = JSON.parse(text) as Record<string, unknown>;
   const endpoint = result.url;
   if (typeof endpoint !== 'string' || !/^https?:\/\/[^/]+\/s\/[A-Za-z0-9_-]{43}\/$/.test(endpoint))

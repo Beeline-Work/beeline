@@ -240,13 +240,13 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
   try {
     const result = await monolithPhoneOperation('readNeedsYou', { workspaceId });
     let items = sortNeeds([...result.items]);
+    for (const operation of slot.log)
+      if (!('clear' in operation) && operation.at > from) items = applyNeedsSlice(items, operation.delta);
+    // Clears go last, so a later Room delta cannot bring back a cleared cell.
     for (const operation of slot.log) {
-      if ('clear' in operation) {
-        const { ids, settled } = operation.clear;
-        if ((settled ?? Infinity) > from) items = items.filter((item) => !ids.has(item.messageId));
-      } else if (operation.at > from) {
-        items = applyNeedsSlice(items, operation.delta);
-      }
+      if (!('clear' in operation)) continue;
+      const { ids, settled } = operation.clear;
+      if ((settled ?? Infinity) > from) items = items.filter((item) => !ids.has(item.messageId));
     }
     if (from > slot.readAt && live(slot)) {
       slot.readAt = from;

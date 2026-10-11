@@ -32,6 +32,7 @@ import {
   applyNeedsYouLiveDelta,
   forgetNeedsYouList,
   loadNeedsYouList,
+  removeNeedsYou,
   seedNeedsYouList,
 } from './needs-you-store';
 
@@ -99,5 +100,18 @@ describe('Needs-you disk copy', () => {
     applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-2', count: 1, items: [need('ask-2', 'room-2')] as never });
     await settle();
     expect(fixture.disk.has(diskA)).toBe(false);
+  });
+});
+
+describe('Needs-you read replay', () => {
+  it('keeps a pending clear after a later Room delta during the read', async () => {
+    const read = loadNeedsYouList('ws');
+    await settle();
+    removeNeedsYou('ws', ['ask-1']);
+    applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-1', count: 2,
+      items: [need('ask-1'), need('ask-2')] as never });
+    fixture.reads[0]!([need('ask-1')]);
+    const items = await read;
+    expect(items.map((item) => item.messageId)).toEqual(['ask-2']);
   });
 });

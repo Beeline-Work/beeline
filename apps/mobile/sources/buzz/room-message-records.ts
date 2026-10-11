@@ -5,278 +5,183 @@ import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset
 import { IdentitySelection, useIdentityRecords } from './identity-records';
 import { currentSurfaceStamp, nextSurfaceStamp } from './surface-clock';
 
-/**
- * One id-keyed record per committed message, per Room. Every view that shows
- * a Room's messages (the live tail, loaded history pages, a detached jump
- * window, the desktop inspector) keeps its own ordered rows as a window and
- * reads each row through this map, so one live delta or mutation result
- * changes that message in every view at once.
- *
- * The map holds only ids some mounted view holds. A record for an id no view
- * holds is dropped, so a large Room stays bounded to its loaded windows.
- */
-
 type RoomRecords = {
-  readonly records: Map<string, RoomViewMessage>;
-  readonly turns: Map<string, { row: RoomViewAgentTurn; stamp: number }>;
-  readonly bookmarkWrittenAt: Map<string, number>;
-  /** The row objects each view last offered, by view key, then message id.
-   *  One view can hold an id in more than one window (tail and history). */
-  readonly views: Map<string, Map<string, Set<RoomViewMessage>>>;
-  readonly listeners: Set<() => void>;
+  messages: Map<string, RoomViewMessage>;
+  turns: Map<string, { row: RoomViewAgentTurn; stamp: number }>;
+  bookmarkedAt: Map<string, number>;
+  views: Map<string, Set<string>>;
+  seenRows: WeakSet<RoomViewMessage>;
+  listeners: Set<() => void>;
   revision: number;
 };
 
 const rooms = new Map<string, RoomRecords>();
-const roomKey = (scope: string, roomId: string) => `${scope}\u0000${roomId}`;
-const identityReadAt = new WeakMap<RoomViewMessage, number>();
-const identitySelected = new WeakMap<RoomViewMessage, { scope: string; version: number; row: RoomViewMessage }>();
+const keyOf = (scope: string, roomId: string) => `${scope}\u0000${roomId}`;
+const readAt = new WeakMap<RoomViewMessage, number>();
+const identityRows = new WeakMap<RoomViewMessage, { scope: string; version: number; row: RoomViewMessage }>();
+let nextViewId = 0;
 
 export function stampRoomMessageRows(rows: readonly RoomViewMessage[], stamp: number): void {
-  for (const row of rows)
-    identityReadAt.set(row, Math.min(identityReadAt.get(row) ?? stamp, stamp));
+  for (const row of rows) readAt.set(row, Math.min(readAt.get(row) ?? stamp, stamp));
+}
+
+function notify(room: RoomRecords): void {
+  room.revision++;
+  for (const listener of [...room.listeners]) listener();
 }
 
 subscribeClientReset(() => {
   for (const room of rooms.values()) {
-    room.records.clear();
+    room.messages.clear();
     room.turns.clear();
-    room.bookmarkWrittenAt.clear();
+    room.bookmarkedAt.clear();
     room.views.clear();
+    room.seenRows = new WeakSet();
     notify(room);
   }
 });
 
-function roomRecords(key: string): RoomRecords {
+function records(key: string): RoomRecords {
   let room = rooms.get(key);
   if (!room) {
-    room = { records: new Map(), turns: new Map(), bookmarkWrittenAt: new Map(), views: new Map(), listeners: new Set(), revision: 0 };
+    room = { messages: new Map(), turns: new Map(), bookmarkedAt: new Map(),
+      views: new Map(), seenRows: new WeakSet(), listeners: new Set(), revision: 0 };
     rooms.set(key, room);
   }
   return room;
 }
 
-/** An incoming copy loses only to a held copy with a higher version. */
-function supersedes(held: RoomViewMessage | undefined, incoming: RoomViewMessage): boolean {
-  if (!held) return true;
-  if (held === incoming) return false;
-  return (incoming.version ?? 0) >= (held.version ?? 0);
-}
-
-// A report is monotonic viewer state; a delta or a stale read may omit it.
-function withViewerState(
-  room: RoomRecords,
-  held: RoomViewMessage | undefined,
-  incoming: RoomViewMessage,
-  source: 'read' | 'shared',
-) {
-  if (!identityReadAt.has(incoming)) identityReadAt.set(incoming, currentSurfaceStamp());
-  if (!held) return incoming;
-  const written = room.bookmarkWrittenAt.get(incoming.id);
-  const keepBookmark = source === 'shared' ||
-    (written !== undefined && identityReadAt.get(incoming)! < written);
-  const bookmarked = keepBookmark ? held.bookmarked : incoming.bookmarked;
-  const reported = Boolean(held.feedbackReported || incoming.feedbackReported);
-  if (bookmarked === incoming.bookmarked && reported === Boolean(incoming.feedbackReported)) return incoming;
-  const next = { ...incoming, bookmarked, feedbackReported: reported };
-  identityReadAt.set(next, identityReadAt.get(incoming)!);
-  return next;
-}
-
-function notify(room: RoomRecords) {
-  room.revision += 1;
-  for (const listener of [...room.listeners]) listener();
-}
-
-function dropUnheld(roomId: string, room: RoomRecords) {
-  for (const id of room.records.keys()) {
-    let held = false;
-    for (const rows of room.views.values()) {
-      if (rows.has(id)) {
-        held = true;
-        break;
-      }
-    }
-    if (!held) {
-      room.records.delete(id);
-      room.bookmarkWrittenAt.delete(id);
-    }
+function prune(key: string, room: RoomRecords): void {
+  for (const id of room.messages.keys()) {
+    if ([...room.views.values()].some((ids) => ids.has(id))) continue;
+    room.messages.delete(id);
+    room.bookmarkedAt.delete(id);
   }
-  if (!room.views.size && !room.listeners.size) rooms.delete(roomId);
+  if (!room.views.size && !room.listeners.size) rooms.delete(key);
 }
 
-/** A Room read replaces turns it could see; a delta after its start survives it. */
-export function offerRoomTurns(
-  scope: string | null,
-  roomId: string,
-  turns: readonly RoomViewAgentTurn[],
-  readStamp: number,
-): void {
+/** A Room read replaces only turns it could see; a newer live delta survives it. */
+export function offerRoomTurns(scope: string | null, roomId: string, turns: readonly RoomViewAgentTurn[], stamp: number): void {
   if (!scope) return;
-  const room = roomRecords(roomKey(scope, roomId));
+  const room = records(keyOf(scope, roomId));
   const seen = new Set(turns.map((turn) => turn.agentPubkey));
   let changed = false;
-  for (const [agentId, held] of room.turns) {
-    if (!seen.has(agentId) && held.stamp <= readStamp) {
-      room.turns.delete(agentId);
-      changed = true;
-    }
+  for (const [id, held] of room.turns) {
+    if (!seen.has(id) && held.stamp <= stamp) { room.turns.delete(id); changed = true; }
   }
   for (const turn of turns) {
     const held = room.turns.get(turn.agentPubkey);
-    if (held && held.stamp > readStamp) continue;
+    if (held && held.stamp > stamp) continue;
     if (held?.row !== turn) changed = true;
-    room.turns.set(turn.agentPubkey, { row: turn, stamp: readStamp });
+    room.turns.set(turn.agentPubkey, { row: turn, stamp });
   }
   if (changed) notify(room);
 }
 
 export function writeRoomTurn(scope: string | null, roomId: string, turn: RoomViewAgentTurn): void {
   if (!scope) return;
-  const room = roomRecords(roomKey(scope, roomId));
+  const room = records(keyOf(scope, roomId));
   room.turns.set(turn.agentPubkey, { row: turn, stamp: nextSurfaceStamp() });
   notify(room);
 }
 
 export function roomTurns(scope: string | null, roomId: string): readonly RoomViewAgentTurn[] {
-  const room = scope ? rooms.get(roomKey(scope, roomId)) : undefined;
+  const room = scope ? rooms.get(keyOf(scope, roomId)) : undefined;
   return [...(room?.turns.values() ?? [])].map(({ row }) => row)
     .sort((a, b) => b.createdAt - a.createdAt || a.agentPubkey.localeCompare(b.agentPubkey))
     .slice(0, ROOM_VIEW_AGENT_LIMIT);
 }
 
-/**
- * A server row for this Room: a live delta or a mutation result. It replaces
- * the record when some view holds that id and it is not older than the record.
- * A row no view holds yet is left to the window that adds it.
- */
+function accept(room: RoomRecords, incoming: RoomViewMessage, shared: boolean): boolean {
+  const held = room.messages.get(incoming.id);
+  if (held === incoming || (held && (held.version ?? 0) > (incoming.version ?? 0))) return false;
+  if (!readAt.has(incoming)) readAt.set(incoming, currentSurfaceStamp());
+  const written = room.bookmarkedAt.get(incoming.id);
+  const keepBookmark = shared || (written !== undefined && readAt.get(incoming)! < written);
+  const bookmarked = held && keepBookmark ? held.bookmarked : incoming.bookmarked;
+  const feedbackReported = Boolean(held?.feedbackReported || incoming.feedbackReported);
+  const next = bookmarked === incoming.bookmarked && feedbackReported === Boolean(incoming.feedbackReported)
+    ? incoming : { ...incoming, bookmarked, feedbackReported };
+  if (next !== incoming) readAt.set(next, readAt.get(incoming)!);
+  room.messages.set(incoming.id, next);
+  return next !== held;
+}
+
+/** Update one loaded row; the server version and viewer state remain authoritative. */
 export function writeRoomMessage(scope: string | null, roomId: string, message: RoomViewMessage): void {
-  if (!scope) return;
-  const room = rooms.get(roomKey(scope, roomId));
-  if (!room?.records.has(message.id)) return;
-  if (!supersedes(room.records.get(message.id), message)) return;
-  room.records.set(message.id, withViewerState(room, room.records.get(message.id), message, 'shared'));
-  notify(room);
+  const room = scope ? rooms.get(keyOf(scope, roomId)) : undefined;
+  if (room?.messages.has(message.id) && accept(room, message, true)) notify(room);
 }
 
 export function writeRoomBookmark(scope: string | null, roomId: string, id: string, bookmarked: boolean): void {
-  const room = scope ? rooms.get(roomKey(scope, roomId)) : undefined;
-  const held = room?.records.get(id);
+  const room = scope ? rooms.get(keyOf(scope, roomId)) : undefined;
+  const held = room?.messages.get(id);
   if (!room || !held) return;
-  room.bookmarkWrittenAt.set(id, nextSurfaceStamp());
-  room.records.set(id, { ...held, bookmarked });
+  room.bookmarkedAt.set(id, nextSurfaceStamp());
+  room.messages.set(id, { ...held, bookmarked });
   notify(room);
 }
 
-/** The current record for one loaded message, if a view holds it. */
-export function roomMessageRecord(scope: string | null, roomId: string, messageId: string): RoomViewMessage | undefined {
-  return scope ? rooms.get(roomKey(scope, roomId))?.records.get(messageId) : undefined;
+export function roomMessageRecord(scope: string | null, roomId: string, id: string): RoomViewMessage | undefined {
+  return scope ? rooms.get(keyOf(scope, roomId))?.messages.get(id) : undefined;
 }
 
-/**
- * Record the rows one view holds. A row object the view has not offered
- * before is a fresh server copy and replaces the record unless the record is
- * newer; a row it offered before never replaces a record that moved on.
- * Returns whether any record changed.
- */
-function offer(
-  key: string,
-  viewKey: string,
-  groups: readonly (readonly RoomViewMessage[])[],
-): boolean {
-  const room = roomRecords(key);
+function offer(key: string, viewKey: string, groups: readonly (readonly RoomViewMessage[])[]): boolean {
+  const room = records(key);
   const previous = room.views.get(viewKey);
-  const next = new Map<string, Set<RoomViewMessage>>();
+  const next = new Set<string>();
   let changed = false;
-  for (const rows of groups) {
-    for (const row of rows) {
-      let offered = next.get(row.id);
-      if (!offered) next.set(row.id, (offered = new Set()));
-      offered.add(row);
-      if (previous?.get(row.id)?.has(row) && room.records.has(row.id)) continue;
-      if (supersedes(room.records.get(row.id), row)) {
-        if (room.records.get(row.id) !== row) changed = true;
-        room.records.set(row.id, withViewerState(room, room.records.get(row.id), row, 'read'));
-      }
-    }
+  for (const rows of groups) for (const row of rows) {
+    next.add(row.id);
+    if (room.seenRows.has(row) && room.messages.has(row.id)) continue;
+    room.seenRows.add(row);
+    if (accept(room, row, false)) changed = true;
   }
   room.views.set(viewKey, next);
-  if (previous && previous.size !== next.size) dropUnheld(key, room);
-  else if (previous) {
-    for (const id of previous.keys()) {
-      if (!next.has(id)) {
-        dropUnheld(key, room);
-        break;
-      }
-    }
-  }
+  if (previous && [...previous].some((id) => !next.has(id))) prune(key, room);
   return changed;
 }
 
-function release(key: string, viewKey: string) {
-  const room = rooms.get(key);
-  if (!room) return;
-  room.views.delete(viewKey);
-  dropUnheld(key, room);
-}
-
-function select(
-  room: RoomRecords | undefined,
-  rows: readonly RoomViewMessage[],
-  scope: string | null,
-  identityVersion: number,
-): readonly RoomViewMessage[] {
-  if (!room) return rows;
-  let changed = false;
-  const selected = rows.map((row) => {
-    const record = room.records.get(row.id) ?? row;
-    let selected = record;
-    if (scope) {
-      const cached = identitySelected.get(record);
-      selected = cached?.scope === scope && cached.version === identityVersion ? cached.row
-        : new IdentitySelection(scope, identityReadAt.get(record) ?? 0).message(record);
-      if (cached?.scope !== scope || cached.version !== identityVersion)
-        identitySelected.set(record, { scope, version: identityVersion, row: selected });
-    }
-    if (selected !== row) changed = true;
-    return selected;
-  });
-  return changed ? selected : rows;
-}
-
-let nextViewId = 0;
-
-function useRoomRevision(key: string | undefined): number {
+function useRevision(key: string | undefined): number {
   const subscribe = useCallback((listener: () => void) => {
     if (!key) return () => undefined;
-    const room = roomRecords(key);
+    const room = records(key);
     room.listeners.add(listener);
-    return () => {
-      room.listeners.delete(listener);
-      dropUnheld(key, room);
-    };
+    return () => { room.listeners.delete(listener); prune(key, room); };
   }, [key]);
   return useSyncExternalStore(subscribe, () => key ? rooms.get(key)?.revision ?? 0 : 0);
 }
 
 export function useRoomTurnRecords(scope: string | null, roomId: string | undefined) {
-  const key = scope && roomId ? roomKey(scope, roomId) : undefined;
-  const revision = useRoomRevision(key);
+  const key = scope && roomId ? keyOf(scope, roomId) : undefined;
+  const revision = useRevision(key);
   return useMemo(() => roomTurns(scope, roomId ?? ''), [key, revision]);
 }
 
-/**
- * One view's windows of a Room, read through the Room's message records.
- * Each group keeps its own order and membership; only each row's content
- * comes from the record. Group arrays keep their identity while no record in
- * them differs from the row given.
- */
+function select(room: RoomRecords | undefined, rows: readonly RoomViewMessage[], scope: string | null, version: number) {
+  if (!room) return rows;
+  let changed = false;
+  const selected = rows.map((row) => {
+    const record = room.messages.get(row.id) ?? row;
+    let result = record;
+    if (scope) {
+      const cached = identityRows.get(record);
+      result = cached?.scope === scope && cached.version === version ? cached.row
+        : new IdentitySelection(scope, readAt.get(record) ?? 0).message(record);
+      if (cached?.scope !== scope || cached.version !== version)
+        identityRows.set(record, { scope, version, row: result });
+    }
+    if (result !== row) changed = true;
+    return result;
+  });
+  return changed ? selected : rows;
+}
+
+/** Windows keep their order; all mounted views select content from one id-keyed record. */
 export function useRoomMessageRecords<const Groups extends readonly (readonly RoomViewMessage[])[]>(
-  scope: string | null,
-  roomId: string | undefined,
-  groups: Groups,
+  scope: string | null, roomId: string | undefined, groups: Groups,
 ): Groups {
-  const [viewKey] = useState(() => `view:${(nextViewId += 1)}`);
+  const [viewKey] = useState(() => `view:${++nextViewId}`);
   const held = useRef({ generation: clientResetGeneration(), scope, roomId,
     groups: [...groups] as readonly (readonly RoomViewMessage[])[], blocked: false });
   const generation = clientResetGeneration();
@@ -286,22 +191,16 @@ export function useRoomMessageRecords<const Groups extends readonly (readonly Ro
     groups.length !== held.current.groups.length ||
     groups.some((rows, index) => rows !== held.current.groups[index])))
     held.current.blocked = false;
-  const visibleGroups = held.current.blocked ? groups.map(() => []) : groups;
+  const visible = held.current.blocked ? groups.map(() => []) : groups;
   const identityVersion = useIdentityRecords();
-  const key = scope && roomId ? roomKey(scope, roomId) : undefined;
-  // Offer during render, so this render already reads the record a fresh
-  // server copy just replaced. Other views learn of it after commit.
-  const changed = key ? offer(key, viewKey, visibleGroups) : false;
+  const key = scope && roomId ? keyOf(scope, roomId) : undefined;
+  const changed = key ? offer(key, viewKey, visible) : false;
   const room = key ? rooms.get(key) : undefined;
-  // Re-render when another view or a live delta changes a record.
-  useRoomRevision(key);
-  useLayoutEffect(() => {
-    if (changed && room) notify(room);
-  });
+  useRevision(key);
+  useLayoutEffect(() => { if (changed && room) notify(room); });
   useLayoutEffect(() => {
     if (!key) return;
-    return () => release(key, viewKey);
+    return () => { const held = rooms.get(key); held?.views.delete(viewKey); if (held) prune(key, held); };
   }, [key, viewKey]);
-  // A group with no changed record is returned as given, so it keeps its identity.
-  return visibleGroups.map((rows) => select(room, rows, scope, identityVersion)) as unknown as Groups;
+  return visible.map((rows) => select(room, rows, scope, identityVersion)) as unknown as Groups;
 }

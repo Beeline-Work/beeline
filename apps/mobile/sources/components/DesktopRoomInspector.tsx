@@ -18,14 +18,12 @@ import {
 } from '@/buzz/desktop-workbench-state';
 import { compactRelativeTime, ledgerStamp } from '@/buzz/relative-time';
 import { ledgerDayCaption, transcriptBylineOpeners } from '@/buzz/message-dates';
-import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
-import { anchorRelayReports } from '@/buzz/system-lines';
 import {
   createRoomMessageProjector,
   roomViewTranscriptMessages,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
-import { useRoomMessageStore } from '@/buzz/room-message-store';
+import { foldTranscriptRows, useRoomMessageStore } from '@/buzz/room-message-store';
 import { offerRoomTurns, useRoomMessageRecords, useRoomTurnRecords } from '@/buzz/room-message-records';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { buildChannelReferenceIndex, type ChannelReferenceIndex, type ChannelReferenceTarget } from '@/buzz/channel-reference';
@@ -370,15 +368,10 @@ function CornerCockpit({
   const messages = React.useMemo(
     () =>
       detail
-        ? foldPrLifecycleRuns(anchorRelayReports(
-            projector.project(
-              roomViewTranscriptMessages({
-                messages: [...historyRows, ...tailRows],
-                toolRows,
-              }),
-              detail.viewer.identity.pubkey,
-            ),
-          ))
+        ? foldTranscriptRows(projector.project(
+            roomViewTranscriptMessages({ messages: [...historyRows, ...tailRows], toolRows }),
+            detail.viewer.identity.pubkey,
+          ), null).rows
         : [],
     [detail, historyRows, projector, tailRows, toolRows],
   );

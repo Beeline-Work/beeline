@@ -3,7 +3,7 @@ import * as React from 'react';
 import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
 import { FlatList, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { CornerListItem, RoomView, RoomViewAgentTurn } from '@beeline/buzz-client';
+import type { CornerListItem, RoomView, RoomViewMessage } from '@beeline/buzz-client';
 import { cornerTitle } from '@beeline/api-contract/phone';
 import type { RoomViewClient } from '@/sync/transport/room-view-client';
 import {
@@ -22,29 +22,16 @@ import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
 import { anchorRelayReports } from '@/buzz/system-lines';
 import {
   createRoomMessageProjector,
-  keepsTurnActivity,
-  reconcileRoomTurnDelta,
   roomViewTranscriptMessages,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
-import {
-  applyRoomTailRead,
-  holdRoomMessages,
-  pruneRoomTail,
-  useRoomMessages,
-  roomRecordScope,
-  useRoomTail,
-  type RoomRecordScope,
-} from '@/buzz/room-message-records';
+import { offerRoomTurns, useRoomMessageRecords, useRoomTurnRecords } from '@/buzz/room-message-records';
+import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { buildChannelReferenceIndex, type ChannelReferenceIndex, type ChannelReferenceTarget } from '@/buzz/channel-reference';
 import { openExternalUrl } from '@/utils/open-external-url';
-import {
-  getEffectiveRelayUrl,
-  loadBuzzIdentity,
-  loadBuzzViewerPubkey,
-} from '@/auth/buzz-identity-storage';
-import { subscribeClientReset } from '@/sync/client-reset';
+import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { identityScope } from '@/buzz/identity-records';
 import { useRoomCorners } from '@/buzz/use-room-corners';
 import { findRoomCornerRow } from '@/buzz/room-corner-store';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -88,9 +75,7 @@ type Props = {
 
 const COMPOSER_MIN_HEIGHT = COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
 const COMPOSER_MAX_HEIGHT = COMPOSER_MAX_INPUT_HEIGHT;
-const noIds: readonly string[] = [];
-const noTurns: readonly RoomViewAgentTurn[] = [];
-let nextInspectorTail = 0;
+const noRows: readonly RoomViewMessage[] = [];
 
 function stateLine(corner: CornerListItem): string {
   return corner.state;
@@ -139,6 +124,14 @@ export function DesktopRoomInspector({
   focusMessageId,
 }: Props) {
   const selectedCornerId = content.kind === 'corner' ? content.cornerId : null;
+  const [messageRecordScope, setMessageRecordScope] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let active = true;
+    void getEffectiveRelayUrl().then((relayUrl) => {
+      if (active) setMessageRecordScope(identityScope(relayUrl, room.viewer.identity.pubkey));
+    });
+    return () => { active = false; };
+  }, [room.viewer.identity.pubkey]);
   // The Room's one corner record, the same rows its Corners screen and Room
   // list dropdown paint; frames keep it current while the inspector is open.
   const cornerRecord = useRoomCorners(client ? room.room.id : undefined, client).record;
@@ -146,41 +139,23 @@ export function DesktopRoomInspector({
   const dragStart = React.useRef(width);
 
   React.useEffect(() => void loadDesktopPaneWidth('inspector').then(setWidth), []);
-  const recordScope = useRoomRecordScope();
-  // Turn progress heard since the last read, so the stop control and live
-  // activity follow the agent without reading the corner again.
-  const [liveTurns, setLiveTurns] = React.useState<{
-    readonly roomId: string | null;
-    readonly turns: readonly RoomViewAgentTurn[];
-  }>({ roomId: null, turns: [] });
   const observed = useObservedResource<RoomView>(
-    client && selectedCornerId ? `inspector:${selectedCornerId}` : undefined,
+    client && selectedCornerId && messageRecordScope ? `inspector:${selectedCornerId}` : undefined,
     {
-      load: () => client!.room(selectedCornerId!),
-      // New and edited messages reach the pane through the Room's message
-      // records. Only a system line or card, a change no delta describes, or
-      // a reconnect reads the corner again.
-      subscribe: selectedCornerId
-        ? observeRoomResource(selectedCornerId, undefined, (turn) =>
-            setLiveTurns((current) => ({
-              roomId: selectedCornerId,
-              turns: [
-                ...(current.roomId === selectedCornerId ? current.turns : []).filter(
-                  (held) => held.agentPubkey !== turn.agentPubkey,
-                ),
-                turn,
-              ],
-            })),
-          )
-        : undefined,
+      load: async () => {
+        const stamp = currentSurfaceStamp();
+        const view = await client!.room(selectedCornerId!);
+        offerRoomTurns(messageRecordScope, selectedCornerId!, view.latestAgentTurns, stamp);
+        return view;
+      },
+      // The inspector paints the whole corner, so every committed message reads it.
+      subscribe: selectedCornerId ? observeRoomResource(selectedCornerId, () => true) : undefined,
     },
   );
-  const read = observed.data?.room.id === selectedCornerId ? observed.data : null;
-  const turns = liveTurns.roomId === selectedCornerId ? liveTurns.turns : noTurns;
-  const detail = React.useMemo(
-    () => (read ? turns.reduce(reconcileRoomTurnDelta, read) : null),
-    [read, turns],
-  );
+  const turns = useRoomTurnRecords(messageRecordScope, selectedCornerId ?? undefined);
+  const detail = React.useMemo(() => observed.data?.room.id === selectedCornerId
+    ? { ...observed.data, latestAgentTurns: turns } : null,
+  [observed.data, selectedCornerId, turns]);
   const loading = observed.loading;
   const refreshCorner = observed.retry;
 
@@ -259,7 +234,7 @@ export function DesktopRoomInspector({
             roomId={content.cornerId}
             parentRoomName={room.room.name}
             detail={detail}
-            recordScope={recordScope}
+            messageRecordScope={messageRecordScope}
             loading={loading}
             summary={summary}
             focusMessageId={focusMessageId}
@@ -272,27 +247,6 @@ export function DesktopRoomInspector({
       )}
     </View>
   );
-}
-
-/** The records scope of the signed-in viewer and relay, once both are read. */
-function useRoomRecordScope(): RoomRecordScope | undefined {
-  const [scope, setScope] = React.useState<RoomRecordScope>();
-  React.useEffect(() => {
-    let current = true;
-    const load = () =>
-      void Promise.all([getEffectiveRelayUrl(), loadBuzzViewerPubkey()]).then(
-        ([relayUrl, viewerPubkey]) => {
-          if (current) setScope(viewerPubkey ? roomRecordScope(relayUrl, viewerPubkey) : undefined);
-        },
-      );
-    load();
-    const stop = subscribeClientReset(load);
-    return () => {
-      current = false;
-      stop();
-    };
-  }, []);
-  return scope;
 }
 
 function scheduleFrame(callback: () => void) {
@@ -319,7 +273,7 @@ function CornerCockpit({
   roomId,
   parentRoomName,
   detail,
-  recordScope,
+  messageRecordScope,
   loading,
   summary,
   focusMessageId,
@@ -334,7 +288,7 @@ function CornerCockpit({
   roomId: string;
   parentRoomName: string;
   detail: RoomView | null;
-  recordScope: RoomRecordScope | undefined;
+  messageRecordScope: string | null;
   loading: boolean;
   summary?: CornerListItem;
   focusMessageId?: string | null;
@@ -355,40 +309,13 @@ function CornerCockpit({
   const [sendError, setSendError] = React.useState<string | null>(null);
   const [stopping, setStopping] = React.useState(false);
   const [now, setNow] = React.useState(Date.now);
-  // The same message records the main transcript reads, so both show one
-  // version of each message. This pane keeps its own tail of ids and scroll;
-  // a new message joins the tail from the live connection.
-  const [tailHolder] = React.useState(() => `inspector-tail:${(nextInspectorTail += 1)}`);
-  const tailRoomId = detail?.room.id;
-  React.useLayoutEffect(() => {
-    if (!recordScope || !detail) return;
-    applyRoomTailRead(recordScope, detail.room.id, tailHolder, detail, true);
-    // A new read replaces the tail; turn progress alone does not.
-  }, [recordScope, detail?.messages, detail?.toolRows, tailHolder]);
-  React.useLayoutEffect(() => {
-    if (!recordScope || !detail) return;
-    for (const turn of detail.latestAgentTurns)
-      pruneRoomTail(recordScope, detail.room.id, tailHolder, (message) =>
-        keepsTurnActivity(message, turn),
-      );
-  }, [recordScope, detail?.latestAgentTurns, tailHolder]);
-  React.useEffect(() => {
-    if (!recordScope || !tailRoomId) return;
-    return () => holdRoomMessages(recordScope, tailRoomId, tailHolder, null);
-  }, [recordScope, tailRoomId, tailHolder]);
-  const tail = useRoomTail(recordScope, tailRoomId, tailHolder);
-  const tailRows = useRoomMessages(recordScope, tailRoomId, tail?.ids ?? noIds);
-  const toolRows = useRoomMessages(recordScope, tailRoomId, tail?.toolIds ?? noIds);
   const {
     rows: serverHistoryRows,
     status: historyStatus,
     loadOlder,
   } = useRoomMessageStore({
     roomId,
-    recordScope,
-    // Not loaded until the read's ids reach the records, so a jump does not
-    // page history for a row the tail is about to hold.
-    tailMessages: detail?.room.id === roomId && tail ? tailRows : undefined,
+    tailMessages: detail?.room.id === roomId ? detail.messages : undefined,
     roomClient: client,
     enabled: Boolean(focusMessageId && client),
     initialVisibleCount: 200,
@@ -432,7 +359,13 @@ function CornerCockpit({
       return false;
     }
   };
-  const historyRows = serverHistoryRows;
+  // The same message records the main transcript reads, so both show one
+  // version of each message. This pane keeps its own rows and scroll.
+  const [historyRows, tailRows, toolRows] = useRoomMessageRecords(messageRecordScope, detail?.room.id, [
+    serverHistoryRows,
+    detail?.messages ?? noRows,
+    detail?.toolRows ?? noRows,
+  ]);
   const projector = React.useMemo(() => createRoomMessageProjector(), [detail?.room.id]);
   const messages = React.useMemo(
     () =>
@@ -453,12 +386,11 @@ function CornerCockpit({
     focusedAnchorRef.current = null;
   }, [focusMessageId, roomId]);
   React.useEffect(() => {
-    // The read's rows are not shown until its ids reach the tail.
-    if (!focusMessageId || !detail || !tail || loading) return;
+    if (!focusMessageId || !detail || loading) return;
     const found = messages.some((message) => messageMatchesFocus(message, focusMessageId));
     if (found) return;
     if (historyStatus === 'idle') loadOlder(messages.length);
-  }, [detail, focusMessageId, historyStatus, loadOlder, loading, messages, tail]);
+  }, [detail, focusMessageId, historyStatus, loadOlder, loading, messages]);
   React.useEffect(() => {
     if (!focusMessageId) return;
     const key = `${roomId}:${focusMessageId}`;

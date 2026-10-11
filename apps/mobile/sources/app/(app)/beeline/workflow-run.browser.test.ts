@@ -59,10 +59,14 @@ function workflowRunShims(
   const view = detail as { contract: unknown; run: unknown };
   return {
     ...webProofShims(mobile),
-    '@/sync/transport/live-connection': `import { applyRoomDraftFrame } from '@/buzz/room-live-drafts';
+    '@/sync/transport/live-connection': `const draftRows = new Map();
     export const sharedLiveConnection = () => ({
-      register: async () => {
-        setTimeout(() => ${JSON.stringify(drafts)}.forEach((live) => applyRoomDraftFrame(live, true)), 0);
+      liveDrafts: () => draftRows,
+      register: async (_filters, listener) => {
+        setTimeout(() => ${JSON.stringify(drafts)}.forEach((live) => {
+          draftRows.set(live.agentId + ':' + live.turnId, live.latestChunk);
+          listener({ monolithLive: live });
+        }), 0);
         return () => undefined;
       },
     });`,

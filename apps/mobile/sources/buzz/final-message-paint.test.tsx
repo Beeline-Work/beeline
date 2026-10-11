@@ -10,13 +10,7 @@ import {
   conversationIdentityByPubkey,
   createRoomMessageProjector,
 } from './room-view-presentation';
-import {
-  applyRoomMessage,
-  applyRoomTailRead,
-  holdRoomMessages,
-  roomTail,
-  selectRoomMessages,
-} from './room-message-records';
+import { useRoomMessageRecords } from './room-message-records';
 import { observeTranscriptArrivals, EMPTY_TRANSCRIPT_ARRIVAL_STATE } from './transcript-motion';
 import { sameRecordValueMap, sameStringSet, useStable } from './use-stable';
 
@@ -86,9 +80,10 @@ function Transcript({
   onRow: (id: string) => void;
 }) {
   const projector = React.useMemo(createRoomMessageProjector, []);
+  const [rows] = useRoomMessageRecords('test-scope', 'room', [view.messages]);
   const messages = React.useMemo(
-    () => projector.project(view.messages, VIEWER),
-    [projector, view.messages],
+    () => projector.project(rows, VIEWER),
+    [projector, rows],
   );
   const rawIdentities = React.useMemo(
     () => conversationIdentityByPubkey(view.members, messages),
@@ -151,24 +146,17 @@ function rowsPaintedForFinalMessage(stable: boolean) {
   const history = Array.from({ length: 20 }, (_, index) => message(index));
   const painted: string[] = [];
   const onRow = (id: string) => painted.push(id);
-  // The session's tail: ids over the Room's message records.
-  const holder = `final-message-${stable}`;
-  applyRoomTailRead('test-scope', 'room', holder, room(history), false);
-  const tailView = () =>
-    room(selectRoomMessages('test-scope', 'room', roomTail('test-scope', 'room', holder)!.ids));
-  let view = tailView();
+  let view = room(history);
   let renderer!: { update: (element: React.ReactElement) => void };
   act(() => {
     renderer = create(React.createElement(Transcript, { view, stable, onRow }));
   });
   painted.length = 0;
   const finalReply = message(21, AGENT);
-  applyRoomMessage('test-scope', 'room', finalReply);
-  view = tailView();
+  view = room([...history, finalReply]);
   act(() => {
     renderer.update(React.createElement(Transcript, { view, stable, onRow }));
   });
-  holdRoomMessages('test-scope', 'room', holder, null);
   return { painted: [...painted], finalId: finalReply.id };
 }
 

@@ -363,7 +363,6 @@ beforeEach(() => {
   list.live = new LiveConnection({
     authorization: async () => 'phone-session',
     liveUrl: () => 'wss://server.example/v1/phone/live',
-    recordScope: async () => undefined,
     subscribeIdentityChange: () => () => undefined,
     subscribeForeground: () => () => undefined,
   });

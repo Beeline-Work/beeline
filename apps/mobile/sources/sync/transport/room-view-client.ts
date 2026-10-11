@@ -26,6 +26,7 @@ import {
   type RoomHistoryOutline,
   type RoomHistoryView,
   type RoomView,
+  type RoomViewMessage,
   type WorkspaceListView,
   type WorkspaceMemberListQuery,
   type WorkspaceMemberListView,
@@ -37,11 +38,11 @@ import {
   MonolithRequestTimeoutError,
   MONOLITH_REQUEST_TIMEOUT_MS,
 } from '@/auth/monolith-session';
-import { roomReadStamp, stampRoomRead } from '@/buzz/room-message-records';
-import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { recordRoomReadNetworkTiming } from '@/buzz/room-open-trace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { liveFrameEpoch } from './live-frame-epoch';
+import { stampRoomMessageRows } from '@/buzz/room-message-records';
+import { currentSurfaceStamp } from '@/buzz/surface-clock';
 
 export { RoomViewHttpError };
 
@@ -336,10 +337,16 @@ export function readPushedMonolithRoom(roomId: string): Promise<RoomView> {
   return new MonolithRoomViewClient().room(roomId);
 }
 
-/** A Room read or history page, its rows marked with when it started. */
-function stamped<T>(read: Promise<T>, stamp = roomReadStamp(),
-  surfaceStamp = currentSurfaceStamp()): Promise<T> {
-  return read.then((value) => stampRoomRead(value, stamp, surfaceStamp));
+/** A Room or history response keeps its read-start clock for live identity and viewer state. */
+function stamped<T>(read: Promise<T>, stamp = currentSurfaceStamp()): Promise<T> {
+  return read.then((value) => {
+    const { messages, toolRows } = value as {
+      messages?: readonly RoomViewMessage[];
+      toolRows?: readonly RoomViewMessage[];
+    };
+    stampRoomMessageRows([...(messages ?? []), ...(toolRows ?? [])], stamp);
+    return value;
+  });
 }
 
 /** Stable read seam: OTA config chooses the monolith or untouched relay reader. */

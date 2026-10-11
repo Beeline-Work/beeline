@@ -299,11 +299,7 @@ import {
   hostRowIndex,
   useRoomMessageStore,
 } from '@/buzz/room-message-store';
-import {
-  heldRoomMessages,
-  applyRoomBookmark,
-  useRoomRecordRevision,
-} from '@/buzz/room-message-records';
+import { roomMessageRecord, useRoomMessageRecords, writeRoomBookmark } from '@/buzz/room-message-records';
 import {
   markRoomOpen,
   useRoomSurfaceSession,
@@ -817,7 +813,7 @@ export function BuzzChatSurface({
     adoptTransport: setSessionTransport,
     roomClient,
     roomSurface,
-    recordScope,
+    messageRecordScope,
     applyRoomRepositoryResult,
     clearRoomRepository,
     applyRoomMessageResult,
@@ -939,9 +935,6 @@ export function BuzzChatSurface({
   const [optimisticReactions, setOptimisticReactions] = useState<Record<string, ChatDisplayMessage['reactions']>>({});
   const [optimisticDeletes, setOptimisticDeletes] = useState<Record<string, true>>({});
   const reactingRef = useRef(new Set<string>());
-  // Messages this viewer reported here, marked before the next read carries
-  // the server's `feedbackReported`.
-  const [optimisticReports, setOptimisticReports] = useState<Record<string, true>>({});
   const { showCopied: showReportToast, toast: reportToast } =
     useCopiedToast('message-report-toast');
   const [forwardTarget, setForwardTarget] = useState<ChatDisplayMessage | null>(null);
@@ -1468,17 +1461,14 @@ export function BuzzChatSurface({
     reset: resetTranscriptHistory,
   } = useRoomMessageStore({
     roomId: decodedId,
-    recordScope,
     tailMessages: roomSurface?.room.id === decodedId ? roomSurface.messages : undefined,
     roomClient,
-    enabled: Boolean(cacheViewerPubkey && recordScope),
+    enabled: Boolean(cacheViewerPubkey),
     initialVisibleCount: isCorner ? INITIAL_CORNER_MESSAGE_WINDOW : INITIAL_MESSAGE_WINDOW,
   });
-  // The tail and history are windows of ids; each row's content comes from
-  // the Room's one record for that message id.
-  const tailRows = serverTailRows;
-  const historyRows = serverHistoryRows;
-  const recordRevision = useRoomRecordRevision(recordScope, decodedId);
+  const [tailRows, historyRows] = useRoomMessageRecords(messageRecordScope, decodedId, [
+    serverTailRows, serverHistoryRows,
+  ]);
   const cachedMessages = useMemo(
     () => (cacheViewerPubkey ? roomMessageProjector.project(tailRows, cacheViewerPubkey) : []),
     [cacheViewerPubkey, roomMessageProjector, tailRows],
@@ -1487,18 +1477,12 @@ export function BuzzChatSurface({
     () => new Set(cachedMessages.map((message) => message.id)),
     [cachedMessages],
   );
-  // A draft settles against any committed row this Room holds, in any window.
-  // `recordRevision` changes whenever those records do.
   const liveMessages = useMemo<ChatDisplayMessage[]>(
     () =>
       roomSurface
-        ? liveDraftMessages(
-            liveOverlays,
-            heldRoomMessages(recordScope, decodedId),
-            roomSurface.latestAgentTurns,
-          )
+        ? liveDraftMessages(liveOverlays, [...tailRows, ...historyRows], roomSurface.latestAgentTurns)
         : [],
-    [decodedId, liveOverlays, recordRevision, recordScope, roomSurface],
+    [historyRows, liveOverlays, roomSurface, tailRows],
   );
   // A detached window (a jump target far from the newest rows) shows only its
   // own rows until `loadNewer` walks it back to the live tail.
@@ -3798,7 +3782,9 @@ export function BuzzChatSurface({
           messageId,
           bookmarked,
         });
-        if (recordScope) applyRoomBookmark(recordScope, decodedId, messageId, result.bookmarked);
+        writeRoomBookmark(messageRecordScope, decodedId, messageId, result.bookmarked);
+        const row = roomMessageRecord(messageRecordScope, decodedId, messageId);
+        if (row) applyRoomMessageResult({ ...row, bookmarked: result.bookmarked });
         settle();
       } catch (error) {
         settle();
@@ -3809,13 +3795,7 @@ export function BuzzChatSurface({
         );
       }
     },
-    [decodedId, messageIsBookmarked, recordScope],
-  );
-
-  const messageIsReported = useCallback(
-    (message: ChatDisplayMessage) =>
-      Boolean(optimisticReports[message.relayId ?? message.id] ?? message.feedbackReported),
-    [optimisticReports],
+    [applyRoomMessageResult, decodedId, messageIsBookmarked, messageRecordScope],
   );
 
   const handleReportMessage = useCallback(
@@ -3834,12 +3814,13 @@ export function BuzzChatSurface({
         Modal.alert('Could not report message', phoneOperationFailureReason(outcome.error));
         return;
       }
-      setOptimisticReports((current) => ({ ...current, [messageId]: true }));
+      const row = roomMessageRecord(messageRecordScope, decodedId, messageId);
+      if (row) applyRoomMessageResult({ ...row, feedbackReported: true });
       const copy = reportIssueToastCopy(outcome.duplicate);
       showReportToast(copy);
       AccessibilityInfo.announceForAccessibility(copy);
     },
-    [decodedId, showReportToast],
+    [applyRoomMessageResult, decodedId, messageRecordScope, showReportToast],
   );
 
   const canDeleteMessage = useCallback(
@@ -5923,15 +5904,9 @@ export function BuzzChatSurface({
       }
 
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
-      const renderedItem =
-        messageIsBookmarked(item) === Boolean(item.bookmarked) &&
-        messageIsReported(item) === Boolean(item.feedbackReported)
-          ? item
-          : {
-              ...item,
-              bookmarked: messageIsBookmarked(item),
-              feedbackReported: messageIsReported(item),
-            };
+      const renderedItem = messageIsBookmarked(item) === Boolean(item.bookmarked)
+        ? item
+        : { ...item, bookmarked: messageIsBookmarked(item) };
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
@@ -6016,7 +5991,6 @@ export function BuzzChatSurface({
       handleBookmarkMessage,
       messageIsBookmarked,
       handleReportMessage,
-      messageIsReported,
       handleCornerProposalDecision,
       cornerProposalAction,
       beginForward,

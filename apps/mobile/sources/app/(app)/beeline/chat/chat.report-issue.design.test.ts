@@ -43,8 +43,8 @@ describe('Report issue on the chat surface', () => {
     expect(handler).toContain('showReportToast(copy)');
     expect(handler).toContain("Modal.alert('Could not report message'");
     // Optimistic: the Reported marker lands before the next read.
-    expect(handler).toContain('setOptimisticReports(');
+    expect(handler).toContain('applyRoomMessageResult({ ...row, feedbackReported: true })');
+    expect(chat).not.toContain('optimisticReports');
     expect(chat).toContain('onReportIssue={handleReportMessage}');
-    expect(chat).toContain('feedbackReported: messageIsReported(item)');
   });
 });

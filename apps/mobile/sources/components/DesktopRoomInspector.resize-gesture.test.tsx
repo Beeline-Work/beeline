@@ -120,6 +120,7 @@ import { DesktopRoomInspector } from './DesktopRoomInspector';
 
 const room = {
   room: { id: 'room-1', name: 'general', workspaceId: 'workspace' },
+  viewer: { identity: { pubkey: 'viewer', kind: 'human', name: 'Viewer' } },
 } as any;
 
 let container: HTMLDivElement;

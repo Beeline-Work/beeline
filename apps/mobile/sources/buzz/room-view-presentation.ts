@@ -13,8 +13,9 @@ import type {
   WorkspaceView,
 } from '@beeline/buzz-client';
 import {
-  ROOM_VIEW_AGENT_LIMIT,
   cornerShortTitle,
+  ROOM_VIEW_MESSAGE_LIMIT,
+  ROOM_VIEW_TOOL_ROW_LIMIT,
   type SystemEvent,
 } from '@beeline/api-contract/phone';
 import type { AgentActivityItem } from '@/sync/transport';
@@ -77,61 +78,43 @@ function shareResponseArrayByKey<T>(
     : shared;
 }
 
-/** Whether a turn already held for an agent outranks an incoming one. Turn
- * times are whole seconds, so a tie within one generation keeps terminal state
- * over `working`. */
-function turnOutranks(held: RoomViewAgentTurn, incoming: RoomViewAgentTurn): boolean {
-  if (held.createdAt !== incoming.createdAt) return held.createdAt > incoming.createdAt;
-  return (
-    held.requestId === incoming.requestId &&
-    held.generationId === incoming.generationId &&
-    held.status !== 'working' &&
-    incoming.status === 'working'
-  );
+function messageTimeMs(message: RoomViewMessage): number {
+  return message.createdAtMs ?? message.createdAt * 1_000;
 }
 
-/** A read that raced a turn delta must not walk that agent's turn backwards
- * or drop it: no follow-up read comes after a delta to correct it. The server
- * only omits an agent's latest turn past the bound, which the merge reapplies. */
-function keepNewerAgentTurns(
-  previous: readonly RoomViewAgentTurn[],
-  next: readonly RoomViewAgentTurn[],
-): readonly RoomViewAgentTurn[] {
-  // A projected view may omit the list; there is then nothing to keep.
-  if (!previous?.length || !next) return next;
-  const nextByAgent = new Map(next.map((turn) => [turn.agentPubkey, turn]));
-  const held = previous.filter((turn) => {
-    const current = nextByAgent.get(turn.agentPubkey);
-    return !current || turnOutranks(turn, current);
+/** Keep a committed live delta that a slightly stale full snapshot has not
+ * caught yet. The next window remains the authority for everything else. */
+function mergeNewerCommittedMessages(
+  previous: readonly RoomViewMessage[],
+  next: readonly RoomViewMessage[],
+): readonly RoomViewMessage[] {
+  if (previous.length === 0) return next;
+  const heldById = new Map(previous.map((message) => [message.id, message]));
+  next = next.map((message) => {
+    const held = heldById.get(message.id);
+    return held && (held.version ?? 0) > (message.version ?? 0) ? held : message;
   });
-  if (held.length === 0) return next;
-  const heldAgents = new Set(held.map((turn) => turn.agentPubkey));
-  const merged = [...next.filter((turn) => !heldAgents.has(turn.agentPubkey)), ...held]
+  const nextIds = new Set(next.map((message) => message.id));
+  const nextNewest = next.reduce((newest, message) => Math.max(newest, messageTimeMs(message)), 0);
+  const extras = previous.filter(
+    (message) => !nextIds.has(message.id) && messageTimeMs(message) >= nextNewest,
+  );
+  if (extras.length === 0) return next;
+  return [...next, ...extras]
     .sort(
       (left, right) =>
-        right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
+        messageTimeMs(left) - messageTimeMs(right) || left.id.localeCompare(right.id),
     )
-    .slice(0, ROOM_VIEW_AGENT_LIMIT);
-  const unchanged =
-    merged.length === next.length && merged.every((turn, index) => turn === next[index]);
-  return unchanged ? next : merged;
+    .slice(-ROOM_VIEW_MESSAGE_LIMIT);
 }
 
-/** A Room read without its messages. Message content lives in the Room's
- *  records (`buzz/room-message-records.ts`); a surface holds only their ids. */
-export type RoomSurfaceHeader = Omit<RoomView, 'messages' | 'toolRows'>;
-
-export function roomSurfaceHeader(view: RoomView): RoomSurfaceHeader {
-  const { messages: _messages, toolRows: _toolRows, ...header } = view;
-  return header;
-}
-
-/** Reconcile the parts of a Room read a surface keeps besides its messages. */
-export function reconcileRoomView<View extends RoomSurfaceHeader>(
-  previous: View | null,
-  next: View,
-): View {
+export function reconcileRoomView(previous: RoomView | null, next: RoomView): RoomView {
   if (!previous) return next;
+  const messages = shareResponseArrayByKey(
+    previous.messages,
+    mergeNewerCommittedMessages(previous.messages, next.messages),
+    (message) => message.id,
+  );
   const members = shareResponseArrayByKey(
     previous.members,
     next.members,
@@ -140,45 +123,63 @@ export function reconcileRoomView<View extends RoomSurfaceHeader>(
   const briefing = next.briefing
     ? shareResponseArrayByKey(previous.briefing ?? [], next.briefing, (message) => message.id)
     : undefined;
-  const latestAgentTurns = keepNewerAgentTurns(previous.latestAgentTurns, next.latestAgentTurns);
   return shareResponseValue(previous, {
     ...next,
+    messages,
     members,
-    ...(latestAgentTurns !== next.latestAgentTurns ? { latestAgentTurns } : {}),
     ...(briefing ? { briefing } : {}),
-  }) as View;
+  }) as RoomView;
 }
 
-/** Merge the server's latest persisted turn for one agent. */
-export function reconcileRoomTurnDelta<View extends Pick<RoomView, 'latestAgentTurns'>>(
-  view: View,
-  turn: RoomViewAgentTurn,
-): View {
-  const previous = view.latestAgentTurns.find(
-    (candidate) => candidate.agentPubkey === turn.agentPubkey,
-  );
-  if (previous && turnOutranks(previous, turn)) return view;
-  const latestAgentTurns = [
-    ...view.latestAgentTurns.filter((candidate) => candidate.agentPubkey !== turn.agentPubkey),
-    turn,
-  ]
-    .sort(
-      (left, right) =>
-        right.createdAt - left.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
-    )
-    .slice(0, ROOM_VIEW_AGENT_LIMIT);
-  return { ...view, latestAgentTurns };
-}
-
-/** Whether a tail keeps `message` under `turn`: a terminal turn removes its
- *  agent's transient activity, exactly as the next full read does. */
-export function keepsTurnActivity(message: RoomViewMessage, turn: RoomViewAgentTurn): boolean {
+function byMessageTime(left: RoomViewMessage, right: RoomViewMessage): number {
   return (
-    message.presentation !== 'activity' ||
-    Boolean(message.durableFact) ||
-    message.author.pubkey !== turn.agentPubkey ||
-    (turn.status === 'working' && message.createdAt >= turn.createdAt)
+    (left.createdAtMs ?? left.createdAt * 1_000) - (right.createdAtMs ?? right.createdAt * 1_000) ||
+    left.id.localeCompare(right.id)
   );
+}
+
+/** A settled corner tool or output row, which the full read returns in `toolRows`. */
+function isCornerWorkRow(message: RoomViewMessage): boolean {
+  return (
+    message.presentation === 'activity' &&
+    !message.durableFact &&
+    Boolean(message.activity?.some((item) => item.kind === 'tool' || item.kind === 'output'))
+  );
+}
+
+/** Merge one server-projected committed message into the bounded Room window.
+ * A corner work row also joins `toolRows`, as the next full read returns it, so
+ * the turn delta that prunes live activity cannot take it off screen. */
+export function reconcileRoomMessageDelta(view: RoomView, message: RoomViewMessage): RoomView {
+  const held = view.messages.find((candidate) => candidate.id === message.id);
+  if (held && (held.version ?? 0) > (message.version ?? 0)) return view;
+  const messages = [...view.messages.filter((candidate) => candidate.id !== message.id), message]
+    .sort(byMessageTime)
+    .slice(-ROOM_VIEW_MESSAGE_LIMIT);
+  const toolRows =
+    view.parent && isCornerWorkRow(message)
+      ? [...(view.toolRows ?? []).filter((candidate) => candidate.id !== message.id), message]
+          .sort(byMessageTime)
+          .slice(-ROOM_VIEW_TOOL_ROW_LIMIT)
+      : view.toolRows;
+  return reconcileRoomView(view, { ...view, messages, ...(toolRows ? { toolRows } : {}) });
+}
+
+/** Merge the server's latest persisted turn for one agent. Terminal state also
+ * removes that agent's transient activity, exactly as the next full read does. */
+export function reconcileRoomTurnDelta(
+  view: RoomView,
+  turn: RoomViewAgentTurn,
+  latestAgentTurns: readonly RoomViewAgentTurn[],
+): RoomView {
+  const messages = view.messages.filter(
+    (message) =>
+      message.presentation !== 'activity' ||
+      message.durableFact ||
+      message.author.pubkey !== turn.agentPubkey ||
+      (turn.status === 'working' && message.createdAt >= turn.createdAt),
+  );
+  return reconcileRoomView(view, { ...view, messages, latestAgentTurns });
 }
 
 export type RoomMessageProjector = {

@@ -47,6 +47,7 @@ const records = {
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   const message = JSON.parse(line);
   if (message.method === 'initialize') {
+    if (behaviors[0] === 'initialize-silent') return;
     send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1, agentCapabilities: {} } });
   } else if (message.method === 'session/new') {
     send({ jsonrpc: '2.0', id: message.id, result: {
@@ -138,6 +139,18 @@ describe('runUpdateFunctionalProbe', () => {
     await expect(probe('served')).resolves.toEqual(
       expect.objectContaining({ harness: 'pi', turnCompleted: true, modelAnswer: 'served' }),
     );
+  });
+
+  it('still rejects a harness that never initializes, without appealing to the previous release', async () => {
+    const compare = vi.fn(async () => ({ kind: 'served' }) as const);
+    const error = await probe('initialize-silent', {
+      sessionTimeoutMs: 300,
+      compareWithCurrentRelease: compare,
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(UpdateFunctionalProbeError);
+    expect((error as UpdateFunctionalProbeError).reason).toBe('session-start-failed');
+    expect((error as Error).message).toContain('ACP initialize timed out after 300ms');
+    expect(compare).not.toHaveBeenCalled();
   });
 
   it('answers despite a stale startup validation failure', async () => {

@@ -33,13 +33,23 @@ describe('agent-owned Chromium sharing', () => {
   let debugPort: number;
   let spawnFailed = false;
   let source: WebSocket | undefined;
+  let receiveFrame: (frame: string) => void;
+  const firstFrame = new Promise<string>((resolve) => { receiveFrame = resolve; });
 
   beforeAll(async () => {
     server.on('upgrade', (request, socket, head) => {
       if (request.url !== '/s/share-test/source' || request.headers.authorization !== 'Bearer test-token') {
         socket.destroy(); return;
       }
-      websocket.handleUpgrade(request, socket, head, (accepted) => { source = accepted; });
+      websocket.handleUpgrade(request, socket, head, (accepted) => {
+        source = accepted;
+        // Subscribe before sharing starts: a frame can precede the share call's
+        // return, and navigation notifications can arrive before the first JPEG.
+        accepted.on('message', (data) => {
+          if (JSON.parse(data.toString()).method === 'Page.screencastFrame')
+            receiveFrame(data.toString());
+        });
+      });
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -92,11 +102,11 @@ describe('agent-owned Chromium sharing', () => {
     });
     await shareChromiumPage({ page, serverBaseUrl: origin, shareId: 'share-test', daemonToken: 'test-token', onEnded: async () => {} });
     expect(source).toBeDefined();
-    const frame = await until(async () => new Promise<string | undefined>((resolve) => {
-      const timer = setTimeout(() => resolve(undefined), 300);
-      source!.once('message', (data) => { clearTimeout(timer); resolve(data.toString()); });
-    }));
-    expect(JSON.parse(frame).method).toBe('Page.screencastFrame');
+    // The test's overall deadline bounds this event wait, without repeatedly
+    // installing one-shot listeners that consume unrelated relay messages.
+    const frame = JSON.parse(await firstFrame);
+    expect(frame.method).toBe('Page.screencastFrame');
+    expect(Buffer.from(frame.params.data, 'base64').subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
     source!.send(JSON.stringify({ type: 'takeover' }));
     await until(async () => browserIsHumanControlled(page.id) ? true : undefined);
     source!.send(JSON.stringify({ type: 'release' }));

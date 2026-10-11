@@ -5801,7 +5801,7 @@ export class DaemonService {
     }
     if (input.brief) validateCornerBrief(input.brief);
     await this.reach(input.cornerId, agentId);
-    const parentId = await this.database.transaction(async (db) => {
+    await this.database.transaction(async (db) => {
       const corner = (
         await db.query<{ parent_id: string | null; archived_at: Date | null; kind: string; objective: string }>(
           `SELECT room.parent_id,room.archived_at,fact.kind,fact.objective
@@ -5866,10 +5866,7 @@ export class DaemonService {
         }
       }
       await writeCornerTitle(db, input.cornerId, corner.parent_id, name);
-      return corner.parent_id;
     });
-    this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });
-    this.live.publish({ type: 'invalidate', roomId: parentId, reason: 'corner', agentId });
     return { cornerId: input.cornerId, name };
   }
   private async targetProposal(input: Input<'postTargetBranchProposal'>, agentId: string) {
@@ -7593,11 +7590,9 @@ export class DaemonService {
   private async archiveCorner(cornerId: string, agentId: string) {
     // The generic gate checks the turn's roomId; the target corner needs its own check.
     await this.reach(cornerId, agentId);
-    const parentId = await this.database.transaction(async (database) => {
-      return (await closeCornerState(database, cornerId)).parentId;
+    await this.database.transaction(async (database) => {
+      await closeCornerState(database, cornerId);
     });
-    this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
-    this.live.publish({ type: 'invalidate', roomId: parentId, reason: 'corner', agentId });
     return this.writeResult();
   }
   private async ensureMembership(input: Input<'ensureAgentMembership'>, agentId: string) {

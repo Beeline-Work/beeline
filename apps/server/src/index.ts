@@ -405,7 +405,7 @@ async function main() {
       }
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
-      await backgroundJobs.run('corner-owed-expiry', () => owedExpiry.runOnce(new Date(), newLeader));
+      await backgroundJobs.run('corner-owed-expiry', () => owedExpiry.runOnce(newLeader));
       const needsYouDue = await backgroundJobs.run('needs-you-expiry', () => needsYouExpiry.runOnce());
       // Recovery scans run once per leadership tenure. Normal writes and
       // Repository events drive their own transitions; failures retry on the next cycle.
@@ -445,11 +445,11 @@ async function main() {
           }));
       }
       const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
-      const nextOwed = await backgroundJobs.run('corner-owed-next-due', () => owedExpiry.nextDueAt());
+      const nextOwed = await backgroundJobs.run('corner-owed-next-due', () => owedExpiry.msUntilNextDue());
       return Math.min(
         reconciliationMs,
-        ...[nextDue, nextOwed].flatMap((due) => due.ok && due.value
-          ? [Math.max(0, due.value.getTime() - Date.now())] : []),
+        ...(nextDue.ok && nextDue.value ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
+        ...(nextOwed.ok && nextOwed.value !== null ? [Math.max(0, nextOwed.value)] : []),
         ...(needsYouDue.ok && needsYouDue.value !== null
           ? [Math.max(0, needsYouDue.value - Date.now())] : []),
       );

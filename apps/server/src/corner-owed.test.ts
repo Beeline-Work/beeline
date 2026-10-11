@@ -17,7 +17,7 @@ type Facts = {
   /** The chat list's corner: state, and whether it pulls the dropdown open. */
   list: { state: string; attention: boolean };
   /** The Corners page row. */
-  page: { state: string; awaitsViewer: boolean };
+  page: { state: string };
   /** The corner header's `cornerOwed`. */
   header: boolean | undefined;
 };
@@ -72,28 +72,28 @@ describe('corner_owed', () => {
     const header = (await phone.readRoom(CORNER, viewer))?.cornerOwed;
     return {
       list: { state: listed?.state ?? 'missing', attention: listed?.attention === true },
-      page: { state: page?.state ?? 'missing', awaitsViewer: page?.awaitsViewer === true },
+      page: { state: page?.state ?? 'missing' },
       header,
     };
   };
   const idle: Facts = {
     list: { state: 'idle', attention: false },
-    page: { state: 'idle', awaitsViewer: false },
+    page: { state: 'idle' },
     header: false,
   };
   const owedToViewer: Facts = {
     list: { state: 'waiting', attention: true },
-    page: { state: 'waiting', awaitsViewer: true },
+    page: { state: 'waiting' },
     header: true,
   };
   const owedToViewerSeen: Facts = {
     list: { state: 'waiting', attention: false },
-    page: { state: 'waiting', awaitsViewer: true },
+    page: { state: 'waiting' },
     header: true,
   };
   const owedToSomeoneElse: Facts = {
     list: { state: 'waiting', attention: false },
-    page: { state: 'waiting', awaitsViewer: false },
+    page: { state: 'waiting' },
     header: true,
   };
 
@@ -199,7 +199,7 @@ describe('corner_owed', () => {
     await step(
       {
         list: { state: 'waiting', attention: true },
-        page: { state: 'waiting', awaitsViewer: true },
+        page: { state: 'waiting' },
         header: true,
       },
       OTHER,

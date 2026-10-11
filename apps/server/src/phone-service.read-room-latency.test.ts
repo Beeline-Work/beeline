@@ -5,7 +5,7 @@ import { ROOM_VIEW_TOOL_ROW_LIMIT } from '@beeline/api-contract/phone';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import type { CommittedMessageLiveRow, CommittedTurnLiveRow } from './live.js';
+import type { CommittedMessageLiveRow } from './live.js';
 import { PgliteDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111119';
@@ -694,37 +694,14 @@ describe('PhoneService.readRoom latency', () => {
         [ROOM],
       )
     ).rows[0]!;
-    const turnRow = (
-      await database.query<CommittedTurnLiveRow>(
-        `SELECT turn.room_id,turn.request_id,turn.agent_id,turn.status,turn.started_at,turn.created_at,
-           turn.generation_id,requester.id requested_by
-         FROM agent_turns turn
-         LEFT JOIN messages trigger ON trigger.id=turn.request_id AND trigger.room_id=turn.room_id
-         LEFT JOIN identities requester ON requester.id=trigger.author_id AND requester.kind='human'
-         WHERE turn.room_id=$1 AND turn.agent_id=$2`,
-        [ROOM, '0'.repeat(64)],
-      )
-    ).rows[0]!;
-
     expect(await phone.projectCommittedLiveDelta(ROOM, { type: 'message', row: messageRow })).toEqual(
       await phone.readLiveDelta(ROOM, VIEWER, {
         type: 'message',
         messageId: 'reply-message',
       }),
     );
-    const persistedTurn = await phone.readLiveDelta(ROOM, VIEWER, {
-      type: 'turn', agentId: '0'.repeat(64), requestId: 'message-179',
-    });
-    expect(persistedTurn?.type).toBe('turn-delta');
-    expect(await phone.projectCommittedLiveDelta(ROOM, { type: 'turn', row: turnRow })).toMatchObject({
-      type: 'turn-delta', roomId: ROOM,
-      turn: persistedTurn?.type === 'turn-delta' ? persistedTurn.turn : undefined,
-    });
     expect(
       await phone.projectCommittedLiveDelta('cross-room', { type: 'message', row: messageRow }),
-    ).toBeNull();
-    expect(
-      await phone.projectCommittedLiveDelta('cross-room', { type: 'turn', row: turnRow }),
     ).toBeNull();
   });
 });

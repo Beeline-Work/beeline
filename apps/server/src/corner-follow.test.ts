@@ -35,7 +35,7 @@ async function mine() {
   const page = (await phone.readCorners(ROOM, PERSON))?.corners.find(
     (item) => item.corner.id === CORNER,
   );
-  return { list: listed?.mine === true, page: page?.followsViewer === true };
+  return { list: listed?.mine === true, page: page?.mine === true };
 }
 
 beforeEach(async () => {

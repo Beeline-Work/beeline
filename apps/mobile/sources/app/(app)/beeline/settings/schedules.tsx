@@ -28,8 +28,7 @@ function first(value: string | string[] | undefined): string | undefined {
  * Everything that wakes the Room's agents without a human tag: timers and
  * subscriptions. Agents set both up. Each entry is one settings row in the same
  * grammar — what it runs · when it runs, over who · where — and opens its own
- * page: a workflow schedule the workflow's page, a prompt schedule its full
- * prompt, a subscription what makes it fire. Stopping happens on those pages.
+ * detail page. Stopping happens on those pages.
  */
 export default function ScheduledWork() {
   useLatencyRouteFrame('/beeline/settings/schedules');
@@ -48,22 +47,7 @@ export default function ScheduledWork() {
   const subscriptions = work?.subscriptions ?? [];
 
   const openSchedule = (schedule: RoomScheduleView) =>
-    router.push(
-      schedule.workflowSlug
-        ? {
-            pathname: '/beeline/workflow',
-            params: {
-              roomId: schedule.roomId,
-              name: schedule.workflowSlug,
-              scheduleId: schedule.id,
-              parentRoomId: roomId!,
-            },
-          }
-        : {
-            pathname: '/beeline/settings/schedule',
-            params: { roomId: roomId!, scheduleId: schedule.id },
-          },
-    );
+    router.push({ pathname: '/beeline/settings/schedule', params: { roomId: roomId!, scheduleId: schedule.id } });
 
   const renderSchedule = (schedule: RoomScheduleView) => (
     <SettingsRow
@@ -78,6 +62,7 @@ export default function ScheduledWork() {
       onPress={() => openSchedule(schedule)}
       testID={`scheduled-work-${schedule.id}`}
       title={scheduleTitle(schedule)}
+      titleLines={2}
     />
   );
 
@@ -86,6 +71,9 @@ export default function ScheduledWork() {
       chevron="right"
       description={`@${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
       key={subscription.id}
+      leading={subscription.workflowSlug ? (
+        <WorkflowGlyph live={false} size={CORNER_META_SIZE} testID={`subscription-glyph-${subscription.id}`} />
+      ) : undefined}
       onPress={() =>
         router.push({
           pathname: '/beeline/settings/subscription',
@@ -93,7 +81,8 @@ export default function ScheduledWork() {
         })
       }
       testID={`subscription-${subscription.id}`}
-      title={`${subscriptionTitle(subscription)} · Each time`}
+      title={subscriptionTitle(subscription)}
+      titleLines={2}
     />
   );
 

@@ -3,6 +3,7 @@ import { router, useFocusEffect, type Href } from 'expo-router';
 import type { RoomScheduleView, RoomSubscriptionView } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
+import { workflowDisplayName } from '@/buzz/workflow-graph';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
@@ -37,7 +38,7 @@ export function scheduleWhere(schedule: Pick<RoomScheduleView, 'corner'>): strin
 /** Line 1 of a schedule row: what it runs · when it runs. */
 export function scheduleTitle(schedule: RoomScheduleView): string {
   const what = schedule.workflowSlug
-    ? `${schedule.workflowSlug} workflow`
+    ? workflowDisplayName(schedule.workflowSlug)
     : promptLead(schedule.message);
   return `${what} · ${scheduleCadenceLabel(schedule.cadence)}`;
 }
@@ -50,30 +51,37 @@ export function scheduleRuns(schedule: RoomScheduleView): string {
 }
 
 export function subscriptionTitle(subscription: RoomSubscriptionView): string {
+  const what = subscription.workflowSlug
+    ? workflowDisplayName(subscription.workflowSlug)
+    : promptLead(subscription.prompt ?? 'React to this event');
+  return `${what} · ${subscriptionWhen(subscription)}`;
+}
+
+export function subscriptionWhen(subscription: RoomSubscriptionView): string {
   if (subscription.source === 'repository') {
     const repository = subscription.repository ?? 'this repository';
     const action: Record<string, string> = {
-      'issue.opened': `New issue in ${repository}`,
-      'issue.closed': `Issue closes in ${repository}`,
-      'issue.reopened': `Issue reopens in ${repository}`,
-      'pull_request.opened': `New pull request in ${repository}`,
-      'pull_request.closed': `Pull request closes in ${repository}`,
-      'pull_request.reopened': `Pull request reopens in ${repository}`,
-      'star.created': `Someone stars ${repository}`,
-      'star.deleted': `Someone removes a star from ${repository}`,
+      'issue.opened': `new issue in ${repository}`,
+      'issue.closed': `issue closing in ${repository}`,
+      'issue.reopened': `issue reopening in ${repository}`,
+      'pull_request.opened': `new pull request in ${repository}`,
+      'pull_request.closed': `pull request closing in ${repository}`,
+      'pull_request.reopened': `pull request reopening in ${repository}`,
+      'star.created': `someone starring ${repository}`,
+      'star.deleted': `someone removing a star from ${repository}`,
     };
-    return action[subscription.event] ?? `An event arrives in ${repository}`;
+    return `On ${action[subscription.event] ?? `an event in ${repository}`}`;
   }
   const action: Record<string, string> = {
-    joined: 'Someone joins this Room',
-    'schedule-ran': 'A schedule runs in this Room',
-    'corner-opened': 'A corner opens in this Room',
-    'check-passed': 'Corner checks pass',
-    'check-failed': 'Corner checks fail',
-    merged: 'A corner merges',
-    'workflow-handoff': 'A workflow moves to its next step',
+    joined: 'someone joining this Room',
+    'schedule-ran': 'a schedule running in this Room',
+    'corner-opened': 'a corner opening in this Room',
+    'check-passed': 'corner checks passing',
+    'check-failed': 'corner checks failing',
+    merged: 'a corner merging',
+    'workflow-handoff': 'a workflow moving to its next step',
   };
-  return action[subscription.event] ?? 'An event arrives in this Room';
+  return `On ${action[subscription.event] ?? 'an event in this Room'}`;
 }
 
 export function subscriptionWhere(subscription: RoomSubscriptionView): string {
@@ -81,30 +89,7 @@ export function subscriptionWhere(subscription: RoomSubscriptionView): string {
 }
 
 export function subscriptionRuns(subscription: RoomSubscriptionView): string {
-  if (subscription.source === 'repository') {
-    const repository = subscription.repository ?? 'this repository';
-    const when: Record<string, string> = {
-      'issue.opened': `Each time a new issue opens in ${repository}`,
-      'issue.closed': `Each time an issue closes in ${repository}`,
-      'issue.reopened': `Each time an issue reopens in ${repository}`,
-      'pull_request.opened': `Each time a new pull request opens in ${repository}`,
-      'pull_request.closed': `Each time a pull request closes in ${repository}`,
-      'pull_request.reopened': `Each time a pull request reopens in ${repository}`,
-      'star.created': `Each time someone stars ${repository}`,
-      'star.deleted': `Each time someone removes a star from ${repository}`,
-    };
-    return when[subscription.event] ?? `Each time an event arrives in ${repository}`;
-  }
-  const when: Record<string, string> = {
-    joined: 'Each time someone joins this Room',
-    'schedule-ran': 'Each time a schedule runs in this Room',
-    'corner-opened': 'Each time a corner opens in this Room',
-    'check-passed': 'Each time corner checks pass',
-    'check-failed': 'Each time corner checks fail',
-    merged: 'Each time a corner merges',
-    'workflow-handoff': 'Each time a workflow moves to its next step',
-  };
-  return when[subscription.event] ?? 'Each time an event arrives in this Room';
+  return subscriptionWhen(subscription);
 }
 
 export type ScheduledWork = {

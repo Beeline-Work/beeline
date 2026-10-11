@@ -62,6 +62,8 @@ type SettingsRowProps = {
   onPress?: () => void;
   testID?: string;
   title: string;
+  /** Long action + trigger labels may wrap while keeping one row per item. */
+  titleLines?: number;
   /**
    * What the TITLE is, when it is not simply the name of a thing:
    * `'action'` — the title is the verb, so it takes the brass every other
@@ -122,6 +124,7 @@ export function SettingsRow({
   statusGlyph,
   testID,
   title,
+  titleLines = 1,
   tone,
   trailingPress,
   value,
@@ -194,7 +197,7 @@ export function SettingsRow({
       {leading}
       <View style={styles.copy}>
         <Text
-          numberOfLines={1}
+          numberOfLines={titleLines}
           style={[
             styles.title,
             appBoard && styles.boardTitle,

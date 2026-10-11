@@ -24,7 +24,10 @@ function shims(mobile: string): Record<string, string> {
       if (name === 'listRoomSubscriptions') return {
         subscriptions: [{ id: 'sub-1', roomId: 'room-1', agentId: 'agent-2',
           source: 'repository', event: 'pull_request.opened', repository: 'owner/widgets',
-          createdAt: 0, lastFiredAt: ${NEXT_RUN}, reason: 'Triage incoming work.', firedCount: 3 }],
+          createdAt: 0, lastFiredAt: ${NEXT_RUN}, prompt: 'Triage incoming work.', firedCount: 3 },
+          { id: 'sub-2', roomId: 'corner-1', agentId: 'agent-2', source: 'room', event: 'joined',
+            prompt: 'Start feedback triage.', workflowSlug: 'feedback-triage',
+            corner: { id: 'corner-1', name: 'issues-triage' } }],
       };
       if (name === 'deleteRoomSubscription' || name === 'deleteRoomSchedule') return {};
       if (name === 'readWorkflowDefinition') return { contract: ${contract}, runs: [] };
@@ -119,40 +122,37 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       'SCHEDULES',
       "Summarize yesterday's merged PRs for the Room… · Weekdays at 09:00 UTC",
       '@Hoots · this Room',
-      'feedback-triage workflow · Daily at 14:00 America/New_York',
+      'Feedback triage · Daily at 14:00 America/New_York',
       '@Ruby · #issues-triage',
       'SUBSCRIPTIONS',
-      'New pull request in owner/widgets · Each time',
+      'Triage incoming work · On new pull request in owner/widgets',
       '@Ruby · this Room',
+      'Feedback triage · On someone joining this Room',
+      '@Ruby · #issues-triage',
     ]);
-    // Only the workflow schedule wears a glyph.
-    expect(page.glyphs).toEqual(['scheduled-work-glyph-video']);
+    expect(page.glyphs).toEqual(['scheduled-work-glyph-video', 'subscription-glyph-sub-2']);
     expect(page.text.join(' ')).not.toMatch(/LAST|NEVER FIRED|STOP|REVOKE/);
     expect(page.pushed).toEqual([
       { pathname: '/beeline/settings/schedule', params: { roomId: 'room-1', scheduleId: 'daily' } },
-      {
-        pathname: '/beeline/workflow',
-        params: { roomId: 'corner-1', name: 'feedback-triage', scheduleId: 'video', parentRoomId: 'room-1' },
-      },
+      { pathname: '/beeline/settings/schedule', params: { roomId: 'room-1', scheduleId: 'video' } },
       { pathname: '/beeline/settings/subscription', params: { roomId: 'room-1', subscriptionId: 'sub-1' } },
+      { pathname: '/beeline/settings/subscription', params: { roomId: 'room-1', subscriptionId: 'sub-2' } },
     ]);
   }, 120_000);
 
-  it('opens a prompt schedule: Runs, Agent, Where, the full prompt, its run count, then Stop', async () => {
+  it('opens a prompt schedule with When, Agent, Where, Does, then Stop', async () => {
     const page = await proof('?page=schedule&roomId=room-1&scheduleId=daily');
     expect(page.text[0]).toBe('Schedules and subscriptions');
     expect(page.text[1]).toBe('Schedule');
     expect(page.text.slice(2)).toEqual([
-      'Runs',
+      'When',
       expect.stringMatching(/^Weekdays at 09:00 UTC · next /),
       'Agent',
       '@Hoots',
       'Where',
       'this Room',
-      'Prompt',
+      'Does',
       "Summarize yesterday's merged PRs for the Room. Group them by area and link each PR.",
-      'Runs so far',
-      '14',
       'Stop schedule',
     ]);
     expect(page.afterStop.slice(-2)).toEqual(['Confirm: Stop schedule', 'Cancel']);
@@ -160,20 +160,32 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.inputs).toContainEqual(['deleteRoomSchedule', { roomId: 'room-1', scheduleId: 'daily' }]);
   }, 120_000);
 
+  it('shows the saved workflow steps on timer and event detail pages', async () => {
+    for (const [pageName, id, stop] of [
+      ['schedule', 'video', 'deleteRoomSchedule'],
+      ['subscription', 'sub-2', 'deleteRoomSubscription'],
+    ] as const) {
+      const page = await proof(`?page=${pageName}&roomId=room-1&${pageName === 'schedule' ? 'scheduleId' : 'subscriptionId'}=${id}`);
+      expect(page.text).toEqual(expect.arrayContaining(['When', 'Agent', 'Where', 'Does', 'Feedback triage']));
+      expect(page.steps.length).toBeGreaterThan(2);
+      expect(page.pendingCircles).toBe(page.allCircles);
+      expect(page.inputs).toContainEqual(['readWorkflowDefinition', { roomId: 'corner-1', name: 'feedback-triage' }]);
+      stopped(page, stop);
+    }
+  }, 120_000);
+
   it('opens a subscription: its event and source, with the same stop control', async () => {
     const page = await proof('?page=subscription&roomId=room-1&subscriptionId=sub-1');
     expect(page.text.slice(0, 2)).toEqual(['Schedules and subscriptions', 'Subscription']);
     expect(page.text.slice(2)).toEqual([
-      'Runs',
-      'Each time a new pull request opens in owner/widgets',
+      'When',
+      'On new pull request in owner/widgets',
       'Agent',
       '@Ruby',
       'Where',
       'this Room',
-      'Why',
-      'Triage incoming work. · Set up by @Ruby',
-      'Fired so far',
-      '3',
+      'Does',
+      'Triage incoming work.',
       'Stop subscription',
     ]);
     expect(page.afterStop.slice(-2)).toEqual(['Confirm: Stop subscription', 'Cancel']);
@@ -191,7 +203,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.text[0]).toBe('Feedback triage');
     expect(page.text).toEqual(
       expect.arrayContaining([
-        'Runs',
+        'When',
         expect.stringMatching(/^Daily at 14:00 America\/New_York · next /),
         'Agent',
         '@Ruby',

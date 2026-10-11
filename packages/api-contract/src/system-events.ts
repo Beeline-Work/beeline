@@ -39,6 +39,9 @@ export type SystemEvent = {
   readonly scheduleId?: string;
   /** Outside input, carried by an untrusted subscription event. */
   readonly payload?: unknown;
+  /** Trusted action captured from the subscription when this event fired. */
+  readonly subscriptionPrompt?: string;
+  readonly subscriptionWorkflowSlug?: string;
 };
 
 export const SYSTEM_LINE_SEPARATOR = ' · ';

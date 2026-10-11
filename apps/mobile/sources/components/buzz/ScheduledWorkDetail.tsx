@@ -1,13 +1,18 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Text, View } from 'react-native';
+import { router, useFocusEffect } from 'expo-router';
+import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { StyleSheet } from 'react-native-unistyles';
+import { workflowDisplayName } from '@/buzz/workflow-graph';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { SettingsRow } from './SettingsRow';
+import { WorkflowRunLine } from './WorkflowRunLine';
 
 /**
  * The parts a schedule's or subscription's own page is built from, cut from the
  * workflow run page (`workflow-run.tsx`) so the three read as one family: its
  * hairline section head (as "Steps" is drawn), its summary rail line, and the
- * settings rows every detail page shares — Runs, Agent(s), Where, then Stop.
+ * settings rows every detail page shares — When, Agent, Where, Does, then Stop.
  */
 export function DetailSection({ title, testID }: { title: string; testID?: string }) {
   return (
@@ -38,23 +43,21 @@ export function DetailCopy({ children, testID }: { children: React.ReactNode; te
   );
 }
 
-/** Runs, Agent or Agents, and Where: the same three rows on every detail page. */
+/** When, Agent or Agents, and Where: the same three rows on every detail page. */
 export function ScheduledWorkFacts({
   runs,
-  runsLabel = 'Runs',
   agents,
   where,
   testID = 'scheduled-work-facts',
 }: {
   runs: string;
-  runsLabel?: string;
   agents: readonly string[];
   where: string;
   testID?: string;
 }) {
   return (
     <View style={styles.facts} testID={testID}>
-      <SettingsRow description={runs} testID={`${testID}-runs`} title={runsLabel} />
+      <SettingsRow description={runs} testID={`${testID}-when`} title="When" />
       <SettingsRow
         description={agents.length ? agents.map((name) => `@${name}`).join(', ') : 'None'}
         testID={`${testID}-agents`}
@@ -62,6 +65,47 @@ export function ScheduledWorkFacts({
       />
       <SettingsRow description={where} testID={`${testID}-where`} title="Where" />
     </View>
+  );
+}
+
+/** The same action rail for timer and event triggers. */
+export function ScheduledWorkDoes({ roomId, prompt, workflowSlug }: {
+  roomId: string;
+  prompt: string;
+  workflowSlug?: string;
+}) {
+  const [contract, setContract] = useState<PhoneOperationMap['readWorkflowDefinition']['output']['contract'] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useFocusEffect(useCallback(() => {
+    if (!workflowSlug) return;
+    let active = true;
+    setContract(null);
+    setError(null);
+    void monolithPhoneOperation('readWorkflowDefinition', { roomId, name: workflowSlug })
+      .then((result) => { if (active) setContract(result.contract); })
+      .catch((caught) => { if (active) setError(String(caught)); });
+    return () => { active = false; };
+  }, [roomId, workflowSlug]));
+  return (
+    <>
+      <DetailSection title="Does" testID="scheduled-work-does-header" />
+      {workflowSlug ? (
+        <>
+          <View style={styles.facts}>
+            <SettingsRow
+              chevron="right"
+              description="Workflow"
+              onPress={() => router.push({ pathname: '/beeline/workflow', params: { roomId, name: workflowSlug } })}
+              testID="scheduled-work-workflow"
+              title={workflowDisplayName(workflowSlug)}
+            />
+          </View>
+          {contract ? <WorkflowRunLine detail={{ contract, roleHolders: {} }} now={0}
+            onOpenCorner={() => undefined} testID="scheduled-work-steps" /> : null}
+          {error ? <DetailCopy testID="scheduled-work-workflow-error">Could not load workflow steps: {error}</DetailCopy> : null}
+        </>
+      ) : <DetailRailLine testID="scheduled-work-prompt">{prompt}</DetailRailLine>}
+    </>
   );
 }
 

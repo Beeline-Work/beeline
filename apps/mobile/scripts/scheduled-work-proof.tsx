@@ -49,11 +49,11 @@ async function run() {
     node ? `${getComputedStyle(node).fontSize} ${getComputedStyle(node).fontFamily}` : null;
   const eyebrow = find('#beeline');
   const title = find('Schedules and subscriptions');
-  const glyphs = ids(/^scheduled-work-glyph-/);
-  const steps = ids(/^workflow-steps-step-[^-]+$/);
-  const pendingCircles = ids(/^workflow-steps-step-.*-circle-pending$/).length;
-  const allCircles = ids(/^workflow-steps-step-.*-circle-/).length;
-  for (const id of ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1']) click(id);
+  const glyphs = ids(/^(scheduled-work-glyph-|subscription-glyph-)/);
+  const steps = ids(/^(workflow-steps|scheduled-work-steps)-step-[^-]+$/);
+  const pendingCircles = ids(/^(workflow-steps|scheduled-work-steps)-step-.*-circle-pending$/).length;
+  const allCircles = ids(/^(workflow-steps|scheduled-work-steps)-step-.*-circle-/).length;
+  for (const id of ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1', 'subscription-sub-2']) click(id);
   const stopId = page === 'subscription' ? 'stop-subscription' : page === 'workflow' ? 'stop-workflow-schedule' : 'stop-schedule';
   click(stopId);
   await pause();

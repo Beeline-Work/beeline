@@ -1,4 +1,4 @@
-import { quoteOutsideData } from '@beeline/api-contract/daemon';
+import { subscriptionActionPrompt } from '@beeline/api-contract/daemon';
 import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
@@ -278,7 +278,7 @@ export function inboxItemPromptBody(item: {
   body: string;
   systemEvent?: SystemEvent;
 }): string {
-  if (item.systemEvent?.kind === 'subscription-fired') return quoteOutsideData('subscription event', item.systemEvent.payload);
+  if (item.systemEvent?.kind === 'subscription-fired') return subscriptionActionPrompt(item.systemEvent);
   return isScheduledPrompt(item) ? (item.systemEvent?.consequence ?? item.body) : item.body;
 }
 

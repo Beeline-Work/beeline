@@ -1,5 +1,10 @@
 # Schedules and subscriptions frames
 
-These 390px frames render the real section and detail components with sample responses. `populated.png` shows a prompt schedule, a workflow schedule, and two event subscriptions; `empty.png` shows the first-use state. `subscription.png` shows Runs, Agent, Where, Why, firing count, and Stop. `stop-confirm.png` shows the second confirmation step before removal.
+These 390 × 900 frames render the real list and detail components with sample Room responses:
 
-To rebuild the temporary page used for capture, run `node --import tsx scripts/build-subscriptions-frame.ts` from `apps/mobile`, open the generated `evidence/subscriptions/frame.html` at 390 × 900, and take screenshots. Use `?empty` for the empty list and `?page=subscription` for the detail page; tap Stop subscription for its confirmation state. The generated HTML and bundle are deliberately omitted from the evidence.
+- `list.png`: one item in each trigger/action quadrant, grouped as Schedules and Subscriptions.
+- `schedule-prompt.png`, `schedule-workflow.png`, `subscription-prompt.png`, `subscription-workflow.png`: the common When, Agent, Where, Does, Stop detail grammar. Workflow actions show the saved steps on the workflow rail.
+- `stop-confirm.png`: the second step before stopping a subscription.
+- `empty.png`: first-use list.
+
+Rebuild the temporary page with `node --import tsx scripts/build-subscriptions-frame.ts` from `apps/mobile`. Open `evidence/subscriptions/frame.html?page=list` at 390 × 900, changing `page` to `schedule-prompt`, `schedule-workflow`, `subscription-prompt`, `subscription-workflow`, or `empty`. For the confirmation frame, open `?page=stop-confirm` and tap Stop subscription. The generated HTML and bundle are omitted from the evidence.

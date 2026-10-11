@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -7,24 +7,32 @@ import { webProofShims } from '../sources/test/browserProof.js';
 const mobile = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.resolve(mobile, '../../evidence/subscriptions');
 mkdirSync(output, { recursive: true });
+const workflowContract = JSON.stringify(JSON.parse(readFileSync(path.resolve(mobile, '../../docs/workflows/feedback-triage.json'), 'utf8')));
 const shims: Record<string, string> = {
   ...webProofShims(mobile),
   'expo-router': `import React from 'react';
     export const useFocusEffect = effect => React.useEffect(effect, [effect]);
-    export const useLocalSearchParams = () => ({roomId:'room-1',workspaceId:'workspace-1',subscriptionId:'repo-1'});
+    export const useLocalSearchParams = () => {
+      const page = new URLSearchParams(location.search).get('page');
+      return {roomId:'room-1',workspaceId:'workspace-1',
+        scheduleId:page === 'schedule-workflow' ? 'schedule-workflow' : 'schedule-prompt',
+        subscriptionId:page === 'subscription-workflow' || page === 'stop-confirm' ? 'subscription-workflow' : 'subscription-prompt'};
+    };
     export const router = {push:()=>undefined,replace:()=>undefined,back:()=>undefined};`,
   '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async name => {
     if (name === 'listRoomSchedules') return {schedules: location.search.includes('empty') ? [] : [
-      {id:'daily',agentId:'agent-1',cadence:{kind:'cron',expression:'0 8 * * *',timeZone:'UTC'},
-        message:'Post the morning standup summary',nextRunAt:1790000000},
-      {id:'hourly',agentId:'agent-1',cadence:{kind:'interval',everyMinutes:60},
-        message:'Start the feedback triage workflow',workflowSlug:'feedback-triage',
-        nextRunAt:1790000000,corner:{id:'corner-1',name:'quiet amber corner'}}]};
+      {id:'schedule-prompt',roomId:'room-1',agentId:'agent-1',cadence:{kind:'cron',expression:'0 9 * * 1-5',timeZone:'UTC'},
+        message:'Post the morning standup summary for this Room.',nextRunAt:1790000000},
+      {id:'schedule-workflow',roomId:'corner-1',agentId:'agent-1',cadence:{kind:'interval',everyMinutes:1440},
+        message:'Start the feedback-triage workflow.',workflowSlug:'feedback-triage',
+        nextRunAt:1790000000,corner:{id:'corner-1',name:'triage'}}]};
     if (name === 'listRoomSubscriptions') return {subscriptions: location.search.includes('empty') ? [] : [
-      {id:'repo-1',roomId:'room-1',agentId:'agent-1',source:'repository',event:'issue.opened',
-        repository:'owner/widgets',reason:'Triage new issues before the team standup.',firedCount:3,lastFiredAt:1790000000},
-      {id:'room-1',roomId:'room-1',agentId:'agent-1',source:'room',event:'joined',
-        reason:'Welcome new members.',firedCount:1}]};
+      {id:'subscription-prompt',roomId:'room-1',agentId:'agent-1',source:'room',event:'joined',
+        prompt:'Welcome the new member and share the Room guide.'},
+      {id:'subscription-workflow',roomId:'corner-1',agentId:'agent-1',source:'repository',event:'issue.opened',
+        repository:'owner/widgets',prompt:'Start the feedback-triage workflow for this issue.',
+        workflowSlug:'feedback-triage',corner:{id:'corner-1',name:'triage'}}]};
+    if (name === 'readWorkflowDefinition') return {contract:${workflowContract},runs:[]};
     return {};
   };`,
   '@/sync/transport/room-view-client': `export class RoomViewClient {async room() {return {

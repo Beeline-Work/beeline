@@ -314,7 +314,7 @@ export type DaemonOperationMap = {
   listWorkSchedules: Operation<AgentInput, WorkScheduleListResult>;
   createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
   setEventSubscriptions: Operation<SetEventSubscriptionsInput, EventSubscriptionsResult>;
-  createAgentSubscription: Operation<RoomInput & { source: SubscriptionSource; event: string; repository?: string; reason: string }, RoomSubscriptionView>;
+  createAgentSubscription: Operation<RoomInput & { source: SubscriptionSource; event: string; repository?: string; prompt: string; workflowName?: string }, RoomSubscriptionView>;
   listAgentSubscriptions: Operation<RoomInput, RoomSubscriptionListResult>;
   deleteAgentSubscription: Operation<RoomInput & { subscriptionId: string }, WriteResult>;
   watchCorner: Operation<

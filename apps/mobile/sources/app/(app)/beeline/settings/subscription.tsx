@@ -11,8 +11,7 @@ import {
   useScheduledWork,
 } from '@/buzz/scheduled-work';
 import { PageHeader } from '@/components/buzz/PageHeader';
-import { DetailRailLine, DetailSection, ScheduledWorkFacts, StopScheduledWork } from '@/components/buzz/ScheduledWorkDetail';
-import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { ScheduledWorkDoes, ScheduledWorkFacts, StopScheduledWork } from '@/components/buzz/ScheduledWorkDetail';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -68,17 +67,8 @@ export default function Subscription() {
             runs={subscriptionRuns(subscription)}
             where={subscriptionWhere(subscription)}
           />
-          <DetailSection testID="subscription-why-header" title="Why" />
-          <DetailRailLine testID="subscription-why">
-            {subscription.reason || 'No reason was recorded.'}{` · Set up by @${creatorName}`}
-          </DetailRailLine>
-          <View style={styles.rows}>
-            <SettingsRow
-              testID="subscription-fire-count"
-              title="Fired so far"
-              value={subscription.firedCount === undefined ? '—' : String(subscription.firedCount)}
-            />
-          </View>
+          <ScheduledWorkDoes roomId={subscription.roomId} prompt={subscription.prompt ?? 'React to this event.'}
+            workflowSlug={subscription.workflowSlug} />
           <View style={styles.stop}>
             <StopScheduledWork
               label="Stop subscription"
@@ -99,7 +89,6 @@ const styles = StyleSheet.create((theme) => ({
   screen: { flex: 1, backgroundColor: theme.buzz.bgBase },
   loading: { padding: theme.buzz.space.xl, alignItems: 'center', justifyContent: 'center' },
   stop: { marginTop: theme.buzz.space.md },
-  rows: { paddingHorizontal: theme.buzz.space.sm },
   gone: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, padding: theme.buzz.space.md },
   error: { minHeight: 44, justifyContent: 'center', paddingHorizontal: theme.buzz.space.md, backgroundColor: theme.buzz.bgHighlight },
   errorText: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary },

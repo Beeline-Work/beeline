@@ -55,6 +55,8 @@ export interface SystemLineInput {
   /** The schedule a `schedule-ran` line fired, so its run may inherit its sessions. */
   readonly scheduleId?: string;
   readonly payload?: unknown;
+  readonly subscriptionPrompt?: string;
+  readonly subscriptionWorkflowSlug?: string;
   readonly object?: string | SystemObject;
   readonly consequence?: string;
   /** A second named actor in the consequence slot (currently the inviter on a join). */
@@ -192,7 +194,7 @@ export interface SystemLineResult {
 
 export type SystemPhrase = Pick<
   SystemLineInput,
-  'subject' | 'verb' | 'object' | 'consequence' | 'attribution' | 'kind' | 'scheduleId' | 'payload'
+  'subject' | 'verb' | 'object' | 'consequence' | 'attribution' | 'kind' | 'scheduleId' | 'payload' | 'subscriptionPrompt' | 'subscriptionWorkflowSlug'
 >;
 
 const CLEAN = /[\s ]+/g;
@@ -222,7 +224,11 @@ export function composeSystemLine(phrase: SystemPhrase): { text: string; event: 
     ...(consequence ? { consequence } : {}),
     ...(phrase.kind ? { kind: phrase.kind } : {}),
     ...(phrase.scheduleId ? { scheduleId: phrase.scheduleId } : {}),
-    ...(phrase.kind === 'subscription-fired' ? { payload: phrase.payload } : {}),
+    ...(phrase.kind === 'subscription-fired' ? {
+      payload: phrase.payload,
+      ...(phrase.subscriptionPrompt ? { subscriptionPrompt: phrase.subscriptionPrompt } : {}),
+      ...(phrase.subscriptionWorkflowSlug ? { subscriptionWorkflowSlug: phrase.subscriptionWorkflowSlug } : {}),
+    } : {}),
   };
   // The kind never reaches the text: `formatSystemLine` reads subject, verb,
   // object and consequence, so a line's wording is exactly what it was before
@@ -346,11 +352,8 @@ async function subscribers(
       `SELECT DISTINCT member.identity_id FROM memberships member
        JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
        WHERE member.room_id=$1 AND member.removed_at IS NULL
-         AND (member.event_subscriptions @> $2::jsonb OR EXISTS (
-           SELECT 1 FROM agent_subscriptions subscription
-           WHERE subscription.room_id=member.room_id AND subscription.agent_id=member.identity_id
-             AND subscription.source='room' AND subscription.event=$3))`,
-      [roomId, JSON.stringify([kind]), kind],
+         AND member.event_subscriptions @> $2::jsonb`,
+      [roomId, JSON.stringify([kind])],
     );
     return rows.rows.map((row) => row.identity_id);
   } catch (error) {
@@ -511,13 +514,32 @@ export async function systemLine(
         causeId: input.causeId,
         commandId: input.commandId,
       });
-      if (input.kind && isSubscribableEventKind(input.kind) && wakes.length)
-        await db.query(
-          `UPDATE agent_subscriptions
-           SET last_fired_at=now(),fired_count=fired_count+1
-           WHERE room_id=$1 AND source='room' AND event=$2 AND agent_id=ANY($3::text[])`,
-          [input.roomId, input.kind, wakes],
-        );
+      if (input.kind && isSubscribableEventKind(input.kind)) {
+        const subscriptions = await db.query<{
+          id: string; agent_id: string; prompt: string; workflow_slug: string | null;
+        }>(`SELECT subscription.id,subscription.agent_id,subscription.prompt,subscription.workflow_slug
+          FROM agent_subscriptions subscription JOIN memberships member
+            ON member.room_id=subscription.room_id AND member.identity_id=subscription.agent_id
+            AND member.removed_at IS NULL
+          WHERE subscription.room_id=$1 AND subscription.source='room' AND subscription.event=$2
+          ORDER BY subscription.id
+          FOR UPDATE OF subscription`,
+          [input.roomId, input.kind]);
+        for (const subscription of subscriptions.rows) {
+          const firedId = createHash('sha256').update(`room-subscription:${id}:${subscription.id}`).digest('hex');
+          const fired = await systemLine(db, {
+            id: firedId, roomId: input.roomId, authorId: SYSTEM_IDENTITY_ID,
+            subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' },
+            verb: 'received', object: 'a Room event', consequence: input.kind,
+            kind: 'subscription-fired', causeId: id, wakes: [subscription.agent_id],
+            payload: { source: 'room', event: input.kind, text },
+            subscriptionPrompt: subscription.prompt,
+            subscriptionWorkflowSlug: subscription.workflow_slug ?? undefined,
+          });
+          if (fired.inserted) await db.query(`UPDATE agent_subscriptions
+            SET last_fired_at=now(),fired_count=fired_count+1 WHERE id=$1`, [subscription.id]);
+        }
+      }
     }
     return { id, text, event, inserted: Boolean(result.rowCount) };
   };

@@ -1047,12 +1047,13 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_subscription',
-    description: `Wake yourself in this Room when an event arrives. Give a short reason so Room managers can see why it was set up. No approval or URL setup. Room events: ${eventKindCatalogLines().join('; ')}. Repository events: ${REPOSITORY_SUBSCRIPTION_EVENTS.join(', ')}. A repository must be covered by this Workspace's installed connection.`,
-    inputSchema: { type: 'object', required: ['source', 'event', 'reason'], properties: {
+    description: `Run a prompt or start a saved workflow in this Room when an event arrives. No approval or URL setup. Room events: ${eventKindCatalogLines().join('; ')}. Repository events: ${REPOSITORY_SUBSCRIPTION_EVENTS.join(', ')}. A repository must be covered by this Workspace's installed connection.`,
+    inputSchema: { type: 'object', required: ['source', 'event', 'prompt'], properties: {
       source: { type: 'string', enum: ['room', 'repository'] },
       event: { type: 'string' },
       repository: { type: 'string', description: 'For repository events, owner/name of a covered repository.' },
-      reason: { type: 'string', description: 'One sentence explaining why this event should wake you.' },
+      prompt: { type: 'string', description: 'The action to perform on each event. For a workflow, tell yourself to call start_workflow for the saved workflow.' },
+      workflowName: { type: 'string', description: 'Saved workflow targeted by this subscription, if the action starts one.' },
     }, additionalProperties: false },
   },
   {
@@ -4781,15 +4782,16 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     case 'create_subscription': {
       const source = stringArg(args, 'source');
       const event = stringArg(args, 'event');
-      const reason = stringArg(args, 'reason');
+      const prompt = stringArg(args, 'prompt');
       if (source !== 'room' && source !== 'repository') throw new Error('source must be room or repository');
       if (!event) throw new Error('event is required');
-      if (!reason) throw new Error('reason is required');
+      if (!prompt) throw new Error('prompt is required');
       const result = await daemonExecute('createAgentSubscription', {
-        roomId: agentScheduleRoomId(), source, event, reason,
+        roomId: agentScheduleRoomId(), source, event, prompt,
         ...(typeof args.repository === 'string' ? { repository: args.repository } : {}),
+        ...(typeof args.workflowName === 'string' ? { workflowName: args.workflowName } : {}),
       });
-      return `Subscription ${String(result.id)} created for ${source} ${event}. It wakes you when the event arrives.`;
+      return `Subscription ${String(result.id)} created for ${source} ${event}. It runs your action when the event arrives.`;
     }
     case 'list_subscriptions':
       return JSON.stringify(await daemonExecute('listAgentSubscriptions', { roomId: agentScheduleRoomId() }));

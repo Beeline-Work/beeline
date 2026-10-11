@@ -30,6 +30,7 @@ import {
   workspaceRecordScope,
 } from '@/buzz/workspace-records';
 import { watchWorkspace } from '@/buzz/workspace-watch';
+import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { isWorkspaceMemberListView } from '@beeline/buzz-client';
 
 export function HumanProfile({
@@ -372,7 +373,7 @@ export function HumanProfile({
                       identity,
                       baseUrl: await getEffectiveRelayUrl(),
                     });
-                    const stamp = mobileSurfaceCache.now();
+                    const stamp = currentSurfaceStamp();
                     const page = await client.workspaceMembers(workspaceId, {
                       kind: 'agent',
                       ownerId: memberId,

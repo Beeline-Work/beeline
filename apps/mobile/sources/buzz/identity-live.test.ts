@@ -38,6 +38,7 @@ vi.mock('./person-name', () => ({
 
 const { applyPersonChanged, applyWorkspaceChanged, subscribeOwnIdentityChange } = await import('./identity-live');
 const { IdentitySelection, identityScope } = await import('./identity-records');
+const { currentSurfaceStamp } = await import('./surface-clock');
 const { mobileSurfaceCache, surfaceAddress } = await import('./surface-storage');
 const records = await import('./workspace-records');
 
@@ -103,7 +104,7 @@ describe('live Workspace and person changes', () => {
   });
 
   it('lets an open Room read before the change select its members and bylines', async () => {
-    const readAt = mobileSurfaceCache.now();
+    const readAt = currentSurfaceStamp();
     const room = {
       members: [{ identity: mateIdentity, role: 'member' }],
       messages: [{ id: 'm1', author: mateIdentity, text: 'hi', reactions: [{ members: [mateIdentity] }] }],
@@ -116,7 +117,7 @@ describe('live Workspace and person changes', () => {
     expect(selected.messages[0]!.reactions![0]!.members![0]!.name).toBe('Mate Again');
     expect(selected.viewer).toBe(room.viewer);
     // A Room read after the change already carries the server's answer.
-    const later = new IdentitySelection(identityScope(relay, viewer), mobileSurfaceCache.now()).roomView(room);
+    const later = new IdentitySelection(identityScope(relay, viewer), currentSurfaceStamp()).roomView(room);
     expect(later).toBe(room);
   });
 

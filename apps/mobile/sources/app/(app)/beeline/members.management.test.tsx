@@ -248,13 +248,13 @@ const surfaces = vi.hoisted(() => ({
   values: new Map<string, unknown>(),
   listeners: new Map<string, Set<() => void>>(),
   observers: new Map<string, Set<(address: any, value: unknown, stamp: number) => void>>(),
-  clock: 0,
 }));
-vi.mock('@/buzz/surface-storage', () => {
+vi.mock('@/buzz/surface-storage', async () => {
+  const { nextSurfaceStamp } = await import('@/buzz/surface-clock');
   const key = (address: any) => JSON.stringify(address);
   const write = async (address: any, value: unknown) => {
     surfaces.values.set(key(address), value);
-    const stamp = ++surfaces.clock;
+    const stamp = nextSurfaceStamp();
     for (const observer of surfaces.observers.get(address.endpoint) ?? []) observer(address, value, stamp);
     for (const listener of surfaces.listeners.get(key(address)) ?? []) listener();
   };
@@ -280,8 +280,7 @@ vi.mock('@/buzz/surface-storage', () => {
         surfaces.observers.set(endpoint, observers);
         return () => observers.delete(observer);
       }),
-      now: vi.fn(() => surfaces.clock),
-      fenceEndpoint: vi.fn(() => ++surfaces.clock),
+      fenceEndpoint: vi.fn(() => nextSurfaceStamp()),
     },
     surfaceAddress: vi.fn((relayOrigin: string, viewerPubkey: string, endpoint: string, params?: unknown) => ({
       relayOrigin, viewerPubkey, endpoint, ...(params ? { params } : {}),

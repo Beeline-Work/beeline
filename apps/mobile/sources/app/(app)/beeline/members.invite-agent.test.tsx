@@ -126,7 +126,6 @@ vi.mock('@/buzz/surface-storage', () => {
       }),
       peek: vi.fn((address: unknown) => values.get(key(address)) ?? null),
       observe: vi.fn(() => () => undefined),
-      now: vi.fn(() => 0),
       fenceEndpoint: vi.fn(() => 0),
     },
     surfaceAddress: vi.fn(() => 'surface-address'),

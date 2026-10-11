@@ -19,6 +19,7 @@ vi.mock('react-native-mmkv', () => ({
 const { resetClientState } = await import('@/sync/client-reset');
 const { identityScope, recordPerson } = await import('./identity-records');
 const { mobileSurfaceCache, surfaceAddress } = await import('./surface-storage');
+const { currentSurfaceStamp } = await import('./surface-clock');
 const records = await import('./workspace-records');
 
 const relay = 'https://relay.test';
@@ -94,7 +95,7 @@ describe('Workspace roster records', () => {
   it('removes a member from every page and lowers each total that counted them', async () => {
     await mobileSurfaceCache.write(entry, workspaceView(), isWorkspaceView);
     records.recordWorkspacePage(scope, { members: [workspaceView().members[1]!], agents: [], peopleTotal: 1 },
-      { query: 'ma', kind: 'human', append: false, stamp: mobileSurfaceCache.now() });
+      { query: 'ma', kind: 'human', append: false, stamp: currentSurfaceStamp() });
     records.recordWorkspaceRemoval(scope, mate);
     expect(records.workspaceRows(scope, ids).map((row) => row.identity.pubkey)).toEqual([viewer]);
     expect(records.workspaceRecord(scope, mate)).toBeNull();
@@ -114,7 +115,7 @@ describe('Workspace roster records', () => {
   });
 
   it('never lets an older page replace a newer row', () => {
-    const stale = mobileSurfaceCache.now();
+    const stale = currentSurfaceStamp();
     records.recordWorkspacePage(scope, {
       members: [{ identity: { ...mateIdentity, name: 'Newer' }, role: 'admin' }], agents: [],
     }, { append: false, stamp: stale + 1 });

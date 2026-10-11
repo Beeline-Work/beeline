@@ -45,6 +45,7 @@ import {
 } from '@/buzz/live-draft-drain';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { IdentitySelection, identityScope, useIdentityRecords } from '@/buzz/identity-records';
+import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { liveChatList } from '@/buzz/chat-list-store';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
@@ -1142,7 +1143,7 @@ export function useRoomSurfaceSession({
             markRoomOpen('room-read-start');
             turnDeltasDuringRead = [];
             messageDeltasDuringRead = [];
-            readStamp = mobileSurfaceCache.now();
+            readStamp = currentSurfaceStamp();
             try {
               const prefetched = openingPrefetch;
               openingPrefetch = null;

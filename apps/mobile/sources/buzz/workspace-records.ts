@@ -87,7 +87,7 @@ function storeTotal(
 }
 
 /**
- * Store one roster page read at `stamp` (`mobileSurfaceCache.now()` when the
+ * Store one roster page read at `stamp` (`currentSurfaceStamp()` when the
  * request started). `query` names the search whose totals it answers (`''`
  * for the whole roster; absent for a filtered page that counts nothing
  * shown); `kind` the list it pages, or both; `append` a load-more page.

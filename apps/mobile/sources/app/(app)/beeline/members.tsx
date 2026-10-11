@@ -64,6 +64,7 @@ import {
   workspaceTotals,
 } from '@/buzz/workspace-records';
 import { watchWorkspace } from '@/buzz/workspace-watch';
+import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import {
   AGENT_MODEL_PICKER_VISIBLE_ROWS,
   effortConfigAxis,
@@ -416,7 +417,7 @@ export default function BuzzMembers({
   }) => {
     if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
     // A removal or receipt recorded while this page is in flight is newer than it.
-    const stamp = mobileSurfaceCache.now();
+    const stamp = currentSurfaceStamp();
     const page = await new RoomViewClient({ baseUrl: relayUrl, identity }).workspaceMembers(workspaceId, input);
     return { ...page, query: input.q ?? '', stamp };
   };

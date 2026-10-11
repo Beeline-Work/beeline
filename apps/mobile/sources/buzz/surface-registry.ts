@@ -1,3 +1,4 @@
+import { nextSurfaceStamp } from './surface-clock';
 import { surfaceCacheKey, type SurfaceCacheAddress, type SurfaceResponseCache } from '@beeline/buzz-client';
 
 type Guard<T> = (value: unknown) => value is T;
@@ -17,7 +18,6 @@ export class SurfaceRegistry {
   private readonly stamps = new Map<string, number>();
   private readonly selected = new Map<string, { value: unknown; projection: unknown }>();
   private readonly observers = new Map<string, Set<Observer>>();
-  private clock = 0;
   private epoch = 0;
 
   constructor(
@@ -66,11 +66,6 @@ export class SurfaceRegistry {
     return () => {
       observers.delete(observer);
     };
-  }
-
-  /** The current stamp: a value read from a server after this is newer than every change before it. */
-  now(): number {
-    return this.clock;
   }
 
   private notify(key: string): void {
@@ -132,7 +127,7 @@ export class SurfaceRegistry {
     if (!guard(normalized)) throw new Error('refusing to cache an invalid surface response');
     const key = surfaceCacheKey(address);
     this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
-    this.remember(key, address, normalized, ++this.clock);
+    this.remember(key, address, normalized, nextSurfaceStamp());
     this.notify(key);
     return normalized;
   }
@@ -198,7 +193,7 @@ export class SurfaceRegistry {
     record: (stamp: number) => void,
   ): string[] {
     const origin = new URL(relayOrigin).origin;
-    record(++this.clock);
+    record(nextSurfaceStamp());
     const keys: string[] = [];
     for (const key of new Set([...this.values.keys(), ...this.fetches.keys()])) {
       const parts = JSON.parse(key) as unknown[];

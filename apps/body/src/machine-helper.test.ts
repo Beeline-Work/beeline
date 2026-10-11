@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,11 +8,7 @@ import { WebSocketServer } from 'ws';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
-import { activeReleaseId, writeUpdateAttemptFixture, writeUpdateState } from './self-update.js';
-import { rollbackFailedSuccessor } from './managed-update.js';
-import * as helperService from './helper-service.js';
-import * as systemd from './systemd.js';
-import * as launchd from './launchd.js';
+import { activeReleaseId, hostPlatformKey, SelfUpdateManager } from './self-update.js';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRuntimeHost, HostedAgent } from './agent-runtime.js';
@@ -80,68 +78,6 @@ function fakeRuntimes(script: (agentId: string, run: number) => Promise<HelperEx
 }
 
 describe('one helper process hosts every agent on the machine', () => {
-  it.each([
-    ['systemd', 'probe'], ['systemd', 'deadline'],
-    ['launchd', 'probe'], ['launchd', 'deadline'],
-  ] as const)('restarts the restored helper despite an incomplete legacy restore (%s, %s)', async (kind, failure) => {
-    const { root, configPaths, env, signals } = await machine(2);
-    vi.spyOn(helperService, 'supervisor').mockReturnValue(kind);
-    // The old handoff can partly start legacy services whose own migration
-    // then stops the helper. It must never be attempted during rollback.
-    const restoreError = new AggregateError([new Error('agent unit start failed')],
-      'per-agent unit restore incomplete');
-    const restoreSystemd = vi.spyOn(systemd, 'restoreLegacyAgentUnits').mockRejectedValue(restoreError);
-    const restoreLaunchd = vi.spyOn(launchd, 'restoreLegacyLaunchdAgents').mockRejectedValue(restoreError);
-    vi.spyOn(systemd, 'retireLegacyAgentUnits').mockResolvedValue([]);
-    vi.spyOn(launchd, 'retireLegacyLaunchdAgents').mockResolvedValue([]);
-    vi.spyOn(systemd, 'installTrustySquireBrokerService').mockResolvedValue();
-    vi.spyOn(launchd, 'installLaunchdTrustySquireBrokerService').mockResolvedValue();
-    const layout = { libDir: resolve(root, 'lib/beeline'),
-      releasesRoot: resolve(root, 'lib/beeline-releases'), binDir: resolve(root, 'bin') };
-    for (const id of ['old', 'new']) {
-      const bundle = resolve(layout.releasesRoot, id, 'lib/beeline');
-      await mkdir(bundle, { recursive: true });
-      await writeFile(resolve(bundle, 'bundle.json'), JSON.stringify({ version: id }));
-      await writeFile(resolve(bundle, 'beeline-cli.mjs'), '');
-    }
-    await symlink('beeline-releases/new', layout.libDir);
-    const helperEnv = { ...env, HOME: root, BEELINE_LIB_DIR: layout.libDir, BEELINE_UPDATE_DISABLE: '1' };
-    await writeUpdateAttemptFixture(layout, {
-      from: { version: 'v0.1.27' }, to: { version: 'v0.1.28' },
-      releaseId: 'new', previousReleaseId: 'old', appliedAt: Date.now(),
-      startedAt: Date.now(), confirmBy: failure === 'deadline' ? 0 : Date.now() + 300_000,
-    });
-    const failingId = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
-    const successor = fakeRuntimes((id) => id === failingId
-      ? rollbackFailedSuccessor(layout).then(() => 'rolled-back' as const) : undefined);
-    const rolledBack = await runMachineHelper({ env: helperEnv, signals,
-      runAgent: successor.runAgent, exitProcess: () => undefined });
-    expect(rolledBack.reason).toBe('rolled-back');
-    expect(await activeReleaseId(layout)).toBe('old');
-    expect(restoreSystemd.mock.calls.length).toBe(0);
-    expect(restoreLaunchd.mock.calls.length).toBe(0);
-    const exit = vi.fn();
-    const lifecycle = new HelperLifecycle({ controller: new AbortController(), exitProcess: exit });
-    lifecycle.exit(rolledBack.reason);
-    expect(exit).toHaveBeenCalledWith(75); // Both service managers restart it.
-
-    // Model the supervisor's next start through the restored install anchor.
-    const restored = fakeRuntimes();
-    const running = runMachineHelper({ env: helperEnv, signals,
-      runAgent: restored.runAgent, exitProcess: () => undefined });
-    try {
-      await vi.waitFor(async () => {
-        const status = JSON.parse(await readFile(helperStatusPath(root), 'utf8'));
-        expect(status.loadedRelease).toBe('old');
-        expect(Object.values(status.agents).map((agent) => (agent as { state: string }).state))
-          .toEqual(['serving', 'serving']);
-      });
-      expect(restored.signals.size).toBe(2);
-    } finally {
-      signals.emit('SIGTERM');
-      await running;
-    }
-  });
 
   it('expires old deleted runtimes on helper start without a recurring timer', async () => {
     const { root, env, signals } = await machine(1);
@@ -275,11 +211,11 @@ describe('one helper process hosts every agent on the machine', () => {
 });
 
 describe('one update drain for every hosted agent', () => {
-  it('claims a message mid-update and drains the restart queue promptly in an isolated helper', async () => {
+  it('downloads and installs between turns, then answers queued work promptly in an isolated helper', async () => {
     const { root, configPaths, env, signals } = await machine(1);
     const layout = { libDir: resolve(root, 'lib/beeline'),
       releasesRoot: resolve(root, 'lib/beeline-releases'), binDir: resolve(root, 'bin') };
-    for (const id of ['old', 'new']) {
+    for (const id of ['old']) {
       const bundle = resolve(layout.releasesRoot, id, 'lib/beeline');
       await mkdir(bundle, { recursive: true });
       await writeFile(resolve(bundle, 'bundle.json'), JSON.stringify({ version: id }));
@@ -287,8 +223,26 @@ describe('one update drain for every hosted agent', () => {
     }
     await symlink('beeline-releases/old', layout.libDir);
     env.BEELINE_LIB_DIR = layout.libDir;
-    // No manifest fetch, service-unit writes, production token or Workspace.
+    // Local archive and server only: no service-unit writes or production Workspace.
     const helperEnv = { ...env, BEELINE_UPDATE_DISABLE: '1' };
+    const archiveRoot = resolve(root, 'published');
+    const publishedLib = resolve(archiveRoot, 'lib/beeline');
+    await mkdir(resolve(publishedLib, 'codegraph/bin'), { recursive: true });
+    await writeFile(resolve(publishedLib, 'beeline-cli.mjs'), "console.log('beeline v0.1.29');\n");
+    await writeFile(resolve(publishedLib, 'pi-mcp-adapter.mjs'), 'export {};\n');
+    await writeFile(resolve(publishedLib, 'codegraph/bin/codegraph'), '#!/bin/sh\nexit 0\n');
+    await writeFile(resolve(archiveRoot, 'bundle.json'), JSON.stringify({ version: 'v0.1.29', commit: 'new' }));
+    const archivePath = resolve(root, 'bundle.tar.gz');
+    execFileSync('tar', ['-czf', archivePath, '-C', archiveRoot, '.']);
+    const archive = await readFile(archivePath);
+    const manifest = JSON.stringify({ schemaVersion: 1, sourceCommit: 'new', version: 'v0.1.29',
+      bundles: { [hostPlatformKey()]: { file: 'bundle.tar.gz',
+        sha256: createHash('sha256').update(archive).digest('hex') } } });
+    // Legacy failure state cannot trigger a rollback or delay startup.
+    const legacyAttemptPath = resolve(layout.releasesRoot, '.state/update-attempt.json');
+    await mkdir(dirname(legacyAttemptPath), { recursive: true });
+    const legacyAttempt = JSON.stringify({ version: 1, releaseId: 'old', status: 'pending', confirmBy: 1 });
+    await writeFile(legacyAttemptPath, legacyAttempt);
     const agentId = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
     const queued = new Map<string, AgentCommand>();
     const claims = new Map<string, number>();
@@ -300,6 +254,8 @@ describe('one update drain for every hosted agent', () => {
           commands: [...queued.values()].filter((row) => row.roomId === roomId) }));
     };
     const server = createServer(async (req, res) => {
+      if (req.url === '/manifest.json') { res.end(manifest); return; }
+      if (req.url === '/bundle.tar.gz') { res.end(archive); return; }
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const input = JSON.parse(Buffer.concat(chunks).toString() || '{}');
@@ -373,7 +329,9 @@ describe('one update drain for every hosted agent', () => {
       await send('held', 'long-room');
       running = runMachineHelper({ configPaths, env: helperEnv, signals, runAgent, exitProcess: () => undefined });
       await vi.waitFor(() => expect(claims.has('held')).toBe(true));
-      await writeUpdateState(layout, { stagedReleaseId: 'new' });
+      const manager = new SelfUpdateManager({ layout, stageOnly: true, env: { ...helperEnv,
+        BEELINE_UPDATE_MANIFEST_URL: `${origin}/manifest.json` }, logger: () => undefined });
+      await manager.checkAndApply({ force: true });
       await host.tickUpdate();
       expect(core.activeTurnCount()).toBe(1);
       expect(await activeReleaseId(layout)).toBe('old');
@@ -400,11 +358,15 @@ describe('one update drain for every hosted agent', () => {
       running = runMachineHelper({ configPaths, env: helperEnv, signals, runAgent, exitProcess: () => undefined });
       await vi.waitFor(() => expect(replies).toContain('during-restart'), { timeout: 2_000 });
       const successorClaimMs = claims.get('during-restart')! - queuedAt;
+      const successorAnswerMs = Date.now() - queuedAt;
       expect(successorClaimMs).toBeLessThan(2_000);
+      expect(successorAnswerMs).toBeLessThan(2_000);
       expect(queued.size).toBe(0);
+      expect(await readFile(legacyAttemptPath, 'utf8')).toBe(legacyAttempt);
+      expect(await readFile(resolve(layout.releasesRoot, 'new/bundle.json'), 'utf8')).toContain('v0.1.29');
       expect(errors).toEqual([]);
-      console.log(`[isolated-helper] mid-drain claim=${midDrainClaimMs}ms; ` +
-        `successor claim=${successorClaimMs}ms; XDG_STATE_HOME=${root}`);
+      console.log(`[isolated-helper] downloaded+installed v0.1.29; mid-drain claim=${midDrainClaimMs}ms; ` +
+        `successor claim=${successorClaimMs}ms; answer=${successorAnswerMs}ms; XDG_STATE_HOME=${root}`);
     } finally {
       finishHeld();
       signals.emit('SIGTERM');

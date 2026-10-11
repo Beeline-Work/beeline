@@ -43,12 +43,10 @@
  *                                      prefix anchor (defence against wrappers
  *                                      already shipped on hosts that resolved
  *                                      symlinks).
- *   4. self-update.ts activateRelease / rollbackToPreviousRelease /
- *      settleUpdateAttemptOnStart /
- *      stageRelease — swap the symlink atomically; resolve entrypoints
+ *   4. self-update.ts activateRelease / stageRelease — swap the symlink atomically; resolve entrypoints
  *      tolerantly (both shapes).
  *   5. cli.ts (--version, and every command via repairInstallForwarders) and
- *      self-update-cli.ts (update --status/--rollback) — read identity
+ *      self-update-cli.ts (update --status) — read identity
  *      through the anchor; repair stale <prefix>/bin forwarders at start.
  *
  * History: #310 made the relaunch path treat the anchor as a bundle root while
@@ -668,7 +666,7 @@ async function replaceFile(path: string, contents: string, mode: number): Promis
  * over it — rename(2) is atomic, so there is no window in which the install
  * is half-replaced. Legacy installs (real directory) are migrated first:
  * the directory moves wholesale into `releases/<legacyId>` (preserving the
- * previous bundle for rollback), then the symlink takes its place. That
+ * existing bundle without overwriting its files), then the symlink takes its place. That
  * one-time migration has a millisecond-scale window between the two renames;
  * every subsequent swap is a single rename.
  *
@@ -678,18 +676,17 @@ async function replaceFile(path: string, contents: string, mode: number): Promis
 export async function activateRelease(
   layout: BeelineInstallLayout,
   releaseId: string,
-): Promise<{ previousReleaseId: string | undefined }> {
+): Promise<void> {
   const releaseDir = join(layout.releasesRoot, releaseId);
   await access(join(releaseDir, BUNDLE_ENTRYPOINT), fsConstants.F_OK);
 
   await mkdir(layout.releasesRoot, { recursive: true });
   await mkdir(layout.binDir, { recursive: true });
 
-  let previousReleaseId = await activeReleaseId(layout);
   const kind = await pathKind(layout.libDir);
   if (kind === 'directory') {
     // Legacy migration. Name the preserved copy after its own identity when
-    // it carries one, so rollback language stays meaningful.
+    // it carries one.
     const legacyIdentity = await readBundleJson(layout.libDir);
     const legacyId = sanitizeReleaseId(
       legacyIdentity?.commit ?? legacyIdentity?.version ?? `legacy-${Date.now()}`,
@@ -698,13 +695,12 @@ export async function activateRelease(
     try {
       await access(legacyDir, fsConstants.F_OK);
       // Collision (same id already staged): keep both, suffix this one.
-      previousReleaseId = `${legacyId}-${Date.now()}`;
-      await rename(layout.libDir, join(layout.releasesRoot, previousReleaseId));
-      await normalizeLegacyBundleShape(join(layout.releasesRoot, previousReleaseId));
+      const preservedId = `${legacyId}-${Date.now()}`;
+      await rename(layout.libDir, join(layout.releasesRoot, preservedId));
+      await normalizeLegacyBundleShape(join(layout.releasesRoot, preservedId));
     } catch {
       await rename(layout.libDir, legacyDir);
       await normalizeLegacyBundleShape(legacyDir);
-      previousReleaseId = legacyId;
     }
   }
 
@@ -718,7 +714,6 @@ export async function activateRelease(
   // not per-update churn.
   await writeBinForwarders(layout, releaseDir);
 
-  return { previousReleaseId };
 }
 
 /** Files a legacy-flat bundle keeps at its root; migration moves them into lib/beeline/. */
@@ -733,8 +728,7 @@ const LEGACY_FLAT_BUNDLE_FILES = [
  * A real-directory install preserved from before self-update existed may hold
  * the bundle FLAT (installer v1 wrote beeline-cli.mjs beside bundle.json).
  * Move those files down into lib/beeline/ so the preserved copy is
- * release-shaped and every consumer — the rollback entrypoint check, the
- * relaunch path, identity reads — sees one shape. Deliberately tolerant of
+ * release-shaped so entrypoint resolution and identity reads see one shape. Deliberately tolerant of
  * mid-migration directories that carry files at BOTH levels (a repair
  * reinstall through the anchor symlink can produce exactly that): an inner
  * file always wins, a missing inner file is filled from the root, and
@@ -831,185 +825,6 @@ export async function repairInstallForwarders(
   return true;
 }
 
-/**
- * Roll the live install back to a previously-active release (single atomic
- * rename, same mechanism as activation).
- */
-export async function rollbackToPreviousRelease(
-  layout: BeelineInstallLayout,
-  previousReleaseId: string,
-): Promise<void> {
-  const releaseDir = join(layout.releasesRoot, previousReleaseId);
-  const entrypoint = await resolveBundleEntrypoint(releaseDir);
-  if (!entrypoint) {
-    throw new Error(`release ${previousReleaseId} has no runnable CLI entrypoint`);
-  }
-  const tempLink = `${layout.libDir}.rollback-${process.pid}`;
-  await rm(tempLink, { force: true });
-  await symlink(join('beeline-releases', previousReleaseId), tempLink);
-  await rename(tempLink, layout.libDir);
-  await fsyncDir(dirname(layout.libDir));
-}
-
-// ---------------------------------------------------------------------------
-// One update-attempt record (restart + prove + revert coordination)
-// ---------------------------------------------------------------------------
-
-/**
- * The only crash-surviving update transition. The active anchor is current
- * release; this record names the previous release and one candidate attempt.
- * Keeping the record after confirmation/revert makes the outcome visible to
- * an operator without a second pin, handoff file, or request outbox.
- */
-export interface UpdateAttemptRecord {
-  version: 1;
-  from: InstalledBundleIdentity;
-  to: InstalledBundleIdentity;
-  releaseId: string;
-  previousReleaseId: string | undefined;
-  appliedAt: number;
-  /** First start on the candidate bundle; the confirmation clock begins here. */
-  startedAt?: number;
-  confirmBy: number;
-  status: 'pending' | 'confirmed' | 'reverted';
-  failure?: string;
-  /** The probe id of the daemon whose own failure reverted this shared attempt. */
-  revertedBy?: string;
-  /** Running agent identities captured at activation for update diagnostics. */
-  requiredProbeIds?: string[];
-  /** Successfully probed identities; updated atomically under the install lock. */
-  confirmedProbeIds?: string[];
-  /** Agent probes blocked by their own selected model; the machine release remains installed. */
-  unavailableProbeIds?: string[];
-  /** Server minimum initiated this install; one agent's probe cannot revert the host. */
-  forcedMinimum?: string;
-}
-
-export function updateAttemptPath(layout: BeelineInstallLayout): string {
-  return join(layout.releasesRoot, '.state', 'update-attempt.json');
-}
-
-export async function readUpdateAttempt(
-  layout: BeelineInstallLayout,
-): Promise<UpdateAttemptRecord | undefined> {
-  try {
-    const raw = JSON.parse(
-      await readFile(updateAttemptPath(layout), 'utf8'),
-    ) as UpdateAttemptRecord;
-    if (
-      raw.version !== 1 ||
-      typeof raw.appliedAt !== 'number' ||
-      typeof raw.confirmBy !== 'number' ||
-      typeof raw.releaseId !== 'string' ||
-      !['pending', 'confirmed', 'reverted'].includes(raw.status)
-    ) {
-      return undefined;
-    }
-    return raw;
-  } catch {
-    return undefined;
-  }
-}
-
-export async function writeUpdateAttempt(
-  layout: BeelineInstallLayout,
-  record: UpdateAttemptRecord,
-): Promise<void> {
-  await mkdir(join(layout.releasesRoot, '.state'), { recursive: true });
-  const path = updateAttemptPath(layout);
-  const staged = `${path}.${process.pid}.tmp`;
-  await writeFile(staged, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
-  await rename(staged, path);
-}
-
-/** Replace the single attempt while the caller holds the install lock. */
-export async function replaceUpdateAttempt(
-  layout: BeelineInstallLayout,
-  record: UpdateAttemptRecord,
-): Promise<void> {
-  await writeUpdateAttempt(layout, record);
-}
-
-/** Test helper: install one update attempt directly. */
-export async function writeUpdateAttemptFixture(
-  layout: BeelineInstallLayout,
-  record: Omit<UpdateAttemptRecord, 'version' | 'confirmBy' | 'status'> &
-    Partial<Pick<UpdateAttemptRecord, 'version' | 'confirmBy' | 'status'>>,
-): Promise<void> {
-  await writeUpdateAttempt(layout, {
-    ...record,
-    version: record.version ?? 1,
-    confirmBy: record.confirmBy ?? record.appliedAt + DEFAULT_UPDATE_CONFIRM_WINDOW_MS,
-    status: record.status ?? 'pending',
-  });
-}
-
-/**
- * How long a freshly-started update is given to prove itself before the
- * daemon declares it healthy and stops keeping the rollback option hot. If
- * the supervisor throws fatally (or the process dies outright) inside this
- * window, the previous bundle comes back.
- */
-export const DEFAULT_UPDATE_CONFIRM_WINDOW_MS = 5 * 60_000;
-const NEVER_STARTED_FAILURE = 'update did not serve a verified turn before its confirmation deadline';
-
-export type UpdateAttemptSettle =
-  | { kind: 'none' }
-  | { kind: 'pending'; confirmAt: number; record: UpdateAttemptRecord }
-  | { kind: 'rolled-back'; record: UpdateAttemptRecord };
-
-/**
- * Called at daemon start. Applying a bundle does not start its proof clock:
- * a busy host may spend longer than the window draining the previous release.
- */
-export async function settleUpdateAttemptOnStart(
-  layout: BeelineInstallLayout,
-  opts: { now?: () => number; confirmWindowMs?: number } = {},
-): Promise<UpdateAttemptSettle> {
-  const record = await readUpdateAttempt(layout);
-  if (!record || record.status !== 'pending') return { kind: 'none' };
-  const now = opts.now ?? Date.now;
-  const active = await activeReleaseId(layout);
-  if (active && active !== record.releaseId) return { kind: 'none' };
-  if (record.startedAt === undefined) {
-    const startedAt = now();
-    const started = {
-      ...record,
-      startedAt,
-      confirmBy: startedAt + (opts.confirmWindowMs ?? DEFAULT_UPDATE_CONFIRM_WINDOW_MS),
-    };
-    await writeUpdateAttempt(layout, started);
-    return { kind: 'pending', confirmAt: started.confirmBy, record: started };
-  }
-  const confirmAt = opts.confirmWindowMs
-    ? record.startedAt + opts.confirmWindowMs
-    : record.confirmBy;
-  if (now() <= confirmAt) {
-    return { kind: 'pending', confirmAt, record };
-  }
-  if (record.forcedMinimum) {
-    // One agent may fail its own probe; it cannot restore a host release the
-    // server has already declared too old. Keep the installed successor.
-    await writeUpdateAttempt(layout, {
-      ...record,
-      confirmBy: confirmAt,
-      status: 'confirmed',
-      failure: 'server-minimum release retained after probe confirmation window',
-    });
-    return { kind: 'none' };
-  }
-  if (record.previousReleaseId) {
-    await rollbackToPreviousRelease(layout, record.previousReleaseId);
-  }
-  await writeUpdateAttempt(layout, {
-    ...record,
-    confirmBy: confirmAt,
-    status: 'reverted',
-    failure: NEVER_STARTED_FAILURE,
-  });
-  return { kind: 'rolled-back', record };
-}
-
 // ---------------------------------------------------------------------------
 // The manager (driven by explicit ticks)
 // ---------------------------------------------------------------------------
@@ -1023,11 +838,8 @@ export interface SelfUpdateManagerOptions {
   /** How long to wait for agent work to finish before restarting. Default 30min. */
   idleTimeoutMs?: number;
   idlePollMs?: number;
-  confirmWindowMs?: number;
   /** Busy gate: true when no agent work is running anywhere in this daemon. */
   isIdle?: () => boolean;
-  /** Running daemon identities captured when the release is applied. */
-  requiredProbeIds?: string[];
   fetchImpl?: typeof fetch;
   logger?: (line: string) => void;
   /** Download, verify, and smoke-test only. The serving daemon activates after it proves idle. */
@@ -1050,7 +862,6 @@ export class SelfUpdateManager {
     >
   > & { env: NodeJS.ProcessEnv; now: () => number };
   private readonly isIdle: () => boolean;
-  private readonly requiredProbeIds: string[];
   private readonly fetchImpl: typeof fetch;
   private readonly log: (line: string) => void;
   private readonly stageOnly: boolean;
@@ -1080,7 +891,6 @@ export class SelfUpdateManager {
       now: options.now ?? Date.now,
     };
     this.isIdle = options.isIdle ?? (() => true);
-    this.requiredProbeIds = [...new Set(options.requiredProbeIds ?? [])].sort();
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.log = options.logger ?? ((line: string) => console.log(line));
     this.stageOnly = options.stageOnly ?? false;
@@ -1132,32 +942,6 @@ export class SelfUpdateManager {
     const raw = await fetchText(manifestUrl, this.fetchImpl);
     const { bundle } = parseUpdateManifest(raw, platform);
     const state = await readUpdateState(this.options.layout);
-    const previousAttempt = await readUpdateAttempt(this.options.layout);
-    if (previousAttempt?.status === 'reverted' &&
-        !(previousAttempt.failure === NEVER_STARTED_FAILURE && previousAttempt.startedAt === undefined) &&
-        !opts.force) {
-      const sameCommit = Boolean(
-        previousAttempt.to.commit && previousAttempt.to.commit === bundle.commit,
-      );
-      const sameVersion = Boolean(
-        previousAttempt.to.version && previousAttempt.to.version === bundle.version,
-      );
-      if (sameCommit && sameVersion) {
-        const line =
-          `release ${describeIdentity(previousAttempt.to)} reverted after a failed served-turn proof; ` +
-          'waiting for a newer publish or `beeline update --force`';
-        if (line !== this.lastVerdictLog) {
-          this.log(`[body] self-update: ${line}`);
-          this.lastVerdictLog = line;
-        }
-        await writeUpdateState(this.options.layout, {
-          ...state,
-          lastCheckAt: now,
-          lastCheckResult: 'skipped: latest attempt reverted',
-        });
-        return;
-      }
-    }
     // An explicit --force overrides an indeterminate comparison when the
     // published side at least names itself; otherwise compare normally.
     const installed = await readInstalledBundleIdentity(this.options.layout, state);
@@ -1242,7 +1026,7 @@ export class SelfUpdateManager {
     }
     this.deferredBusyNotice = false;
 
-    const { previousReleaseId } = await activateRelease(this.options.layout, releaseId);
+    await activateRelease(this.options.layout, releaseId);
     // The managed self-update path converges the host elector onto the bundle
     // it just activated: the unit installed by `beeline start`/pairing predates
     // `trustySquireBrokerUnit()`'s Node pin (#1653), and neither the activating
@@ -1274,19 +1058,6 @@ export class SelfUpdateManager {
         log: this.log,
       });
     }
-    await writeUpdateAttempt(this.options.layout, {
-      version: 1,
-      from: installed ?? {},
-      to: targetIdentity,
-      releaseId,
-      previousReleaseId,
-      appliedAt: now,
-      confirmBy: now + DEFAULT_UPDATE_CONFIRM_WINDOW_MS,
-      status: 'pending',
-      ...(this.requiredProbeIds.length > 0
-        ? { requiredProbeIds: this.requiredProbeIds, confirmedProbeIds: [] }
-        : {}),
-    });
     const { stagedReleaseId: _stagedReleaseId, ...stateWithoutStagedRelease } = state;
     await writeUpdateState(this.options.layout, {
       ...stateWithoutStagedRelease,
@@ -1295,7 +1066,7 @@ export class SelfUpdateManager {
     });
     this.log(
       `[body] self-update: Beeline bundle ${describeIdentity(installed)} -> ` +
-        `${describeIdentity(targetIdentity)} applied; the daemon coordinator will restart from the stable anchor (previous release kept for rollback).`,
+        `${describeIdentity(targetIdentity)} applied; the daemon coordinator will restart from the stable anchor.`,
     );
   }
 

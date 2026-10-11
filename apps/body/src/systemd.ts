@@ -19,7 +19,7 @@ export const DELIBERATE_REMOVAL_EXIT_STATUS = 78;
 export const DAEMON_DISTRESS_EXIT_STATUS = 77;
 /** systemd addressed an agent whose durable runtime was already removed. */
 export const UNKNOWN_AGENT_EXIT_STATUS = 79;
-/** The pre-machine per-agent template; only migration and rollback still name it. */
+/** The pre-machine per-agent template; migration still names it. */
 export const SYSTEMD_UNIT_NAME = 'beeline-agent@.service';
 /** One helper process per machine hosts every paired agent. */
 export const SYSTEMD_HELPER_UNIT_NAME = 'beeline-helper.service';
@@ -62,60 +62,6 @@ RestartSteps=5
 RestartMaxDelaySec=60s
 RestartPreventExitStatus=${NO_AGENTS_EXIT_STATUS}
 SuccessExitStatus=${NO_AGENTS_EXIT_STATUS}
-WatchdogSec=180s
-CPUWeight=1000
-IOWeight=1000
-Nice=-5
-OOMScoreAdjust=-1000
-OOMPolicy=continue
-TimeoutStartSec=90s
-TimeoutStopSec=90s
-KillMode=control-group
-UMask=0077
-# A desktop-launched user manager may inherit Ubuntu's unprivileged_userns
-# AppArmor profile. Without an explicit transition every agent inherits it too,
-# so /usr/bin/bwrap cannot enter its package-provided bwrap profile.
-# Do not set NoNewPrivileges or PrivateTmp on this outer service: systemd applies
-# either before AppArmorProfile, which blocks this transition. Bubblewrap sets
-# no-new-privs and a private /tmp inside each agent sandbox it creates.
-AppArmorProfile=-unconfined
-
-[Install]
-WantedBy=default.target
-`;
-}
-
-/**
- * The pre-machine per-agent template. Written only when a rollback restores a
- * release that predates the machine helper, so that release can serve again.
- * PATH includes `%h/.local/bin` so every Cursor helper can resolve
- * `cursor-agent`; a host drop-in that replaces PATH must keep that entry.
- *
- * `OOMPolicy=continue` is load-bearing: systemd's default `stop` tears the whole
- * unit down when the kernel OOM-kills any process in its cgroup, which on this
- * host means one memory-hungry harness would take every other agent's daemon
- * with it. `OOMScoreAdjust=-1000` keeps the daemon itself off the kernel's
- * victim list so the child is the one reclaimed.
- */
-export function agentServiceUnit(): string {
-  return `[Unit]
-Description=Beeline agent %i
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=0
-
-[Service]
-Type=notify
-NotifyAccess=all
-Environment=BEELINE_MANAGED_BY_SYSTEMD=1
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/beeline daemon --agent %i
-Restart=always
-RestartSec=5s
-RestartSteps=5
-RestartMaxDelaySec=60s
-RestartPreventExitStatus=${DAEMON_DISTRESS_EXIT_STATUS} ${DELIBERATE_REMOVAL_EXIT_STATUS} ${UNKNOWN_AGENT_EXIT_STATUS}
-SuccessExitStatus=${UNKNOWN_AGENT_EXIT_STATUS}
 WatchdogSec=180s
 CPUWeight=1000
 IOWeight=1000
@@ -397,8 +343,7 @@ export async function installHelperService(
   // restarting in the background once this call returns control to a caller
   // that assumes the attempt is over, and so the legacy per-agent units —
   // never retired above — remain the only thing serving until a fixed
-  // release lands (the caller's own failure path rolls that back; see
-  // cli.ts's migrateLegacyAgentUnit / successorRollbackAllowed).
+  // release lands. cli.ts's migrateLegacyAgentUnit reports the refusal.
   await run(['disable', SYSTEMD_HELPER_UNIT_NAME]).catch(() => undefined);
   await run(['stop', '--no-block', SYSTEMD_HELPER_UNIT_NAME]).catch(() => undefined);
   throw new Error(
@@ -456,44 +401,6 @@ async function legacyAgentUnits(options: { run: SystemdRunner }): Promise<string
   return [...units].sort();
 }
 
-/**
- * A rollback restored a release that may predate the machine helper, and that
- * release cannot run `daemon --machine`. Give each paired agent its per-agent
- * unit back and stand the helper unit down; a restored release that does know
- * the machine helper migrates straight back on its first start.
- */
-export async function restoreLegacyAgentUnits(
-  publicKeys: readonly string[],
-  options: { env?: NodeJS.ProcessEnv; run?: SystemdRunner } = {},
-): Promise<void> {
-  const env = options.env ?? process.env;
-  const run = options.run ?? runSystemctl;
-  const template = systemdUserUnitPath(env);
-  await mkdir(dirname(template), { recursive: true, mode: 0o700 });
-  await writeFile(template, agentServiceUnit(), { mode: 0o600 });
-  await run(['daemon-reload']);
-  const failures: Error[] = [];
-  for (const publicKey of publicKeys) {
-    if (!/^[0-9a-f]{64}$/i.test(publicKey)) continue;
-    const unit = `beeline-agent@${publicKey.toLowerCase()}.service`;
-    try {
-      await run(['enable', unit]);
-    } catch (error) {
-      failures.push(new Error(`${unit} enable: ${error instanceof Error ? error.message : String(error)}`));
-    }
-    try {
-      await run(['start', '--no-block', unit]);
-    } catch (error) {
-      failures.push(new Error(`${unit} start: ${error instanceof Error ? error.message : String(error)}`));
-    }
-  }
-  // Keep the helper enabled if any per-agent handoff failed. The restored
-  // release can then retry through its normal supervisor instead of leaving
-  // an agent permanently without a service after this process exits.
-  if (failures.length) throw new AggregateError(failures, 'per-agent unit restore incomplete');
-  await run(['disable', SYSTEMD_HELPER_UNIT_NAME]);
-}
-
 async function serviceStatus(
   run: SystemdRunner,
   service: string,
@@ -548,12 +455,7 @@ async function notify(fields: string[]): Promise<void> {
   await execFileAsync('systemd-notify', fields, { timeout: SYSTEMD_COMMAND_TIMEOUT_MS });
 }
 
-/**
- * Ask the service manager for more start time (`EXTEND_TIMEOUT_USEC`, honored
- * by `Type=notify` units while the unit is still starting). The successor's
- * comparison against the current release runs a second full probe inside the
- * 90s start deadline, which the first probe may already have spent.
- */
+/** Extend startup while interrupted-turn replay waits for a network reconnect. */
 export async function extendSystemdStartTimeout(ms: number): Promise<void> {
   await notify([`EXTEND_TIMEOUT_USEC=${Math.max(0, Math.round(ms)) * 1000}`]).catch(() => undefined);
 }

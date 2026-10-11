@@ -23,7 +23,6 @@ import {
   managedRestartStaggerMs,
   ManagedUpdateDrain,
   ManagedUpdateHandoff,
-  runningRuntimeProbeIds,
   withInstallLock,
 } from './managed-update.js';
 import { DEFAULT_DRAIN_DEADLINE_MS } from './room-runtime.js';
@@ -31,7 +30,6 @@ import {
   clearHelperPidRecordIfPid,
   defaultSupervisorRoot,
   findAgentRuntimeConfigPaths,
-  helperStateDirectory,
   isAgentStopped,
   readRuntimeRecord,
   runtimeDaemonPid,
@@ -40,9 +38,7 @@ import {
 import {
   activeReleaseId,
   beelineInstallLayout,
-  describeIdentity,
   readInstalledBundleIdentity,
-  settleUpdateAttemptOnStart,
 } from './self-update.js';
 import type { InstalledBundleIdentity } from './self-update-manifest.js';
 import {
@@ -52,7 +48,6 @@ import {
   startLocalWatchdog,
   SystemdNotifier,
 } from './systemd.js';
-import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
 import { squireBrokerMeetsComputerUseMinimum } from './squire-host.js';
 import { pruneDeletedRuntimes, pruneRepositoryCaches } from './host-disk-retention.js';
 import { applyRequestedStartupCleanup } from './startup-cleanup.js';
@@ -82,7 +77,7 @@ interface AgentSlot {
  * as an in-process runtime and holds one live socket per server for all of
  * them. It owns everything that is per process: signals, the service
  * manager's watchdog, the update drain (all agents drain, then one restart),
- * the forced update, and rollback. One agent's failure restarts or stops only
+ * and the forced update. One agent's failure restarts or stops only
  * that agent. SIGHUP rescans the paired agents, which is how pairing, `start`
  * and `stop` change what it hosts.
  *
@@ -166,10 +161,6 @@ export async function runMachineHelper(
     return live;
   };
 
-  // The anchor is restored already. Restart this same supervised helper;
-  // handing agents to legacy services can disable it during their migration.
-  const standDownForRollback = standDownAfterRollback;
-
   const finish = async (reason: HelperExitReason) => {
     disposeSignals();
     stopReserveMonitor();
@@ -179,24 +170,13 @@ export async function runMachineHelper(
   };
 
   if (layout) {
-    const settle = await settleUpdateAttemptOnStart(layout);
-    if (settle.kind === 'rolled-back') {
-      for (const path of await hostedRuntimes())
-        await queueUpdateRollbackAlert(dirname(path), settle.record.releaseId);
-      console.error(
-        `[helper] self-update ROLLED BACK: bundle ${describeIdentity(settle.record.to)} never confirmed healthy; ` +
-          `restored ${settle.record.previousReleaseId ?? 'previous release'}`,
-      );
-      return finish(await standDownForRollback());
-    }
     loadedRelease = await activeReleaseId(layout);
     loadedReleaseIdentity = await readInstalledBundleIdentity(layout);
-    if (settle.kind === 'pending' ||
-        !squireBrokerMeetsComputerUseMinimum(env.HOME?.trim() || homedir())) {
-      // The first process on a new bundle converges the elector. Other starts
-      // only do so when the durable install is below the computer-use floor.
+    if (!squireBrokerMeetsComputerUseMinimum(env.HOME?.trim() || homedir())) {
+      // Converge the elector only when the durable install is below
+      // the computer-use floor. Activation already converges new bundles.
       // A broker crash restart never reaches this path.
-      const squireUpdateMode = settle.kind === 'pending' ? 'latest' : 'minimum';
+      const squireUpdateMode = 'minimum';
       if (managedBy === 'systemd')
         await installTrustySquireBrokerService({ env, squireUpdateMode }).catch((error) => console.error(
           `[beeline] host Squire broker unit not converged: ${error instanceof Error ? error.message : String(error)}`));
@@ -275,7 +255,6 @@ export async function runMachineHelper(
       return forceInstallMinimum({
         layout,
         minVersion,
-        requiredProbeIds: await runningRuntimeProbeIds(env),
       });
     },
     restart: async (desiredRelease) => {
@@ -304,14 +283,8 @@ export async function runMachineHelper(
 
   const machineKey = () => [...slots.values()].map((slot) => slot.agentId).sort()[0] ?? 'helper';
   if (layout) {
-    update = await ManagedUpdateHandoff.create(layout, helperStateDirectory(supervisorRoot), Date.now, {
+    update = await ManagedUpdateHandoff.create(layout, Date.now, {
       env,
-      requiredProbeIds: [
-        ...(await runningRuntimeProbeIds(env)),
-        ...(await Promise.all(initial.map((path) =>
-          readRuntimeRecord(path).then((runtime) => runtime.agent.publicKey, () => undefined))))
-          .filter((key): key is string => Boolean(key)),
-      ],
     });
   }
   // Serve new messages while an update waits. Close intake across the machine
@@ -444,10 +417,6 @@ export async function runMachineHelper(
         setState(slot, 'distressed');
         break;
       }
-      if (reason === 'rolled-back') {
-        void standDownForRollback().then((next) => restartHelper(next));
-        break;
-      }
       if (reason === 'update' || reason === 'force-update-failed') {
         restartHelper(reason);
         break;
@@ -541,16 +510,6 @@ export function quiesceHostedAgents(agents: readonly HostedAgent[]): boolean {
     }
   }
   return true;
-}
-
-/**
- * End the current process after restoring the install anchor, leaving the
- * machine service intact. Exit 75 restarts it on the previous release under
- * systemd and launchd. Never restore legacy per-agent services here: a partial
- * handoff can race their migration back to the helper and leave it stopped.
- */
-export async function standDownAfterRollback(): Promise<HelperExitReason> {
-  return 'rolled-back';
 }
 
 /**

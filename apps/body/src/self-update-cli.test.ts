@@ -7,13 +7,16 @@
  * way the installer itself lays it out and delegates the update to it, only
  * refusing (with a useful next step) when no install exists at all.
  */
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import * as runtime from './runtime.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdir, mkdtemp as mkdtempFs, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp as mkdtempFs, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { requireLayout, runUpdateCommand } from './self-update-cli.js';
-import { hostPlatformKey } from './self-update.js';
+import { activeReleaseId, beelineInstallLayout, hostPlatformKey, readUpdateState } from './self-update.js';
 
 const tempDirs: string[] = [];
 async function tempDir(prefix: string): Promise<string> {
@@ -24,6 +27,7 @@ async function tempDir(prefix: string): Promise<string> {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   for (const dir of tempDirs.splice(0))
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
 });
@@ -137,4 +141,72 @@ describe('runUpdateCommand end-to-end under a simulated npx environment', () => 
     expect(logs.some((line) => line.includes('installed bundle: 0.0.56'))).toBe(true);
     expect(logs.some((line) => line.includes('installed bundle is current'))).toBe(true);
   });
+});
+
+
+describe('update commands after removing confirmation and rollback', () => {
+  it('rejects obsolete rollback before touching an install', async () => {
+    await expect(runUpdateCommand(['update', '--rollback'])).rejects.toThrow('unknown update argument');
+  });
+
+  it('reports the installed release without surfacing a legacy failed attempt', async () => {
+    const home = await tempDir('update-status-');
+    const prefix = join(home, '.local');
+    await writeStubInstall(prefix, { commit: 'new-release', version: 'v0.1.29' });
+    const stateDir = join(prefix, 'lib/beeline-releases/.state');
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, 'update-attempt.json'), JSON.stringify({ status: 'reverted',
+      failure: 'functional update probe failed: initialize timed out' }));
+    simulateNpxEnvironment(home);
+    vi.stubEnv('XDG_STATE_HOME', join(home, 'state'));
+    const output: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((line) => output.push(String(line)));
+    try { await runUpdateCommand(['update', '--status']); } finally { log.mockRestore(); }
+    expect(output.join('\n')).toContain('v0.1.29');
+    expect(output.join('\n')).not.toMatch(/reverted|probe failed|update attempt/);
+  });
+});
+
+
+it('stages a CLI update from its manifest override while a helper is serving', async () => {
+  const home = await tempDir('cli-idle-update-');
+  const prefix = join(home, '.local');
+  await writeStubInstall(prefix, { commit: 'old', version: 'v0.1.28' });
+  simulateNpxEnvironment(home);
+  vi.stubEnv('BEELINE_SYSTEMD_USER', '0');
+  const configPath = join(home, 'runtime.json');
+  vi.spyOn(runtime, 'findRuntimeConfigPaths').mockResolvedValue([]);
+  vi.spyOn(runtime, 'findAgentRuntimeConfigPaths').mockResolvedValue([configPath]);
+  vi.spyOn(runtime, 'resolveRuntimeConfigPath').mockResolvedValue(configPath);
+  vi.spyOn(runtime, 'runtimeDaemonPid').mockResolvedValue(process.pid);
+  vi.spyOn(runtime, 'readRuntimeRecord').mockResolvedValue({ agent: { publicKey: 'fixture-agent' } } as never);
+  const published = join(home, 'published');
+  const lib = join(published, 'lib/beeline');
+  await mkdir(join(lib, 'codegraph/bin'), { recursive: true });
+  await writeFile(join(lib, 'beeline-cli.mjs'), "console.log('v0.1.29');\n");
+  await writeFile(join(lib, 'pi-mcp-adapter.mjs'), 'export {};\n');
+  await writeFile(join(lib, 'codegraph/bin/codegraph'), '#!/bin/sh\nexit 0\n');
+  await writeFile(join(published, 'bundle.json'), JSON.stringify({ commit: 'new', version: 'v0.1.29' }));
+  const archivePath = join(home, 'bundle.tar.gz');
+  execFileSync('tar', ['-czf', archivePath, '-C', published, '.']);
+  const archive = await readFile(archivePath);
+  let downloads = 0;
+  const server = createServer((req, res) => {
+    if (req.url === '/bundle.tar.gz') { downloads++; res.end(archive); return; }
+    res.end(JSON.stringify({ sourceCommit: 'new', version: 'v0.1.29', bundles: {
+      [hostPlatformKey()]: { file: 'bundle.tar.gz', sha256: createHash('sha256').update(archive).digest('hex') },
+    } }));
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  const manifestUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}/manifest.json`;
+  try {
+    await runUpdateCommand(['update', '--manifest-url', manifestUrl]);
+    const layout = beelineInstallLayout({ BEELINE_LIB_DIR: join(prefix, 'lib/beeline') })!;
+    expect(downloads).toBe(1);
+    expect(await activeReleaseId(layout)).toBe('legacy');
+    expect(await readUpdateState(layout)).toMatchObject({ stagedReleaseId: 'new' });
+    expect(await readFile(join(layout.releasesRoot, 'new/bundle.json'), 'utf8')).toContain('v0.1.29');
+  } finally {
+    await new Promise<void>((done) => server.close(() => done()));
+  }
 });

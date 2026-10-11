@@ -33,7 +33,6 @@ import { REGISTRY_MCP_BROKER_FLAG, runRegistryMcpBroker } from './registry-mcp.j
 import {
   HELPER_EXIT_CODES,
   installUnhandledRejectionGuard,
-  successorRollbackAllowed,
   type HelperLifecycle,
   type HelperExitReason,
 } from './helper-lifecycle.js';
@@ -52,13 +51,11 @@ import {
   beelineInstallLayout,
   describeIdentity,
   readInstalledBundleIdentity,
-  readUpdateAttempt,
   repairInstallForwarders,
 } from './self-update.js';
-import { rollbackFailedSuccessor, runManagedUpdateWorker } from './managed-update.js';
-import { runUpdateProbeCommand, UPDATE_PROBE_COMMAND } from './current-release-probe.js';
+import { runManagedUpdateWorker } from './managed-update.js';
 import { ensureMachineHelper, reloadMachineHelper } from './helper-service.js';
-import { runMachineHelper, standDownAfterRollback } from './machine-helper.js';
+import { runMachineHelper } from './machine-helper.js';
 import { runLeasedEmulator } from './android-emulator-lease.js';
 
 function usage(exitCode = 1): void {
@@ -80,7 +77,7 @@ ${pc.dim('Usage:')}
   beeline start --agent <agent-pubkey>      Same, for one agent only (undoes stop)
   beeline stop --agent <agent-pubkey>       Stop serving one agent; every other
                                             agent on this machine keeps serving
-  beeline update [--check|--status|--rollback|--force]
+  beeline update [--check|--status|--force]
                                             Self-update the installed bundle
   beeline cleanup-shared-home [--apply]      Report byte-identical obsolete cache copies;
                                             --apply requires a quiescent helper
@@ -273,13 +270,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Internal: a successor's comparison probe spawns the CURRENT release's
-  // bundle this way (`current-release-probe.ts`); not listed in usage.
-  if (command === UPDATE_PROBE_COMMAND) {
-    await runUpdateProbeCommand(args);
-    return;
-  }
-
   if (command === 'start') {
     await runStartCommand(args, interactiveUi);
     return;
@@ -307,22 +297,7 @@ async function main(): Promise<void> {
 }
 
 main().catch(async (err) => {
-  // Cover failures before the machine helper reaches its own handling. A
-  // pending release that cannot reach READY rolls back once; the same helper
-  // service restarts through the install anchor on the restored release.
-  let reason: HelperExitReason = err instanceof DaemonExitError ? err.reason : 'failed';
-  if (process.argv[2] === 'daemon') {
-    const layout = beelineInstallLayout(process.env);
-    const attempt = layout ? await readUpdateAttempt(layout).catch(() => undefined) : undefined;
-    if (
-      layout &&
-      successorRollbackAllowed(err, attempt?.confirmBy) &&
-      (await rollbackFailedSuccessor(layout).catch(() => false))
-    ) {
-      console.error('[thin-core] successor failed during startup; previous release restored once');
-      if (process.argv.includes('--machine')) reason = await standDownAfterRollback();
-    }
-  }
+  const reason: HelperExitReason = err instanceof DaemonExitError ? err.reason : 'failed';
   // `daemon` is never a human at a keyboard — always the plain, full-detail
   // form (stack included) regardless of whether a TTY happens to be attached.
   const interactiveUi = process.argv[2] !== 'daemon' && Boolean(stdin.isTTY && stdout.isTTY);

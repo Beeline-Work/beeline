@@ -8,37 +8,18 @@ import {
   mkdir,
   readFile,
   rm,
-  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import {
-  SelfUpdateManager,
-  STAGED_NODE_PATH_FILE,
-  activateRelease,
-  activeReleaseId,
-  archiveUrlFor,
-  beelineInstallLayout,
-  hostPlatformKey,
-  nodeVersionAtLeast,
-  readInstalledBundleIdentity,
-  readUpdateAttempt,
-  readUpdateState,
-  rollbackToPreviousRelease,
-  settleUpdateAttemptOnStart,
-  stageRelease,
-  writeUpdateAttempt,
-  writeUpdateAttemptFixture,
-  type BeelineInstallLayout,
-} from './self-update.js';
+import { SelfUpdateManager, STAGED_NODE_PATH_FILE, activeReleaseId, archiveUrlFor, beelineInstallLayout, hostPlatformKey, nodeVersionAtLeast, readInstalledBundleIdentity, readUpdateState, stageRelease, type BeelineInstallLayout } from './self-update.js';
 import {
   compareBundleIdentity,
   compareVersions,
   parseUpdateManifest,
 } from './self-update-manifest.js';
-import { forceInstallMinimum, rollbackFailedSuccessor, versionAtLeast } from './managed-update.js';
+import { forceInstallMinimum, versionAtLeast } from './managed-update.js';
 
 const tempDirs: string[] = [];
 async function tempDir(prefix: string): Promise<string> {
@@ -355,13 +336,9 @@ describe('self-update end to end against a local fixture manifest', () => {
       minVersion: 'v0.0.69',
       env: { BEELINE_LIB_DIR: layout.libDir, BEELINE_UPDATE_MANIFEST_URL: manifestUrl,
         BEELINE_SYSTEMD_USER: '0' },
-      requiredProbeIds: ['agent-b', 'agent-a'],
     });
     expect(await activeReleaseId(layout)).toBe(releaseId);
     expect((await readInstalledBundleIdentity(layout))?.version).toBe('v0.0.69');
-    expect(await readUpdateAttempt(layout)).toMatchObject({
-      releaseId, forcedMinimum: 'v0.0.69', requiredProbeIds: ['agent-a', 'agent-b'],
-    });
     expect(versionAtLeast('v0.0.69', 'v0.0.69')).toBe(true);
     expect(versionAtLeast('v0.0.9', 'v0.0.10')).toBe(false);
   });
@@ -369,14 +346,13 @@ describe('self-update end to end against a local fixture manifest', () => {
   it('detects, downloads, verifies, and swaps atomically once work is idle', async () => {
     const v2 = await buildFixtureBundle('c2newer', '1.1.0');
     const manifestUrl = serveManifest(v2);
-    const { root, layout } = await makeLegacyInstall('c1alpha', '1.0.0');
+    const { layout } = await makeLegacyInstall('c1alpha', '1.0.0');
 
     let idle = false;
     const manager = new SelfUpdateManager({
       layout,
       env: { BEELINE_UPDATE_MANIFEST_URL: manifestUrl },
       checkIntervalMs: 0,
-      initialDelayMs: 0,
       idleTimeoutMs: 400,
       idlePollMs: 20,
       isIdle: () => idle,
@@ -395,16 +371,10 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect((await lstat(layout.libDir)).isSymbolicLink()).toBe(true);
     expect(await activeReleaseId(layout)).toBe(v2.commit);
 
-    // Previous bundle preserved for rollback.
+    // The legacy install is migrated without overwriting its files.
     expect(
       existsSync(join(layout.releasesRoot, 'c1alpha', 'lib', 'beeline', 'beeline-cli.mjs')),
     ).toBe(true);
-
-    // The rollback journal is durable operational state. A successful update
-    // and restart must not publish anything into Room chat.
-    const pending = await readUpdateAttempt(layout);
-    expect(pending?.releaseId).toBe(v2.commit);
-    expect(pending?.previousReleaseId).toBe('c1alpha');
 
     // Identity now reads from the INSTALLED bundle itself.
     expect(await readInstalledBundleIdentity(layout)).toEqual({
@@ -412,9 +382,23 @@ describe('self-update end to end against a local fixture manifest', () => {
       version: v2.version,
     });
 
-    // A served-turn confirmation retains one durable outcome record.
-    await writeUpdateAttempt(layout, { ...pending!, status: 'confirmed' });
-    expect((await readUpdateAttempt(layout))?.status).toBe('confirmed');
+  }, 60_000);
+
+  it('ignores a legacy reverted attempt when installing the published release', async () => {
+    const target = await buildFixtureBundle('new-publish', '1.1.0');
+    const { layout } = await makeLegacyInstall('old-publish', '1.0.0');
+    const oldStatePath = join(layout.releasesRoot, '.state', 'update-attempt.json');
+    await mkdir(dirname(oldStatePath), { recursive: true });
+    const legacyAttempt = JSON.stringify({ version: 1, releaseId: target.commit,
+      to: { commit: target.commit, version: target.version }, status: 'reverted',
+      failure: 'functional update probe failed', confirmBy: 1 });
+    await writeFile(oldStatePath, legacyAttempt);
+    const manager = new SelfUpdateManager({ layout,
+      env: { BEELINE_UPDATE_MANIFEST_URL: serveManifest(target), BEELINE_SYSTEMD_USER: '0' },
+      logger: () => undefined });
+    await manager.checkAndApply();
+    expect(await activeReleaseId(layout)).toBe(target.commit);
+    expect(await readFile(oldStatePath, 'utf8')).toBe(legacyAttempt);
   }, 60_000);
 
   it('lets the managed worker stage and smoke-test without swapping the live anchor', async () => {
@@ -432,7 +416,7 @@ describe('self-update end to end against a local fixture manifest', () => {
 
     expect(existsSync(join(layout.releasesRoot, v2.commit, '.stage-ok'))).toBe(true);
     expect(await activeReleaseId(layout)).toBe('legacy');
-    expect(await readUpdateAttempt(layout)).toBeUndefined();
+    expect(existsSync(join(layout.releasesRoot, '.state', 'update-attempt.json'))).toBe(false);
     expect(await readUpdateState(layout)).toMatchObject({
       stagedReleaseId: v2.commit,
       lastCheckResult: 'staged; waiting for serving daemon idle gate',
@@ -513,196 +497,6 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect(nodeVersionAtLeast('21.0.0', [20, 11, 0])).toBe(true);
   });
 
-  it('rolls back when an applied update never confirms healthy, and keeps a fresh one', async () => {
-    const { layout } = await makeLegacyInstall('c1old', '1.0.0');
-    const b = await buildFixtureBundle('c4newer', '1.5.0');
-    const releaseB = await stageRelease(layout, serveManifest(b), {
-      file: b.tarballPath.split('/').pop()!,
-      sha256: b.sha256,
-      commit: b.commit,
-      version: b.version,
-    });
-    const { previousReleaseId } = await activateRelease(layout, releaseB);
-    expect(previousReleaseId).toBe('c1old');
-    expect(await activeReleaseId(layout)).toBe(releaseB);
-
-    // A bundle that started but never proved healthy still rolls back.
-    await writeUpdateAttemptFixture(layout, {
-      from: { commit: 'c1old', version: '1.0.0' },
-      to: { commit: b.commit, version: b.version },
-      releaseId: releaseB,
-      previousReleaseId,
-      appliedAt: Date.now() - 10 * 60_000,
-      startedAt: Date.now() - 10 * 60_000,
-    });
-    const settle = await settleUpdateAttemptOnStart(layout);
-    expect(settle.kind).toBe('rolled-back');
-    expect(await activeReleaseId(layout)).toBe(previousReleaseId!);
-    expect(await readUpdateAttempt(layout)).toMatchObject({
-      releaseId: releaseB,
-      previousReleaseId,
-      status: 'reverted',
-    });
-
-    // The exact broken publish cannot churn straight back onto the host.
-    const logs: string[] = [];
-    const pinned = new SelfUpdateManager({
-      layout,
-      env: { BEELINE_UPDATE_MANIFEST_URL: serveManifest(b) },
-      isIdle: () => true,
-      logger: (line) => logs.push(line),
-    });
-    await pinned.checkAndApply();
-    expect(await activeReleaseId(layout)).toBe(previousReleaseId!);
-    expect(logs.join('\n')).toContain('reverted after a failed served-turn proof');
-
-    // A new commit clears the pin even if a rebuilt release reused the same
-    // version label. The old OR comparison skipped this later artifact.
-    const newer = await buildFixtureBundle('c5fixed', b.version);
-    const fixed = new SelfUpdateManager({
-      layout,
-      env: { BEELINE_UPDATE_MANIFEST_URL: serveManifest(newer) },
-      isIdle: () => true,
-      logger: () => undefined,
-    });
-    await fixed.checkAndApply();
-    expect(await activeReleaseId(layout)).toBe(newer.commit);
-    expect((await readUpdateAttempt(layout))?.releaseId).toBe(newer.commit);
-
-    // A FRESH journal is kept pending confirmation instead.
-    await writeUpdateAttemptFixture(layout, {
-      from: {},
-      to: { commit: newer.commit },
-      releaseId: newer.commit,
-      previousReleaseId,
-      appliedAt: Date.now(),
-    });
-    expect((await settleUpdateAttemptOnStart(layout)).kind).toBe('pending');
-    expect(await readUpdateAttempt(layout)).toBeDefined();
-  });
-
-  it('remembers a cutover-triggered rollback too, so the next check does not repeat it', async () => {
-    // The per-agent -> helper cutover's own failure path reverts through
-    // rollbackFailedSuccessor (apps/body/src/systemd.ts's installHelperService
-    // throwing, caught by cli.ts's migrateLegacyAgentUnit / top-level catch),
-    // never settleUpdateAttemptOnStart -- a crash-on-import helper can never
-    // reach that. Prove the SAME "do not re-apply" memory holds regardless of
-    // which path wrote the revert.
-    const { layout } = await makeLegacyInstall('e1old', '1.0.0');
-    const bad = await buildFixtureBundle('e2cutoverbad', '2.0.0');
-    const releaseBad = await stageRelease(layout, serveManifest(bad), {
-      file: bad.tarballPath.split('/').pop()!,
-      sha256: bad.sha256,
-      commit: bad.commit,
-      version: bad.version,
-    });
-    const { previousReleaseId } = await activateRelease(layout, releaseBad);
-    await writeUpdateAttemptFixture(layout, {
-      from: { commit: 'e1old', version: '1.0.0' },
-      to: { commit: bad.commit, version: bad.version },
-      releaseId: releaseBad,
-      previousReleaseId,
-      appliedAt: Date.now(),
-    });
-
-    const rolledBack = await rollbackFailedSuccessor(layout, undefined, {
-      probeId: 'migrating-agent',
-      failure: 'beeline-helper.service did not become healthy before the restart deadline',
-    });
-    expect(rolledBack).toBe(true);
-    expect(await activeReleaseId(layout)).toBe(previousReleaseId!);
-    expect(await readUpdateAttempt(layout)).toMatchObject({
-      releaseId: releaseBad,
-      status: 'reverted',
-      revertedBy: 'migrating-agent',
-    });
-
-    const logs: string[] = [];
-    const pinned = new SelfUpdateManager({
-      layout,
-      env: { BEELINE_UPDATE_MANIFEST_URL: serveManifest(bad) },
-      isIdle: () => true,
-      logger: (line) => logs.push(line),
-    });
-    await pinned.checkAndApply();
-    expect(await activeReleaseId(layout)).toBe(previousReleaseId!);
-    expect(logs.join('\n')).toContain('reverted after a failed served-turn proof');
-  });
-
-  it('resumes one attempt safely after a crash before proof, after proof, and after deadline', async () => {
-    const { layout } = await makeLegacyInstall('stable', '1.0.0');
-    const base = {
-      from: { commit: 'stable' },
-      to: { commit: 'candidate' },
-      releaseId: 'legacy',
-      previousReleaseId: undefined,
-    };
-
-    await writeUpdateAttemptFixture(layout, { ...base, appliedAt: 1_000, confirmBy: 2_000 });
-    expect(await settleUpdateAttemptOnStart(layout, { now: () => 1_500 })).toMatchObject({
-      kind: 'pending',
-    });
-
-    await writeUpdateAttempt(layout, {
-      ...(await readUpdateAttempt(layout))!,
-      status: 'confirmed',
-    });
-    expect(await settleUpdateAttemptOnStart(layout, { now: () => 3_000 })).toEqual({
-      kind: 'none',
-    });
-
-    await writeUpdateAttemptFixture(layout, { ...base, appliedAt: 4_000, startedAt: 4_000, confirmBy: 5_000 });
-    expect(await settleUpdateAttemptOnStart(layout, { now: () => 5_001 })).toMatchObject({
-      kind: 'rolled-back',
-    });
-    expect((await readUpdateAttempt(layout))?.status).toBe('reverted');
-  });
-
-  it('starts confirmation only when the new bundle runs after a long drain', async () => {
-    const { layout } = await makeLegacyInstall('old', '1.0.0');
-    const candidate = await buildFixtureBundle('new', '1.1.0');
-    const releaseId = await stageRelease(layout, serveManifest(candidate), {
-      file: candidate.tarballPath.split('/').pop()!,
-      sha256: candidate.sha256,
-      commit: candidate.commit,
-      version: candidate.version,
-    });
-    const { previousReleaseId } = await activateRelease(layout, releaseId);
-    await writeUpdateAttemptFixture(layout, {
-      from: { commit: 'old' }, to: { commit: candidate.commit }, releaseId,
-      previousReleaseId, appliedAt: 1_000, confirmBy: 2_000,
-    });
-    const started = await settleUpdateAttemptOnStart(layout, { now: () => 100_000 });
-    expect(started).toMatchObject({ kind: 'pending', confirmAt: 400_000 });
-    expect((await readUpdateAttempt(layout))?.startedAt).toBe(100_000);
-    expect(await settleUpdateAttemptOnStart(layout, { now: () => 400_001 })).toMatchObject({
-      kind: 'rolled-back',
-    });
-    expect(await activeReleaseId(layout)).toBe(previousReleaseId);
-  });
-
-  it('retries a release previously reverted before it ever started', async () => {
-    const { layout } = await makeLegacyInstall('old', '1.0.0');
-    const candidate = await buildFixtureBundle('retry', '1.1.0');
-    await writeUpdateAttemptFixture(layout, {
-      from: { commit: 'old' },
-      to: { commit: candidate.commit, version: candidate.version },
-      releaseId: candidate.commit,
-      previousReleaseId: 'legacy',
-      appliedAt: 1_000,
-      status: 'reverted',
-      failure: 'update did not serve a verified turn before its confirmation deadline',
-    });
-    const manager = new SelfUpdateManager({
-      layout,
-      env: { BEELINE_UPDATE_MANIFEST_URL: serveManifest(candidate), BEELINE_SYSTEMD_USER: '0' },
-      isIdle: () => true,
-    });
-    await manager.checkAndApply();
-    expect((await readUpdateAttempt(layout))?.status).toBe('pending');
-    expect(await activeReleaseId(layout)).toBe(candidate.commit);
-  });
-
   it('lets an explicit update apply even when automatic checks are disabled', async () => {
     const v2 = await buildFixtureBundle('c5optin', '1.6.0');
     serveManifest(v2);
@@ -715,7 +509,6 @@ describe('self-update end to end against a local fixture manifest', () => {
         BEELINE_UPDATE_MANIFEST_URL: `${baseUrl}/dl/manifest.json`,
       },
       checkIntervalMs: 3_600_000,
-      initialDelayMs: 3_600_000,
       idleTimeoutMs: 10_000,
       idlePollMs: 20,
       isIdle: () => true,
@@ -803,29 +596,4 @@ describe('self-update end to end against a local fixture manifest', () => {
       if (previousPlatform) Object.defineProperty(process, 'platform', previousPlatform);
     }
   }, 60_000);
-});
-
-// The daemon no longer spawns a successor or separately monitors anchor drift.
-// ManagedUpdateHandoff owns one stable-anchor restart request; confirmation and
-// rollback are covered by the update-attempt tests above and in managed-update.
-describe('rollback helper', () => {
-  it('restores the previous release with a single symlink swap', async () => {
-    const root = await tempDir('rb');
-    const libDir = join(root, 'prefix', 'lib', 'beeline');
-    const releasesRoot = join(root, 'prefix', 'lib', 'beeline-releases');
-    for (const release of ['r1', 'r2']) {
-      await mkdir(join(releasesRoot, release, 'lib', 'beeline'), { recursive: true });
-      await writeFile(
-        join(releasesRoot, release, 'lib', 'beeline', 'beeline-cli.mjs'),
-        `// ${release}\n`,
-      );
-    }
-    await symlink(join('beeline-releases', 'r2'), libDir);
-    const layout = beelineInstallLayout({ BEELINE_LIB_DIR: libDir })!;
-    await rollbackToPreviousRelease(layout, 'r1');
-    expect(await activeReleaseId(layout)).toBe('r1');
-    expect(await readFile(join(libDir, 'lib', 'beeline', 'beeline-cli.mjs'), 'utf8')).toBe(
-      '// r1\n',
-    );
-  });
 });

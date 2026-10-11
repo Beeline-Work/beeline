@@ -6,7 +6,7 @@
  *
  * Two layers:
  *   - unit tests over beelineInstallLayout normalization, identity reads,
- *     legacy-flat migration + rollback, and repairInstallForwarders;
+ *     legacy-flat migration, and repairInstallForwarders;
  *   - one SHELL-level end-to-end test that runs the real relay-stack/web/
  *     install.sh against stub bundles, applies updates through the real
  *     SelfUpdateManager swap, and invokes `<prefix>/bin/beeline --version`
@@ -32,19 +32,7 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  SelfUpdateManager,
-  activeReleaseId,
-  beelineInstallLayout,
-  defaultBeelineInstallLayout,
-  normalizeLegacyBundleShape,
-  readInstalledBundleIdentity,
-  repairInstallForwarders,
-  resolveBundleEntrypoint,
-  rollbackToPreviousRelease,
-  runningReleaseId,
-  type BeelineInstallLayout,
-} from './self-update.js';
+import { SelfUpdateManager, activeReleaseId, beelineInstallLayout, defaultBeelineInstallLayout, normalizeLegacyBundleShape, readInstalledBundleIdentity, repairInstallForwarders, resolveBundleEntrypoint, runningReleaseId, type BeelineInstallLayout } from './self-update.js';
 import { hostPlatformKey } from './self-update.js';
 
 const tempDirs: string[] = [];
@@ -431,7 +419,7 @@ describe('<prefix>/lib/beeline anchor contract', () => {
     });
   });
 
-  describe('migrating a legacy-flat install keeps rollback runnable', () => {
+  describe('migrating a legacy-flat install preserves its bundle shape', () => {
     it('preserves the flat bundle as a normalized release whose entrypoint resolves', async () => {
       const { activateRelease } = await import('./self-update.js');
       const root = await tempDir('legacy-flat-');
@@ -454,15 +442,14 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       spawnSync('tar', ['-xzf', staged.tarballPath, '-C', extracted]);
       await activateRelease(layout, 'newrel1');
 
-      // The preserved copy must be runnable for rollback: entrypoint resolvable.
+      // The migrated copy has the same shape as other installed bundles.
       const previousEntrypoint = await resolveBundleEntrypoint(
         join(layout.releasesRoot, 'oldflat'),
       );
       expect(previousEntrypoint).toBe(
         join(layout.releasesRoot, 'oldflat', 'lib', 'beeline', 'beeline-cli.mjs'),
       );
-      await rollbackToPreviousRelease(layout, 'oldflat');
-      expect(await activeReleaseId(layout)).toBe('oldflat');
+      expect(await activeReleaseId(layout)).toBe('newrel1');
     });
   });
 
@@ -597,7 +584,7 @@ describe('<prefix>/lib/beeline anchor contract', () => {
 // ---------------------------------------------------------------------------
 
 describe('self-update keeps fresh-shell invocations working across swaps', () => {
-  it('installs, updates twice (including a drifted-daemon handover), rolls back — and the wrapper still runs', async () => {
+  it('installs and updates twice (including a drifted-daemon handover), and the wrapper still runs', async () => {
     const v1 = await buildStubBundle('aaa111v1', '1.0.0');
     const v2 = await buildStubBundle('bbb222v2', '2.0.0');
     const v3 = await buildStubBundle('ccc333v3', '3.0.0');
@@ -679,13 +666,6 @@ describe('self-update keeps fresh-shell invocations working across swaps', () =>
       expect(await repairInstallForwarders(anchorLayout)).toBe(true);
       expectFreshShell(prefix, '3.0.0');
 
-      // --- 6. rollback keeps a runnable CLI ----------------------------------
-      const attempt = JSON.parse(
-        await readFile(join(anchorLayout.releasesRoot, '.state', 'update-attempt.json'), 'utf8'),
-      );
-      await rollbackToPreviousRelease(anchorLayout, attempt.previousReleaseId);
-      expectFreshShell(prefix, '2.0.0');
-      expectInstalledHelperForwarders(prefix, '2.0.0');
     } finally {
       await remote.close();
     }

@@ -9,7 +9,6 @@ import {
   applyRuntimeModelPreflight,
   resolvePreflightModelSelection,
 } from './runtime-model-validation.js';
-import { modelUnavailableState } from './model-availability.js';
 import { syncAgentModelCatalog } from './model-catalog-sync.js';
 import {
   AgentSignIn,
@@ -24,7 +23,6 @@ import { ThinDaemonCore } from './thin-core.js';
 import {
   HelperLifecycle,
   retryBeforeReady,
-  successorRollbackAllowed,
   type HelperExitReason,
 } from './helper-lifecycle.js';
 import { activateDaemonTransport, DaemonApiError } from './daemon-api-client.js';
@@ -40,18 +38,10 @@ import {
 import { retireRemovedAgent } from './agent-retirement.js';
 import { readMachineId } from './connect-command.js';
 import { BUBBLEWRAP_INSTALL_BUDGET_MS, ensureBwrapSandbox } from './bwrap-sandbox.js';
-import { readUpdateAttempt, type BeelineInstallLayout } from './self-update.js';
+import type { BeelineInstallLayout } from './self-update.js';
 import type { InstalledBundleIdentity } from './self-update-manifest.js';
 import { clearDaemonStartFailures } from './daemon-failure.js';
 import { extendSystemdStartTimeout } from './systemd.js';
-import { gateManagedSuccessor, attemptFailureText, rollbackFailedSuccessor } from './managed-update.js';
-import { retryWhileAdapterReinstalls, runUpdateFunctionalProbe } from './update-functional-probe.js';
-import { CURRENT_RELEASE_PROBE_TIMEOUT_MS, probeReleaseInSubprocess } from './current-release-probe.js';
-import {
-  reportUpdateRollback,
-  clearUpdateRollbackAlert,
-  clearUpdateRollbackAlertIfConfirmed,
-} from './update-rollback-alert.js';
 import { writeDaemonReleaseStatus } from './release-status.js';
 import { runScratchSweep } from './scratch-sweep.js';
 import type { MachineLink } from './machine-link.js';
@@ -212,41 +202,8 @@ export async function runAgentRuntime(
   signal.addEventListener('abort', abortFromHost, { once: true });
   if (signal.aborted) abortFromHost();
 
-  const layout = host.layout;
-  let rollbackAlertDrain: Promise<void> | undefined;
-  const drainRollbackAlert = (channelId: string | undefined): Promise<void> => {
-    if (!channelId) return Promise.resolve();
-    if (rollbackAlertDrain) return rollbackAlertDrain;
-    rollbackAlertDrain = reportUpdateRollback({ runtimeDir })
-      .then(() => undefined)
-      .catch((alertError) =>
-        console.error('[thin-core] automatic rollback alert remains queued:', alertError),
-      )
-      .finally(() => {
-        rollbackAlertDrain = undefined;
-      });
-    return rollbackAlertDrain;
-  };
-  const loadedRelease = host.loadedRelease;
   const loadedReleaseIdentity = host.loadedReleaseIdentity;
-  let pendingSuccessor = false;
-  let successorRolledBack = false;
-  /** A pending successor is never rolled back for an outage before this. */
-  let attemptDeadlineAt: number | undefined;
-  if (layout) {
-    // This agent proves the release only while the attempt that installed it
-    // is still pending; an agent restarted after a sibling confirmed it serves.
-    const attempt = await readUpdateAttempt(layout);
-    if (attempt?.status === 'pending' && attempt.releaseId === loadedRelease) {
-      pendingSuccessor = true;
-      attemptDeadlineAt = attempt.confirmBy;
-    }
-    // A prior process may have queued a rollback alert that has since been
-    // overtaken by events (this exact release later confirmed active
-    // fleet-wide). Check before this process has any chance to queue an
-    // alert of its own for a failure of ITS OWN — that check happens later
-    // and must never observe this early clear.
-    await clearUpdateRollbackAlertIfConfirmed(runtimeDir, loadedRelease);
+  if (host.layout) {
     config.daemonReleaseVersion = loadedReleaseIdentity?.version;
     config.daemonSourceSha = loadedReleaseIdentity?.commit;
     daemonApi.setHelperIdentity({
@@ -271,7 +228,6 @@ export async function runAgentRuntime(
   );
   scratchSweepTimer.unref();
 
-  let ready = false;
   let established = false;
   const markEstablished = () => {
     if (established) return;
@@ -363,101 +319,14 @@ export async function runAgentRuntime(
     const result = await core.run({
       signal: controller.signal,
       onEstablished: async () => {
-        let functionalProof: Awaited<ReturnType<typeof runUpdateFunctionalProbe>> | undefined;
-        if (layout && pendingSuccessor) {
-          // The release this successor would roll back to; a provider refusal
-          // or ACP turn failure it shares with the successor is not the
-          // successor's fault.
-          const currentReleaseId = (await readUpdateAttempt(layout))?.previousReleaseId;
-          const gate = await gateManagedSuccessor({
-            layout,
-            runtimeDir,
-            loadedRelease,
-            probeId: agentId,
-            probe: () =>
-              retryWhileAdapterReinstalls(
-                () =>
-                  runUpdateFunctionalProbe({
-                    config,
-                    runtimeDir,
-                    releaseId: loadedRelease ?? 'unknown',
-                    sandboxRequired: runtime.sandbox !== 'off',
-                    sandboxUnavailableDetail: sandbox.advisory,
-                    ...(currentReleaseId
-                      ? {
-                          compareWithCurrentRelease: async (appeal) => {
-                            console.warn(
-                              `[thin-core] successor probe got no answer from the provider ` +
-                                `(${appeal.reason}); probing the current release ${currentReleaseId} ` +
-                                `for the same outcome`,
-                            );
-                            await extendSystemdStartTimeout(
-                              CURRENT_RELEASE_PROBE_TIMEOUT_MS + 15_000,
-                            );
-                            return probeReleaseInSubprocess({
-                              layout,
-                              releaseId: currentReleaseId,
-                              runtimeConfigPath: configPath,
-                            });
-                          },
-                        }
-                      : {}),
-                  }),
-                {
-                  sleep: async (ms) => {
-                    await extendSystemdStartTimeout(ms + 15_000);
-                    await new Promise<void>((resolveWait) => setTimeout(resolveWait, ms));
-                  },
-                },
-              ),
-          });
-          if (gate.kind === 'failed') {
-            successorRolledBack = gate.rolledBack;
-            throw gate.error;
-          }
-          if (gate.kind === 'agent-failed') {
-            if (!config.modelUnavailable)
-              config.modelUnavailable = modelUnavailableState(
-                config.modelSelection ?? runtime.modelSelection ?? {}, gate.error,
-              );
-            console.warn('[thin-core] server-minimum release retained; this agent probe failed:', gate.error);
-          }
-          if (gate.kind === 'agent-unavailable') {
-            if (!config.modelUnavailable) {
-              config.modelUnavailable = modelUnavailableState(
-                config.modelSelection ?? runtime.modelSelection ?? {},
-                gate.error.cause ?? gate.error,
-              );
-            }
-            console.warn(
-              `[thin-core] new release retained; this agent's selected model is unavailable: ${gate.error.message}`,
-            );
-          } else if (gate.kind === 'passed') {
-            functionalProof = gate.proof;
-          }
-          pendingSuccessor = false;
-          // A fresh gate pass proves this update path is healthy right now,
-          // whichever release it names — it supersedes any stale rollback
-          // record from an earlier failed attempt.
-          await clearUpdateRollbackAlert(runtimeDir);
-          if (functionalProof)
-            console.log(
-              `[thin-core] successor functional probe passed on exact release ${loadedRelease}: ` +
-                `${functionalProof?.harness ?? 'unknown'} session/new + turn` +
-                (functionalProof?.modelAnswer === 'unavailable'
-                  ? ` (model answer unavailable: ${functionalProof.modelAnswerReason})`
-                  : ''),
-            );
-        }
         try {
           // Interrupted-turn replay waits out an outage on every open
-          // instead of failing the start (or rolling a successor back).
+          // instead of failing the start.
           await retryBeforeReady(
             () => reportInterruptedTurns(runtimeDir, daemonApi, agentId),
             {
               onLinkOpen: (listener) => daemonApi.onLiveOpen(listener),
               extendStartTimeout: extendSystemdStartTimeout,
-              ...(attemptDeadlineAt !== undefined ? { deadlineAt: attemptDeadlineAt } : {}),
               signal: controller.signal,
             },
           );
@@ -472,7 +341,6 @@ export async function runAgentRuntime(
         }
         await clearDaemonStartFailures(runtimeDir);
         await writeDaemonReleaseStatus(runtimeDir, agentId, loadedReleaseIdentity);
-        ready = true;
         markEstablished();
         // One bounded harness probe per activation keeps the phone's MODEL /
         // EFFORT rows current; it never blocks readiness or the Room loop.
@@ -530,7 +398,6 @@ export async function runAgentRuntime(
         }
       },
       onProgress: async (status) => {
-        void drainRollbackAlert(core.activeRoomIds()[0] ?? runtime.rooms[0]?.channelId);
         host.progress(agentId, status);
         await host.tickUpdate();
       },
@@ -541,25 +408,6 @@ export async function runAgentRuntime(
       exitReason = 'agent-removed';
       console.log(`[beeline] agent ${agentId} removed; runtime archived at ${archivedRuntime}`);
     }
-  } catch (error) {
-    const rolledBack =
-      successorRolledBack ||
-      (layout &&
-        pendingSuccessor &&
-        !ready &&
-        successorRollbackAllowed(error, attemptDeadlineAt) &&
-        // Named, so a sibling's journal can say whose failure reverted the
-        // attempt it shares with this one.
-        (await rollbackFailedSuccessor(layout, runtimeDir, {
-          probeId: agentId,
-          failure: attemptFailureText(error),
-        })));
-    if (rolledBack) {
-      console.error(`[thin-core] successor failed before READY for agent ${agentId}; previous release restored once`);
-      await drainRollbackAlert(runtime.rooms[0]?.channelId);
-      return 'rolled-back';
-    }
-    throw error;
   } finally {
     markEstablished();
     signal.removeEventListener('abort', abortFromHost);

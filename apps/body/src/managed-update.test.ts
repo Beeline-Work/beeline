@@ -6,43 +6,13 @@ import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { identityFromKey } from './runtime.js';
-import {
-  activeReleaseId,
-  readUpdateState,
-  readUpdateAttempt,
-  settleUpdateAttemptOnStart,
-  writeUpdateAttemptFixture,
-  writeUpdateState,
-  type BeelineInstallLayout,
-} from './self-update.js';
-import {
-  coordinateManagedUpdateHandoff,
-  DEFAULT_UPDATE_INTERVAL_MS,
-  gateManagedSuccessor,
-  ManagedUpdateDrain,
-  ManagedUpdateHandoff,
-  managedRestartStaggerMs,
-  MAX_HOST_RESTART_STAGGER_MS,
-  proveLoadedReleaseReady,
-  rollbackFailedSuccessor,
-  UPDATE_CONVERGENCE_SLO_MS,
-  UPDATE_DRAIN_DEADLINE_MS,
-} from './managed-update.js';
-import { UpdateFunctionalProbeError } from './update-functional-probe.js';
-import { updateRollbackAlertPath } from './update-rollback-alert.js';
+import { activeReleaseId, readUpdateState, writeUpdateState, type BeelineInstallLayout } from './self-update.js';
+import { coordinateManagedUpdateHandoff, DEFAULT_UPDATE_INTERVAL_MS, ManagedUpdateDrain, ManagedUpdateHandoff, managedRestartStaggerMs, MAX_HOST_RESTART_STAGGER_MS, UPDATE_CONVERGENCE_SLO_MS, UPDATE_DRAIN_DEADLINE_MS } from './managed-update.js';
 
 const roots: string[] = [];
 const systemdUnits: string[] = [];
 const execFileAsync = promisify(execFile);
 const nodeRequire = createRequire(import.meta.url);
-const functionalProof = {
-  harness: 'fixture-acp',
-  sandboxed: true,
-  sessionStarted: true as const,
-  turnCompleted: true as const,
-  nativeTools: ['close_corner'] as const,
-};
-
 async function layoutFixture(): Promise<{
   root: string;
   runtimeDir: string;
@@ -78,34 +48,9 @@ afterEach(async () => {
 });
 
 describe('managed update handoff', () => {
-  it('reserves the full service stop budget and successor proof time', () => {
+  it('reserves the full service stop budget and successor startup time', () => {
     expect(UPDATE_DRAIN_DEADLINE_MS + 90_000 + 60_000)
       .toBeLessThanOrEqual(UPDATE_CONVERGENCE_SLO_MS);
-  });
-  it('keeps a server-minimum release installed when one agent probe fails', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
-    await rm(layout.libDir);
-    await symlink('beeline-releases/new', layout.libDir);
-    await writeUpdateAttemptFixture(layout, {
-      from: { version: 'v0.0.68' },
-      to: { version: 'v0.0.69' },
-      releaseId: 'new',
-      previousReleaseId: 'old',
-      appliedAt: 1_000,
-      startedAt: 1_000,
-      forcedMinimum: 'v0.0.69',
-      requiredProbeIds: ['agent', 'other'],
-      confirmedProbeIds: [],
-    });
-    const result = await gateManagedSuccessor({ layout, runtimeDir, loadedRelease: 'new',
-      probeId: 'agent', probe: async () => { throw new Error('agent-specific model failure'); } });
-    expect(result.kind).toBe('agent-failed');
-    expect(await activeReleaseId(layout)).toBe('new');
-    expect((await readUpdateAttempt(layout))?.unavailableProbeIds).toEqual(['agent']);
-    expect(await settleUpdateAttemptOnStart(layout, { now: () => Date.now() + 1_000_000 }))
-      .toEqual({ kind: 'none' });
-    expect((await readUpdateAttempt(layout))?.status).toBe('confirmed');
-    expect(await activeReleaseId(layout)).toBe('new');
   });
   it('spreads fifteen agents while respecting the current drain deadline', () => {
     const agents = Array.from({ length: 15 }, (_, index) => index.toString(16).padStart(64, '0'));
@@ -122,11 +67,11 @@ describe('managed update handoff', () => {
   });
 
   it('restarts when this process is still executing a previous release after the anchor moved', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
+    const { layout } = await layoutFixture();
     await rm(layout.libDir);
     await symlink('beeline-releases/new', layout.libDir);
     const restarts: string[] = [];
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
+    const update = await ManagedUpdateHandoff.create(layout, () => 1_000, {
       env: { BEELINE_LIB_DIR: resolve(layout.releasesRoot, 'old', 'lib', 'beeline') },
     });
 
@@ -140,15 +85,14 @@ describe('managed update handoff', () => {
       ),
     ).toBe('restarting');
     expect(restarts).toEqual(['new']);
-    expect((await readUpdateAttempt(layout))?.previousReleaseId).toBe('old');
   });
 
   it('lets an active agent turn finish before handing over, then restarts on the next tick', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
+    const { layout } = await layoutFixture();
     let activeTurns = 1;
     let intakeQuiesced = false;
     const restarts: string[] = [];
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
+    const update = await ManagedUpdateHandoff.create(layout, () => 1_000);
     await rm(layout.libDir);
     await symlink('beeline-releases/new', layout.libDir);
 
@@ -187,10 +131,10 @@ describe('managed update handoff', () => {
   });
 
   it('waits at the drain deadline while a turn is still running', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
+    const { layout } = await layoutFixture();
     let now = 1_000;
     const restarts: Array<[string, string]> = [];
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
+    const update = await ManagedUpdateHandoff.create(layout, () => now, {
       drainDeadlineMs: 50,
     });
     await rm(layout.libDir);
@@ -221,10 +165,10 @@ describe('managed update handoff', () => {
   });
 
   it('keeps a staged release inert until the turn finishes', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
+    const { layout } = await layoutFixture();
     let now = 1_000;
     const restarts: string[] = [];
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
+    const update = await ManagedUpdateHandoff.create(layout, () => now, {
       drainDeadlineMs: 50,
     });
     await writeUpdateState(layout, { stagedReleaseId: 'new' });
@@ -246,251 +190,13 @@ describe('managed update handoff', () => {
     expect(await coordinateManagedUpdateHandoff(update, () => true, restart)).toBe('restarting');
     expect(restarts).toEqual(['new:drained']);
     expect(await activeReleaseId(layout)).toBe('new');
-    expect((await readUpdateAttempt(layout))?.status).toBe('pending');
-  });
-
-  it('converges to the exact desired release and accepts only its READY proof', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
-    await rm(layout.libDir);
-    await symlink('beeline-releases/new', layout.libDir);
-
-    expect(await update.check()).toBe(true);
-    expect((await readUpdateAttempt(layout))?.releaseId).toBe('new');
-    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new')).toBe(false);
-    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'old', { functionalProof })).toBe(
-      false,
-    );
-    expect(await proveLoadedReleaseReady(layout, runtimeDir, 'new', { functionalProof })).toBe(
-      true,
-    );
-    expect((await readUpdateAttempt(layout))?.status).toBe('confirmed');
-    expect(
-      JSON.parse(await readFile(resolve(runtimeDir, 'daemon-ready.json'), 'utf8')),
-    ).toMatchObject({
-      loadedRelease: 'new',
-    });
-  });
-
-  it('rolls a bad successor back exactly once', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
-    await rm(layout.libDir);
-    await symlink('beeline-releases/new', layout.libDir);
-    await update.check();
-
-    expect(await rollbackFailedSuccessor(layout, runtimeDir)).toBe(true);
-    expect(await activeReleaseId(layout)).toBe('old');
-    expect(await readUpdateAttempt(layout)).toMatchObject({ releaseId: 'new', status: 'reverted' });
-    expect(JSON.parse(await readFile(updateRollbackAlertPath(runtimeDir), 'utf8'))).toMatchObject({
-      releaseId: 'new',
-    });
-    expect(await rollbackFailedSuccessor(layout)).toBe(false);
-  });
-
-  it.each([
-    ['hung generated extension', 'session-start-failed'],
-    ['broken sandbox', 'sandbox-unavailable'],
-  ] as const)('automatically rolls back a successor with %s', async (_label, reason) => {
-    const { layout, runtimeDir } = await layoutFixture();
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
-    await rm(layout.libDir);
-    await symlink('beeline-releases/new', layout.libDir);
-    await update.check();
-
-    const result = await gateManagedSuccessor({
-      layout,
-      runtimeDir,
-      loadedRelease: 'new',
-      probeId: 'agent-1',
-      probe: () =>
-        Promise.reject(new UpdateFunctionalProbeError(reason, 'deliberate acceptance fault')),
-    });
-
-    expect(result).toMatchObject({ kind: 'failed', rolledBack: true });
-    expect(await activeReleaseId(layout)).toBe('old');
-    expect(await readUpdateAttempt(layout)).toMatchObject({
-      releaseId: 'new',
-      status: 'reverted',
-      revertedBy: 'agent-1',
-      failure: `functional update probe failed (${reason}): deliberate acceptance fault`,
-    });
-  });
-
-  it('retains the machine release and flags only the unavailable-model agent', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
-      requiredProbeIds: ['agent-1', 'agent-2'],
-    });
-    await rm(layout.libDir);
-    await symlink('beeline-releases/new', layout.libDir);
-    await update.check();
-    const result = await gateManagedSuccessor({
-      layout,
-      runtimeDir,
-      loadedRelease: 'new',
-      probeId: 'agent-1',
-      probe: () =>
-        Promise.reject(new UpdateFunctionalProbeError('model-unavailable', 'chosen model gone')),
-    });
-    expect(result.kind).toBe('agent-unavailable');
-    expect(await activeReleaseId(layout)).toBe('new');
-    expect(await readUpdateAttempt(layout)).toMatchObject({
-      status: 'pending',
-      unavailableProbeIds: ['agent-1'],
-    });
-    expect(
-      await proveLoadedReleaseReady(layout, runtimeDir, 'new', {
-        probeId: 'agent-2',
-        functionalProof,
-      }),
-    ).toBe(true);
-    expect(await readUpdateAttempt(layout)).toMatchObject({
-      status: 'confirmed',
-      confirmedProbeIds: ['agent-2'],
-      unavailableProbeIds: ['agent-1'],
-    });
-  });
-
-  /**
-   * Every daemon on the host shares one update attempt, so the first genuine
-   * fault reverts it for the fleet. 2026-09-06 (v0.0.51): helpers whose own
-   * probes had passed then logged `successor release 62c8fcb5 did not produce
-   * functional proof`, which reads as a bad bundle. The rollback stays; the
-   * sentence names the sibling that caused it.
-   */
-  describe('a sibling that already reverted the shared attempt', () => {
-    const siblingFailure = 'functional update probe failed (turn-failed): ACP error -32603';
-
-    it("names the sibling instead of blaming this daemon's own passing probe", async () => {
-      const { layout, runtimeDir } = await layoutFixture();
-      const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
-        requiredProbeIds: ['agent-1', 'agent-2'],
-      });
-      await rm(layout.libDir);
-      await symlink('beeline-releases/new', layout.libDir);
-      await update.check();
-
-      const result = await gateManagedSuccessor({
-        layout,
-        runtimeDir,
-        loadedRelease: 'new',
-        probeId: 'agent-1',
-        // The sibling's rollback lands while this daemon is still probing.
-        probe: async () => {
-          await rollbackFailedSuccessor(layout, undefined, {
-            probeId: 'agent-2',
-            failure: siblingFailure,
-          });
-          return functionalProof;
-        },
-      });
-
-      expect(result).toMatchObject({ kind: 'failed', rolledBack: false });
-      expect((result as { error: Error }).error.message).toBe(
-        'successor release new lost its attempt while this daemon proved it: ' +
-          "this daemon's own probe passed; " +
-          `shared update attempt reverted by sibling agent-2: ${siblingFailure}`,
-      );
-      // The fleet-wide rollback stands: one sibling's genuine fault reverts all.
-      expect(await activeReleaseId(layout)).toBe('old');
-    });
-
-    it('says the same when the revert landed before this daemon probed at all', async () => {
-      const { layout, runtimeDir } = await layoutFixture();
-      const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
-        requiredProbeIds: ['agent-1', 'agent-2'],
-      });
-      await rm(layout.libDir);
-      await symlink('beeline-releases/new', layout.libDir);
-      await update.check();
-      await rollbackFailedSuccessor(layout, undefined, {
-        probeId: 'agent-2',
-        failure: siblingFailure,
-      });
-
-      const probe = vi.fn();
-      const result = await gateManagedSuccessor({
-        layout,
-        runtimeDir,
-        loadedRelease: 'new',
-        probeId: 'agent-1',
-        probe,
-      });
-
-      expect(probe).not.toHaveBeenCalled();
-      expect((result as { error: Error }).error.message).toBe(
-        'successor release new was reverted before this daemon probed it: ' +
-          `shared update attempt reverted by sibling agent-2: ${siblingFailure}`,
-      );
-    });
-
-    it("keeps the plain sentence when nothing reverted this daemon's attempt", async () => {
-      const { layout, runtimeDir } = await layoutFixture();
-      const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000);
-      await rm(layout.libDir);
-      await symlink('beeline-releases/new', layout.libDir);
-      await update.check();
-      // Confirmed by this same probe id already: the proof is refused, no revert.
-      await proveLoadedReleaseReady(layout, runtimeDir, 'new', {
-        probeId: 'agent-1',
-        functionalProof,
-      });
-
-      const result = await gateManagedSuccessor({
-        layout,
-        runtimeDir,
-        loadedRelease: 'new',
-        probeId: 'agent-1',
-        probe: async () => functionalProof,
-      });
-
-      expect((result as { error: Error }).error.message).toBe(
-        'successor loaded release new, not the pending desired release',
-      );
-    });
-  });
-
-  it('confirms the new release when one peer proves it while an old peer is still stopping', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
-    const secondRuntime = resolve(dirname(runtimeDir), 'runtime-2');
-    await mkdir(secondRuntime);
-    const requiredProbeIds = ['agent-1', 'agent-2'];
-    const first = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
-      requiredProbeIds,
-    });
-    const second = await ManagedUpdateHandoff.create(layout, secondRuntime, () => 1_000, {
-      requiredProbeIds,
-    });
-    await rm(layout.libDir);
-    await symlink('beeline-releases/new', layout.libDir);
-    await first.check();
-    await second.check();
-
-    expect(await proveLoadedReleaseReady(layout, secondRuntime, 'old', {
-      probeId: 'agent-2', functionalProof,
-    })).toBe(false);
-    expect((await readUpdateAttempt(layout))?.status).toBe('pending');
-
-    expect(
-      await proveLoadedReleaseReady(layout, runtimeDir, 'new', {
-        probeId: 'agent-1',
-        functionalProof,
-      }),
-    ).toBe(true);
-    expect(await readUpdateAttempt(layout)).toMatchObject({
-      status: 'confirmed',
-      requiredProbeIds,
-      confirmedProbeIds: ['agent-1'],
-    });
-    expect(await activeReleaseId(layout)).toBe('new');
   });
 
   it('stages automatic updates in the locked worker and activates only after intake quiesces', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
+    const { layout } = await layoutFixture();
     let now = 1_000;
     let workerCalls = 0;
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
+    const update = await ManagedUpdateHandoff.create(layout, () => now, {
       env: { BEELINE_UPDATE_INITIAL_DELAY_MS: '50' },
       runUpdateWorker: async () => {
         workerCalls += 1;
@@ -523,12 +229,11 @@ describe('managed update handoff', () => {
       ),
     ).toBe('restarting');
     expect(await activeReleaseId(layout)).toBe('new');
-    expect((await readUpdateAttempt(layout))?.releaseId).toBe('new');
   });
 
   it('never makes a watchdog progress tick await a slow update worker', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => 1_000, {
+    const { layout } = await layoutFixture();
+    const update = await ManagedUpdateHandoff.create(layout, () => 1_000, {
       env: { BEELINE_UPDATE_INITIAL_DELAY_MS: '0' },
       runUpdateWorker: () => new Promise<void>(() => undefined),
     });
@@ -540,10 +245,10 @@ describe('managed update handoff', () => {
   });
 
   it('rechecks the published channel inside the convergence SLO by default', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
+    const { layout } = await layoutFixture();
     let now = 1_000;
     let workerCalls = 0;
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
+    const update = await ManagedUpdateHandoff.create(layout, () => now, {
       runUpdateWorker: async () => {
         workerCalls += 1;
       },
@@ -561,10 +266,10 @@ describe('managed update handoff', () => {
   });
 
   it('checks a newly announced release immediately even inside the cadence window', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
+    const { layout } = await layoutFixture();
     let now = 1_000;
     let workerCalls = 0;
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
+    const update = await ManagedUpdateHandoff.create(layout, () => now, {
       env: { BEELINE_UPDATE_INTERVAL_MS: '21600000' },
       runUpdateWorker: async () => {
         workerCalls += 1;
@@ -585,9 +290,9 @@ describe('managed update handoff', () => {
   });
 
   it('activates an announced release on the next idle progress tick despite a six-hour initial delay', async () => {
-    const { layout, runtimeDir } = await layoutFixture();
+    const { layout } = await layoutFixture();
     let now = 1_000;
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => now, {
+    const update = await ManagedUpdateHandoff.create(layout, () => now, {
       env: { BEELINE_UPDATE_INITIAL_DELAY_MS: '21600000', BEELINE_SYSTEMD_USER: '0' },
       runUpdateWorker: async () => {
         await writeUpdateState(layout, { stagedReleaseId: 'new', lastCheckAt: now });
@@ -677,12 +382,12 @@ describe('managed update drain', () => {
   const MINUTE = 60_000;
 
   async function drainFixture(options: { activeTurns: number; drainDeadlineMs?: number }) {
-    const { layout, runtimeDir } = await layoutFixture();
+    const { layout } = await layoutFixture();
     const clock = new FakeClock();
     const state = { activeTurns: options.activeTurns, intakeQuiesced: false };
     const restarts: Array<{ release: string; mode: string; at: number }> = [];
     const logs: string[] = [];
-    const update = await ManagedUpdateHandoff.create(layout, runtimeDir, () => clock.now, {
+    const update = await ManagedUpdateHandoff.create(layout, () => clock.now, {
       drainDeadlineMs: options.drainDeadlineMs ?? UPDATE_DRAIN_DEADLINE_MS,
     });
     await rm(layout.libDir);
@@ -701,7 +406,7 @@ describe('managed update drain', () => {
       setTimer: clock.setTimer,
       clearTimer: clock.clearTimer,
     });
-    return { clock, state, restarts, logs, drain, layout, runtimeDir };
+    return { clock, state, restarts, logs, drain, layout };
   }
 
   it('restarts an idle helper within one tick, arming no timer', async () => {
@@ -771,7 +476,7 @@ async function readSystemdState(path: string): Promise<Record<string, unknown>> 
 describe.runIf(process.env.BEELINE_SYSTEMD_ACCEPTANCE === '1')(
   'managed update systemd convergence',
   () => {
-    it('forces continuous work at the absolute deadline and restarts READY on the new release', async () => {
+    it('waits beyond the drain target and restarts READY in the first quiet gap', async () => {
       const { root, runtimeDir, layout } = await layoutFixture();
       const stored = (name: string) => {
         const identity = identityFromKey(undefined, name);
@@ -801,36 +506,25 @@ describe.runIf(process.env.BEELINE_SYSTEMD_ACCEPTANCE === '1')(
       const publishedPath = resolve(root, 'published');
       const fixturePath = resolve(root, 'managed-update-systemd-fixture.mjs');
       const managedUpdateUrl = new URL('./managed-update.ts', import.meta.url).href;
-      const roomRuntimeUrl = new URL('./room-runtime.ts', import.meta.url).href;
       const selfUpdateUrl = new URL('./self-update.ts', import.meta.url).href;
       const systemdUrl = new URL('./systemd.ts', import.meta.url).href;
       await writeFile(
         fixturePath,
         `import { existsSync } from 'node:fs';
-import { readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { ManagedUpdateHandoff, proveLoadedReleaseReady } from ${JSON.stringify(managedUpdateUrl)};
-import { readUpdateAttempt } from ${JSON.stringify(selfUpdateUrl)};
-import { RoomRuntimeCoordinator } from ${JSON.stringify(roomRuntimeUrl)};
-import { activeReleaseId } from ${JSON.stringify(selfUpdateUrl)};
+import { readFile, writeFile } from 'node:fs/promises';
+import { ManagedUpdateHandoff, coordinateManagedUpdateHandoff } from ${JSON.stringify(managedUpdateUrl)};
+import { activeReleaseId, writeUpdateState } from ${JSON.stringify(selfUpdateUrl)};
 import { SystemdNotifier } from ${JSON.stringify(systemdUrl)};
 
 const [runtimePath, statePath, publishedPath, libDir, releasesRoot, binDir] = process.argv.slice(2);
 const previous = JSON.parse(await readFile(statePath, 'utf8').catch(() => '{}'));
 const generation = Number(previous.generation ?? 0) + 1;
 const runtime = JSON.parse(await readFile(runtimePath, 'utf8'));
-const runtimeDir = dirname(runtimePath);
 const layout = { libDir, releasesRoot, binDir };
 const loadedRelease = await activeReleaseId(layout);
 const notifier = new SystemdNotifier();
 
 if (generation > 1) {
-  const attempt = await readUpdateAttempt(layout);
-  if (!attempt || attempt.releaseId !== loadedRelease) process.exit(70);
-if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease, { functionalProof: {
-  harness: 'fixture-acp', sandboxed: true, sessionStarted: true,
-  turnCompleted: true, nativeTools: ['close_corner']
-} }))) process.exit(71);
   const successorReadyAt = Date.now();
   await notifier.ready('ready; loaded_release=' + loadedRelease);
   await writeFile(statePath, JSON.stringify({ ...previous, generation, loadedRelease, successorReadyAt }));
@@ -842,33 +536,13 @@ if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease, { functio
     process.exit(0);
   });
 } else {
-  const update = await ManagedUpdateHandoff.create(layout, runtimeDir, Date.now, {
+  const update = await ManagedUpdateHandoff.create(layout, Date.now, {
     env: { BEELINE_UPDATE_INITIAL_DELAY_MS: '0', BEELINE_UPDATE_INTERVAL_MS: '25' },
     drainDeadlineMs: 500,
     runUpdateWorker: async () => {
       if (!existsSync(publishedPath)) return;
-      await rm(libDir);
-      await symlink('beeline-releases/new', libDir);
+      await writeUpdateState(layout, { stagedReleaseId: 'new', lastCheckAt: Date.now() });
     },
-  });
-  const coordinator = new RoomRuntimeCoordinator(runtime, runtimePath, {}, {
-    drainDeadlineMs: 5_000,
-  });
-  let finishWork;
-  const continuousWork = new Promise((resolveWork) => {
-    finishWork = resolveWork;
-  });
-  let forcedAt;
-  coordinator.running.set('continuous-room', {
-    body: {
-      forceRecoverRoom: async () => {
-        forcedAt = Date.now();
-        await writeFile(statePath + '.forced', String(forcedAt));
-        finishWork();
-      },
-    },
-    controller: new AbortController(),
-    promise: continuousWork,
   });
   await notifier.ready('ready; loaded_release=' + loadedRelease);
   await writeFile(statePath, JSON.stringify({ ...previous, generation, loadedRelease }));
@@ -877,26 +551,17 @@ if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease, { functio
     if (checking) return;
     checking = true;
     try {
-      if (!(await update.check())) return;
-      clearInterval(poll);
-      const attempt = await readUpdateAttempt(layout);
-      if (!attempt) process.exit(72);
-      const drainDeadlineAt = Date.now() + 500;
-      coordinator.setDrainDeadlineAt(drainDeadlineAt);
-      const updateStatus =
-        'update pending, converging; loaded_release=' + loadedRelease +
-        '; desired_release=' + attempt.releaseId +
-        '; intake quiesced, draining; exit_deadline=' + new Date(drainDeadlineAt).toISOString();
-      await notifier.stopping(updateStatus);
-      await coordinator.shutdown();
-      await writeFile(statePath, JSON.stringify({
-        ...previous,
-        generation,
-        loadedRelease,
-        updateStatus,
-        forcedAt,
-      }));
-      process.exit(0);
+      await coordinateManagedUpdateHandoff(update,
+        () => existsSync(publishedPath + '.quiet'),
+        async (request) => {
+          clearInterval(poll);
+          await notifier.stopping('update; loaded_release=' + loadedRelease +
+            '; desired_release=' + request.desiredRelease);
+          process.exit(0);
+        },
+        async () => {
+          await notifier.progress('update waiting; intake open; loaded_release=' + loadedRelease);
+        });
     } finally {
       checking = false;
     }
@@ -934,13 +599,18 @@ if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease, { functio
         return state.generation === 1 && state.loadedRelease === 'old';
       });
 
-      const publishedAt = Date.now();
       await writeFile(publishedPath, 'new\n');
       await waitForSystemd(async () =>
         (await systemctl('show', '-p', 'StatusText', '--value', unit)).includes(
-          'update pending, converging',
+          'update waiting; intake open',
         ),
       );
+      // A long turn keeps the old helper serving even past its drain target.
+      await new Promise((resolveWait) => setTimeout(resolveWait, 700));
+      expect((await readSystemdState(statePath)).generation).toBe(1);
+      expect(await activeReleaseId(layout)).toBe('old');
+      const quietAt = Date.now();
+      await writeFile(publishedPath + '.quiet', 'turn completed\n');
       await waitForSystemd(async () => {
         const state = await readSystemdState(statePath);
         return state.generation >= 2 && state.loadedRelease === 'new';
@@ -951,9 +621,7 @@ if (!(await proveLoadedReleaseReady(layout, runtimeDir, loadedRelease, { functio
         loadedRelease: string;
         successorReadyAt: number;
       };
-      const forcedAt = Number(await readFile(`${statePath}.forced`, 'utf8'));
-      expect(forcedAt - publishedAt).toBeGreaterThanOrEqual(350);
-      expect(state.successorReadyAt - publishedAt).toBeLessThan(5_000);
+      expect(state.successorReadyAt - quietAt).toBeLessThan(5_000);
       expect(Number((await systemctl('show', '-p', 'NRestarts', '--value', unit)).trim())).toBe(1);
       expect(await systemctl('show', '-p', 'StatusText', '--value', unit)).toContain(
         'loaded_release=new',

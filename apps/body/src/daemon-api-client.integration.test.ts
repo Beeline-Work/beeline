@@ -1378,7 +1378,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         }
         await mkdir(join(updateRoot, 'lib'), { recursive: true });
         await symlink('beeline-releases/old', layout.libDir);
-        const update = await ManagedUpdateHandoff.create(layout, supervisorRoot);
+        const update = await ManagedUpdateHandoff.create(layout);
         await writeUpdateState(layout, { stagedReleaseId: 'new' });
         let restarted = false;
         expect(

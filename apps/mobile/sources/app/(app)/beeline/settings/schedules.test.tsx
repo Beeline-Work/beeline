@@ -120,3 +120,25 @@ it('stops a subscription from its page only after the same confirm step', async 
     expect(router.back).toHaveBeenCalled();
   } finally { await act(async () => tree.unmount()); }
 });
+
+it('names empty and legacy corner names through the shared title grammar (J40)', async () => {
+  params.value = { roomId: 'room', workspaceId: 'ws' };
+  const original = operation.getMockImplementation()!;
+  const base = { agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Check in', nextRunAt: 1790000000, runCount: 1 };
+  operation.mockImplementation(async (name: string) => name === 'listRoomSchedules' ? { schedules: [
+    { ...base, id: 'unnamed', roomId: 'abcdef12-3456', corner: { id: 'abcdef12-3456', name: '' } },
+    { ...base, id: 'legacy', roomId: 'corner-2', corner: { id: 'corner-2', name: '#Room/fix-auth' } },
+  ] } : name === 'listRoomSubscriptions' ? { subscriptions: [
+    { id: 'sub', roomId: 'corner-3', agentId: 'agent-1', source: 'repository', event: 'issue.opened', repository: 'owner/widgets', prompt: 'Triage.', firedCount: 0, corner: { id: 'corner-3', name: 'room/triage' } },
+  ] } : {});
+  try {
+    const tree = await render(<ScheduledWork />);
+    const row = (testID: string) => tree.root.findByProps({ testID });
+    expect(row('scheduled-work-unnamed').props.description).toBe('· @Hoots · corner corner-abcdef12');
+    expect(row('scheduled-work-legacy').props.description).toBe('· @Hoots · corner fix-auth');
+    expect(row('subscription-sub').props.description).toBe('· @Hoots · corner triage');
+    tree.unmount();
+  } finally {
+    operation.mockImplementation(original);
+  }
+});

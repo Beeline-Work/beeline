@@ -107,14 +107,14 @@ export default function Workflow() {
             <ScheduledWorkFacts
               agents={[scheduled.work?.agentNames.get(schedule.agentId) ?? 'Agent']}
               runs={scheduleRuns(schedule)}
-              where={scheduleWhere(schedule)}
+              where={scheduleWhere(schedule, scheduled.work?.roomName)}
               whereCorner={schedule.corner}
             />
           ) : subscription ? (
             <ScheduledWorkFacts
               agents={[scheduled.work?.agentNames.get(subscription.agentId) ?? 'Agent']}
               runs={subscriptionRuns(subscription)}
-              where={subscriptionWhere(subscription)}
+              where={subscriptionWhere(subscription, scheduled.work?.roomName)}
               whereCorner={subscription.corner}
             />
           ) : null}

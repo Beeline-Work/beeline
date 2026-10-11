@@ -1,6 +1,10 @@
 import { useCallback, useState } from 'react';
 import { router, useFocusEffect, type Href } from 'expo-router';
-import type { RoomScheduleView, RoomSubscriptionView } from '@beeline/api-contract/phone';
+import {
+  cornerShortTitle,
+  type RoomScheduleView,
+  type RoomSubscriptionView,
+} from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
 import { workflowDisplayName } from '@/buzz/workflow-graph';
@@ -30,9 +34,18 @@ export function promptLead(message: string): string {
   return bare.length < text.replace(/[.!?]$/, '').length ? `${bare}…` : bare;
 }
 
-/** Spoken scope: name a child corner as such, or this Room. */
-export function scheduleWhere(schedule: Pick<RoomScheduleView, 'corner'>): string {
-  return schedule.corner ? `corner ${schedule.corner.name}` : 'this Room';
+/**
+ * Spoken scope: name a child corner as such, or this Room. The corner's name
+ * comes from the shared title grammar, so an empty or legacy `<room>/` name
+ * reads the same as on every other surface.
+ */
+export function scheduleWhere(
+  work: Pick<RoomScheduleView, 'corner'>,
+  roomName: string | null | undefined,
+): string {
+  return work.corner
+    ? `corner ${cornerShortTitle(roomName, work.corner.name, work.corner.id)}`
+    : 'this Room';
 }
 
 /** Line 1 of a schedule row: what it runs, ellipsized by the row if needed. */
@@ -82,8 +95,11 @@ export function subscriptionWhen(subscription: RoomSubscriptionView): string {
   return `On ${action[subscription.event] ?? 'an event in this Room'}`;
 }
 
-export function subscriptionWhere(subscription: RoomSubscriptionView): string {
-  return subscription.corner ? `corner ${subscription.corner.name}` : 'this Room';
+export function subscriptionWhere(
+  subscription: RoomSubscriptionView,
+  roomName: string | null | undefined,
+): string {
+  return scheduleWhere(subscription, roomName);
 }
 
 export function subscriptionRuns(subscription: RoomSubscriptionView): string {

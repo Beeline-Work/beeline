@@ -97,7 +97,7 @@ export default function ScheduledWork() {
   const renderSchedule = (schedule: RoomScheduleView) => (
     <SettingsRow
       chevron="right"
-      description={`· @${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule)}`}
+      description={`· @${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule, work?.roomName)}`}
       descriptionContent={<ListTail agent={work?.agentNames.get(schedule.agentId) ?? 'Agent'}
         compact={scheduleCadenceLabel(schedule.cadence).length > 24} corner={schedule.corner} />}
       descriptionLead={scheduleCadenceLabel(schedule.cadence)}
@@ -116,7 +116,7 @@ export default function ScheduledWork() {
   const renderSubscription = (subscription: RoomSubscriptionView) => (
     <SettingsRow
       chevron="right"
-      description={`· @${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
+      description={`· @${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription, work?.roomName)}`}
       descriptionContent={<ListTail agent={work?.agentNames.get(subscription.agentId) ?? 'Agent'}
         compact={subscriptionWhen(subscription).length > 24} corner={subscription.corner} />}
       descriptionLead={subscriptionWhen(subscription)}

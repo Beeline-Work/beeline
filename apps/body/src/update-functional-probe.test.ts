@@ -114,8 +114,12 @@ async function probe(
     operatorHome,
     sharedSkills: [],
   } as unknown as BodyConfig;
-  const { configOverrides, ...rest } = extra as { configOverrides?: Record<string, unknown> };
+  const { configOverrides, captureConfig, ...rest } = extra as {
+    configOverrides?: Record<string, unknown>;
+    captureConfig?: (config: BodyConfig) => void;
+  };
   Object.assign(config, configOverrides ?? {});
+  captureConfig?.(config);
   return runUpdateFunctionalProbe({
     config,
     runtimeDir: join(root, 'runtime'),
@@ -129,28 +133,37 @@ async function probe(
   });
 }
 
-/**
- * The probe with a configured model the live catalog does not offer. Mirrors
- * how cli.ts fills `config.modelUnavailable` before a successor may announce
- * READY.
- */
-function probeWithModelUnavailable(extra: Record<string, unknown>) {
-  return probe('served', {
-    configOverrides: {
-      modelUnavailable: {
-        detail: 'model "claude-opus-5-thinking-high" is unavailable',
-        unavailable: { label: 'claude-opus-5-thinking-high' },
-      },
-    },
-    ...extra,
-  } as never);
-}
-
 describe('runUpdateFunctionalProbe', () => {
   it('passes with a served answer', async () => {
     await expect(probe('served')).resolves.toEqual(
       expect.objectContaining({ harness: 'pi', turnCompleted: true, modelAnswer: 'served' }),
     );
+  });
+
+  it('answers despite a stale startup validation failure', async () => {
+    let probedConfig: BodyConfig | undefined;
+    const config = {
+      modelSelection: { model: 'available-model' },
+      modelUnavailable: {
+        kind: 'validation-unavailable',
+        selection: { model: 'available-model' },
+        unavailable: { label: 'selection', value: 'available-model' },
+        detail: 'The live harness catalog could not verify "available-model".',
+        recovery: 'Restore access to the selected harness and its live catalog.',
+      },
+    };
+    const result = await probe('served', {
+      configOverrides: config,
+      captureConfig: (captured: BodyConfig) => {
+        probedConfig = captured;
+      },
+    } as never);
+    expect(result).toEqual(expect.objectContaining({
+      sessionStarted: true,
+      turnCompleted: true,
+      modelAnswer: 'served',
+    }));
+    expect(probedConfig?.modelUnavailable).toBeUndefined();
   });
 
   it('does not roll a candidate back when the current release has the same host sandbox failure', async () => {
@@ -183,51 +196,22 @@ describe('runUpdateFunctionalProbe', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('preserving fail-closed sandboxing'));
   });
 
-  it('does not roll a candidate back when the configured model is unavailable to both releases', async () => {
-    // Observed on the owner's host 2026-09-18: every `usebeeline update`
-    // installed v0.0.115 and reverted to v0.0.114 with
-    // `model-unavailable: model "claude-opus-5-thinking-high" is unavailable`,
-    // so a merged Cursor fix could never reach his phone. A missing model is
-    // account state the successor cannot cause and a rollback cannot cure.
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const compare = vi.fn(async () => ({
-      kind: 'unavailable' as const,
-      reason: 'model "claude-opus-5-thinking-high" is unavailable',
-    }));
-    await expect(
-      probeWithModelUnavailable({ compareWithCurrentRelease: compare }),
-    ).resolves.toEqual(
-      expect.objectContaining({ modelAnswer: 'unavailable', turnCompleted: false }),
-    );
-    expect(compare).toHaveBeenCalledWith({
-      kind: 'model-unavailable',
-      reason: 'model "claude-opus-5-thinking-high" is unavailable',
-    });
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('the account catalog, not the bundle'),
-    );
-    warn.mockRestore();
-  });
-
-  it('still rejects an unavailable model when the current release can serve it', async () => {
-    await expect(
-      probeWithModelUnavailable({ compareWithCurrentRelease: async () => ({ kind: 'served' }) }),
-    ).rejects.toThrow('claude-opus-5-thinking-high" is unavailable; the current release answered');
-  });
-
   it('classifies a model retired between preflight and session start as agent-specific', async () => {
     await expect(probe('model-retired', {
-      configOverrides: { modelSelection: { model: 'retired-model' } },
+      configOverrides: {
+        modelSelection: { model: 'retired-model' },
+        modelUnavailable: {
+          kind: 'validation-unavailable',
+          selection: { model: 'retired-model' },
+          unavailable: { label: 'selection', value: 'retired-model' },
+          detail: 'The live harness catalog could not verify "retired-model".',
+          recovery: 'Restore access to the selected harness and its live catalog.',
+        },
+      },
     } as never)).rejects.toMatchObject({
       reason: 'model-unavailable',
       cause: expect.objectContaining({ label: 'model', value: 'retired-model' }),
     });
-  });
-
-  it('still rejects an unavailable model when no comparison is possible', async () => {
-    await expect(probeWithModelUnavailable({})).rejects.toThrow(
-      'claude-opus-5-thinking-high" is unavailable',
-    );
   });
 
   it('still rejects a sandbox failure when the current release can serve', async () => {

@@ -180,7 +180,7 @@ export class RoomWebhooks {
         `SELECT * FROM room_webhook_requests WHERE id=$1 AND room_id=$2 FOR UPDATE`, [id, roomId]);
       const row = result.rows[0];
       if (!row) throw new WebhookError(404, 'webhook request not found');
-      if (row.status !== 'pending') return { status: row.status };
+      if (row.status !== 'pending') return { status: row.status, messageId: row.message_id };
       await this.member(db, roomId, row.agent_id, false);
       const status = approve ? 'approved' : 'denied';
       if (approve) await db.query(`UPDATE room_webhook_requests SET result_enc=NULL WHERE room_id=$1 AND source=$2`, [roomId, row.source]);
@@ -189,7 +189,7 @@ export class RoomWebhooks {
         [id, status, url ? this.seal(JSON.stringify({ url, ...(revealSecret && signingSecret ? { signingSecret } : {}) })) : null]);
       await db.query(`UPDATE messages SET card=jsonb_set(card,'{status}',$2::jsonb) WHERE id=$1`, [row.message_id, JSON.stringify(status)]);
       await this.decisionLine(db, roomId, row, status);
-      return { status };
+      return { status, messageId: row.message_id };
     });
   }
   async takeUrl(roomId: string, agentId: string, id: string): Promise<{ url?: string; signingSecret?: string }> {

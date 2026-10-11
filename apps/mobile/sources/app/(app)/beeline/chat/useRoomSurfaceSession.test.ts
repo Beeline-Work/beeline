@@ -45,6 +45,8 @@ const controls = vi.hoisted(() => ({
   roomError: null as unknown,
   liveList: null as ChatListView | null,
   liveListKeys: [] as unknown[],
+  /** What the live connection does with a frame before any listener hears it. */
+  deliverToRecords: undefined as undefined | ((event: TestSurfaceEvent) => void),
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -138,8 +140,12 @@ vi.mock('@/sync/transport', () => ({
     async ensureClient() {
       await controls.ensureClientPromise;
       return {
-        surfaceSubscribe: async (filters: unknown, emit: (event: TestSurfaceEvent) => void) => {
+        surfaceSubscribe: async (filters: unknown, listener: (event: TestSurfaceEvent) => void) => {
           const stop = vi.fn();
+          const emit = (event: TestSurfaceEvent) => {
+            controls.deliverToRecords?.(event);
+            listener(event);
+          };
           controls.subscriptions.push({ filters, stop, emit });
           for (const event of controls.replayEvents) emit(event);
           return stop;
@@ -247,7 +253,12 @@ import { RoomViewHttpError } from '@beeline/buzz-client';
 import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
-import { roomMessageRecord, useRoomMessageRecords } from '@/buzz/room-message-records';
+import {
+  applyRoomMessage,
+  roomDeltaMessage,
+  roomMessageRecord,
+} from '@/buzz/room-message-records';
+import { applyRoomDraftFrame, clearRoomDrafts } from '@/buzz/room-live-drafts';
 import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
 import {
   LIVE_TRACE_STORAGE_KEY,
@@ -257,6 +268,16 @@ import {
 } from './useRoomSurfaceSession';
 
 const originalConsoleError = console.error;
+
+// The live connection writes every committed row to the Room's message
+// records, and every draft frame to its live drafts, before it hands the
+// frame to a listener.
+controls.deliverToRecords = (event) => {
+  if (!('monolithLive' in event)) return;
+  const live = event.monolithLive;
+  if (live.type === 'message-delta') applyRoomMessage(live.roomId, roomDeltaMessage(live));
+  applyRoomDraftFrame(live, Boolean(live.type === 'subscribed' && live.resumed));
+};
 
 function roomView(id: string, filters: RoomView['watchFilters'] = [{ '#h': [id] }]): RoomView {
   return {
@@ -362,6 +383,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
+  // The live connection drops a Room's drafts once no view listens to it.
+  for (const roomId of ['room-a', 'room-b', 'corner-a']) clearRoomDrafts(roomId);
   vi.useRealTimers();
   vi.unstubAllGlobals();
   controls.cached = null;
@@ -1923,7 +1946,7 @@ describe('useRoomSurfaceSession', () => {
     });
     await flushEffects();
 
-    expect(current.roomSurface).toBe(controls.cached);
+    expect(current.roomSurface).toEqual(controls.cached);
     expect(controls.subscriptions).toHaveLength(1);
     expect(controls.subscriptions[0]!.filters).toEqual([{ '#h': ['room-a'] }]);
     const firstStop = controls.subscriptions[0]!.stop;
@@ -2193,6 +2216,7 @@ describe('Room history follows live row changes', () => {
     const session = useRoomSurfaceSession({ channelId: 'room-a', bindingsRef });
     const history = useRoomMessageStore({
       roomId: 'room-a',
+      recordScope: session.recordScope,
       tailMessages: session.roomSurface?.messages,
       roomClient: {
         history: async (): Promise<RoomHistoryView> => ({ roomId: 'room-a', messages: [old] }),
@@ -2200,11 +2224,9 @@ describe('Room history follows live row changes', () => {
       enabled: true,
       initialVisibleCount: 30,
     });
-    // The same groups the chat screen passes: the tail and the history rows.
-    const [tailRows, historyRows] = useRoomMessageRecords('room-a', [
-      session.roomSurface?.messages ?? [],
-      history.rows,
-    ]);
+    // Both windows hold ids and read each row from the Room's message records.
+    const tailRows = session.roomSurface?.messages ?? [];
+    const historyRows = history.rows;
     capture({ session, history, historyRows, tailRows });
     return React.createElement('room-surface');
   }
@@ -2296,7 +2318,7 @@ describe('Room history follows live row changes', () => {
     // The chat screen's bookmark settlement: the server value onto the record.
     await act(async () =>
       current().session.applyRoomMessageResult({
-        ...roomMessageRecord('room-a', 'old-row')!,
+        ...roomMessageRecord(current().session.recordScope, 'room-a', 'old-row')!,
         bookmarked: true,
       }),
     );
@@ -2322,6 +2344,41 @@ describe('Room history follows live row changes', () => {
     });
     const written = vi.mocked(mobileSurfaceCache.write).mock.calls.at(-1)?.[1] as RoomView;
     expect(written.messages.at(-1)?.id).toBe('fresh-row');
+    await act(async () => renderer.unmount());
+  });
+
+  it('writes a mutation result to the Room disk cache', async () => {
+    const { mobileSurfaceCache } = await import('@/buzz/surface-storage');
+    vi.useFakeTimers();
+    const { current, renderer } = await openWithHistory();
+    vi.mocked(mobileSurfaceCache.write).mockClear();
+    await act(async () =>
+      current().session.applyRoomMessageResult({ ...tail[29]!, text: 'edited', version: 2 }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    const written = vi.mocked(mobileSurfaceCache.write).mock.calls.at(-1)?.[1] as RoomView;
+    expect(written.messages.at(-1)?.text).toBe('edited');
+    await act(async () => renderer.unmount());
+  });
+
+  it('ignores a delta frame older than the row it already shows', async () => {
+    const { current, renderer } = await openWithHistory();
+    const emit = (text: string, version: number) =>
+      act(async () =>
+        controls.subscriptions[0]!.emit({
+          monolithLive: {
+            type: 'message-delta',
+            roomId: 'room-a',
+            message: { ...tail[29]!, text },
+            version,
+          },
+        }),
+      );
+    await emit('second edit', 3);
+    await emit('first edit', 2);
+    expect(byId(current().tailRows, 'tail-29')?.text).toBe('second edit');
     await act(async () => renderer.unmount());
   });
 });

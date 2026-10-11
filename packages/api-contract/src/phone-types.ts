@@ -220,6 +220,12 @@ export type RoomViewMessage = {
   readonly createdAt: number;
   /** Millisecond creation stamp used only for stable transcript ordering. */
   readonly createdAtMs?: number;
+  /**
+   * The row's write counter, on full reads, pages and deltas alike. It grows
+   * with every committed change to this message, so a copy with a lower one
+   * is older than one already held.
+   */
+  readonly version?: number;
   readonly author: RoomViewIdentity;
   readonly presentation: 'message' | 'system' | 'activity' | 'card';
   /** The original text and attachments were removed; this row remains as a transcript record. */

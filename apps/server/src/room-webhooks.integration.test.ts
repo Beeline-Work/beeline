@@ -78,7 +78,11 @@ it('demonstrates request → admin card → private one-time URL → quoted subs
   expect(cards.rows[0]!.card).toMatchObject({ source: 'price-feed', reason: 'Receive market signals', agentId: AGENT });
   const deniedAdmin = await op('phone', 'decideWebhookRequest', { roomId: ROOM, webhookRequestId: id, approve: true }, agentToken);
   expect(deniedAdmin.status).toBeGreaterThanOrEqual(400);
-  expect((await op('phone', 'decideWebhookRequest', { roomId: ROOM, webhookRequestId: id, approve: true, signingSecret: 'private-source-secret' })).body.status).toBe('approved');
+  const decided = await op('phone', 'decideWebhookRequest', { roomId: ROOM, webhookRequestId: id, approve: true, signingSecret: 'private-source-secret' });
+  expect(decided.body.status).toBe('approved');
+  // The card's own row comes back, so the phone shows the server status.
+  expect(decided.body.message.webhookRequest.status).toBe('approved');
+  expect(decided.body.message.version).toBeGreaterThan(0);
   const inbox = await op('daemon', 'getAgentCommands', { roomId: ROOM });
   const resumed = inbox.body.commands.find((c: any) => c.action === 'resume');
   expect(resumed).toBeDefined();

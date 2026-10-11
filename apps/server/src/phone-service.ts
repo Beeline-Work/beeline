@@ -753,6 +753,7 @@ function projectedMessage(
       : row.text,
     createdAt: unix(row.created_at),
     createdAtMs: row.created_at.getTime(),
+    ...(typeof row.version === 'number' ? { version: row.version } : {}),
     author,
     presentation: row.deleted_at ? 'system' : row.presentation,
     ...(row.deleted_at ? { deleted: true } : {}),
@@ -4067,14 +4068,22 @@ export class PhoneService {
       }
       case 'decideWebhookRequest': {
         const i = input as Input<'decideWebhookRequest'>;
-        return (await new RoomWebhooks(this.database, this.publicOrigin).decide(
+        const decided = await new RoomWebhooks(this.database, this.publicOrigin).decide(
           i.roomId,
           viewerId,
           i.webhookRequestId,
           i.approve,
           i.signingSecret,
           i.revealSecret,
-        )) as Output<Name>;
+        );
+        // The card's own row, so the phone applies the server's status.
+        const delta = await this.readLiveDelta(i.roomId, viewerId, {
+          type: 'message', messageId: decided.messageId,
+        });
+        return {
+          status: decided.status,
+          ...(delta?.type === 'message-delta' ? { message: delta.message } : {}),
+        } as Output<Name>;
       }
       case 'readWelcomeCards':
         return (await this.readWelcomeCards(viewerId)) as Output<Name>;

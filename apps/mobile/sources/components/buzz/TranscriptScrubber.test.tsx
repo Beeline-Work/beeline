@@ -348,6 +348,7 @@ describe('TranscriptScrubber on the Room message store', () => {
   }) {
     const store = useRoomMessageStore({
       roomId,
+      recordScope: 'test-scope',
       tailMessages: [roomMessage('b', 2), roomMessage('c', 3)],
       roomClient: { history },
       enabled: true,

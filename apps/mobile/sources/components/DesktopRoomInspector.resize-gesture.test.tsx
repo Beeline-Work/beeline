@@ -93,7 +93,11 @@ vi.mock('@/app/(app)/beeline/chat/RoomMessageVariants', () => ({
 }));
 vi.mock('@/components/buzz/DesktopArtifactPane', () => ({ DesktopArtifactPane: () => null }));
 vi.mock('@/components/buzz/SurfaceGlyphLoader', () => ({ SurfaceGlyphLoader: () => null }));
-vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: vi.fn(async () => null) }));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  loadBuzzIdentity: vi.fn(async () => null),
+  loadBuzzViewerPubkey: vi.fn(async () => 'viewer'),
+  getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
+}));
 vi.mock('@/sync/transport', () => ({ BuzzRigTransport: class {} }));
 vi.mock('@/buzz/use-room-corners', () => ({ useRoomCorners: () => ({ record: undefined }) }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));

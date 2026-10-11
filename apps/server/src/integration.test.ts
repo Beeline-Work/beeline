@@ -962,6 +962,8 @@ describe('monolith integration', () => {
         Date.parse('2026-09-12T01:00:00.100Z'),
         Date.parse('2026-09-12T01:00:00.900Z'),
       ]);
+      // A full read carries each row's write counter, as a delta does.
+      expect(view?.messages.map((message) => message.version)).toEqual([0, 0]);
       expect(view?.viewer.readCursor).toEqual({
         messageId: read,
         firstUnreadMessageId: unread,

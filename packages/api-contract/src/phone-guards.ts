@@ -1079,6 +1079,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     presentation,
     ...field('deleted', typeof item.deleted === 'boolean' ? item.deleted : undefined),
     ...field('createdAtMs', integer(item.createdAtMs) ? item.createdAtMs : undefined),
+    ...field('version', integer(item.version) ? item.version : undefined),
     ...field('bookmarked', typeof item.bookmarked === 'boolean' ? item.bookmarked : undefined),
     ...field(
       'feedbackReported',

@@ -30,6 +30,7 @@ it.each(['quote', 'notification', 'bookmark'])(
     function Probe() {
       state = useRoomMessageStore({
         roomId: route.params.channelId,
+        recordScope: 'test-scope',
         tailMessages: [message('f', 6)],
         roomClient: { history, historyAround: around },
         enabled: true,

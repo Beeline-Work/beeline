@@ -13,6 +13,8 @@ import {
   resetRoomCornerStore,
 } from '@/buzz/room-corner-store';
 import { subscribeClientReset } from '@/sync/client-reset';
+import { applyRoomMessage, roomDeltaMessage } from '@/buzz/room-message-records';
+import { applyRoomDraftFrame, clearRoomDrafts } from '@/buzz/room-live-drafts';
 
 type SurfaceFilters = readonly {
   readonly '#h'?: readonly string[];
@@ -344,6 +346,8 @@ export class LiveConnection {
         const acknowledged = this.seenSubscribed.delete(roomId);
         this.overlays.delete(roomId);
         this.roomCursors.delete(roomId);
+        // No view hears this Room now, so no frame can end its drafts.
+        clearRoomDrafts(roomId);
         noteCornerLaneReleased(roomId);
         if (acknowledged && this.socket && isSocketOpen(this.socket))
           this.socket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
@@ -547,10 +551,11 @@ export class LiveConnection {
         generation.send(JSON.stringify({ type: 'unsubscribe', roomId: live.roomId }));
       return;
     }
+    let resumed = false;
     if (live.type === 'subscribed') {
       this.pendingSubscribe.delete(live.roomId);
       this.seenSubscribed.add(live.roomId);
-      let resumed = Boolean(live.resumed);
+      resumed = Boolean(live.resumed);
       if (typeof live.epoch === 'string' && Number.isSafeInteger(live.cursor)) {
         const previous = this.roomCursors.get(live.roomId);
         resumed = Boolean(live.resumed) && previous?.epoch === live.epoch;
@@ -577,6 +582,11 @@ export class LiveConnection {
     if (live.type === 'invalidate' && !live.deliveryId && CORNER_LIST_REASONS.has(live.reason))
       noteRoomCornersChanged(live.roomId);
     this.rememberOverlay(live);
+    // The one place a committed row reaches the Room's message records; every
+    // view holding it shows the change before its own listener runs.
+    if (live.type === 'message-delta') applyRoomMessage(live.roomId, roomDeltaMessage(live));
+    // Likewise the one place a draft frame reaches the Room's live drafts.
+    applyRoomDraftFrame(live, resumed);
     for (const registration of this.registrations.values()) {
       if (registration.closed || !registration.roomIds.has(live.roomId)) continue;
       const trace = 'trace' in live ? live.trace : undefined;

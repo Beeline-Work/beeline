@@ -45,10 +45,12 @@ const request = (status: Request['status']): Request => ({
   expiresAt: Date.now() / 1000 + 3600,
 });
 
-function render(initial: Request) {
+function render(initial: Request, onResult?: (message: unknown) => void) {
   let renderer!: ReactTestRenderer;
   act(() => {
-    renderer = create(<WebhookRequestCard request={initial} roomId="room-a" canManage />);
+    renderer = create(
+      <WebhookRequestCard request={initial} roomId="room-a" canManage onResult={onResult} />,
+    );
   });
   renderers.push(renderer);
   const card = () => renderer.root.findByType('TranscriptCard' as any);
@@ -59,20 +61,27 @@ function render(initial: Request) {
         .props.actions.find((action: any) => action.testID === testID)
         .onPress(),
     update: (next: Request) =>
-      act(() => renderer.update(<WebhookRequestCard request={next} roomId="room-a" canManage />)),
+      act(() =>
+        renderer.update(
+          <WebhookRequestCard request={next} roomId="room-a" canManage onResult={onResult} />,
+        ),
+      ),
   };
 }
 
 describe('webhook request card status', () => {
-  it('shows the decision, then the server status once the row changes', async () => {
-    operation.monolithPhoneOperation.mockResolvedValue({ status: 'approved' });
-    const card = render(request('pending'));
+  it('hands the returned row on and shows only the server status', async () => {
+    const row = { id: 'card-1', webhookRequest: request('approved') };
+    operation.monolithPhoneOperation.mockResolvedValue({ status: 'approved', message: row });
+    const onResult = vi.fn();
+    const card = render(request('pending'), onResult);
     expect(card.subline()).toBe('Room admin approval needed');
     await act(async () => card.press('webhook-approve'));
+    // The row goes to the Room's records; the card holds no status copy.
+    expect(onResult).toHaveBeenCalledExactlyOnceWith(row);
+    expect(card.subline()).toBe('Room admin approval needed');
+    card.update(request('approved'));
     expect(card.subline()).toBe('approved');
-    // Another admin's decision or expiry reaches this card on the server row.
-    card.update(request('expired'));
-    expect(card.subline()).toBe('expired');
   });
 
   it('follows a server change it did not make', () => {

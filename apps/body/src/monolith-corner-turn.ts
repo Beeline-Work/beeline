@@ -980,12 +980,10 @@ export class MonolithCornerTurnLoop {
         toolchain = await prepareWorkspaceAdapter(assets, this.options.config.agentKind, command, {
           ...this.options.config.agentEnv, ...homeOverlay, ...workspaceCacheEnv(assets),
         });
-        if (!toolchain) assets = undefined;
       } catch (error) {
-        // A registry or host-tool failure must not prevent a turn from using
-        // the already installed adapter and its legacy private layout.
+        // Pinning is optional: use the installed host adapter while keeping
+        // the Workspace download cache shared for this turn.
         console.warn('[body] Workspace adapter pinning failed; using host adapter:', error);
-        assets = undefined;
       }
     }
     let androidAssets: { avdBase: string } | undefined;
@@ -1070,7 +1068,7 @@ export class MonolithCornerTurnLoop {
       ]);
     await mkdir(hfHomeDir, { recursive: true, mode: 0o700 });
     this.agentEnv = agentEnv;
-    const selectedCommand = assets && toolchain ? toolchain.command : command;
+    const selectedCommand = toolchain?.command ?? command;
     if (assets && this.options.config.agentPrivateRoot)
       await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
     this.modelContextTokens = await modelContextWindowTokens(

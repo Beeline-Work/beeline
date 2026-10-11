@@ -1607,7 +1607,7 @@ describe('corner close-request delivery', () => {
     };
   }
 
-  it.each(['repository', 'scratch', 'android-operator', 'capacity-fallback', 'registry-fallback'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
+  it.each(['repository', 'scratch', 'android-operator', 'goose-unpinned', 'capacity-fallback', 'registry-fallback'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
     vi.stubEnv('ANDROID_HOME', '');
     vi.stubEnv('ANDROID_SDK_ROOT', '');
     const execute = vi.fn(async (name: string) => {
@@ -1647,6 +1647,11 @@ describe('corner close-request delivery', () => {
       agentHomeRoot: join(shape === 'scratch' ? worktree : cornerRoot, 'agent-home'),
       agentPrivateRoot: join(shape === 'scratch' ? worktree : cornerRoot, 'agent-private'),
     });
+    if (shape === 'goose-unpinned') {
+      internal.options.config.agentKind = 'goose';
+      internal.options.config.agentCommand = 'goose';
+      internal.options.config.agentBinary = 'goose';
+    }
     if (shape === 'android-operator') {
       const operatorHome = internal.options.config.operatorHome!;
       await mkdir(join(operatorHome, 'android-sdk/platform-tools'), { recursive: true });
@@ -1676,9 +1681,14 @@ describe('corner close-request delivery', () => {
       }
       if (pinningFailure) {
         expect(pinningFailure).toHaveBeenCalledOnce();
-        expect(selected.agentEnv?.npm_config_cache ?? '').not.toContain('/workspaces/');
-        expect(selected.agentArgs).not.toContain(expect.stringContaining('/shared-home/tools/'));
-        return;
+        expect(selected.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
+        const args = selected.agentArgs!;
+        expect(args[args.lastIndexOf('--') + 1]).toBe('codex-acp');
+      }
+      if (shape === 'goose-unpinned') {
+        expect(selected.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
+        const args = selected.agentArgs!;
+        expect(args[args.lastIndexOf('--') + 1]).toBe('goose');
       }
       const args = selected.agentArgs!;
       const separator = args.lastIndexOf('--');

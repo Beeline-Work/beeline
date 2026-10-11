@@ -988,11 +988,10 @@ export class MonolithRoomTurnLoop {
         toolchain = await prepareWorkspaceAdapter(assets, this.options.config.agentKind, command, {
           ...this.options.config.agentEnv, ...homeOverlay, ...workspaceCacheEnv(assets),
         });
-        if (!toolchain) assets = undefined;
       } catch (error) {
-        // A failed install or registry lookup leaves the host adapter usable.
+        // Pinning is optional: a failed install or registry lookup leaves the
+        // host adapter usable, while the Workspace download cache stays shared.
         console.warn('[body] Workspace adapter pinning failed; using host adapter:', error);
-        assets = undefined;
       }
     }
     this.sharedAssetsActive = Boolean(assets);
@@ -1011,7 +1010,7 @@ export class MonolithRoomTurnLoop {
       agentEnv.PATH = `${join(toolchain.binDir, '../../bin')}:${toolchain.binDir}:${agentEnv.PATH ?? ''}`;
       if (this.options.config.agentKind === 'pi') agentEnv.PI_ACP_PI_COMMAND = toolchain.cliCommand;
     }
-    const selectedCommand = assets && toolchain ? toolchain.command : command;
+    const selectedCommand = toolchain?.command ?? command;
     this.agentEnv = agentEnv;
     this.modelContextTokens = await modelContextWindowTokens(
       selectionModel,

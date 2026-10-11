@@ -2,11 +2,12 @@
 
 The helper now gives every agent in a Workspace on this machine one asset tree at
 `$XDG_STATE_HOME/beeline/workspaces/<Workspace digest>/shared-home`. New turns use
-its supported package caches, pinned harness and ACP adapter generations,
-and AVD metadata. Android tools and system images continue to use the
-operator's installed SDK; the helper does not copy or hash that SDK. A harness
-without a pinnable CLI and adapter, or whose pinning fails, uses its legacy
-private layout for that turn. Every agent and Room keeps its existing `agent-home` path for harness
+its supported package caches, optional pinned harness and ACP adapter
+generations, and AVD metadata. Every harness kind uses the shared download
+caches, including harnesses without a pinnable adapter and turns where pinning
+fails; those turns use the host's installed adapter. Android tools and system
+images continue to use the operator's installed SDK; the helper does not copy
+or hash that SDK. Every agent and Room keeps its existing `agent-home` path for harness
 sign-in, configuration, sessions, plugin data, and unknown files; resume needs no
 transcript migration. Pending approvals remain server scoped. Repository corners
 keep their own checkout and build output. Emulator launches through `beeline
@@ -35,8 +36,9 @@ on its selected generation.
 ## Capacity and migration
 
 Before optional shared writes, the helper checks for 2 GiB free and creates a
-real, fsynced 128 MiB private recovery reserve. A turn falls back to its
-existing private paths when admission or later tool installation lacks space.
+real, fsynced 128 MiB private recovery reserve. A turn uses its existing
+private paths when initial shared admission lacks space. If optional tool
+pinning later fails, it keeps the shared caches and uses the host adapter.
 The helper checks free capacity every 500 ms and releases the reserve when
 free space approaches it; observed ENOSPC also releases it. This is best effort:
 a private write may race the check, and concurrent writers can consume the

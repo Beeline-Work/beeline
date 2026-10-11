@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
+import { AGENT_KINDS } from './agent-command.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
@@ -274,7 +275,7 @@ describe('Room turn phase trace', () => {
   it.each([
     ['capacity', new SharedAssetCapacityError()],
     ['registry failure', new Error('npm registry timed out')],
-  ])('falls back to the private layout when adapter pinning hits %s', async (_reason, failure) => {
+  ])('uses the host adapter and shared cache when pinning hits %s', async (_reason, failure) => {
     const prepare = vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter')
       .mockRejectedValueOnce(failure);
     try {
@@ -285,9 +286,34 @@ describe('Room turn phase trace', () => {
       });
       expect(prepare).toHaveBeenCalledOnce();
       expect(receipts.at(-1)?.status).toBe('complete');
-      expect(acpOptions?.agentEnv?.npm_config_cache ?? '').not.toContain('/workspaces/');
-      expect(acpOptions?.agentArgs).not.toContain(expect.stringContaining('/shared-home/tools/'));
+      expect(acpOptions?.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
+      const args = acpOptions!.agentArgs!;
+      expect(args[args.lastIndexOf('--') + 1]).toBe('codex-acp');
     } finally { prepare.mockRestore(); }
+  }, 20_000);
+
+  it.each(AGENT_KINDS)('shares downloads for unpinned %s harness turns', async (kind) => {
+    const hostCommand = `host-${kind}`;
+    const { acpOptions, receipts } = await runTurns({
+      sharedAssets: true,
+      agentKind: kind,
+      configOverrides: { agentBinary: hostCommand, agentCommand: hostCommand },
+      asks: [{ id: `cache-${kind}`, body: 'work' }],
+      prompt: async () => answer('Done'),
+    });
+    expect(receipts.at(-1)?.status).toBe('complete');
+    expect(acpOptions?.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
+    expect(acpOptions?.agentCommand).toBe('/usr/bin/bwrap');
+    const args = acpOptions!.agentArgs!;
+    const separator = args.lastIndexOf('--');
+    expect(args[separator + 1]).toBe(hostCommand);
+    const cache = acpOptions!.agentEnv!.npm_config_cache!;
+    const child = spawnSync('/usr/bin/bwrap', [
+      ...args.slice(0, separator + 1), '/bin/sh', '-c', 'printf "%s" "$2" > "$1"',
+      'probe', `${cache}/harness-proof`, kind,
+    ], { env: acpOptions!.agentEnv, encoding: 'utf8' });
+    expect(child.status, child.stderr).toBe(0);
+    expect(await readFile(`${cache}/harness-proof`, 'utf8')).toBe(kind);
   }, 20_000);
 
   it('activates a real shared-layout Room mount from the turn loop', async () => {

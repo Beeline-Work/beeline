@@ -267,8 +267,8 @@ export async function prepareWorkspaceAdapter(
   env: NodeJS.ProcessEnv,
 ): Promise<WorkspaceToolchain | undefined> {
   const adapter = kind && ADAPTER_PACKAGES[kind];
-  // An unknown or native harness remains on its legacy private layout. No
-  // selected shared generation may invoke a mutable machine-global child CLI.
+  // Unknown or native harnesses still use Workspace caches with their host
+  // adapter. A selected tool generation must pin its nested CLI as well.
   if (!adapter || !kind || basename(command) !== adapter.binary) return undefined;
   const selectedAdapter = await installedPackage(command, env).catch(() => undefined);
   const selectedCli = await installedPackage(kind, env).catch(() => undefined);

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beeline viewer composer · approval board</title>
+  <style>
+    @font-face { font-family: SpaceGrotesk; src: url(SpaceGrotesk-Regular.ttf); }
+    @font-face { font-family: SpaceGrotesk; src: url(SpaceGrotesk-SemiBold.ttf); font-weight: 600; }
+    @font-face { font-family: IBMPlexMono; src: url(IBMPlexMono-Regular.ttf); }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 36px 24px 72px; background: #14091a; color: #f0f0f3; font-family: SpaceGrotesk, sans-serif; }
+    header, main { max-width: 1450px; margin: auto; }
+    .kicker { font: 11px IBMPlexMono, monospace; letter-spacing: 1.5px; color: #b08a4a; text-transform: uppercase; }
+    h1 { font-size: 32px; line-height: 1.2; margin: 8px 0 12px; font-weight: 600; }
+    .lead { max-width: 950px; color: #c9c9d1; font-size: 16px; line-height: 1.5; margin: 0; }
+    .notes { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0 34px; }
+    .notes span { border: 1px solid #3b3048; border-radius: 8px; padding: 8px 11px; color: #c9c9d1; font-size: 13px; }
+    h2 { font-size: 20px; margin: 34px 0 16px; font-weight: 600; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+    figure { margin: 0; background: #190e21; border: 1px solid #3b3048; border-radius: 14px; padding: 15px; min-width: 0; }
+    figure img { display: block; width: 100%; max-width: 390px; height: auto; margin: 0 auto; border: 1px solid #3b3048; }
+    figcaption { margin: 0 0 12px; min-height: 60px; }
+    figcaption strong { display: block; font-size: 16px; margin-bottom: 4px; }
+    figcaption span { color: #90909b; font-size: 13px; line-height: 1.4; }
+    .wide img { max-width: none; }
+    .provenance { margin-top: 28px; color: #90909b; font-size: 13px; line-height: 1.5; }
+    code { color: #d5ae70; font: 12px IBMPlexMono, monospace; }
+    @media (max-width: 1080px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 680px) { body { padding: 20px 14px 48px; } .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="kicker">Decision mock · viewer conversation</div>
+    <h1>Talk to Moth without leaving what you’re viewing</h1>
+    <p class="lead">A 44 px rounded control sits in its own strip above Android’s three-button navigation bar. The regular composer slides up over either viewer, keeping voice available. A sent message carries the artifact title or a browser snapshot. The agent’s latest reply arrives as a quiet temporary ticker; tapping it opens recent conversation.</p>
+    <div class="notes"><span>390 × 844 phone</span><span>1440 × 900 desktop</span><span>Obsidian shell + Bone mock and theme</span><span>Browser taps remain in the stream above the control strip</span></div>
+  </header>
+  <main>
+    <h2>Entry and compose</h2>
+    <section class="grid">
+      <figure><figcaption><strong>1 · Artifact, idle</strong><span>Viewer stays full screen; the only new control is at bottom right.</span></figcaption><img src="artifact-idle.png" alt="Artifact viewer with small message control above Android navigation"></figure>
+      <figure><figcaption><strong>2 · Artifact, composer open</strong><span>Same artifact remains visible. Context is attached automatically; the empty field shows the voice control.</span></figcaption><img src="artifact-composer.png" alt="Composer over a checkout mock with artifact context chip and microphone"></figure>
+      <figure><figcaption><strong>3 · Live computer session, idle</strong><span>The button lives below the browser iframe, so page taps keep their take-over behavior.</span></figcaption><img src="computer-idle.png" alt="Live computer viewer with browser page and message control outside stream"></figure>
+      <figure><figcaption><strong>4 · Live computer session, composer open</strong><span>The current screen snapshot is attached. A typed question swaps the mic for send.</span></figcaption><img src="computer-composer.png" alt="Composer over live browser with automatic screen snapshot context"></figure>
+      <figure><figcaption><strong>5 · Bone theme</strong><span>The viewer controls and dock use Bone tokens with the same placement.</span></figcaption><img src="computer-bone.png" alt="Live browser viewer in Bone theme"></figure>
+    </section>
+    <h2>Reply and recent history</h2>
+    <section class="grid">
+      <figure><figcaption><strong>6 · Reply ticker</strong><span>A translucent, compact preview of the latest reply fades after a few seconds; tap to expand.</span></figcaption><img src="computer-ticker.png" alt="Faint reply ticker over the computer viewer"></figure>
+      <figure><figcaption><strong>7 · Expanded recent transcript</strong><span>Recent messages appear as a shallow overlay on the artifact, with the artifact context on the sent message.</span></figcaption><img src="expanded-transcript.png" alt="Recent conversation over the artifact viewer"></figure>
+      <figure><figcaption><strong>8 · Browser context after send</strong><span>The sent message identifies the browser session and keeps a thumbnail of the screen seen at send time.</span></figcaption><img src="computer-sent-context.png" alt="Recent conversation with browser screen snapshot attached to the human message"></figure>
+    </section>
+    <h2>Desktop work pane</h2>
+    <section class="grid"><figure class="wide" style="grid-column: 1 / -1"><figcaption><strong>9 · Browser pane, composer open</strong><span>The same action lives inside the 400 px work pane; the Room transcript stays in place.</span></figcaption><img src="desktop-composer.png" alt="Desktop Beeline Room with live browser work pane and composer"></figure></section>
+    <p class="provenance">The screenshots render the current <code>ArtifactViewerScreen</code> and <code>ComputerSessionViewer</code> from app source through React Native Web, with the app’s Space Grotesk and IBM Plex Mono fonts. The overlay controls and sample artifact/browser pages are visual fixtures for approval. Rebuild with <code>node .lavish/viewer-composer/build.mjs</code>, serve this directory, and capture <code>frame.html?frame=…</code>. Implementation begins after approval and after the parallel computer-use viewer change lands.</p>
+  </main>
+</body>
+</html>

@@ -18,6 +18,7 @@ import type { CodeDocument } from '@/buzz/code-document';
 import * as Clipboard from 'expo-clipboard';
 import { copyPicture, sharePicture } from '@/buzz/picture-actions';
 import { useCopiedToast } from '@/components/buzz/CopiedToast';
+import { ViewerConversationDock } from '@/components/buzz/ViewerConversationDock';
 
 /**
  * The full-screen artifact viewer (mock 1c): the whole page, still guarded —
@@ -36,6 +37,8 @@ export function ArtifactViewerScreen({
   document,
   markdown,
   notice,
+  authorHandle,
+  roomId,
   onClose,
 }: (
   | { attachment: AttachmentReference; document?: never; markdown?: never; notice?: never }
@@ -44,6 +47,7 @@ export function ArtifactViewerScreen({
   | { attachment?: never; document?: never; markdown?: never; notice: { title: string; message: string } }
 ) & {
   authorHandle?: string;
+  roomId?: string;
   photoAttachments?: readonly AttachmentReference[];
   onClose: () => void;
 }) {
@@ -210,6 +214,8 @@ export function ArtifactViewerScreen({
           />
         )}
       </View>
+      <ViewerConversationDock kind="artifact" title={attachment?.name ?? title} roomId={roomId} agentHandle={authorHandle}
+        {...(attachment ? { artifact: attachment } : {})} />
       {toast}
     </View>
   );

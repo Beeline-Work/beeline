@@ -8,46 +8,81 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Modal } from '@/modal';
 import { openComputerInDesktopWorkPane } from '@/buzz/desktop-computer-pane';
 import { openExternalUrl } from '@/utils/open-external-url';
+import { ViewerConversationDock } from '@/components/buzz/ViewerConversationDock';
+import { currentViewerConversation } from '@/buzz/viewer-conversation';
 
-export type ComputerSessionView = NonNullable<RoomViewMessage['computerSession']> & { access?: string };
+export type ComputerSessionView = NonNullable<RoomViewMessage['computerSession']> & { access?: string; agentHandle?: string };
 
-function ComputerStream({ session, preview = false, onEnded }: { session: ComputerSessionView; preview?: boolean; onEnded?: () => void }) {
+function ComputerStream({ session, preview = false, onEnded, captureRef }: {
+  session: ComputerSessionView; preview?: boolean; onEnded?: () => void;
+  captureRef?: React.MutableRefObject<(() => Promise<string | null>) | null>;
+}) {
   const WebView = useSandboxWebView();
+  const iframeRef = React.useRef<HTMLIFrameElement | null>(null);
+  const webViewRef = React.useRef<{ injectJavaScript(script: string): void } | null>(null);
+  const pendingCaptures = React.useRef(new Map<number, (image: string | null) => void>());
+  const nextCapture = React.useRef(0);
   const streamUrl = new URL(session.url);
   if (session.access) streamUrl.searchParams.set('access', session.access);
   streamUrl.searchParams.set('embedded', '1');
   if (preview) streamUrl.searchParams.set('preview', '1');
   const url = streamUrl.toString();
   React.useEffect(() => {
-    if (Platform.OS !== 'web' || !onEnded) return;
+    if (Platform.OS !== 'web') return;
     const origin = new URL(session.url).origin;
     const handle = (event: MessageEvent) => {
-      if (event.origin !== origin || event.data?.type !== 'computer-ended' || event.data.id !== session.id) return;
-      onEnded();
+      if (event.origin !== origin || event.data?.id !== session.id) return;
+      if (event.data.type === 'computer-ended') onEnded?.();
+      if (event.data.type === 'computer-snapshot') {
+        const resolve = pendingCaptures.current.get(event.data.requestId);
+        if (resolve) { pendingCaptures.current.delete(event.data.requestId); resolve(event.data.image ?? null); }
+      }
     };
     window.addEventListener('message', handle);
     return () => window.removeEventListener('message', handle);
   }, [onEnded, session.id, session.url]);
+  React.useEffect(() => {
+    if (!captureRef || preview) return;
+    captureRef.current = () => new Promise((resolve) => {
+      const requestId = ++nextCapture.current;
+      const finish = (image: string | null) => { clearTimeout(timeout); resolve(image); };
+      const timeout = setTimeout(() => { pendingCaptures.current.delete(requestId); resolve(null); }, 2000);
+      pendingCaptures.current.set(requestId, finish);
+      const request = { type: 'viewer-snapshot-request', id: session.id, requestId };
+      if (Platform.OS === 'web') iframeRef.current?.contentWindow?.postMessage(request, new URL(session.url).origin);
+      else webViewRef.current?.injectJavaScript(`window.postMessage(${JSON.stringify(request)}, '*'); true;`);
+    });
+    return () => { captureRef.current = null; for (const resolve of pendingCaptures.current.values()) resolve(null);
+      pendingCaptures.current.clear(); };
+  }, [captureRef, preview, session.id, session.url]);
+  const onStreamMessage = (event: { nativeEvent: { data: string } }) => {
+    try {
+      const message = JSON.parse(event.nativeEvent.data) as { type?: string; id?: string; requestId?: number; image?: string };
+      if (message.id !== session.id) return;
+      if (message.type === 'computer-ended') onEnded?.();
+      if (message.type === 'computer-snapshot' && message.requestId !== undefined) {
+        const resolve = pendingCaptures.current.get(message.requestId);
+        if (resolve) { pendingCaptures.current.delete(message.requestId); resolve(message.image ?? null); }
+      }
+    } catch { /* Ignore unrelated page messages. */ }
+  };
   if (session.status === 'ended') return <View style={styles.ended} testID="computer-session-ended"><Text style={styles.endedText}>Browser session ended</Text></View>;
   if (!session.access) return <View style={styles.ended}><Text style={styles.endedText}>Connecting to browser…</Text></View>;
   if (Platform.OS === 'web') return React.createElement('iframe', {
+    ref: iframeRef,
     src: url,
     title: session.title,
     style: { width: '100%', height: '100%', border: 0, pointerEvents: preview ? 'none' : 'auto' },
     'data-testid': preview ? 'computer-session-preview-frame' : 'computer-session-view-frame',
   });
-  if (WebView) return <WebView source={{ uri: url }} javaScriptEnabled domStorageEnabled
-    onMessage={onEnded ? (event: { nativeEvent: { data: string } }) => {
-      try { const message = JSON.parse(event.nativeEvent.data) as { type?: string; id?: string };
-        if (message.type === 'computer-ended' && message.id === session.id) onEnded();
-      } catch { /* Ignore unrelated page messages. */ }
-    } : undefined}
+  if (WebView) return <WebView ref={webViewRef} source={{ uri: url }} javaScriptEnabled domStorageEnabled
+    onMessage={onStreamMessage}
     scrollEnabled={false} style={styles.stream} testID={preview ? 'computer-session-preview-webview' : 'computer-session-view-webview'} />;
   return <View style={styles.ended}><Text style={styles.endedText}>Opening browser…</Text></View>;
 }
 
 /** The live card uses a real stream while mounted; it never snapshots or polls. */
-export function ComputerSessionCard({ session, isDesktop }: { session: ComputerSessionView; isDesktop?: boolean }) {
+export function ComputerSessionCard({ session, isDesktop, agentHandle }: { session: ComputerSessionView; isDesktop?: boolean; agentHandle?: string }) {
   const [access, setAccess] = React.useState<string | null>(session.access ?? null);
   React.useEffect(() => {
     if (session.status !== 'live' || session.access) return;
@@ -67,9 +102,10 @@ export function ComputerSessionCard({ session, isDesktop }: { session: ComputerS
       return;
     }
     setAccess(freshAccess);
-    const permitted = { ...session, access: freshAccess };
+    const permitted = { ...session, access: freshAccess, agentHandle };
     if (isDesktop && openComputerInDesktopWorkPane(permitted)) return;
-    Modal.show({ component: ComputerSessionViewer, props: { session: permitted }, placement: 'fill' });
+    Modal.show({ component: ComputerSessionViewer,
+      props: { session: permitted, agentHandle, roomId: currentViewerConversation()?.roomId }, placement: 'fill' });
   };
   return <View style={styles.card} testID={`computer-session-card-${session.status}`}>
     {session.status === 'live' && access ? <Pressable onPress={() => void open()} accessibilityRole="button" accessibilityLabel={`Open ${session.title} browser`}>
@@ -85,8 +121,11 @@ export function ComputerSessionCard({ session, isDesktop }: { session: ComputerS
 }
 
 /** Full area of the artifact viewer, with only the two rounded controls. */
-export function ComputerSessionViewer({ session, onClose }: { session: ComputerSessionView; onClose: () => void }) {
+export function ComputerSessionViewer({ session, onClose, roomId, agentHandle }: {
+  session: ComputerSessionView; onClose: () => void; roomId?: string; agentHandle?: string;
+}) {
   const insets = useSafeAreaInsets();
+  const captureRef = React.useRef<(() => Promise<string | null>) | null>(null);
   const [ended, setEnded] = React.useState(session.status === 'ended');
   React.useEffect(() => { if (session.status === 'ended') setEnded(true); }, [session.status]);
   const shownSession = ended ? { ...session, status: 'ended' as const } : session;
@@ -120,13 +159,15 @@ export function ComputerSessionViewer({ session, onClose }: { session: ComputerS
     }
   };
   return <View style={[styles.viewer, { paddingTop: insets.top + 48 + 16, paddingBottom: insets.bottom }]} testID="computer-session-viewer">
-    <View style={styles.viewerStream}><ComputerStream session={shownSession} onEnded={() => setEnded(true)} /></View>
+    <View style={styles.viewerStream}><ComputerStream session={shownSession} onEnded={() => setEnded(true)} captureRef={captureRef} /></View>
     <View style={[styles.controls, { top: insets.top + 12 }]}>
       {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void openInBrowser()} accessibilityRole="button" accessibilityLabel="Open in browser" testID="computer-session-open-browser"><Text style={styles.controlText}>Open ↗</Text></Pressable> : null}
       {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void handBack()} accessibilityRole="button" accessibilityLabel="Hand browser back to agent" testID="computer-session-handback"><Text style={styles.controlText}>Hand back</Text></Pressable> : null}
       {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void endShare()} accessibilityRole="button" accessibilityLabel="End browser share" testID="computer-session-end"><Text style={styles.controlText}>End share</Text></Pressable> : null}
       <Pressable style={styles.control} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close browser" testID="computer-session-close"><Text style={styles.controlText}>✕</Text></Pressable>
     </View>
+    <ViewerConversationDock kind="computer" title={session.title} roomId={roomId}
+      agentHandle={agentHandle} captureScreen={() => captureRef.current?.() ?? Promise.resolve(null)} />
   </View>;
 }
 

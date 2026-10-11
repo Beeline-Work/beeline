@@ -4,7 +4,9 @@ import { createRoot } from 'react-dom/client';
 import { ArtifactViewerScreen } from '../../apps/mobile/sources/components/buzz/ArtifactViewer';
 import { ComputerSessionViewer } from '../../apps/mobile/sources/components/buzz/ComputerSession';
 import { ConversationComposer } from '../../apps/mobile/sources/components/buzz/ConversationComposer';
+import { ViewerConversationDock } from '@/components/buzz/ViewerConversationDock';
 import { beelineThemes } from '../../apps/mobile/sources/buzz/groknight';
+import { publishViewerConversation } from '../../apps/mobile/sources/buzz/viewer-conversation';
 
 // @ts-expect-error esbuild embeds app fonts as data URLs.
 import regular from '../../apps/mobile/sources/assets/fonts/SpaceGrotesk-Regular.ttf';
@@ -16,6 +18,7 @@ import semibold from '../../apps/mobile/sources/assets/fonts/SpaceGrotesk-SemiBo
 import mono from '../../apps/mobile/sources/assets/fonts/IBMPlexMono-Regular.ttf';
 
 const frame = new URLSearchParams(location.search).get('frame') ?? 'artifact-idle';
+const built = location.pathname.includes('built-frame');
 const isComputer = frame.includes('computer') || frame.startsWith('desktop');
 const desktop = frame.startsWith('desktop');
 const theme = beelineThemes[new URLSearchParams(location.search).get('theme') === 'bone' ? 'bone' : 'obsidian'];
@@ -26,6 +29,25 @@ const session = {
   status: 'live' as const,
   access: 'mock-viewer-access',
 };
+function pushProofReply() {
+  publishViewerConversation({
+    roomId: 'mock-room',
+    messages: [{ id: `reply-${Date.now()}`, text: isComputer
+      ? 'Use the test card, then tap Continue. I’ll watch for the next screen.'
+      : 'Yes. I’d collapse payment details until the buyer chooses Continue.',
+      createdAt: Math.floor(Date.now() / 1000), presentation: 'message',
+      author: { pubkey: 'moth', kind: 'agent', name: 'Moth', handle: 'moth' } }] as never,
+    send: sendProofMessage,
+  });
+}
+async function sendProofMessage() {
+  setTimeout(pushProofReply, 2500);
+  return true;
+}
+if (built) {
+  publishViewerConversation({ roomId: 'mock-room', messages: [], send: sendProofMessage });
+  (window as any).__pushViewerReply = pushProofReply;
+}
 
 const sheet = document.createElement('style');
 sheet.textContent = `@font-face{font-family:SpaceGrotesk-Regular;src:url(${regular})}
@@ -55,14 +77,16 @@ button{font:inherit;cursor:pointer}.phone{height:100%;display:flex;flex-directio
 .floating-transcript{position:absolute;z-index:8;left:16px;right:16px;bottom:88px;min-height:104px;border:1px solid ${theme.borderStrong};border-radius:12px;background:${new URLSearchParams(location.search).get('theme') === 'bone' ? '#ece4d5db' : '#190e21bf'};backdrop-filter:blur(12px);padding:12px 14px;box-shadow:0 8px 24px #0002}
 .floating-transcript.arriving{opacity:.42;transform:translateY(4px)}.transcript-label{font:11px IBMPlexMono-Regular;color:${theme.ledgerQuiet};margin-bottom:8px}.transcript-line{font:13px/19px SpaceGrotesk-Regular;color:${theme.textPrimary};margin-top:5px}.transcript-line span{font:11px IBMPlexMono-Regular;color:${theme.accent};margin-right:6px}
 .phone.computer .floating-transcript{bottom:138px}.desktop-pane .floating-transcript{bottom:114px}
+.viewer-area .mock-artifact{pointer-events:none}.phone.artifact .viewer-area>div:first-child [data-testid="viewer-conversation-dock"]{display:none}
 `;
 document.head.appendChild(sheet);
 
 function Viewer() {
   return <div className="viewer-area">
-    {isComputer ? <ComputerSessionViewer session={session} onClose={() => undefined} /> :
-      <ArtifactViewerScreen markdown={{ title: 'Checkout flow · mock', text: '## Checkout flow\nReview the mock and leave feedback.' }} onClose={() => undefined} />}
+    {isComputer ? <ComputerSessionViewer session={session} roomId="mock-room" agentHandle="moth" onClose={() => undefined} /> :
+      <ArtifactViewerScreen markdown={{ title: 'Checkout flow · mock', text: '## Checkout flow\nReview the mock and leave feedback.' }} authorHandle="moth" onClose={() => undefined} />}
     {!isComputer && <div className="mock-artifact"><div className="eyebrow">MONARCH / CHECKOUT</div><h1>Almost there.</h1><p>Review your details and finish your order.</p><div className="mock-card"><b>Contact</b><div className="field">Email address</div><b>Payment</b><div className="field">Card number</div><div className="primary">Continue</div><div className="hint">A calm, secure final step.</div></div></div>}
+    {built && !isComputer ? <ViewerConversationDock kind="artifact" title="Checkout flow · mock" agentHandle="moth" /> : null}
   </div>;
 }
 type DockStage = 'collapsed' | 'expanding' | 'typing' | 'voice' | 'reply' | 'collapsed-again';
@@ -108,7 +132,7 @@ function ConversationDock({ stage, computer, onStage }: { stage: DockStage; comp
 function Phone() {
   const [stage, setStage] = React.useState<DockStage>(queryStage);
   return <div className={`phone ${isComputer ? 'computer' : 'artifact'}`}>{!isComputer && <div className="status"><span>9:41</span><span>◆ ▰</span></div>}
-    <Viewer /><RecentTranscript stage={stage} computer={isComputer} /><ConversationDock stage={stage} computer={isComputer} onStage={setStage} />
+    <Viewer />{!built && <><RecentTranscript stage={stage} computer={isComputer} /><ConversationDock stage={stage} computer={isComputer} onStage={setStage} /></>}
     <div className="nav"><span /><span /><span /></div>
   </div>;
 }
@@ -117,7 +141,7 @@ function Desktop() {
   const [stage, setStage] = React.useState<DockStage>(queryStage);
   return <div className="desktop"><div className="rail">✦</div><div className="rooms"><div className="word">beeline</div><div className="room-item">⌕ &nbsp; Search</div><div className="room-item">✦ &nbsp; Design Room</div><div className="room-item"># &nbsp; General</div></div>
     <div className="room-main"><h2>Design Room</h2><div className="body"><div className="agent">Moth · agent</div>I reached the sign in step. The browser is ready for you to finish it.</div></div>
-    <div className="desktop-pane"><div className="pane-head">Browser</div><Viewer /><RecentTranscript stage={stage} computer /><ConversationDock stage={stage} computer onStage={setStage} /></div>
+    <div className="desktop-pane"><div className="pane-head">Browser</div><Viewer />{!built && <><RecentTranscript stage={stage} computer /><ConversationDock stage={stage} computer onStage={setStage} /></>}</div>
   </div>;
 }
 

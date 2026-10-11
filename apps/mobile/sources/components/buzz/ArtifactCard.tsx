@@ -37,6 +37,7 @@ import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { ArtifactImage, ArtifactText } from '@/components/buzz/ArtifactMedia';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
+import { currentViewerConversation } from '@/buzz/viewer-conversation';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { Modal } from '@/modal';
@@ -99,6 +100,7 @@ export const ArtifactCard = React.memo(function ArtifactCard({
       openArtifactInDesktopWorkPane({
         attachment: activeAttachment,
         authorHandle: activeAuthorHandle,
+        roomId: currentViewerConversation()?.roomId,
       })
     )
       return;
@@ -107,6 +109,7 @@ export const ArtifactCard = React.memo(function ArtifactCard({
       props: {
         attachment: activeAttachment,
         authorHandle: activeAuthorHandle,
+        roomId: currentViewerConversation()?.roomId,
         ...(isPhotoGroup ? { photoAttachments } : {}),
       },
       // The viewer is a full-screen surface: the default centered placement

@@ -11,6 +11,7 @@ import React, {
   useMemo,
   type MutableRefObject,
 } from 'react';
+import { Buffer } from 'buffer';
 import { transcriptBylineOpeners } from '@/buzz/message-dates';
 import {
   View,
@@ -59,6 +60,11 @@ import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import { Modal } from '@/modal';
 import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { BuzzRigTransport } from '@/sync/transport';
+import {
+  publishViewerConversation,
+  removeViewerConversation,
+  type ViewerMessage,
+} from '@/buzz/viewer-conversation';
 import {
   type ChannelRole,
   type RoomRepository,
@@ -452,7 +458,11 @@ import {
 import { subscribeDesktopWorkCorner } from '@/buzz/desktop-work-pane';
 
 type RoomMemberOption = RoomRosterParticipant;
-type MessageShortcut = { text: string; replyTarget: MessageReplyTarget };
+type MessageShortcut = {
+  text: string;
+  replyTarget?: MessageReplyTarget;
+  viewer?: Omit<ViewerMessage, 'text'>;
+};
 const NO_SELECTED_MENTIONS: ReadonlyMap<string, string> = new Map();
 /**
  * The reserved `@channel` autocomplete row: tags every human in the Room (the
@@ -3979,14 +3989,18 @@ export function BuzzChatSurface({
       // every send). Only a real shortcut — it always carries text — qualifies.
       const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;
       const clearSubmittedDraft = composerDraft.captureMessage();
-      const rawText = (sendShortcut?.text ?? inputTextRef.current).trim();
-      const activeReplyTarget = sendShortcut?.replyTarget ?? replyTarget;
-      const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;
+      const viewer = sendShortcut?.viewer;
+      const spoken = (sendShortcut?.text ?? inputTextRef.current).trim();
+      const addressed = viewer?.agentHandle && !spoken.includes(`@${viewer.agentHandle}`)
+        ? `@${viewer.agentHandle} ${spoken}` : spoken;
+      const rawText = viewer ? `${addressed}\n\n[${viewer.context}]` : addressed;
+      const activeReplyTarget = sendShortcut ? sendShortcut.replyTarget : replyTarget;
+      const activePendingAttachments = viewer?.pickedAttachments ?? (sendShortcut ? [] : pendingAttachmentsRef.current);
       // State updates are committed asynchronously. A ref closes the short
       // double-tap window before `sending` can disable the native control.
       if (
         sendInFlightRef.current ||
-        (!rawText && activePendingAttachments.length === 0) ||
+        (!spoken && activePendingAttachments.length === 0) ||
         isArchived
       )
         return;
@@ -4085,12 +4099,28 @@ export function BuzzChatSurface({
           return true;
         };
         if (dictationCancelled()) return;
-        const attachments = activePendingAttachments.length
-          ? await attachmentUploader.uploadAll(
-              await sendTransport.ensureClient(),
-              activePendingAttachments,
-            )
-          : [];
+        const uploadedSnapshot = viewer?.screenshotBase64
+          ? await (async () => {
+              const bytes = Uint8Array.from(Buffer.from(viewer.screenshotBase64!, 'base64'));
+              const uploaded = await sendTransport.uploadMedia(bytes, 'image/jpeg');
+              return {
+                url: uploaded.url,
+                name: 'browser-screen.jpg',
+                mimeType: 'image/jpeg',
+                size: uploaded.size,
+                sha256: uploaded.sha256,
+                ...(uploaded.thumb ? { thumbnailUrl: uploaded.thumb } : {}),
+              };
+            })()
+          : undefined;
+        const selectedAttachments = activePendingAttachments.length
+            ? await attachmentUploader.uploadAll(await sendTransport.ensureClient(), activePendingAttachments)
+            : [];
+        const attachments = [
+          ...(viewer?.artifact ? [viewer.artifact] : []),
+          ...(uploadedSnapshot ? [uploadedSnapshot] : []),
+          ...selectedAttachments,
+        ];
         if (dictationCancelled()) return;
         // Sign before append. The authoritative event id is the optimistic row
         // identity and the durable outbox key from its first frame onward.
@@ -4205,6 +4235,7 @@ export function BuzzChatSurface({
         // has no mark left to write for it. The write receipt or live delta
         // paints the canonical message without a confirmation GET.
         acknowledgeReadMark(preparedEvent.id);
+        return true;
       } catch (err) {
         console.warn('Send failed:', err);
         if (provisionalId && !preparedEvent) removeOptimistic(provisionalId);
@@ -4230,6 +4261,7 @@ export function BuzzChatSurface({
               ]
             : [{ text: 'OK' }],
         );
+        return false;
       } finally {
         sendInFlightRef.current = false;
         setSending(false);
@@ -4269,6 +4301,18 @@ export function BuzzChatSurface({
       landAtOwnSend,
     ],
   );
+
+  // Fill modals render outside the Room tree. Give the viewer the Room's live
+  // messages and its signed/outbox-backed send path without a second socket.
+  useEffect(() => {
+    if (!roomSurface || !isFocused) return;
+    publishViewerConversation({
+      roomId: decodedId,
+      messages: roomSurface.messages,
+      send: (message, dictated) => handleSend({ text: message.text, viewer: message }, dictated).then(Boolean),
+    });
+    return () => removeViewerConversation(decodedId);
+  }, [decodedId, handleSend, isFocused, roomSurface]);
 
   const handleCornerProposalDecision = useCallback(
     (message: ChatDisplayMessage, decision: 'open' | 'cancel') => {
@@ -5724,7 +5768,8 @@ export function BuzzChatSurface({
         );
       }
       if (item.computerSession) {
-        return <ComputerSessionCard session={item.computerSession} isDesktop={desktopExperience} />;
+        return <ComputerSessionCard session={item.computerSession} isDesktop={desktopExperience}
+          agentHandle={item.authorIdentity?.kind === 'agent' ? item.authorIdentity.handle : undefined} />;
       }
       if (item.choice) {
         return (

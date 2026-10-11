@@ -4,6 +4,7 @@ import type { CornerGitHubCli } from './corner-github-auth.js';
 import { ACP_SESSION_MEMORY_MAX_BYTES } from './acp-resource-scope.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
+import type { MachineHost } from './machine-host.js';
 
 /**
  * The ONE place Beeline prompt text is written and assembled.
@@ -85,6 +86,7 @@ export interface SessionPromptContext {
   readonly surface: PromptSurface;
   readonly brief?: CornerBrief;
   readonly agentName: string;
+  readonly machineHost?: MachineHost;
   readonly soul?: { readonly name: string; readonly instructions: string };
   /** The ACP command; decides whether session text must also ride every turn. */
   readonly agentCommand?: string;
@@ -304,6 +306,17 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
         .join('\n'),
   },
   {
+    id: 'core.machine-host',
+    topic: 'machine-host',
+    why: 'Agents tried to SSH to the machine they were already running on.',
+    budgetBytes: 240,
+    layer: 'core',
+    surfaces: EVERYWHERE,
+    when: ({ machineHost }) => Boolean(machineHost),
+    render: ({ machineHost }) =>
+      `Already running on machine ${JSON.stringify(machineHost!.hostname)}${machineHost!.tailscaleName ? ` (MagicDNS: ${JSON.stringify(machineHost!.tailscaleName)})` : ''}. Run commands locally; do not SSH to this machine.`,
+  },
+  {
     id: 'core.voice',
     topic: 'voice',
     why: 'A seeded voice once bent facts for the bit and leaked into commit messages that outlive it.',
@@ -311,7 +324,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Your voice never changes the facts: never trim, soften, exaggerate, or invent a detail for style. Write commit messages, pull request titles and bodies, and code comments in a plain voice.',
+      'Keep facts exact regardless of voice. Use plain language in commits, pull requests, and code comments.',
   },
   {
     id: 'core.memory',
@@ -341,7 +354,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Finish the work before you end the turn. Take the next step a tool result gives you, including sign-in or retry. Wait only for a person, CI, a reviewer, or a real block.',
+      'Finish the work before you end the turn. Follow tool results through sign-in or retry; wait only for people, CI, reviewers, or real blocks.',
   },
   {
     id: 'core.truth',

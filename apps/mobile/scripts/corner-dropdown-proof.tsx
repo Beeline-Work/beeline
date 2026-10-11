@@ -7,6 +7,7 @@ import { DesktopRoomCorners } from '../sources/components/buzz/DesktopRoomCorner
 import { RoomCornersList } from '../sources/components/buzz/RoomCornersList';
 import { useCornerDropdowns } from '../sources/buzz/corner-dropdowns';
 import { WAITING_PULSE_CYCLE } from '../sources/components/buzz/CornerWaitingPulse';
+import { applyChatListCorners } from '../sources/buzz/room-corner-store';
 
 /**
  * The Room list's corner dropdown, fed chat-list responses as the server sends
@@ -76,11 +77,19 @@ const response = (phase: Phase) => {
   };
 };
 
+/** A server read: the client's guard parses it, and its corner facts go to the corner store. */
+let readAt = 0;
+const serverRead = (body: unknown): ChatListView | null => {
+  const view = readChatListView(body);
+  if (view) applyChatListCorners(view.chats, (readAt += 1));
+  return view;
+};
+
 const setters = new Set<(view: ChatListView) => void>();
 const setView = (view: ChatListView) => setters.forEach((set) => set(view));
 
 function RoomList({ desktop }: { desktop: boolean }) {
-  const [view, set] = React.useState<ChatListView>(() => readChatListView(response('working'))!);
+  const [view, set] = React.useState<ChatListView>(() => serverRead(response('working'))!);
   React.useEffect(() => {
     setters.add(set);
     return () => void setters.delete(set);
@@ -212,7 +221,7 @@ async function flows() {
       `${prefix}: accessible count matches the four listed viewer corners, not all five`,
     );
   }
-  setView(readChatListView(response('waiting'))!);
+  setView(serverRead(response('waiting'))!);
   await settleOpen(true);
   for (const prefix of ['phone', 'desktop']) {
     const s = describe(prefix, '2 my corner waiting');
@@ -245,7 +254,7 @@ async function flows() {
   }
   // The viewer opened the corner: it still waits on them, but stops pulling
   // the dropdown open.
-  setView(readChatListView(response('seen'))!);
+  setView(serverRead(response('seen'))!);
   await settleOpen(false);
   for (const prefix of ['phone', 'desktop']) {
     const s = describe(prefix, '5 seen');
@@ -258,7 +267,7 @@ async function flows() {
     await settleOpen(false, [prefix]);
   }
   // The corner finished with nothing owed to anyone: idle, quiet, closed.
-  setView(readChatListView(response('idle'))!);
+  setView(serverRead(response('idle'))!);
   await pause(150);
   for (const prefix of ['phone', 'desktop']) {
     const s = describe(prefix, '7 idle');
@@ -274,11 +283,11 @@ async function flows() {
     tap(prefix, 'alpha');
     await settleOpen(false, [prefix]);
   }
-  setView(readChatListView(response('waiting'))!);
+  setView(serverRead(response('waiting'))!);
   await settleOpen(true);
   for (const prefix of ['phone', 'desktop'])
     check(describe(prefix, '9 waiting again').open, `${prefix}: a new ask opens it again`);
-  setView(readChatListView(response('working'))!);
+  setView(serverRead(response('working'))!);
   await settleOpen(false);
   for (const prefix of ['phone', 'desktop']) {
     const s = describe(prefix, '10 answered');
@@ -289,7 +298,7 @@ async function flows() {
     const next = response('working');
     const room = next.chats.find((item) => item.room.id === alpha)!;
     setView(
-      readChatListView({
+      serverRead({
         ...next,
         chats: next.chats.map((item) =>
           item === room ? { ...item, unread: true, openCorners } : item,
@@ -323,7 +332,7 @@ async function pulse() {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
-  const waitingItem = readChatListView(response('waiting'))!.chats[0]!;
+  const waitingItem = serverRead(response('waiting'))!.chats[0]!;
   const pageItem = {
     corner: { id: uuid(4), name: 'needs you', workspaceId, parentId: alpha },
     lifecycle: { lifecycle: 'working', checks: 'unknown' },

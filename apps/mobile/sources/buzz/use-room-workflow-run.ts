@@ -33,7 +33,6 @@ function observeWorkflowRuns(roomId: string) {
   return async (invalidate: () => void, reconnect: () => void,
     replace: (runs: readonly WorkflowRunSummaryView[]) => void) => {
     let subscribed = false;
-    const stopCorners = subscribeRoomCornerFacts(roomId, invalidate);
     const stopLive = await sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
       if (!('monolithLive' in event)) return;
       const live = event.monolithLive;
@@ -49,6 +48,8 @@ function observeWorkflowRuns(roomId: string) {
         invalidate();
       }
     });
+    // Subscribed only once the lane holds, so a failed register leaves no listener.
+    const stopCorners = subscribeRoomCornerFacts(roomId, invalidate);
     return () => {
       stopCorners();
       stopLive();

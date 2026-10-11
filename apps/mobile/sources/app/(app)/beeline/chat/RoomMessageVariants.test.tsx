@@ -288,6 +288,62 @@ describe('NotificationLifecycleCard', () => {
   });
 });
 
+describe('NotificationLifecycleCard against the corner header (9.4)', () => {
+  const head = 'a'.repeat(40);
+  const earlier = 'b'.repeat(40);
+  const run = message({
+    id: 'checks',
+    notificationLifecycleRun: {
+      subline: 'by @github · 09:41 – 09:50',
+      items: [
+        { id: 'now', title: 'mobile-tests', state: 'Checks passed', kindLine: 'Check · aaaaaaa',
+          kind: 'check', headSha: head, actor: 'github', updatedBy: 'now' },
+        { id: 'then', title: 'mobile-tests', state: 'Checks passed', kindLine: 'Check · bbbbbbb',
+          kind: 'check', headSha: earlier, actor: 'github', updatedBy: 'then' },
+      ],
+    },
+  });
+  const lifecycle = (status: 'pending' | 'passed' | 'failed') => ({
+    lifecycle: 'in-review' as const,
+    checks: status === 'failed' ? 'failing' as const : status === 'passed' ? 'passing' as const : 'pending' as const,
+    pr: { number: 1, url: 'https://github.com/acme/repo/pull/1', title: 'Fix', targetBranch: 'main', headSha: head },
+    checksSummary: { status: status === 'failed' ? 'failing' as const : 'passing' as const, total: 1,
+      failing: status === 'failed' ? ['mobile-tests'] : [], updatedAt: 2,
+      checks: [{ name: 'mobile-tests', status }] },
+  });
+  const card = (status: 'pending' | 'passed' | 'failed') => (
+    <NotificationLifecycleCard message={run} cornerLifecycle={lifecycle(status)}
+      onOpenCorner={() => undefined} onOpenUrl={() => undefined} />
+  );
+  const text = (renderer: ReactTestRenderer) => JSON.stringify(renderer.toJSON());
+
+  it('follows the header\'s check state for the current head after the card is posted', () => {
+    const renderer = render(card('passed'));
+    expect(text(renderer)).toContain('"passed"');
+    // The checks re-ran and failed after the card was posted; the corner row changed.
+    act(() => renderer.update(card('failed')));
+    const words = (node: ReactTestInstance | string): string[] =>
+      typeof node === 'string' ? [node] : node.children.flatMap(words);
+    expect(words(renderer.root.findByProps({ testID: 'notification-run-cell-now' })))
+      .toContain('failed');
+    expect(text(renderer)).toContain('1 failed');
+    // The older head keeps its own state and says which push it belongs to.
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-expand-checks' }).props.onPress(),
+    );
+    expect(text(renderer)).toContain('checks for an earlier push');
+  });
+
+  it('keeps the posted state outside a corner', () => {
+    const renderer = render(
+      <NotificationLifecycleCard message={run} onOpenCorner={() => undefined}
+        onOpenUrl={() => undefined} />,
+    );
+    expect(text(renderer)).toContain('2 passed');
+    expect(text(renderer)).not.toContain('earlier push');
+  });
+});
+
 describe('Workbench identities', () => {
   it('describes a standing Wallet grant without an end date', () => {
     const renderer = render(

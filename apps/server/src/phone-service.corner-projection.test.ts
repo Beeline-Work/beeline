@@ -108,6 +108,23 @@ describe('one corner projection for the Room list read, the live frame and the C
     });
   });
 
+  it('sends the Room list summary on the first open Corners page only', async () => {
+    const { phone } = await fixture();
+    const read = await roomListRow(phone);
+    const page = (await phone.readCorners(ROOM, VIEWER))!;
+    expect(page.summary).toEqual({
+      cornerCount: read.cornerCount,
+      waitingCornerCount: read.waitingCornerCount,
+      mineCornerCount: read.mineCornerCount,
+      openCorners: read.openCorners,
+    });
+    const archived = (await phone.readCorners(ROOM, VIEWER, false, true))!;
+    expect(archived).not.toHaveProperty('summary');
+    const later = (await phone.readCorners(ROOM, VIEWER, false, false, undefined,
+      { micros: String(Date.now() * 1000), id: 'ffffffff-ffff-4fff-bfff-ffffffffffff' }))!;
+    expect(later).not.toHaveProperty('summary');
+  });
+
   it('marks the same corners Mine on the Corners page as on the Room list', async () => {
     const { phone } = await fixture();
     const read = await roomListRow(phone);

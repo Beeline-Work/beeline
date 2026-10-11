@@ -18,14 +18,12 @@ import {
 } from '@beeline/api-contract/phone';
 import { isMachinePreview } from '@/buzz/room-list-summary';
 import { displayModel } from '@/buzz/model-display';
+import type { RoomCornerSummary } from '@/buzz/room-corner-store';
 import {
   isRetiredAgentNotice,
   type ChatListItem,
   type RoomViewIdentity,
 } from '@beeline/buzz-client';
-
-export type ExpandedCornerRefreshAction =
-  { kind: 'none' } | { kind: 'reload'; roomId: string } | { kind: 'drop'; roomId: string };
 
 export type RoomListSection = {
   kind: 'rooms' | 'messages';
@@ -35,9 +33,10 @@ export type RoomListSection = {
 
 /** A Room row carries the corner mark only when the viewer's dropdown has corners. */
 export function roomRowShowsCornerMark(
-  item: Pick<ChatListItem, 'directMessage' | 'openCorners'>,
+  item: Pick<ChatListItem, 'directMessage'>,
+  summary: RoomCornerSummary | undefined,
 ): boolean {
-  return !item.directMessage && Boolean(item.openCorners?.some((corner) => corner.mine));
+  return !item.directMessage && Boolean(summary?.openCorners.some((corner) => corner.mine));
 }
 
 /** Rooms lead the index; direct messages follow in their own newest-first section. */
@@ -57,17 +56,6 @@ export function roomListSections(chats: readonly ChatListItem[]): RoomListSectio
       ? [{ kind: 'messages' as const, title: 'Direct messages' as const, data: messages }]
       : []),
   ];
-}
-
-export function expandedCornerRefreshAction(
-  expandedRoomId: string | null,
-  chats: readonly { readonly room: { readonly id: string }; readonly cornerCount?: number }[],
-): ExpandedCornerRefreshAction {
-  if (!expandedRoomId) return { kind: 'none' };
-  const room = chats.find((chat) => chat.room.id === expandedRoomId);
-  return room?.cornerCount
-    ? { kind: 'reload', roomId: expandedRoomId }
-    : { kind: 'drop', roomId: expandedRoomId };
 }
 
 /** The one state vocabulary used by both row projection and circle rendering. */

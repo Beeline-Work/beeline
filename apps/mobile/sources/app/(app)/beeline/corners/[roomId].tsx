@@ -28,7 +28,6 @@ import { liveRoomRuns, useRoomWorkflowRuns } from '@/buzz/use-room-workflow-run'
 import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 import { useRoomCorners } from '@/buzz/use-room-corners';
-import { roomOpenCornerRows } from '@/buzz/room-corner-store';
 
 /** The footer's read status; the archived rows themselves live in the corner record. */
 type ArchivedFooter =
@@ -238,7 +237,7 @@ export default function BuzzCorners() {
         )}
         <CornerOpenRow roomId={decodedId} />
         <RoomCornersList
-          corners={corners.record ? roomOpenCornerRows(corners.record) : surface.corners}
+          corners={corners.openRows}
           onMoreOpen={() => void loadMoreOpen()}
           moreOpen={!!corners.record?.nextOpen}
           parentRoomId={decodedId}

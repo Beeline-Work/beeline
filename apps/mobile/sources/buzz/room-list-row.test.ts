@@ -27,7 +27,6 @@ import { identityHandle, type CornerState } from '@beeline/api-contract/phone';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import {
   roomRowShowsCornerMark,
-  expandedCornerRefreshAction,
   isRoomAlive,
   NO_ACTIVITY_PREVIEW,
   roomRowName,
@@ -40,22 +39,6 @@ import {
   roomListFeed,
   roomRowPresentation,
 } from './room-list-row';
-
-describe('expanded corner watch refresh', () => {
-  it('reloads an open dropdown, then drops it when the watched list reports archival', () => {
-    const open = [{ room: { id: 'room' }, cornerCount: 1 }];
-    const archived = [{ room: { id: 'room' }, cornerCount: 0 }];
-
-    expect(expandedCornerRefreshAction('room', open)).toEqual({
-      kind: 'reload',
-      roomId: 'room',
-    });
-    expect(expandedCornerRefreshAction('room', archived)).toEqual({
-      kind: 'drop',
-      roomId: 'room',
-    });
-  });
-});
 
 function corner(
   state: CornerState,
@@ -942,28 +925,26 @@ describe('roomRowNeedsAttention — the one brass square', () => {
 describe('the corner-mark tip row', () => {
   const mine = { id: 'mine', name: 'My corner', state: 'working' as const, mine: true };
   const other = { id: 'other', name: 'Other corner', state: 'working' as const };
-  const row = (openCorners?: ChatListItem['openCorners'], direct = false) =>
-    ({
-      room: { id: 'room', name: 'Room', updatedAt: 1 },
-      cornerCount: 5,
-      openCorners,
-      ...(direct
-        ? { directMessage: { peer: { pubkey: 'peer', kind: 'human', name: 'Peer' } } }
-        : {}),
-    }) as unknown as ChatListItem;
+  const room = { room: { id: 'room', name: 'Room', updatedAt: 1 } } as unknown as ChatListItem;
+  const direct = {
+    ...room,
+    directMessage: { peer: { pubkey: 'peer', kind: 'human', name: 'Peer' } },
+  } as unknown as ChatListItem;
+  const summary = (openCorners: NonNullable<ChatListItem['openCorners']>) =>
+    ({ cornerCount: 5, openCorners });
 
   it('hides the mark when no viewer corners are listed despite a positive total', () => {
-    expect(roomRowShowsCornerMark(row([other]))).toBe(false);
-    expect(roomRowShowsCornerMark(row([]))).toBe(false);
-    expect(roomRowShowsCornerMark(row())).toBe(false);
+    expect(roomRowShowsCornerMark(room, summary([other]))).toBe(false);
+    expect(roomRowShowsCornerMark(room, summary([]))).toBe(false);
+    expect(roomRowShowsCornerMark(room, undefined)).toBe(false);
   });
 
   it('shows the mark when a viewer corner is listed, including a partial list', () => {
-    expect(roomRowShowsCornerMark(row([mine]))).toBe(true);
-    expect(roomRowShowsCornerMark(row([other, mine]))).toBe(true);
+    expect(roomRowShowsCornerMark(room, summary([mine]))).toBe(true);
+    expect(roomRowShowsCornerMark(room, summary([other, mine]))).toBe(true);
   });
 
   it('never shows the Room mark on a direct message', () => {
-    expect(roomRowShowsCornerMark(row([mine], true))).toBe(false);
+    expect(roomRowShowsCornerMark(direct, summary([mine]))).toBe(false);
   });
 });

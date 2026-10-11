@@ -161,8 +161,8 @@ export type RoomViewHeader = {
   readonly reviewerAgentId?: string;
   /** Agents tried in order after `reviewerAgentId` when it is unhealthy or its review turn fails. */
   readonly reviewerFallbackIds?: readonly string[];
-  /** Absent when this bundle could not read it: a Room whose live/closed state
-   *  is unknown is never painted as live. */
+  /** Absent when this bundle could not read it. Only `true` paints a Room as
+   *  archived. */
   readonly archived?: boolean;
   readonly createdAt?: number;
   /** Absent when this bundle could not read it; a surface omits the age rather
@@ -766,6 +766,14 @@ export type ChatListCorner = {
   readonly attention?: true;
 };
 
+/** A Room's open-corner summary: exact counts and the capped list of open corners. */
+export type RoomCornerSummary = {
+  readonly cornerCount: number;
+  readonly waitingCornerCount: number;
+  readonly mineCornerCount: number;
+  readonly openCorners: readonly ChatListCorner[];
+};
+
 export type ChatListItem = {
   readonly room: RoomViewHeader;
   /** Leaving as the last Workspace manager in this Room deletes it for everyone. */
@@ -1124,6 +1132,9 @@ export type CornerListView = {
   readonly nextArchived?: string;
   /** Cursor for the next page of open corners. */
   readonly nextOpen?: string;
+  /** On the first open page of a top-level Room: the Room list row's corner
+   *  summary, read in the same statement as the rows. */
+  readonly summary?: RoomCornerSummary;
   /** Apps connected to this Workspace and available for a new corner. */
   readonly apps?: readonly CornerAppInstallationView[];
   readonly viewer: RoomViewer;

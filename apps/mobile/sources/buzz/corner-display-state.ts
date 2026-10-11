@@ -23,7 +23,8 @@ export type CornerDisplayItem = {
   readonly state: CornerState;
   readonly stateAt?: number;
   readonly reason?: CornerStateReason;
-  /** PR/check narration only; never an input to the displayed state. */
+  /** PR/check narration; never an input to the displayed state. The transcript's
+   *  check card reads its current-head check states from it (`withCornerChecks`). */
   readonly lifecycle: CornerLifecycleView;
 };
 
@@ -40,16 +41,25 @@ export function roomViewParentId(view: {
 }
 
 /**
+ * The one archived rule for a Room or corner screen: only the server's
+ * `archived: true` is a fact. The composer, the turn stream and the header
+ * all read it.
+ */
+export function roomIsArchived(room: { readonly archived?: boolean } | undefined): boolean {
+  return room?.archived === true;
+}
+
+/**
  * A corner's header state is its row in the parent Room's corner record, the
- * same row the Corners screen paints. With no row yet, only the server's
- * `archived: true` is a fact; anything else shows no state until the row lands.
+ * same row the Corners screen paints. With no row yet, an archived corner
+ * shows archived; anything else shows no state until the row lands.
  */
 export function cornerHeaderItem(
   row: CornerDisplayItem | undefined,
-  archived: boolean | undefined,
+  archived: boolean,
 ): CornerDisplayItem | undefined {
   if (row) return row;
-  if (archived === true)
+  if (archived)
     return { state: 'archived', lifecycle: { lifecycle: 'unknown', checks: 'unknown' } };
   return undefined;
 }

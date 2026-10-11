@@ -141,6 +141,7 @@ import {
   roomAttentionActorSql,
   roomNeedsYouSql,
   roomWorkingSql,
+  type ChatCornerSummary,
   type OpenCornerFactsRow,
 } from './chat-corner-counts.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
@@ -474,6 +475,14 @@ interface DeckCornerFacts {
   working: boolean;
   attention_actor: string | null;
   corner_rows: OpenCornerFactsRow[];
+}
+
+/** The parent Room row's corner summary from its corner facts. */
+function deckCornerSummary(roomId: string, deck: DeckCornerFacts): ChatCornerSummary {
+  return chatCornerCounts(deck.corner_rows.map((corner) =>
+    reviveDates(corner, ['archived_at', 'latest_created_at']))).get(roomId) ?? {
+    cornerCount: 0, waitingCornerCount: 0, mineCornerCount: 0, openCorners: [],
+  };
 }
 interface RoomReadRow {
   room: RoomRow & {
@@ -1723,11 +1732,7 @@ export class PhoneService {
       undefined, undefined, true);
     if (!loaded?.deck) return null;
     const { view, deck } = loaded;
-    const counts = chatCornerCounts(deck.corner_rows.map((corner) =>
-      reviveDates(corner, ['archived_at', 'latest_created_at']))).get(parentRoomId) ?? {
-      cornerCount: 0, waitingCornerCount: 0, mineCornerCount: 0, openCorners: [],
-    };
-    return { ...counts,
+    return { ...deckCornerSummary(parentRoomId, deck),
       agentState: deck.needs_you ? 'needs-you' : deck.working ? 'working' : null,
       ...(deck.needs_you ? { attentionReason: { kind: 'approval' as const,
         ...(deck.attention_actor ? { actor: deck.attention_actor } : {}) } } : {}),
@@ -2668,8 +2673,15 @@ export class PhoneService {
     archivedBefore?: ArchivedCornerCursor,
     openBefore?: ArchivedCornerCursor,
   ): Promise<CornerListView | null> {
-    return (await this.loadCorners(roomId, viewerId, roomViewFamilyOrder, archived,
-      archivedBefore, openBefore))?.view ?? null;
+    // The first open page carries the Room list row's summary from the same
+    // snapshot, so a reader replaces its summary whole.
+    const firstPage = !archived && !archivedBefore && !openBefore;
+    const loaded = await this.loadCorners(roomId, viewerId, roomViewFamilyOrder, archived,
+      archivedBefore, openBefore, firstPage);
+    if (!loaded) return null;
+    return loaded.deck
+      ? { ...loaded.view, summary: deckCornerSummary(roomId, loaded.deck) }
+      : loaded.view;
   }
 
   /**

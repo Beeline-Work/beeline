@@ -48,7 +48,7 @@ describe('Approved Room list layout', () => {
   });
   it('keeps desktop corners independently selectable, waiting first, from the corner record alone', () => {
     const corners = component('DesktopRoomCorners');
-    expect(corners).toContain('useRoomOpenCorners(item.room.id, item.openCorners) ?? []');
+    expect(corners).toContain('useRoomCornerSummary(item.room.id)?.openCorners ?? []');
     expect(corners).not.toContain('.corners(');
     expect(corners).toContain("Number(b.state === 'waiting') - Number(a.state === 'waiting')");
     expect(corners).toContain('onOpen(corner.id, corner.name)');

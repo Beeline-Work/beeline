@@ -22,6 +22,7 @@ import {
   type AgentPairingClaimWireView,
   type AgentYoloView,
   type ChatListCorner,
+  type RoomCornerSummary,
   type ChatListItem,
   type ChatListUnavailable,
   type ChatListView,
@@ -1235,6 +1236,20 @@ function readChatCorner(value: unknown): ChatListCorner | null {
   };
 }
 
+function readCornerSummary(value: unknown): RoomCornerSummary | undefined {
+  const item = record(value);
+  if (!item) return undefined;
+  const openCorners = readList(item.openCorners, readChatCorner);
+  const counts = [item.cornerCount, item.waitingCornerCount, item.mineCornerCount];
+  if (!openCorners || !counts.every(integer)) return undefined;
+  return {
+    cornerCount: item.cornerCount as number,
+    waitingCornerCount: item.waitingCornerCount as number,
+    mineCornerCount: item.mineCornerCount as number,
+    openCorners,
+  };
+}
+
 function readChat(value: unknown): ChatListItem | null {
   const item = record(value);
   const room = readHeader(item?.room);
@@ -1908,6 +1923,7 @@ export function readCornerListView(value: unknown): CornerListView | null {
     ),
     ...field('nextOpen', typeof item.nextOpen === 'string' && item.nextOpen.length <= 128
       ? item.nextOpen : undefined),
+    ...field('summary', readCornerSummary(item.summary)),
     ...field('apps', readList(item.apps, readCornerAppInstallation, 100)),
     viewer: readViewer(item.viewer),
     watchFilters: readWatchFilters(item.watchFilters),

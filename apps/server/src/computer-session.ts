@@ -191,8 +191,41 @@ export async function serveComputerSession(
     if (!html) { response.writeHead(502, { 'cache-control': 'no-store' }).end(); return; }
     // The Squire page uses a relative "stream" URL. This small host bridge
     // reconciles one close with our session row and notifies the artifact view.
+    const coverStyle = `<style>
+      html,body{background:#1b1320!important}
+      #screen{display:block!important;overflow:auto!important;align-items:unset!important;justify-content:unset!important;touch-action:none!important}
+      canvas{display:block!important;max-width:none!important;max-height:none!important;object-fit:fill!important;touch-action:none!important}
+      #bar{position:fixed!important;z-index:2;right:12px;bottom:12px;padding:0!important;background:transparent!important}
+      #state{display:none!important}
+      #focus{width:42px;height:42px;margin:0!important;padding:0;border:1px solid #ffffff44;border-radius:14px;background:#261a2ae8;color:#f6edf4;font-size:0}
+      #focus::before{content:'⌨';font-size:20px}
+      @media(pointer:fine){#bar{display:none!important}}
+    </style>`;
     const bridge = `<script>
+      const beelineScreen=document.getElementById('screen'),beelineCanvas=document.getElementById('canvas');
       if(new URLSearchParams(location.search).has('preview'))document.getElementById('bar').style.display='none';
+      function beelineFit(){if(!beelineCanvas.width||!beelineCanvas.height)return;
+        const scale=Math.max(beelineScreen.clientWidth/beelineCanvas.width,beelineScreen.clientHeight/beelineCanvas.height);
+        beelineCanvas.style.width=Math.ceil(beelineCanvas.width*scale)+'px';
+        beelineCanvas.style.height=Math.ceil(beelineCanvas.height*scale)+'px';}
+      new MutationObserver(beelineFit).observe(beelineCanvas,{attributes:true,attributeFilter:['width','height']});
+      addEventListener('resize',beelineFit);beelineFit();
+      if(matchMedia('(pointer:coarse)').matches){let drag;
+        beelineCanvas.addEventListener('pointerdown',event=>{if(event.pointerType!=='touch')return;
+          event.preventDefault();event.stopImmediatePropagation();beelineCanvas.setPointerCapture(event.pointerId);
+          drag={id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};beelineCanvas.focus();},true);
+        beelineCanvas.addEventListener('pointermove',event=>{if(event.pointerType!=='touch'||drag?.id!==event.pointerId)return;
+          event.preventDefault();event.stopImmediatePropagation();const dx=drag.x-event.clientX,dy=drag.y-event.clientY;
+          if(Math.abs(dx)+Math.abs(dy)>3){drag.moved=true;
+            if(Math.abs(dx)>Math.abs(dy)&&beelineScreen.scrollWidth>beelineScreen.clientWidth)beelineScreen.scrollLeft+=dx;
+            else send({type:'wheel',delta_x:dx,delta_y:dy,...point(event)});}
+          drag.x=event.clientX;drag.y=event.clientY;},true);
+        beelineCanvas.addEventListener('pointerup',event=>{if(event.pointerType!=='touch'||drag?.id!==event.pointerId)return;
+          event.preventDefault();event.stopImmediatePropagation();
+          if(!drag.moved){const p=point(event);send({type:'touch',phase:'start',...p});send({type:'touch',phase:'end',...p});}
+          drag=undefined;},true);
+        beelineCanvas.addEventListener('pointercancel',event=>{if(event.pointerType==='touch')drag=undefined;},true);
+      }
       socket.addEventListener('close',async()=>{
         try{const reply=await fetch('status',{cache:'no-store'});const state=await reply.json();
           if(state.status==='live'&&!new URLSearchParams(location.search).has('reconnected')){
@@ -210,7 +243,7 @@ export async function serveComputerSession(
       'content-security-policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self' wss: ws:; base-uri 'none'; form-action 'none'",
       'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
     });
-    response.end(html.replace('</body>', `${bridge}</body>`));
+    response.end(html.replace('</head>', `${coverStyle}</head>`).replace('</body>', `${bridge}</body>`));
     return;
   }
   response.writeHead(200, {
@@ -227,18 +260,22 @@ export async function serveComputerSession(
 export function computerViewerHtml(id: string): string {
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>Browser · Beeline</title><style>
   html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#1b1320;color:#f6edf4;font-family:system-ui,sans-serif}
-  #screen{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;touch-action:none}
+  #stage{position:absolute;inset:0;overflow:auto;background:#1b1320}
+  #screen{display:block;height:100%;width:auto;max-width:none;object-fit:fill;touch-action:none}
   #ended{display:none;position:absolute;inset:0;place-items:center;font-size:16px}
   #controls{position:absolute;top:env(safe-area-inset-top,12px);right:12px;display:flex;gap:8px}
   button,a{border:1px solid #ffffff44;border-radius:999px;background:#261a2ad9;color:#f6edf4;padding:10px 14px;font:500 13px system-ui,sans-serif;text-decoration:none;cursor:pointer}
   body.embedded #controls{display:none}
   #keys{position:absolute;opacity:0;width:1px;height:1px;left:0;bottom:0}
-  </style></head><body><img id="screen" alt="Live browser"><div id="ended">Browser session ended</div><input id="keys" autocomplete="off" autocapitalize="off"><div id="controls"><button id="back" aria-label="Close browser">✕</button><a id="external" target="_blank" rel="noopener noreferrer" href="/s/${id}">Open in browser ↗</a></div><script>
+  </style></head><body><div id="stage"><img id="screen" alt="Live browser"></div><div id="ended">Browser session ended</div><input id="keys" autocomplete="off" autocapitalize="off"><div id="controls"><button id="back" aria-label="Close browser">✕</button><a id="external" target="_blank" rel="noopener noreferrer" href="/s/${id}/">Open in browser ↗</a></div><script>
   const query=new URLSearchParams(location.search), preview=query.has('preview');
   if(query.has('embedded')) document.body.classList.add('embedded');
-  const image=document.getElementById('screen'), ended=document.getElementById('ended'), keys=document.getElementById('keys');
+  const image=document.getElementById('screen'), stage=document.getElementById('stage'), ended=document.getElementById('ended'), keys=document.getElementById('keys');
   const socketUrl=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/s/${id}/ws'+(preview?'?preview=1':'');
   let wire, serial=1, controlling=false, width=1, height=1, leaving=false, endedSession=false, reconnected=false;
+  function fit(){if(width<=1||height<=1)return;const scale=Math.max(stage.clientWidth/width,stage.clientHeight/height);
+    image.style.width=Math.ceil(width*scale)+'px';image.style.height=Math.ceil(height*scale)+'px';}
+  addEventListener('resize',fit);
   function send(value){if(wire.readyState===WebSocket.OPEN) wire.send(JSON.stringify(value));}
   function cdp(method,params={}){send({id:serial++,method,params});}
   function takeover(){if(!controlling){controlling=true;send({type:'takeover'});}}
@@ -250,7 +287,7 @@ export function computerViewerHtml(id: string): string {
     wire.onopen=()=>{cdp('Page.startScreencast',{format:'jpeg',quality:preview?45:65,maxWidth:preview?640:1280,maxHeight:preview?450:900,everyNthFrame:1});if(document.hidden)send({type:'pause-view'});};
     wire.onmessage=event=>{try{const message=JSON.parse(event.data);
       if(message.type==='ended'){showEnded();return;}
-      if(message.method==='Page.screencastFrame'){const p=message.params;image.src='data:image/jpeg;base64,'+p.data;width=p.metadata?.deviceWidth||image.naturalWidth||width;height=p.metadata?.deviceHeight||image.naturalHeight||height;cdp('Page.screencastFrameAck',{sessionId:p.sessionId});}
+      if(message.method==='Page.screencastFrame'){const p=message.params;image.src='data:image/jpeg;base64,'+p.data;width=p.metadata?.deviceWidth||image.naturalWidth||width;height=p.metadata?.deviceHeight||image.naturalHeight||height;fit();cdp('Page.screencastFrameAck',{sessionId:p.sessionId});}
     }catch{}};
     wire.onclose=async()=>{if(leaving||endedSession)return;controlling=false;
       if(reconnected){showLost();return;}reconnected=true;
@@ -265,10 +302,13 @@ export function computerViewerHtml(id: string): string {
   function point(event){const r=image.getBoundingClientRect(),scale=Math.min(r.width/width,r.height/height),left=r.left+(r.width-width*scale)/2,top=r.top+(r.height-height*scale)/2;return {x:Math.max(0,Math.min(width,(event.clientX-left)/scale)),y:Math.max(0,Math.min(height,(event.clientY-top)/scale))};}
   let touch;
   image.addEventListener('pointerdown',event=>{if(preview)return;takeover();const p=point(event);image.setPointerCapture(event.pointerId);
-    if(event.pointerType==='touch'){touch={id:event.pointerId,x:p.x,y:p.y,moved:false};return;}
+    if(event.pointerType==='touch'){touch={id:event.pointerId,x:p.x,y:p.y,clientX:event.clientX,clientY:event.clientY,moved:false};return;}
     keys.focus();cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});});
   image.addEventListener('pointermove',event=>{if(!controlling||!event.buttons)return;const p=point(event);
-    if(touch?.id===event.pointerId){const dx=touch.x-p.x,dy=touch.y-p.y;if(Math.abs(dx)+Math.abs(dy)>3){touch.moved=true;cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:dx,deltaY:dy});}touch.x=p.x;touch.y=p.y;return;}
+    if(touch?.id===event.pointerId){const dx=touch.clientX-event.clientX,dy=touch.clientY-event.clientY;if(Math.abs(dx)+Math.abs(dy)>3){touch.moved=true;
+      if(Math.abs(dx)>Math.abs(dy)&&stage.scrollWidth>stage.clientWidth)stage.scrollLeft+=dx;
+      else cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:dx,deltaY:dy});}
+      touch.x=p.x;touch.y=p.y;touch.clientX=event.clientX;touch.clientY=event.clientY;return;}
     cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:p.x,y:p.y,button:'left',buttons:1});});
   image.addEventListener('pointerup',event=>{if(!controlling)return;const p=point(event);
     if(touch?.id===event.pointerId){if(!touch.moved){cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});keys.focus();}touch=undefined;return;}

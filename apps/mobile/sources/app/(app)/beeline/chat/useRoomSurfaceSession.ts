@@ -382,7 +382,9 @@ export function useRoomSurfaceSession({
   }, []);
   const applyRoomMessageResult = useCallback((message: RoomViewMessage) => {
     // The same write as a live delta: every window holding it, or every tail for a new row.
-    applyRoomMessage(channelIdRef.current, message);
+    const scope = recordScopeRef.current;
+    if (!scope) return;
+    applyRoomMessage(scope, channelIdRef.current, message);
     scheduleCacheWriteRef.current?.();
     void outboxRef.current?.reconcile(
       new Set(heldRoomMessages(recordScopeRef.current, channelIdRef.current).map((row) => row.id)),
@@ -734,7 +736,7 @@ export function useRoomSurfaceSession({
       applyRoomTailRead(scope, channelId, tailHolder, view, Boolean(view.parent));
       for (const turn of replayed.turns)
         pruneRoomTail(scope, channelId, tailHolder, (message) => keepsTurnActivity(message, turn));
-      for (const message of replayed.messages) applyRoomMessage(channelId, message);
+      for (const message of replayed.messages) applyRoomMessage(scope, channelId, message);
       const tailIds = roomTail(scope, channelId, tailHolder)?.ids ?? [];
       for (const message of selectRoomMessages(scope, channelId, tailIds)) {
         if (message.requestId) {

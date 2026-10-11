@@ -300,7 +300,7 @@ import {
 } from '@/buzz/room-message-store';
 import {
   heldRoomMessages,
-  roomMessageRecord,
+  applyRoomBookmark,
   useRoomRecordRevision,
 } from '@/buzz/room-message-records';
 import {
@@ -3776,8 +3776,7 @@ export function BuzzChatSurface({
           messageId,
           bookmarked,
         });
-        const row = roomMessageRecord(recordScope, decodedId, messageId);
-        if (row) applyRoomMessageResult({ ...row, bookmarked: result.bookmarked });
+        if (recordScope) applyRoomBookmark(recordScope, decodedId, messageId, result.bookmarked);
         settle();
       } catch (error) {
         settle();
@@ -3788,7 +3787,7 @@ export function BuzzChatSurface({
         );
       }
     },
-    [applyRoomMessageResult, decodedId, messageIsBookmarked, recordScope],
+    [decodedId, messageIsBookmarked, recordScope],
   );
 
   const messageIsReported = useCallback(

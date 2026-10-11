@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('react-native', () => ({
   AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
 }));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  getEffectiveRelayUrl: async () => 'https://relay.test',
+  loadBuzzViewerPubkey: async () => 'viewer',
+}));
 
 import { LiveConnection } from './live-connection';
 import { liveFrameEpoch } from './live-frame-epoch';
@@ -67,6 +71,7 @@ function createConnection(authorization = vi.fn().mockResolvedValue('phone-sessi
   const connection = new LiveConnection({
     authorization,
     liveUrl: () => 'wss://server.example/v1/phone/live',
+    recordScope: async () => undefined,
     subscribeIdentityChange: (listener) => {
       identityListeners.add(listener);
       return () => identityListeners.delete(listener);

@@ -38,7 +38,7 @@ function openTail(view: RoomView) {
   return {
     ids,
     read: (next: RoomView) => applyRoomTailRead(scope, roomId, holder, next, Boolean(next.parent)),
-    deliver: (message: RoomViewMessage) => applyRoomMessage(roomId, message),
+    deliver: (message: RoomViewMessage) => applyRoomMessage(scope, roomId, message),
     turn: (turn: Parameters<typeof keepsTurnActivity>[1]) =>
       pruneRoomTail(scope, roomId, holder, (message) => keepsTurnActivity(message, turn)),
     view: (): Pick<RoomView, 'messages' | 'toolRows'> => {

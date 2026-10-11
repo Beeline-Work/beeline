@@ -17,6 +17,11 @@ import { subscribeClientReset } from '@/sync/client-reset';
  * A tail is a window that also takes new messages: a delta for an id no
  * window holds joins every tail of its Room, newest last, at most one Room
  * read long.
+ *
+ * `bookmarked` is the viewer's own state and no message version covers it.
+ * Live deltas and mutation results never carry it, so they keep the held
+ * value. A read that started before this device last wrote it keeps the held
+ * value too, so a slow read cannot undo a settled bookmark.
  */
 
 /** The relay origin and viewer a set of records was read for. */
@@ -39,6 +44,8 @@ type RoomRecords = {
   readonly windows: Map<string, Window>;
   /** When each record stopped being held, so a window can adopt it first. */
   readonly unheldSince: Map<string, number>;
+  /** The viewer-state clock at this device's last write of each record's viewer state. */
+  readonly viewerWrittenAt: Map<string, number>;
   readonly listeners: Set<() => void>;
   revision: number;
 };
@@ -51,6 +58,31 @@ type RoomRecords = {
 const UNHELD_GRACE_MS = 10_000;
 
 const rooms = new Map<string, RoomRecords>();
+/** Advances with every viewer-state write on this device. */
+let viewerClock = 0;
+/** The viewer-state clock when the read that returned each row started. */
+const readStartedAt = new WeakMap<RoomViewMessage, number>();
+
+/** Call when a Room read starts; pass the result to `stampRoomRead`. */
+export function roomReadStamp(): number {
+  return viewerClock;
+}
+
+/**
+ * Mark the rows of a Room read or history page with when the read started.
+ * A row without a mark counts as older than every viewer-state write.
+ */
+export function stampRoomRead<T>(read: T, stamp: number): T {
+  const { messages, toolRows } = read as {
+    readonly messages?: readonly RoomViewMessage[];
+    readonly toolRows?: readonly RoomViewMessage[];
+  };
+  for (const row of [...(messages ?? []), ...(toolRows ?? [])]) {
+    const earlier = readStartedAt.get(row);
+    readStartedAt.set(row, earlier === undefined ? stamp : Math.min(earlier, stamp));
+  }
+  return read;
+}
 const roomKey = (scope: RoomRecordScope, roomId: string) => `${scope}\u0000${roomId}`;
 
 subscribeClientReset(() => {
@@ -71,6 +103,7 @@ function roomRecords(scope: RoomRecordScope, roomId: string): RoomRecords {
       records: new Map(),
       windows: new Map(),
       unheldSince: new Map(),
+      viewerWrittenAt: new Map(),
       listeners: new Set(),
       revision: 0,
     };
@@ -108,9 +141,25 @@ function supersedes(held: RoomViewMessage | undefined, incoming: RoomViewMessage
   return incoming.version !== undefined && incoming.version >= held.version;
 }
 
-/** Write one row under the version rule. Returns whether the record changed. */
-function put(room: RoomRecords, message: RoomViewMessage): boolean {
-  const held = room.records.get(message.id);
+function withBookmark(message: RoomViewMessage, bookmarked: boolean | undefined): RoomViewMessage {
+  if (Boolean(message.bookmarked) === Boolean(bookmarked)) return message;
+  if (bookmarked) return { ...message, bookmarked: true };
+  const { bookmarked: _dropped, ...rest } = message;
+  return rest;
+}
+
+/**
+ * Write one row under the version rule. Returns whether the record changed.
+ * A `shared` row (a live delta or mutation result) has no viewer state; a
+ * `read` row has it unless the read started before this device last wrote it.
+ */
+function put(room: RoomRecords, incoming: RoomViewMessage, source: 'shared' | 'read'): boolean {
+  const held = room.records.get(incoming.id);
+  const writtenAt = room.viewerWrittenAt.get(incoming.id);
+  const staleViewerState =
+    source === 'shared' ||
+    (writtenAt !== undefined && (readStartedAt.get(incoming) ?? -1) < writtenAt);
+  const message = held && staleViewerState ? withBookmark(incoming, held.bookmarked) : incoming;
   if (!supersedes(held, message)) return false;
   if (held && sameJson(held, message)) return false;
   room.records.set(message.id, message);
@@ -158,6 +207,7 @@ function sweep(scope: RoomRecordScope, roomId: string, room: RoomRecords) {
     else if (now - since >= UNHELD_GRACE_MS) {
       room.records.delete(id);
       room.unheldSince.delete(id);
+      room.viewerWrittenAt.delete(id);
     }
   }
   if (!room.windows.size && !room.listeners.size && rooms.get(roomKey(scope, roomId)) === room)
@@ -217,33 +267,54 @@ export function roomDeltaMessage(delta: {
 
 /**
  * The one write for a server row of a Room: a live delta (from the live
- * connection) or a mutation result. A held record takes it under the version
- * rule; a new id joins every tail of the Room. A row no window can take is
- * not kept.
+ * connection) or a mutation result, for the relay and viewer it came from. A
+ * held record takes it under the version rule; a new id joins every tail of
+ * the Room. A row no window can take is not kept.
  */
-export function applyRoomMessage(roomId: string, message: RoomViewMessage): void {
-  for (const [key, room] of rooms) {
-    if (!key.endsWith(`\u0000${roomId}`)) continue;
-    const known = room.records.has(message.id);
-    let changed = put(room, message);
-    if (!heldIds(room).has(message.id)) {
-      const record = room.records.get(message.id)!;
-      let joined = false;
-      for (const [holder, window] of room.windows) {
-        if (!window.tail) continue;
-        const next = joinTail(room, window, record);
-        if (next === window) continue;
-        room.windows.set(holder, next);
-        joined = true;
-      }
-      if (joined) changed = true;
-      else if (!known) {
-        room.records.delete(message.id);
-        changed = false;
-      }
+export function applyRoomMessage(
+  scope: RoomRecordScope,
+  roomId: string,
+  message: RoomViewMessage,
+): void {
+  const room = rooms.get(roomKey(scope, roomId));
+  if (!room) return;
+  const known = room.records.has(message.id);
+  let changed = put(room, message, 'shared');
+  if (!heldIds(room).has(message.id)) {
+    const record = room.records.get(message.id)!;
+    let joined = false;
+    for (const [holder, window] of room.windows) {
+      if (!window.tail) continue;
+      const next = joinTail(room, window, record);
+      if (next === window) continue;
+      room.windows.set(holder, next);
+      joined = true;
     }
-    if (changed) notify(room);
+    if (joined) changed = true;
+    else if (!known) {
+      room.records.delete(message.id);
+      changed = false;
+    }
   }
+  if (changed) notify(room);
+}
+
+/** The settled result of this viewer's bookmark change on one held message. */
+export function applyRoomBookmark(
+  scope: RoomRecordScope,
+  roomId: string,
+  messageId: string,
+  bookmarked: boolean,
+): void {
+  const room = rooms.get(roomKey(scope, roomId));
+  const held = room?.records.get(messageId);
+  if (!room || !held) return;
+  viewerClock += 1;
+  room.viewerWrittenAt.set(messageId, viewerClock);
+  const next = withBookmark(held, bookmarked);
+  if (next === held) return;
+  room.records.set(messageId, next);
+  notify(room);
 }
 
 /**
@@ -257,7 +328,7 @@ export function writeRoomMessages(
 ): void {
   const room = roomRecords(scope, roomId);
   let changed = false;
-  for (const row of rows) if (put(room, row)) changed = true;
+  for (const row of rows) if (put(room, row, 'read')) changed = true;
   if (changed) notify(room);
 }
 
@@ -293,7 +364,7 @@ export function applyRoomTailRead(
   const room = roomRecords(scope, roomId);
   let changed = false;
   for (const row of [...read.messages, ...(read.toolRows ?? [])])
-    if (put(room, row)) changed = true;
+    if (put(room, row, 'read')) changed = true;
   const previous = room.windows.get(holder);
   const readIds = new Set(read.messages.map((message) => message.id));
   const readNewest = read.messages.reduce(

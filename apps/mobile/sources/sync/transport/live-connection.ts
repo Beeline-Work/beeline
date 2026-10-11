@@ -13,7 +13,13 @@ import {
   resetRoomCornerStore,
 } from '@/buzz/room-corner-store';
 import { subscribeClientReset } from '@/sync/client-reset';
-import { applyRoomMessage, roomDeltaMessage } from '@/buzz/room-message-records';
+import {
+  applyRoomMessage,
+  roomDeltaMessage,
+  roomRecordScope,
+  type RoomRecordScope,
+} from '@/buzz/room-message-records';
+import { getEffectiveRelayUrl, loadBuzzViewerPubkey } from '@/auth/buzz-identity-storage';
 import { applyRoomDraftFrame, clearRoomDrafts } from '@/buzz/room-live-drafts';
 
 type SurfaceFilters = readonly {
@@ -52,6 +58,8 @@ type RoomCursor = { epoch: string; base: number; seen: Set<number> };
 type LiveConnectionDeps = {
   authorization: () => Promise<string>;
   liveUrl: () => string;
+  /** The relay and viewer this connection's committed rows belong to. */
+  recordScope: () => Promise<RoomRecordScope | undefined>;
   /** Fires on an identity or relay change. */
   subscribeIdentityChange: (listener: () => void) => () => void;
   /** Fires when the app returns to the foreground from the background. */
@@ -114,6 +122,8 @@ export class LiveConnection {
   private readonly connectedListeners = new Set<() => void>();
   private socket: WebSocket | undefined;
   private connectInFlight: Promise<void> | undefined;
+  /** The record scope of the current socket's identity. */
+  private recordScope: RoomRecordScope | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   /** Rooms on screen, counted per holder; the server holds their pushes. */
   private readonly viewing = new Map<string, number>();
@@ -369,6 +379,16 @@ export class LiveConnection {
   private async connect(): Promise<void> {
     const generation = this.generation;
     try {
+      // Frames that arrive before the record scope is known wait for it, in order.
+      let scopeReady: Promise<void> | undefined = this.deps.recordScope().then(
+        (scope) => {
+          if (generation === this.generation) this.recordScope = scope;
+          scopeReady = undefined;
+        },
+        () => {
+          scopeReady = undefined;
+        },
+      );
       const token = await this.deps.authorization();
       if (generation !== this.generation) return;
       const url = this.deps.liveUrl();
@@ -390,7 +410,7 @@ export class LiveConnection {
         this.coverRoomlessRegistrations();
         for (const listener of this.connectedListeners) listener();
       };
-      next.onmessage = (message) => {
+      const receive = (message: { data: unknown }) => {
         if (this.socket !== next) return;
         let live: LiveWireEvent;
         try {
@@ -405,6 +425,10 @@ export class LiveConnection {
         }
         noteLiveFrame();
         this.dispatch(live, next);
+      };
+      next.onmessage = (message) => {
+        if (scopeReady) scopeReady = scopeReady.then(() => receive(message));
+        else receive(message);
       };
       next.onclose = () => {
         clearTimeout(connectTimer);
@@ -584,7 +608,8 @@ export class LiveConnection {
     this.rememberOverlay(live);
     // The one place a committed row reaches the Room's message records; every
     // view holding it shows the change before its own listener runs.
-    if (live.type === 'message-delta') applyRoomMessage(live.roomId, roomDeltaMessage(live));
+    if (live.type === 'message-delta' && this.recordScope)
+      applyRoomMessage(this.recordScope, live.roomId, roomDeltaMessage(live));
     // Likewise the one place a draft frame reaches the Room's live drafts.
     applyRoomDraftFrame(live, resumed);
     for (const registration of this.registrations.values()) {
@@ -673,6 +698,13 @@ export function sharedLiveConnection(): LiveConnection {
   shared ??= new LiveConnection({
     authorization: () => monolithSession.authorization(),
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
+    recordScope: async () => {
+      const [relayUrl, viewerPubkey] = await Promise.all([
+        getEffectiveRelayUrl(),
+        loadBuzzViewerPubkey(),
+      ]);
+      return viewerPubkey ? roomRecordScope(relayUrl, viewerPubkey) : undefined;
+    },
     subscribeIdentityChange: subscribeClientReset,
     subscribeForeground: (listener) => {
       let backgrounded = AppState.currentState === 'background';

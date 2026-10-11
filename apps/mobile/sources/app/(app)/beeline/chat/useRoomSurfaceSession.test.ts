@@ -254,9 +254,10 @@ import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
 import {
+  applyRoomBookmark,
   applyRoomMessage,
   roomDeltaMessage,
-  roomMessageRecord,
+  roomRecordScope,
 } from '@/buzz/room-message-records';
 import { applyRoomDraftFrame, clearRoomDrafts } from '@/buzz/room-live-drafts';
 import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
@@ -275,7 +276,12 @@ const originalConsoleError = console.error;
 controls.deliverToRecords = (event) => {
   if (!('monolithLive' in event)) return;
   const live = event.monolithLive;
-  if (live.type === 'message-delta') applyRoomMessage(live.roomId, roomDeltaMessage(live));
+  if (live.type === 'message-delta' && controls.viewerPubkey)
+    applyRoomMessage(
+      roomRecordScope('https://relay.test', controls.viewerPubkey),
+      live.roomId,
+      roomDeltaMessage(live),
+    );
   applyRoomDraftFrame(live, Boolean(live.type === 'subscribed' && live.resumed));
 };
 
@@ -2317,10 +2323,7 @@ describe('Room history follows live row changes', () => {
     const { current, renderer } = await openWithHistory();
     // The chat screen's bookmark settlement: the server value onto the record.
     await act(async () =>
-      current().session.applyRoomMessageResult({
-        ...roomMessageRecord(current().session.recordScope, 'room-a', 'old-row')!,
-        bookmarked: true,
-      }),
+      applyRoomBookmark(current().session.recordScope!, 'room-a', 'old-row', true),
     );
     await emitUnrelatedDelta('later-1');
     await emitUnrelatedDelta('later-2');

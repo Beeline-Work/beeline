@@ -163,7 +163,7 @@ function rowsPaintedForFinalMessage(stable: boolean) {
   });
   painted.length = 0;
   const finalReply = message(21, AGENT);
-  applyRoomMessage('room', finalReply);
+  applyRoomMessage('test-scope', 'room', finalReply);
   view = tailView();
   act(() => {
     renderer.update(React.createElement(Transcript, { view, stable, onRow }));

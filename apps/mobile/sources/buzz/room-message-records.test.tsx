@@ -5,12 +5,15 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { RoomViewMessage } from '@beeline/buzz-client';
 import { resetClientState } from '@/sync/client-reset';
 import {
+  applyRoomBookmark,
   applyRoomMessage,
   applyRoomTailRead,
   holdRoomMessages,
   roomDeltaMessage,
   roomMessageRecord,
+  roomReadStamp,
   roomRecordScope,
+  stampRoomRead,
   useRoomMessages,
   useRoomTail,
   writeRoomMessages,
@@ -51,8 +54,12 @@ const frame = (roomId: string, message: RoomViewMessage, version: number) => ({
 });
 
 /** What the live connection does with every `message-delta` it hears. */
-const deliver = (delta: ReturnType<typeof frame>) =>
-  act(() => applyRoomMessage(delta.roomId, roomDeltaMessage(delta)));
+const deliver = (delta: ReturnType<typeof frame>, into = scope) =>
+  act(() => applyRoomMessage(into, delta.roomId, roomDeltaMessage(delta)));
+
+/** Rows a Room read returned, marked as the read client marks them. */
+const readRows = (stamp: number, ...rows: RoomViewMessage[]) =>
+  stampRoomRead({ messages: rows }, stamp).messages;
 
 /** One window: rows a read returned, held as ids and read back from the records. */
 function Window({
@@ -215,6 +222,41 @@ describe('room message records', () => {
     const first = transcript.rows();
     transcript.update([row('m1', 'same', 1)]);
     expect(transcript.rows()).toBe(first);
+    transcript.unmount();
+  });
+
+  // Review R1: the bookmark is viewer state no version covers, so a delayed
+  // read with the same version undid a settled bookmark in every view.
+  it('a read started before a bookmark settled keeps the bookmark in every view', () => {
+    const transcript = mount('room-b1', 'tail', readRows(roomReadStamp(), row('m1', 'A', 1)), 'tail');
+    const inspector = mount('room-b1', 'inspector', readRows(roomReadStamp(), row('m1', 'A', 1)), 'tail');
+    const startedBeforeBookmark = roomReadStamp();
+    act(() => applyRoomBookmark(scope, 'room-b1', 'm1', true));
+    inspector.update(readRows(startedBeforeBookmark, row('m1', 'A', 1)));
+    expect(transcript.rows()[0]?.bookmarked).toBe(true);
+    expect(inspector.rows()[0]?.bookmarked).toBe(true);
+    // A delta carries no viewer state: an edit keeps the bookmark.
+    deliver(frame('room-b1', row('m1', 'B'), 2));
+    expect(transcript.rows()[0]).toMatchObject({ text: 'B', bookmarked: true });
+    // A read started after the bookmark settled is current, so its value wins.
+    transcript.update(readRows(roomReadStamp(), row('m1', 'B', 2)));
+    expect(transcript.rows()[0]?.bookmarked).toBeUndefined();
+    expect(inspector.rows()[0]?.bookmarked).toBeUndefined();
+    transcript.unmount();
+    inspector.unmount();
+  });
+
+  // Review R2: a live row for one relay and viewer changed every scope that
+  // held a Room with the same id.
+  it('a live row changes only the relay and viewer it came from', () => {
+    const other = roomRecordScope('https://other.test', 'viewer');
+    const transcript = mount('room-x', 'tail', [row('m1', 'mine', 1)], 'tail');
+    act(() => applyRoomTailRead(other, 'room-x', 'other-tail', { messages: [row('m1', 'theirs', 1)] }, false));
+    deliver(frame('room-x', row('m1', 'edited for other'), 2), other);
+    deliver(frame('room-x', row('m2', 'new for other', undefined, 2), 1), other);
+    expect(transcript.texts()).toEqual(['mine']);
+    expect(roomMessageRecord(other, 'room-x', 'm1')?.text).toBe('edited for other');
+    act(() => holdRoomMessages(other, 'room-x', 'other-tail', null));
     transcript.unmount();
   });
 

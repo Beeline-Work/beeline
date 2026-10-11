@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
 import { AGENT_KINDS } from './agent-command.js';
+import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
@@ -16,6 +17,7 @@ import { SessionScheduler } from './session-scheduler.js';
 import { turnTraceDirectory, type TurnTraceRecord } from './turn-trace.js';
 
 const roots: string[] = [];
+const bwrapUsable = Boolean(detectBwrapSandbox().path);
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -307,6 +309,7 @@ describe('Room turn phase trace', () => {
     const args = acpOptions!.agentArgs!;
     const separator = args.lastIndexOf('--');
     expect(args[separator + 1]).toBe(hostCommand);
+    if (!bwrapUsable) return;
     const cache = acpOptions!.agentEnv!.npm_config_cache!;
     const child = spawnSync('/usr/bin/bwrap', [
       ...args.slice(0, separator + 1), '/bin/sh', '-c', 'printf "%s" "$2" > "$1"',
@@ -342,6 +345,7 @@ describe('Room turn phase trace', () => {
     expect(acpOptions?.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
     for (const [name, value] of Object.entries(inherited))
       expect(acpOptions?.agentEnv?.[name]).toBe(value);
+    if (!bwrapUsable) return;
     const args = acpOptions!.agentArgs!;
     const child = spawnSync('/usr/bin/bwrap', [
       ...args.slice(0, args.lastIndexOf('--') + 1), '/usr/bin/env',
@@ -351,7 +355,7 @@ describe('Room turn phase trace', () => {
       expect(child.stdout).toContain(`${name}=${value}\n`);
   }, 20_000);
 
-  it('activates a real shared-layout Room mount from the turn loop', async () => {
+  it.skipIf(!bwrapUsable)('activates a real shared-layout Room mount from the turn loop', async () => {
     const { acpOptions } = await runTurns({
       sharedAssets: true,
       asks: [{ id: 'shared-room', body: 'work' }],

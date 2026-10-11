@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { wrapAgentCommand } from './bwrap-sandbox.js';
+import { detectBwrapSandbox, wrapAgentCommand } from './bwrap-sandbox.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
 import {
   prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, prepareWorkspaceAvdBase,
@@ -11,6 +11,7 @@ import {
 } from './workspace-assets.js';
 
 const roots: string[] = [];
+const bwrapUsable = Boolean(detectBwrapSandbox().path);
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
@@ -61,13 +62,15 @@ describe('coarse Workspace assets', () => {
     const home = resolve(runtime, 'rooms/room-a/agent-home');
     await mkdir(home, { recursive: true });
     await writeFile(resolve(runtime, 'runtime.json'), '{}');
-    const update = wrapAgentCommand({
-      bwrapPath: '/usr/bin/bwrap',
-      spec: { mode: 'readonly', cwd: resolve(runtime, 'rooms/room-a'),
-        sharedLayout: { assetRoot: assets.root, agentRuntimeDir: runtime, privateHomeRoot: home } },
-      command: '/bin/sh', args: ['-c', 'printf changed > "$1"', 'probe', first!.command],
-    });
-    expect(spawnSync(update.command, update.args, { encoding: 'utf8' }).status).not.toBe(0);
+    if (bwrapUsable) {
+      const update = wrapAgentCommand({
+        bwrapPath: '/usr/bin/bwrap',
+        spec: { mode: 'readonly', cwd: resolve(runtime, 'rooms/room-a'),
+          sharedLayout: { assetRoot: assets.root, agentRuntimeDir: runtime, privateHomeRoot: home } },
+        command: '/bin/sh', args: ['-c', 'printf changed > "$1"', 'probe', first!.command],
+      });
+      expect(spawnSync(update.command, update.args, { encoding: 'utf8' }).status).not.toBe(0);
+    }
     expect(await readFile(first!.command, 'utf8')).toContain('exit 0');
     expect(await prepareWorkspaceAdapter(assets, 'goose', '/usr/bin/goose', env)).toBeUndefined();
   });
@@ -88,7 +91,7 @@ describe('coarse Workspace assets', () => {
     expect(await readFile(resolve(base, 'test.avd/config.ini'), 'utf8')).toContain('image.sysdir');
   });
 
-  it('masks other Rooms and Workspaces while restoring a repository-free cwd and required assets', async () => {
+  it.skipIf(!bwrapUsable)('masks other Rooms and Workspaces while restoring a repository-free cwd and required assets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-assets-bwrap-'));
     roots.push(root);
     const assets = await prepareWorkspaceAssets(workspaceAssetRoot(root, 'A'));
@@ -138,7 +141,7 @@ describe('coarse Workspace assets', () => {
       .toThrow('required sandbox mount');
   });
 
-  it('shares only Codex downloads and installed packages across private Room homes', async () => {
+  it.skipIf(!bwrapUsable)('shares only Codex downloads and installed packages across private Room homes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-codex-cache-'));
     roots.push(root);
     const assets = await prepareWorkspaceAssets(workspaceAssetRoot(root, 'A'));
@@ -185,7 +188,7 @@ describe('coarse Workspace assets', () => {
       expect(await readFile(resolve(home, 'codex/sessions/history'), 'utf8')).toBe(home);
   });
 
-  it('lets a shared-layout corner push its branch and open a PR through its private runtime control file', async () => {
+  it.skipIf(!bwrapUsable)('lets a shared-layout corner push its branch and open a PR through its private runtime control file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-shared-corner-'));
     roots.push(root);
     const state = resolve(root, 'state');

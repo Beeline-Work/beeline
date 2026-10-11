@@ -28,6 +28,7 @@ import {
 import { identityFromKey, runtimeDirectory, type AgentRuntimeRecord } from './runtime.js';
 import * as workspaceAssets from './workspace-assets.js';
 import { SharedAssetCapacityError } from './shared-asset-capacity.js';
+import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
 import {
@@ -46,6 +47,7 @@ const TAGGING_RULE =
 vi.mock('./corner-branch-sync.js', () => ({ syncCornerBranch: vi.fn(async () => 'unchanged') }));
 
 const roots: string[] = [];
+const bwrapUsable = Boolean(detectBwrapSandbox().path);
 const execFileAsync = promisify(execFile);
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -1702,13 +1704,15 @@ describe('corner close-request delivery', () => {
       }
       const args = selected.agentArgs!;
       const separator = args.lastIndexOf('--');
-      const child = spawnSync('/usr/bin/bwrap', [...args.slice(0, separator + 1), '/bin/sh', '-c',
-        'test -d "$1" && test -d "$2" && touch "$3" && ! touch "$4" 2>/dev/null', 'probe',
-        internal.options.config.agentHomeRoot!, internal.options.config.agentPrivateRoot!,
-        selected.agentEnv!.npm_config_cache + '/corner-proof',
-        join(selected.agentEnv!.npm_config_cache!, '../../tools/should-fail'),
-      ], { env: selected.agentEnv, encoding: 'utf8' });
-      expect(child.status, child.stderr).toBe(0);
+      if (bwrapUsable) {
+        const child = spawnSync('/usr/bin/bwrap', [...args.slice(0, separator + 1), '/bin/sh', '-c',
+          'test -d "$1" && test -d "$2" && touch "$3" && ! touch "$4" 2>/dev/null', 'probe',
+          internal.options.config.agentHomeRoot!, internal.options.config.agentPrivateRoot!,
+          selected.agentEnv!.npm_config_cache + '/corner-proof',
+          join(selected.agentEnv!.npm_config_cache!, '../../tools/should-fail'),
+        ], { env: selected.agentEnv, encoding: 'utf8' });
+        expect(child.status, child.stderr).toBe(0);
+      }
     } finally {
       pinningFailure?.mockRestore();
       fixture.abort.abort();

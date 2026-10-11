@@ -182,8 +182,10 @@ export function recordWorkspaceRemoval(scope: string, pubkey: string): void {
 export function recordWorkspaceRole(scope: string, pubkey: string, role: MemberRecord['role']): void {
   const scoped = records(scope);
   const current = scoped.rows.get(pubkey);
-  if (!current?.record) return;
-  scoped.rows.set(pubkey, { record: { ...current.record, role }, stamp: writeStamp(scope) });
+  const selected = current ? selectRecord(scope, current) : null;
+  if (!selected) return;
+  // Keep the identity this row shows now; the raw one may predate a live rename.
+  scoped.rows.set(pubkey, { record: { ...selected, role }, stamp: writeStamp(scope) });
   notify(scope);
 }
 

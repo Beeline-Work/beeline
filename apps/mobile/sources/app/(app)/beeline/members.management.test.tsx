@@ -839,6 +839,27 @@ describe('Members workspace management', () => {
     }
   });
 
+  it('Reproduction 2315-R3: rendered profile keeps live identity after saving role', async () => {
+    const renderer = await personProfile();
+    const identities = await import('@/buzz/identity-records');
+    const records = await import('@/buzz/workspace-records');
+    const { nextSurfaceStamp } = await import('@/buzz/surface-clock');
+    const { ProfileIdentity } = await import('@/components/buzz/ProfileIdentity');
+    await act(async () => {
+      identities.recordPerson(identities.identityScope('https://relay.test', VIEWER),
+        {...state.workspace.members.find((row: any) => row.identity.pubkey === MEMBER).identity, name: 'Builder Renamed'}, nextSurfaceStamp());
+      records.notifyWorkspaceIdentity('https://relay.test', VIEWER);
+    });
+    expect(renderer.root.findByType(ProfileIdentity).props.identity.name).toBe('Builder Renamed');
+    await press(renderer, 'edit-person-role');
+    await press(renderer, 'person-role-admin');
+    await press(renderer, 'save-person-role');
+    const shown = renderer.root.findByType(ProfileIdentity).props;
+    console.log('Reproduction 2315-R3 rendered profile after Save:', shown.identity.name, shown.role);
+    expect(shown.identity.name).toBe('Builder Renamed');
+    expect(shown.role).toBe('admin');
+  });
+
   it('saves role edits from the human profile and supports cancel', async () => {
     const renderer = await personProfile();
     expect(roomView.workspace).not.toHaveBeenCalled(); // R12c

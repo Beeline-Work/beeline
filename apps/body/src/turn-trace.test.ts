@@ -48,6 +48,15 @@ describe('turn phase trace', () => {
     expect(turn.snapshot('complete')).not.toHaveProperty('promptWindow');
   });
 
+  it('records section bytes beside their change status, and omits status when none was given', () => {
+    const turn = trace(clock().now);
+    turn.notePromptSections([{ id: 'turn.memory', bytes: 12 }], { 'turn.memory': 'unchanged' });
+    expect(turn.snapshot('complete').promptSections).toEqual({ 'turn.memory': 12 });
+    expect(turn.snapshot('complete').promptSectionChanges).toEqual({ 'turn.memory': 'unchanged' });
+    turn.notePromptSections([{ id: 'turn.memory', bytes: 12 }]);
+    expect(turn.snapshot('complete')).not.toHaveProperty('promptSectionChanges');
+  });
+
   it('separates queue, activation, context, model and publish time on one attempt', async () => {
     const { now, advance } = clock();
     const turn = trace(now);

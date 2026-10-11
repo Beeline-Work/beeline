@@ -230,9 +230,10 @@ describe('monolith Room turn context', () => {
     );
 
     for (const prompt of prompts) {
-      expect(prompt).toContain('current-corner');
-      expect(prompt).toContain('Update the endpoint');
-      expect(prompt).toContain('Old work (closed-corner): PR #42, merge commit ' + 'f'.repeat(40));
+      expect(prompt).toContain(
+        `- Endpoint work (current-corner), parent Room room-id, created by ${agent.publicKey}: Update the endpoint`,
+      );
+      expect(prompt).toContain('- Old work (closed-corner): closed, PR #42, merge commit ' + 'f'.repeat(40));
       expect(prompt).not.toContain('older-corner');
     }
     expect(conversationReads.every((read) => read.window !== 'continuity')).toBe(true);

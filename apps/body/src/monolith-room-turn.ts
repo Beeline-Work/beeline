@@ -127,6 +127,7 @@ import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
+import { PromptSectionBaseline } from './prompt-section-baseline.js';
 import type { RoomSupervisor } from './room-supervisor.js';
 
 export const ROOM_PROMPT_BACKSTOP_MS = TURN_BACKSTOP_MS;
@@ -501,6 +502,8 @@ export class MonolithRoomTurnLoop {
   private sessionStateDirs: string[] = [];
   /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
   private readonly warmTranscript = new WarmTranscript();
+  /** What each turn section last sent to this exact ACP session hashed to (`prompt-section-baseline.ts`). */
+  private readonly sectionBaseline = new PromptSectionBaseline();
   /** Local copies already delivered this session, by message id, so transcript renders reuse them. */
   private readonly deliveredAttachments = new Map<string, DeliveredAttachment[]>();
   /** Names from the latest roster read, for ledger bylines the runner writes. */
@@ -898,6 +901,7 @@ export class MonolithRoomTurnLoop {
       return this.sessionId;
     }
     trace?.noteActivation('cold');
+    this.sectionBaseline.reset();
     const [configuration, roster, repositoryState, grants] =
       await Promise.all([
         this.options.api.execute('getAgentConfiguration', {
@@ -1640,7 +1644,10 @@ export class MonolithRoomTurnLoop {
                     ),
                   },
                 });
-                trace.notePromptSections(assembled.report);
+                trace.notePromptSections(
+                  assembled.report,
+                  this.sectionBaseline.observe(this.sessionId, assembled.report),
+                );
                 trace.notePromptWindow(assembled.text, this.modelContextTokens);
                 this.commandContext.notePromptSections([
                   ...this.sessionPromptSectionIds,

@@ -1,5 +1,6 @@
 import { boundReplyExcerpt, subscriptionActionPrompt, WORKSPACE_CORE_SKILL_SLUG, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { createHash } from 'node:crypto';
 import type { CornerGitHubCli } from './corner-github-auth.js';
 import { ACP_SESSION_MEMORY_MAX_BYTES } from './acp-resource-scope.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
@@ -135,6 +136,8 @@ export interface PromptSection<C> {
 export interface SectionReport {
   readonly id: string;
   readonly bytes: number;
+  /** sha256 of the rendered text, so a warm turn can tell whether it changed without keeping the text. */
+  readonly hash: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -697,6 +700,7 @@ export function assembleSessionPrompt(context: SessionPromptContext): AssembledS
     report: entries.map(({ section, text }) => ({
       id: section.id,
       bytes: Buffer.byteLength(text),
+      hash: createHash('sha256').update(text).digest('hex'),
     })),
   };
 }
@@ -756,7 +760,7 @@ export interface TurnPromptContext {
   readonly resume?: string;
   readonly members?: string;
   readonly memory?: string;
-  readonly corners?: readonly unknown[];
+  readonly corners?: readonly OpenCornerRow[];
   readonly closedCorners?: readonly {
     readonly name?: string;
     readonly cornerId: string;
@@ -779,6 +783,31 @@ export interface TurnPromptContext {
 }
 
 const ROOMS: readonly PromptSurface[] = ['room', 'dm'];
+
+export type OpenCornerRow = {
+  readonly cornerId: string;
+  readonly parentRoomId: string;
+  readonly name?: string;
+  readonly objective?: string;
+  readonly createdBy: string;
+  readonly archived: boolean;
+  readonly closedAt?: number;
+  readonly pullRequestNumber?: number;
+  readonly mergeCommitSha?: string;
+};
+
+/** One line per open corner, carrying every field the JSON dump carried; the objective is last because it is free text. */
+export function renderOpenCornerLine(corner: OpenCornerRow): string {
+  const fields = [
+    `parent Room ${corner.parentRoomId}`,
+    `created by ${corner.createdBy}`,
+    corner.pullRequestNumber ? `PR #${corner.pullRequestNumber}` : '',
+    corner.mergeCommitSha ? `merge commit ${corner.mergeCommitSha}` : '',
+    corner.closedAt !== undefined ? `closed at ${corner.closedAt}` : '',
+    corner.archived ? 'archived' : '',
+  ].filter(Boolean);
+  return `- ${corner.name ?? corner.cornerId} (${corner.cornerId}), ${fields.join(', ')}${corner.objective ? `: ${corner.objective}` : ''}`;
+}
 
 export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
@@ -926,13 +955,13 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     render: ({ surface, corners, closedCorners }) =>
       [
         corners?.length
-          ? `Current corners you belong to (use the exact cornerId with ${surface === 'room' ? 'inspect_corner, steer_corner, or ask_corner' : 'inspect_corner or steer_corner for a sibling under this parent Room'}):\n${JSON.stringify(corners)}`
+          ? `Current corners you belong to (use the exact cornerId with ${surface === 'room' ? 'inspect_corner, steer_corner, or ask_corner' : 'inspect_corner or steer_corner for a sibling under this parent Room'}):\n${corners.map(renderOpenCornerLine).join('\n')}`
           : '',
         surface === 'room' && closedCorners?.length
-          ? `Corners you belong to closed in the last 24 hours (merge commit is unavailable when absent):\n${closedCorners
+          ? `Corners you belong to closed in the last 24 hours:\n${closedCorners
               .map(
                 (corner) =>
-                  `- ${corner.name ?? corner.cornerId} (${corner.cornerId}): PR ${corner.pullRequestNumber ? `#${corner.pullRequestNumber}` : 'unavailable'}, merge commit ${corner.mergeCommitSha ?? 'unavailable'}`,
+                  `- ${corner.name ?? corner.cornerId} (${corner.cornerId}): closed${corner.pullRequestNumber ? `, PR #${corner.pullRequestNumber}` : ''}${corner.mergeCommitSha ? `, merge commit ${corner.mergeCommitSha}` : ''}`,
               )
               .join('\n')}`
           : '',
@@ -1017,6 +1046,7 @@ export function assembleTurnPrompt(context: TurnPromptContext): {
     report: entries.map(({ section, text }) => ({
       id: section.id,
       bytes: Buffer.byteLength(text),
+      hash: createHash('sha256').update(text).digest('hex'),
     })),
   };
 }

@@ -27,6 +27,7 @@
 import { appendFile, mkdir, readdir, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import type { PromptSectionChange } from './prompt-section-baseline.js';
 import type { SessionSchedulerSnapshot } from './session-scheduler.js';
 
 /**
@@ -124,6 +125,8 @@ export interface TurnTraceRecord {
   };
   /** Bytes per prompt section of the last prompt built (`prompt-assembly.ts`). */
   promptSections?: Record<string, number>;
+  /** Per section, whether its text matches the last prompt sent to this same harness session. */
+  promptSectionChanges?: Record<string, PromptSectionChange>;
   promptWindow?: { promptBytes: number; modelContextTokens: number };
   /** How many times this turn called search_memory, and how many came back
    *  with nothing — read back once after the turn settles (best-effort;
@@ -186,6 +189,7 @@ export class TurnTrace {
   private atAdmission?: SessionSchedulerSnapshot;
   private finished = false;
   private promptSections?: Record<string, number>;
+  private promptSectionChanges?: Record<string, PromptSectionChange>;
   private promptWindow?: { promptBytes: number; modelContextTokens: number };
   private searchMemoryCalls?: number;
   private searchMemoryMisses?: number;
@@ -276,9 +280,13 @@ export class TurnTrace {
     this.searchMemoryMisses = misses;
   }
 
-  /** What each section of the assembled prompt cost, so growth shows in the trace. */
-  notePromptSections(report: readonly { id: string; bytes: number }[]): void {
+  /** What each section of the assembled prompt cost, and whether it changed since this session's last prompt. */
+  notePromptSections(
+    report: readonly { id: string; bytes: number }[],
+    changes?: Record<string, PromptSectionChange>,
+  ): void {
     this.promptSections = Object.fromEntries(report.map((entry) => [entry.id, entry.bytes]));
+    this.promptSectionChanges = changes;
   }
 
   /** Assembled text only; the harness's tool schema is outside this measurement. */
@@ -406,6 +414,7 @@ export class TurnTrace {
         ...(this.atAdmission ? { atAdmission: this.atAdmission } : {}),
       },
       ...(this.promptSections ? { promptSections: this.promptSections } : {}),
+      ...(this.promptSectionChanges ? { promptSectionChanges: this.promptSectionChanges } : {}),
       ...(this.promptWindow ? { promptWindow: this.promptWindow } : {}),
       ...(this.searchMemoryCalls !== undefined
         ? { searchMemoryCalls: this.searchMemoryCalls, searchMemoryMisses: this.searchMemoryMisses ?? 0 }

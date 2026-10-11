@@ -3,10 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('react-native', () => ({
   AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
 }));
-vi.mock('@/auth/buzz-identity-storage', () => ({
-  getEffectiveRelayUrl: async () => 'https://relay.test',
-  loadBuzzViewerPubkey: async () => 'viewer',
-}));
 
 import { LiveConnection } from './live-connection';
 import { liveFrameEpoch } from './live-frame-epoch';

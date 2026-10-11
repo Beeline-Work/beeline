@@ -19,7 +19,6 @@ import {
   roomRecordScope,
   type RoomRecordScope,
 } from '@/buzz/room-message-records';
-import { getEffectiveRelayUrl, loadBuzzViewerPubkey } from '@/auth/buzz-identity-storage';
 import { applyRoomDraftFrame, clearRoomDrafts } from '@/buzz/room-live-drafts';
 
 type SurfaceFilters = readonly {
@@ -698,12 +697,13 @@ export function sharedLiveConnection(): LiveConnection {
   shared ??= new LiveConnection({
     authorization: () => monolithSession.authorization(),
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
+    // The monolith's relay and viewer, as getEffectiveRelayUrl and
+    // loadBuzzViewerPubkey give them to the Room session.
     recordScope: async () => {
-      const [relayUrl, viewerPubkey] = await Promise.all([
-        getEffectiveRelayUrl(),
-        loadBuzzViewerPubkey(),
-      ]);
-      return viewerPubkey ? roomRecordScope(relayUrl, viewerPubkey) : undefined;
+      const viewerPubkey = await monolithSession.identityId();
+      return viewerPubkey
+        ? roomRecordScope(getBuzzRuntimeConfig().monolithUrl, viewerPubkey)
+        : undefined;
     },
     subscribeIdentityChange: subscribeClientReset,
     subscribeForeground: (listener) => {

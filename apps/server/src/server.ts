@@ -93,11 +93,11 @@ const SENT_ROW_LIMIT = 256;
 type RowOrder = { version: number } | { epoch?: string; sequence: number };
 type SentRow = { order?: RowOrder; fingerprint?: string; reads: number };
 
-/** Whether `next` is older than the frame already sent; unordered frames never are. */
-function rowOrderIsOlder(next: RowOrder | undefined, sent: RowOrder | undefined): boolean {
+/** Whether `next` is not newer than the frame already sent; unordered frames always are newer. */
+function rowOrderIsNotNewer(next: RowOrder | undefined, sent: RowOrder | undefined): boolean {
   if (!next || !sent) return false;
-  if ('version' in next) return 'version' in sent && next.version < sent.version;
-  return !('version' in sent) && next.epoch === sent.epoch && next.sequence < sent.sequence;
+  if ('version' in next) return 'version' in sent && next.version <= sent.version;
+  return !('version' in sent) && next.epoch === sent.epoch && next.sequence <= sent.sequence;
 }
 const LIVE_PING_FRAME = JSON.stringify({ type: 'ping' });
 const LIVE_PONG_FRAME = JSON.stringify({ type: 'pong' });
@@ -935,7 +935,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       const draftWire = new Map<string, { text: string; revision: number }>();
       // One record per row this socket delivers. Reads run concurrently and
       // finish out of order, and a writer also receives its own PostgreSQL
-      // NOTIFY. One rule covers both: drop a frame older than the last one
+      // NOTIFY. One rule covers both: drop a frame not newer than the last one
       // sent for its row, else drop it when its projection is unchanged. A row
       // with a read in flight is never evicted, so the bound cannot let a
       // delayed older read through.
@@ -953,14 +953,16 @@ export function createBeelineServer(options: ServerOptions): Server {
       };
       const admitRow = (key: string, order: RowOrder | undefined, fingerprint: string) => {
         const sent = sentRows.get(key) ?? { reads: 0 };
-        if (rowOrderIsOlder(order, sent.order) || sent.fingerprint === fingerprint) return false;
+        if (rowOrderIsNotNewer(order, sent.order)) return false;
+        // An unchanged projection is not sent, but its order still advances,
+        // so an older frame with other content cannot follow it.
         sentRows.delete(key);
         sentRows.set(key, { order: order ?? sent.order, fingerprint, reads: sent.reads });
         for (const [candidate, row] of sentRows) {
           if (sentRows.size <= SENT_ROW_LIMIT) break;
           if (!row.reads) sentRows.delete(candidate);
         }
-        return true;
+        return sent.fingerprint !== fingerprint;
       };
       const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>,
         sequence?: number) => {

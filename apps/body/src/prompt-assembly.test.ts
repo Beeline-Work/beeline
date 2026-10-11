@@ -696,8 +696,22 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
     expect(reviewer.indexOf('Reviewer rules:')).toBeGreaterThan(
       reviewer.indexOf('Never merge any other pull request.'),
     );
-    expect(reviewer).toContain("never edit or push another agent's branch");
+    expect(reviewer).toContain("never push another agent's branch");
     expect(reviewer).toContain(CORNER_REVIEWER_AUTHOR_MERGE);
+  });
+
+  it('makes the reviewer-author merge rule conditional on the reviewer having written the code', () => {
+    expect(CORNER_REVIEWER_AUTHOR_MERGE.startsWith("If you wrote this corner's code,")).toBe(true);
+    const reviewer = prompt('code-corner-reviewer');
+    expect(reviewer).toContain(CORNER_REVIEWER_AUTHOR_MERGE);
+    // A reviewer that did not write the code gets no line that says it did.
+    expect(prompt('code-corner-reviewed')).not.toContain(CORNER_REVIEWER_AUTHOR_MERGE);
+  });
+
+  it('tells the reviewer that a finding goes to the author, not a commit, over the finished-fix rule', () => {
+    const reviewer = prompt('code-corner-reviewer');
+    expect(reviewer).toContain('Findings go to the author, not a commit');
+    expect(reviewer).toContain('This wins over the finished-fix rule.');
   });
 
   it('keeps fix-and-push text out of a reviewer green-checks turn', () => {

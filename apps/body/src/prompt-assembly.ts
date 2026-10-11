@@ -267,12 +267,14 @@ export function cornerReviewerInstruction(input: {
 }
 
 /**
- * The merge rule for a Room's reviewer that writes code itself: no agent can
- * review its own work, so a person is its reviewer. Without this the ordinary
- * author rule would tell it to wait for its own PASS, a permanent deadlock.
+ * The merge rule for a Room's reviewer, conditional on it having written the
+ * corner's code: no agent can review its own work, so a person is its
+ * reviewer. A reviewer that did not write the code fits no condition and
+ * follows the reviewer rules instead. Without this the ordinary author rule
+ * would tell a reviewer-author to wait for its own PASS, a permanent deadlock.
  */
 export const CORNER_REVIEWER_AUTHOR_MERGE =
-  "You are this Room's reviewer, so no agent can review your own code; a person is your reviewer. Once the pull request exists, reply with its full URL, tag the person who assigned you this work, and ask them to approve the merge; only a Workspace owner or admin's yes counts. Record their yes with order_corner_merge. Never merge it any other way. You are woken to fix failing checks or a merge GitHub refused.";
+  "If you wrote this corner's code, no agent can review your own code; a person is your reviewer. Once the pull request exists, reply with its full URL, tag the person who assigned you this work, and ask them to approve the merge; only a Workspace owner or admin's yes counts. Record their yes with order_corner_merge. Never merge it any other way. You are woken to fix failing checks or a merge GitHub refused.";
 
 function shellLine(shell: RoomShellState | undefined): string {
   if (!shell) return '';
@@ -627,7 +629,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: ['code-corner'],
     when: ({ reviewer }) => reviewer === true,
     render: () =>
-      `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Report findings to the author; never edit or push another agent's branch.`,
+      `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Findings go to the author, not a commit; never push another agent's branch. This wins over the finished-fix rule.`,
   },
   {
     id: 'corner.repo-less',

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cornerGitHubCommandRefusal, installCornerGitHubWrappers } from './corner-github-auth.js';
+import { agentGitIdentityEnv } from './agent-git-identity.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -142,6 +143,32 @@ process.stderr.write(Buffer.alloc(${size}, 121));`,
     console.log(
       'Local init/add/commit/status/ls-files/show/cat-file/rev-parse: zero token requests',
     );
+  });
+
+  it('carries the session git identity through the launcher wrapper', async () => {
+    const { root, git } = await fixture();
+    const worktree = join(root, 'repo');
+    await execFileAsync('/usr/bin/git', ['init', worktree]);
+    // The shared worktree config names the other agent, as it does after the
+    // other session prepared the same corner checkout last.
+    await execFileAsync('/usr/bin/git', ['-C', worktree, 'config', 'user.name', 'Agent B']);
+    await execFileAsync('/usr/bin/git', ['-C', worktree, 'config', 'user.email', 'b@example.test']);
+    const identity = agentGitIdentityEnv({ name: 'Agent A', publicKey: 'a'.repeat(64) });
+    await writeFile(join(worktree, 'file'), 'work\n');
+    await execFileAsync(git, ['-C', worktree, 'add', 'file'], {
+      env: { ...process.env, ...identity },
+    });
+    await execFileAsync(git, ['-C', worktree, 'commit', '-m', 'work'], {
+      env: { ...process.env, ...identity },
+    });
+    const author = (
+      await execFileAsync('/usr/bin/git', ['-C', worktree, 'show', '-s', '--format=%an <%ae>|%cn <%ce>', 'HEAD'])
+    ).stdout.trim();
+    expect(author).toBe(
+      `${identity.GIT_AUTHOR_NAME} <${identity.GIT_AUTHOR_EMAIL}>|` +
+        `${identity.GIT_COMMITTER_NAME} <${identity.GIT_COMMITTER_EMAIL}>`,
+    );
+    console.log(`Launcher-wrapper commit author: ${author}`);
   });
 
   it.each([

@@ -9,7 +9,7 @@ import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { machineHost } from './machine-host.js';
 import { markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv, workspaceToolEnv } from './workspace-assets.js';
-import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capacity.js';
+import { admitSharedAssets } from './shared-asset-capacity.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import {
@@ -990,7 +990,8 @@ export class MonolithRoomTurnLoop {
         });
         if (!toolchain) assets = undefined;
       } catch (error) {
-        if (!(error instanceof SharedAssetCapacityError)) throw error;
+        // A failed install or registry lookup leaves the host adapter usable.
+        console.warn('[body] Workspace adapter pinning failed; using host adapter:', error);
         assets = undefined;
       }
     }

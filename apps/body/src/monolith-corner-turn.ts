@@ -19,7 +19,6 @@ import {
   markWorkspaceLayoutLive,
   prepareWorkspaceAssets,
   prepareWorkspaceAvdBase,
-  prepareWorkspaceSdk,
   sharedAssetsEnabled,
   workspaceCacheEnv,
   workspaceToolEnv,
@@ -983,18 +982,17 @@ export class MonolithCornerTurnLoop {
         });
         if (!toolchain) assets = undefined;
       } catch (error) {
-        if (!(error instanceof SharedAssetCapacityError)) throw error;
+        // A registry or host-tool failure must not prevent a turn from using
+        // the already installed adapter and its legacy private layout.
+        console.warn('[body] Workspace adapter pinning failed; using host adapter:', error);
         assets = undefined;
       }
     }
-    let androidAssets: { sdk: string; avdBase: string } | undefined;
+    let androidAssets: { avdBase: string } | undefined;
     if (assets && homeOverlay.ANDROID_HOME && homeOverlay.ANDROID_AVD_HOME &&
       existsSync(homeOverlay.ANDROID_AVD_HOME)) {
       try {
-        androidAssets = {
-          sdk: await prepareWorkspaceSdk(assets, homeOverlay.ANDROID_HOME),
-          avdBase: await prepareWorkspaceAvdBase(assets, homeOverlay.ANDROID_AVD_HOME),
-        };
+        androidAssets = { avdBase: await prepareWorkspaceAvdBase(assets, homeOverlay.ANDROID_AVD_HOME) };
       } catch (error) {
         if (!(error instanceof SharedAssetCapacityError)) throw error;
         assets = undefined; // private legacy paths remain available this turn
@@ -1036,12 +1034,8 @@ export class MonolithCornerTurnLoop {
       } : {}),
       ...(androidAssets && this.options.config.agentHomeRoot
         ? {
-            ANDROID_HOME: androidAssets.sdk,
-            ANDROID_SDK_ROOT: androidAssets.sdk,
             ANDROID_AVD_HOME: androidAssets.avdBase,
             ANDROID_EMULATOR_HOME: resolve(this.options.config.agentHomeRoot, 'android-emulator'),
-            PATH: (homeOverlay.PATH ?? this.options.config.agentEnv.PATH ?? '')
-              .replaceAll(homeOverlay.ANDROID_HOME!, androidAssets.sdk),
           }
         : {}),
       npm_config_cache: npmCacheDir,
@@ -1057,7 +1051,7 @@ export class MonolithCornerTurnLoop {
             BEELINE_ANDROID_LEASE_ROOT: resolve(assets.cache, 'android-leases'),
             BEELINE_ANDROID_INSTANCE_ROOT: resolve(this.options.config.agentHomeRoot, 'android-instances'),
             BEELINE_ANDROID_BASE_AVD_HOME: androidAssets.avdBase,
-            BEELINE_ANDROID_EMULATOR_BINARY: resolve(androidAssets.sdk, 'emulator/emulator'),
+            BEELINE_ANDROID_EMULATOR_BINARY: resolve(homeOverlay.ANDROID_HOME!, 'emulator/emulator'),
           }
         : {}),
     };

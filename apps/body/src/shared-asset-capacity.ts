@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, readdir, rename, rm, stat, statfs } from 'node:fs/promises';
+import { mkdir, open, rename, rm, stat, statfs } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 export const SHARED_ASSET_FREE_FLOOR_BYTES = 2 * 1024 ** 3;
@@ -15,14 +15,6 @@ export function privateRecoveryReservePath(supervisorRoot: string): string {
 export async function availableBytes(path: string): Promise<bigint> {
   const fs = await statfs(path, { bigint: true });
   return fs.bavail * fs.bsize;
-}
-
-export async function apparentTreeBytes(path: string): Promise<number> {
-  const info = await lstat(path);
-  if (!info.isDirectory()) return info.isFile() ? info.size : 0;
-  let bytes = 0;
-  for (const entry of await readdir(path)) bytes += await apparentTreeBytes(resolve(path, entry));
-  return bytes;
 }
 
 /** Allocate real blocks before optional shared downloads can consume the disk. */
@@ -68,7 +60,7 @@ export async function releasePrivateRecoveryReserve(supervisorRoot: string): Pro
   return true;
 }
 
-/** Release capacity before an external harness's next private transcript write. */
+/** Best-effort release when monitoring observes pressure; writers can race the check. */
 export async function checkPrivateRecoveryReserve(
   supervisorRoot: string,
   freeBytes: () => Promise<bigint> = () => availableBytes(supervisorRoot),
@@ -88,7 +80,7 @@ export function monitorPrivateRecoveryReserve(supervisorRoot: string): () => voi
   return () => clearInterval(timer);
 }
 
-/** A floor blocks new shared writers and releases the reserve for private state. */
+/** A best-effort floor blocks new shared writers and releases reserve under pressure. */
 export async function admitSharedAssets(
   supervisorRoot: string,
   estimatedBytes = 0,

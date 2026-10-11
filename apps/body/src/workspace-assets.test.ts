@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { wrapAgentCommand } from './bwrap-sandbox.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
 import {
-  prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, prepareWorkspaceAvdBase, prepareWorkspaceSdk,
+  prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, prepareWorkspaceAvdBase,
   sharedAssetsEnabled, workspaceAssetRoot, workspaceCacheEnv, workspaceToolEnv,
 } from './workspace-assets.js';
 
@@ -41,13 +41,22 @@ describe('coarse Workspace assets', () => {
     const env = workspaceToolEnv({
       ...process.env as Record<string, string>, HOME: resolve(home, 'user'),
       RUSTUP_HOME: '/tmp/host-rustup', GOPATH: '/tmp/host-go', NVM_BIN: '/tmp/host-nvm',
-      JAVA_HOME: '/tmp/host-jdk', PIP_CACHE_DIR: '/tmp/host-pip',
+      JAVA_HOME: '/tmp/host-jdk', ANDROID_NDK_HOME: '/tmp/host-ndk',
+      MAVEN_OPTS: '-Xmx1g', GRADLE_OPTS: '-Dorg.gradle.daemon=false',
+      JAVA_TOOL_OPTIONS: '-Dtest.tool=true', _JAVA_OPTIONS: '-Dtest.legacy=true',
+      JDK_JAVA_OPTIONS: '-Dtest.jdk=true', PIP_CACHE_DIR: '/tmp/host-pip',
     }, resolve(home, 'user'), assets);
     expect(env.RUSTUP_HOME).toBe(resolve(home, 'user/.rustup'));
     expect(env.GOPATH).toBe(resolve(home, 'user/go'));
     expect(env.PIP_CACHE_DIR).toBe(resolve(home, 'user/.cache/pip'));
     expect(env.NVM_BIN).toBeUndefined();
-    expect(env.JAVA_HOME).toBeUndefined();
+    expect(env.JAVA_HOME).toBe('/tmp/host-jdk');
+    expect(env.ANDROID_NDK_HOME).toBe('/tmp/host-ndk');
+    expect(env.MAVEN_OPTS).toBe('-Xmx1g');
+    expect(env.GRADLE_OPTS).toBe('-Dorg.gradle.daemon=false');
+    expect(env.JAVA_TOOL_OPTIONS).toBe('-Dtest.tool=true');
+    expect(env._JAVA_OPTIONS).toBe('-Dtest.legacy=true');
+    expect(env.JDK_JAVA_OPTIONS).toBe('-Dtest.jdk=true');
     const wrapped = wrapAgentCommand({
       bwrapPath: '/usr/bin/bwrap',
       spec: { mode: 'readonly', cwd: resolve(runtime, 'rooms/one'),
@@ -58,7 +67,10 @@ describe('coarse Workspace assets', () => {
     expect(child.status, child.stderr).toBe(0);
     expect(child.stdout).toContain(`RUSTUP_HOME=${resolve(home, 'user/.rustup')}`);
     expect(child.stdout).toContain(`PIP_CACHE_DIR=${resolve(home, 'user/.cache/pip')}`);
-    expect(child.stdout).not.toContain('JAVA_HOME=');
+    expect(child.stdout).toContain('JAVA_HOME=/tmp/host-jdk');
+    expect(child.stdout).toContain('ANDROID_NDK_HOME=/tmp/host-ndk');
+    expect(child.stdout).toContain('MAVEN_OPTS=-Xmx1g');
+    expect(child.stdout).toContain('GRADLE_OPTS=-Dorg.gradle.daemon=false');
   });
 
   it('pins both adapter and nested CLI in versioned, immutable Workspace generations', async () => {
@@ -103,31 +115,19 @@ describe('coarse Workspace assets', () => {
     expect(await prepareWorkspaceAdapter(assets, 'goose', '/usr/bin/goose', env)).toBeUndefined();
   });
 
-  it('publishes one fixed SDK and AVD metadata generation for concurrent agents', async () => {
+  it('publishes AVD metadata without copying or hashing the operator SDK', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-android-assets-'));
     roots.push(root);
     const assets = await prepareWorkspaceAssets(workspaceAssetRoot(root, 'A'));
-    const sdk = resolve(root, 'operator-sdk');
     const avd = resolve(root, 'operator-avd');
-    await mkdir(resolve(sdk, 'emulator'), { recursive: true });
     await mkdir(resolve(avd, 'test.avd'), { recursive: true });
-    await writeFile(resolve(sdk, 'emulator/source.properties'), 'Pkg.Revision=1\n');
-    await writeFile(resolve(sdk, 'emulator/emulator'), 'binary');
     await writeFile(resolve(avd, 'test.ini'), `path=${resolve(avd, 'test.avd')}\ntarget=android-36\n`);
     await writeFile(resolve(avd, 'test.avd/config.ini'), 'image.sysdir.1=system-images/android-36/\n');
-    const [sdkA, sdkB] = await Promise.all([
-      prepareWorkspaceSdk(assets, sdk), prepareWorkspaceSdk(assets, sdk),
+    const [base, sameBase] = await Promise.all([
+      prepareWorkspaceAvdBase(assets, avd), prepareWorkspaceAvdBase(assets, avd),
     ]);
-    expect(sdkA).toBe(sdkB);
-    expect(await readFile(resolve(sdkA, 'emulator/emulator'), 'utf8')).toBe('binary');
-    await writeFile(resolve(sdk, 'emulator/emulator'), 'binary-new');
-    const sdkNew = await prepareWorkspaceSdk(assets, sdk);
-    expect(sdkNew).not.toBe(sdkA);
-    expect(await readFile(resolve(sdkNew, 'emulator/emulator'), 'utf8')).toBe('binary-new');
-    await writeFile(resolve(sdkNew, 'emulator/emulator'), 'corrupt');
-    expect(await prepareWorkspaceSdk(assets, sdk)).toBe(sdkNew);
-    expect(await readFile(resolve(sdkNew, 'emulator/emulator'), 'utf8')).toBe('binary-new');
-    const base = await prepareWorkspaceAvdBase(assets, avd);
+    expect(base).toBe(sameBase);
+    expect(assets).not.toHaveProperty('sdk');
     expect(await readFile(resolve(base, 'test.avd/config.ini'), 'utf8')).toContain('image.sysdir');
   });
 

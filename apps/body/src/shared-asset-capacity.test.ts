@@ -39,3 +39,15 @@ it('frees the reserve before a private conversation write without another asset 
   await writeFile(resolve(root, 'private-conversation'), 'persisted');
   expect(await readFile(resolve(root, 'private-conversation'), 'utf8')).toBe('persisted');
 });
+
+it('retains the reserve above the pressure threshold, then releases it once as space falls', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-reserve-pressure-'));
+  roots.push(root);
+  await admitSharedAssets(root, 0, { floorBytes: 0, reserveBytes: 64 });
+  const reserve = privateRecoveryReservePath(root);
+  expect(await checkPrivateRecoveryReserve(root, async () => BigInt(64 + 256 * 1024 ** 2))).toBe(false);
+  expect((await stat(reserve)).size).toBe(64);
+  expect(await checkPrivateRecoveryReserve(root, async () => 0n)).toBe(true);
+  expect(await checkPrivateRecoveryReserve(root, async () => 0n)).toBe(false);
+  await expect(stat(reserve)).rejects.toMatchObject({ code: 'ENOENT' });
+});

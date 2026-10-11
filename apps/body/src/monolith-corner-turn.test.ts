@@ -1607,7 +1607,7 @@ describe('corner close-request delivery', () => {
     };
   }
 
-  it.each(['repository', 'scratch', 'capacity-fallback'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
+  it.each(['repository', 'scratch', 'android-operator', 'capacity-fallback', 'registry-fallback'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
     vi.stubEnv('ANDROID_HOME', '');
     vi.stubEnv('ANDROID_SDK_ROOT', '');
     const execute = vi.fn(async (name: string) => {
@@ -1647,16 +1647,35 @@ describe('corner close-request delivery', () => {
       agentHomeRoot: join(shape === 'scratch' ? worktree : cornerRoot, 'agent-home'),
       agentPrivateRoot: join(shape === 'scratch' ? worktree : cornerRoot, 'agent-private'),
     });
-    const lateCapacity = shape === 'capacity-fallback'
-      ? vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter').mockRejectedValueOnce(new SharedAssetCapacityError())
+    if (shape === 'android-operator') {
+      const operatorHome = internal.options.config.operatorHome!;
+      await mkdir(join(operatorHome, 'android-sdk/platform-tools'), { recursive: true });
+      await mkdir(join(operatorHome, 'android-sdk/emulator'), { recursive: true });
+      await mkdir(join(operatorHome, '.android/avd/test.avd'), { recursive: true });
+      await writeFile(join(operatorHome, 'android-sdk/platform-tools/adb'), 'operator adb');
+      await writeFile(join(operatorHome, 'android-sdk/emulator/emulator'), 'operator emulator');
+      await writeFile(join(operatorHome, '.android/avd/test.ini'), 'path=/operator/test.avd\n');
+      await writeFile(join(operatorHome, '.android/avd/test.avd/config.ini'), 'image.sysdir.1=system-images/android-36/\n');
+    }
+    const pinningFailure = shape.endsWith('-fallback')
+      ? vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter').mockRejectedValueOnce(
+          shape === 'capacity-fallback' ? new SharedAssetCapacityError() : new Error('npm registry timed out'))
       : undefined;
     try {
       await internal.activate();
       expect(fixture.clientOptions()).toBeDefined();
       const selected = fixture.clientOptions()!;
       expect(selected.agentCommand).toBe('/usr/bin/bwrap');
-      if (lateCapacity) {
-        expect(lateCapacity).toHaveBeenCalledOnce();
+      if (shape === 'android-operator') {
+        const operatorSdk = join(internal.options.config.operatorHome!, 'android-sdk');
+        expect(selected.agentEnv?.ANDROID_HOME).toBe(operatorSdk);
+        expect(selected.agentEnv?.ANDROID_SDK_ROOT).toBe(operatorSdk);
+        expect(selected.agentEnv?.BEELINE_ANDROID_EMULATOR_BINARY).toBe(join(operatorSdk, 'emulator/emulator'));
+        expect(selected.agentEnv?.BEELINE_ANDROID_BASE_AVD_HOME).toContain('/avd-base/');
+        expect(selected.agentEnv?.BEELINE_ANDROID_BASE_AVD_HOME).not.toContain('/sdk/');
+      }
+      if (pinningFailure) {
+        expect(pinningFailure).toHaveBeenCalledOnce();
         expect(selected.agentEnv?.npm_config_cache ?? '').not.toContain('/workspaces/');
         expect(selected.agentArgs).not.toContain(expect.stringContaining('/shared-home/tools/'));
         return;
@@ -1671,7 +1690,7 @@ describe('corner close-request delivery', () => {
       ], { env: selected.agentEnv, encoding: 'utf8' });
       expect(child.status, child.stderr).toBe(0);
     } finally {
-      lateCapacity?.mockRestore();
+      pinningFailure?.mockRestore();
       fixture.abort.abort();
       await fixture.scheduler.dispose();
     }

@@ -271,9 +271,12 @@ describe('Room turn phase trace', () => {
     } finally { prepare.mockRestore(); }
   });
 
-  it('falls back to the private layout when adapter capacity drops after initial admission', async () => {
+  it.each([
+    ['capacity', new SharedAssetCapacityError()],
+    ['registry failure', new Error('npm registry timed out')],
+  ])('falls back to the private layout when adapter pinning hits %s', async (_reason, failure) => {
     const prepare = vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter')
-      .mockRejectedValueOnce(new SharedAssetCapacityError());
+      .mockRejectedValueOnce(failure);
     try {
       const { acpOptions, receipts } = await runTurns({
         sharedAssets: true,

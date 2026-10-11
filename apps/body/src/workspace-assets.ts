@@ -1,11 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { createReadStream } from 'node:fs';
-import { cp, lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentKind } from './agent-command.js';
-import { admitSharedAssets, apparentTreeBytes, releaseReserveOnEnospc, SharedAssetCapacityError } from './shared-asset-capacity.js';
+import { admitSharedAssets, releaseReserveOnEnospc, SharedAssetCapacityError } from './shared-asset-capacity.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -20,7 +19,6 @@ export interface WorkspaceAssetPaths {
   root: string;
   cache: string;
   tools: string;
-  sdk: string;
   avdBase: string;
   staging: string;
 }
@@ -45,7 +43,6 @@ export function workspaceAssetPaths(root: string): WorkspaceAssetPaths {
     root: absolute,
     cache: resolve(absolute, 'cache'),
     tools: resolve(absolute, 'tools'),
-    sdk: resolve(absolute, 'sdk'),
     avdBase: resolve(absolute, 'avd-base'),
     staging: resolve(absolute, 'staging'),
   };
@@ -70,7 +67,6 @@ export async function prepareWorkspaceAssets(root: string): Promise<WorkspaceAss
     resolve(paths.cache, 'cargo'),
     resolve(paths.cache, 'cargo', 'registry'),
     paths.tools,
-    paths.sdk,
     paths.avdBase,
     paths.staging,
   ];
@@ -110,11 +106,6 @@ export async function preparePackageCacheTargets(userHome: string): Promise<void
   }
 }
 
-export function containedAssetPath(root: string, path: string): boolean {
-  const rel = relative(resolve(root), resolve(path));
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-}
-
 /**
  * Select only cache-specific variables. HOME/XDG and tool homes that contain
  * credentials or generated configuration remain inside the private Room home.
@@ -145,10 +136,10 @@ export function workspaceToolEnv(
 ): Record<string, string> {
   const result = { ...env };
   for (const name of [
-    'MAVEN_OPTS', 'MAVEN_ARGS', 'MAVEN_CONFIG', 'MAVEN_USER_HOME', 'MAVEN_REPO_LOCAL',
-    'GRADLE_OPTS', 'GRADLE_RO_DEP_CACHE', 'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS', 'JAVA_HOME',
+    'MAVEN_ARGS', 'MAVEN_CONFIG', 'MAVEN_USER_HOME', 'MAVEN_REPO_LOCAL',
+    'GRADLE_RO_DEP_CACHE',
     'NODE_PATH', 'PIP_CONFIG_FILE', 'PIP_TARGET', 'PIP_PREFIX', 'PIP_USER',
-    'ANDROID_NDK_HOME', 'ANDROID_NDK_ROOT', 'ANDROID_SDK_HOME',
+    'ANDROID_SDK_HOME',
     'NVM_BIN', 'NVM_INC', 'FNM_MULTISHELL_PATH', 'RUSTUP_TOOLCHAIN', 'ASDF_DIR',
     'PYENV_VERSION', 'RBENV_VERSION', 'SDKMAN_DIR',
   ]) delete result[name];
@@ -174,33 +165,6 @@ export function workspaceToolEnv(
     NPM_CONFIG_PREFIX: resolve(home, '.local'),
   });
   return result;
-}
-
-async function sdkTreeDigest(root: string): Promise<string> {
-  const hash = createHash('sha256');
-  const visit = async (dir: string): Promise<void> => {
-    for (const entry of (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
-      const path = resolve(dir, entry.name);
-      const info = await lstat(path);
-      hash.update(`${relative(root, path)}\0${info.mode & 0o777}\0`);
-      if (info.isDirectory()) {
-        hash.update('dir\0');
-        await visit(path);
-      } else if (info.isFile()) {
-        hash.update(`file\0${info.size}\0`);
-        for await (const chunk of createReadStream(path)) hash.update(chunk);
-        hash.update('\0');
-      } else if (info.isSymbolicLink()) {
-        const target = await readlink(path);
-        if (isAbsolute(target) || !containedAssetPath(root, resolve(dirname(path), target)) ||
-            !containedAssetPath(root, await realpath(path)))
-          throw new Error(`Android SDK symlink escapes its source: ${path}`);
-        hash.update(`symlink\0${target.length}\0${target}\0`);
-      } else throw new Error(`unsupported Android SDK entry: ${path}`);
-    }
-  };
-  await visit(root);
-  return hash.digest('hex').slice(0, 24);
 }
 
 async function processExists(pid: number): Promise<boolean> {
@@ -229,40 +193,6 @@ async function withGenerationLock<T>(lock: string, work: () => Promise<T>): Prom
   }
   try { return await work(); }
   finally { await rm(lock, { recursive: true, force: true }); }
-}
-
-/** Publish an SDK snapshot, never modifying a generation selected by a child. */
-export async function prepareWorkspaceSdk(paths: WorkspaceAssetPaths, sourceSdk: string): Promise<string> {
-  const source = await realpath(sourceSdk);
-  const digest = await sdkTreeDigest(source);
-  const published = resolve(paths.sdk, digest);
-  const publishedValid = async (): Promise<boolean> => {
-    const info = await lstat(published).catch(() => undefined);
-    if (!info?.isDirectory() || info.isSymbolicLink()) return false;
-    return sdkTreeDigest(published).then((actual) => actual === digest, () => false);
-  };
-  if (await publishedValid()) return published;
-  if (!(await admitSharedAssets(supervisorRoot(paths), (await apparentTreeBytes(source)) + 1024 ** 3)))
-    throw new SharedAssetCapacityError();
-  return withGenerationLock(resolve(paths.staging, `sdk-${digest}.lock`), async () => {
-    if (await publishedValid()) return published;
-    if (await lstat(published).catch(() => undefined)) {
-      await rename(published, resolve(paths.staging, `corrupt-sdk-${digest}-${randomUUID()}`));
-    }
-    const staged = resolve(paths.staging, `sdk-${digest}-${randomUUID()}`);
-    try {
-      await cp(source, staged, { recursive: true, dereference: false });
-      if ((await sdkTreeDigest(staged)) !== digest || (await sdkTreeDigest(source)) !== digest)
-        throw new Error('Android SDK changed while publishing a Workspace generation');
-      await rename(staged, published);
-      return published;
-    } catch (error) {
-      await releaseReserveOnEnospc(supervisorRoot(paths), error);
-      throw error;
-    } finally {
-      await rm(staged, { recursive: true, force: true });
-    }
-  });
 }
 
 /** AVD metadata is small; mutable userdata never enters this base generation. */

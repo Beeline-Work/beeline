@@ -448,14 +448,14 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     id: 'room.corners',
     topic: 'repository-work',
     why: 'Repository work must start through the host-governed corner, with a brief as its authority.',
-    budgetBytes: 1_100,
+    budgetBytes: 1_150,
     layer: 'surface',
     surfaces: ['room'],
     render: () =>
       [
         'Repository changes happen only in a corner. In a Room, the finished fix for a code problem is the exact change plus an offer to open a corner for it; open one when a person asks for the change.',
         'Before opening one, consult beeline-triage and beeline-spec, then call open_corner with a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message). The objective only titles the work; the brief is its authority. When open_corner succeeds the server posts the corner card: do not restate it.',
-        'For corners under this Room, use inspect_corner for status, steer_corner to pass Room input down, ask_corner for one answer, and post_to_corner for a note that wakes nobody.',
+        'For corners under this Room, use inspect_corner for status (its activity and awaiting fields show whether one waits on you), steer_corner to pass Room input down, ask_corner for one answer, and post_to_corner for a note that wakes nobody.',
         'A corner ends when its pull request merges; since a person may merge minutes after it opens, anything still needed must already live in a different corner before that pull request opens, not after. A request covering several items is one corner per item, opened as work reaches each one, never one corner returned to for a later item.',
       ].join(' '),
   },

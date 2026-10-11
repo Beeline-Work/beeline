@@ -25,11 +25,11 @@ Workspaces and agent homes even if a new sibling appears after a turn starts.
 This is an ordinary path visibility boundary on the same Unix account, not a
 multi-user security perimeter.
 
-Pip's wheel cache and Gradle's derived caches stay private to each Room.
-The final child environment replaces inherited Rust, Go, Node manager and
-package tool homes with paths under its private HOME; unsupported host-level
-version selectors are cleared. Java, NDK, Maven and Gradle runtime options
-pass through from the host. `BEELINE_SHARED_ASSETS_ENABLED=0` selects the
+Beeline adds no shared pip or Gradle cache override; their defaults follow
+the private Room HOME, while inherited custom locations remain unchanged.
+Existing Rust, Cargo, Maven, Java, Android NDK, Gradle and other toolchain
+settings pass through. The added environment variables select only supported
+shared package and harness download caches. `BEELINE_SHARED_ASSETS_ENABLED=0` selects the
 legacy layout for new cold activations; an already running session continues
 on its selected generation.
 

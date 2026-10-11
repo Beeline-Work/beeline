@@ -127,46 +127,6 @@ export function workspaceCacheEnv(paths: WorkspaceAssetPaths, cornerRoot?: strin
   };
 }
 
-/** Final tool-home selection: inherited machine homes must not cross Workspaces. */
-export function workspaceToolEnv(
-  env: Record<string, string>,
-  home: string,
-  paths: WorkspaceAssetPaths,
-  cornerRoot?: string,
-): Record<string, string> {
-  const result = { ...env };
-  for (const name of [
-    'MAVEN_ARGS', 'MAVEN_CONFIG', 'MAVEN_USER_HOME', 'MAVEN_REPO_LOCAL',
-    'GRADLE_RO_DEP_CACHE',
-    'NODE_PATH', 'PIP_CONFIG_FILE', 'PIP_TARGET', 'PIP_PREFIX', 'PIP_USER',
-    'ANDROID_SDK_HOME',
-    'NVM_BIN', 'NVM_INC', 'FNM_MULTISHELL_PATH', 'RUSTUP_TOOLCHAIN', 'ASDF_DIR',
-    'PYENV_VERSION', 'RBENV_VERSION', 'SDKMAN_DIR',
-  ]) delete result[name];
-  Object.assign(result, workspaceCacheEnv(paths, cornerRoot), {
-    PIP_CACHE_DIR: resolve(home, '.cache/pip'),
-    GRADLE_USER_HOME: resolve(home, '.gradle'),
-    CARGO_HOME: resolve(home, '.cargo'),
-    CARGO_INSTALL_ROOT: resolve(home, '.cargo'),
-    RUSTUP_HOME: resolve(home, '.rustup'),
-    GOPATH: resolve(home, 'go'),
-    GOBIN: resolve(home, 'go/bin'),
-    GOENV: resolve(home, '.config/go/env'),
-    NVM_DIR: resolve(home, '.nvm'),
-    FNM_DIR: resolve(home, '.fnm'),
-    VOLTA_HOME: resolve(home, '.volta'),
-    ASDF_DATA_DIR: resolve(home, '.asdf'),
-    MISE_DATA_DIR: resolve(home, '.local/share/mise'),
-    PYENV_ROOT: resolve(home, '.pyenv'),
-    RBENV_ROOT: resolve(home, '.rbenv'),
-    PNPM_HOME: resolve(home, '.local/share/pnpm'),
-    COREPACK_HOME: resolve(home, '.cache/node/corepack'),
-    npm_config_prefix: resolve(home, '.local'),
-    NPM_CONFIG_PREFIX: resolve(home, '.local'),
-  });
-  return result;
-}
-
 async function processExists(pid: number): Promise<boolean> {
   try { process.kill(pid, 0); return true; }
   catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }

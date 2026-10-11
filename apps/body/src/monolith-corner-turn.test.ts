@@ -1651,6 +1651,11 @@ describe('corner close-request delivery', () => {
       internal.options.config.agentKind = 'goose';
       internal.options.config.agentCommand = 'goose';
       internal.options.config.agentBinary = 'goose';
+      Object.assign(internal.options.config.agentEnv, {
+        RUSTUP_HOME: '/operator/rustup', CARGO_HOME: '/operator/cargo',
+        MAVEN_ARGS: '--offline', MAVEN_CONFIG: '/operator/maven-config',
+        GRADLE_USER_HOME: '/operator/gradle', JAVA_HOME: '/operator/jdk',
+      });
     }
     if (shape === 'android-operator') {
       const operatorHome = internal.options.config.operatorHome!;
@@ -1689,6 +1694,11 @@ describe('corner close-request delivery', () => {
         expect(selected.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
         const args = selected.agentArgs!;
         expect(args[args.lastIndexOf('--') + 1]).toBe('goose');
+        expect(selected.agentEnv).toMatchObject({
+          RUSTUP_HOME: '/operator/rustup', CARGO_HOME: '/operator/cargo',
+          MAVEN_ARGS: '--offline', MAVEN_CONFIG: '/operator/maven-config',
+          GRADLE_USER_HOME: '/operator/gradle', JAVA_HOME: '/operator/jdk',
+        });
       }
       const args = selected.agentArgs!;
       const separator = args.lastIndexOf('--');

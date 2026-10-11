@@ -8,7 +8,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { machineHost } from './machine-host.js';
-import { markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv, workspaceToolEnv } from './workspace-assets.js';
+import { markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
 import { admitSharedAssets } from './shared-asset-capacity.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
@@ -1002,10 +1002,7 @@ export class MonolithRoomTurnLoop {
     await Promise.all(Object.values(cacheEnv).map((path) => mkdir(path, { recursive: true, mode: 0o700 })));
     if (assets && this.options.config.agentPrivateRoot)
       await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
-    const inheritedEnv = { ...this.options.config.agentEnv, ...homeOverlay, ...cacheEnv };
-    const agentEnv: Record<string, string> = assets && homeOverlay.HOME
-      ? workspaceToolEnv(inheritedEnv, homeOverlay.HOME, assets)
-      : inheritedEnv;
+    const agentEnv: Record<string, string> = { ...this.options.config.agentEnv, ...homeOverlay, ...cacheEnv };
     if (toolchain && assets) {
       agentEnv.PATH = `${join(toolchain.binDir, '../../bin')}:${toolchain.binDir}:${agentEnv.PATH ?? ''}`;
       if (this.options.config.agentKind === 'pi') agentEnv.PI_ACP_PI_COMMAND = toolchain.cliCommand;

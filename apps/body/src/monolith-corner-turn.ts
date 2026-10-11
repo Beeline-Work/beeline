@@ -21,7 +21,6 @@ import {
   prepareWorkspaceAvdBase,
   sharedAssetsEnabled,
   workspaceCacheEnv,
-  workspaceToolEnv,
 } from './workspace-assets.js';
 import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capacity.js';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
@@ -1018,7 +1017,7 @@ export class MonolithCornerTurnLoop {
         mkdir(path, { recursive: true, mode: 0o700 }),
       ),
     );
-    const inheritedEnv: Record<string, string> = {
+    const agentEnv: Record<string, string> = {
       ...this.options.config.agentEnv,
       ...homeOverlay,
       ...githubEnv,
@@ -1026,10 +1025,6 @@ export class MonolithCornerTurnLoop {
       // no matter which session last prepared the shared corner worktree.
       ...agentGitIdentityEnv(this.agent),
       ...cacheEnv,
-      ...(assets && homeOverlay.HOME ? {
-        GRADLE_USER_HOME: resolve(homeOverlay.HOME, '.gradle'),
-        CARGO_HOME: resolve(homeOverlay.HOME, '.cargo'),
-      } : {}),
       ...(androidAssets && this.options.config.agentHomeRoot
         ? {
             ANDROID_AVD_HOME: androidAssets.avdBase,
@@ -1053,9 +1048,6 @@ export class MonolithCornerTurnLoop {
           }
         : {}),
     };
-    const agentEnv = assets && homeOverlay.HOME
-      ? workspaceToolEnv(inheritedEnv, homeOverlay.HOME, assets, this.options.worktreePath)
-      : inheritedEnv;
     if (toolchain && assets) {
       agentEnv.PATH = `${resolve(toolchain.binDir, '../../bin')}:${toolchain.binDir}:${agentEnv.PATH ?? ''}`;
       if (this.options.config.agentKind === 'pi') agentEnv.PI_ACP_PI_COMMAND = toolchain.cliCommand;

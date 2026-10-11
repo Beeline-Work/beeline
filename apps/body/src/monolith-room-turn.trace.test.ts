@@ -316,6 +316,41 @@ describe('Room turn phase trace', () => {
     expect(await readFile(`${cache}/harness-proof`, 'utf8')).toBe(kind);
   }, 20_000);
 
+  it('passes inherited toolchain settings unchanged into a shared-layout harness', async () => {
+    const inherited = {
+      RUSTUP_HOME: '/operator/rustup', RUSTUP_TOOLCHAIN: 'stable',
+      CARGO_HOME: '/operator/cargo', CARGO_INSTALL_ROOT: '/operator/cargo-bin',
+      MAVEN_OPTS: '-Xmx1g', MAVEN_ARGS: '--offline', MAVEN_CONFIG: '/operator/maven-config',
+      MAVEN_USER_HOME: '/operator/maven', MAVEN_REPO_LOCAL: '/operator/m2',
+      JAVA_HOME: '/operator/jdk', JAVA_TOOL_OPTIONS: '-Dtest.tool=true',
+      _JAVA_OPTIONS: '-Dtest.legacy=true', JDK_JAVA_OPTIONS: '-Dtest.jdk=true',
+      ANDROID_NDK_HOME: '/operator/ndk', ANDROID_NDK_ROOT: '/operator/ndk',
+      GRADLE_USER_HOME: '/operator/gradle', GRADLE_OPTS: '-Dorg.gradle.daemon=false',
+      GRADLE_RO_DEP_CACHE: '/operator/gradle-ro',
+      GOPATH: '/operator/go', PIP_CACHE_DIR: '/operator/pip', NODE_PATH: '/operator/node',
+    };
+    const { acpOptions, receipts } = await runTurns({
+      sharedAssets: true, agentKind: 'goose',
+      configOverrides: {
+        agentBinary: 'goose', agentCommand: 'goose',
+        agentEnv: { PATH: process.env.PATH ?? '', ...inherited },
+      },
+      asks: [{ id: 'toolchain-env', body: 'work' }],
+      prompt: async () => answer('Done'),
+    });
+    expect(receipts.at(-1)?.status).toBe('complete');
+    expect(acpOptions?.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
+    for (const [name, value] of Object.entries(inherited))
+      expect(acpOptions?.agentEnv?.[name]).toBe(value);
+    const args = acpOptions!.agentArgs!;
+    const child = spawnSync('/usr/bin/bwrap', [
+      ...args.slice(0, args.lastIndexOf('--') + 1), '/usr/bin/env',
+    ], { env: acpOptions!.agentEnv, encoding: 'utf8' });
+    expect(child.status, child.stderr).toBe(0);
+    for (const [name, value] of Object.entries(inherited))
+      expect(child.stdout).toContain(`${name}=${value}\n`);
+  }, 20_000);
+
   it('activates a real shared-layout Room mount from the turn loop', async () => {
     const { acpOptions } = await runTurns({
       sharedAssets: true,

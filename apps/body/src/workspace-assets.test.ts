@@ -7,7 +7,7 @@ import { wrapAgentCommand } from './bwrap-sandbox.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
 import {
   prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, prepareWorkspaceAvdBase,
-  sharedAssetsEnabled, workspaceAssetRoot, workspaceCacheEnv, workspaceToolEnv,
+  sharedAssetsEnabled, workspaceAssetRoot, workspaceCacheEnv,
 } from './workspace-assets.js';
 
 const roots: string[] = [];
@@ -28,49 +28,6 @@ describe('coarse Workspace assets', () => {
     expect(workspaceCacheEnv(a)).not.toHaveProperty('PIP_CACHE_DIR');
     expect(sharedAssetsEnabled({ BEELINE_SHARED_ASSETS_ENABLED: '0' })).toBe(false);
     expect(sharedAssetsEnabled({})).toBe(true);
-  });
-
-  it('scrubs inherited tool homes in the effective sandbox environment', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-tool-env-'));
-    roots.push(root);
-    const assets = await prepareWorkspaceAssets(workspaceAssetRoot(root, 'A'));
-    const runtime = resolve(root, 'beeline/agents/a');
-    const home = resolve(runtime, 'rooms/one/agent-home');
-    await mkdir(home, { recursive: true });
-    await writeFile(resolve(runtime, 'runtime.json'), '{}');
-    const env = workspaceToolEnv({
-      ...process.env as Record<string, string>, HOME: resolve(home, 'user'),
-      RUSTUP_HOME: '/tmp/host-rustup', GOPATH: '/tmp/host-go', NVM_BIN: '/tmp/host-nvm',
-      JAVA_HOME: '/tmp/host-jdk', ANDROID_NDK_HOME: '/tmp/host-ndk',
-      MAVEN_OPTS: '-Xmx1g', GRADLE_OPTS: '-Dorg.gradle.daemon=false',
-      JAVA_TOOL_OPTIONS: '-Dtest.tool=true', _JAVA_OPTIONS: '-Dtest.legacy=true',
-      JDK_JAVA_OPTIONS: '-Dtest.jdk=true', PIP_CACHE_DIR: '/tmp/host-pip',
-    }, resolve(home, 'user'), assets);
-    expect(env.RUSTUP_HOME).toBe(resolve(home, 'user/.rustup'));
-    expect(env.GOPATH).toBe(resolve(home, 'user/go'));
-    expect(env.PIP_CACHE_DIR).toBe(resolve(home, 'user/.cache/pip'));
-    expect(env.NVM_BIN).toBeUndefined();
-    expect(env.JAVA_HOME).toBe('/tmp/host-jdk');
-    expect(env.ANDROID_NDK_HOME).toBe('/tmp/host-ndk');
-    expect(env.MAVEN_OPTS).toBe('-Xmx1g');
-    expect(env.GRADLE_OPTS).toBe('-Dorg.gradle.daemon=false');
-    expect(env.JAVA_TOOL_OPTIONS).toBe('-Dtest.tool=true');
-    expect(env._JAVA_OPTIONS).toBe('-Dtest.legacy=true');
-    expect(env.JDK_JAVA_OPTIONS).toBe('-Dtest.jdk=true');
-    const wrapped = wrapAgentCommand({
-      bwrapPath: '/usr/bin/bwrap',
-      spec: { mode: 'readonly', cwd: resolve(runtime, 'rooms/one'),
-        sharedLayout: { assetRoot: assets.root, agentRuntimeDir: runtime, privateHomeRoot: home } },
-      command: '/usr/bin/env',
-    });
-    const child = spawnSync(wrapped.command, wrapped.args, { env, encoding: 'utf8' });
-    expect(child.status, child.stderr).toBe(0);
-    expect(child.stdout).toContain(`RUSTUP_HOME=${resolve(home, 'user/.rustup')}`);
-    expect(child.stdout).toContain(`PIP_CACHE_DIR=${resolve(home, 'user/.cache/pip')}`);
-    expect(child.stdout).toContain('JAVA_HOME=/tmp/host-jdk');
-    expect(child.stdout).toContain('ANDROID_NDK_HOME=/tmp/host-ndk');
-    expect(child.stdout).toContain('MAVEN_OPTS=-Xmx1g');
-    expect(child.stdout).toContain('GRADLE_OPTS=-Dorg.gradle.daemon=false');
   });
 
   it('pins both adapter and nested CLI in versioned, immutable Workspace generations', async () => {

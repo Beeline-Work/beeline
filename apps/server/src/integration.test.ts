@@ -7565,6 +7565,15 @@ describe('monolith integration', () => {
         check_suite: { head_branch: 'fm/widget', head_sha: '1'.repeat(40) },
       },
     });
+    Object.assign(githubApp, {
+      readPullRequest: vi.fn(async () => ({
+        number: 42,
+        url: 'https://github.com/owner/widgets/pull/42',
+        headSha: '1'.repeat(40),
+        headRef: 'fm/widget',
+        merged: false,
+      })),
+    });
     githubRollupState = 'failed';
     await webhook('check_suite', 'corner-checks-failed', {
       ...base,
@@ -7581,14 +7590,6 @@ describe('monolith integration', () => {
     });
     // The owner's yes on a red head is kept, and nothing merges until the
     // head is green: there is no force past failing checks.
-    Object.assign(githubApp, {
-      readPullRequest: vi.fn(async () => ({
-        url: 'https://github.com/owner/widgets/pull/42',
-        headSha: '1'.repeat(40),
-        headRef: 'fm/widget',
-        merged: false,
-      })),
-    });
     const redApproval = await request('/v1/phone/operations/approveCornerMerge', 'POST', {
       cornerId,
     });

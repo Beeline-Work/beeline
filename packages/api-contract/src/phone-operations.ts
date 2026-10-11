@@ -1,4 +1,4 @@
-import type { RoomWebhooksResult } from './room-webhooks.js';
+import type { RoomSubscriptionListResult } from './subscriptions.js';
 import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
 import type { AgentAccessPolicy } from './agent-access.js';
@@ -78,9 +78,8 @@ export type CornerMergeHold = {
 };
 
 export type PhoneOperationMap = {
-  readRoomWebhooks: { input: { roomId: string }; output: RoomWebhooksResult };
-  manageRoomWebhook: { input: { roomId: string; action: 'create' | 'rotate' | 'revoke' | 'secret'; source?: string; webhookId?: string; signingSecret?: string | null }; output: { url?: string } };
-  decideWebhookRequest: { input: { roomId: string; webhookRequestId: string; approve: boolean; signingSecret?: string; revealSecret?: boolean }; output: { status: string } };
+  listRoomSubscriptions: { input: { roomId: string }; output: RoomSubscriptionListResult };
+  deleteRoomSubscription: { input: { roomId: string; subscriptionId: string }; output: void };
   setCornerHold: { input: CornerHoldInput; output: { holdId: string; roomId: string } };
   readWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
   completeWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
@@ -242,7 +241,7 @@ export type PhoneOperationMap = {
  * may also repeat one on a fresh connection when the first attempt stalls.
  */
 export const PHONE_READ_OPERATIONS = [
-  'readRoomWebhooks',
+  'listRoomSubscriptions',
   'readWelcomeCards',
   'readStarPrompt',
   'listMessageBookmarks',

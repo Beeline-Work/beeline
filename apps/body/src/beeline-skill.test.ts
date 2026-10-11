@@ -94,7 +94,9 @@ describe('using-beeline Room guidance', () => {
     // A tool a model never hears about is a tool nobody calls: the welcome
     // agent could not subscribe, and someone edited a database row for it.
     const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('beeline-agent subscribe_events');
+    expect(markdown).toContain('beeline-agent create_subscription');
+    expect(markdown).toContain('list_subscriptions and delete_subscription');
+    expect(markdown).toContain('No approval or URL setup is needed');
     expect(markdown).toContain('list_event_subscriptions');
     expect(markdown).toContain('joined');
     expect(markdown).toContain('You do this yourself');
@@ -104,9 +106,9 @@ describe('using-beeline Room guidance', () => {
   it('tells a model with post-merge work to subscribe to merged, and never to acknowledge a merge', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
     expect(markdown).toContain('A corner merging wakes nobody in its parent Room by default.');
-    expect(markdown).toContain('subscribe to merged in the parent Room, from a turn there, before the merge');
-    expect(markdown).toContain('act only on the corner you are waiting for, post nothing for any other merge');
-    expect(markdown).toContain('take merged back out of your list once nothing is left to wait for');
+    expect(markdown).toContain('create a merged subscription in the parent Room before the merge');
+    expect(markdown).toContain('Act only on that corner; post nothing for any other merge');
+    expect(markdown).toContain('Delete the subscription when the follow-up is done');
     expect(markdown).toContain(
       'Never post just to acknowledge a merge: the merge card already announces it.',
     );
@@ -123,7 +125,7 @@ describe('using-beeline Room guidance', () => {
       expect(markdown).not.toContain(`${kind} `);
     }
     expect(markdown).toContain(
-      'there is nothing to subscribe to for it, and asking is refused',
+      'there is nothing to subscribe to for those item-specific events, and asking is refused',
     );
     expect(markdown).toContain('ask_choice');
     expect(markdown).toContain('open_poll');

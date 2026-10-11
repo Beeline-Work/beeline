@@ -1,4 +1,3 @@
-import { WebhookRequestCard } from '@/components/buzz/WebhookRequestCard';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { HumanProfile } from '../human-profile';
 import BuzzMembers from '../members';
@@ -5686,10 +5685,6 @@ export function BuzzChatSurface({
         );
       }
 
-      if (item.webhookRequest) {
-        return <WebhookRequestCard request={item.webhookRequest} roomId={decodedId}
-          canManage={!viewerIsAgent && (viewerChannelRole === 'owner' || viewerChannelRole === 'admin' || canManageWorkspace)} />;
-      }
       if (item.grantRequest) {
         return (
           <GrantRequestCard
@@ -7308,9 +7303,9 @@ export function BuzzChatSurface({
             />
             {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
               <HullActionSheetRow
-                accessibilityLabel={`View ${ROOM_LABEL} schedules and webhooks`}
+                accessibilityLabel={`View ${ROOM_LABEL} schedules and subscriptions`}
                 chevron="right"
-                label="Schedules and webhooks"
+                label="Schedules and subscriptions"
                 onPress={() => {
                   setRoomActionsVisible(false);
                   router.push({

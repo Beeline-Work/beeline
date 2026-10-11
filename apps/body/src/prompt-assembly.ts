@@ -1,4 +1,4 @@
-import { boundReplyExcerpt, quoteOutsideData, WORKSPACE_CORE_SKILL_SLUG, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
+import { boundReplyExcerpt, subscriptionActionPrompt, WORKSPACE_CORE_SKILL_SLUG, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { CornerGitHubCli } from './corner-github-auth.js';
 import { ACP_SESSION_MEMORY_MAX_BYTES } from './acp-resource-scope.js';
@@ -963,8 +963,8 @@ export function assembleTurnPrompt(context: TurnPromptContext): {
   readonly text: string;
   readonly report: readonly SectionReport[];
 } {
-  if (context.task.outsideEvent?.kind?.startsWith('webhook:')) {
-    context = { ...context, task: { ...context.task, body: quoteOutsideData(context.task.outsideEvent.kind, context.task.outsideEvent.payload) } };
+  if (context.task.outsideEvent?.kind === 'subscription-fired') {
+    context = { ...context, task: { ...context.task, body: subscriptionActionPrompt(context.task.outsideEvent) } };
   }
   const boundedContext = ROOMS.includes(context.surface)
     ? {

@@ -7,12 +7,10 @@ import { StyleSheet } from 'react-native-unistyles';
 import { scheduleRuns, scheduleWhere, stopSchedule, useScheduledWork } from '@/buzz/scheduled-work';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import {
-  DetailRailLine,
-  DetailSection,
+  ScheduledWorkDoes,
   ScheduledWorkFacts,
   StopScheduledWork,
 } from '@/components/buzz/ScheduledWorkDetail';
-import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -20,9 +18,7 @@ function first(value: string | string[] | undefined): string | undefined {
 }
 
 /**
- * One prompt schedule, laid out like a workflow run page: Schedules and
- * Webhooks over Schedule, the Runs, Agent and Where rows, the full prompt on
- * the run page's summary rail, how often it has fired, then Stop.
+ * One schedule, with the same detail grammar as a subscription.
  */
 export default function PromptSchedule() {
   useLatencyRouteFrame('/beeline/settings/schedule');
@@ -54,8 +50,8 @@ export default function PromptSchedule() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <PageHeader
-        backAccessibilityLabel="Back to Schedules and Webhooks"
-        eyebrow="Schedules and Webhooks"
+        backAccessibilityLabel="Back to Schedules and subscriptions"
+        eyebrow="Schedules and subscriptions"
         onBack={() => router.back()}
         testID="schedule-header"
         title="Schedule"
@@ -78,16 +74,10 @@ export default function PromptSchedule() {
             agents={[work?.agentNames.get(schedule.agentId) ?? 'Agent']}
             runs={scheduleRuns(schedule)}
             where={scheduleWhere(schedule)}
+            whereCorner={schedule.corner}
           />
-          <DetailSection testID="schedule-prompt-header" title="Prompt" />
-          <DetailRailLine testID="schedule-prompt">{schedule.message}</DetailRailLine>
-          <View style={styles.rows}>
-            <SettingsRow
-              testID="schedule-run-count"
-              title="Runs so far"
-              value={String(schedule.runCount)}
-            />
-          </View>
+          <ScheduledWorkDoes roomId={schedule.roomId} parentRoomId={roomId}
+            scheduleId={schedule.id} prompt={schedule.message} workflowSlug={schedule.workflowSlug} />
           <StopScheduledWork
             label="Stop schedule"
             onStop={() => void stop()}
@@ -107,7 +97,6 @@ export default function PromptSchedule() {
 const styles = StyleSheet.create((theme) => ({
   screen: { flex: 1, backgroundColor: theme.buzz.bgBase },
   loading: { padding: theme.buzz.space.xl, alignItems: 'center', justifyContent: 'center' },
-  rows: { paddingHorizontal: theme.buzz.space.sm },
   gone: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, padding: theme.buzz.space.md },
   error: {
     minHeight: 44,

@@ -1,6 +1,7 @@
 import { RoomWebhooks, webhookPromptBody } from './room-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
 import { activeCornerHolds, setCornerHold } from './corner-holds.js';
+import { visibleChatMessageSql } from './read-cursor.js';
 import { renderAgentAvatar } from './agent-avatar.js';
 import {
   authorizeCommandOutput,
@@ -2713,6 +2714,10 @@ export class DaemonService {
     const limit = Math.max(1, Math.min(input.limit ?? 100, 200));
     const after = input.after?.match(/^(\d+),([0-9a-f]{64})$/);
     if (input.after && !after) throw new Error('invalid inbox cursor');
+    const beforeInput = name === 'getRoomConversation' ? input.before : undefined;
+    const before = beforeInput?.match(/^(\d+),([0-9a-f]{64})$/);
+    if (beforeInput && (!before || after || input.window === 'earliest' || input.window === 'continuity'))
+      throw new Error('invalid conversation before cursor');
     // A conversation read defaults to the NEWEST page: a turn is prompted from
     // the most recent messages, and the first 200 rows of a long Room are old
     // news. Startup objective recovery is the one caller that wants the other
@@ -2755,6 +2760,7 @@ export class DaemonService {
         : newestPage
           ? `SELECT * FROM (${conversationColumns}
              FROM messages WHERE room_id=$1
+               ${before ? `AND (${MESSAGE_CURSOR_MS_SQL},id) < ($2::bigint,$3)` : ''}
              ORDER BY cursor_ms DESC,id DESC LIMIT ${limit}) newest
            ORDER BY cursor_ms,id`
           : `${conversationColumns}
@@ -2767,7 +2773,13 @@ export class DaemonService {
                    : ''
                }
              ORDER BY cursor_ms,id LIMIT ${limit + 1}`,
-      after ? (input.rewind ? [roomId, after[1]] : [roomId, after[1], after[2]]) : [roomId],
+      after
+        ? input.rewind
+          ? [roomId, after[1]]
+          : [roomId, after[1], after[2]]
+        : before
+          ? [roomId, before[1], before[2]]
+          : [roomId],
     );
     const page = newestPage ? rows.rows : rows.rows.slice(0, limit);
     const visiblePage = page;
@@ -3148,15 +3160,28 @@ export class DaemonService {
         lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
         pull_request_number: number | null;
         approval_head_sha: string | null;
+        running: boolean;
+        last_author_id: string | null;
+        last_author_kind: 'human' | 'agent' | null;
+        last_created_at: Date | null;
+        last_type: 'message' | 'system' | 'card' | null;
+        last_excerpt: string | null;
       }>(
         `SELECT room.parent_id parent_room_id,room.archived_at IS NOT NULL archived,
            fact.objective,room.name title,fact.title_generated,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
            requester.handle requester_handle,
-           approval.pull_request_number,approval.head_sha approval_head_sha
+           approval.pull_request_number,approval.head_sha approval_head_sha,
+           EXISTS(SELECT 1 FROM agent_turns turn WHERE turn.room_id=fact.corner_id AND turn.status='working') running,
+           last.author_id last_author_id,last_author.kind last_author_kind,last.created_at last_created_at,
+           last.presentation last_type,left(last.text,280) last_excerpt
          FROM corner_facts fact
          JOIN rooms room ON room.id=fact.corner_id
          LEFT JOIN corner_merge_approvals approval ON approval.corner_id=fact.corner_id
          LEFT JOIN identities requester ON requester.id=fact.commissioned_by
+         LEFT JOIN LATERAL (SELECT author_id,created_at,presentation,text FROM messages message
+           WHERE message.room_id=fact.corner_id AND ${visibleChatMessageSql('message')}
+           ORDER BY created_at DESC,id DESC LIMIT 1) last ON true
+         LEFT JOIN identities last_author ON last_author.id=last.author_id
          WHERE fact.corner_id=$1`,
         [cornerId],
       )
@@ -3182,6 +3207,20 @@ export class DaemonService {
               headSha: row.approval_head_sha,
             },
           }
+        : {}),
+      ...(row ? { activity: row.running ? ('running' as const) : ('idle' as const) } : {}),
+      ...(row?.last_author_id && row.last_created_at && row.last_type
+        ? {
+            lastMessage: {
+              authorId: row.last_author_id,
+              createdAt: row.last_created_at.toISOString(),
+              type: row.last_type,
+              excerpt: row.last_excerpt ?? '',
+            },
+          }
+        : {}),
+      ...(row && !row.running && !row.lifecycle?.pr && row.last_author_kind === 'agent'
+        ? { awaiting: 'reply' as const }
         : {}),
     };
   }

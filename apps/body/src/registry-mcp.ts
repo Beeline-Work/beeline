@@ -652,6 +652,19 @@ async function refresh(state: ConnectedState, transport: typeof fetch): Promise<
   };
 }
 
+/** Helper-owned provider maintenance may use a connected Registry credential; it never enters a turn. */
+export async function registryMcpProviderToken(connectorId: string, expectedName: string,
+  home = homedir(), transport: typeof fetch = fetch): Promise<string> {
+  const path = registryMcpStatePath(connectorId, home);
+  const stored = readState(path);
+  if (stored?.status !== 'connected' || stored.serverName !== expectedName)
+    throw new Error('Official MCP connection is unavailable');
+  const state = await refresh(stored, transport);
+  if (state !== stored) writeState(path, state);
+  if (!state.accessToken) throw new Error('Official MCP credential is unavailable');
+  return state.accessToken;
+}
+
 export type RegistryMcpTurnContext = {
   readonly roomId: string;
   readonly requestId: string;

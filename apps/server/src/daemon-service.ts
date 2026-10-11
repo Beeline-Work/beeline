@@ -1,5 +1,6 @@
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
+import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
 import { activeCornerHolds, setCornerHold } from './corner-holds.js';
 import { visibleChatMessageSql } from './read-cursor.js';
@@ -1093,12 +1094,14 @@ export class DaemonService {
       case 'createAgentSubscription':
         return await createAgentSubscription(this.database, authenticatedAgentId,
           input as Input<'createAgentSubscription'>,
-          this.composio && this.subscriptionReceiverUrl
-            ? { composio: this.composio, receiverUrl: this.subscriptionReceiverUrl } : undefined) as Output<Name>;
+          this.subscriptionReceiverUrl
+            ? { ...(this.composio ? { composio: this.composio } : {}),
+              receiverUrl: this.subscriptionReceiverUrl } : undefined) as Output<Name>;
       case 'listServiceSubscriptionEvents':
-        return this.composio && this.subscriptionReceiverUrl
+        return this.subscriptionReceiverUrl
           ? await listServiceSubscriptionEvents(this.database,
-            (input as Input<'listServiceSubscriptionEvents'>).roomId, authenticatedAgentId) as Output<Name>
+            (input as Input<'listServiceSubscriptionEvents'>).roomId, authenticatedAgentId,
+            Boolean(this.composio)) as Output<Name>
           : { events: [] } as Output<Name>;
       case 'listAgentSubscriptions':
         return await listAgentSubscriptions(this.database,
@@ -1405,6 +1408,10 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getConnectorAssignments':
         return (await this.connectorAssignments(authenticatedAgentId)) as Output<Name>;
+      case 'completeProviderWebhookAssignment':
+        await completeProviderWebhookAssignment(this.database, authenticatedAgentId,
+          input as Input<'completeProviderWebhookAssignment'>);
+        return this.writeResult() as Output<Name>;
       case 'reportAgentSignIn':
         await reportAgentSignIn(
           this.database,
@@ -1990,6 +1997,9 @@ export class DaemonService {
          WHERE id = ANY($1::uuid[])`,
         [pendingIds],
       );
+    assignments.push(...(await providerWebhookAssignments(this.database, agentId)).map((job) => ({
+      kind: 'provider-webhook' as const, ...job,
+    })));
     return { assignments };
   }
 
@@ -7998,6 +8008,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentModelCatalog: true,
   postAgentMachineReport: true,
   getConnectorAssignments: true,
+  completeProviderWebhookAssignment: true,
   reportAgentSignIn: true,
   getGoogleOAuthGrant: true,
   createLinkSpendRequest: true,

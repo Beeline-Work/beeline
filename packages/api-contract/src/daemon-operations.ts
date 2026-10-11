@@ -561,6 +561,15 @@ export type DaemonOperationMap = {
   revokeConnectionGrants: Operation<AgentInput & ConnectionRefInput, ConnectionGrantRevokeResult>;
   postConnectionUsage: Operation<PostConnectionUsageInput, WriteResult>;
   getConnectorAssignments: Operation<AgentInput, ConnectorAssignmentsResult>;
+  completeProviderWebhookAssignment: Operation<AgentInput & {
+    readonly id: string;
+    readonly operation: 'register' | 'remove';
+    readonly providerId?: string;
+    readonly signingSecret?: string;
+    readonly accountContext?: string;
+    readonly livemode?: boolean;
+    readonly error?: string;
+  }, WriteResult>;
   /** The helper's answer to one Sign in to Claude step: the authorize link or the verdict. */
   reportAgentSignIn: Operation<ReportAgentSignInInput, void>;
   getGoogleOAuthGrant: Operation<
@@ -1847,6 +1856,19 @@ export type ConnectorAssignment =
       readonly connectorId: string;
       readonly connectorType: ConnectorKind;
       readonly pairingGeneration?: number;
+    }
+  | {
+      readonly kind: 'provider-webhook';
+      readonly connectorId: string;
+      readonly id: string;
+      readonly service: 'linear' | 'stripe';
+      readonly event: string;
+      readonly receiverUrl: string;
+      readonly operation: 'register' | 'remove';
+      readonly providerId?: string;
+      readonly signingSecret?: string;
+      readonly accountContext?: string;
+      readonly livemode?: boolean;
     };
 
 export type ConnectorAssignmentsResult = {

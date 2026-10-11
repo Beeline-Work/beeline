@@ -1,5 +1,6 @@
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
+import { PROVIDER_WEBHOOKS_SCHEMA } from './provider-webhooks.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
 import { hyphenateCornerNames } from './migrations/corner-names.js';
 import {
@@ -2797,6 +2798,7 @@ export async function migrate(
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
   await ddlScript('agent subscriptions', AGENT_SUBSCRIPTIONS_SCHEMA);
+  await ddlScript('provider webhooks', PROVIDER_WEBHOOKS_SCHEMA);
   await ddl('retire room webhooks', `
     DROP TABLE IF EXISTS room_webhook_idempotency, room_webhook_rates,
       room_webhook_deliveries, room_webhook_requests, room_webhooks;

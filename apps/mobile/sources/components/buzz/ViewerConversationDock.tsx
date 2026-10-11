@@ -6,8 +6,8 @@ import type { AttachmentReference } from '@beeline/buzz-client';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 import { currentViewerConversation, subscribeViewerConversation, viewerAgentHandle, viewerContext } from '@/buzz/viewer-conversation';
 import { withAlpha } from '@/buzz/groknight';
-import { MAX_MESSAGE_ATTACHMENTS, pickedPhotoAttachments, type PickedChatAttachment } from '@/buzz/chat-attachment';
-import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT, ConversationComposer, type DictatedSend } from './ConversationComposer';
+import { MAX_MESSAGE_ATTACHMENTS, pickedPhotoAttachments, type PickedChatAttachment } from '@/buzz/chat-attachment-pick';
+import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT, ConversationComposer, type DictatedSend } from '@/components/buzz/ConversationComposer';
 import { AttachmentPickerSheet } from './AttachmentPickerSheet';
 
 type Entry = { id: string; speaker: string; text: string; context?: string };

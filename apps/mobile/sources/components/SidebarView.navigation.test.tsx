@@ -315,7 +315,7 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
 }));
 
 import { SidebarView } from './SidebarView';
-import { resetChatListStoresForTest } from '@/buzz/chat-list-store';
+import { liveChatList, refreshChatList, resetChatListStoresForTest } from '@/buzz/chat-list-store';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 let tree: ReactTestRenderer;
 function control(id: string) {
@@ -334,6 +334,17 @@ async function settle() {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+async function refreshWorkspaceViewer() {
+  const key = { relayUrl: 'http://server.test', viewerPubkey: 'viewer', workspaceId: 'workspace-a' };
+  refreshChatList(key);
+  await vi.waitFor(() => {
+    const surface = liveChatList(key);
+    expect(surface?.workspace.role).toBe(workspaceRole.current);
+    expect(surface?.viewer.kind).toBe(viewer.kind);
+  });
+  await settle();
 }
 
 beforeAll(() => {
@@ -657,6 +668,7 @@ describe('desktop Workspace navigation', () => {
 
   it('offers Workspace settings to a Workspace admin', async () => {
     workspaceRole.current = 'admin';
+    await refreshWorkspaceViewer();
     await act(async () => {
       tree.update(<SidebarView key="admin-viewer" />);
     });
@@ -668,6 +680,7 @@ describe('desktop Workspace navigation', () => {
 
   it('does not offer Workspace settings to an ordinary member', async () => {
     workspaceRole.current = 'member';
+    await refreshWorkspaceViewer();
     await act(async () => {
       tree.update(<SidebarView key="member-viewer" />);
     });
@@ -740,6 +753,7 @@ describe('desktop Workspace navigation', () => {
 
   it('hides the Rooms plus and the settings glyph from an ordinary member and takes nothing else away', async () => {
     workspaceRole.current = 'member';
+    await refreshWorkspaceViewer();
     await act(async () => {
       tree.update(<SidebarView key="member-viewer" />);
     });
@@ -756,6 +770,7 @@ describe('desktop Workspace navigation', () => {
 
   it('does not offer New Room to an agent even with an elevated Workspace role', async () => {
     viewer.kind = 'agent';
+    await refreshWorkspaceViewer();
     await act(async () => {
       tree.update(<SidebarView key="agent-viewer" />);
     });
@@ -839,6 +854,7 @@ describe('desktop Workspace navigation', () => {
 
   it('offers an agent viewer no corner long press', async () => {
     viewer.kind = 'agent';
+    await refreshWorkspaceViewer();
     await act(async () => {
       tree.update(<SidebarView key="agent-viewer" />);
     });

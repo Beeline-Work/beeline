@@ -137,6 +137,12 @@ vi.mock('@/components/buzz/DesktopArtifactPane', async () => {
     DesktopArtifactPane: (props: any) => ReactModule.createElement('DesktopArtifactPane', props),
   };
 });
+vi.mock('@/components/buzz/ComputerSession', async () => {
+  const ReactModule = await import('react');
+  return {
+    ComputerSessionViewer: (props: any) => ReactModule.createElement('ComputerSessionViewer', props),
+  };
+});
 vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   const ReactModule = await import('react');
   return {

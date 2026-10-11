@@ -23,6 +23,9 @@ import {
   MonolithSessionRequiredError,
   monolithOrigins,
 } from './monolith-session';
+import { TokenAuth } from '../../../server/src/auth';
+import { migrate } from '../../../server/src/database';
+import { PgliteDatabase } from '../../../server/src/test-support';
 
 const tokens = (generation: number) => ({
   accessToken: `access-${generation}`,
@@ -293,6 +296,56 @@ describe('monolith phone session', () => {
       expect(next.status).toBe(204);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('stays signed in when a refresh commits on the server but its reply times out', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const auth = new TokenAuth(db, async () => ({
+        subject: 'owner', login: 'owner', name: 'Owner',
+      }));
+      const initial = await auth.exchangeGitHubOidc('proof');
+      secure.set('buzzy.monolith.refresh.v1', initial.refreshToken);
+      let first = true;
+      let committed!: () => void;
+      const firstCommitted = new Promise<void>((resolve) => { committed = resolve; });
+      const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        if (!String(input).endsWith('/v1/auth/refresh')) return new Response(null, { status: 204 });
+        const request = JSON.parse(String(init?.body)) as { refreshToken: string };
+        const answer = await auth.refresh(request.refreshToken);
+        if (first) {
+          first = false;
+          committed();
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            );
+          });
+        }
+        return answer
+          ? new Response(JSON.stringify(answer), { status: 200 })
+          : new Response(null, { status: 401 });
+      });
+      const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+      vi.useFakeTimers();
+      try {
+        const firstAttempt = session.authorization();
+        const firstAssertion = expect(firstAttempt).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
+        await firstCommitted;
+        expect(secure.get('buzzy.monolith.refresh.v1')).toBe(initial.refreshToken);
+        await vi.advanceTimersByTimeAsync(10_000);
+        await firstAssertion;
+        const access = await session.authorization();
+        expect(await auth.authenticatePhone(access)).toBe(initial.identityId);
+        expect(secure.get('buzzy.monolith.refresh.v1')).not.toBe(initial.refreshToken);
+        expect(await session.identityId()).toBe(initial.identityId);
+      } finally {
+        vi.useRealTimers();
+      }
+    } finally {
+      await db.close();
     }
   });
 

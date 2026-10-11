@@ -1,4 +1,11 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
 import { GITHUB_IDENTITY_AUDIENCE } from '@beeline/auth/github';
 import type { SqlDatabase } from './database.js';
 import { ensureReviewWorkspace } from './review-proof-fixture.js';
@@ -14,6 +21,7 @@ import {
 
 const ACCESS_LIFETIME_MS = 15 * 60_000;
 const REFRESH_LIFETIME_MS = 30 * 24 * 60 * 60_000;
+const REFRESH_REPLAY_GRACE_MS = 120_000;
 const DAEMON_EXCHANGE_LIFETIME_MS = 15 * 60_000;
 const DAEMON_AUTH_CACHE_TTL_MS = 10_000;
 
@@ -48,6 +56,30 @@ function sameHash(left: string, right: string): boolean {
   const a = Buffer.from(left, 'hex');
   const b = Buffer.from(right, 'hex');
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// Only the holder of the consumed token can decrypt its successor. The database
+// keeps the hash and sealed reply, never the raw phone credentials.
+function replayKey(refreshToken: string): Buffer {
+  return createHash('sha256').update('beeline:refresh-replay:').update(refreshToken).digest();
+}
+
+function sealSuccessor(refreshToken: string, tokens: PhoneTokens): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', replayKey(refreshToken), iv);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(tokens), 'utf8'), cipher.final()]);
+  return [iv, cipher.getAuthTag(), ciphertext].map((part) => part.toString('base64url')).join('.');
+}
+
+function openSuccessor(refreshToken: string, sealed: string): PhoneTokens {
+  const parts = sealed.split('.').map((part) => Buffer.from(part, 'base64url'));
+  if (parts.length !== 3 || parts[0]!.length !== 12 || parts[1]!.length !== 16)
+    throw new Error('stored phone successor is invalid');
+  const decipher = createDecipheriv('aes-256-gcm', replayKey(refreshToken), parts[0]!);
+  decipher.setAuthTag(parts[1]!);
+  return JSON.parse(
+    Buffer.concat([decipher.update(parts[2]!), decipher.final()]).toString('utf8'),
+  ) as PhoneTokens;
 }
 
 export interface PhoneTokens {
@@ -171,10 +203,31 @@ export class TokenAuth {
         family_id: string;
         expires_at: Date;
         consumed_at: Date | null;
+        successor_tokens: string | null;
       }>(`SELECT * FROM phone_sessions WHERE refresh_hash = $1 FOR UPDATE`, [hash]);
       const session = found.rows[0];
       if (!session || !sameHash(session.refresh_hash, hash)) return null;
-      if (session.consumed_at || session.expires_at.getTime() <= this.now().getTime()) {
+      const now = this.now();
+      if (
+        session.consumed_at &&
+        session.successor_tokens &&
+        session.expires_at.getTime() > now.getTime() &&
+        session.consumed_at.getTime() <= now.getTime() &&
+        now.getTime() - session.consumed_at.getTime() <= REFRESH_REPLAY_GRACE_MS
+      ) {
+        const successor = openSuccessor(refreshToken, session.successor_tokens);
+        const current = await database.query<{ consumed_at: Date | null }>(
+          `SELECT consumed_at FROM phone_sessions WHERE refresh_hash=$1 AND family_id=$2 FOR UPDATE`,
+          [tokenHash(successor.refreshToken), session.family_id],
+        );
+        if (
+          current.rows[0] &&
+          !current.rows[0].consumed_at &&
+          successor.refreshExpiresAt > now.getTime()
+        )
+          return successor;
+      }
+      if (session.consumed_at || session.expires_at.getTime() <= now.getTime()) {
         await database.query(`DELETE FROM phone_sessions WHERE family_id = $1`, [
           session.family_id,
         ]);
@@ -183,11 +236,16 @@ export class TokenAuth {
         ]);
         return null;
       }
-      await database.query(`UPDATE phone_sessions SET consumed_at = $2 WHERE refresh_hash = $1`, [
-        hash,
-        this.now(),
-      ]);
-      return this.issuePhoneTokens(session.identity_id, session.family_id, database);
+      const successor = await this.issuePhoneTokens(
+        session.identity_id,
+        session.family_id,
+        database,
+      );
+      await database.query(
+        `UPDATE phone_sessions SET consumed_at=$2, successor_tokens=$3 WHERE refresh_hash=$1`,
+        [hash, now, sealSuccessor(refreshToken, successor)],
+      );
+      return successor;
     });
   }
 

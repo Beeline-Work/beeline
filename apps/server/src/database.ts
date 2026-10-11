@@ -195,7 +195,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 22;
+export const REQUIRED_SCHEMA_VERSION = 23;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -661,8 +661,10 @@ CREATE TABLE IF NOT EXISTS phone_sessions (
   family_id uuid NOT NULL,
   expires_at timestamptz NOT NULL,
   consumed_at timestamptz,
+  successor_tokens text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE phone_sessions ADD COLUMN IF NOT EXISTS successor_tokens text;
 CREATE INDEX IF NOT EXISTS phone_sessions_identity_idx ON phone_sessions(identity_id, expires_at);
 
 CREATE TABLE IF NOT EXISTS phone_access_tokens (

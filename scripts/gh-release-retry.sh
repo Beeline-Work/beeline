@@ -146,6 +146,31 @@ ghr_create() {
   done
 }
 
+# ghr_publish <release> <notes-file>
+# Publish only after every installer and the updater manifest are on the draft.
+# A successful edit whose response was lost is confirmed by reading isDraft.
+# Keep this retry short: release_result has a two-minute job budget.
+ghr_publish() {
+  local release="$1"
+  local notes="$2"
+  local attempt=1
+  while :; do
+    if gh release edit "$release" --notes-file "$notes" --draft=false --latest &&
+       [ "$(gh release view "$release" --json isDraft --jq .isDraft)" = false ]; then
+      return 0
+    fi
+    if [ "$(gh release view "$release" --json isDraft --jq .isDraft 2>/dev/null)" = false ]; then
+      return 0
+    fi
+    if [ "$attempt" -ge 3 ]; then
+      ghr_exhausted "release publish $release"
+      return 1
+    fi
+    ghr_sleep_backoff "$attempt"
+    attempt=$((attempt + 1))
+  done
+}
+
 # ghr_delete_asset <release> <asset-name>
 # Bounded retry around `gh release delete-asset --yes`. Callers keep `|| true`
 # where deletion is best-effort, unchanged.

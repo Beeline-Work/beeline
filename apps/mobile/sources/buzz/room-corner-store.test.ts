@@ -17,6 +17,7 @@ import {
   resetRoomCornerStore,
   roomCornerListView,
   roomOpenCornerRows,
+  subscribeRoomCornerFacts,
 } from './room-corner-store';
 
 const ROOM = 'room-a';
@@ -61,6 +62,20 @@ const ids = () => roomOpenCornerRows(getRoomCorners(ROOM)).map((item) => item.co
 beforeEach(() => resetRoomCornerStore());
 
 describe('room corner store', () => {
+  it('does not report the first rows as a workflow change', () => {
+    let changes = 0;
+    const stop = subscribeRoomCornerFacts(ROOM, () => { changes += 1; });
+    applyCornerListRead(ROOM, view([row('a')]), cornerReadMark(ROOM));
+    expect(changes).toBe(0);
+    acceptCornerStatusFrame(frame(1, [row('a', 'review')]));
+    expect(changes).toBe(1);
+    noteRoomCornersChanged(ROOM);
+    expect(changes).toBe(2);
+    resetRoomCornerStore();
+    expect(changes).toBe(2);
+    stop();
+  });
+
   it('keeps frame rows current only while the lane holds them', () => {
     noteCornerLaneSubscribed(ROOM, false);
     expect(acceptCornerStatusFrame(frame(1, [row('a')]))).toBe(true);

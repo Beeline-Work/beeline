@@ -212,14 +212,13 @@ function subscribeRoomCorners(roomId: string, listener: () => void): () => void 
 
 /** Workflow cells observe the same corner record as every other reader. */
 export function subscribeRoomCornerFacts(roomId: string, listener: () => void): () => void {
-  let facts = rowsFacts(entry(roomId).rows);
-  let wantsRead = entry(roomId).wantsRead;
+  let previous = entry(roomId);
   return records.subscribe(roomId, () => {
     const current = entry(roomId);
-    const next = rowsFacts(current.rows);
-    const changed = next !== facts || (current.wantsRead && !wantsRead);
-    facts = next;
-    wantsRead = current.wantsRead;
+    const changed = Boolean(previous.rows && current.rows &&
+      rowsFacts(previous.rows) !== rowsFacts(current.rows)) ||
+      (current.wantsRead && !previous.wantsRead);
+    previous = current;
     if (changed) listener();
   });
 }

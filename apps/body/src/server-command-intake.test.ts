@@ -43,6 +43,24 @@ function socketApi(execute: ReturnType<typeof vi.fn>) {
 }
 
 describe('command intake mechanics', () => {
+  it('uses history refreshed by claim as read-only context for the one surviving turn', async () => {
+    const abort = new AbortController();
+    const run = vi.fn(async (_command: AgentCommand) => abort.abort());
+    const latest = command('latest');
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [latest] };
+      if (name === 'claimAgentCommand') return {
+        id: 'latest', recoveryContext: JSON.stringify({ id: 'earlier', body: 'An earlier ping' }),
+      };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    await runServerCommandIntake({ ...socketApi(execute), roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, stop: vi.fn(), run });
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0]![0].source.body).toContain('only the latest wake above authorizes this turn');
+    expect(run.mock.calls[0]![0].source.body).toContain('An earlier ping');
+  });
+
   it('demonstrates R2a–R2f: user messages receive answers over HTTP and live WebSocket after failures', async () => {
     const abort = new AbortController();
     const ctx = await context();

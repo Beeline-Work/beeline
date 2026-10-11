@@ -801,20 +801,41 @@ describe('visit output through daemon completion and phone GET', () => {
   it('does not turn failed or cancelled output into a final; a reclaimed turn keeps its original visit', async () => {
     const runId = await start();
     const held = await wake(runId);
-    await handoff(database, held, { runId, outcome: 'retry', contents: {} });
+    // Reclaim while this visit still owns the step; an advanced attempt cannot
+    // authorize a new execution merely to fill in its historical final reply.
     await database.query(`UPDATE agent_commands SET state='pending',generation_id=NULL WHERE id=$1`, [held.id]);
     await expect(final(held, 'Refused stale final')).rejects.toThrow();
     const retried = await claimAgentCommand(database, CORNER, TRIAGER, held.id, 'retry-generation');
+    await handoff(database, retried, { runId, outcome: 'retry', contents: {} });
     await final(retried, 'Recovered final.');
     expect((await read(runId)).history[0]!.finalReply?.text).toBe('Recovered final.');
     expect((await read(runId)).history[1]!.finalReply).toBeUndefined();
+    await database.query(`UPDATE agent_commands SET state='pending',generation_id=NULL WHERE id=$1`, [held.id]);
+    await expect(database.transaction(db => claimAgentCommand(db, CORNER, TRIAGER, held.id, 'late-generation')))
+      .rejects.toThrow('command claim conflict');
     const current = await wake(runId);
     await database.query(`UPDATE agent_turns SET status='cancelled' WHERE room_id=$1 AND request_id=$2`, [CORNER, current.turn_request_id]);
     await expect(final(current, 'Cancelled final')).rejects.toThrow();
     expect((await read(runId)).history[1]!.finalReply).toBeUndefined();
   });
 
-  it('pins a resumed turn to its parent visit after the run has advanced', async () => {
+  it('pins a valid resumed turn to its parent visit when its reply arrives after handoff', async () => {
+    const runId = await start();
+    const held = await wake(runId);
+    const source = await command(CORNER, TRIAGER);
+    const resumed = (await createAgentCommand(database, { roomId: CORNER, agentId: TRIAGER,
+      sourceMessageId: source.source_message_id, action: 'resume', reason: 'resume',
+      parent: held, retainDepth: true, turnRequestId: held.turn_request_id }))!;
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [held.id]);
+    const claimed = await claimAgentCommand(database, CORNER, TRIAGER, resumed.id, 'resume-generation');
+    await handoff(database, claimed, { runId, outcome: 'retry', contents: {} });
+    await final(claimed, 'Final after resuming the original turn.');
+    const fresh = await read(runId);
+    expect(fresh.history[0]!.finalReply?.text).toBe('Final after resuming the original turn.');
+    expect(fresh.history[1]!.finalReply).toBeUndefined();
+  });
+
+  it('refuses a pending resume of a parent visit that has already advanced', async () => {
     const runId = await start();
     const held = await wake(runId);
     await handoff(database, held, { runId, outcome: 'retry', contents: {} });
@@ -822,11 +843,15 @@ describe('visit output through daemon completion and phone GET', () => {
     const resumed = (await createAgentCommand(database, { roomId: CORNER, agentId: TRIAGER,
       sourceMessageId: source.source_message_id, action: 'resume', reason: 'resume',
       parent: held, retainDepth: true, turnRequestId: held.turn_request_id }))!;
-    await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [held.id]);
-    const claimed = await claimAgentCommand(database, CORNER, TRIAGER, resumed.id, 'resume-generation');
-    await final(claimed, 'Final after resuming the original turn.');
+    await expect(database.transaction(db => claimAgentCommand(db, CORNER, TRIAGER, resumed.id, 'late-resume')))
+      .rejects.toThrow('command claim conflict');
+    expect((await readAgentCommands(database, CORNER, TRIAGER)).commands.some(wake => wake.id === resumed.id)).toBe(false);
+    await expect(final({ ...resumed, generation_id: 'late-resume' }, 'Stale resume final')).rejects.toThrow();
+    // Refusing a new stale wake does not revoke the already executing parent's
+    // output binding: its final still belongs to the visit it actually served.
+    await final(held, 'Original execution final.');
     const fresh = await read(runId);
-    expect(fresh.history[0]!.finalReply?.text).toBe('Final after resuming the original turn.');
+    expect(fresh.history[0]!.finalReply?.text).toBe('Original execution final.');
     expect(fresh.history[1]!.finalReply).toBeUndefined();
   });
 

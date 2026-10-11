@@ -1020,12 +1020,12 @@ export class DaemonService {
           authenticatedAgentId,
         )) as Output<Name>;
       case 'claimAgentCommand': {
-        await this.database.transaction(async (db) => {
-          await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
+        const claimed = await this.database.transaction(async (db) => {
+          return claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
             String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '');
         });
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
-        return this.writeResult() as Output<Name>;
+        return { ...this.writeResult(), ...(claimed.recovery_context ? { recoveryContext: claimed.recovery_context } : {}) } as Output<Name>;
       }
       case 'acknowledgeAgentCommand': {
         const acknowledged = await this.database.query(
@@ -2613,8 +2613,21 @@ export class DaemonService {
        WHERE m.identity_id=$1 AND m.removed_at IS NULL AND r.parent_id IS NULL`,
       [agentId],
     );
+    const pending = await this.database.query<{ room_id: string; parent_id: string | null; owner_agent_id: string | null }>(
+      `SELECT DISTINCT command.room_id,r.parent_id,f.owner_agent_id
+       FROM agent_commands command
+       JOIN rooms r ON r.id=command.room_id AND r.archived_at IS NULL
+       JOIN memberships m ON m.room_id=r.id AND m.identity_id=command.agent_id AND m.removed_at IS NULL
+       LEFT JOIN corner_facts f ON f.corner_id=r.id
+       WHERE command.agent_id=$1 AND (command.state='pending'
+         OR (command.state='claimed' AND command.lease_expires_at<=now()))`,
+      [agentId],
+    );
     return {
       workspaceIds: workspaces.rows.map((row) => row.workspace_id),
+      pendingRooms: pending.rows.map(row => ({ roomId: row.room_id,
+        ...(row.parent_id ? { parentRoomId: row.parent_id } : {}),
+        ...(row.owner_agent_id ? { openedBy: row.owner_agent_id } : {}) })),
       rooms: rooms.rows.map((row) => ({ roomId: row.room_id, archived: row.archived,
         repositoryRevision: row.repository_revision })),
     };

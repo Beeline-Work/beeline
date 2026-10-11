@@ -27,6 +27,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "measure:turns": "node --import tsx scripts/measure-turn-phases.ts",
+    "measure:fast-resume": "node --import tsx scripts/measure-fast-resume.ts",
     "pretest:live": "npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/body",
     "test:live": "vitest run --config vitest.live.config.ts"
   },

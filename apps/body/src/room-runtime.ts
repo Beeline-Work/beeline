@@ -832,6 +832,26 @@ export class RoomRuntimeCoordinator {
     }
     this.workspaceRemovalConfirmations = 0;
     const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
+    // Bind waiting surfaces before any fan-out, cleanup or corner listing.
+    // Their intake runs independently while the rest of this sweep continues.
+    const pendingRooms = [...(bootstrap.pendingRooms ?? [])].sort((left, right) =>
+      Number(Boolean(left.parentRoomId)) - Number(Boolean(right.parentRoomId)));
+    await mapWithConcurrency(pendingRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
+      if (this.stopped) return;
+      // A bootstrap can cover several Workspaces; this core serves only its own.
+      if (!topLevelRooms.some(top => top.roomId === (room.parentRoomId ?? room.roomId))) return;
+      try {
+        if (room.parentRoomId) {
+          this.monolithCornerParents.set(room.roomId, room.parentRoomId);
+          await this.startCorner({ cornerId: room.roomId, parentRoomId: room.parentRoomId, openedBy: room.openedBy });
+        } else {
+          this.surfaceHealth.discover(room.roomId, 'room');
+          await this.startRoom(room.roomId);
+        }
+      } catch (error) {
+        console.error(`[thin-core] pending Room ${room.roomId} start failed:`, error);
+      }
+    });
     for (const room of topLevelRooms) {
       const revision = room.repositoryRevision;
       if (revision === undefined) continue;

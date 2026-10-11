@@ -56,7 +56,6 @@
     "exports:apps/mobile/sources/utils/consoleLogging.ts:getLogBuffer",
     "exports:apps/mobile/sources/utils/readFileBytes.web.ts:readFileBytes",
     "exports:apps/mobile/sources/utils/responsive.ts:getHeaderHeight",
-    "exports:apps/server/src/agent-command.ts:COMMAND_LEASE_SECONDS",
     "exports:packages/api-contract/src/phone-guards.ts:isAgentGrantView",
     "exports:packages/api-contract/src/phone-guards.ts:isAgentPairingAbandonView",
     "exports:packages/api-contract/src/phone-guards.ts:isAgentPairingClaimView",

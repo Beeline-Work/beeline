@@ -596,12 +596,22 @@ async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<
   };
 }
 
-/** Every pending wake from this run's cards and gate answers; the next card's own wake is created after. */
+/** Cancel pending and expired-lease wakes; an already executing turn retains its output binding. */
 async function cancelRunWakes(db: SqlDatabase, roomId: string, runId: string): Promise<void> {
   await db.query(
-    `UPDATE agent_commands command SET state='cancelled',completed_at=now()
-     FROM messages message WHERE command.source_message_id=message.id AND command.room_id=$1
-       AND message.card->>'runId'=$2 AND command.state='pending'`,
+    `WITH due AS MATERIALIZED (
+       SELECT command.id FROM agent_commands command
+       JOIN messages message ON message.id=command.source_message_id
+       WHERE command.room_id=$1 AND message.card->>'runId'=$2
+         AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
+       FOR UPDATE OF command SKIP LOCKED
+     ), cancelled AS (
+       UPDATE agent_commands command SET state='cancelled',completed_at=now(),cancellation_reason='workflow_attempt_advanced'
+       FROM due WHERE command.id=due.id
+       RETURNING command.room_id,command.agent_id,command.turn_request_id
+     ) UPDATE agent_turns turn SET status='cancelled',failure_reason='Workflow attempt advanced',created_at=now()
+       FROM cancelled WHERE turn.room_id=cancelled.room_id AND turn.agent_id=cancelled.agent_id
+         AND turn.request_id=cancelled.turn_request_id AND turn.status='working'`,
     [roomId, runId],
   );
 }

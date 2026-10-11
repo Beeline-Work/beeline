@@ -47,7 +47,9 @@ export class TextDraft<T extends string | string[]> {
     };
   };
   private notify() {
-    for (const listener of this.listeners) listener();
+    // React may replace a subscription while a synchronous input update is
+    // being delivered. A live Set iterator would visit that replacement again.
+    for (const listener of [...this.listeners]) listener();
   }
   get hasEdits() {
     return this.edited;
@@ -97,11 +99,17 @@ export class TextDraft<T extends string | string[]> {
     this.notify();
   };
   set = (update: T | ((previous: T) => T)) => {
-    this.value = typeof update === 'function' ? update(this.value) : update;
+    const previous = this.value;
+    this.value = typeof update === 'function' ? update(previous) : update;
+    const changed = typeof previous === 'string' || typeof this.value === 'string'
+      ? previous !== this.value
+      : previous.length !== this.value.length || previous.some((item, index) => item !== this.value[index]);
     this.edited = true;
     this.revision++;
     this.markStorageRevision();
-    this.notify();
+    // An identical replacement still fences an in-flight send and hydration,
+    // but a controlled input echo must not recursively repaint the same text.
+    if (changed) this.notify();
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       void this.flush();

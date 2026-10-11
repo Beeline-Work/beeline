@@ -28,10 +28,11 @@ describe('scheduled Agent work', () => {
     expect(screen).not.toContain('Alert.alert');
     expect(work).toContain("monolithPhoneOperation('listRoomSubscriptions'");
     expect(work).toContain("monolithPhoneOperation('deleteRoomSubscription'");
-    // Both Stop actions live on the entry's own page, behind one confirm step.
+    // Both Stop actions live on the trigger's own page, behind one confirm step.
     expect(schedule).toContain('<StopScheduledWork');
     expect(subscription).toContain('<StopScheduledWork');
-    expect(workflow).toContain('<StopScheduledWork');
+    expect(workflow).not.toContain('<StopScheduledWork');
+    expect(workflow).toContain('<WorkflowRunLine');
   });
 
   it('draws each entry as a settings row in one grammar, with no timestamp log', () => {

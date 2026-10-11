@@ -11,7 +11,14 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { chatWatchFiltersKey } from '@/buzz/chat-list-delta';
 import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
-import { getRoomCornerSummary, subscribeRoomCornerSummaries } from '@/buzz/room-corner-store';
+import {
+  applyCornerListRead,
+  cornerReadMark,
+  getRoomCorners,
+  getRoomCornerSummary,
+  roomOpenCornerRows,
+  subscribeRoomCornerSummaries,
+} from '@/buzz/room-corner-store';
 import { isTauri } from '@/utils/isTauri';
 
 /**
@@ -59,12 +66,8 @@ export function startDesktopNotifications(): () => void {
     const relayUrl = await getEffectiveRelayUrl();
     if (disposed || current !== generation) return;
     const reader = new RoomViewClient({ baseUrl: relayUrl, identity });
-    // Each Workspace's Rooms come from the app-level Room list store, which
-    // owns their watch and covering reads. Corners are read here.
+    // Each Workspace's Rooms come from the app-level Room list store.
     const lists = new Map<string, { handle: ChatListHandle; stop: () => void }>();
-    let corners = new Map<string, ChatListItem>();
-    // Each corner's parent Room id; its name is taken from the store when shown.
-    let cornerParentIds = new Map<string, string>();
     let cornerKey = '';
     let watchKey = '';
     let refreshing = false;
@@ -82,17 +85,27 @@ export function startDesktopNotifications(): () => void {
       lists.clear();
     };
 
+    function parents(): ChatListItem[] {
+      return [...lists.values()].flatMap(({ handle }) => handle.current()?.chats ?? []);
+    }
+
+    function cornerRows() {
+      return parents().filter((parent) => (getRoomCornerSummary(parent.room.id)?.cornerCount ?? 0) > 0)
+        .flatMap((parent) =>
+        roomOpenCornerRows(getRoomCorners(parent.room.id)).map((item) => ({ parent, item })));
+    }
+
     function roomFor(roomId: string): ChatListItem | undefined {
       for (const { handle } of lists.values()) {
         const item = handle.current()?.chats.find((chat) => chat.room.id === roomId);
         if (item) return item;
       }
-      return corners.get(roomId);
+      const item = cornerRows().find(({ item }) => item.corner.id === roomId)?.item;
+      return item && { room: item.corner, unread: false } as ChatListItem;
     }
 
     function parentNameOf(roomId: string): string | undefined {
-      const parentId = cornerParentIds.get(roomId);
-      return parentId === undefined ? undefined : roomFor(parentId)?.room.name;
+      return cornerRows().find(({ item }) => item.corner.id === roomId)?.parent.room.name;
     }
     const seen = new Set<string>();
     const startedAt = Date.now();
@@ -211,39 +224,29 @@ export function startDesktopNotifications(): () => void {
           const view = handle.current();
           return view ? [view] : [];
         });
-        const parents = views.flatMap((view) => view.chats);
+        const rooms = views.flatMap((view) => view.chats);
         // A corner is its own Room and its messages do not ride the parent's
         // socket filter. Read each active parent with corners so the same
         // signed-in member can receive an exact tag there too.
         const cornerCount = (room: ChatListItem) => getRoomCornerSummary(room.room.id)?.cornerCount ?? 0;
-        const cornerParents = parents.filter((room) => cornerCount(room) > 0);
+        const cornerParents = rooms.filter((room) => cornerCount(room) > 0);
         const nextCornerKey = JSON.stringify(cornerParents.map((room) =>
-          [room.room.id, cornerCount(room)]));
+          [room.room.id, getRoomCornerSummary(room.room.id)]));
         if (nextCornerKey !== cornerKey) {
+          const marks = cornerParents.map((room) => cornerReadMark(room.room.id));
           const cornerReads = await Promise.allSettled(
             cornerParents.map((room) => reader.corners(room.room.id)),
           );
           if (disposed || current !== generation) return;
-          const cornerReadsWithParent = cornerReads.flatMap((result, index) =>
-            result.status === 'fulfilled'
-              ? result.value.corners.map((item) => ({
-                  item,
-                  parentId: cornerParents[index]!.room.id,
-                }))
-              : [],
-          );
+          cornerReads.forEach((result, index) => {
+            if (result.status === 'fulfilled')
+              applyCornerListRead(cornerParents[index]!.room.id, result.value, marks[index]!);
+          });
           cornerKey = nextCornerKey;
-          cornerParentIds = new Map(
-            cornerReadsWithParent.map(({ item, parentId }) => [item.corner.id, parentId]),
-          );
-          corners = new Map(
-            cornerReadsWithParent.map(({ item }) =>
-              [item.corner.id, { room: item.corner, unread: false } as ChatListItem] as const),
-          );
         }
         const filters = [
           ...views.flatMap((view) => view.watchFilters),
-          ...[...corners.keys()].map((id) => ({ '#h': [id] })),
+          ...cornerRows().map(({ item }) => ({ '#h': [item.corner.id] })),
         ];
         const nextKey = chatWatchFiltersKey(filters);
         if (nextKey === watchKey) return;

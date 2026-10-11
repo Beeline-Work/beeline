@@ -10,6 +10,7 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
+import { subscribeClientReset } from '@/sync/client-reset';
 import { cornerHeaderItem, type CornerDisplayItem } from '@/buzz/corner-display-state';
 import {
   applyArchivedCorners,
@@ -23,6 +24,7 @@ import {
   noteCornerReadStarted,
   roomCornerListView,
   roomOpenCornerRows,
+  shareCornerRead,
   useRoomCornerRecord,
   type RoomCorners,
 } from '@/buzz/room-corner-store';
@@ -34,102 +36,63 @@ type CornersClient = Pick<RoomViewClient, 'corners'>;
 
 type Reader = {
   readonly client: CornersClient;
+  readonly key: string;
+  readonly generation: number;
   /** Where the first page is saved; absent without an identity to key it by. */
   readonly address?: ReturnType<typeof surfaceAddress>;
 };
 
-/** One first-page read per Room in flight, shared by every reader. */
-const firstPageReads = new Map<
-  string,
-  { again: boolean; generation: number; done: Promise<void> }
->();
-
 async function roomReader(roomId: string, client: CornersClient | undefined): Promise<Reader> {
+  const generation = cornerStoreGeneration();
   const identity = (await loadBuzzIdentity()) as Identity | null;
   if (!identity) {
-    if (client) return { client };
+    if (client) return { client, key: roomId, generation };
     throw new Error('Beeline identity is unavailable');
   }
   const relayUrl = await getEffectiveRelayUrl();
   return {
     client: client ?? new RoomViewClient({ baseUrl: relayUrl, identity }),
+    key: JSON.stringify([relayUrl, identity.publicKey, roomId]),
+    generation,
     address: surfaceAddress(relayUrl, identity.publicKey, '/room/:id/corners', { roomId }),
   };
 }
 
-/**
- * Read the first page, or join the read in flight. A change the record wants
- * read while it runs, or a `force` from a reader that asked after it began,
- * reads once more.
- */
 function readFirstPage(roomId: string, reader: Reader, force: boolean): Promise<void> {
-  const generation = cornerStoreGeneration();
-  const running = firstPageReads.get(roomId);
-  // A read started before a store reset belongs to the previous account.
-  if (running?.generation === generation) {
-    if (force) running.again = true;
-    return running.done;
-  }
-  const flight = { again: false, generation, done: Promise.resolve() };
-  flight.done = (async () => {
-    try {
-      do {
-        flight.again = false;
-        noteCornerReadStarted(roomId);
-        const mark = cornerReadMark(roomId);
-        if (mark.generation !== generation) return;
-        const view = await reader.client.corners(roomId);
-        applyCornerListRead(roomId, view, mark);
-        if (cornerStoreGeneration() !== generation) return;
-        const held = roomCornerListView(getRoomCorners(roomId));
-        if (held && reader.address)
-          void mobileSurfaceCache.write(reader.address, held, isCornerListView);
-      } while (flight.again || getRoomCorners(roomId).wantsRead);
-    } finally {
-      if (firstPageReads.get(roomId) === flight) firstPageReads.delete(roomId);
-    }
-  })();
-  firstPageReads.set(roomId, flight);
-  return flight.done;
+  if (reader.generation !== cornerStoreGeneration()) return Promise.resolve();
+  return shareCornerRead(reader.key, force, async () => {
+    noteCornerReadStarted(roomId);
+    const mark = cornerReadMark(roomId);
+    const view = await reader.client.corners(roomId);
+    applyCornerListRead(roomId, view, mark);
+    if (reader.generation !== cornerStoreGeneration()) return false;
+    const held = roomCornerListView(getRoomCorners(roomId));
+    if (held && reader.address)
+      void mobileSurfaceCache.write(reader.address, held, isCornerListView);
+    return getRoomCorners(roomId).wantsRead;
+  });
 }
 
-/**
- * Read open pages after the first until they hold as many rows as before,
- * again while a frame that landed mid-read left them unproven.
- */
-async function rereadOpenPages(roomId: string, reader: Reader): Promise<void> {
-  const generation = cornerStoreGeneration();
+/** Refill held pages after a frame changed their membership or state. */
+async function rereadPages(roomId: string, reader: Reader, archived: boolean): Promise<void> {
+  if (reader.generation !== cornerStoreGeneration()) return;
   do {
     const mark = cornerReadMark(roomId);
-    if (mark.generation !== generation) return;
+    if (reader.generation !== mark.generation) return;
     const held = getRoomCorners(roomId);
-    const target = held.openMore.length;
-    let next = held.firstPageNext;
+    const target = archived ? Math.max(1, held.archived?.corners.length ?? 0) : held.openMore.length;
+    let next = archived ? undefined : held.firstPageNext;
     const rows: CornerListItem[] = [];
-    while (next && rows.length < target) {
-      const page = await reader.client.corners(roomId, { openBefore: next });
+    do {
+      if (!archived && !next) break;
+      const page = await reader.client.corners(roomId,
+        archived ? { archived: true, ...(next ? { before: next } : {}) } : { openBefore: next! });
       rows.push(...page.corners);
-      next = page.nextOpen;
-    }
-    applyOpenCornerPage(roomId, rows, next, mark, true);
-  } while (getRoomCorners(roomId).openMoreStale && getRoomCorners(roomId).openMore.length > 0);
-}
-
-/** Read archived pages until they hold as many rows as before. */
-async function rereadArchivedPages(roomId: string, reader: Reader): Promise<void> {
-  const target = Math.max(1, getRoomCorners(roomId).archived?.corners.length ?? 0);
-  const mark = cornerReadMark(roomId);
-  let next: string | undefined;
-  const rows: CornerListItem[] = [];
-  do {
-    const page = await reader.client.corners(roomId, {
-      archived: true,
-      ...(next ? { before: next } : {}),
-    });
-    rows.push(...page.corners);
-    next = page.nextArchived;
-  } while (next && rows.length < target);
-  applyArchivedCorners(roomId, rows, next, false, mark);
+      next = archived ? page.nextArchived : page.nextOpen;
+    } while (next && rows.length < target);
+    if (archived) applyArchivedCorners(roomId, rows, next, false, mark);
+    else applyOpenCornerPage(roomId, rows, next, mark, true);
+  } while (!archived && getRoomCorners(roomId).openMoreStale && getRoomCorners(roomId).openMore.length > 0);
 }
 
 type RoomCornersHandle = {
@@ -155,16 +118,19 @@ export function useRoomCorners(
 ): RoomCornersHandle {
   const record = useRoomCornerRecord(roomId);
   const [error, setError] = useState<string | null>(null);
+  const [accountEpoch, setAccountEpoch] = useState(0);
   const readerRef = useRef<Promise<Reader> | null>(null);
   const readyRef = useRef(false);
   const refreshingOpen = useRef(false);
   const refreshingArchived = useRef(false);
 
+  useEffect(() => subscribeClientReset(() => setAccountEpoch((value) => value + 1)), []);
+
   const reader = useCallback(() => {
     if (!roomId) return Promise.reject(new Error('No Room'));
     readerRef.current ??= roomReader(roomId, client ?? undefined);
     return readerRef.current;
-  }, [client, roomId]);
+  }, [client, roomId, accountEpoch]);
 
   const read = useCallback(async (force: boolean) => {
     if (!roomId) return;
@@ -189,10 +155,11 @@ export function useRoomCorners(
     void (async () => {
       try {
         const held = getRoomCorners(roomId);
-        const { address } = await reader();
+        const { address, generation } = await reader();
+        if (generation !== cornerStoreGeneration()) return;
         if ((!held.header || !held.rows) && address) {
           const saved = await mobileSurfaceCache.read(address, isCornerListView);
-          if (cancelled) return;
+          if (cancelled || generation !== cornerStoreGeneration()) return;
           if (saved) hydrateRoomCorners(roomId, saved);
         }
         await live.whenSubscribed(filters, SUBSCRIBE_HANDSHAKE_TIMEOUT_MS);
@@ -217,14 +184,14 @@ export function useRoomCorners(
     if (record.openMoreStale && record.openMore.length > 0 && !refreshingOpen.current) {
       refreshingOpen.current = true;
       void reader()
-        .then((value) => rereadOpenPages(roomId, value))
+        .then((value) => rereadPages(roomId, value, false))
         .catch((reason) => setError(phoneOperationFailureReason(reason)))
         .finally(() => { refreshingOpen.current = false; });
     }
     if (record.archivedStale && record.archived && !refreshingArchived.current) {
       refreshingArchived.current = true;
       void reader()
-        .then((value) => rereadArchivedPages(roomId, value))
+        .then((value) => rereadPages(roomId, value, true))
         .catch((reason) => setError(phoneOperationFailureReason(reason)))
         .finally(() => { refreshingArchived.current = false; });
     }
@@ -235,7 +202,9 @@ export function useRoomCorners(
     const cursor = getRoomCorners(roomId).nextOpen;
     if (!cursor) return;
     const mark = cornerReadMark(roomId);
-    const page = await (await reader()).client.corners(roomId, { openBefore: cursor });
+    const source = await reader();
+    if (source.generation !== mark.generation) return;
+    const page = await source.client.corners(roomId, { openBefore: cursor });
     // A frame or another page may have moved the cursor while this one read.
     if (getRoomCorners(roomId).nextOpen !== cursor) return;
     applyOpenCornerPage(roomId, page.corners, page.nextOpen, mark);
@@ -246,7 +215,9 @@ export function useRoomCorners(
     const before = more ? getRoomCorners(roomId).archived?.next : undefined;
     if (more && !before) return;
     const mark = cornerReadMark(roomId);
-    const page = await (await reader()).client.corners(roomId, {
+    const source = await reader();
+    if (source.generation !== mark.generation) return;
+    const page = await source.client.corners(roomId, {
       archived: true,
       ...(before ? { before } : {}),
     });

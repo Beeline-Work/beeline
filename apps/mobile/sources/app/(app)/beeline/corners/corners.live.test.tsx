@@ -22,6 +22,7 @@ const list = vi.hoisted(() => ({
   createGate: null as Promise<void> | null,
   createFailure: null as Error | null,
   live: null as null | import('@/sync/transport/live-connection').LiveConnection,
+  identityPubkey: 'viewer',
 }));
 
 vi.mock('react-native', async () => {
@@ -86,7 +87,7 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
-  loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'viewer', secretKey: new Uint8Array(32) })),
+  loadBuzzIdentity: vi.fn(async () => ({ publicKey: list.identityPubkey, secretKey: new Uint8Array(32) })),
 }));
 vi.mock('@/buzz/surface-storage', () => ({
   mobileSurfaceCache: {
@@ -114,6 +115,10 @@ vi.mock('@/sync/transport', () => ({
 }));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
+    private readonly pubkey: string;
+    constructor(config: { identity: { publicKey: string } }) {
+      this.pubkey = config.identity.publicKey;
+    }
     async corners(
       _id: string,
       options?: { archived?: boolean; openBefore?: string },
@@ -123,11 +128,11 @@ vi.mock('@/sync/transport/room-view-client', () => ({
       const state = list.state;
       const extra = [...list.extra];
       const archived = [...list.archived];
-      await list.readGate;
+      if (this.pubkey === 'viewer') await list.readGate;
       if (options?.archived) {
         return { ...cornerList(state), corners: archived.map((id) => corner(id, 'archived')) };
       }
-      const view = cornerList(state, extra);
+      const view = cornerList(this.pubkey === 'viewer' ? state : 'review', extra);
       return options?.openBefore ? view : { ...view, summary: summaryOf(view.corners) };
     }
   },
@@ -147,6 +152,7 @@ import { LiveConnection } from '@/sync/transport/live-connection';
 import { router } from 'expo-router';
 import { cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
 import { useCornerHeaderItem } from '@/buzz/use-room-corners';
+import { resetClientState } from '@/sync/client-reset';
 import { CornerHeaderAgentText } from '@/components/buzz/HeaderLadder';
 
 const viewer = { pubkey: 'viewer', kind: 'human' as const, name: 'Captain' };
@@ -334,6 +340,7 @@ beforeEach(() => {
   list.mine = false;
   list.mineIds = [];
   list.readGate = null;
+  list.identityPubkey = 'viewer';
   list.archived = [];
   list.cached = null;
   list.createCalls.length = 0;
@@ -418,6 +425,24 @@ describe('Corner list live path', () => {
     await act(async () => release());
     await settle();
     expect(painted(renderer)).toEqual(['corner-new:working', 'corner-1:working']);
+  });
+
+  it('J04/J10: a new account reads its own corners while the old GET is in flight', async () => {
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => (release = resolve));
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(openReads()).toBe(1));
+
+    list.identityPubkey = 'new-viewer';
+    await act(async () => resetClientState());
+    server.subscribed(false, 'new-account');
+    await vi.waitFor(() => expect(openReads()).toBe(2));
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:review']));
+    await act(async () => release());
+    expect(painted(renderer)).toEqual(['corner-1:review']);
   });
 
   it('drops a frame older than one the lane already applied', async () => {

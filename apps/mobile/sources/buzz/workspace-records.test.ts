@@ -114,6 +114,27 @@ describe('Workspace roster records', () => {
     expect(records.workspaceRecord(scope, mate)).toBeNull();
   });
 
+  it('keeps an agent rename receipt over a Workspace read that was in flight when it landed', async () => {
+    await mobileSurfaceCache.write(entry, workspaceView(), isWorkspaceView);
+    let answer!: (value: WorkspaceView) => void;
+    const read = mobileSurfaceCache.fetch(entry, isWorkspaceView,
+      () => new Promise<WorkspaceView>((resolve) => { answer = resolve; }));
+    await mobileSurfaceCache.write(agentAddress, detail('Codex'), isAgentDetailView);
+    answer(workspaceView());
+    await read;
+    expect(records.workspaceRecord(scope, agent)?.identity.name).toBe('Codex');
+  });
+
+  it('keeps a removal over the totals of a roster page that was in flight when it landed', async () => {
+    await mobileSurfaceCache.write(entry, workspaceView(), isWorkspaceView);
+    const stamp = currentSurfaceStamp();
+    records.recordWorkspaceRemoval(scope, mate);
+    records.recordWorkspacePage(scope, { members: workspaceView().members, agents: [], peopleTotal: 2 },
+      { query: '', kind: 'human', append: false, stamp });
+    expect(records.workspaceRows(scope, ids).map((row) => row.identity.pubkey)).toEqual([viewer]);
+    expect(records.workspaceTotals(scope, '')).toEqual({ people: 1, agents: 1 });
+  });
+
   it('never lets an older page replace a newer row', () => {
     const stale = currentSurfaceStamp();
     records.recordWorkspacePage(scope, {

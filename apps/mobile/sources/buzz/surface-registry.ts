@@ -1,4 +1,4 @@
-import { nextSurfaceStamp } from './surface-clock';
+import { currentSurfaceStamp, nextSurfaceStamp } from './surface-clock';
 import { surfaceCacheKey, type SurfaceCacheAddress, type SurfaceResponseCache } from '@beeline/buzz-client';
 
 type Guard<T> = (value: unknown) => value is T;
@@ -116,18 +116,22 @@ export class SurfaceRegistry {
     return this.peek(address, guard);
   }
 
-  async write<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>): Promise<void> {
-    const normalized = this.publish(address, value, guard);
+  async write<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>, stamp?: number): Promise<void> {
+    const normalized = this.publish(address, value, guard, stamp);
     await this.durable.write(address, normalized, guard);
   }
 
-  /** Share an already validated live projection without serializing it on every frame. */
-  publish<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>): T {
+  /**
+   * Share an already validated live projection without serializing it on
+   * every frame. `stamp` defaults to now; a server answer passes the stamp
+   * its request started at, so a change stored meanwhile stays newer.
+   */
+  publish<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>, stamp = nextSurfaceStamp()): T {
     const normalized = this.normalize(value);
     if (!guard(normalized)) throw new Error('refusing to cache an invalid surface response');
     const key = surfaceCacheKey(address);
     this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
-    this.remember(key, address, normalized, nextSurfaceStamp());
+    this.remember(key, address, normalized, stamp);
     this.notify(key);
     return normalized;
   }
@@ -143,12 +147,15 @@ export class SurfaceRegistry {
     if (existing) return existing as Promise<T | null>;
     const epoch = this.epoch;
     const revision = this.revisions.get(key) ?? 0;
+    // Observers order this answer by when it was asked: a write to another
+    // entry (an agent receipt, a removal) stored meanwhile stays newer.
+    const stamp = currentSurfaceStamp();
     const pending = request().then(async (value): Promise<T | null> => {
       // A live publish or removal after the request started is newer than this response.
       if (this.epoch !== epoch || (this.revisions.get(key) ?? 0) !== revision) {
         return this.peek(address, guard);
       }
-      await this.write(address, value, guard);
+      await this.write(address, value, guard, stamp);
       return value;
     });
     this.fetches.set(key, pending);

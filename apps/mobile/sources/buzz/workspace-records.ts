@@ -14,8 +14,11 @@ type MemberRecord = WorkspaceView['members'][number];
 type AgentRecord = WorkspaceView['agents'][number];
 export type WorkspaceRecord = MemberRecord | AgentRecord;
 
-/** A roster count and the ids a search counted it over, so a removal lowers it. */
-type Total = { value: number; listed: Set<string> };
+/**
+ * A roster count, the ids a search counted it over (so a removal lowers it)
+ * and the stamp of its last change: an older page never replaces it.
+ */
+type Total = { value: number; listed: Set<string>; stamp: number };
 
 type Scope = {
   /** `null` records a removal. `stamp` orders server answers: an older one never replaces a newer one. */
@@ -77,12 +80,15 @@ function storeTotal(
   value: number | undefined,
   rows: readonly WorkspaceRecord[],
   append: boolean,
+  stamp: number,
 ): void {
   const totals = scoped.totals.get(query) ?? {};
-  const listed = new Set(append ? totals[kind]?.listed : undefined);
+  const current = totals[kind];
+  if (current && current.stamp > stamp) return;
+  const listed = new Set(append ? current?.listed : undefined);
   for (const row of rows) listed.add(row.identity.pubkey);
   if (value === undefined) delete totals[kind];
-  else totals[kind] = { value, listed };
+  else totals[kind] = { value, listed, stamp };
   scoped.totals.set(query, totals);
 }
 
@@ -104,9 +110,9 @@ export function recordWorkspacePage(
     return;
   }
   if (options.kind !== 'agent')
-    storeTotal(scoped, options.query, 'people', page.peopleTotal, page.members, options.append);
+    storeTotal(scoped, options.query, 'people', page.peopleTotal, page.members, options.append, options.stamp);
   if (options.kind !== 'human')
-    storeTotal(scoped, options.query, 'agents', page.agentTotal, page.agents, options.append);
+    storeTotal(scoped, options.query, 'agents', page.agentTotal, page.agents, options.append, options.stamp);
   notify(scope);
 }
 
@@ -123,8 +129,8 @@ function recordWorkspaceView(scope: string, view: WorkspaceView, stamp: number):
     const complete = current.record.identity.kind === 'agent' ? !view.agentsTruncated : !view.membersTruncated;
     if (complete) scoped.rows.set(pubkey, { record: null, stamp });
   }
-  storeTotal(scoped, '', 'people', view.peopleTotal, view.members, false);
-  storeTotal(scoped, '', 'agents', view.agentTotal, view.agents, false);
+  storeTotal(scoped, '', 'people', view.peopleTotal, view.members, false, stamp);
+  storeTotal(scoped, '', 'agents', view.agentTotal, view.agents, false, stamp);
   notify(scope);
 }
 
@@ -158,7 +164,7 @@ function removeRow(scoped: Scope, pubkey: string, stamp: number): void {
     const total = totals[kind];
     if (!total) continue;
     if (!total.listed.delete(pubkey) && query !== '') continue;
-    totals[kind] = { value: Math.max(0, total.value - 1), listed: total.listed };
+    totals[kind] = { value: Math.max(0, total.value - 1), listed: total.listed, stamp: Math.max(total.stamp, stamp) };
   }
 }
 

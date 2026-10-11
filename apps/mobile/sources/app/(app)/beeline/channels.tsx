@@ -570,12 +570,13 @@ export default function BuzzChannels() {
       .read(address, isWorkspaceView)
       .then((cached) => {
         if (!cancelled && cached) setWorkspaceDetail(cached);
-        return http.workspace(activeCommunityId);
+        // The shared fetch orders this read against roster writes made while it is in flight.
+        return mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(activeCommunityId));
       })
       .then((value) => {
         if (cancelled) return;
-        setWorkspaceDetail(value);
-        return mobileSurfaceCache.write(address, value, isWorkspaceView);
+        const current = value ?? mobileSurfaceCache.peek(address, isWorkspaceView);
+        if (current) setWorkspaceDetail(current);
       })
       .catch((reason) => {
         if (!cancelled) setError(String(reason));

@@ -20,7 +20,7 @@ Web frames use the real `TranscriptReference` and theme/font assets in an isolat
 | Light | ![](web-before-light.png) | ![](web-after-light.png) |
 | Dark | ![](web-before-dark.png) | ![](web-after-dark.png) |
 
-Reproduce web frames from `apps/mobile`: `npx tsx scripts/render-viewer-reference-proof.ts`. The harness checks equal ring/text vertical centers and click dispatch.
+The isolated capture harness checked equal ring/text vertical centers and click dispatch. Its standalone scripts were removed after capture; the committed frames retain the visual evidence.
 
 ## Validation
 

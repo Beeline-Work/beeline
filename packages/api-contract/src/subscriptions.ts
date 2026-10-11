@@ -2,7 +2,7 @@ import { quoteOutsideData } from './outside-data.js';
 import type { SystemEvent } from './system-events.js';
 
 /** A standing, event-driven wake for one agent in one Room. */
-export type SubscriptionSource = 'room' | 'repository';
+export type SubscriptionSource = 'room' | 'repository' | 'service';
 export type RoomSubscriptionView = {
   readonly id: string;
   readonly roomId: string;
@@ -10,6 +10,10 @@ export type RoomSubscriptionView = {
   readonly source: SubscriptionSource;
   readonly event: string;
   readonly repository?: string;
+  readonly service?: 'Slack';
+  readonly channel?: string;
+  /** Human-readable event grammar shared by the agent list and phone. */
+  readonly when?: string;
   /** The action delivered on each event. Older Room subscriptions have no saved prompt. */
   readonly prompt?: string;
   readonly workflowSlug?: string;
@@ -27,6 +31,12 @@ export const REPOSITORY_SUBSCRIPTION_EVENTS = [
   'pull_request.opened', 'pull_request.closed', 'pull_request.reopened',
   'star.created', 'star.deleted',
 ] as const;
+/** Only events with a configured delivery path may appear in the agent catalog. */
+export const SERVICE_SUBSCRIPTION_EVENTS = [
+  { service: 'Slack', event: 'new_message', label: 'new message in a Slack channel' },
+] as const;
+export type ServiceSubscriptionEvent = typeof SERVICE_SUBSCRIPTION_EVENTS[number];
+export type SubscriptionEventCatalog = { readonly events: readonly ServiceSubscriptionEvent[] };
 export function isRepositorySubscriptionEvent(value: unknown): value is typeof REPOSITORY_SUBSCRIPTION_EVENTS[number] {
   return (REPOSITORY_SUBSCRIPTION_EVENTS as readonly unknown[]).includes(value);
 }

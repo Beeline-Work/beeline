@@ -1047,14 +1047,21 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'create_subscription',
-    description: `Run a prompt or start a saved workflow in this Room when an event arrives. No approval or URL setup. Room events: ${eventKindCatalogLines().join('; ')}. Repository events: ${REPOSITORY_SUBSCRIPTION_EVENTS.join(', ')}. A repository must be covered by this Workspace's installed connection.`,
+    description: `Run a prompt or start a saved workflow in this Room when an event arrives. No approval or URL setup. Room events: ${eventKindCatalogLines().join('; ')}. Repository events: ${REPOSITORY_SUBSCRIPTION_EVENTS.join(', ')}. Call list_subscription_events for available connected service events.`,
     inputSchema: { type: 'object', required: ['source', 'event', 'prompt'], properties: {
-      source: { type: 'string', enum: ['room', 'repository'] },
+      source: { type: 'string', enum: ['room', 'repository', 'service'] },
       event: { type: 'string' },
       repository: { type: 'string', description: 'For repository events, owner/name of a covered repository.' },
+      channelId: { type: 'string', description: 'For a Slack channel event, its ID from the connected Slack account.' },
+      channelName: { type: 'string', description: 'For a Slack channel event, its plain channel name without #.' },
       prompt: { type: 'string', description: 'The action to perform on each event. For a workflow, tell yourself to call start_workflow for the saved workflow.' },
       workflowName: { type: 'string', description: 'Saved workflow targeted by this subscription, if the action starts one.' },
     }, additionalProperties: false },
+  },
+  {
+    name: 'list_subscription_events',
+    description: 'List events from connected services available to subscribe to in this Room, in plain words.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'list_subscriptions',
@@ -4783,18 +4790,25 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       const source = stringArg(args, 'source');
       const event = stringArg(args, 'event');
       const prompt = stringArg(args, 'prompt');
-      if (source !== 'room' && source !== 'repository') throw new Error('source must be room or repository');
+      if (source !== 'room' && source !== 'repository' && source !== 'service')
+        throw new Error('source must be room, repository, or service');
       if (!event) throw new Error('event is required');
       if (!prompt) throw new Error('prompt is required');
       const result = await daemonExecute('createAgentSubscription', {
         roomId: agentScheduleRoomId(), source, event, prompt,
         ...(typeof args.repository === 'string' ? { repository: args.repository } : {}),
+        ...(typeof args.channelId === 'string' ? { channelId: args.channelId } : {}),
+        ...(typeof args.channelName === 'string' ? { channelName: args.channelName } : {}),
         ...(typeof args.workflowName === 'string' ? { workflowName: args.workflowName } : {}),
       });
       return `Subscription ${String(result.id)} created for ${source} ${event}. It runs your action when the event arrives.`;
     }
     case 'list_subscriptions':
       return JSON.stringify(await daemonExecute('listAgentSubscriptions', { roomId: agentScheduleRoomId() }));
+    case 'list_subscription_events': {
+      const result = await daemonExecute('listServiceSubscriptionEvents', { roomId: agentScheduleRoomId() });
+      return JSON.stringify(result);
+    }
     case 'delete_subscription': {
       const subscriptionId = stringArg(args, 'subscriptionId');
       if (!subscriptionId) throw new Error('subscriptionId is required');

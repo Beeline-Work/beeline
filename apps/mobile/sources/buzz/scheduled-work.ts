@@ -56,6 +56,9 @@ export function subscriptionTitle(subscription: RoomSubscriptionView): string {
 }
 
 export function subscriptionWhen(subscription: RoomSubscriptionView): string {
+  if (subscription.when) return subscription.when;
+  if (subscription.source === 'service' && subscription.service === 'Slack')
+    return `On new message in ${subscription.channel ?? 'a Slack channel'}`;
   if (subscription.source === 'repository') {
     const repository = subscription.repository ?? 'this repository';
     const action: Record<string, string> = {

@@ -1,7 +1,7 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const route = vi.hoisted(() => ({ pathname: '/beeline/onboarding' }));
 const desktopShell = vi.hoisted(() => ({ enabled: false }));
@@ -87,6 +87,11 @@ import { UpdateProvider } from './useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 
 const originalConsoleError = console.error;
+const mountedRenderers = new Set<ReactTestRenderer>();
+
+afterEach(async () => {
+  for (const renderer of mountedRenderers) await unmount(renderer);
+});
 
 beforeAll(() => {
   vi.stubGlobal('__DEV__', false);
@@ -132,20 +137,24 @@ async function renderUpdateRoot(child?: React.ReactNode): Promise<ReactTestRende
       ),
     );
   });
+  mountedRenderers.add(renderer);
   return renderer;
 }
 
 async function unmount(renderer: ReactTestRenderer): Promise<void> {
   await act(async () => renderer.unmount());
+  mountedRenderers.delete(renderer);
 }
 
-async function flushDynamicImports(): Promise<void> {
-  await act(async () => {
-    // Updater and process are separate lazy imports with installation between
-    // them. Drain both module turns before asserting the restart boundary.
-    for (let turn = 0; turn < 3; turn += 1) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
+async function settleUpdate(assertSettled: () => void): Promise<void> {
+  // Finish lazy modules, then let React commit and run effects before testing
+  // the result. Waiting inside one act holds the very effect being awaited.
+  await vi.waitFor(async () => {
+    await act(async () => {
+      await vi.dynamicImportSettled();
+      await Promise.all(desktopUpdater.check.mock.results.map(result => result.value));
+    });
+    assertSettled();
   });
 }
 
@@ -249,8 +258,7 @@ describe('root OTA update coordinator', () => {
     desktopUpdater.check.mockResolvedValue({ version: '0.2.21', downloadAndInstall });
 
     const renderer = await renderUpdateRoot();
-    await flushDynamicImports();
-    await vi.waitFor(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
+    await settleUpdate(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
 
     expect(desktopUpdater.check).toHaveBeenCalledTimes(1);
     expect(updates.checkForUpdateAsync).not.toHaveBeenCalled();
@@ -263,16 +271,17 @@ describe('root OTA update coordinator', () => {
     desktopShell.enabled = true;
     process.env.EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES = '1';
     route.pathname = '/beeline/chat/room-1';
-    desktopUpdater.check.mockResolvedValue({ version: '0.2.21', downloadAndInstall });
+    desktopUpdater.check.mockImplementation(() => new Promise(resolve => {
+      setTimeout(() => resolve({ version: '0.2.21', downloadAndInstall }), 30);
+    }));
     const child = React.createElement(UpdateReadyPrompt);
     const renderer = await renderUpdateRoot(child);
-    await flushDynamicImports();
+    await settleUpdate(() => expect(desktopUpdater.check).toHaveBeenCalledTimes(1));
     expect(downloadAndInstall).not.toHaveBeenCalled();
 
     route.pathname = '/beeline/channels';
     await act(async () => renderer.update(React.createElement(UpdateProvider, null, child)));
-    await flushDynamicImports();
-    await vi.waitFor(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
+    await settleUpdate(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
 
     expect(downloadAndInstall).toHaveBeenCalledTimes(1);
     await unmount(renderer);
@@ -284,32 +293,27 @@ describe('root OTA update coordinator', () => {
       .mockResolvedValueOnce(undefined);
     desktopShell.enabled = true;
     process.env.EXPO_PUBLIC_BEELINE_DESKTOP_UPDATES = '1';
-    desktopUpdater.check.mockResolvedValue({ version: '0.2.21', downloadAndInstall });
+    desktopUpdater.check.mockImplementation(() => new Promise(resolve => {
+      setTimeout(() => resolve({ version: '0.2.21', downloadAndInstall }), 30);
+    }));
     const child = React.createElement(UpdateReadyPrompt);
     const renderer = await renderUpdateRoot(child);
 
-    await flushDynamicImports();
-    await act(async () => {
-      await vi.waitFor(
-        () => expect(downloadAndInstall).toHaveBeenCalledTimes(1),
-        { timeout: 10_000 },
-      );
+    await settleUpdate(() => {
+      expect(downloadAndInstall).toHaveBeenCalledTimes(1);
+      expect(renderer.root.findAllByProps({ testID: 'ota-update-ready-prompt' })).not.toHaveLength(0);
     });
-    expect(renderer.root.findAllByProps({ testID: 'ota-update-ready-prompt' })).not.toHaveLength(0);
 
     route.pathname = '/beeline/channels/settings';
     await act(async () => renderer.update(React.createElement(UpdateProvider, null, child)));
-    await flushDynamicImports();
+    await act(async () => { await vi.dynamicImportSettled(); });
     expect(downloadAndInstall).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       renderer.root.findByProps({ testID: 'ota-update-restart' }).props.onPress();
     });
-    await act(async () => {
-      await vi.waitFor(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
-    });
+    await settleUpdate(() => expect(desktopProcess.relaunch).toHaveBeenCalledTimes(1));
     expect(downloadAndInstall).toHaveBeenCalledTimes(2);
     await unmount(renderer);
-    // Above the 10 s install wait, so a slow CI runner does not kill it at the 5 s default.
-  }, 20_000);
+  });
 });

@@ -69,8 +69,8 @@ const storeListeners = new Set<() => void>();
 /** The relay and identity the entries belong to; `undefined` until resolved. */
 let viewer: Viewer | undefined;
 let viewerRead: Promise<Viewer> | undefined;
-let liveStop: (() => void) | undefined;
-let liveStarting = false;
+/** The live registration and the reset generation it was started under. */
+let liveRegistration: { generation: number; stop?: () => void } | undefined;
 
 function slotKey(viewerKey: string, workspaceId: string): string {
   return `${viewerKey}\u0000${workspaceId}`;
@@ -160,8 +160,8 @@ subscribeClientReset(() => {
   countsInFlight.clear();
   viewer = undefined;
   viewerRead = undefined;
-  liveStop?.();
-  liveStop = undefined;
+  liveRegistration?.stop?.();
+  liveRegistration = undefined;
   notify();
 });
 
@@ -192,20 +192,20 @@ function resolveViewer(): Promise<Viewer> {
  * next viewer resolution registers again.
  */
 function startLive(): void {
-  if (liveStop || liveStarting) return;
-  liveStarting = true;
   const at = clientResetGeneration();
+  if (liveRegistration?.generation === at) return;
+  const registration: { generation: number; stop?: () => void } = { generation: at };
+  liveRegistration = registration;
   void sharedLiveConnection().register([], (event) => {
     if (!('monolithLive' in event)) return;
     const signal = (event as MonolithSurfaceEvent).monolithLive;
     if (signal.type === 'needs-you-delta') applyNeedsYouLiveDelta(signal);
     else if (signal.type === 'invalidate' && NEEDS_YOU_GAP_REASONS.has(signal.reason)) invalidateNeedsYou();
   }).then((stop) => {
-    liveStarting = false;
-    if (at === clientResetGeneration()) liveStop = stop;
+    if (liveRegistration === registration) registration.stop = stop;
     else stop();
   }, () => {
-    liveStarting = false;
+    if (liveRegistration === registration) liveRegistration = undefined;
   });
 }
 

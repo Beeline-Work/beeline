@@ -74,6 +74,7 @@ vi.mock('@beeline/buzz-client', async (original) => {
   };
 });
 
+import { resetClientState } from '@/sync/client-reset';
 import { RoomViewClient } from './room-view-client';
 
 describe('mobile transport cutover switch', () => {
@@ -96,6 +97,28 @@ describe('mobile transport cutover switch', () => {
       expect(controls.legacyCalls).toBe(enabled ? 0 : 1);
     },
   );
+
+  it('starts a new read after a client reset instead of sharing the previous account\'s', async () => {
+    controls.enabled = true;
+    const { monolithSession } = await import('@/auth/monolith-session');
+    let answer: (response: Response) => void = () => undefined;
+    vi.mocked(monolithSession.fetch).mockImplementationOnce(
+      () => new Promise<Response>((resolve) => { answer = resolve; }),
+    );
+    const client = new RoomViewClient({
+      baseUrl: 'https://relay.example',
+      identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) },
+    });
+    const before = client.workspaces();
+    expect(client.workspaces()).toBe(before);
+    resetClientState();
+    const after = client.workspaces();
+    expect(after).not.toBe(before);
+    await expect(after).resolves.toEqual(fixture);
+    answer(new Response(JSON.stringify(fixture), { status: 200 }));
+    await before;
+    expect(controls.monolithCalls).toBe(1);
+  });
 
   it('maps a timed-out phone read to a distinct timeout error, never a silent retry', async () => {
     controls.enabled = true;

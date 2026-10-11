@@ -96,6 +96,13 @@ function outboxKey(relayOrigin: string, viewerPubkey: string, roomId: string): s
   return `${OUTBOX_PREFIX}${relayScope(relayOrigin)}.${viewerPubkey}.${encodeURIComponent(roomId)}`;
 }
 
+// Outboxes saved before relay scoping (`outbox.<viewer>.<room>`) are never
+// read again, so they are deleted once at startup. A scoped key starts with
+// an encoded relay origin, never with a 64-hex viewer key.
+for (const key of mutations.getAllKeys()) {
+  if (/^outbox\.[0-9a-f]{64}\./.test(key)) mutations.delete(key);
+}
+
 /** One mutation-lifetime owner per mounted composer. It stores exact prepared frames only. */
 export function createRoomOutbox(
   relayOrigin: string,

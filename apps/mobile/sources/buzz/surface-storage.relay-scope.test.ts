@@ -71,12 +71,17 @@ describe('relay-scoped Room outbox', () => {
     expect(again.list().map((record) => record.event.id)).toEqual([event.id]);
   });
 
-  it('does not read an outbox saved before relay scoping', async () => {
+  it('deletes an outbox saved before relay scoping at startup', async () => {
     const outboxStore = stores.get('buzz-surface-outbox')!;
     outboxStore.clear();
     const legacy: SignedOutboxRecord[] = [{ event, row, status: 'failed', attempts: 2 }];
+    const scoped = `outbox.${encodeURIComponent('https://relay-one.example')}.${VIEWER}.${ROOM}`;
     outboxStore.set(`outbox.${VIEWER}.${ROOM}`, JSON.stringify(legacy));
-    const outbox = createRoomOutbox('https://relay-one.example', { publicKey: VIEWER }, ROOM);
+    outboxStore.set(scoped, JSON.stringify(legacy));
+    vi.resetModules();
+    const restarted = await import('./surface-storage');
+    expect([...outboxStore.keys()]).toEqual([scoped]);
+    const outbox = restarted.createRoomOutbox('https://relay-two.example', { publicKey: VIEWER }, ROOM);
     await outbox.restore();
     expect(outbox.list()).toEqual([]);
   });

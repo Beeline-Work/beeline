@@ -209,5 +209,5 @@ const styles = StyleSheet.create((theme) => ({
   // SettingsRow pads by `space.sm`; the page's copy sits at `space.md`.
   facts: { paddingHorizontal: theme.buzz.space.sm },
   // The workflow circle starts at x=18 on its own page. Bring its left edge to the 16pt detail axis.
-  workflowLine: { marginLeft: -2, marginRight: 2 },
+  workflowLine: { position: 'relative', left: -theme.buzz.space.xs / 2 },
 }));

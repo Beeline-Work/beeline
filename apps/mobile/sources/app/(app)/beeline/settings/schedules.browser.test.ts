@@ -141,19 +141,19 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.text.slice(2)).toEqual([
       "Summarize yesterday's merged PRs for the Room…",
       'Weekdays at 09:00 UTC',
-      '·', '@Hoots', '·',
+      '\u2009·\u2009', '@Hoots', '\u2009·\u2009',
       'this Room',
       'Triage incoming work',
       'On new pull request in owner/widgets',
-      '·', '@R', '·',
+      '\u2009·\u2009', '@R', '\u2009·\u2009',
       'this Room',
       'Feedback triage',
       'Daily at 14:00 America/New_York',
-      '·', '@R', '·',
+      '\u2009·\u2009', '@R', '\u2009·\u2009',
       'issues-triage',
       'Feedback triage',
       'On someone joining this Room',
-      '·', '@R', '·',
+      '\u2009·\u2009', '@R', '\u2009·\u2009',
       'issues-triage',
     ]);
     expect(page.glyphs).toEqual(['scheduled-work-glyph-video', 'subscription-glyph-sub-2']);

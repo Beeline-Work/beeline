@@ -62,9 +62,9 @@ function ListTail({ agent, corner, compact }: {
 }) {
   const shownAgent = compact ? Array.from(agent)[0] ?? agent : agent;
   return <View style={styles.listTail}>
-    <Text style={styles.listDot}>·</Text>
+    <Text style={styles.listDot}>{'\u2009·\u2009'}</Text>
     <Text numberOfLines={1} style={styles.listAgent}>@{shownAgent}</Text>
-    <Text style={styles.listDot}>·</Text>
+    <Text style={styles.listDot}>{'\u2009·\u2009'}</Text>
     <ScheduledWorkWhere corner={corner} />
   </View>;
 }
@@ -190,7 +190,7 @@ const styles = StyleSheet.create((theme) => ({
   leadingSlot: { width: CORNER_META_SIZE, alignItems: 'center', justifyContent: 'center' },
   workflowGlyph: { color: theme.buzz.accent },
   listTail: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' },
-  listDot: { ...theme.buzz.type.meta, color: theme.buzz.textMuted, marginHorizontal: 2 },
+  listDot: { ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   listAgent: { ...theme.buzz.type.meta, color: theme.buzz.textMuted, flexShrink: 1, minWidth: 0 },
   emptyBlock: { padding: theme.buzz.space.xl, alignItems: 'flex-start', justifyContent: 'center' },
   emptyIcon: { color: theme.buzz.accent },

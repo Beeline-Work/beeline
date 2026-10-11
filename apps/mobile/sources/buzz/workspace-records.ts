@@ -150,7 +150,8 @@ function recordMemberProfile(scope: string, memberId: string, view: WorkspaceMem
     for (const [pubkey, row] of scoped.rows) {
       const agent = row.record as AgentRecord | null;
       if (!agent || owned.has(pubkey) || row.stamp > stamp || agent.owner?.pubkey !== memberId) continue;
-      const { owner: _owner, ...unowned } = agent;
+      // Keep the identity this row shows now; the raw one may predate a live rename.
+      const { owner: _owner, ...unowned } = selectRecord(scope, row) as AgentRecord;
       scoped.rows.set(pubkey, { record: unowned as AgentRecord, stamp });
     }
   }

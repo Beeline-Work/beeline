@@ -1029,6 +1029,47 @@ describe('Members workspace management', () => {
     list.unmount();
   });
 
+  it('Reproduction 2315-R7: unlinking ownership preserves the live agent identity in rendered Members', async () => {
+    const owned = {
+      ...state.workspace.agents[0],
+      owner: { pubkey: MEMBER, kind: 'human', name: 'Builder', handle: 'builder' },
+    };
+    state.workspace = { ...state.workspace, agents: [owned] };
+    const base = roomView.workspaceMembers.getMockImplementation()!;
+    roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
+      ...(await (base as any)(...args)), agents: [owned], agentsTruncated: false,
+    }));
+    const list = await render();
+    await personProfile();
+    const identities = await import('@/buzz/identity-records');
+    const records = await import('@/buzz/workspace-records');
+    const { nextSurfaceStamp } = await import('@/buzz/surface-clock');
+    const { mobileSurfaceCache, surfaceAddress } = await import('@/buzz/surface-storage');
+    const { isWorkspaceMemberListView } = await import('@beeline/buzz-client');
+    await act(async () => {
+      identities.recordPerson(
+        identities.identityScope('https://relay.test', VIEWER),
+        { ...owned.identity, name: 'Clara Renamed', handle: 'renamedagent' },
+        nextSurfaceStamp(),
+      );
+      records.notifyWorkspaceIdentity('https://relay.test', VIEWER);
+    });
+    const shown = () => list.root.findAll((node: any) => node.props.name === 'Clara Renamed').length;
+    expect(shown()).toBeGreaterThan(0);
+    const first = await roomView.workspaceMembers.mock.results[0]!.value as any;
+    await act(async () => {
+      await mobileSurfaceCache.write(
+        surfaceAddress('https://relay.test', VIEWER, '/workspace/:id/members/:memberId', {
+          workspaceId: WORKSPACE, memberId: MEMBER,
+        }),
+        { ...first, agents: [], agentsTruncated: false },
+        isWorkspaceMemberListView,
+      );
+    });
+    expect(shown()).toBeGreaterThan(0);
+    list.unmount();
+  });
+
   it('keeps peers and owners outside admin role edit authority', async () => {
     state.workspace = baseWorkspace('admin');
     let renderer = await personProfile(OWNER);

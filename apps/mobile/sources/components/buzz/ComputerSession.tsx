@@ -119,7 +119,7 @@ export function ComputerSessionViewer({ session, onClose }: { session: ComputerS
       Modal.alert('Could not end browser share', 'The live browser is unavailable. Try again.');
     }
   };
-  return <View style={[styles.viewer, { paddingTop: insets.top + 64, paddingBottom: insets.bottom }]} testID="computer-session-viewer">
+  return <View style={[styles.viewer, { paddingTop: insets.top + 48 + 16, paddingBottom: insets.bottom }]} testID="computer-session-viewer">
     <View style={styles.viewerStream}><ComputerStream session={shownSession} onEnded={() => setEnded(true)} /></View>
     <View style={[styles.controls, { top: insets.top + 12 }]}>
       {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void openInBrowser()} accessibilityRole="button" accessibilityLabel="Open in browser" testID="computer-session-open-browser"><Text style={styles.controlText}>Open ↗</Text></Pressable> : null}

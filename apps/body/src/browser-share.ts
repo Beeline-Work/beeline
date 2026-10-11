@@ -65,6 +65,7 @@ export async function shareChromiumPage(input: {
   let inputCount = 0;
   let screenshotId: number | undefined;
   let screenshotStartedAt = 0;
+  let fallbackTimer: NodeJS.Timeout | undefined;
   const capture = () => {
     if (screenshotId !== undefined && Date.now() - screenshotStartedAt < 5_000) return;
     screenshotId = sendCdp('Page.captureScreenshot', { format: 'jpeg', quality: 65, captureBeyondViewport: false });
@@ -114,7 +115,7 @@ export async function shareChromiumPage(input: {
   const finish = () => {
     if (shares.get(input.page.id) !== share) return;
     shares.delete(input.page.id);
-    clearInterval(fallback);
+    clearTimeout(fallbackTimer);
     cdp.close(); relay.close();
     void input.onEnded();
   };
@@ -125,8 +126,15 @@ export async function shareChromiumPage(input: {
   // A static or externally driven tab may never deliver a screencast frame.
   // Capture one immediately, then keep a slow fallback only while it is quiet.
   capture();
-  const fallback = setInterval(() => { if (Date.now() - lastFrameAt > 1_500) capture(); }, 1_000);
-  fallback.unref();
+  const scheduleFallback = () => {
+    fallbackTimer = setTimeout(() => {
+      if (shares.get(input.page.id) !== share) return;
+      if (Date.now() - lastFrameAt > 1_500) capture();
+      scheduleFallback();
+    }, 1_000);
+    fallbackTimer.unref();
+  };
+  scheduleFallback();
 }
 
 /** One live event wait, with one authoritative reconcile if the socket reconnects. */

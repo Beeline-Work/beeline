@@ -105,6 +105,7 @@ describe('the event kinds beside the prose', () => {
       'poll-closed',
       'workflow-handoff',
       'subscription-fired',
+      'computer-session-activity',
     ]);
     expect(isServerEventKind('joined')).toBe(true);
     expect(isServerEventKind('agent:handoff')).toBe(false);
@@ -175,6 +176,7 @@ describe('the event kinds beside the prose', () => {
       'choice-skipped',
       'poll-closed',
       'subscription-fired',
+      'computer-session-activity',
     ]);
     for (const kind of PER_ITEM_EVENT_KINDS) {
       expect(isPerItemEventKind(kind)).toBe(true);

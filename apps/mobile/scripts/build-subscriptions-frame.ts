@@ -40,10 +40,11 @@ const shims: Record<string, string> = {
       const page = query.get('page');
       return {roomId:query.get('roomId') ?? 'room-1',workspaceId:'workspace-1',
         name:query.get('name') ?? 'feedback-triage',
-        scheduleId:page === 'schedule-workflow' ? 'schedule-workflow'
-          : page === 'schedule-prompt' ? 'schedule-prompt' : undefined,
-        subscriptionId:page === 'subscription-workflow' || page === 'stop-confirm' ? 'subscription-workflow'
-          : page === 'subscription-prompt' ? 'subscription-prompt' : undefined};
+        parentRoomId:query.get('parentRoomId') ?? undefined,
+        scheduleId:query.get('scheduleId') ?? (page === 'schedule-workflow' ? 'schedule-workflow'
+          : page === 'schedule-prompt' ? 'schedule-prompt' : undefined),
+        subscriptionId:query.get('subscriptionId') ?? (page === 'subscription-workflow' || page === 'stop-confirm' ? 'subscription-workflow'
+          : page === 'subscription-prompt' ? 'subscription-prompt' : undefined)};
     };
     export const router = {push:href=>{
       if (href.pathname !== '/beeline/workflow') return;
@@ -51,6 +52,9 @@ const shims: Record<string, string> = {
       next.searchParams.set('page','workflow-from-subscription');
       next.searchParams.set('roomId',href.params.roomId);
       next.searchParams.set('name',href.params.name);
+      if (href.params.parentRoomId) next.searchParams.set('parentRoomId',href.params.parentRoomId);
+      if (href.params.scheduleId) next.searchParams.set('scheduleId',href.params.scheduleId);
+      if (href.params.subscriptionId) next.searchParams.set('subscriptionId',href.params.subscriptionId);
       location.href = next.href;
     },replace:()=>undefined,back:()=>undefined};`,
   '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async name => {

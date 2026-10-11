@@ -74,8 +74,11 @@ export function ScheduledWorkFacts({
 }
 
 /** The same action rail for timer and event triggers. */
-export function ScheduledWorkDoes({ roomId, prompt, workflowSlug }: {
+export function ScheduledWorkDoes({ roomId, parentRoomId, scheduleId, subscriptionId, prompt, workflowSlug }: {
   roomId: string;
+  parentRoomId?: string;
+  scheduleId?: string;
+  subscriptionId?: string;
   prompt: string;
   workflowSlug?: string;
 }) {
@@ -100,7 +103,12 @@ export function ScheduledWorkDoes({ roomId, prompt, workflowSlug }: {
             <SettingsRow
               chevron="right"
               description="Workflow"
-              onPress={() => router.push({ pathname: '/beeline/workflow', params: { roomId, name: workflowSlug } })}
+              onPress={() => router.push({ pathname: '/beeline/workflow', params: {
+                roomId, name: workflowSlug,
+                ...(parentRoomId ? { parentRoomId } : {}),
+                ...(scheduleId ? { scheduleId } : {}),
+                ...(subscriptionId ? { subscriptionId } : {}),
+              } })}
               testID="scheduled-work-workflow"
               title={workflowDisplayName(workflowSlug)}
             />

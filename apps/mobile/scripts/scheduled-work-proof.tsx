@@ -85,7 +85,10 @@ async function run() {
     .map((node) => (node.querySelector('[dir=auto]') ?? node).getBoundingClientRect().x);
   for (const id of ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1', 'subscription-sub-2']) click(id);
   if (page === 'subscription') click('scheduled-work-workflow');
-  const stopId = page === 'subscription' ? 'stop-subscription' : page === 'workflow' ? 'stop-workflow-schedule' : 'stop-schedule';
+  const stopId = page === 'subscription' ? 'stop-subscription'
+    : page === 'workflow' ? new URLSearchParams(location.search).has('subscriptionId')
+      ? 'stop-workflow-subscription' : 'stop-workflow-schedule'
+      : 'stop-schedule';
   click(stopId);
   await pause();
   const afterStop = leaves().map((node) => node.textContent);

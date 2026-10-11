@@ -141,19 +141,19 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.text.slice(2)).toEqual([
       "Summarize yesterday's merged PRs for the Room…",
       'Weekdays at 09:00 UTC',
-      '· @Hoots ·',
+      '·', '@Hoots', '·',
       'this Room',
       'Triage incoming work',
       'On new pull request in owner/widgets',
-      '· @Ruby ·',
+      '·', '@R', '·',
       'this Room',
       'Feedback triage',
       'Daily at 14:00 America/New_York',
-      '· @Ruby ·',
+      '·', '@R', '·',
       'issues-triage',
       'Feedback triage',
       'On someone joining this Room',
-      '· @Ruby ·',
+      '·', '@R', '·',
       'issues-triage',
     ]);
     expect(page.glyphs).toEqual(['scheduled-work-glyph-video', 'subscription-glyph-sub-2']);
@@ -210,7 +210,8 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       expect(page.detailAxis).toEqual([16, 16, 16, 16, 16, 16, 16]);
       expect(page.inputs).toContainEqual(['readWorkflowDefinition', { roomId: 'corner-1', name: 'feedback-triage' }]);
       if (pageName === 'subscription') expect(page.pushed).toContainEqual({
-        pathname: '/beeline/workflow', params: { roomId: 'corner-1', name: 'feedback-triage' },
+        pathname: '/beeline/workflow', params: { roomId: 'corner-1', name: 'feedback-triage',
+          parentRoomId: 'room-1', subscriptionId: 'sub-2' },
       });
       stopped(page, stop);
     }
@@ -267,6 +268,19 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.inputs).toContainEqual(['readWorkflowDefinition', { roomId: 'corner-1', name: 'feedback-triage' }]);
     stopped(page, 'deleteRoomSchedule');
     expect(page.inputs).toContainEqual(['deleteRoomSchedule', { roomId: 'room-1', scheduleId: 'video' }]);
+  }, 120_000);
+
+  it('keeps subscription facts and two-step Stop on the workflow page opened from Does', async () => {
+    const page = await proof('?page=workflow&roomId=corner-1&name=feedback-triage&subscriptionId=sub-2&parentRoomId=room-1');
+    expect(page.text).toEqual(expect.arrayContaining([
+      'When', 'On someone joining this Room', 'Agent', '@Ruby', 'Where', 'issues-triage',
+      'Steps', 'History', 'Stop subscription',
+    ]));
+    expect(page.steps.length).toBeGreaterThan(2);
+    expect(page.pendingCircles).toBe(page.allCircles);
+    expect(page.afterStop.slice(-2)).toEqual(['Confirm: Stop subscription', 'Cancel']);
+    stopped(page, 'deleteRoomSubscription');
+    expect(page.inputs).toContainEqual(['deleteRoomSubscription', { roomId: 'room-1', subscriptionId: 'sub-2' }]);
   }, 120_000);
 
   it('shows a failed schedule read on the workflow page, and Retry restores its rows and Stop', async () => {

@@ -55,9 +55,16 @@ export function orderScheduledWork(
   });
 }
 
-function ListTail({ agent, corner }: { agent: string; corner?: { id: string; name: string } | null }) {
+function ListTail({ agent, corner, compact }: {
+  agent: string;
+  corner?: { id: string; name: string } | null;
+  compact: boolean;
+}) {
+  const shownAgent = compact ? Array.from(agent)[0] ?? agent : agent;
   return <View style={styles.listTail}>
-    <Text numberOfLines={1} style={styles.listAgent}>· @{agent} ·</Text>
+    <Text style={styles.listDot}>·</Text>
+    <Text numberOfLines={1} style={styles.listAgent}>@{shownAgent}</Text>
+    <Text style={styles.listDot}>·</Text>
     <ScheduledWorkWhere corner={corner} />
   </View>;
 }
@@ -92,7 +99,8 @@ export default function ScheduledWork() {
     <SettingsRow
       chevron="right"
       description={`· @${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule)}`}
-      descriptionContent={<ListTail agent={work?.agentNames.get(schedule.agentId) ?? 'Agent'} corner={schedule.corner} />}
+      descriptionContent={<ListTail agent={work?.agentNames.get(schedule.agentId) ?? 'Agent'}
+        compact={scheduleCadenceLabel(schedule.cadence).length > 24} corner={schedule.corner} />}
       descriptionLead={scheduleCadenceLabel(schedule.cadence)}
       key={schedule.id}
       leading={<View style={styles.leadingSlot}>
@@ -110,7 +118,8 @@ export default function ScheduledWork() {
     <SettingsRow
       chevron="right"
       description={`· @${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
-      descriptionContent={<ListTail agent={work?.agentNames.get(subscription.agentId) ?? 'Agent'} corner={subscription.corner} />}
+      descriptionContent={<ListTail agent={work?.agentNames.get(subscription.agentId) ?? 'Agent'}
+        compact={subscriptionWhen(subscription).length > 24} corner={subscription.corner} />}
       descriptionLead={subscriptionWhen(subscription)}
       key={subscription.id}
       leading={<View style={styles.leadingSlot}>
@@ -180,7 +189,8 @@ const styles = StyleSheet.create((theme) => ({
   rows: { paddingHorizontal: theme.buzz.space.sm },
   leadingSlot: { width: CORNER_META_SIZE, alignItems: 'center', justifyContent: 'center' },
   workflowGlyph: { color: theme.buzz.accent },
-  listTail: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.xs },
+  listTail: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' },
+  listDot: { ...theme.buzz.type.meta, color: theme.buzz.textMuted, marginHorizontal: 2 },
   listAgent: { ...theme.buzz.type.meta, color: theme.buzz.textMuted, flexShrink: 1, minWidth: 0 },
   emptyBlock: { padding: theme.buzz.space.xl, alignItems: 'flex-start', justifyContent: 'center' },
   emptyIcon: { color: theme.buzz.accent },

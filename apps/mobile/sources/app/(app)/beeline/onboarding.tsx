@@ -1089,6 +1089,8 @@ const styles = StyleSheet.create((theme) => {
       lineHeight: 32,
       color: groknight.textPrimary,
       textAlign: 'center',
+      // Android can undermeasure the bundled face's intrinsic Text width.
+      width: Platform.OS === 'android' ? '100%' : undefined,
       marginTop: groknight.space.xs,
       marginBottom: 8,
     },
@@ -1105,6 +1107,9 @@ const styles = StyleSheet.create((theme) => {
     subtitle: {
       ...theme.buzz.type.body,
       maxWidth: 320,
+      // Reserve the line's width so a notice-triggered layout cannot crop it.
+      width: '100%',
+      alignSelf: 'center',
       color: groknight.textSecondary,
       textAlign: 'center',
     },

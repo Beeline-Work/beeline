@@ -741,6 +741,12 @@ describe('fresh Room discovery through the live membership wake', () => {
   it('refreshes a running Room when its repository binding changes over the socket', async () => {
     const execute = vi.spyOn(daemonApi, 'execute');
     await vi.waitFor(() => expect(core.activeRoomIds()).toContain(ROOM));
+    // The initial command read can precede the live subscription. Both ends
+    // must be ready before the binding change whose notification we test.
+    await vi.waitFor(() => expect(listener.projectionHealth().connected).toBe(true));
+    await vi.waitFor(() =>
+      expect(core.surfaceHealthSnapshot().find((surface) => surface.id === ROOM)?.stage).toBe('intake-ready'),
+    );
     await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0));
     execute.mockClear();
     await database.query(

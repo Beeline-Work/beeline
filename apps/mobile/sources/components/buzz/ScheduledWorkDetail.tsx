@@ -1,19 +1,16 @@
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import { Text, View } from 'react-native';
-import { router, useFocusEffect } from 'expo-router';
-import type { PhoneOperationMap } from '@beeline/api-contract/phone';
+import { router } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { workflowDisplayName } from '@/buzz/workflow-graph';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { SettingsRow } from './SettingsRow';
-import { WorkflowRunLine } from './WorkflowRunLine';
 import { ScheduledWorkWhere } from './ScheduledWorkWhere';
 
 /**
  * The parts a schedule's or subscription's own page is built from, cut from the
  * workflow run page (`workflow-run.tsx`) so the three read as one family: its
- * hairline section head (as "Steps" is drawn), its summary rail line, and the
- * settings rows every detail page shares — When, Agent, Where, Does, then Stop.
+ * hairline section head, its summary rail line, and the settings rows every
+ * trigger detail page shares — When, Agent, Where, Does, then Stop.
  */
 export function DetailSection({ title, testID }: { title: string; testID?: string }) {
   return (
@@ -32,15 +29,6 @@ export function DetailRailLine({ children, testID }: { children: React.ReactNode
         {children}
       </Text>
     </View>
-  );
-}
-
-/** Plain copy under a section head, at the summary line's size. */
-export function DetailCopy({ children, testID }: { children: React.ReactNode; testID?: string }) {
-  return (
-    <Text style={styles.copy} testID={testID}>
-      {children}
-    </Text>
   );
 }
 
@@ -74,26 +62,11 @@ export function ScheduledWorkFacts({
 }
 
 /** The same action rail for timer and event triggers. */
-export function ScheduledWorkDoes({ roomId, parentRoomId, scheduleId, subscriptionId, prompt, workflowSlug }: {
+export function ScheduledWorkDoes({ roomId, prompt, workflowSlug }: {
   roomId: string;
-  parentRoomId?: string;
-  scheduleId?: string;
-  subscriptionId?: string;
   prompt: string;
   workflowSlug?: string;
 }) {
-  const [contract, setContract] = useState<PhoneOperationMap['readWorkflowDefinition']['output']['contract'] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useFocusEffect(useCallback(() => {
-    if (!workflowSlug) return;
-    let active = true;
-    setContract(null);
-    setError(null);
-    void monolithPhoneOperation('readWorkflowDefinition', { roomId, name: workflowSlug })
-      .then((result) => { if (active) setContract(result.contract); })
-      .catch((caught) => { if (active) setError(String(caught)); });
-    return () => { active = false; };
-  }, [roomId, workflowSlug]));
   return (
     <>
       <DetailSection title="Does" testID="scheduled-work-does-header" />
@@ -103,21 +76,11 @@ export function ScheduledWorkDoes({ roomId, parentRoomId, scheduleId, subscripti
             <SettingsRow
               chevron="right"
               description="Workflow"
-              onPress={() => router.push({ pathname: '/beeline/workflow', params: {
-                roomId, name: workflowSlug,
-                ...(parentRoomId ? { parentRoomId } : {}),
-                ...(scheduleId ? { scheduleId } : {}),
-                ...(subscriptionId ? { subscriptionId } : {}),
-              } })}
+              onPress={() => router.push({ pathname: '/beeline/workflow', params: { roomId, name: workflowSlug } })}
               testID="scheduled-work-workflow"
               title={workflowDisplayName(workflowSlug)}
             />
           </View>
-          {contract ? <View style={styles.workflowLine}>
-            <WorkflowRunLine detail={{ contract, roleHolders: {} }} now={0}
-              onOpenCorner={() => undefined} testID="scheduled-work-steps" />
-          </View> : null}
-          {error ? <DetailCopy testID="scheduled-work-workflow-error">Could not load workflow steps: {error}</DetailCopy> : null}
         </>
       ) : <DetailRailLine testID="scheduled-work-prompt">{prompt}</DetailRailLine>}
     </>
@@ -200,14 +163,6 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     color: theme.buzz.textSecondary,
   },
-  copy: {
-    ...theme.buzz.type.meta,
-    color: theme.buzz.textSecondary,
-    marginHorizontal: theme.buzz.space.md,
-    marginTop: theme.buzz.space.md,
-  },
   // SettingsRow pads by `space.sm`; the page's copy sits at `space.md`.
   facts: { paddingHorizontal: theme.buzz.space.sm },
-  // The workflow circle starts at x=18 on its own page. Bring its left edge to the 16pt detail axis.
-  workflowLine: { position: 'relative', left: -theme.buzz.space.xs / 2 },
 }));

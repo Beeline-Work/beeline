@@ -17,8 +17,10 @@ import {
   type ChatListDelta,
   type ChatListDeltaContext,
 } from './chat-list-delta';
-import { readChatListFromServer } from './chat-list-read';
+import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
+import { currentSurfaceStamp } from './surface-clock';
 import { isDraftFrame } from '@/sync/transport/live-frames';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
@@ -95,10 +97,9 @@ function watchedRoomIds(filters: Filters): Set<string> {
  * go to the corner store, which owns them; only the saved copy carries them.
  */
 class ChatListStore {
-  private value: ChatListView | null = null;
   private readFromServer = false;
-  private readonly listeners = new Set<() => void>();
   private readonly consumers = new Set<ChatListConsumer>();
+  private readonly subscriptions = new Set<() => void>();
   private readonly address: SurfaceCacheAddress;
   private readonly scheduler: SurfaceRefreshScheduler<ChatListView>;
   private unsubscribe: (() => void) | undefined;
@@ -109,6 +110,7 @@ class ChatListStore {
   private readInFlight = false;
   /** The corner store clock when the running read started. */
   private readClock = 0;
+  private readStamp = 0;
   private deltasDuringRead: ChatListDelta[] = [];
   // Rooms the installed watch covers. A read sees every delta for these.
   private watchedRooms = new Set<string>();
@@ -130,17 +132,21 @@ class ChatListStore {
   ) {
     this.address = chatListAddress(key);
     // A copy another screen published paints on the first frame.
-    this.value = this.restored(mobileSurfaceCache.peek(this.address, isChatListView));
+    this.restored(mobileSurfaceCache.peek(this.address, isChatListView));
     this.scheduler = new SurfaceRefreshScheduler({
       fetch: async () => {
         this.deltasDuringRead = [];
         this.readInFlight = true;
         this.readClock = cornerStoreClock();
+        this.readStamp = currentSurfaceStamp();
         this.readWatchedRooms = new Set(this.watchedRooms);
         try {
           // The raw read is never published: only applyRead's reconciled value
           // reaches memory and disk.
-          return await readChatListFromServer(key.relayUrl, key.viewerPubkey, key.workspaceId);
+          const identity = await loadBuzzIdentity();
+          if (!identity || identity.publicKey !== key.viewerPubkey)
+            throw new Error('The signed-in identity changed before the Room list was read.');
+          return await new RoomViewClient({ baseUrl: key.relayUrl, identity }).chats(key.workspaceId);
         } finally {
           this.readInFlight = false;
         }
@@ -155,7 +161,7 @@ class ChatListStore {
   }
 
   current(): ChatListView | null {
-    return this.value;
+    return this.closed ? null : mobileSurfaceCache.peek(this.address, isChatListView);
   }
 
   confirmed(): boolean {
@@ -172,8 +178,12 @@ class ChatListStore {
   }
 
   subscribe(listener: () => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    const stop = mobileSurfaceCache.subscribe(this.address, listener);
+    this.subscriptions.add(stop);
+    return () => {
+      stop();
+      this.subscriptions.delete(stop);
+    };
   }
 
   force(): void {
@@ -190,10 +200,9 @@ class ChatListStore {
     // The pending live write must not land after the removal.
     if (this.durableTimer) clearTimeout(this.durableTimer);
     this.durableTimer = undefined;
+    const removal = mobileSurfaceCache.remove(this.address);
     this.close();
-    this.value = null;
-    this.notify();
-    await mobileSurfaceCache.remove(this.address);
+    await removal;
   }
 
   /** The account changed: drop the list and its watch, and write nothing to disk. */
@@ -201,9 +210,7 @@ class ChatListStore {
     if (this.durableTimer) clearTimeout(this.durableTimer);
     this.durableTimer = undefined;
     this.close();
-    this.value = null;
     this.readFromServer = false;
-    this.notify();
   }
 
   private visible(): boolean {
@@ -218,15 +225,9 @@ class ChatListStore {
     else this.missed = true;
   }
 
-  private notify(): void {
-    for (const listener of [...this.listeners]) listener();
-  }
-
   private paint(value: ChatListView): void {
     if (this.closed) return;
-    this.value = value;
     mobileSurfaceCache.publish(this.address, value, isChatListView);
-    this.notify();
     this.scheduleDurableWrite();
   }
 
@@ -238,14 +239,15 @@ class ChatListStore {
   private flushDurableWrite(): void {
     if (this.durableTimer) clearTimeout(this.durableTimer);
     this.durableTimer = undefined;
-    if (this.value) void mobileSurfaceCache.write(this.address, this.saved(this.value), isChatListView);
+    const value = this.current();
+    if (value) void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
   }
 
   /** A saved copy hands its corner facts to the corner store, never over a newer summary. */
-  private restored(saved: ChatListView | null): ChatListView | null {
-    if (!saved) return null;
+  private restored(saved: ChatListView | null): void {
+    if (!saved || !saved.chats.some((item) => 'cornerCount' in item || 'openCorners' in item)) return;
     applyChatListCorners(saved.chats, -1);
-    return withoutCornerFacts(saved);
+    mobileSurfaceCache.publish(this.address, withoutCornerFacts(saved), isChatListView, 0);
   }
 
   /** The saved copy carries each Room's corner summary, so a cold start paints it. */
@@ -259,7 +261,7 @@ class ChatListStore {
   private applyRead(read: ChatListView): void {
     if (this.closed) return;
     this.missed = false;
-    const held = this.value;
+    const held = this.current();
     const missedLive =
       this.readFromServer && held !== null && roomsMissedByLive(held, read, this.heardRooms).length > 0;
     this.heardRooms.clear();
@@ -270,11 +272,10 @@ class ChatListStore {
       withoutCornerFacts(keepUnavailableChatFacts(held, read)),
     );
     this.readFromServer = true;
-    this.value = value;
     if (this.durableTimer) clearTimeout(this.durableTimer);
     this.durableTimer = undefined;
-    void mobileSurfaceCache.write(this.address, this.saved(value), isChatListView);
-    this.notify();
+    mobileSurfaceCache.publish(this.address, value, isChatListView, this.readStamp);
+    void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
     for (const consumer of this.consumers) consumer.onRead?.();
     if (missedLive) sharedLiveConnection().reconnect();
     if (chatWatchFiltersKey(value.watchFilters) !== this.watchKey)
@@ -285,11 +286,8 @@ class ChatListStore {
     const stored = await mobileSurfaceCache.read(this.address, isChatListView);
     if (this.closed) return;
     // A server read or delta can land before storage answers.
-    if (stored && !this.value) {
-      this.value = this.restored(stored);
-      this.notify();
-    }
-    const filters = this.value?.watchFilters ?? [];
+    this.restored(stored);
+    const filters = this.current()?.watchFilters ?? [];
     await this.installWatch(filters);
     await sharedLiveConnection().whenSubscribed(filters, CHAT_SUBSCRIBE_WAIT_MS);
     if (this.closed) return;
@@ -336,7 +334,7 @@ class ChatListStore {
       // Deltas that land while a read is in flight: the read may predate them,
       // and no later read comes to correct it.
       if (this.readInFlight) this.deltasDuringRead.push(live);
-      const held = this.value;
+      const held = this.current();
       const needsRead = !held || chatListDeltaNeedsRead(held, live);
       if (held) this.paint(applyChatListDelta(held, live, this.deltaContext));
       if (needsRead) this.requestRead();
@@ -358,6 +356,8 @@ class ChatListStore {
     if (this.durableTimer) this.flushDurableWrite();
     this.closed = true;
     this.scheduler.dispose();
+    for (const stop of this.subscriptions) stop();
+    this.subscriptions.clear();
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.onClosed();
@@ -366,10 +366,13 @@ class ChatListStore {
 
 const stores = new Map<string, ChatListStore>();
 
-subscribeClientReset(() => {
+function resetChatListStores(): void {
+  mobileSurfaceCache.clear();
   for (const store of [...stores.values()]) store.reset();
   stores.clear();
-});
+}
+
+subscribeClientReset(resetChatListStores);
 
 /**
  * Join the Workspace's Room list. The first consumer opens it; later
@@ -423,7 +426,7 @@ export function liveChatList(key: ChatListKey): ChatListView | null {
  * store's value, else the copy that store last published this session.
  */
 export function chatListSnapshot(key: ChatListKey): ChatListView | null {
-  return stores.get(storeKey(key))?.current() ?? mobileSurfaceCache.peek(chatListAddress(key), isChatListView);
+  return mobileSurfaceCache.peek(chatListAddress(key), isChatListView);
 }
 
 /** Force a read of the live list, if a screen holds it open. */
@@ -468,7 +471,4 @@ export function useChatList(
 }
 
 /** Test seam: close and drop every store between cases. */
-export function resetChatListStoresForTest(): void {
-  for (const store of [...stores.values()]) store.reset();
-  stores.clear();
-}
+export const resetChatListStoresForTest = resetChatListStores;

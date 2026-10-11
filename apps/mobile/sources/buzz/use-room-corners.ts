@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   isCornerListView,
   type CornerListItem,
-  type CornerListView,
   type Identity,
 } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -26,7 +25,6 @@ import {
   roomOpenCornerRows,
   shareCornerRead,
   useRoomCornerRecord,
-  type RoomCorners,
 } from '@/buzz/room-corner-store';
 
 /** A socket that never answers must not hold the first read. */
@@ -95,18 +93,6 @@ async function rereadPages(roomId: string, reader: Reader, archived: boolean): P
   } while (!archived && getRoomCorners(roomId).openMoreStale && getRoomCorners(roomId).openMore.length > 0);
 }
 
-type RoomCornersHandle = {
-  readonly record: RoomCorners | undefined;
-  /** The first page and the held pages after it, as one list. */
-  readonly openRows: readonly CornerListItem[];
-  /** The first page with its Room and viewer, once both are held. */
-  readonly view: CornerListView | undefined;
-  readonly error: string | null;
-  refresh(): Promise<void>;
-  loadMoreOpen(): Promise<void>;
-  loadArchived(more: boolean): Promise<void>;
-};
-
 /**
  * Hold a Room's lane and keep its corner record current. Rows the lane already
  * proved paint with no read; a read happens only when the record cannot prove
@@ -115,7 +101,7 @@ type RoomCornersHandle = {
 export function useRoomCorners(
   roomId: string | undefined,
   client?: CornersClient | null,
-): RoomCornersHandle {
+) {
   const record = useRoomCornerRecord(roomId);
   const [error, setError] = useState<string | null>(null);
   const [accountEpoch, setAccountEpoch] = useState(0);

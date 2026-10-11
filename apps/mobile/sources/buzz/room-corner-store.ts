@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import type {
   ChatListCorner,
   ChatListItem,
@@ -8,25 +8,9 @@ import type {
 import { subscribeClientReset } from '@/sync/client-reset';
 import { OrderedRecordStore, type RecordMark } from './ordered-record-store';
 
-/**
- * The client's one copy of each Room's corner rows. The live connection
- * writes every `corner-status` frame here whichever screen is mounted, and
- * every corners read lands here too, so the Corners screen, the Room list
- * dropdown, the desktop inspector, the corner header and the `#` menu all
- * select the same record.
- *
- * It also owns each Room's corner summary: the counts and the capped list of
- * open corners the Room list row, its dropdown, the repository guard and
- * notifications read. A `corner-status` frame, a first-page corners read and
- * a Room list read each carry the whole summary and replace it; any other
- * corners read leaves the summary alone. Whole sources apply only when they
- * started after the held summary's source.
- *
- * Order: every read and frame takes its own clock tick, so no two share a
- * mark. Frames are ordered by the Room lane's sequence, and a frame is newer
- * than any read that started before it. A read's rows apply only when no frame
- * or later read landed for its Room since the read started.
- */
+/** One Room corner record for frames, reads, the list, header and notifier.
+ * Whole server summaries replace older summaries; partial pages never derive one.
+ * The surface clock orders reads and frames, and lane sequence deduplicates frames. */
 
 type CornerStatusFrame = {
   readonly roomId: string;
@@ -37,11 +21,8 @@ type CornerStatusFrame = {
   readonly sequence?: number;
 };
 
-/** What a corners read says besides its rows: the Room, the viewer, the apps. */
 type CornerListHeader = Omit<CornerListView, 'corners' | 'nextOpen' | 'nextArchived' | 'summary'>;
 
-/** A Room's open-corner summary. The count is the server's, never counted here;
- *  the list keeps every Mine corner and fills to the server's cap. */
 export type RoomCornerSummary = {
   readonly cornerCount: number;
   readonly openCorners: readonly ChatListCorner[];
@@ -49,50 +30,31 @@ export type RoomCornerSummary = {
 
 export type RoomCorners = {
   readonly header?: CornerListHeader;
-  /** A corners read set `header`; one from disk is never current. */
   readonly headerRead: boolean;
-  /** The first page of open corners, newest first. */
   readonly rows?: readonly CornerListItem[];
-  /** The cursor after the first page. */
   readonly firstPageNext?: string;
-  /** Open corners past the first page, never repeating a first-page row. */
   readonly openMore: readonly CornerListItem[];
-  /** The cursor after the last open row held. */
   readonly nextOpen?: string;
-  /** The Room's corner summary, the one copy every Room list surface reads. */
   readonly summary?: RoomCornerSummary;
-  /** Closed corners, once a reader asked for them. */
   readonly archived?: { readonly corners: readonly CornerListItem[]; readonly next?: string };
-  /** The Room lane carried every change since `rows` landed. Rows from disk,
-   *  or read or framed without a held lane, are never current. */
+  /** False after a lost lane or an unproven saved copy. */
   readonly current: boolean;
-  /** A change only a read of the first page can show; a missing header is
-   *  the reader's own reason to read. */
   readonly wantsRead: boolean;
-  /** The open pages past the first may hold rows a frame changed. */
   readonly openMoreStale: boolean;
-  /** A corner left the open set, so the archived rows may miss it. */
   readonly archivedStale: boolean;
 };
 
 type Entry = RoomCorners & {
-  /** The clock value of the last frame or change for this Room. */
   readonly changedAt: number;
-  /** The clock value when the read that set `rows` started. */
   readonly rowsReadAt?: number;
-  /** The last applied `corner-status` sequence on the current lane. */
   readonly sequence?: number;
-  /** The clock value when the source of `summary` started. */
   readonly summaryAt?: number;
-  /** The clock value when a corner last left the open set, or the open set
-   *  changed unseen. An archived read started before it may miss that corner. */
+  /** An archived read begun before this clock may miss a closed corner. */
   readonly archivedChangedAt: number;
-  /** Bumped when the lane is lost or restarts, so a read across it is not current. */
   readonly laneEpoch: number;
   readonly laneHeld: boolean;
 };
 
-/** Taken when a read starts and handed back when it lands. */
 export type CornerReadMark = RecordMark & {
   readonly laneEpoch: number;
   readonly laneHeld: boolean;
@@ -113,21 +75,18 @@ const EMPTY: Entry = {
 
 const records = new OrderedRecordStore<Entry>();
 const summaryListeners = new Set<() => void>();
-let summaries: ReadonlyMap<string, RoomCornerSummary> = new Map();
+let summaryRevision = 0;
 function entry(roomId: string): Entry {
   return records.get(roomId) ?? EMPTY;
 }
 
 function write(roomId: string, next: Entry): void {
   const before = records.get(roomId)?.summary;
-  if (next.summary !== before) {
-    const changed = new Map(summaries);
-    if (next.summary) changed.set(roomId, next.summary);
-    else changed.delete(roomId);
-    summaries = changed;
-  }
   records.set(roomId, next);
-  if (next.summary !== before) for (const listener of [...summaryListeners]) listener();
+  if (next.summary !== before) {
+    summaryRevision += 1;
+    for (const listener of [...summaryListeners]) listener();
+  }
 }
 
 /**
@@ -456,7 +415,7 @@ export function applyChatListCorners(
 /** A new identity must not see the last one's corners, nor a read started for it. */
 export function resetRoomCornerStore(): void {
   records.reset();
-  summaries = new Map();
+  summaryRevision += 1;
   for (const listener of [...summaryListeners]) listener();
 }
 
@@ -489,5 +448,7 @@ export function useRoomCornerSummary(roomId: string): RoomCornerSummary | undefi
 
 /** Every held Room's summary by Room id; a new map whenever one changes. */
 export function useRoomCornerSummaries(): ReadonlyMap<string, RoomCornerSummary> {
-  return useSyncExternalStore(subscribeRoomCornerSummaries, () => summaries);
+  const revision = useSyncExternalStore(subscribeRoomCornerSummaries, () => summaryRevision);
+  return useMemo(() => new Map([...records.entries()].flatMap(([id, record]) =>
+    record.summary ? [[id, record.summary] as const] : [])), [revision]);
 }

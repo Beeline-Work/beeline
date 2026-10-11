@@ -52,6 +52,7 @@ import type { InstitutionalSkillAnchorSource } from './institutional-skill-ancho
 import { retireWelcomeWorkspace, welcomeRetirementPreflight } from './welcome-retirement.js';
 import { feedbackConfigFromEnv } from './feedback.js';
 import { FeedbackGitHub } from './feedback-github.js';
+import { startComputerExpirySweep } from './computer-session.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -469,9 +470,11 @@ async function main() {
     await connectionPresence.start();
   }, port, host);
   void leader.run();
+  const stopComputerExpiry = startComputerExpirySweep(database, live);
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
     leader.stop();
+    stopComputerExpiry();
     stopBackgroundWake();
     await connectionPresence.stop();
     await liveListener.stop();

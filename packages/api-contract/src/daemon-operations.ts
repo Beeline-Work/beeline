@@ -463,6 +463,8 @@ export type DaemonOperationMap = {
     readonly sessionId: string;
     readonly upstreamUrl: string;
     readonly title?: string;
+    /** Epoch milliseconds when the upstream share link stops working. */
+    readonly expiresAt?: number;
   }, { readonly id: string; readonly url: string }>;
   endComputerSession: Operation<RoomInput & {
     readonly sessionId: string;

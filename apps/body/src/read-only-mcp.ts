@@ -3936,29 +3936,84 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
   };
 }
 
+/**
+ * Squire error codes with a known recovery. Codes come from Squire's
+ * `errorContent` ({ error: { code, message } }): `stale_lease` and
+ * `unknown_session` mean the session is gone or not this connection's, and the
+ * Beeline task relay reuses `stale_lease` for the same case.
+ */
+const SQUIRE_SHARE_CAUSES: Record<string, string> = {
+  stale_lease: 'the Squire browser session is gone or no longer owned by this conversation; call operate_start for a fresh session, then share it',
+  unknown_session: 'the Squire browser session is gone; call operate_start for a fresh session, then share it',
+  session_busy: 'cancelled work still holds this Squire session; wait for it to settle or call operate_finish',
+  server_unavailable: 'the Squire browser service is unavailable; do not restart it, try again later',
+};
+
+/** Messages the Beeline task relay writes itself, so they hold no provider text. */
+const SQUIRE_RELAY_REFUSALS = new Set([
+  'Squire MCP connection died and its browser session is gone; call operate_start',
+  'Squire browser session is no longer owned by this conversation; call operate_start',
+  'Squire MCP connection died; call operate_start for a fresh browser session',
+  'Squire call is not authorized for this task',
+  'Squire requires the current active task',
+  'Squire task ended while the call was running',
+]);
+
+/** Only known causes reach the agent; provider payloads may hold secrets. */
+function squireShareFailure(status: number, body: unknown): Error {
+  const record = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+  if (typeof record.error === 'string' && SQUIRE_RELAY_REFUSALS.has(record.error))
+    return new Error(`Squire could not share this browser session: ${record.error}`);
+  const result = record.result as { content?: Array<{ type?: string; text?: unknown }> } | undefined;
+  const text = Array.isArray(result?.content)
+    ? result.content.find((entry) => entry?.type === 'text')?.text : undefined;
+  let code: unknown;
+  try { code = (JSON.parse(typeof text === 'string' ? text : '') as { error?: { code?: unknown } }).error?.code; }
+  catch { /* Unstructured text stays private. */ }
+  if (typeof code === 'string' && Object.hasOwn(SQUIRE_SHARE_CAUSES, code))
+    return new Error(`Squire could not share this browser session: ${SQUIRE_SHARE_CAUSES[code]} (${code})`);
+  const safeCode = typeof code === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? `, code ${code}` : '';
+  return new Error(`Squire share failed (HTTP ${status}${safeCode})`);
+}
+
 async function squireShareEndpoint(sessionId: string): Promise<{ url: string; expiresAt: number }> {
   const relayUrl = requiredEnv('BEELINE_SQUIRE_RELAY_URL');
   const relayToken = requiredEnv('BEELINE_SQUIRE_RELAY_TOKEN');
-  const response = await fetch(new URL('/mcp', relayUrl), {
-    method: 'POST',
-    headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ ...await activeCommandContext(), method: 'tools/call',
-      params: { name: 'operate_share', arguments: { session_id: sessionId } } }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`Squire share failed (${response.status})`);
-  const body = await response.json() as { error?: string; result?: { isError?: boolean; content?: Array<{ type: string; text?: string }> } };
-  const text = body.result?.content?.find((entry) => entry.type === 'text')?.text;
-  if (body.result?.isError || !text) {
-    const cause = [text, body.error].find((value) => typeof value === 'string' && value.trim())
-      ?.replace(/\s+/g, ' ').trim().slice(0, 300);
-    throw new Error(`Squire could not share this browser session${cause ? `: ${cause}` : ''}`);
+  let response: Response;
+  let body: unknown;
+  try {
+    response = await fetch(new URL('/mcp', relayUrl), {
+      method: 'POST',
+      headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...await activeCommandContext(), method: 'tools/call',
+        params: { name: 'operate_share', arguments: { session_id: sessionId } } }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    // Only an unparseable body is tolerated; a timeout while reading it is not.
+    body = await response.json().catch((error: unknown) => {
+      if (error instanceof SyntaxError) return undefined;
+      throw error;
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError')
+      throw new Error('Squire share timed out after 30 seconds');
+    throw error;
   }
-  const result = JSON.parse(text) as Record<string, unknown>;
-  const endpoint = result.url;
+  if (response.status === 403 && body === undefined)
+    throw new Error('Squire relay refused authorization (HTTP 403); this turn may have ended');
+  if (!response.ok) throw squireShareFailure(response.status, body);
+  const result = (body as { result?: { isError?: unknown; content?: unknown } } | undefined)?.result;
+  if (result?.isError) throw squireShareFailure(response.status, body);
+  const text = Array.isArray(result?.content)
+    ? (result.content as Array<{ type?: unknown; text?: unknown }>)
+      .find((entry) => entry?.type === 'text')?.text : undefined;
+  let shared: Record<string, unknown> | undefined;
+  try { shared = typeof text === 'string' ? JSON.parse(text) as Record<string, unknown> : undefined; } catch { /* Reported below. */ }
+  if (!shared || typeof shared !== 'object') throw new Error('Squire share returned a malformed response');
+  const endpoint = shared.url;
   if (typeof endpoint !== 'string' || !/^https?:\/\/[^/]+\/s\/[A-Za-z0-9_-]{43}\/$/.test(endpoint))
     throw new Error('Squire share returned no valid live page URL');
-  const expiresAt = typeof result.expires_at === 'string' ? Date.parse(result.expires_at) : NaN;
+  const expiresAt = typeof shared.expires_at === 'string' ? Date.parse(shared.expires_at) : NaN;
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now())
     throw new Error('Squire share returned no valid expiry');
   return { url: endpoint, expiresAt };
@@ -3972,10 +4027,10 @@ async function shareBrowser(args: JsonObject): Promise<string> {
   if (args.source === 'squire') {
     if (typeof args.sessionId !== 'string' || !args.sessionId.trim())
       throw new Error('An existing Squire operate session id is required');
-    const { url: upstreamUrl } = await squireShareEndpoint(args.sessionId);
+    const { url: upstreamUrl, expiresAt } = await squireShareEndpoint(args.sessionId);
     console.error(`[computer-share] Squire operate_share completed ms=${Date.now() - startedAt}`);
     const result = await daemonExecute('postComputerSession', {
-      roomId: context.roomId, sessionId: args.sessionId, upstreamUrl, title,
+      roomId: context.roomId, sessionId: args.sessionId, upstreamUrl, title, expiresAt,
     });
     console.error(`[computer-share] card published ms=${Date.now() - startedAt}`);
     return JSON.stringify({ cardId: result.id, url: result.url, sessionId: args.sessionId, status: 'live' });

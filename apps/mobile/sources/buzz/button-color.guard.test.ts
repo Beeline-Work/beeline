@@ -41,6 +41,8 @@ const decorativeAccentFills = new Set([
   'components/buzz/TranscriptCard.tsx:choiceWashLeader',
   'components/buzz/TranscriptCard.tsx:choiceLetterSelected',
   'components/buzz/TranscriptScrubber.tsx:handle',
+  // The center point of the outlined attention glyph, not the button plate.
+  'components/buzz/ViewerConversationDock.tsx:attentionDot',
 ]);
 
 function filesUnder(directory: string): string[] {

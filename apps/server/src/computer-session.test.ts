@@ -286,7 +286,7 @@ describe('computer session handoff', () => {
           }, 15_000);
           break;
         } catch (error) {
-          if (!spawnFailed && chrome.exitCode === null) {
+          if (!spawnFailed && chrome.exitCode === null && chrome.signalCode === null) {
             chrome.kill('SIGTERM');
             await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
           }
@@ -332,7 +332,7 @@ describe('computer session handoff', () => {
       expect(ended.status).toBe(410);
       expect((await fetch(`${origin}/s/${share.id}/last.jpg`)).status).toBe(404);
     } finally {
-      if (chrome && !spawnFailed && chrome.exitCode === null) {
+      if (chrome && !spawnFailed && chrome.exitCode === null && chrome.signalCode === null) {
         chrome.kill('SIGTERM');
         await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
       }

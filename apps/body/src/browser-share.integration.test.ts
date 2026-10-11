@@ -63,7 +63,7 @@ describe('agent-owned Chromium sharing', () => {
         }, 15_000);
         return;
       } catch (error) {
-        if (!spawnFailed && chrome.exitCode === null) {
+        if (!spawnFailed && chrome.exitCode === null && chrome.signalCode === null) {
           chrome.kill('SIGTERM');
           await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
         }
@@ -74,7 +74,7 @@ describe('agent-owned Chromium sharing', () => {
   }, 90_000);
   afterAll(async () => {
     source?.close();
-    if (chrome && !spawnFailed && chrome.exitCode === null) {
+    if (chrome && !spawnFailed && chrome.exitCode === null && chrome.signalCode === null) {
       chrome.kill('SIGTERM');
       await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
     }

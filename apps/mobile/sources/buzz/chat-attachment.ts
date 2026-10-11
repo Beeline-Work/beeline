@@ -5,9 +5,11 @@ import type { BuzzClient, AttachmentReference } from '@beeline/buzz-client';
 import { canonicalizeJpeg, canonicalizePng } from '@/buzz/avatar-png';
 import { RawPhotoDecodeError } from '@/buzz/publish-failure';
 import { readFileBytes } from '@/utils/readFileBytes';
+import type { PickedChatAttachment } from './chat-attachment-pick';
+export { MAX_MESSAGE_ATTACHMENTS, pickedPhotoAttachments } from './chat-attachment-pick';
+export type { PickedChatAttachment } from './chat-attachment-pick';
 
 export const MAX_CHAT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-export const MAX_MESSAGE_ATTACHMENTS = 10;
 const THUMBNAIL_EDGE = 360;
 const PHOTO_JPEG_QUALITY = 0.9;
 type PreservedPhotoFormat = 'jpeg' | 'png' | 'gif' | 'webp';
@@ -63,41 +65,6 @@ const RAW_PHOTO_MIME_TYPES = new Set([
   'image/x-raw',
   'image/x-sony-arw',
 ]);
-
-export type PickedChatAttachment = {
-  uri: string;
-  name: string;
-  mimeType: string;
-  size: number;
-  source: 'photo' | 'file';
-  width?: number;
-  height?: number;
-};
-
-type PickedPhotoAsset = {
-  uri: string;
-  fileName?: string | null;
-  mimeType?: string | null;
-  fileSize?: number;
-  width: number;
-  height: number;
-};
-
-/** Preserves the picker order and gives unnamed assets stable, distinct labels. */
-export function pickedPhotoAttachments(
-  assets: readonly PickedPhotoAsset[],
-  pickedAt = Date.now(),
-): PickedChatAttachment[] {
-  return assets.map((asset, index) => ({
-    uri: asset.uri,
-    name: asset.fileName?.trim() || `photo-${pickedAt}-${index + 1}.jpg`,
-    mimeType: asset.mimeType ?? 'image/jpeg',
-    size: asset.fileSize ?? 0,
-    source: 'photo',
-    width: asset.width,
-    height: asset.height,
-  }));
-}
 
 const CLIPBOARD_IMAGE_DATA_URI = /^data:(image\/\w+);base64,(.+)$/;
 

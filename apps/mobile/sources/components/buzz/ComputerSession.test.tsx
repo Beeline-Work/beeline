@@ -24,6 +24,7 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 vi.mock('@/utils/open-external-url', () => ({ openExternalUrl }));
 vi.mock('@/buzz/desktop-computer-pane', () => ({ openComputerInDesktopWorkPane: () => false }));
 vi.mock('@/modal', () => ({ Modal: { show: vi.fn(), alert: vi.fn() } }));
+vi.mock('@/components/buzz/ViewerConversationDock', () => ({ ViewerConversationDock: () => null }));
 
 import { ComputerSessionCard, ComputerSessionViewer, type ComputerSessionView } from './ComputerSession';
 

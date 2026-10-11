@@ -50,6 +50,7 @@ import {
 } from '@/buzz/draft-settle';
 import { liveDraftDrainStore } from '@/buzz/live-draft-drain';
 import { splitLedgerText } from '@/buzz/ledger-text';
+import { splitViewerContext } from '@/buzz/viewer-conversation';
 import { parseConnectorReceipt, type ConnectorReceipt } from '@/buzz/connector-receipt';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { isLedgerDayOpener } from '@/buzz/message-dates';
@@ -1844,8 +1845,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       : undefined;
   const connectorReceipt = parseConnectorReceipt(forwarded.body);
   const receiptBody = connectorReceipt ? connectorReceipt.prose : forwarded.body;
-  const ledgerText = isSelfSteer ? undefined : splitLedgerText(receiptBody);
-  const proseBody = ledgerText ? ledgerText.prose : receiptBody;
+  const viewerMessage = !isAgent ? splitViewerContext(receiptBody) : { body: receiptBody };
+  const ledgerText = isSelfSteer ? undefined : splitLedgerText(viewerMessage.body);
+  const proseBody = ledgerText ? ledgerText.prose : viewerMessage.body;
   const renderedBody = isAgent ? (agentMessageJsonMarkdown(proseBody) ?? proseBody) : proseBody;
   const receiptCard =
     connectorReceipt && !isSelfSteer ? (
@@ -1867,7 +1869,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   const groupedPhotoArtifacts =
     livePhotoArtifacts && livePhotoArtifacts.length > 1 ? livePhotoArtifacts : undefined;
   const firstGroupedPhoto = groupedPhotoArtifacts?.[0];
-  const attachments = message.attachments?.map((attachment) => {
+  const attachments = message.attachments?.map((attachment, index) => {
+    if (viewerMessage.context && index === 0 &&
+      (viewerMessage.context.startsWith('Viewing artifact:') || attachment.name === 'browser-screen.jpg')) return null;
     if (attachment.kind === 'artifact' && !attachment.expired) {
       if (groupedPhotoArtifacts && artifactFormat(attachment.mimeType) === 'image') {
         if (attachment !== firstGroupedPhoto) return null;
@@ -1896,6 +1900,12 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     );
   });
 
+  const viewerAttachments = viewerMessage.context ? [
+    <Text key="viewer-context" style={styles.viewerContextChip} testID={`viewer-context-${message.id}`}>
+      ◉ {viewerMessage.context}
+    </Text>, ...(attachments ?? []),
+  ] : attachments;
+
   const content = (
     <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>
       <View>
@@ -1906,7 +1916,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             chronological={desktopLayout}
             precededByDayCaption={dayOpener}
             byline={byline}
-            bodyText={forwarded.body}
+            bodyText={viewerMessage.body}
             mentionHandles={mentionHandles}
             onMention={handleMention}
             channelIndex={channelIndex}
@@ -1916,7 +1926,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             bodyTestID={`chat-message-text-${message.id}`}
             bodyAction={forwardBodyAction}
             replyReference={replyReference}
-            attachments={attachments}
+            attachments={viewerAttachments}
           />
         ) : cornerProposal ? (
           <TranscriptCard
@@ -1987,7 +1997,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             bodyAction={forwardBodyAction}
             replyReference={replyReference}
             machineNoise={machineNoise}
-            attachments={attachments}
+            attachments={viewerAttachments}
           />
         )}
         {receiptCard}
@@ -2156,6 +2166,17 @@ const styles = StyleSheet.create((theme) => ({
     marginLeft: 8,
   },
   reactionEmoji: emojiTextStyle(theme.buzz.type.body),
+  viewerContextChip: {
+    ...theme.buzz.type.machine,
+    alignSelf: 'flex-start',
+    color: theme.buzz.accent,
+    borderWidth: 1,
+    borderColor: theme.buzz.borderStrong,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: theme.buzz.space.xs,
+  },
   forwardCaption: {
     ...theme.buzz.type.sectionHead,
     marginTop: theme.buzz.space.xs,

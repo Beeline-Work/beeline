@@ -3,6 +3,7 @@ import type { AttachmentReference } from '@beeline/buzz-client';
 export interface DesktopArtifactSelection {
   attachment: AttachmentReference;
   authorHandle?: string;
+  roomId?: string;
 }
 
 const listeners = new Set<(selection: DesktopArtifactSelection) => boolean>();

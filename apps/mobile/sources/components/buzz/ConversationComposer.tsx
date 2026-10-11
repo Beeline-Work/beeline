@@ -77,6 +77,8 @@ type Props = {
   inputRevision?: number;
   isInputRevisionCurrent?(inputRevision: number): boolean;
   testIDPrefix?: string;
+  /** One-line viewer pill: the same controls and speech state with centered type. */
+  viewerPill?: boolean;
   reply?: {
     handle: string;
     preview: string;
@@ -161,6 +163,7 @@ export function ConversationComposer({
   inputRevision = 0,
   isInputRevisionCurrent,
   testIDPrefix = 'chat',
+  viewerPill = false,
   reply,
   onCancelReply,
   tagHandles = NO_TAG_HANDLES,
@@ -275,7 +278,7 @@ export function ConversationComposer({
   // never empty — including while an agent is working, when a tap queues the
   // next instruction.
   const showMic =
-    speechAvailable && (dictationBusy || !keyboardUp || !tagSplit.rest.trim());
+    speechAvailable && (dictationBusy || (!viewerPill && !keyboardUp) || !tagSplit.rest.trim());
   const showSend = !showMic;
 
   // Dictation shows a waveform, never live words. Only a failure that needs
@@ -317,7 +320,8 @@ export function ConversationComposer({
     <View
       ref={containerRef as React.Ref<View>}
       {...containerProps}
-      style={[styles.composer, focused && styles.composerFocused]}
+      style={[styles.composer, focused && styles.composerFocused,
+        ...(viewerPill ? [styles.viewerPill] : [])]}
     >
       {(reply || attachments.length > 0) && (
         <View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}>
@@ -406,7 +410,8 @@ export function ConversationComposer({
         </View>
       )}
       <View
-        style={[styles.inputRow, multiline && styles.composerMultiline]}
+        style={[styles.inputRow, multiline && styles.composerMultiline,
+          ...(viewerPill ? [styles.viewerInputRow] : [])]}
         testID={`${testIDPrefix}-composer-input-row`}
       >
         {dictationBusy ? (
@@ -445,6 +450,7 @@ export function ConversationComposer({
               styles.input,
               Platform.OS === 'ios' ? undefined : { height, maxHeight },
               Platform.OS === 'android' && styles.inputAndroid,
+              ...(viewerPill ? [styles.viewerInput] : []),
               // The input stays mounted under the waveform; its typed text
               // returns when dictation ends.
               dictationBusy ? styles.inputHidden : undefined,
@@ -794,6 +800,9 @@ const styles = StyleSheet.create((theme) => ({
   composerFocused: {
     borderColor: theme.buzz.accent,
   },
+  viewerPill: { borderWidth: 0, borderRadius: 0, backgroundColor: 'transparent' },
+  viewerInputRow: { minHeight: 42, paddingVertical: 0 },
+  viewerInput: { textAlignVertical: 'center' },
   adjuncts: { borderBottomWidth: 1, borderBottomColor: theme.buzz.border },
   adjunctDivider: { borderTopWidth: 1, borderTopColor: theme.buzz.border },
   reply: {

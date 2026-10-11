@@ -312,6 +312,11 @@ export async function serveComputerSession(
       const beelineQuery=new URLSearchParams(location.search),beelinePreview=beelineQuery.has('preview');
       if(beelinePreview)document.getElementById('bar').style.display='none';
       let beelineZoom=1,beelineLeft=0,beelineTop=0;
+      addEventListener('message',event=>{if(event.data?.type!=='viewer-snapshot-request'||event.data.id!=='${id}')return;
+        let image=null;try{if(beelineCanvas.width>1&&beelineCanvas.height>1)
+          image=beelineCanvas.toDataURL('image/jpeg',0.72).split(',')[1]||null;}catch{}
+        const answer={type:'computer-snapshot',id:'${id}',requestId:event.data.requestId,image};
+        if(event.source!==window)event.source?.postMessage(answer,event.origin);window.ReactNativeWebView?.postMessage(JSON.stringify(answer));});
       function beelineFit(){if(!beelineCanvas.width||!beelineCanvas.height)return;
         const scale=(beelinePreview?Math.max:Math.min)(beelineScreen.clientWidth/beelineCanvas.width,beelineScreen.clientHeight/beelineCanvas.height)*beelineZoom;
         const w=beelineCanvas.width*scale,h=beelineCanvas.height*scale;
@@ -405,6 +410,10 @@ export function computerViewerHtml(id: string): string {
   const query=new URLSearchParams(location.search), preview=query.has('preview');
   if(query.has('embedded')) document.body.classList.add('embedded');
   const image=document.getElementById('screen'), stage=document.getElementById('stage'), ended=document.getElementById('ended'), keys=document.getElementById('keys');
+  addEventListener('message',event=>{if(event.data?.type!=='viewer-snapshot-request'||event.data.id!=='${id}')return;
+    const answer={type:'computer-snapshot',id:'${id}',requestId:event.data.requestId,
+      image:image.src.startsWith('data:image/jpeg;base64,')?image.src.slice('data:image/jpeg;base64,'.length):null};
+    if(event.source!==window)event.source?.postMessage(answer,event.origin);window.ReactNativeWebView?.postMessage(JSON.stringify(answer));});
   const socketUrl=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/s/${id}/ws'+location.search;
   let wire, serial=1, controlling=false, width=1, height=1, leaving=false, endedSession=false, reconnected=false;
   let zoom=1,offsetX=0,offsetY=0;

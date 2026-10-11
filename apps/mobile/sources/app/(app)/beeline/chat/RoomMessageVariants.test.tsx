@@ -379,6 +379,26 @@ describe('Workbench identities', () => {
 });
 
 describe('Room message variant components', () => {
+  it('renders a viewer send as prose plus a context chip without duplicating its artifact card', () => {
+    const renderer = render(<OrdinaryLedgerMessage
+      message={message({
+        id: 'viewer-send', isUser: true,
+        text: '@moth Could we simplify this?\n\n[Viewing artifact: Checkout mock]',
+        attachments: [{ kind: 'artifact', url: 'https://example.test/artifact', name: 'mock.html',
+          mimeType: 'text/html', size: 120 }],
+      })}
+      participantsHydrated viewerPubkey="viewer" speakerWorking={false} continued={false}
+      participantHandles={[]} channelIndex={{ rooms: [], corners: [] }} deliveryFailed={false}
+      onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()}
+      onRetry={vi.fn()} onDismiss={vi.fn()}
+    />);
+    const steer = renderer.root.findByType('LedgerSteer' as never).props;
+    expect(steer.bodyText).toBe('@moth Could we simplify this?');
+    expect(steer.attachments[0].props.children)
+      .toEqual(['◉ ', 'Viewing artifact: Checkout mock']);
+    expect(steer.attachments.slice(1)).toEqual([null]);
+  });
+
   it('replaces the AGENT label with the model, falling back when no model is known', () => {
     expect(agentBylineLabel('  openrouter/deepseek-deepseek-v.4.1-flash  ')).toBe(
       'deepseek-deepseek-v.4.1-flash',

@@ -82,7 +82,7 @@ describe('Room→repo corner-open lazy prompt', () => {
       "const sendShortcut = shortcut && typeof shortcut.text === 'string' ? shortcut : undefined;",
     );
     expect(handleSend).toContain(
-      'const activePendingAttachments = sendShortcut ? [] : pendingAttachmentsRef.current;',
+      'const activePendingAttachments = viewer?.pickedAttachments ?? (sendShortcut ? [] : pendingAttachmentsRef.current);',
     );
     expect(handleSend).toContain(
       'sendShortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current',

@@ -217,10 +217,12 @@ export function DesktopRoomInspector({
         <DesktopArtifactPane
           attachment={content.artifact.attachment}
           authorHandle={content.artifact.authorHandle}
+          roomId={content.artifact.roomId ?? room.room.id}
           onClose={onClose}
         />
       ) : content.kind === 'computer' ? (
-        <ComputerSessionViewer session={content.session} onClose={onClose} />
+        <ComputerSessionViewer session={content.session} onClose={onClose} roomId={room.room.id}
+          agentHandle={content.session.agentHandle} />
       ) : (
         <>
           {observed.error ? (

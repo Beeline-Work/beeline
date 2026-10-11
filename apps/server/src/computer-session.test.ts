@@ -113,7 +113,10 @@ describe('computer session handoff', () => {
     expect((await fetch(`${origin}/s/${share.id}`)).status).toBe(403);
     const page = await fetch(`${origin}/s/${share.id}?access=${access}`);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('Page.screencastFrame');
+    const viewerHtml = await page.text();
+    expect(viewerHtml).toContain('Page.screencastFrame');
+    expect(viewerHtml).toContain('viewer-snapshot-request');
+    expect(viewerHtml).toContain('computer-snapshot');
     const source = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/source`);
     await opened(source);
     const frame = JSON.stringify({ method: 'Page.screencastFrame', params: { data: 'abc', sessionId: 1 } });

@@ -16,6 +16,7 @@ import { useCopiedToast } from '@/components/buzz/CopiedToast';
 import { ZoomableArtifactImage } from '@/components/buzz/ZoomableArtifactImage';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
+import { ViewerConversationDock } from '@/components/buzz/ViewerConversationDock';
 
 /**
  * The desktop work pane's artifact view (mock 1c, desktop): markup rendered in
@@ -33,10 +34,12 @@ import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 export function DesktopArtifactPane({
   attachment,
   authorHandle,
+  roomId,
   onClose,
 }: {
   attachment: AttachmentReference;
   authorHandle?: string;
+  roomId?: string;
   onClose(): void;
 }) {
   const format = artifactFormat(attachment.mimeType);
@@ -122,6 +125,8 @@ export function DesktopArtifactPane({
           </Text>
         </View>
       )}
+      <ViewerConversationDock kind="artifact" title={attachment.name} roomId={roomId} agentHandle={authorHandle}
+        artifact={attachment} />
       {toast}
     </View>
   );

@@ -111,6 +111,9 @@ vi.mock('@/components/buzz/ArtifactPdfView', () => ({
   ArtifactPdfView: (props: Record<string, unknown>) =>
     React.createElement('ArtifactPdfView', props, null),
 }));
+vi.mock('@/components/buzz/ViewerConversationDock', () => ({
+  ViewerConversationDock: () => null,
+}));
 
 import { ARTIFACT_DEFAULT_CANVAS } from '@/buzz/artifact';
 import { ArtifactViewerSandbox, ArtifactViewerScreen } from './ArtifactViewer';

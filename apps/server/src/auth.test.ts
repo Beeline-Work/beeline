@@ -10,6 +10,76 @@ describe('opaque token ceremony', () => {
     await migrate(db);
   });
   afterEach(() => db.close());
+  async function phoneAuth(clock: () => Date) {
+    const auth = new TokenAuth(
+      db,
+      async () => ({ subject: 'owner', login: 'owner', name: 'Owner' }),
+      clock,
+    );
+    const initial = await auth.exchangeGitHubOidc('proof');
+    return { auth, initial };
+  }
+
+  it('replays the exact successor after a lost refresh reply without revoking the family', async () => {
+    let now = new Date('2026-10-11T14:00:00Z');
+    const { auth, initial } = await phoneAuth(() => now);
+    const successor = await auth.refresh(initial.refreshToken);
+    now = new Date(now.getTime() + 119_999);
+    const afterRestart = new TokenAuth(
+      db,
+      async () => {
+        throw new Error('unused');
+      },
+      () => now,
+    );
+    expect(await afterRestart.refresh(initial.refreshToken)).toEqual(successor);
+    expect(await auth.authenticatePhone(successor!.accessToken)).toBe(initial.identityId);
+    const stored = await db.query<{ successor_tokens: string }>(
+      `SELECT successor_tokens FROM phone_sessions WHERE refresh_hash=$1`,
+      [tokenHash(initial.refreshToken)],
+    );
+    expect(stored.rows[0]?.successor_tokens).not.toContain(successor!.refreshToken);
+    expect(stored.rows[0]?.successor_tokens).not.toContain(successor!.accessToken);
+  });
+
+  it('revokes the family when a consumed token returns after the grace window', async () => {
+    let now = new Date('2026-10-11T14:00:00Z');
+    const { auth, initial } = await phoneAuth(() => now);
+    const successor = await auth.refresh(initial.refreshToken);
+    now = new Date(now.getTime() + 120_001);
+    expect(await auth.refresh(initial.refreshToken)).toBeNull();
+    expect(await auth.refresh(successor!.refreshToken)).toBeNull();
+    expect(await auth.authenticatePhone(successor!.accessToken)).toBeNull();
+  });
+
+  it('revokes the family when the successor was already consumed', async () => {
+    const now = new Date('2026-10-11T14:00:00Z');
+    const { auth, initial } = await phoneAuth(() => now);
+    const successor = await auth.refresh(initial.refreshToken);
+    const next = await auth.refresh(successor!.refreshToken);
+    expect(await auth.refresh(initial.refreshToken)).toBeNull();
+    expect(await auth.refresh(next!.refreshToken)).toBeNull();
+    expect(await auth.authenticatePhone(next!.accessToken)).toBeNull();
+  });
+
+  it('serializes two simultaneous refreshes into one successor', async () => {
+    const now = new Date('2026-10-11T14:00:00Z');
+    const { auth, initial } = await phoneAuth(() => now);
+    const [first, second] = await Promise.all([
+      auth.refresh(initial.refreshToken),
+      auth.refresh(initial.refreshToken),
+    ]);
+    expect(first).toEqual(second);
+    expect(
+      (
+        await db.query(
+          `SELECT 1 FROM phone_sessions WHERE family_id=(SELECT family_id FROM phone_sessions WHERE refresh_hash=$1)`,
+          [tokenHash(initial.refreshToken)],
+        )
+      ).rowCount,
+    ).toBe(2);
+    expect(await auth.authenticatePhone(first!.accessToken)).toBe(initial.identityId);
+  });
   it('makes daemon exchange codes one use and token hashes the only stored secret', async () => {
     await db.query(
       `INSERT INTO identities(id,kind,name) VALUES($1,'human','owner'),($2,'agent','bee')`,

@@ -15,6 +15,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@beeline/auth/github': resolve('../auth/src/github.ts'),
       '@': resolve('./sources'),
     },
   },

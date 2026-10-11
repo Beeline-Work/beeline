@@ -672,8 +672,7 @@ jobs:
           cache: npm
       - run: npm ci
       # Mobile vitest resolves @beeline/* from built dist (same as Metro).
-      # The phone refresh integration test also imports the server auth harness.
-      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/auth
+      - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
       # The isolated mobile app resolves its file-linked @beeline/* deps only
       # from its own node_modules — a root-only npm ci never provides it.
       - run: npm run mobile:install

@@ -1106,13 +1106,6 @@ export type CornerListItem = {
   readonly closedAt?: number;
   /** Human whose request caused the agent to open this corner. */
   readonly initiator?: RoomViewIdentity;
-  /** Present when the corner is waiting or in review and its latest message
-   * tags the viewer. */
-  readonly awaitsViewer?: true;
-  /** Present when the viewer follows this open corner: they opened, requested,
-   * posted in, steered or were tagged in it. Push's Followed level uses the
-   * same rule. */
-  readonly followsViewer?: true;
   /** The server's Mine rule; see `ChatListCorner.mine`. */
   readonly mine?: true;
   readonly agent?: RoomViewIdentity;

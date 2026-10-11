@@ -6445,19 +6445,8 @@ describe('monolith integration', () => {
       ).rows[0]?.close_requested,
     ).toBe(false);
 
-    const closeLive = new LiveHub();
-    const closePhone = new PhoneService(
-      database,
-      'http://placeholder',
-      githubOperations,
-      sendPushTest,
-      closeLive,
-    );
-    const parentEvents: unknown[] = [];
-    const unsubscribe = closeLive.subscribe(ROOM, (event) => parentEvents.push(event));
-    await closePhone.execute('requestCornerClose', { roomId: cornerId }, HUMAN);
-    unsubscribe();
-    expect(parentEvents).toContainEqual({ type: 'invalidate', roomId: ROOM, reason: 'corner' });
+    // The parent hears the close from the rooms trigger (postgres-live.test.ts).
+    expect((await operation('requestCornerClose', { roomId: cornerId })).status).toBe(204);
     expect((await operation('requestCornerClose', { roomId: cornerId })).status).toBe(204);
     expect(
       (
@@ -9355,32 +9344,6 @@ describe('monolith integration', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('marks a parked corner as awaiting the viewer its latest message tags', async () => {
-    const created = await daemonOperation('createCorner', {
-      roomId: ROOM,
-      requestId: 'corner-awaits-viewer',
-      name: 'Pick-a-colour',
-      objective: 'Pick a colour for the widget',
-    });
-    const { cornerId } = (await created.json()) as { cornerId: string };
-    const read = async () =>
-      (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
-        (item) => item.corner.id === cornerId,
-      );
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('awaits-untagged',$1,$2,'Still thinking.',now()+interval '1 second')`,
-      [cornerId, AGENT],
-    );
-    expect(await read()).not.toHaveProperty('awaitsViewer');
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('awaits-tagged',$1,$2,'@owner red or blue?',now()+interval '2 seconds')`,
-      [cornerId, AGENT],
-    );
-    expect(await read()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
-  });
-
   it("marks the viewer's corners in the Room list with the push Followed rule", async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
@@ -9526,7 +9489,7 @@ describe('monolith integration', () => {
     expect(await listed()).toEqual(
       expect.objectContaining({ state: 'waiting', mine: true, attention: true }),
     );
-    expect(await page()).toEqual(expect.objectContaining({ state: 'waiting', awaitsViewer: true }));
+    expect(await page()).toEqual(expect.objectContaining({ state: 'waiting' }));
     expect(await owed()).toBe(true);
 
     // The viewer opens the corner: still waiting, but no longer pulling.

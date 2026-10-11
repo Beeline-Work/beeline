@@ -40,7 +40,7 @@ const CORNERS = [
     { initiator: { pubkey: VIEWER, kind: 'human', name: 'Me' }, mine: true, briefRevision: 5 }),
   corner('corner-hyphen', 'Hyphenated room names', 'waiting', 'Earth',
     'Replace whitespace with hyphens during name entry and reject whitespace in room and corner names.',
-    { awaitsViewer: true, mine: true, briefRevision: 2 }),
+    { mine: true, briefRevision: 2 }),
   corner('corner-ios', 'iOS Settings title', 'working', 'BBC',
     'Reproduce the clipped trailing "s" in the iOS Settings page title at Medium text size, then fix it narrowly.',
     { briefRevision: 1 }),

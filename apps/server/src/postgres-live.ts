@@ -214,9 +214,7 @@ BEGIN
       ) || COALESCE((
         SELECT jsonb_build_object(
           'parentRoomId', room.parent_id,
-          'cornerParentId', CASE WHEN TG_OP <> 'UPDATE'
-              OR NEW.removed_at IS DISTINCT FROM OLD.removed_at
-            THEN room.parent_id END,
+          'joinedOrLeft', TG_OP <> 'UPDATE' OR NEW.removed_at IS DISTINCT FROM OLD.removed_at,
           'archived', room.archived_at IS NOT NULL,
           'openedBy', CASE WHEN room.parent_id IS NOT NULL THEN COALESCE(
             (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
@@ -405,6 +403,8 @@ interface LiveNotificationPayload {
   closeRequested?: boolean;
   /** Parent Room of a corner whose corner-list row inputs changed. */
   cornerParentId?: string;
+  /** A membership row was added, deleted, removed or restored. */
+  joinedOrLeft?: boolean;
   pending?: boolean;
   /** An agent_commands row left `claimed`. */
   released?: boolean;
@@ -466,6 +466,7 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.cornerParentId === 'string'
         ? { cornerParentId: parsed.cornerParentId }
         : {}),
+      ...(parsed.joinedOrLeft === true ? { joinedOrLeft: true } : {}),
       ...(typeof parsed.pending === 'boolean' ? { pending: parsed.pending } : {}),
       ...(parsed.released === true ? { released: true } : {}),
       ...(typeof parsed.repositoryChanged === 'boolean'
@@ -939,10 +940,14 @@ export class PostgresLiveListener {
     // The parent's corner list reads a corner's status from these rows, but
     // their notifications name only the corner. One reason-only hint tells a
     // list watching the parent to re-read; nothing else acts on it.
-    if (payload.cornerParentId) {
+    // A corner membership names its parent once; joining or leaving changes
+    // the parent's list.
+    const cornerParentId = payload.cornerParentId ??
+      (payload.table === 'memberships' && payload.joinedOrLeft ? payload.parentRoomId : undefined);
+    if (cornerParentId) {
       this.live.publish({
         type: 'invalidate',
-        roomId: payload.cornerParentId,
+        roomId: cornerParentId,
         reason: 'corner-status',
       });
     }

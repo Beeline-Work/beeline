@@ -18,10 +18,8 @@ export type CornerStateRow = {
   /** `cornerOwedLookupSql`'s facts for this corner and viewer. */
   owed?: boolean | null;
   owed_viewer?: boolean | null;
-  /** `viewerFollowsCornerSql`: the push Followed rule for this viewer. */
+  /** `followsCornerSql`: the push Followed rule for this viewer. */
   follows_viewer?: boolean | null;
-  /** `corner_facts.commissioned_by` is the viewer. */
-  commissioned_viewer?: boolean | null;
 };
 
 /** The one corner state derivation for the Room list, its live frame and the Corners page. */
@@ -38,13 +36,41 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
 }
 
 /**
- * Mine: the viewer follows it (opened, requested, posted, steered or was
- * tagged), it owes them something, or they commissioned it.
+ * Mine: the viewer follows it (opened, commissioned, requested, posted,
+ * steered or was tagged) or it owes them something.
  */
-export function cornerRowMine(
-  row: Pick<CornerStateRow, 'follows_viewer' | 'owed_viewer' | 'commissioned_viewer'>,
-): boolean {
-  return Boolean(row.follows_viewer || row.owed_viewer || row.commissioned_viewer);
+export function cornerRowMine(row: Pick<CornerStateRow, 'follows_viewer' | 'owed_viewer'>): boolean {
+  return Boolean(row.follows_viewer || row.owed_viewer);
+}
+
+/**
+ * The one source of corner facts for corner `c` and `viewerExpr`, shared by
+ * the Room list and the Corners page so one frame cannot disagree with
+ * itself. `columns` are the `CornerStateRow` facts plus the latest message
+ * (`lm`) and turn; `joins` follow `FROM rooms c`; `member` says the viewer
+ * belongs to the corner.
+ */
+export function cornerFactsSql(viewerExpr: string): {
+  columns: string;
+  joins: string;
+  member: string;
+} {
+  return {
+    columns: `f.lifecycle,f.workflow_state,f.workflow_outcome,
+      turn.status latest_turn_status,turn.created_at latest_turn_created_at,
+      lm.created_at latest_created_at,
+      ${followsCornerSql('c', viewerExpr)} follows_viewer,
+      owed.owed,owed.owed_viewer,owed.attention`,
+    joins: `LEFT JOIN corner_facts f ON f.corner_id=c.id
+    LEFT JOIN LATERAL (SELECT * FROM messages message WHERE message.room_id=c.id
+      AND message.presentation IN ('message','system') AND ${visibleChatMessageSql('message')}
+      ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
+    LEFT JOIN LATERAL (SELECT status,created_at FROM agent_turns WHERE room_id=c.id
+      ORDER BY created_at DESC LIMIT 1) turn ON true
+    ${cornerOwedLookupSql('c', viewerExpr)}`,
+    member: `EXISTS (SELECT 1 FROM memberships corner_member WHERE corner_member.room_id=c.id
+      AND corner_member.identity_id=${viewerExpr} AND corner_member.removed_at IS NULL)`,
+  };
 }
 
 /**
@@ -53,23 +79,10 @@ export function cornerRowMine(
  * `chatCornerCounts` reads.
  */
 export function openCornerFactsSql(parentPredicate: string, viewerExpr: string): string {
-  return `SELECT c.id,c.name,c.parent_id,c.created_at,c.archived_at,
-      f.lifecycle,f.workflow_state,f.workflow_outcome,
-      turn.status latest_turn_status,
-      ${followsCornerSql('c', viewerExpr)} follows_viewer,
-      (f.commissioned_by IS NOT NULL AND f.commissioned_by=${viewerExpr}) commissioned_viewer,
-      lm.created_at latest_created_at,
-      owed.owed,owed.owed_viewer,owed.attention
-    FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
-    LEFT JOIN LATERAL (SELECT created_at FROM messages message WHERE message.room_id=c.id
-      AND message.presentation IN ('message','system') AND ${visibleChatMessageSql('message')}
-      ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
-    LEFT JOIN LATERAL (SELECT status FROM agent_turns WHERE room_id=c.id
-      ORDER BY created_at DESC LIMIT 1) turn ON true
-    ${cornerOwedLookupSql('c', viewerExpr)}
-    WHERE c.parent_id ${parentPredicate} AND c.archived_at IS NULL AND EXISTS (
-      SELECT 1 FROM memberships corner_member WHERE corner_member.room_id=c.id
-        AND corner_member.identity_id=${viewerExpr} AND corner_member.removed_at IS NULL)
+  const facts = cornerFactsSql(viewerExpr);
+  return `SELECT c.id,c.name,c.parent_id,c.created_at,c.archived_at,${facts.columns}
+    FROM rooms c ${facts.joins}
+    WHERE c.parent_id ${parentPredicate} AND c.archived_at IS NULL AND ${facts.member}
     ORDER BY c.created_at DESC,c.id DESC`;
 }
 

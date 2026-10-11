@@ -128,13 +128,14 @@ import {
   notifyConnectorHelper,
   POSTGRES_LIVE_CHANNEL,
 } from './postgres-live.js';
-import type { CommittedMessageLiveRow, CommittedTurnLiveRow, LiveEvent, LiveHub } from './live.js';
+import type { CommittedMessageLiveRow, LiveEvent, LiveHub } from './live.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
 import { advanceCorner } from './corner-lifecycle.js';
 import {
   chatCornerCounts,
+  cornerFactsSql,
   cornerRowMine,
   cornerRowState,
   openCornerFactsSql,
@@ -145,7 +146,6 @@ import {
   type OpenCornerFactsRow,
 } from './chat-corner-counts.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
-import { followsCornerSql } from './corner-follow.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
@@ -438,14 +438,11 @@ interface CornerRow extends RoomRow {
   latest_author_id: string | null;
   latest_author_kind: 'human' | 'agent' | null;
   latest_author_name: string | null;
-  latest_tags_viewer: boolean | null;
-  /** `cornerOwedLookupSql`'s facts; null on the archived page, which skips them. */
+  /** `cornerOwedLookupSql`'s facts. */
   owed: boolean | null;
   owed_viewer: boolean | null;
   attention: boolean | null;
   follows_viewer: boolean | null;
-  /** `corner_facts.commissioned_by` is the viewer. */
-  commissioned_viewer: boolean;
   /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
   archived_us: string | null;
   created_us: string;
@@ -1076,16 +1073,10 @@ export class PhoneService {
    * get the same decoration as readLiveDeltas, read once per committed row. */
   async projectCommittedLiveDelta(
     roomId: string,
-    committed:
-      | { type: 'message'; row: CommittedMessageLiveRow }
-      | { type: 'turn'; row: CommittedTurnLiveRow },
+    committed: { type: 'message'; row: CommittedMessageLiveRow },
     viewerId?: string,
   ): Promise<RoomLiveDelta | null> {
     if (committed.row.room_id !== roomId) return null;
-    if (committed.type === 'turn') {
-      const turn = this.projectAgentTurns([committed.row])[0];
-      return turn ? { type: 'turn-delta', roomId, turn } : null;
-    }
     const message = projectedMessage(committed.row, this.publicOrigin, viewerId);
     let facts = this.committedAttachmentFacts.get(committed.row);
     if (!facts) {
@@ -1508,8 +1499,7 @@ export class PhoneService {
          SELECT count(*)::text room_count,COALESCE(bool_or(
            (latest.id IS NOT NULL AND (mark.message_created_at IS NULL OR
              latest.id<>mark.message_id AND (latest.created_at,latest.id)>(mark.message_created_at,mark.message_id)))
-           OR EXISTS(SELECT 1 FROM permission_authority p WHERE p.status='pending'
-             AND (p.room_id=r.id OR p.room_id IN (SELECT id FROM rooms WHERE parent_id=r.id)))
+           OR ${roomNeedsYouSql('r')}
          ),false) attention
          FROM rooms r JOIN memberships member ON member.room_id=r.id
            AND member.identity_id=$2 AND member.removed_at IS NULL
@@ -1691,8 +1681,7 @@ export class PhoneService {
     corners: CornerListView['corners'];
     nextOpen?: string;
   } | null> {
-    const loaded = await this.loadCorners(parentRoomId, viewerId, false, false,
-      undefined, undefined, true);
+    const loaded = await this.loadCorners(parentRoomId, viewerId, { deck: true });
     if (!loaded?.deck) return null;
     const { view, deck } = loaded;
     return { ...deckCornerSummary(parentRoomId, deck),
@@ -1739,7 +1728,8 @@ export class PhoneService {
         peer_presence_body: Record<string, unknown> | null;
         peer_presence_updated_at: Date | null;
         peer_activity_at: Date | null;
-        unread: boolean;
+        /** Undefined until the cursor enrichment reads it. */
+        unread?: boolean;
         working: boolean;
         needs_you: boolean;
         closed: boolean;
@@ -1769,7 +1759,7 @@ export class PhoneService {
         ${roomAttentionActorSql('r')} attention_actor_name,
         peer.id peer_id,peer.kind peer_kind,peer.name peer_name,peer.handle peer_handle,peer.avatar peer_avatar,peer.face_id peer_face,
         NULL::jsonb peer_presence_body,NULL::timestamptz peer_presence_updated_at,
-        NULL::timestamptz peer_activity_at,false unread,
+        NULL::timestamptz peer_activity_at,
         false agents_offline,
         ${roomWorkingSql('r')} working,
         ${roomNeedsYouSql('r')} needs_you,
@@ -1906,7 +1896,7 @@ export class PhoneService {
       room.peer_presence_updated_at = item?.peer_presence_updated_at ?? null;
       room.peer_activity_at = item?.peer_activity_at ?? null;
       room.agents_offline = item?.agents_offline ?? false;
-      room.unread = cursorByRoom.get(room.id)?.unread ?? false;
+      if (cursors) room.unread = cursorByRoom.get(room.id)?.unread ?? false;
     }
     return {
       workspace: {
@@ -1994,7 +1984,7 @@ export class PhoneService {
                 },
               }
             : {}),
-          ...(cursors ? { unread: row.unread } : {}),
+          ...(row.unread !== undefined ? { unread: row.unread } : {}),
           ...(row.repository_key
             ? {
                 repositoryName:
@@ -2639,8 +2629,9 @@ export class PhoneService {
     // The first open page carries the Room list row's summary from the same
     // snapshot, so a reader replaces its summary whole.
     const firstPage = !archived && !archivedBefore && !openBefore;
-    const loaded = await this.loadCorners(roomId, viewerId, roomViewFamilyOrder, archived,
-      archivedBefore, openBefore, firstPage);
+    const loaded = await this.loadCorners(roomId, viewerId, {
+      roomViewFamilyOrder, archived, before: archivedBefore ?? openBefore, deck: firstPage,
+    });
     if (!loaded) return null;
     return loaded.deck
       ? { ...loaded.view, summary: deckCornerSummary(roomId, loaded.deck) }
@@ -2655,13 +2646,20 @@ export class PhoneService {
   private async loadCorners(
     roomId: string,
     viewerId: string,
-    roomViewFamilyOrder = false,
-    archived = false,
-    archivedBefore?: ArchivedCornerCursor,
-    openBefore?: ArchivedCornerCursor,
-    deck = false,
+    {
+      roomViewFamilyOrder = false,
+      archived = false,
+      before,
+      deck = false,
+    }: {
+      roomViewFamilyOrder?: boolean;
+      archived?: boolean;
+      /** The keyset cursor of the page before, open or archived. */
+      before?: ArchivedCornerCursor;
+      deck?: boolean;
+    } = {},
   ): Promise<{ view: CornerListView; deck: DeckCornerFacts | null } | null> {
-    const cornerQuery = this.cornerRowsSql(roomViewFamilyOrder, archived, archivedBefore ?? openBefore);
+    const cornerQuery = this.cornerRowsSql(roomViewFamilyOrder, archived, before);
     const result = await this.database.query<{
       room_row: RoomRow & {
         viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
@@ -2698,9 +2696,7 @@ export class PhoneService {
               FROM (${openCornerFactsSql('=authorized.id', '$2')}) deck_corner),'[]'::jsonb))
           END` : 'NULL::jsonb'} deck
       FROM authorized JOIN identities viewer ON viewer.id=$2`,
-      (archivedBefore ?? openBefore)
-        ? [roomId, viewerId, (archivedBefore ?? openBefore)!.micros, (archivedBefore ?? openBefore)!.id]
-        : [roomId, viewerId],
+      before ? [roomId, viewerId, before.micros, before.id] : [roomId, viewerId],
     );
     const loaded = result.rows[0];
     if (!loaded) return null;
@@ -3143,29 +3139,22 @@ export class PhoneService {
     const keyset =
       before ? `AND (${archived ? archivedMicros : createdMicros},c.id) < ($3::bigint,$4::uuid)` : '';
     const limit = `LIMIT ${(archived ? ARCHIVED_CORNER_PAGE : OPEN_CORNER_PAGE) + 1}`;
+    const facts = cornerFactsSql('$2');
     return `
-      SELECT c.*,f.lifecycle,f.workflow_state,f.workflow_outcome,f.objective,lm.id latest_id,lm.text latest_text,lm.created_at latest_created_at,lm.author_id latest_author_id,
+      SELECT c.*,${facts.columns},f.objective,lm.id latest_id,lm.text latest_text,lm.author_id latest_author_id,
         initiator.id initiator_id,initiator.name initiator_name,
         initiator.handle initiator_handle,initiator.avatar initiator_avatar,
         initiator.face_id initiator_face,
-        li.kind latest_author_kind,li.name latest_author_name,
-        $2=ANY(${taggedIdentityIdsSql('lm')}) latest_tags_viewer,agent.identity_id agent_id,
+        li.kind latest_author_kind,li.name latest_author_name,agent.identity_id agent_id,
         agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
-        turn.status latest_turn_status,turn.created_at latest_turn_created_at,
         app_binding.installation_id app_installation_id,
         app_binding.instance_id app_instance_id,app_installation.manifest app_manifest,
-        ${archived ? 'NULL::boolean owed,NULL::boolean owed_viewer,NULL::boolean attention' : 'owed.owed,owed.owed_viewer,owed.attention'},
-        ${archived ? 'NULL::boolean' : followsCornerSql('c', '$2')} follows_viewer,
-        (f.commissioned_by IS NOT NULL AND f.commissioned_by=$2) commissioned_viewer,
         ${archivedMicros}::text archived_us,
         ${createdMicros}::text created_us,
         (SELECT max(brief.revision) FROM corner_brief_revisions brief WHERE brief.corner_id=c.id) brief_revision
-      FROM rooms c LEFT JOIN corner_facts f ON f.corner_id=c.id
+      FROM rooms c ${facts.joins}
       LEFT JOIN identities initiator
         ON initiator.id=f.commissioned_by AND initiator.kind='human'
-      LEFT JOIN LATERAL (SELECT * FROM messages message WHERE message.room_id=c.id
-        AND message.presentation IN ('message','system') AND ${visibleChatMessageSql('message')}
-        ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN LATERAL (
         SELECT i.id identity_id,
@@ -3176,17 +3165,10 @@ export class PhoneService {
         WHERE i.id=f.owner_agent_id
           AND i.kind='agent' LIMIT 1
       ) agent ON true
-      LEFT JOIN LATERAL (
-        SELECT status,created_at FROM agent_turns WHERE room_id=c.id
-        ORDER BY created_at DESC LIMIT 1
-      ) turn ON true
       LEFT JOIN corner_app_bindings app_binding ON app_binding.corner_id=c.id
       LEFT JOIN corner_app_installations app_installation ON app_installation.id=app_binding.installation_id
-      ${archived ? '' : cornerOwedLookupSql('c', '$2')}
-      WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND EXISTS(
-        SELECT 1 FROM memberships viewer
-        WHERE viewer.room_id=c.id AND viewer.identity_id=$2 AND viewer.removed_at IS NULL
-      ) AND EXISTS (SELECT 1 FROM authorized) ${keyset} ${order} ${limit}`;
+      WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND ${facts.member}
+        AND EXISTS (SELECT 1 FROM authorized) ${keyset} ${order} ${limit}`;
   }
 
   private projectCorners(rows: readonly CornerRow[]): CornerListView['corners'] {
@@ -3211,13 +3193,6 @@ export class PhoneService {
         // `updated_at` moves with any later write, so the closure stamp reads
         // the archive time itself rather than the row's last touch.
         ...(corner.archived_at ? { closedAt: unix(corner.archived_at) } : {}),
-        // A corner awaits the viewer when it owes them something, or it is
-        // parked on a person and its latest message tags them.
-        ...(corner.owed_viewer ||
-        (corner.latest_tags_viewer && (derived.state === 'waiting' || derived.state === 'review'))
-          ? { awaitsViewer: true as const }
-          : {}),
-        ...(corner.follows_viewer ? { followsViewer: true as const } : {}),
         ...(cornerRowMine(corner) ? { mine: true as const } : {}),
         ...(corner.initiator_id && corner.initiator_name
           ? {
@@ -5852,7 +5827,7 @@ export class PhoneService {
    * structured stop command. No chat sentence is created or interpreted.
    */
   private async requestCornerClose(roomId: string, viewerId: string) {
-    const parentId = await this.database.transaction(async (database) => {
+    await this.database.transaction(async (database) => {
       const access = await database.query<{ workspace_role: string }>(
         `SELECT workspace_member.role workspace_role FROM memberships room_member
          JOIN rooms room ON room.id=room_member.room_id
@@ -5883,9 +5858,8 @@ export class PhoneService {
           'corner close access denied: only the creator or a workspace owner or admin can close this corner',
         );
 
-      return (await closeCornerState(database, roomId)).parentId;
+      await closeCornerState(database, roomId);
     });
-    this.live?.publish({ type: 'invalidate', roomId: parentId, reason: 'corner' });
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
     const pending = (
@@ -6299,12 +6273,11 @@ export class PhoneService {
       }
       return true;
     });
-    if (created) this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'corner' });
     return { id };
   }
   private async renameCorner(roomId: string, name: string | undefined, viewerId: string) {
     const title = normalizeHumanCornerTitle(name);
-    const parentId = await this.database.transaction(async (database) => {
+    await this.database.transaction(async (database) => {
       const access = (
         await database.query<{ parent_id: string; archived_at: Date | null }>(
           `SELECT room.parent_id, room.archived_at
@@ -6323,10 +6296,7 @@ export class PhoneService {
       if (!access) throw new Error('room access denied');
       if (access.archived_at) throw new Error('room is archived');
       await writeCornerTitle(database, roomId, access.parent_id, title);
-      return access.parent_id;
     });
-    this.live?.publish({ type: 'invalidate', roomId, reason: 'corner' });
-    this.live?.publish({ type: 'invalidate', roomId: parentId, reason: 'corner' });
   }
   private async updateRoom(input: Input<'updateRoom'>, viewerId: string) {
     const existing = (

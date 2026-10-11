@@ -195,11 +195,11 @@ describe('RoomCornersList', () => {
     ]);
   });
 
-  it("sorts by the server's Mine flag alone, not by follow, ask or initiator facts", () => {
+  it("sorts by the server's Mine flag alone, not by initiator facts", () => {
     const tree = render([
       { ...theirs('posted-in', 'working'), mine: true },
-      { ...theirs('asks-me', 'waiting'), awaitsViewer: true },
-      { ...theirs('follows', 'working'), followsViewer: true },
+      theirs('asks-me', 'waiting'),
+      theirs('follows', 'working'),
     ]);
     expect(rowIds(tree)).toEqual(['room-corner-posted-in']);
     expect(pressable(tree, 'room-corners-others').props.accessibilityLabel).toBe('Others · 2');
@@ -430,7 +430,7 @@ describe('RoomCornersList on desktop', () => {
   const corners = [
     { ...corner('c-waits', 'waiting'), corner: { ...corner('c-waits', 'waiting').corner, about: 'Ship the corners overview for desktop.' }, briefRevision: 4 },
     { ...theirs('c-theirs', 'working'), corner: { ...theirs('c-theirs', 'working').corner, about: 'Fix the clipped Settings title.' } },
-    { ...theirs('c-asks-me', 'waiting'), awaitsViewer: true as const, mine: true as const },
+    { ...theirs('c-asks-me', 'waiting'), mine: true as const },
   ] as CornerListItem[];
   const run = { runId: 'run-1', roomId: 'c-theirs', status: 'live' } as never;
 

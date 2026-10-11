@@ -231,6 +231,24 @@ describe('room corner store', () => {
     expect(getRoomCornerSummary(ROOM)?.cornerCount).toBe(1);
   });
 
+  it('E1: a partial read that matches the summary still blocks an older whole read', () => {
+    const idle = { cornerCount: 1, openCorners: [
+      { id: 'corner-1', name: 'corner-1', state: 'idle' as const, mine: true as const },
+    ] };
+    applyChatListCorners([{ room: { id: ROOM } as never, ...idle }], cornerReadMark(ROOM).clock);
+    const older = cornerReadMark(ROOM);
+    // A newer first page with no summary agrees with the held summary.
+    applyCornerListRead(ROOM, view([mineRow('corner-1', 'idle')]), cornerReadMark(ROOM));
+    applyCornerListRead(ROOM, { ...view([mineRow('corner-1', 'waiting'),
+      mineRow('corner-2', 'waiting')]), summary: { cornerCount: 2, waitingCornerCount: 2,
+      mineCornerCount: 2, openCorners: [
+        { id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true, attention: true },
+        { id: 'corner-2', name: 'corner-2', state: 'waiting', mine: true },
+      ] } }, older);
+    expect(getRoomCornerSummary(ROOM)).toEqual(idle);
+    expect(getRoomCorners(ROOM).rows?.map((item) => item.state)).toEqual(['idle']);
+  });
+
   it('PC1: a partial read patches the summary corners it names by id', () => {
     applyChatListCorners([{ room: { id: ROOM } as never, cornerCount: 3, openCorners: [
       { id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true, waitingSince: 50, attention: true },

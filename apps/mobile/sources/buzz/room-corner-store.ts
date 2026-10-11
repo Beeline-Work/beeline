@@ -181,15 +181,20 @@ function withSummaryRows(
   if (!summary || (current.summaryAt !== undefined && startedAt <= current.summaryAt))
     return current;
   const byId = new Map(rows.map((item) => [item.corner.id, item]));
+  let named = false;
   let changed = false;
   const openCorners = summary.openCorners.map((held) => {
     const item = byId.get(held.id);
     if (!item) return held;
+    named = true;
     const next = patchedCorner(held, item);
     if (JSON.stringify(next) !== JSON.stringify(held)) changed = true;
     return next;
   });
-  if (!changed) return current;
+  if (!named) return current;
+  // A read that agrees with the summary still proves it as of its start, so
+  // an older read that lands later cannot restore what this read saw gone.
+  if (!changed) return { ...current, summaryAt: startedAt };
   return { ...current, summary: { ...summary, openCorners }, summaryAt: startedAt };
 }
 

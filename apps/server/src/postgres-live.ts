@@ -8,7 +8,7 @@ import {
   CORNER_ROW_MESSAGE_COLUMNS,
   CORNER_ROW_ROOM_COLUMNS,
   rowChangedSql,
-} from './chat-corner-counts.js';
+} from './corner-row-projection.js';
 
 export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
 

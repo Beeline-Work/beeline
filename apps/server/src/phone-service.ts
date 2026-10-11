@@ -136,7 +136,6 @@ import { advanceCorner } from './corner-lifecycle.js';
 import {
   chatCornerCounts,
   cornerFactsSql,
-  cornerRoomColumnsSql,
   cornerRowMine,
   cornerRowState,
   openCornerFactsSql,
@@ -146,6 +145,7 @@ import {
   type ChatCornerSummary,
   type OpenCornerFactsRow,
 } from './chat-corner-counts.js';
+import { cornerRoomColumnsSql } from './corner-row-projection.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';

@@ -131,15 +131,15 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     });
     expect(page.text.slice(2)).toEqual([
       'SCHEDULES',
-      "Summarize yesterday's merged PRs for the Room… · Weekdays at 09:00 UTC",
-      '@Hoots · this Room',
-      'Feedback triage · Daily at 14:00 America/New_York',
-      '@Ruby · #issues-triage',
+      "Summarize yesterday's merged PRs for the Room…",
+      'Weekdays at 09:00 UTC · @Hoots · this Room',
+      'Feedback triage',
+      'Daily at 14:00 America/New_York · @Ruby · #issues-triage',
       'SUBSCRIPTIONS',
-      'Triage incoming work · On new pull request in owner/widgets',
-      '@Ruby · this Room',
-      'Feedback triage · On someone joining this Room',
-      '@Ruby · #issues-triage',
+      'Triage incoming work',
+      'On new pull request in owner/widgets · @Ruby · this Room',
+      'Feedback triage',
+      'On someone joining this Room · @Ruby · #issues-triage',
     ]);
     expect(page.glyphs).toEqual(['scheduled-work-glyph-video', 'subscription-glyph-sub-2']);
     expect(page.loadedFonts).toEqual(expect.arrayContaining(['SpaceGrotesk-Regular', 'SpaceGrotesk-Medium', 'SpaceGrotesk-SemiBold']));

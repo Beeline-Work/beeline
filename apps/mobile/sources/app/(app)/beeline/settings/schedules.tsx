@@ -7,10 +7,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import type { RoomScheduleView, RoomSubscriptionView } from '@beeline/api-contract/phone';
 import { displayRoomIndexTitle } from '@/buzz/room-list-row';
+import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
 import {
   scheduleTitle,
   scheduleWhere,
   subscriptionTitle,
+  subscriptionWhen,
   subscriptionWhere,
   useScheduledWork,
 } from '@/buzz/scheduled-work';
@@ -27,7 +29,7 @@ function first(value: string | string[] | undefined): string | undefined {
 /**
  * Everything that wakes the Room's agents without a human tag: timers and
  * subscriptions. Agents set both up. Each entry is one settings row in the same
- * grammar — what it runs · when it runs, over who · where — and opens its own
+ * grammar — what it runs, then when · who · where — and opens its own
  * detail page. Stopping happens on those pages.
  */
 export default function ScheduledWork() {
@@ -52,7 +54,7 @@ export default function ScheduledWork() {
   const renderSchedule = (schedule: RoomScheduleView) => (
     <SettingsRow
       chevron="right"
-      description={`@${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule)}`}
+      description={`${scheduleCadenceLabel(schedule.cadence)} · @${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule)}`}
       key={schedule.id}
       leading={<View style={styles.leadingSlot}>
         {schedule.workflowSlug ? (
@@ -68,7 +70,7 @@ export default function ScheduledWork() {
   const renderSubscription = (subscription: RoomSubscriptionView) => (
     <SettingsRow
       chevron="right"
-      description={`@${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
+      description={`${subscriptionWhen(subscription)} · @${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
       key={subscription.id}
       leading={<View style={styles.leadingSlot}>
         {subscription.workflowSlug ? (

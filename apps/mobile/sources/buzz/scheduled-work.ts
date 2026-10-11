@@ -35,12 +35,11 @@ export function scheduleWhere(schedule: Pick<RoomScheduleView, 'corner'>): strin
   return schedule.corner ? `#${schedule.corner.name}` : 'this Room';
 }
 
-/** Line 1 of a schedule row: what it runs · when it runs. */
+/** Line 1 of a schedule row: what it runs, ellipsized by the row if needed. */
 export function scheduleTitle(schedule: RoomScheduleView): string {
-  const what = schedule.workflowSlug
+  return schedule.workflowSlug
     ? workflowDisplayName(schedule.workflowSlug)
     : promptLead(schedule.message);
-  return `${what} · ${scheduleCadenceLabel(schedule.cadence)}`;
 }
 
 /** The detail page's Runs row: the cadence and the next firing. */
@@ -51,10 +50,9 @@ export function scheduleRuns(schedule: RoomScheduleView): string {
 }
 
 export function subscriptionTitle(subscription: RoomSubscriptionView): string {
-  const what = subscription.workflowSlug
+  return subscription.workflowSlug
     ? workflowDisplayName(subscription.workflowSlug)
     : promptLead(subscription.prompt ?? 'React to this event');
-  return `${what} · ${subscriptionWhen(subscription)}`;
 }
 
 export function subscriptionWhen(subscription: RoomSubscriptionView): string {

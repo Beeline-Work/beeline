@@ -58,12 +58,12 @@ it('lists every entry as one row in the shared grammar, each opening its own pag
   const tree = await render(<ScheduledWork />);
   try {
     const row = (testID: string) => tree.root.findByProps({ testID });
-    expect(row('scheduled-work-daily').props).toMatchObject({ title: 'Morning summary · Every hour', description: '@Hoots · this Room', chevron: 'right' });
-    expect(row('scheduled-work-video').props).toMatchObject({ title: 'Post youtube video · Every day', description: '@Hoots · #video' });
+    expect(row('scheduled-work-daily').props).toMatchObject({ title: 'Morning summary', description: 'Every hour · @Hoots · this Room', chevron: 'right' });
+    expect(row('scheduled-work-video').props).toMatchObject({ title: 'Post youtube video', description: 'Every day · @Hoots · #video' });
     expect(row('scheduled-work-video').props.leading).toBeTruthy();
     expect(row('scheduled-work-daily').props.leading).toBeTruthy();
     expect(row('subscription-sub').props.leading).toBeTruthy();
-    expect(row('subscription-sub').props).toMatchObject({ title: 'Triage new issues · On new issue in owner/widgets', description: '@Hoots · this Room' });
+    expect(row('subscription-sub').props).toMatchObject({ title: 'Triage new issues', description: 'On new issue in owner/widgets · @Hoots · this Room' });
     act(() => row('scheduled-work-daily').props.onPress());
     act(() => row('scheduled-work-video').props.onPress());
     act(() => row('subscription-sub').props.onPress());

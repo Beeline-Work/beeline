@@ -85,7 +85,6 @@ async function mountStore(tail: readonly RoomViewMessage[], client: RoomHistoryC
   function Probe() {
     state.current = useRoomMessageStore({
       roomId: 'room',
-      recordScope: 'test-scope',
       tailMessages: tail,
       roomClient: client,
       enabled: true,

@@ -57,7 +57,6 @@ function PhoneTranscript({
   const roomClient = React.useMemo(() => (connected ? { history } : null), [connected, history]);
   const page = useRoomMessageStore({
     roomId: 'room',
-    recordScope: 'test-scope',
     tailMessages: tail,
     roomClient,
     enabled: true,

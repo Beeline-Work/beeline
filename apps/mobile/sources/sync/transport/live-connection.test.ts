@@ -68,7 +68,6 @@ function createConnection(authorization = vi.fn().mockResolvedValue('phone-sessi
   const connection = new LiveConnection({
     authorization,
     liveUrl: () => 'wss://server.example/v1/phone/live',
-    recordScope: async () => undefined,
     subscribeIdentityChange: (listener) => {
       identityListeners.add(listener);
       return () => identityListeners.delete(listener);
@@ -455,6 +454,23 @@ describe('LiveConnection', () => {
     await connection.register([{ '#h': [ROOM_A] }], (event) => room.push(event));
 
     expect(room).toEqual([{ monolithLive: { type: 'subscribed', roomId: ROOM_A } }]);
+    connection.dispose();
+  });
+
+  it('selects workflow draft text from the socket overlay owner', async () => {
+    const { connection } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    sockets[0]!.emit({ type: 'draft', roomId: ROOM_A, agentId: 'agent',
+      turnId: 'turn-1', text: 'whole text', latestChunk: 'first' });
+    expect([...connection.liveDrafts(ROOM_A).values()]).toEqual(['first']);
+    sockets[0]!.emit({ type: 'draft', roomId: ROOM_A, agentId: 'agent',
+      turnId: 'turn-1', text: 'whole text plus', latestChunk: 'second' });
+    expect([...connection.liveDrafts(ROOM_A).values()]).toEqual(['second']);
+    sockets[0]!.emit({ type: 'turn-delta', roomId: ROOM_A,
+      turn: { requestId: 'turn-1', agentPubkey: 'agent', status: 'complete', createdAt: 1 } });
+    expect(connection.liveDrafts(ROOM_A).size).toBe(0);
     connection.dispose();
   });
 

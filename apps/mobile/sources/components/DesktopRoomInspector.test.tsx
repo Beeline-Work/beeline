@@ -145,8 +145,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 });
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: vi.fn(),
-  loadBuzzViewerPubkey: vi.fn(async () => 'viewer'),
-  getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
+  getEffectiveRelayUrl: async () => 'https://relay.test',
 }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {

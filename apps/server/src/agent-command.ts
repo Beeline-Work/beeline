@@ -80,6 +80,9 @@ ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS hiccup_attempts integer NOT 
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS renudged_at timestamptz;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS lifecycle_before text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS restart_confirmed_at timestamptz;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS cancellation_reason text;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS recovery_context text;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS created_offline boolean;
 ALTER TABLE agent_commands DROP CONSTRAINT IF EXISTS agent_commands_action_check;
 ALTER TABLE agent_commands ADD CONSTRAINT agent_commands_action_check CHECK(action IN ('input','resume','stop','restart'));
 CREATE INDEX IF NOT EXISTS agent_commands_delivery ON agent_commands(agent_id,room_id,state,created_at);
@@ -121,7 +124,104 @@ export type CommandRow = {
   hiccup_attempts: number;
   lifecycle_before: string | null;
   restart_confirmed_at: Date | null;
+  recovery_context: string | null;
 };
+
+/**
+ * Reconcile return traffic at both delivery and claim, in the same statement
+ * as either operation. A cached helper snapshot therefore grants no right to
+ * run a superseded wake. Controls and avatar jobs retain their own authority.
+ * Ninety seconds is the normal command lease/claim window; a live turn keeps
+ * its ordinary queue even when the person sends several follow-ups.
+ */
+function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL::text'): string {
+  return `recovery_scope AS MATERIALIZED (
+    SELECT command.* FROM agent_commands command
+    WHERE command.room_id=${roomSql} AND command.agent_id=${agentSql}
+      AND command.action IN ('input','resume') AND NOT command.avatar_job
+      AND (command.state='pending' OR (command.state='claimed' AND
+        (command.lease_expires_at<=now() OR command.id=${claimSql})))
+    ORDER BY command.created_at,command.id FOR UPDATE
+  ), recovery_workflows AS MATERIALIZED (
+    SELECT command.id,COALESCE(source.card->>'runId',choice_source.card->>'runId',parent_source.card->>'runId') run_id,
+      COALESCE(source.card->>'seq',parent_source.card->>'seq') attempt,
+      latest.card latest_card,start.card start_card,
+      EXISTS(SELECT 1 FROM agent_schedules timer
+        WHERE timer.room_id=command.room_id AND timer.workflow_run->>'runId'=latest.card->>'runId'
+          AND timer.next_run_at<=now()
+          AND (timer.workflow_run->>'timer'='deadline'
+            OR timer.workflow_run->>'attempt'=latest.card->>'seq')) expired
+    FROM recovery_scope command
+    JOIN messages source ON source.id=command.source_message_id AND source.room_id=command.room_id
+    LEFT JOIN room_choices choice ON choice.id::text=source.card->>'choiceId' AND choice.room_id=command.room_id
+    LEFT JOIN messages choice_source ON choice_source.id=choice.message_id
+    LEFT JOIN agent_commands parent ON command.action='resume' AND parent.id=command.parent_command_id
+    LEFT JOIN messages parent_source ON parent_source.id=parent.source_message_id AND parent_source.room_id=command.room_id
+    LEFT JOIN LATERAL (
+      SELECT message.card FROM messages message
+      WHERE message.room_id=command.room_id AND message.card_type='workflow-handoff'
+        AND message.card->>'runId'=COALESCE(source.card->>'runId',choice_source.card->>'runId',parent_source.card->>'runId')
+      ORDER BY (message.card->>'seq')::int DESC NULLS LAST,message.created_at DESC,message.id DESC LIMIT 1
+    ) latest ON true
+    LEFT JOIN messages start ON start.id=latest.card->>'runId' AND start.room_id=command.room_id
+    WHERE source.card_type IS DISTINCT FROM '${CORNER_LIFECYCLE_CARD_TYPE}'
+  ), stale_wakes AS MATERIALIZED (
+    SELECT id FROM recovery_workflows WHERE run_id IS NOT NULL
+      AND (latest_card IS NULL OR latest_card->'cancellation' IS NOT NULL
+        OR COALESCE(start_card->>'runStatus','live')<>'live'
+        OR (attempt IS NOT NULL AND attempt IS DISTINCT FROM latest_card->>'seq') OR expired)
+  ), return_queue AS MATERIALIZED (
+    SELECT command.*,row_number() OVER (ORDER BY command.created_at DESC,command.id DESC) position
+    FROM recovery_scope command
+    WHERE command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now())
+  ), return_head AS MATERIALIZED (
+    SELECT newest.id FROM return_queue newest WHERE newest.position=1
+      AND EXISTS(SELECT 1 FROM return_queue old WHERE old.created_offline IS TRUE
+        OR (old.created_at<=now()-interval '${COMMAND_LEASE_SECONDS} seconds'
+          AND NOT EXISTS(SELECT 1 FROM agent_commands served
+            WHERE served.room_id=${roomSql} AND served.agent_id=${agentSql}
+              AND served.state='complete' AND served.action IN ('input','resume')
+              AND served.completed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')))
+      AND NOT EXISTS(SELECT 1 FROM agent_commands busy
+        WHERE busy.room_id=${roomSql} AND busy.agent_id=${agentSql}
+          AND busy.state='claimed' AND ((busy.lease_expires_at>now()
+            AND NOT EXISTS(SELECT 1 FROM return_queue offline WHERE offline.created_offline IS TRUE)) OR EXISTS(
+            SELECT 1 FROM agent_connections connection JOIN live_server_instances server
+              ON server.instance_id=connection.instance_id
+            WHERE connection.agent_id=busy.agent_id AND connection.released_at IS NULL
+              AND connection.connected_at<=busy.claimed_at
+              AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')))
+  ), cancelled_wakes AS (
+    UPDATE agent_commands command SET state='cancelled',completed_at=now(),
+      cancellation_reason=CASE WHEN stale.id IS NOT NULL THEN 'workflow_attempt_expired'
+        ELSE 'superseded_on_return:' || head.id END
+    FROM recovery_scope scoped
+    LEFT JOIN stale_wakes stale ON stale.id=scoped.id
+    LEFT JOIN return_queue queued ON queued.id=scoped.id
+    LEFT JOIN return_head head ON true
+    WHERE command.id=scoped.id AND (stale.id IS NOT NULL OR (head.id IS NOT NULL AND queued.position>1))
+    RETURNING command.*
+  ), cancelled_turns AS (
+    UPDATE agent_turns turn SET status='cancelled',failure_reason='Wake superseded or workflow attempt expired',created_at=now()
+    FROM cancelled_wakes cancelled WHERE turn.room_id=cancelled.room_id AND turn.agent_id=cancelled.agent_id
+      AND turn.request_id=cancelled.turn_request_id AND turn.status='working'
+      AND NOT EXISTS(SELECT 1 FROM recovery_scope survivor
+        WHERE survivor.turn_request_id=turn.request_id
+          AND NOT EXISTS(SELECT 1 FROM cancelled_wakes removed WHERE removed.id=survivor.id))
+    RETURNING turn.request_id
+  ), return_context AS (
+    SELECT head.id,COALESCE(newest.recovery_context || E'\\n','') ||
+      string_agg(COALESCE(cancelled.recovery_context || E'\\n','') ||
+        jsonb_build_object('id',message.id,'authorId',message.author_id,'body',message.text,
+          'cancellationReason',cancelled.cancellation_reason)::text,
+        E'\\n' ORDER BY cancelled.created_at,cancelled.id) recovery_context
+    FROM return_head head JOIN recovery_scope newest ON newest.id=head.id
+    JOIN cancelled_wakes cancelled ON cancelled.id<>head.id
+    JOIN messages message ON message.id=cancelled.source_message_id
+    WHERE NOT EXISTS(SELECT 1 FROM stale_wakes stale WHERE stale.id=head.id)
+    GROUP BY head.id,newest.recovery_context
+  )`;
+}
 
 /** Read the same root requester that cancelAgentTurn authorizes, including relayed turns. */
 export function turnRootMessageSql(turn: 'turn' | 'written'): string {
@@ -223,10 +323,16 @@ export async function createAgentCommand(
   );
   if (!member.rowCount) return undefined;
   const id = randomBytes(32).toString('hex');
+  // Capture known offline presence at dispatch. An absent connection record
+  // stays unknown and uses the overdue-claim fallback during recovery.
   const result = await db.query<CommandRow>(
     `INSERT INTO agent_commands
- (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+ (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job,created_offline)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+   (SELECT connection.released_at IS NOT NULL OR NOT EXISTS(
+     SELECT 1 FROM live_server_instances server WHERE server.instance_id=connection.instance_id
+       AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')
+    FROM agent_connections connection WHERE connection.agent_id=$3))
  ON CONFLICT(room_id,source_message_id,agent_id,action) DO UPDATE SET id=agent_commands.id RETURNING *`,
     [
       id,
@@ -863,10 +969,11 @@ export async function claimAgentCommand(
   if (!generation || generation.length > 200) throw new Error('command generation is required');
   const row = (
     await db.query<CommandRow & { turn_claimed: boolean }>(
-      `WITH eligible AS MATERIALIZED (
+      `WITH ${commandRecoveryCtes('$2', '$3', '$1')}, eligible AS MATERIALIZED (
            SELECT * FROM agent_commands
            WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND
              (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
+             AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
            FOR UPDATE
          ), working AS (
            INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
@@ -879,7 +986,8 @@ export async function claimAgentCommand(
            RETURNING 1
          ), claimed AS (
            UPDATE agent_commands command SET state='claimed',generation_id=$4,
-             lease_expires_at=now()+interval '90 seconds',claimed_at=now()
+             lease_expires_at=now()+interval '90 seconds',claimed_at=now(),
+             recovery_context=COALESCE((SELECT context.recovery_context FROM return_context context WHERE context.id=command.id),command.recovery_context)
            FROM eligible
            WHERE command.id=eligible.id AND
              (eligible.action='stop' OR eligible.action='restart' OR EXISTS(SELECT 1 FROM working))
@@ -1065,6 +1173,7 @@ export async function readAgentCommands(
   const rows = await db.query<
     CommandRow & {
       text: string;
+      delivered_context: string | null;
       receipt_hint: string | null;
       author_id: string;
       attachments: RoomInboxResult['items'][number]['attachments'];
@@ -1087,7 +1196,12 @@ export async function readAgentCommands(
       created_at: Date;
     }
   >(
-    `SELECT c.*,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,CASE WHEN workflow_latest.card IS NOT NULL THEN workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->>'hint' WHEN m.room_id=c.room_id THEN COALESCE(m.card->>'receiptHint',choice_message.card->>'receiptHint') END receipt_hint,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,reply_parent.author_id reply_to_author_id,reply_author.name reply_to_author_name,left(reply_parent.text,${REPLY_EXCERPT_MAX_LENGTH + 1}) reply_to_excerpt,CASE WHEN m.room_id=c.room_id THEN m.card_type END wake_card_type,CASE WHEN m.room_id=c.room_id THEN m.card END wake_card,workflow_latest.card->>'toState' workflow_state,NULLIF(workflow_start.card->>'runStatus','live') workflow_status,workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->'on' workflow_outcomes,watched_corner.id watched_corner_id,watched_corner.name watched_corner_name,watched_fact.lifecycle->'pr'->>'mergeCommitSha' watched_merge_commit FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+    `WITH ${commandRecoveryCtes('$1', '$2')}, kept_context AS (
+       UPDATE agent_commands command SET recovery_context=context.recovery_context
+       FROM return_context context WHERE context.id=command.id RETURNING command.id,command.recovery_context
+     )
+     SELECT c.*,COALESCE(kept_context.recovery_context,c.recovery_context) delivered_context,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,CASE WHEN workflow_latest.card IS NOT NULL THEN workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->>'hint' WHEN m.room_id=c.room_id THEN COALESCE(m.card->>'receiptHint',choice_message.card->>'receiptHint') END receipt_hint,m.author_id,m.attachments,m.system_event,m.presentation,m.card->>'askId' corner_ask_id,m.reply_to_message_id,reply_parent.author_id reply_to_author_id,reply_author.name reply_to_author_name,left(reply_parent.text,${REPLY_EXCERPT_MAX_LENGTH + 1}) reply_to_excerpt,CASE WHEN m.room_id=c.room_id THEN m.card_type END wake_card_type,CASE WHEN m.room_id=c.room_id THEN m.card END wake_card,workflow_latest.card->>'toState' workflow_state,NULLIF(workflow_start.card->>'runStatus','live') workflow_status,workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->'on' workflow_outcomes,watched_corner.id watched_corner_id,watched_corner.name watched_corner_name,watched_fact.lifecycle->'pr'->>'mergeCommitSha' watched_merge_commit FROM agent_commands c JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+ LEFT JOIN kept_context ON kept_context.id=c.id
  LEFT JOIN messages reply_parent ON reply_parent.id=m.reply_to_message_id
  LEFT JOIN identities reply_author ON reply_author.id=reply_parent.author_id
  LEFT JOIN rooms watched_corner ON watched_corner.id=m.room_id AND c.reason='watched_corner'
@@ -1107,6 +1221,7 @@ export async function readAgentCommands(
  LEFT JOIN workspace_skill_versions workflow_version ON workflow_version.skill_id=workflow_skill.id
    AND workflow_version.version=(workflow_latest.card->>'workflowVersion')::int
  WHERE c.room_id=$1 AND c.agent_id=$2 AND (c.state='pending' OR (c.state='claimed' AND c.lease_expires_at<=now()))
+   AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=c.id)
    AND workflow_latest.card->'cancellation' IS NULL
    AND NOT (
      -- A review wake waits for the corner to go quiet. The checks-passed
@@ -1148,6 +1263,7 @@ export async function readAgentCommands(
       turnRequestId: r.turn_request_id,
       action: r.action,
       reason: r.reason,
+      ...(r.delivered_context ? { recoveryContext: r.delivered_context } : {}),
       ...(r.system_event?.scheduleId ? { scheduleId: r.system_event.scheduleId } : {}),
       rootCommandId: r.root_command_id,
       ...(r.parent_command_id ? { parentCommandId: r.parent_command_id } : {}),

@@ -141,6 +141,8 @@ export type AgentCommand = {
   readonly rootSourceMessageId: string;
   readonly agentDepth: number;
   readonly source: RoomInboxResult['items'][number];
+  /** Superseded wakes, quoted as history; only source authorizes this turn. */
+  readonly recoveryContext?: string;
 };
 export type CommandClaimInput = RoomInput & {
   readonly commandId: string;
@@ -277,7 +279,7 @@ export type DaemonOperationMap = {
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
   >;
-  claimAgentCommand: Operation<CommandClaimInput, WriteResult>;
+  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly recoveryContext?: string }>;
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
@@ -798,6 +800,12 @@ export type DaemonBootstrapInput = AgentInput;
 export type WorkspaceRosterInput = AgentInput & { readonly workspaceId: string };
 export type DaemonBootstrapResult = {
   readonly workspaceIds: readonly string[];
+  /** Command-bearing surfaces to bind before background Room discovery. */
+  readonly pendingRooms?: readonly {
+    readonly roomId: string;
+    readonly parentRoomId?: string;
+    readonly openedBy?: string;
+  }[];
   readonly rooms: readonly {
     readonly roomId: string;
     readonly archived: boolean;

@@ -30,6 +30,181 @@ const commands = (agentId = A, roomId = R) =>
   daemon.execute('getAgentCommands', { roomId }, agentId).then((r) => r.commands);
 const send = (text: string, roomId = R) => phone.execute('sendRoomMessage', { roomId, text }, H);
 
+it('runs only the newest of three overdue pings, preserving the earlier text as history', async () => {
+  await send('@hoots First request');
+  await send('@hoots Are you there?');
+  await send('@hoots Please answer this latest request');
+  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes'`);
+  const pending = await commands();
+  expect(pending).toHaveLength(1);
+  expect(pending[0]!.source.body).toBe('@hoots Please answer this latest request');
+  expect(pending[0]!.recoveryContext).toContain('@hoots First request');
+  expect(pending[0]!.recoveryContext).toContain('@hoots Are you there?');
+  const cancelled = await db.query<{ cancellation_reason: string }>(
+    `SELECT cancellation_reason FROM agent_commands WHERE state='cancelled'`,
+  );
+  expect(cancelled.rows).toEqual(Array(2).fill({ cancellation_reason: `superseded_on_return:${pending[0]!.id}` }));
+  await claim(pending[0]!);
+  await result(pending[0]!, 'Back now');
+  expect(await commands()).toHaveLength(0);
+});
+
+it('keeps one latest wake in each Room when returning', async () => {
+  for (const room of [R, C]) {
+    await send('@hoots First ping', room);
+    await send('@hoots Latest ping', room);
+  }
+  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes'`);
+  for (const room of [R, C]) {
+    const pending = await commands(A, room);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.source.body).toBe('@hoots Latest ping');
+    expect(pending[0]!.recoveryContext).toContain('@hoots First ping');
+    await claim(pending[0]!);
+    await result(pending[0]!, 'Back in this Room');
+  }
+});
+
+it('supersedes an expired claimed wake as well as pending pings on return', async () => {
+  await send('@hoots Request before the helper exited');
+  const [abandoned] = await commands();
+  await claim(abandoned!);
+  await send('@hoots First offline ping');
+  await send('@hoots Latest offline ping');
+  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes',
+    lease_expires_at=CASE WHEN state='claimed' THEN now()-interval '1 second' ELSE lease_expires_at END`);
+  const pending = await commands();
+  expect(pending).toHaveLength(1);
+  expect(pending[0]!.source.body).toBe('@hoots Latest offline ping');
+  expect(pending[0]!.recoveryContext).toContain('Request before the helper exited');
+  expect(pending[0]!.recoveryContext).toContain('First offline ping');
+  expect(pending[0]!.recoveryContext!.split('\n')).toHaveLength(2);
+  await expect(claim(abandoned!, 'returned-helper')).rejects.toThrow();
+  await expect(result(abandoned!, 'Late output')).rejects.toThrow();
+  expect((await db.query(`SELECT status FROM agent_turns WHERE request_id=$1`,
+    [abandoned!.turnRequestId])).rows).toEqual([{ status: 'cancelled' }]);
+  await claim(pending[0]!, 'returned-helper');
+  await result(pending[0]!, 'Back now', 'returned-helper');
+});
+
+it('refuses a stale helper snapshot at claim and supplies the survivor its current history', async () => {
+  await send('@hoots First request');
+  await send('@hoots Latest request');
+  const snapshot = await commands();
+  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes'`);
+  await expect(claim(snapshot[0]!)).rejects.toThrow();
+  const claimed = await daemon.execute('claimAgentCommand', {
+    roomId: R, commandId: snapshot[1]!.id, generationId: 'returned-helper',
+  }, A);
+  expect(claimed.recoveryContext).toContain('@hoots First request');
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE state='cancelled'`)).rowCount).toBe(1);
+});
+
+it('keeps the surviving resume claimable when superseded resumes share its turn', async () => {
+  await send('@hoots Start the turn');
+  const [parent] = await commands();
+  await claim(parent!);
+  await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [parent!.id]);
+  for (const text of ['Earlier decision', 'Latest decision']) {
+    const source = id();
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [source, R, H, text]);
+    await createAgentCommand(db, {
+      roomId: R, agentId: A, sourceMessageId: source, action: 'resume', reason: 'resume',
+      turnRequestId: parent!.turnRequestId,
+    });
+  }
+  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes'`);
+  const pending = await commands();
+  expect(pending).toHaveLength(1);
+  expect(pending[0]!.source.body).toBe('Latest decision');
+  await claim(pending[0]!, 'returned-helper');
+  await result(pending[0]!, 'Resumed once', 'returned-helper');
+});
+
+it('preserves fresh online follow-ups and queues behind a live turn', async () => {
+  await send('@hoots First request');
+  await send('@hoots Second request');
+  await send('@hoots Third request');
+  const pending = await commands();
+  expect(pending).toHaveLength(3);
+  await claim(pending[0]!);
+  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes' WHERE state='pending'`);
+  expect(await commands()).toHaveLength(2);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE state='cancelled'`)).rowCount).toBe(0);
+  await result(pending[0]!, 'Finished the first request');
+  expect(await commands()).toHaveLength(2);
+});
+
+it('coalesces recent offline pings on a new live connection, without waiting ninety seconds', async () => {
+  await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('return-test') ON CONFLICT DO NOTHING`);
+  await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id,released_at)
+    VALUES($1,1,'return-test','return-test',clock_timestamp())`, [A]);
+  // A crashed helper can leave a still-valid takeover lease behind.
+  await send('@hoots Task before the helper exited');
+  const [abandoned] = await commands();
+  await claim(abandoned!);
+  await send('@hoots First offline ping');
+  await send('@hoots Last offline ping');
+  await db.query(`UPDATE agent_connections SET connected_at=clock_timestamp(),released_at=NULL WHERE agent_id=$1`, [A]);
+  const pending = await commands();
+  expect(pending).toHaveLength(1);
+  expect(pending[0]!.source.body).toBe('@hoots Last offline ping');
+});
+
+it('keeps an online long-running turn and its follow-ups after the takeover lease expires', async () => {
+  await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('long-turn') ON CONFLICT DO NOTHING`);
+  await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
+    VALUES($1,1,'long-turn','long-turn')`, [A]);
+  await send('@hoots Long-running task');
+  const [working] = await commands();
+  await claim(working!);
+  await send('@hoots First follow-up');
+  await send('@hoots Second follow-up');
+  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes',
+    lease_expires_at=CASE WHEN state='claimed' THEN now()-interval '1 second' ELSE lease_expires_at END`);
+  expect(await commands()).toHaveLength(3);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE state='cancelled'`)).rowCount).toBe(0);
+  // The live helper renews its own generation with its next working receipt.
+  await daemon.execute('postAgentTurnReceipt', { roomId: R, agentId: A,
+    requestId: working!.turnRequestId, generationId: 'g1', status: 'working' }, A);
+  await result(working!, 'Finished the long task');
+  expect(await commands()).toHaveLength(2);
+});
+
+it('keeps rapid online follow-ups across a brief socket reconnect', async () => {
+  await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('online-test') ON CONFLICT DO NOTHING`);
+  await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
+    VALUES($1,1,'online-test','online-test')`, [A]);
+  await send('@hoots First online request');
+  await send('@hoots Second online request');
+  await send('@hoots Third online request');
+  await db.query(`UPDATE agent_connections SET connected_at=clock_timestamp() WHERE agent_id=$1`, [A]);
+  expect(await commands()).toHaveLength(3);
+});
+
+it('carries accumulated history through a second offline return', async () => {
+  await send('@hoots Original request');
+  await send('@hoots Second request');
+  await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes'`);
+  expect(await commands()).toHaveLength(1);
+  await send('@hoots Third request');
+  const [newest] = await commands();
+  expect(newest!.source.body).toBe('@hoots Third request');
+  expect(newest!.recoveryContext).toContain('@hoots Original request');
+  expect(newest!.recoveryContext).toContain('@hoots Second request');
+});
+
+it('bootstrap identifies only pending member surfaces, including the corner parent', async () => {
+  await send('@hoots Wake the Room');
+  await send('@hoots Wake the corner', C);
+  const bootstrap = await daemon.execute('getDaemonBootstrap', { agentId: A }, A);
+  expect(bootstrap.pendingRooms).toEqual(expect.arrayContaining([
+    { roomId: R }, { roomId: C, parentRoomId: R, openedBy: B },
+  ]));
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2`, [A, C]);
+  expect((await daemon.execute('getDaemonBootstrap', { agentId: A }, A)).pendingRooms).toEqual([{ roomId: R }]);
+});
+
 it('shows an accepted tagged command until claim and re-nudges a connected idle helper once', async () => {
   const sent = await send('@hoots Please check this');
   const [command] = await commands(A);
@@ -153,6 +328,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => db?.close());
 beforeEach(async () => {
+  await db.query(`DELETE FROM agent_connections`);
   await db.query(
     `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
      VALUES($1,$2,'presence','presence','{"status":"online"}'),

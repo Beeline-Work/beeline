@@ -54,4 +54,26 @@ describe('host daemon read budget', () => {
     }
     expect(budget.metrics().active).toBe(0);
   });
+
+  it('admits bootstrap into reserved capacity so return traffic can bind on demand', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-bootstrap-budget-'));
+    roots.push(root);
+    const origin = 'http://127.0.0.1:41113';
+    const budget = new HostReadBudget(origin, root);
+    const releases = await Promise.all(Array.from({ length: 4 }, () =>
+      budget.acquire('background', Date.now() + 5_000)));
+    const agentId = 'a'.repeat(64);
+    const api = new DaemonApiClient(origin, 'fixture', agentId,
+      async () => Response.json({ workspaceIds: [], rooms: [], pendingRooms: [] }), undefined, budget);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await expect(Promise.race([
+        api.execute('getDaemonBootstrap', { agentId }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('bootstrap waited for background work')), 1_000); }),
+      ])).resolves.toMatchObject({ pendingRooms: [] });
+    } finally {
+      clearTimeout(timer);
+      await Promise.all(releases.map(release => release()));
+    }
+  });
 });

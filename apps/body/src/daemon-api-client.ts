@@ -370,7 +370,7 @@ export class DaemonApiClient {
       const operation = String(name);
       if (this.readBudget && /^(get|list|read|search)/.test(operation)) {
         release = await this.readBudget.acquire(
-          operation === 'getAgentCommands' || operation === 'getRoomInbox' ? 'urgent' : 'background',
+          operation === 'getAgentCommands' || operation === 'getRoomInbox' || operation === 'getDaemonBootstrap' ? 'urgent' : 'background',
           Date.now() + REQUEST_DEADLINE_MS,
         );
       }

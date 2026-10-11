@@ -1939,6 +1939,7 @@ describe('list roles', () => {
 
   it('moves an expired step to the next agent on the list even if the current agent never answers', async () => {
     const { runId } = await startedListRun();
+    const oldWake = (await readAgentCommands(database, ROOM, WORKER_A)).commands[0]!;
     // The step timer belongs to the run and names the attempt it times.
     const schedule = await database.query<{ agent_id: string; attempt: string }>(
       `SELECT agent_id,workflow_run->>'attempt' attempt FROM agent_schedules WHERE room_id=$1 AND workflow_run->>'timer'='step'`,
@@ -1956,6 +1957,53 @@ describe('list roles', () => {
     expect(await pendingCommandsFor(WORKER_B)).toBe(1);
     // The silent agent's pending dispatch is cancelled: it cannot act on the old attempt.
     expect(await pendingCommandsFor(WORKER_A)).toBe(0);
+    await expect(database.transaction(db => claimAgentCommand(db, ROOM, WORKER_A, oldWake.id, 'late-helper')))
+      .rejects.toThrow('command claim conflict');
+  });
+
+  it('refuses a workflow wake as soon as its timer is due, before the timer loop runs', async () => {
+    await startedListRun();
+    const wake = (await readAgentCommands(database, ROOM, WORKER_A)).commands[0]!;
+    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute'
+      WHERE room_id=$1 AND workflow_run->>'timer'='step'`, [ROOM]);
+    await expect(database.transaction(db => claimAgentCommand(db, ROOM, WORKER_A, wake.id, 'late-helper')))
+      .rejects.toThrow('command claim conflict');
+    expect((await readAgentCommands(database, ROOM, WORKER_A)).commands).toHaveLength(0);
+    expect((await database.query(`SELECT cancellation_reason FROM agent_commands WHERE id=$1`, [wake.id])).rows[0])
+      .toEqual({ cancellation_reason: 'workflow_attempt_expired' });
+  });
+
+  it('does not revive an older request when the newest return wake has timed out', async () => {
+    const source = randomBytes(32).toString('hex');
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'An old request')`,
+      [source, ROOM, OWNER]);
+    const old = (await createAgentCommand(database, {
+      roomId: ROOM, agentId: WORKER_A, sourceMessageId: source, reason: 'human_tag',
+    }))!;
+    await database.query(`UPDATE agent_commands SET created_at=now()-interval '2 minutes' WHERE id=$1`, [old.id]);
+    await startedListRun();
+    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute'
+      WHERE room_id=$1 AND workflow_run->>'timer'='step'`, [ROOM]);
+    expect((await readAgentCommands(database, ROOM, WORKER_A)).commands).toHaveLength(0);
+    await expect(database.transaction(db => claimAgentCommand(db, ROOM, WORKER_A, old.id, 'late-helper')))
+      .rejects.toThrow('command claim conflict');
+  });
+
+  it('cancels an expired claimed workflow wake when the step fails over', async () => {
+    await startedListRun();
+    const wake = (await readAgentCommands(database, ROOM, WORKER_A)).commands[0]!;
+    await claimAgentCommand(database, ROOM, WORKER_A, wake.id, 'gone-helper');
+    await database.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 minute' WHERE id=$1`, [wake.id]);
+    await database.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 minute'
+      WHERE room_id=$1 AND workflow_run->>'timer'='step'`, [ROOM]);
+    await new AgentScheduleLoop(database).runOnce();
+    expect((await readAgentCommands(database, ROOM, WORKER_A)).commands).toHaveLength(0);
+    await expect(database.transaction(db => claimAgentCommand(db, ROOM, WORKER_A, wake.id, 'late-helper')))
+      .rejects.toThrow('command claim conflict');
+    const daemon = new DaemonService(database, new LiveHub());
+    await expect(daemon.execute('postRoomMessage', {
+      roomId: ROOM, requestId: wake.turnRequestId, generationId: 'gone-helper', text: 'Too late',
+    }, WORKER_A)).rejects.toThrow();
   });
 
   it('asks a human when nobody on the list is healthy, leaving the run parked with no agent dispatched', async () => {

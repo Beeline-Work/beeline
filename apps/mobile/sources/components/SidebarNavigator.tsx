@@ -19,6 +19,7 @@ import {
 import { useBrowserNavigationStore } from '@/navigation/browserNavigationStore';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { monolithSession } from '@/auth/monolith-session';
+import { subscribeClientReset } from '@/sync/client-reset';
 import {
   showsDesktopSessionChrome,
   type DesktopSessionState,
@@ -79,7 +80,7 @@ export const SidebarNavigator = React.memo(() => {
         });
     };
     refresh();
-    const unsubscribe = monolithSession.subscribeIdentityChange(refresh);
+    const unsubscribe = subscribeClientReset(refresh);
     return () => {
       cancelled = true;
       unsubscribe();

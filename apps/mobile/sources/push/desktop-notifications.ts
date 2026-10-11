@@ -1,7 +1,7 @@
 import type { ChatListItem, RoomViewMessage } from '@beeline/buzz-client';
 import { cornerTitle, directMessageTitle, roomTitle } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { monolithSession } from '@/auth/monolith-session';
+import { subscribeClientReset } from '@/sync/client-reset';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { getBuzzPushEnabled } from './buzz-push-registration';
 import { loadStoredPushLevel } from './push-level-storage';
@@ -296,7 +296,7 @@ export function startDesktopNotifications(): () => void {
   function report(error: unknown) {
     console.warn('[desktop-notifications]', error);
   }
-  stopSession = monolithSession.subscribeIdentityChange(
+  stopSession = subscribeClientReset(
     () => void startForIdentity().catch(report),
   );
   void startForIdentity().catch(report);

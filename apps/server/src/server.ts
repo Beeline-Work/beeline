@@ -4,6 +4,7 @@ import { GitHubHttpError } from '@beeline/auth/github';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { serveComputerLastFrame, serveComputerSession, serveComputerStatus, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter } from './computer-session.js';
 import type { Duplex } from 'node:stream';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
 import { isAppSignInLink } from './composio-apps.js';
@@ -680,6 +681,28 @@ export function createBeelineServer(options: ServerOptions): Server {
   server.on('upgrade', (request, socket, head) => {
     void (async () => {
       const url = exactPath(request.url);
+      const computer = /^\/s\/([A-Za-z0-9_-]{43})\/ws$/.exec(url.pathname);
+      if (computer) {
+        await upgradeComputerSession(request, socket, head, options.database, options.live, computer[1]!);
+        return;
+      }
+      const computerSource = /^\/s\/([A-Za-z0-9_-]{43})\/source$/.exec(url.pathname);
+      if (computerSource) {
+        const token = bearer(request.headers.authorization);
+        const agentId = token ? await options.auth.authenticateDaemon(token) : null;
+        if (!agentId) { socket.destroy(); return; }
+        await upgradeBodyComputerSource(request, socket, head, options.database, options.live, computerSource[1]!, agentId);
+        return;
+      }
+      const computerWait = /^\/s\/([A-Za-z0-9_-]{43})\/wait$/.exec(url.pathname);
+      if (computerWait) {
+        const token = bearer(request.headers.authorization);
+        const agentId = token ? await options.auth.authenticateDaemon(token) : null;
+        if (!agentId) { socket.destroy(); return; }
+        const since = Math.max(0, Number(url.searchParams.get('since') ?? 0) || 0);
+        await upgradeComputerWaiter(request, socket, head, options.database, computerWait[1]!, agentId, since);
+        return;
+      }
       if (url.pathname !== '/v1/phone/live') {
         socket.destroy();
         return;
@@ -1441,6 +1464,21 @@ async function route(
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
+  const computer = /^\/s\/([A-Za-z0-9_-]{43})\/?$/.exec(url.pathname);
+  if (method === 'GET' && computer) {
+    await serveComputerSession(request, response, options.database, options.live, computer[1]!);
+    return;
+  }
+  const lastFrame = /^\/s\/([A-Za-z0-9_-]{43})\/last\.jpg$/.exec(url.pathname);
+  if (method === 'GET' && lastFrame) {
+    await serveComputerLastFrame(response, options.database, lastFrame[1]!);
+    return;
+  }
+  const computerStatus = /^\/s\/([A-Za-z0-9_-]{43})\/status$/.exec(url.pathname);
+  if (method === 'GET' && computerStatus) {
+    await serveComputerStatus(response, options.database, computerStatus[1]!);
+    return;
+  }
   if (method === 'GET' && url.pathname === '/v1/link/oauth/callback') {
     if (!options.linkWallet) {
       json(response, 503, { error: 'Link is unavailable' });

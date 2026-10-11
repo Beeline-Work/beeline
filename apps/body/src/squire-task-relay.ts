@@ -140,7 +140,12 @@ export class SquireTaskRelay {
      * that does not pass one keeps working unchanged.
      */
     private readonly onApprovalDecided: (decision: SquireApprovalDecision) => void = () => {},
+    private readonly onSessionEnded: (sessionId: string) => void = () => {},
   ) {}
+
+  private ended(ids: Iterable<string>): void {
+    for (const id of ids) this.onSessionEnded(id);
+  }
 
   async listen(): Promise<{ url: string; token: string; contextFile: string }> {
     if (this.closed) throw new Error('Squire task relay is closed');
@@ -272,6 +277,7 @@ export class SquireTaskRelay {
         this.log('relay-exit', task, { pid, exitCode: code,
           sessionId: redactedSessionId(task.sessions.values().next().value) });
         forgetSquireSessions(task.sessions);
+        this.ended(task.sessions);
         task.sessions.clear();
         task.pendingApprovals.clear();
       },
@@ -330,6 +336,7 @@ export class SquireTaskRelay {
       sessionId: redactedSessionId(this.task.sessions.values().next().value) });
     this.task.client.close();
     forgetSquireSessions(this.task.sessions);
+    this.ended(this.task.sessions);
     this.task.sessions.clear();
     this.task.pendingApprovals.clear();
     this.task = undefined;
@@ -428,6 +435,7 @@ export class SquireTaskRelay {
       if (staleLeaseResult(result)) {
         for (const id of requestedIds) task.sessions.delete(id);
         forgetSquireSessions(requestedIds);
+        this.ended(requestedIds);
         this.releasePendingApprovals(task, requestedIds);
         this.log('call-error', task, { method: input.method, tool: safeToolName ?? null,
           reason: 'stale-lease', sessionId: redactedSessionId(requestedIds[0]) });
@@ -439,6 +447,7 @@ export class SquireTaskRelay {
           !(result && typeof result === 'object' && (result as { isError?: unknown }).isError === true)) {
         for (const id of requestedIds) task.sessions.delete(id);
         forgetSquireSessions(requestedIds);
+        this.ended(requestedIds);
         this.releasePendingApprovals(task, requestedIds);
       } else if (usingOwnConnection) {
         const created = sessionIds(result);
@@ -488,6 +497,7 @@ export class SquireTaskRelay {
     } catch (error) {
       if (error instanceof Error && /timed out/.test(error.message)) {
         task.dead = true;
+        this.ended(task.sessions);
         task.sessions.clear();
         task.pendingApprovals.clear();
         task.client.close();

@@ -37,6 +37,7 @@ import { findRoomCornerRow } from '@/buzz/room-corner-store';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
+import { ComputerSessionViewer } from '@/components/buzz/ComputerSession';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { CornerBriefLink } from '@/components/buzz/CornerObjectiveLine';
 import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
@@ -220,6 +221,8 @@ export function DesktopRoomInspector({
           authorHandle={content.artifact.authorHandle}
           onClose={onClose}
         />
+      ) : content.kind === 'computer' ? (
+        <ComputerSessionViewer session={content.session} onClose={onClose} />
       ) : (
         <>
           {observed.error ? (

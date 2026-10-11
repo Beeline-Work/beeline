@@ -855,6 +855,11 @@ function projectedMessage(
         ...base,
         squireApproval: row.card as NonNullable<RoomViewMessage['squireApproval']>,
       };
+    case 'computer-session':
+      return {
+        ...base,
+        computerSession: row.card as NonNullable<RoomViewMessage['computerSession']>,
+      };
     case 'connector-offer':
       return {
         ...base,

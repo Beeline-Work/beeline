@@ -530,6 +530,9 @@ export class MonolithRoomTurnLoop {
           .execute('postSquireApprovalDecision', { roomId: options.roomId, ...decision })
           .catch(() => {});
       },
+      (sessionId) => {
+        options.api.execute('endComputerSession', { roomId: options.roomId, sessionId }).catch(() => {});
+      },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.roomId, {

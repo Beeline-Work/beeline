@@ -456,6 +456,15 @@ export type DaemonOperationMap = {
   /** Relay a Squire-owned approval page into the agent owner's private
    * Trusty Squire DM. Beeline never settles the approval itself. */
   postSquireApproval: Operation<PostSquireApprovalInput, WriteResult>;
+  /** Publish or end an existing Squire operate browser in this Room. */
+  postComputerSession: Operation<TurnOutputAuthority & RoomInput & {
+    readonly sessionId: string;
+    readonly upstreamUrl: string;
+    readonly title?: string;
+  }, { readonly id: string; readonly url: string }>;
+  endComputerSession: Operation<RoomInput & {
+    readonly sessionId: string;
+  }, WriteResult>;
   /** A Squire in-task result named a stale/logged-out provider session
    * (`needs_user.wall === 'google_session'`); a reconnect card goes to the
    * SAME Room carrying Squire's own hosted sign-in page, and the paused

@@ -893,6 +893,24 @@ CREATE TABLE IF NOT EXISTS messages (
   deleted_by text REFERENCES identities(id),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- A live computer card keeps only the Beeline bearer link in the Room. The
+-- upstream Squire URL remains server-side and dies with its browser session.
+CREATE TABLE IF NOT EXISTS computer_sessions (
+  id text PRIMARY KEY,
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  message_id text NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+  agent_id text NOT NULL REFERENCES identities(id),
+  source_session_id text NOT NULL,
+  upstream_url text NOT NULL,
+  relay_instance_id text,
+  last_frame bytea,
+  handoff_count integer NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'live' CHECK (status IN ('live', 'ended')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  ended_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS computer_sessions_room_idx ON computer_sessions(room_id);
+CREATE INDEX IF NOT EXISTS computer_sessions_agent_idx ON computer_sessions(agent_id);
 -- Private message bookmarks deliberately keep their pointer after a source is
 -- deleted or becomes inaccessible. Reads never cache or reveal source text;
 -- they return an unavailable row that the viewer can remove.

@@ -284,6 +284,14 @@ export type RoomViewMessage = {
   /** One Squire-owned approval page relayed into the owner's connector DM.
    * Beeline presents the link but never decides the request. */
   readonly squireApproval?: SquireApprovalCardView;
+  /** A Beeline-hosted interactive view of an existing Squire operate browser. */
+  readonly computerSession?: {
+    readonly id: string;
+    readonly url: string;
+    readonly title: string;
+    readonly status: 'live' | 'ended';
+    readonly lastFrameUrl: string;
+  };
   /** One connector offer: the agent reaches for a Workbench tool it needs (R5). */
   readonly connectorOffer?: ConnectorOfferCardView;
   /** A connected app is needed to finish the Room request. Route details stay server-side. */

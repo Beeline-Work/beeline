@@ -312,7 +312,10 @@ function StepRow({
   // A gate's own resolution line already states the result (the pick and who
   // picked it); showing the agent's final message too would say it twice.
   const final = !current && step.kind === 'handoff' ? visit?.finalReply : undefined;
-  const does = detail.contract.handoffs[step.state]?.does;
+  // A cached response from before the server's description repair must not
+  // put the retired migration placeholder back on either workflow surface.
+  const savedDoes = detail.contract.handoffs[step.state]?.does;
+  const does = savedDoes?.includes('describe what this step does') ? undefined : savedDoes;
   const gate = visit?.gate;
   const gateWaitingOn = detail.run?.viewerHolds ? 'you' : `a person in ${detail.run?.roomName}`;
   const gateLine =

@@ -17,6 +17,7 @@ import { AgentScheduleLoop } from './agent-schedules.js';
 import { PhoneService } from './phone-service.js';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import { ensureSystemIdentity } from './system-line.js';
+import { FEEDBACK_TRIAGE_CONTRACT } from './feedback-triage-workflow.js';
 import {
   activeRunIdsForSchedule,
   archiveWorkflow,
@@ -2183,7 +2184,7 @@ describe('agent workflow run reads and cancellation', () => {
 
 describe('backfillWorkflowSkillDescriptions', () => {
   /** Simulates a workflow skill version saved before PR #2083 added `summary`/`does`. */
-  async function seedLegacySkillVersion(slug: string, markdown: string): Promise<string> {
+  async function seedLegacySkillVersion(slug: string, markdown: string, extractorVersion = 'legacy-test'): Promise<string> {
     const skillId = randomUUID();
     await database.query(
       `INSERT INTO workspace_skills
@@ -2196,8 +2197,8 @@ describe('backfillWorkflowSkillDescriptions', () => {
       `INSERT INTO workspace_skill_versions
          (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
           repository,target_commit,path,extractor_version,model)
-       VALUES($1,1,$2,$3,NULL,$4,'','',NULL,'legacy-test','n/a')`,
-      [skillId, markdown, createHash('sha256').update(markdown).digest('hex'), ['legacy-seed']],
+       VALUES($1,1,$2,$3,NULL,$4,'','',NULL,$5,'n/a')`,
+      [skillId, markdown, createHash('sha256').update(markdown).digest('hex'), ['legacy-seed'], extractorVersion],
     );
     return skillId;
   }
@@ -2211,7 +2212,7 @@ describe('backfillWorkflowSkillDescriptions', () => {
     ).rows[0]!.markdown;
   }
 
-  it('fills summary from the description and a does placeholder on every missing state, matches the pure helper, and is idempotent', async () => {
+  it('derives each custom step from its own instruction or fields and is idempotent', async () => {
     const markdown = JSON.stringify(CONTRACT);
     const skillId = await seedLegacySkillVersion('legacy-corner', markdown);
 
@@ -2219,16 +2220,13 @@ describe('backfillWorkflowSkillDescriptions', () => {
 
     const described = JSON.parse(await markdownFor(skillId));
     expect(described.summary).toBe(CONTRACT.description);
-    expect(described.handoffs.implement.does).toBe(
-      'Step implement (implementer): describe what this step does',
-    );
-    expect(described.handoffs.human_approve.does).toBe(
-      'Step human_approve (approver): describe what this step does',
-    );
+    expect(described.handoffs.implement.does).toBe('Produce summary, PR URL for implement.');
+    expect(described.handoffs.human_approve.does).toBe('Ask a person for decision.');
     // Terminal states get a does too: validateSavedWorkflow requires one on
     // every state, with no exception, so the backfill cannot skip them.
-    expect(described.handoffs.land.does).toBe('Step land: describe what this step does');
-    expect(described.handoffs.failed.does).toBe('Step failed: describe what this step does');
+    expect(described.handoffs.land.does).toBe('The workflow finished.');
+    expect(described.handoffs.failed.does).toBe('The workflow stopped because a step failed.');
+    expect(JSON.stringify(described)).not.toContain('describe what this step does');
     // Every edge, role binding and loop rule survived untouched.
     expect(described.handoffs.checks.loop).toEqual(CONTRACT.handoffs.checks.loop);
     expect(described.start).toBe(CONTRACT.start);
@@ -2243,15 +2241,71 @@ describe('backfillWorkflowSkillDescriptions', () => {
     expect(await markdownFor(skillId)).toBe(JSON.stringify(described));
   });
 
-  it('falls back to a plain placeholder when the description is itself empty', async () => {
+  it('writes a usable summary when the description is empty', async () => {
     const blank = { ...CONTRACT, description: '   ' };
     const skillId = await seedLegacySkillVersion('legacy-blank', JSON.stringify(blank));
     await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(1);
-    expect(JSON.parse(await markdownFor(skillId)).summary).toBe('Summary not written yet');
+    expect(JSON.parse(await markdownFor(skillId)).summary).toBe('Run the corner workflow.');
+  });
+
+  it('repairs every saved seeded version with authored copy and serves the repaired current version', async () => {
+    const stale = JSON.parse(JSON.stringify(FEEDBACK_TRIAGE_CONTRACT));
+    stale.summary = 'Summary not written yet';
+    for (const [name, step] of Object.entries(stale.handoffs))
+      step.does = `Step ${name}: describe what this step does`;
+    const skillId = await seedLegacySkillVersion('feedback-triage', JSON.stringify(stale), 'feedback-triage-v1');
+    await database.query(
+      `INSERT INTO workspace_skill_versions
+         (skill_id,version,markdown,content_hash,source_job_id,source_message_ids,
+          repository,target_commit,path,extractor_version,model)
+       VALUES($1,2,$2,$3,NULL,$4,'','',NULL,'feedback-triage-v1','n/a')`,
+      [skillId, JSON.stringify(stale), createHash('sha256').update(JSON.stringify(stale)).digest('hex'), ['legacy-seed']],
+    );
+    await database.query(`UPDATE workspace_skills SET current_version=2 WHERE id=$1`, [skillId]);
+
+    await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(2);
+    const versions = (await database.query<{ markdown: string; content_hash: string }>(
+      `SELECT markdown,content_hash FROM workspace_skill_versions WHERE skill_id=$1 ORDER BY version`, [skillId],
+    )).rows;
+    for (const version of versions) {
+      const contract = JSON.parse(version.markdown);
+      expect(contract.summary).toBe(FEEDBACK_TRIAGE_CONTRACT.summary);
+      for (const [name, step] of Object.entries(FEEDBACK_TRIAGE_CONTRACT.handoffs))
+        expect(contract.handoffs[name].does).toBe(step.does);
+      expect(version.markdown).not.toContain('describe what this step does');
+      expect(version.content_hash).toBe(createHash('sha256').update(version.markdown).digest('hex'));
+    }
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
+      [WORKSPACE, OWNER],
+    );
+    const command = await commandFor(WORKER_A);
+    const { runId } = await startWorkflow(database, command, {
+      name: 'feedback-triage', roleBindings: { triager: WORKER_A },
+    });
+    const served = await readWorkflowRun(database, { roomId: ROOM, runId }, OWNER);
+    expect(served?.contract.handoffs.pull?.does).toBe(FEEDBACK_TRIAGE_CONTRACT.handoffs.pull.does);
+    expect(JSON.stringify(served?.contract)).not.toContain('describe what this step does');
+    const definition = await new PhoneService(database, 'http://localhost').execute(
+      'readWorkflowDefinition', { roomId: ROOM, name: 'feedback-triage' }, OWNER,
+    );
+    expect(definition.contract.handoffs.pull.does).toBe(FEEDBACK_TRIAGE_CONTRACT.handoffs.pull.does);
+    expect(JSON.stringify(definition.contract)).not.toContain('describe what this step does');
+    await expect(backfillWorkflowSkillDescriptions(database)).resolves.toBe(0);
+  });
+
+  it('uses a custom step hint instead of its old placeholder', async () => {
+    const legacy = JSON.parse(JSON.stringify(CONTRACT));
+    legacy.handoffs.implement.hint = '  Draft the change and open a pull request.  ';
+    legacy.handoffs.implement.does = 'Step implement (implementer): describe what this step does';
+    const skillId = await seedLegacySkillVersion('custom-hint', JSON.stringify(legacy));
+    await backfillWorkflowSkillDescriptions(database);
+    expect(JSON.parse(await markdownFor(skillId)).handoffs.implement.does)
+      .toBe('Draft the change and open a pull request.');
   });
 
   it('leaves an already-described contract untouched, including its content hash', async () => {
-    const markdown = JSON.stringify(describedWorkflow(CONTRACT));
+    const markdown = JSON.stringify(describedWorkflow(CONTRACT), null, 2);
     const skillId = await seedLegacySkillVersion('already-described', markdown);
     const before = (
       await database.query<{ content_hash: string }>(

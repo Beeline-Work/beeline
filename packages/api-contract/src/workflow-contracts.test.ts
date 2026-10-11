@@ -498,6 +498,7 @@ describe('separate saved and corner validators', () => {
     [work({ roleBinding: 'live:parent.reviewer_agent_id' }), 'handoffs.work: roleBinding is corner-only and cannot be saved in a workflow'],
     [{ ...base, summary: undefined }, 'summary is required and must be nonempty'],
     [work({ does: undefined }), 'handoffs.work: does is required and must be nonempty'],
+    [work({ does: 'Step work (worker): describe what this step does' }), 'handoffs.work: does must describe this step'],
     [work({ on: { blocked: 'done', timeout: 'done' } }), 'handoffs.work: "blocked" is built in; name this outcome something else'],
     [work({ timeoutSeconds: undefined }), 'handoffs.work: timeoutSeconds is required, with a "timeout" outcome in on'],
     [work({ kind: 'gate', timeoutSeconds: undefined }), 'handoffs.work: a gate needs timeoutSeconds and default'],

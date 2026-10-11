@@ -13,6 +13,7 @@ import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './me
 import type { ObjectStorage } from './object-storage.js';
 import { apnsReadClearBatch } from './apns-push.js';
 import { firebaseReadClearBatch } from './firebase-push.js';
+import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import type { ObjectService } from './object-service.js';
 import { addressedToPersonSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
@@ -296,18 +297,7 @@ export class PushDeliveryLoop {
     // Candidate messages expire after an hour. A terminal claim outside that
     // window cannot suppress a future push, except an explicit release catchup.
     // Retain mobile claims for read-clear for at most a week.
-    await this.database.query(`DELETE FROM push_delivery_claims claim
-      WHERE (claim.message_id,claim.device_token) IN (
-        SELECT old.message_id,old.device_token FROM push_delivery_claims old
-        WHERE old.status IN ('delivered','suppressed','failed')
-          AND old.completed_at<now()-interval '1 hour'
-          AND NOT (old.status='delivered' AND old.read_cleared_at IS NULL
-            AND old.completed_at>=now()-interval '7 days'
-            AND EXISTS (SELECT 1 FROM push_devices device
-              WHERE device.token=old.device_token AND device.platform IN ('ios','android')))
-          AND NOT EXISTS (SELECT 1 FROM push_release_catchups catchup
-            WHERE catchup.message_id=old.message_id AND catchup.device_token=old.device_token)
-        ORDER BY old.completed_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
+    await this.database.query(TERMINAL_PUSH_CLAIMS_SQL, [1000]);
     await retireTerminalReleaseCatchups(this.database);
     const candidates = await this.database.query<{
       message_id: string;

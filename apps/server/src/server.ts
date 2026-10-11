@@ -326,9 +326,6 @@ function clientKey(request: IncomingMessage): string {
   const first = value?.split(',')[0]?.trim();
   return first || request.socket.remoteAddress || 'unknown';
 }
-export function requestLogPath(path: string): string {
-  return path;
-}
 function signatureMatches(secret: string, payload: Buffer, header: string | undefined) {
   if (!header?.startsWith('sha256=')) return false;
   const expected = `sha256=${createHmac('sha256', secret).update(payload).digest('hex')}`;
@@ -358,22 +355,19 @@ export function createBeelineServer(options: ServerOptions): Server {
     ReturnType<PhoneService['liveWorkspaceChange']>>();
   const personChangeReads = new WeakMap<LiveEvent,
     ReturnType<PhoneService['livePersonChange']>>();
-  const readWorkspaceChange = (event: LiveEvent, workspaceId: string) => {
-    let read = workspaceChangeReads.get(event);
+  const readChange = <T>(cache: WeakMap<LiveEvent, Promise<T>>, event: LiveEvent,
+    load: () => Promise<T>): Promise<T> => {
+    let read = cache.get(event);
     if (!read) {
-      read = withLiveDbTask(() => options.phone.liveWorkspaceChange(workspaceId));
-      workspaceChangeReads.set(event, read);
+      read = withLiveDbTask(load);
+      cache.set(event, read);
     }
     return read;
   };
-  const readPersonChange = (event: LiveEvent, personId: string) => {
-    let read = personChangeReads.get(event);
-    if (!read) {
-      read = withLiveDbTask(() => options.phone.livePersonChange(personId));
-      personChangeReads.set(event, read);
-    }
-    return read;
-  };
+  const readWorkspaceChange = (event: LiveEvent, id: string) =>
+    readChange(workspaceChangeReads, event, () => options.phone.liveWorkspaceChange(id));
+  const readPersonChange = (event: LiveEvent, id: string) =>
+    readChange(personChangeReads, event, () => options.phone.livePersonChange(id));
   const cornerStatusReads = new WeakMap<LiveEvent, Map<string,
     ReturnType<PhoneService['liveChatCornerStatus']>>>();
   const readCornerStatusForViewer = (event: LiveEvent, roomId: string, viewerId: string) => {
@@ -581,7 +575,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         ).catch(() => undefined);
       });
     }
-    console.log('[req]', method, requestLogPath(url.pathname));
+    console.log('[req]', method, url.pathname);
     const minimum = helperVersionGate.minimum;
     const reportedVersion = request.headers['x-beeline-helper-version'];
     if (
@@ -649,7 +643,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       console.error(
         '[req-error]',
         method,
-        requestLogPath(url.pathname),
+        url.pathname,
         `status=${status}`,
         error instanceof Error ? error.stack || error.message : String(error),
       );

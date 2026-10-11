@@ -11,7 +11,6 @@ import {
   READ_CLEAR_MAX_MESSAGE_IDS,
   runMaintenance,
   type LeaderConnection,
-  type ReadClearCursor,
 } from './background.js';
 import { migrate } from './database.js';
 import { DaemonService } from './daemon-service.js';
@@ -28,7 +27,7 @@ import { PhoneService } from './phone-service.js';
 import { APNS_MAX_PAYLOAD_BYTES, ApnsPushError, apnsReadClearRequest } from './apns-push.js';
 import { ensureSystemDirectMessageRoom, ensureSystemIdentity } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { cornerTitle } from '@beeline/api-contract/phone';
+import { cornerTitle, type ReadClear as ReadClearCursor } from '@beeline/api-contract/phone';
 
 describe('background advisory-lock ownership', () => {
   it('records a failed job and still runs the next independent job', async () => {

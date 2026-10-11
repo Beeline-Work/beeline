@@ -11,6 +11,10 @@ import {
 } from './corner-row-projection.js';
 
 export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
+const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
+  'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_app_bindings',
+]);
+const PARENT_ONLY_SQL = [...PARENT_ONLY_TABLES].map((table) => `'${table}'`).join(',');
 
 /** Agent-directed Connect / pending_ops wake. Never a catalog or availability. */
 export async function notifyConnectorAssignment(
@@ -239,11 +243,8 @@ BEGIN
         'cornerParentId', CASE WHEN ${rowChangedSql(CORNER_ROW_FACT_COLUMNS)}
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
       );
-    WHEN 'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_app_bindings' THEN
-      -- Only the parent's corner list reads these rows. One owed refresh
-      -- deletes and reinserts many rows; a fixed operation and a per-
-      -- transaction trace make every row's payload equal, so PostgreSQL
-      -- delivers one notification per corner and transaction.
+    WHEN ${PARENT_ONLY_SQL} THEN
+      -- Equal payloads collapse an owed refresh into one transaction notification.
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', 'UPDATE',
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
@@ -303,8 +304,7 @@ BEGIN
   END CASE;
   -- A section clear can touch hundreds of marks in one transaction. Equal
   -- room/reader payloads let PostgreSQL collapse them into one notification.
-  IF TG_TABLE_NAME IN ('needs_you_marks', 'corner_owed', 'corner_follows',
-      'corner_brief_revisions', 'corner_app_bindings') THEN
+  IF TG_TABLE_NAME IN ('needs_you_marks', ${PARENT_ONLY_SQL}) THEN
     payload = payload || jsonb_build_object(
       'traceId', md5(txid_current()::text || payload::text),
       'databaseAt', floor(extract(epoch FROM transaction_timestamp()) * 1000)::bigint
@@ -339,7 +339,7 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
-    'corner_facts', 'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_app_bindings',
+    'corner_facts', ${PARENT_ONLY_SQL},
     'permission_authority', 'room_read_marks', 'message_bookmarks',
     'needs_you_marks',
     'agent_grants', 'agent_schedules', 'agent_commands',
@@ -364,11 +364,6 @@ BEGIN
 END;
 $$;
 `;
-
-/** Tables only a parent's corner list reads; their rows publish nothing else. */
-const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
-  'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_app_bindings',
-]);
 
 interface PgNotification {
   channel: string;

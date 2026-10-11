@@ -17,6 +17,7 @@ import {
   resetRoomCornerStore,
   roomCornerListView,
   roomOpenCornerRows,
+  subscribeRoomCornerFacts,
 } from './room-corner-store';
 
 const ROOM = 'room-a';
@@ -61,6 +62,20 @@ const ids = () => roomOpenCornerRows(getRoomCorners(ROOM)).map((item) => item.co
 beforeEach(() => resetRoomCornerStore());
 
 describe('room corner store', () => {
+  it('does not report the first rows as a workflow change', () => {
+    let changes = 0;
+    const stop = subscribeRoomCornerFacts(ROOM, () => { changes += 1; });
+    applyCornerListRead(ROOM, view([row('a')]), cornerReadMark(ROOM));
+    expect(changes).toBe(0);
+    acceptCornerStatusFrame(frame(1, [row('a', 'review')]));
+    expect(changes).toBe(1);
+    noteRoomCornersChanged(ROOM);
+    expect(changes).toBe(2);
+    resetRoomCornerStore();
+    expect(changes).toBe(2);
+    stop();
+  });
+
   it('keeps frame rows current only while the lane holds them', () => {
     noteCornerLaneSubscribed(ROOM, false);
     expect(acceptCornerStatusFrame(frame(1, [row('a')]))).toBe(true);
@@ -249,33 +264,22 @@ describe('room corner store', () => {
     expect(getRoomCorners(ROOM).rows?.map((item) => item.state)).toEqual(['idle']);
   });
 
-  it('PC1: a partial read patches the summary corners it names by id', () => {
+  it('keeps the server summary when a partial page has no summary', () => {
     applyChatListCorners([{ room: { id: ROOM } as never, cornerCount: 3, openCorners: [
       { id: 'corner-1', name: 'corner-1', state: 'waiting', mine: true, waitingSince: 50, attention: true },
       { id: 'corner-2', name: 'corner-2', state: 'working' },
       { id: 'corner-3', name: 'corner-3', state: 'working' },
     ] }], cornerReadMark(ROOM).clock);
-    // A first page with no summary (an older server, or a child Room) patches.
+    const summary = getRoomCornerSummary(ROOM);
+    // A partial page has rows but no authority to recompute the summary.
     applyCornerListRead(ROOM, view([mineRow('corner-1', 'idle')]), cornerReadMark(ROOM));
-    expect(getRoomCornerSummary(ROOM)).toEqual({ cornerCount: 3, openCorners: [
-      { id: 'corner-1', name: 'corner-1', state: 'idle', mine: true },
-      { id: 'corner-2', name: 'corner-2', state: 'working' },
-      { id: 'corner-3', name: 'corner-3', state: 'working' },
-    ] });
-    // A later open page patches the corners it names and leaves the rest.
+    expect(getRoomCornerSummary(ROOM)).toBe(summary);
     const page = { ...mineRow('corner-3', 'waiting'),
       latestMessage: { id: 'm', text: 'done', createdAt: 70, author: { pubkey: 'agent' } } } as CornerListItem;
     applyOpenCornerPage(ROOM, [page, row('corner-9', 'idle')], undefined, cornerReadMark(ROOM));
-    expect(getRoomCornerSummary(ROOM)?.openCorners).toEqual([
-      { id: 'corner-1', name: 'corner-1', state: 'idle', mine: true },
-      { id: 'corner-2', name: 'corner-2', state: 'working' },
-      { id: 'corner-3', name: 'corner-3', state: 'waiting', mine: true, waitingSince: 70 },
-    ]);
-    // A partial read started before the held summary's source patches nothing.
-    const stale = cornerReadMark(ROOM);
-    acceptCornerStatusFrame(frame(1, [row('corner-2', 'review')]));
-    applyOpenCornerPage(ROOM, [row('corner-2', 'idle')], undefined, stale);
-    expect(getRoomCornerSummary(ROOM)?.openCorners[0]?.state).toBe('review');
+    expect(getRoomCornerSummary(ROOM)).toBe(summary);
+    expect(roomOpenCornerRows(getRoomCorners(ROOM)).find((item) => item.corner.id === 'corner-3')?.state)
+      .toBe('waiting');
   });
 
   it('fills an empty summary from a saved copy, and skips a row without corner facts', () => {

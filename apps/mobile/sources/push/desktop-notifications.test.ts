@@ -9,6 +9,7 @@ const fixture = vi.hoisted(() => ({
   workspacesCalls: 0,
   acquired: [] as string[],
   roomName: 'Test room',
+  cornerId: 'corner-1',
   forced: 0,
   released: 0,
 }));
@@ -56,7 +57,7 @@ vi.mock('@/sync/transport', () => ({
       return Promise.resolve({ workspaces: [{ id: 'workspace-1' }] });
     }
     corners() {
-      return Promise.resolve({ corners: [{ corner: { id: 'corner-1', name: 'Test corner' } }] });
+      return Promise.resolve({ corners: [{ corner: { id: fixture.cornerId, name: 'Test corner' } }] });
     }
   },
 }));
@@ -99,14 +100,17 @@ vi.mock('@tauri-apps/plugin-notification', () => ({
 }));
 
 import { startDesktopNotifications } from './desktop-notifications';
+import { acceptCornerStatusFrame, resetRoomCornerStore } from '@/buzz/room-corner-store';
 
 afterEach(() => {
+  resetRoomCornerStore();
   fixture.roomListener = null;
   fixture.connectedListener = null;
   fixture.send.mockClear();
   fixture.workspacesCalls = 0;
   fixture.acquired = [];
   fixture.roomName = 'Test room';
+  fixture.cornerId = 'corner-1';
   fixture.forced = 0;
   fixture.released = 0;
   vi.unstubAllGlobals();
@@ -198,6 +202,33 @@ describe('signed-in desktop native notification delivery', () => {
         body: 'Test sender: Review this',
       }),
     );
+    stop();
+  });
+
+  it('follows a new corner from the shared Room record', async () => {
+    vi.stubGlobal('document', { hasFocus: () => false });
+    const stop = startDesktopNotifications();
+    await vi.waitFor(() => expect(fixture.roomListener).toBeTypeOf('function'));
+    fixture.cornerId = 'corner-2';
+    acceptCornerStatusFrame({
+      roomId: 'room-1', cornerCount: 1,
+      openCorners: [{ id: 'corner-2', name: 'Test corner', state: 'working' }],
+      corners: [{ corner: { id: 'corner-2', name: 'Test corner' }, state: 'working' } as never],
+    });
+    await vi.waitFor(() => expect(fixture.roomListener).toBeTypeOf('function'));
+    fixture.roomListener?.({
+      monolithLive: {
+        type: 'message-delta', roomId: 'corner-2',
+        message: {
+          id: 'new-corner-message', text: 'Review this', createdAt: Date.now() / 1000,
+          author: { pubkey: 'other', name: 'Test sender' }, presentation: 'message',
+          mentionPubkeys: ['test-viewer'],
+        },
+      },
+    });
+    await vi.waitFor(() => expect(fixture.send).toHaveBeenCalledWith({
+      title: '#Test room/Test corner', body: 'Test sender: Review this',
+    }));
     stop();
   });
 

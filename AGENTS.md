@@ -110,7 +110,7 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 ## Daemon self-update and CLI bundle
 
 - **`<prefix>/lib/beeline` is the active bundle anchor**, a symlink into `lib/beeline-releases/<id>` swung by rename(2) (`self-update.ts`). A stale pending journal rolls back (`BEELINE_UPDATE_DISABLE=1` opts out). Never suggest `npx beeline` (an unrelated package); recovery is `npx usebeeline update`.
-- **Routine update drains work first.** `release-notify.ts` pushes the release; `ManagedUpdateHandoff` activates only at idle; `update-functional-probe.ts` proves a real ACP turn. A server-enforced minimum (426 / `force-update`) cancels turns, installs, and replays `update-interrupted` receipts so the same commands requeue (`managed-update.ts`).
+- **Routine updates keep intake open until a quiet gap.** `release-notify.ts` pushes the release; `ManagedUpdateDrain` and `quiesceHostedAgents` (`machine-helper.ts`) wait for all turns to finish while serving new commands, then restart immediately; `machine-helper.test.ts` proves mid-wait and successor intake over HTTP/WebSocket; `ManagedUpdateHandoff` activates only at idle; `update-functional-probe.ts` proves a real ACP turn. A server-enforced minimum (426 / `force-update`) cancels turns, installs, and replays `update-interrupted` receipts so the same commands requeue (`managed-update.ts`).
 - `.github/actions/daemon-leg/` builds linux-x64 and darwin bundles; `launchd.ts` supervises macOS (no bwrap). `https://usebeeline.app/dl/manifest.json` stays pinned; runbook `docs/cli-bundle-channel.md`.
 
 ## Release

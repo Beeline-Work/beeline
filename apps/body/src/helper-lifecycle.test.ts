@@ -155,7 +155,6 @@ describe('HelperLifecycle', () => {
         return helper.quiesce('update');
       },
       activeTurnCount: () => core.activeTurnCount(),
-      interrupt: () => undefined,
       restart: async () => {
         throw new Error('staged release lost activation race');
       },

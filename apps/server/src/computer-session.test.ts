@@ -13,8 +13,8 @@ import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import {
-  computerViewToken, createComputerSession, endComputerSession, getComputerSession, serveComputerSession, serveComputerStatus,
-  upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter,
+  computerViewToken, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, serveComputerSession,
+  serveComputerStatus, startComputerExpirySweep, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter,
 } from './computer-session.js';
 
 const HUMAN = 'a'.repeat(64);
@@ -291,6 +291,60 @@ describe('computer session handoff', () => {
       await until(async () => (await getComputerSession(database, share.id))?.status === 'ended' ? true : undefined);
       expect((await fetch(`${origin}/s/${share.id}?access=${access}`)).status).toBe(410);
       expect((await fetch(`${origin}/s/${share.id}/last.jpg`)).status).toBe(404);
+    } finally {
+      for (const client of upstreamSockets.clients) client.close();
+      await new Promise<void>((resolve) => upstreamSockets.close(() => resolve()));
+      await new Promise<void>((resolve) => squire.close(() => resolve()));
+    }
+  }, 60_000);
+
+  it('ends a Squire card at its stored expiry, closes viewers and refuses new ones', async () => {
+    const token = 'e'.repeat(43);
+    const squire = createServer((_request, response) => { response.writeHead(200).end('<!doctype html>'); });
+    const upstreamSockets = new WebSocketServer({ noServer: true });
+    squire.on('upgrade', (request, socket, head) =>
+      upstreamSockets.handleUpgrade(request, socket, head, (client) => upstreamSockets.emit('connection', client, request)));
+    await new Promise<void>((resolve) => squire.listen(0, '127.0.0.1', resolve));
+    const upstreamUrl = `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/${token}/`;
+    try {
+      const share = await createComputerSession(database, live, {
+        roomId: ROOM, agentId: AGENT, sessionId: 'squire-expires', upstreamUrl, expiresAt: Date.now() + 1_500,
+      });
+      const lasting = await createComputerSession(database, live, {
+        roomId: ROOM, agentId: AGENT, sessionId: 'squire-no-expiry', upstreamUrl,
+      });
+      const access = await computerViewToken(database, share.id, HUMAN);
+      const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
+      await opened(viewer);
+      const viewerClosed = new Promise<void>((resolve) => viewer.once('close', () => resolve()));
+      await new Promise((resolve) => setTimeout(resolve, 1_600));
+
+      // Before any sweep, the expired link already refuses new connections.
+      expect((await fetch(`${origin}/s/${share.id}/?access=${access}`)).status).toBe(410);
+      const refused = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
+      await expect(opened(refused)).rejects.toThrow();
+
+      // A restarted server keeps no timers; its first sweep reads the stored expiry.
+      await migrate(database);
+      const stop = startComputerExpirySweep(database, live, 60_000);
+      try {
+        await until(async () => (await database.query<{ status: string }>(
+          'SELECT status FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.status === 'ended' ? true : undefined);
+      } finally { stop(); }
+      await viewerClosed;
+      const card = (await database.query<{ card: { status: string } }>(
+        `SELECT m.card FROM messages m JOIN computer_sessions c ON c.message_id=m.id WHERE c.id=$1`, [share.id])).rows[0];
+      expect(card?.card.status).toBe('ended');
+      const endedAt = (await database.query<{ ended_at: Date }>(
+        'SELECT ended_at FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.ended_at;
+
+      // Repeated processing changes nothing.
+      expect(await expireComputerSessions(database, live)).toBe(0);
+      await endComputerSession(database, live, { ...(await getComputerSession(database, share.id))!, status: 'live' });
+      expect((await database.query<{ ended_at: Date }>(
+        'SELECT ended_at FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.ended_at).toEqual(endedAt);
+      expect((await getComputerSession(database, lasting.id))?.status).toBe('live');
+      await endComputerSession(database, live, (await getComputerSession(database, lasting.id))!);
     } finally {
       for (const client of upstreamSockets.clients) client.close();
       await new Promise<void>((resolve) => upstreamSockets.close(() => resolve()));

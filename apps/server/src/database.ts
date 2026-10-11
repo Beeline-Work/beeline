@@ -916,6 +916,10 @@ CREATE INDEX IF NOT EXISTS computer_sessions_room_idx ON computer_sessions(room_
 CREATE INDEX IF NOT EXISTS computer_sessions_agent_idx ON computer_sessions(agent_id);
 ALTER TABLE computer_sessions ADD COLUMN IF NOT EXISTS view_secret bytea;
 ALTER TABLE computer_sessions DROP COLUMN IF EXISTS last_frame;
+-- A Squire share link has an absolute expiry. Rows without one never expire.
+ALTER TABLE computer_sessions ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+CREATE INDEX IF NOT EXISTS computer_sessions_live_expiry_idx ON computer_sessions(expires_at)
+  WHERE status='live' AND expires_at IS NOT NULL;
 -- A bounded, metadata-only activity trail lets a waiting agent receive live
 -- control updates and replay events after its WebSocket reconnects.
 CREATE TABLE IF NOT EXISTS computer_session_events (

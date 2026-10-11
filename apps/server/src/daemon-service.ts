@@ -1348,6 +1348,7 @@ export class DaemonService {
           sessionId: share.sessionId,
           upstreamUrl: share.upstreamUrl,
           title: share.title,
+          expiresAt: share.expiresAt,
         })) as Output<Name>;
       }
       case 'endComputerSession': {

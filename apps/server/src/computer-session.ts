@@ -146,7 +146,7 @@ export function computerSessionUrl(id: string): string {
 export async function createComputerSession(
   database: SqlDatabase,
   live: LiveHub,
-  input: { roomId: string; agentId: string; sessionId: string; upstreamUrl: string; title?: string },
+  input: { roomId: string; agentId: string; sessionId: string; upstreamUrl: string; title?: string; expiresAt?: number },
 ): Promise<{ id: string; url: string }> {
   const bodySource = input.upstreamUrl === 'body:';
   const upstream = bodySource ? undefined : new URL(input.upstreamUrl);
@@ -154,6 +154,8 @@ export async function createComputerSession(
     throw new Error('computer share URL is invalid');
   if (!input.sessionId.trim() || input.sessionId.length > 240)
     throw new Error('computer session id is invalid');
+  if (input.expiresAt !== undefined && !Number.isFinite(input.expiresAt))
+    throw new Error('computer share expiry is invalid');
   const title = input.title?.trim().slice(0, 120) || 'Browser';
   const id = randomBytes(32).toString('base64url');
   const messageId = randomBytes(32).toString('hex');
@@ -175,9 +177,9 @@ export async function createComputerSession(
       card: { id, url, title, status: 'live' },
     });
     await db.query(
-      `INSERT INTO computer_sessions(id,room_id,message_id,agent_id,source_session_id,upstream_url,relay_instance_id,view_secret)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [id, input.roomId, messageId, input.agentId, input.sessionId, upstream?.toString() ?? 'body:', process.env.FLY_MACHINE_ID ?? null, randomBytes(32)],
+      `INSERT INTO computer_sessions(id,room_id,message_id,agent_id,source_session_id,upstream_url,relay_instance_id,view_secret,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,to_timestamp($9::double precision/1000))`,
+      [id, input.roomId, messageId, input.agentId, input.sessionId, upstream?.toString() ?? 'body:', process.env.FLY_MACHINE_ID ?? null, randomBytes(32), input.expiresAt ?? null],
     );
   });
   live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId: input.agentId });
@@ -187,7 +189,10 @@ export async function createComputerSession(
 export async function getComputerSession(database: SqlDatabase, id: string): Promise<ComputerSessionRow | undefined> {
   if (!/^[A-Za-z0-9_-]{43}$/.test(id)) return undefined;
   return (await database.query<ComputerSessionRow>(
-    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,status,relay_instance_id,handoff_count,view_secret
+    // An expired link reads as ended at once, before the sweep updates the card.
+    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,
+       CASE WHEN expires_at<=now() THEN 'ended' ELSE status END AS status,
+       relay_instance_id,handoff_count,view_secret
      FROM computer_sessions WHERE id=$1`, [id],
   )).rows[0];
 }
@@ -211,17 +216,55 @@ export async function endComputerSession(
     return true;
   });
   if (changed) live?.publish({ type: 'invalidate', roomId: row.room_id, reason: 'message', agentId: row.agent_id });
-  if (changed) {
-    notifyWaiters(row.id, { type: 'ended' });
-    const body = bodyChannels.get(row.id);
-    body?.source?.close();
-    for (const viewer of body?.viewers ?? []) viewer.close();
-    const squire = squireChannels.get(row.id);
-    for (const upstream of squire?.upstreams ?? []) upstream.close();
-    for (const viewer of squire?.viewers ?? []) viewer.close();
-    bodyChannels.delete(row.id);
-    squireChannels.delete(row.id);
+  if (changed) closeComputerChannels(row.id);
+}
+
+function closeComputerChannels(id: string): void {
+  notifyWaiters(id, { type: 'ended' });
+  const body = bodyChannels.get(id);
+  body?.source?.close();
+  for (const viewer of body?.viewers ?? []) viewer.close();
+  const squire = squireChannels.get(id);
+  for (const upstream of squire?.upstreams ?? []) upstream.close();
+  for (const viewer of squire?.viewers ?? []) viewer.close();
+  bodyChannels.delete(id);
+  squireChannels.delete(id);
+}
+
+/**
+ * Ends every live card whose Squire link has expired. The expiry is stored,
+ * so a restarted server ends cards that expired while it was down. Another
+ * instance may end the row first; this instance still closes its own sockets.
+ */
+export async function expireComputerSessions(database: SqlDatabase, live: LiveHub | undefined): Promise<number> {
+  const local = [...new Set([...bodyChannels.keys(), ...squireChannels.keys(), ...handbackWaiters.keys()])];
+  const rows = (await database.query<ComputerSessionRow>(
+    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,status,relay_instance_id,handoff_count,view_secret
+     FROM computer_sessions WHERE expires_at<=now() AND (status='live' OR id=ANY($1::text[]))`, [local],
+  )).rows;
+  for (const row of rows) {
+    await endComputerSession(database, live, row);
+    if (row.status === 'ended') closeComputerChannels(row.id);
   }
+  return rows.length;
+}
+
+const COMPUTER_EXPIRY_SWEEP_MS = 15_000;
+
+/** Sweeps once now, then on an interval. The returned function stops it. */
+export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, intervalMs = COMPUTER_EXPIRY_SWEEP_MS): () => void {
+  let running = false;
+  const sweep = () => {
+    if (running) return;
+    running = true;
+    void expireComputerSessions(database, live)
+      .catch((error: unknown) => console.warn('[computer-share] expiry sweep failed', error instanceof Error ? error.message : error))
+      .finally(() => { running = false; });
+  };
+  sweep();
+  const timer = setInterval(sweep, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 /** One authoritative read when a live viewer's socket reconnects. */

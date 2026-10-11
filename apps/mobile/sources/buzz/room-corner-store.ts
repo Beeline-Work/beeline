@@ -112,7 +112,6 @@ const EMPTY: Entry = {
 };
 
 const records = new OrderedRecordStore<Entry>();
-const factListeners = new Map<string, Set<() => void>>();
 const summaryListeners = new Set<() => void>();
 let summaries: ReadonlyMap<string, RoomCornerSummary> = new Map();
 function entry(roomId: string): Entry {
@@ -142,10 +141,6 @@ function withSummary(
 ): Entry {
   if (current.summaryAt !== undefined && startedAt <= current.summaryAt) return current;
   return { ...current, summary, summaryAt: startedAt };
-}
-
-function emitFacts(roomId: string): void {
-  for (const listener of [...(factListeners.get(roomId) ?? [])]) listener();
 }
 
 function rowsFacts(rows: readonly CornerListItem[] | undefined): string {
@@ -215,16 +210,18 @@ function subscribeRoomCorners(roomId: string, listener: () => void): () => void 
   return records.subscribe(roomId, listener);
 }
 
-/** Fires when a held corner's state, reason or lifecycle changed, or a frame
- *  named a change without its rows. Workflow cells re-read on it. */
+/** Workflow cells observe the same corner record as every other reader. */
 export function subscribeRoomCornerFacts(roomId: string, listener: () => void): () => void {
-  const set = factListeners.get(roomId) ?? new Set();
-  set.add(listener);
-  factListeners.set(roomId, set);
-  return () => {
-    set.delete(listener);
-    if (set.size === 0) factListeners.delete(roomId);
-  };
+  let facts = rowsFacts(entry(roomId).rows);
+  let wantsRead = entry(roomId).wantsRead;
+  return records.subscribe(roomId, () => {
+    const current = entry(roomId);
+    const next = rowsFacts(current.rows);
+    const changed = next !== facts || (current.wantsRead && !wantsRead);
+    facts = next;
+    wantsRead = current.wantsRead;
+    if (changed) listener();
+  });
 }
 
 /** Taken when a read starts: its own clock tick, never shared with another read. */
@@ -263,7 +260,6 @@ export function acceptCornerStatusFrame(frame: CornerStatusFrame): boolean {
       ...framed, current: false, wantsRead: true, archivedChangedAt: clock,
       archivedStale: current.archived !== undefined,
     });
-    emitFacts(frame.roomId);
     return true;
   }
   const next = withRows(framed, frame.corners, frame.nextOpen);
@@ -279,7 +275,6 @@ export function acceptCornerStatusFrame(frame: CornerStatusFrame): boolean {
     archivedStale: current.archivedStale || (closed && current.archived !== undefined),
     ...(closed ? { archivedChangedAt: clock } : {}),
   });
-  if (current.rows && rowsFacts(current.rows) !== rowsFacts(frame.corners)) emitFacts(frame.roomId);
   return true;
 }
 
@@ -380,7 +375,6 @@ export function applyCornerListRead(
     current: current.laneHeld && mark.laneHeld && current.laneEpoch === mark.laneEpoch,
     openMoreStale: current.openMoreStale || (next.openMore.length > 0 && changed),
   });
-  if (changed) emitFacts(roomId);
 }
 
 /** A saved copy paints before the first read; it is never current. */

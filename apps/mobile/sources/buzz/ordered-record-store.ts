@@ -49,7 +49,8 @@ export class OrderedRecordStore<T> {
         let repeat: boolean;
         do {
           flight.again = false;
-          repeat = await read();
+          // Start after the flight is registered, including when read throws synchronously.
+          repeat = await Promise.resolve().then(read);
         } while (this.epoch === generation && (flight.again || repeat));
       } finally {
         if (this.reads.get(key) === flight) this.reads.delete(key);

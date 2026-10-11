@@ -36,3 +36,11 @@ it('shares a GET only within its account and retries a requested refresh once', 
   await records.coalesceRead('viewer-a/room', false, async () => { reads += 1; return false; });
   expect(reads).toBe(4);
 });
+
+it('releases a shared GET after a synchronous request failure', async () => {
+  const records = new OrderedRecordStore<string>();
+  await expect(records.coalesceRead('viewer/room', false, () => {
+    throw new Error('offline');
+  })).rejects.toThrow('offline');
+  await expect(records.coalesceRead('viewer/room', false, async () => false)).resolves.toBeUndefined();
+});

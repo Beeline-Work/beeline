@@ -931,7 +931,6 @@ export function BuzzChatSurface({
   }, [attachmentUploader, pendingAttachments, transport]);
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
-  const [optimisticBookmarks, setOptimisticBookmarks] = useState<Record<string, boolean>>({});
   const [optimisticReactions, setOptimisticReactions] = useState<Record<string, ChatDisplayMessage['reactions']>>({});
   const [optimisticDeletes, setOptimisticDeletes] = useState<Record<string, true>>({});
   const reactingRef = useRef(new Set<string>());
@@ -3753,9 +3752,10 @@ export function BuzzChatSurface({
   );
 
   const messageIsBookmarked = useCallback(
-    (message: ChatDisplayMessage) =>
-      optimisticBookmarks[message.relayId ?? message.id] ?? Boolean(message.bookmarked),
-    [optimisticBookmarks],
+    (message: ChatDisplayMessage) => Boolean(
+      roomMessageRecord(messageRecordScope, decodedId, message.relayId ?? message.id)?.bookmarked ?? message.bookmarked,
+    ),
+    [decodedId, messageRecordScope],
   );
 
   const handleBookmarkMessage = useCallback(
@@ -3764,18 +3764,10 @@ export function BuzzChatSurface({
       const messageId = message.relayId ?? message.id;
       const previous = messageIsBookmarked(message);
       const bookmarked = !previous;
-      setOptimisticBookmarks((current) => ({ ...current, [messageId]: bookmarked }));
+      writeRoomBookmark(messageRecordScope, decodedId, messageId, bookmarked);
       AccessibilityInfo.announceForAccessibility(
         bookmarked ? 'Message bookmarked' : 'Bookmark removed',
       );
-      // The overlay only bridges the wait. Once the call settles the row's
-      // own value shows, whichever way it went.
-      const settle = () =>
-        setOptimisticBookmarks((current) => {
-          const updated = { ...current };
-          delete updated[messageId];
-          return updated;
-        });
       try {
         const result = await monolithPhoneOperation('setMessageBookmark', {
           roomId: decodedId,
@@ -3785,9 +3777,8 @@ export function BuzzChatSurface({
         writeRoomBookmark(messageRecordScope, decodedId, messageId, result.bookmarked);
         const row = roomMessageRecord(messageRecordScope, decodedId, messageId);
         if (row) applyRoomMessageResult({ ...row, bookmarked: result.bookmarked });
-        settle();
       } catch (error) {
-        settle();
+        writeRoomBookmark(messageRecordScope, decodedId, messageId, previous);
         AccessibilityInfo.announceForAccessibility('Bookmark change failed');
         Modal.alert(
           bookmarked ? 'Could not bookmark message' : 'Could not remove bookmark',
@@ -5904,16 +5895,13 @@ export function BuzzChatSurface({
       }
 
       const knownAgent = item.pubkey ? agentByPubkey.get(item.pubkey) : undefined;
-      const renderedItem = messageIsBookmarked(item) === Boolean(item.bookmarked)
-        ? item
-        : { ...item, bookmarked: messageIsBookmarked(item) };
       const personName = item.pubkey ? personProfileByPubkey.get(item.pubkey)?.name : undefined;
       const referencedTarget = referencedMessage
         ? replyTargetForMessage(referencedMessage)
         : undefined;
       const ledgerMessage = (
         <OrdinaryLedgerMessage
-          message={renderedItem}
+          message={item}
           firstBylineOfDay={bylineOpeners.has(item.id)}
           // The byline shows the agent's model from its profile; an agent
           // with no profile model keeps the plain `AGENT` word.

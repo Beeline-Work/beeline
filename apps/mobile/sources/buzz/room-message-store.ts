@@ -56,6 +56,13 @@ export const JUMP_NEWER_ROWS = 20;
 
 const PAGE_SIZE = 30;
 
+function useCurrentState<T>(initial: T) {
+  const [value, setValue] = useState(initial);
+  const ref = useRef(initial);
+  const update = useCallback((next: T) => { ref.current = next; setValue(next); }, []);
+  return [value, ref, update] as const;
+}
+
 /** Where the list shows a Room's window, as the scrubber reads it. */
 export type RoomMessagePositions = TranscriptScrubberStore;
 
@@ -97,30 +104,25 @@ export function useRoomMessageStore({
 }) {
   const [olderPages, setOlderPages] = useState<readonly (readonly RoomViewMessage[])[]>([]);
   const olderPagesRef = useRef(olderPages);
-  const [detached, setDetachedState] = useState<DetachedWindow | null>(null);
-  const detachedRef = useRef<DetachedWindow | null>(null);
+  const [detached, detachedRef, setDetached] = useCurrentState<DetachedWindow | null>(null);
   // Advances when a jump or a return to the latest rows replaces the rows on
   // screen, rather than paging more rows onto them.
   const [windowId, setWindowId] = useState(0);
-  const [jump, setJumpState] = useState<RoomJump | null>(null);
-  const jumpRef = useRef<RoomJump | null>(null);
-  const [newerStatus, setNewerStatusState] = useState<TranscriptHistoryStatus>('idle');
-  const newerStatusRef = useRef<TranscriptHistoryStatus>('idle');
-  const [windowOlderStatus, setWindowOlderStatusState] = useState<TranscriptHistoryStatus>('idle');
-  const windowOlderStatusRef = useRef<TranscriptHistoryStatus>('idle');
+  const [jump, jumpRef, setJump] = useCurrentState<RoomJump | null>(null);
+  const [newerStatus, newerStatusRef, setNewerStatus] = useCurrentState<TranscriptHistoryStatus>('idle');
+  const [windowOlderStatus, windowOlderStatusRef, setWindowOlderStatus] = useCurrentState<TranscriptHistoryStatus>('idle');
   // One generation for every request that writes the window. A jump, a
   // return to the latest rows, a reset or a Room change advances it, so a
   // late response from the old window never lands in the new one.
   const windowRequestRef = useRef(0);
   const [visibleMessageCount, setVisibleMessageCount] = useState(initialVisibleCount);
-  const [status, setStatus] = useState<TranscriptHistoryStatus>('idle');
+  const [status, statusRef, updateStatus] = useCurrentState<TranscriptHistoryStatus>('idle');
   const cursorRef = useRef<RoomHistoryCursorState | null>(null);
   const loadingRef = useRef(false);
   // A screen-fill page added no rows. Fill stops until the window changes or
   // a page adds rows, so a short Room cannot loop on an empty page.
   const fillStalledRef = useRef(false);
   const visibleCountRef = useRef(initialVisibleCount);
-  const statusRef = useRef<TranscriptHistoryStatus>('idle');
   const requestVersionRef = useRef(0);
   const previousRoomIdRef = useRef(roomId);
   const completedTailIdRef = useRef<string | null>(null);
@@ -151,26 +153,6 @@ export function useRoomMessageStore({
     },
     [],
   );
-  const setDetached = useCallback((next: DetachedWindow | null) => {
-    detachedRef.current = next;
-    setDetachedState(next);
-  }, []);
-  const setJump = useCallback((next: RoomJump | null) => {
-    jumpRef.current = next;
-    setJumpState(next);
-  }, []);
-  const setNewerStatus = useCallback((next: TranscriptHistoryStatus) => {
-    newerStatusRef.current = next;
-    setNewerStatusState(next);
-  }, []);
-  const setWindowOlderStatus = useCallback((next: TranscriptHistoryStatus) => {
-    windowOlderStatusRef.current = next;
-    setWindowOlderStatusState(next);
-  }, []);
-  const updateStatus = useCallback((next: TranscriptHistoryStatus) => {
-    statusRef.current = next;
-    setStatus(next);
-  }, []);
   const reveal = useCallback((count: number) => {
     visibleCountRef.current = Math.max(visibleCountRef.current, count);
     setVisibleMessageCount(visibleCountRef.current);
@@ -205,8 +187,8 @@ export function useRoomMessageStore({
     statusRef.current = 'idle';
   }
   useEffect(() => {
-    if (status === 'complete' && statusRef.current === 'idle') setStatus('idle');
-  }, [status, tailMessages]);
+    if (status === 'complete' && statusRef.current === 'idle') updateStatus('idle');
+  }, [status, tailMessages, updateStatus]);
 
   /** Drop the detached window and page older history from the attached rows. */
   const attachToTail = useCallback(

@@ -851,7 +851,6 @@ describe('Members workspace management', () => {
     await act(async () => {
       identities.recordPerson(identities.identityScope('https://relay.test', VIEWER),
         {...state.workspace.members.find((row: any) => row.identity.pubkey === MEMBER).identity, name: 'Builder Renamed'}, nextSurfaceStamp());
-      records.notifyWorkspaceIdentity('https://relay.test', VIEWER);
     });
     expect(renderer.root.findByType(ProfileIdentity).props.identity.name).toBe('Builder Renamed');
     await press(renderer, 'edit-person-role');
@@ -965,7 +964,7 @@ describe('Members workspace management', () => {
     const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
     expect(subscribes.at(-1)![0]).toEqual([{ kinds: [0, 9, 9000, 9001],
       '#h': ['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'] }]);
-    expect(subscribes).toHaveLength(2);
+    expect(subscribes).toHaveLength(3);
     expect(roomView.workspaceMembers).toHaveBeenCalledTimes(1);
     expect(roomView.workspaceMembers).toHaveBeenCalledWith(WORKSPACE, { memberId: MEMBER });
     const ownedAgent = state.workspace.agents[0];
@@ -1052,7 +1051,6 @@ describe('Members workspace management', () => {
         { ...owned.identity, name: 'Clara Renamed', handle: 'renamedagent' },
         nextSurfaceStamp(),
       );
-      records.notifyWorkspaceIdentity('https://relay.test', VIEWER);
     });
     const shown = () => list.root.findAll((node: any) => node.props.name === 'Clara Renamed').length;
     expect(shown()).toBeGreaterThan(0);
@@ -1962,7 +1960,7 @@ describe('Members workspace management', () => {
     expect(roomView.workspace.mock.calls.length).toBe(workspaceReads);
   });
 
-  it('drops an agent another session removed from a searched roster on the next Workspace refresh (G7-R2)', async () => {
+  it('drops an agent another session removed from a searched roster on a global membership signal (P1, G7-R2)', async () => {
     const renderer = await render();
     await act(async () => {
       renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('Clara');
@@ -1976,7 +1974,13 @@ describe('Members workspace management', () => {
     const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
       [unknown, () => void]
     >;
-    await act(async () => subscriptions.at(-1)![1]());
+    const global = subscriptions.find(([filters]) => Array.isArray(filters) && filters.length === 0);
+    expect(global).toBeDefined();
+    const reads = roomView.workspace.mock.calls.length;
+    await act(async () => (global![1] as (event: unknown) => void)({
+      monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' },
+    }));
+    expect(roomView.workspace.mock.calls.length).toBeGreaterThan(reads);
 
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
   });

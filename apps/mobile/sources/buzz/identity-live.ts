@@ -7,7 +7,6 @@ import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { identityScope, recordPerson, recordWorkspaceHeader, type WorkspaceHeaderChange } from './identity-records';
 import { savePreferredPersonName } from './person-name';
 import { mobileSurfaceCache } from './surface-storage';
-import { notifyWorkspaceIdentity } from './workspace-records';
 
 const ownIdentityListeners = new Set<(person: RoomViewIdentity) => void>();
 
@@ -44,7 +43,6 @@ export async function applyPersonChanged(
   const scope = identityScope(relayUrl, identity.publicKey);
   mobileSurfaceCache.fenceViewer(relayUrl, identity.publicKey,
     (stamp) => recordPerson(scope, person, stamp));
-  notifyWorkspaceIdentity(relayUrl, identity.publicKey);
   if (person.pubkey !== identity.publicKey) return;
   await savePreferredPersonName(identity.publicKey, person.name).catch(() => undefined);
   if (pushLevel) await saveStoredPushLevel(identity.publicKey, pushLevel);

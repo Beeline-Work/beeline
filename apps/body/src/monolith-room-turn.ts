@@ -8,7 +8,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { machineHost } from './machine-host.js';
-import { markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
+import { isolatedSharedAssetCategories, markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAdapter, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
+import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
 import { admitSharedAssets } from './shared-asset-capacity.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
@@ -292,11 +293,11 @@ export function inboxItemPromptBody(item: {
  */
 type PendingCardKind = 'grant' | 'connector';
 function pendingCardKind(call: { title?: string; content?: unknown }): PendingCardKind | undefined {
-  const kind = /(?:^|[._:/-])(request_grant|offer_connector)$/i.exec(call.title ?? '')?.[1];
+  const kind = /(?:^|[._:/-])(request_grant|request_shared_asset_isolation|offer_connector)$/i.exec(call.title ?? '')?.[1];
   if (!kind || !/(?:pending|already offered), card (?:posted|still open)/i.test(
     typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? ''),
   )) return undefined;
-  return kind.toLowerCase() === 'request_grant' ? 'grant' : 'connector';
+  return kind.toLowerCase() === 'offer_connector' ? 'connector' : 'grant';
 }
 
 export function pendingGrantToolCall(call: { title?: string; content?: unknown }): boolean {
@@ -464,6 +465,7 @@ export class MonolithRoomTurnLoop {
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
   private sharedAssetsActive = false;
+  private isolatedCategories: SharedAssetCategory[] = [];
   /**
    * The real size of the last settled prompt, captured while the session that
    * sent it is still alive — `discardSession` clears both the client and the id,
@@ -570,6 +572,7 @@ export class MonolithRoomTurnLoop {
   private grantWritePolicy(): GrantWritePolicy {
     const assetRoot = this.sharedAssetsActive ? this.options.config.agentSharedAssetRoot : undefined;
     const runtimeDir = runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey);
+    const privateAssetRoot = join(runtimeDir, 'private-assets');
     return {
       surface: 'room',
       ...(this.options.config.bwrapPath ? { bwrapPath: this.options.config.bwrapPath } : {}),
@@ -590,15 +593,18 @@ export class MonolithRoomTurnLoop {
             ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
             ...(this.options.config.agentKind === 'codex' && this.agentEnv.CODEX_HOME ? { codexHome: this.agentEnv.CODEX_HOME } : {}),
             ...(this.agentEnv.HOME ? { packageHome: this.agentEnv.HOME } : {}),
+            privateAssetRoot,
+            isolatedCategories: this.isolatedCategories,
           } }
         : {}),
-      ...(assetRoot && this.agentEnv
+      ...((assetRoot || this.isolatedCategories.includes('package-cache')) && this.agentEnv
         ? { toolEnv: {
             ...(this.agentEnv.HOME ? { HOME: this.agentEnv.HOME } : {}),
             ...(this.agentEnv.PATH ? { PATH: this.agentEnv.PATH } : {}),
             ...(this.agentEnv.GRADLE_USER_HOME ? { GRADLE_USER_HOME: this.agentEnv.GRADLE_USER_HOME } : {}),
             ...(this.agentEnv.CARGO_HOME ? { CARGO_HOME: this.agentEnv.CARGO_HOME } : {}),
-            ...workspaceCacheEnv(workspaceAssetPaths(assetRoot)),
+            ...workspaceCacheEnv(workspaceAssetPaths(assetRoot ?? privateAssetRoot), undefined,
+              this.isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined),
           } }
         : {}),
     };
@@ -813,11 +819,12 @@ export class MonolithRoomTurnLoop {
       this.roster(),
       this.grantedResources(),
     ]);
-    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
       devices: grantedDevices,
+      isolatedCategories,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -841,7 +848,7 @@ export class MonolithRoomTurnLoop {
     });
   }
 
-  private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[] }> {
+  private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[]; isolatedCategories: SharedAssetCategory[] }> {
     try {
       const grants = await this.options.api.execute('listAgentGrants', {
         agentId: this.agent.publicKey,
@@ -863,9 +870,10 @@ export class MonolithRoomTurnLoop {
           ]),
         ],
         devices: grantedSandboxDevices(grants),
+        isolatedCategories: isolatedSharedAssetCategories(grants),
       };
     } catch {
-      return { hostRoutes: [], devices: [] };
+      return { hostRoutes: [], devices: [], isolatedCategories: [] };
     }
   }
 
@@ -900,7 +908,10 @@ export class MonolithRoomTurnLoop {
         this.repositoryState(),
         this.grantedResources(),
         ]);
-    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
+    this.isolatedCategories = isolatedCategories;
+    const privateAssetRoot = join(runtimeDirectory(this.options.runtime.supervisorRoot,
+      this.options.runtime.agent.publicKey), 'private-assets');
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const directMessage =
       Array.isArray(repositoryState.directParticipants) &&
@@ -983,10 +994,14 @@ export class MonolithRoomTurnLoop {
       ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
       : undefined;
     let toolchain;
+    if (isolatedCategories.length)
+      await preparePrivateAssets(privateAssetRoot, isolatedCategories);
     if (assets) {
       try {
         toolchain = await prepareWorkspaceAdapter(assets, this.options.config.agentKind, command, {
-          ...this.options.config.agentEnv, ...homeOverlay, ...workspaceCacheEnv(assets),
+          ...this.options.config.agentEnv, ...homeOverlay,
+          ...workspaceCacheEnv(assets, undefined,
+            isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined),
         });
       } catch (error) {
         // Pinning is optional: a failed install or registry lookup leaves the
@@ -995,7 +1010,12 @@ export class MonolithRoomTurnLoop {
       }
     }
     this.sharedAssetsActive = Boolean(assets);
-    const cacheEnv = assets ? workspaceCacheEnv(assets) : {};
+    const cacheEnv = assets
+      ? workspaceCacheEnv(assets, undefined,
+          isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined)
+      : isolatedCategories.includes('package-cache')
+        ? workspaceCacheEnv(workspaceAssetPaths(privateAssetRoot), undefined, privateAssetRoot)
+        : {};
     if (assets && this.options.config.agentKind === 'codex' && homeOverlay.CODEX_HOME)
       await prepareCodexCacheTargets(homeOverlay.CODEX_HOME);
     if (assets && homeOverlay.HOME) await preparePackageCacheTargets(homeOverlay.HOME);
@@ -1038,6 +1058,7 @@ export class MonolithRoomTurnLoop {
     const codegraphReady = await prepareCodegraphIndex(this.options.config, this.options.cwd);
     const fingerprint = sessionConfigFingerprint({
       devices: grantedDevices,
+      isolatedCategories,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -1092,6 +1113,8 @@ export class MonolithRoomTurnLoop {
               ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
               ...(this.options.config.agentKind === 'codex' && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
               ...(agentEnv.HOME ? { packageHome: agentEnv.HOME } : {}),
+              privateAssetRoot,
+              isolatedCategories,
             } }
           : {}),
       },

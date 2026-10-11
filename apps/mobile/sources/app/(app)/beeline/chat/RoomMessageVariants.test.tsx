@@ -2618,6 +2618,9 @@ describe('Room message variant components', () => {
     ['repository', 'manager', 'admin', true],
     ['mcp', 'manager', 'admin', false],
     ['mcp', 'owner', 'member', true],
+    ['shared_asset', 'manager', 'admin', true],
+    ['shared_asset', 'owner', 'member', true],
+    ['shared_asset', 'outsider', 'member', false],
   ] as const)(
     'matches server authority for %s, %s, %s',
     (kind, viewerPubkey, viewerRole, allowed) => {
@@ -2652,6 +2655,8 @@ describe('Room message variant components', () => {
         />,
       );
       expect(view.root.findAllByProps({ testID: 'grant-matrix-always' }).length > 0).toBe(allowed);
+      if (kind === 'shared_asset')
+        expect(view.root.findAllByProps({ testID: 'grant-matrix-once' })).toHaveLength(0);
     },
   );
 

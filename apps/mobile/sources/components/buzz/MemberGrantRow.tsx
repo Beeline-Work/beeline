@@ -5,6 +5,7 @@ import type { WorkspaceMemberGrantView } from '@beeline/api-contract/phone';
 import { grantProvenanceLine } from '@/buzz/agent-grant-copy';
 import { SettingsRow } from './SettingsRow';
 import { IdentityMark } from './IdentityMark';
+import { Button } from './Button';
 
 /** `@handle` when the identity has one, its name otherwise. */
 function named(identity: WorkspaceMemberGrantView['requestedBy']): string {
@@ -17,17 +18,21 @@ function named(identity: WorkspaceMemberGrantView['requestedBy']): string {
  * `SettingsRow` (the agent's mark, the target, the agent's stated reason, and
  * the provenance line), and tapping it reveals the rest beneath.
  *
- * Display only. Nothing here mutates a grant; a decision lives on the card in
- * the Room the grant was asked in.
+ * Shared asset approvals also expose the one revocation action. The caller
+ * sends it through the existing phone operation; all other rows are read only.
  */
 export function MemberGrantRow({
   grant,
   roomName,
+  onRevoke,
+  revokeBusy = false,
 }: {
   readonly grant: WorkspaceMemberGrantView;
   /** The Room's name when the viewer's workspace read carried one; the id is
    *  the honest fallback, never a fabricated label. */
   readonly roomName?: string;
+  readonly onRevoke?: () => void;
+  readonly revokeBusy?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const provenance = grantProvenanceLine(grant);
@@ -64,6 +69,15 @@ export function MemberGrantRow({
                 {script.contents}
               </Text>
             </>
+          ) : null}
+          {grant.kind === 'shared_asset' && grant.status === 'approved' && onRevoke ? (
+            <Button
+              label="Make shared again"
+              variant="secondary"
+              disabled={revokeBusy}
+              onPress={onRevoke}
+              testID={`member-grant-${grant.grantId}-revoke`}
+            />
           ) : null}
         </View>
       ) : null}

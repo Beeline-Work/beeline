@@ -6,6 +6,9 @@
 | Another person’s files or tools outside the sandbox                              | Any                              | Ask that resource owner                                  |
 | Wallet                                                                           | Existing requester and yolo rule | Unchanged                                                |
 | Command naming a credential file or an unread script                             | Any                              | Ask a person; script approval remains bound to its bytes |
+| Agent asks to isolate a shared cache category after a failure                     | Any                              | Workspace owner/admin or agent owner approves a standing grant; either may revoke it |
+
+Shared cache isolation uses `request_shared_asset_isolation` and the existing Agent Grants card. The agent names `package-cache`, `codex-download-cache`, or `codex-plugin-cache` and explains why sharing broke its work. The Room receives the card; eligible deciders outside the Room receive the same grant in their private `@system` DM. Approval applies to that agent's next session, across its Rooms. The human grant ledger offers revocation, which restores the shared mapping on the next session.
 
 The agent’s own-owner access creates a quiet grant receipt when `request_grant` is used; the per-call imported-tool gate allows the call without creating a card. New budget and repository grant requests remain retired. The root requester remains recorded for provenance and for the wallet’s separate consent rule.
 

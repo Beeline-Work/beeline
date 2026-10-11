@@ -76,6 +76,7 @@ import {
   grantScriptTooLongMessage,
   interpreterScriptArgument,
   isRequestableAgentGrantKind,
+  isSharedAssetCategory,
   isCommandGrantScript,
   parseCommandGrantTarget,
   type AgentGrantEscalation,
@@ -5943,6 +5944,10 @@ export class DaemonService {
       throw new Error('grant ttlSeconds is invalid');
     const kind: AgentGrantKind = input.kind;
     const target = kind === 'command' ? input.target : input.target.trim();
+    if (kind === 'shared_asset' && !isSharedAssetCategory(target))
+      throw new Error('shared asset category is invalid');
+    if (kind === 'shared_asset' && (input.ttlSeconds !== undefined || input.script !== undefined))
+      throw new Error('shared asset isolation must be standing');
     const squireRoute = kind === 'mcp' && target === 'squire';
     let rule: CommandGrantRule | undefined;
     if (kind === 'command') {
@@ -5959,6 +5964,15 @@ export class DaemonService {
     const script = rule ? validateGrantScript(rule, input.script) : undefined;
     const escalations: AgentGrantEscalation[] = rule ? commandRuleEscalations(rule, script) : [];
     const reason = input.reason.trim();
+    if (kind === 'shared_asset') {
+      const existing = await this.database.query<{ status: string }>(
+        `SELECT status FROM agent_grants WHERE agent_id=$1 AND kind='shared_asset'
+         AND target=$2 AND status IN ('pending','approved') LIMIT 1`,
+        [agentId, target],
+      );
+      if (existing.rowCount)
+        throw new Error(`shared asset isolation conflict: ${target} is already ${existing.rows[0]!.status}`);
+    }
     const context = (
       await this.database.query<{
         workspace_id: string;
@@ -6031,6 +6045,7 @@ export class DaemonService {
     // The person who started the turn is provenance, not the resource owner.
     // Wallet consent and the two command hard stops keep their existing gates.
     const auto =
+      kind !== 'shared_asset' &&
       escalations.length === 0 &&
       (kind === 'mcp' && target.startsWith('app:')
         ? context.owner_id === resourceOwnerId
@@ -6084,7 +6099,9 @@ export class DaemonService {
         [context.workspace_id, resourceOwnerId],
       );
       if (!member.rowCount) throw new Error('resource owner access denied');
-      const resourceRoomId = squireRoute
+      const resourceRoomId = kind === 'shared_asset'
+        ? input.roomId
+        : squireRoute
         ? await ensureConnectorDirectMessageRoom(
             database,
             context.workspace_id,
@@ -6112,13 +6129,15 @@ export class DaemonService {
         return { messageId: undefined, cardRoomId: resourceRoomId };
       }
       const dmRoomId = resourceRoomId;
-      const open = (
+      const open = kind === 'shared_asset' ? undefined : (
         await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
           `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
            AND card->'agent'->>'pubkey'=$2 AND card->>'sourceRoomId'=$3
            AND card->'requester'->>'pubkey'=$4 AND created_at>now()-interval '2 minutes'
            AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(card->'grants') entry
              JOIN agent_grants g ON g.id=(entry->>'grantId')::uuid WHERE g.status<>'pending')
+           AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(card->'grants') entry
+             WHERE entry->>'kind'='shared_asset')
            ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
           [dmRoomId, agentId, input.roomId, requester.pubkey],
         )
@@ -6152,11 +6171,43 @@ export class DaemonService {
           ...(sourceMessageId ? { sourceMessageId } : {}),
         },
       });
-      return { messageId, cardRoomId: dmRoomId };
+      // A manager sees the Room card only if they are a member of this Room.
+      // Mirror it to each other authorized person's @system DM, preserving
+      // Room membership as the read boundary while giving every decider a card.
+      const additionalCardRoomIds: string[] = [];
+      if (kind === 'shared_asset') {
+        const absentDeciders = await database.query<{ identity_id: string }>(
+          `SELECT member.identity_id FROM memberships member
+           WHERE member.workspace_id=$1 AND member.room_id IS NULL
+             AND member.removed_at IS NULL
+             AND (member.role IN ('owner','admin') OR member.identity_id=$2)
+             AND NOT EXISTS (SELECT 1 FROM memberships room_member
+               WHERE room_member.room_id=$3 AND room_member.identity_id=member.identity_id
+                 AND room_member.removed_at IS NULL)`,
+          [context.workspace_id, context.owner_id, input.roomId],
+        );
+        for (const decider of absentDeciders.rows) {
+          const cardRoomId = await ensureSystemDirectMessageRoom(database, context.workspace_id, decider.identity_id);
+          additionalCardRoomIds.push(cardRoomId);
+          await systemLine(database, {
+            roomId: cardRoomId,
+            authorId: agentId,
+            ...grantCardPhrase(requester, agent, [grantView]),
+            presentation: 'card',
+            cardType: 'grant-request',
+            card: { agent, owner, requester, grants: [grantView], sourceRoomId: input.roomId,
+              ...(sourceMessageId ? { sourceMessageId } : {}) },
+          });
+        }
+      }
+      return { messageId, cardRoomId: dmRoomId, additionalCardRoomIds };
     });
     this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'grant', agentId });
     if (result.cardRoomId)
       this.live.publish({ type: 'invalidate', roomId: result.cardRoomId, reason: 'grant' });
+    if ('additionalCardRoomIds' in result && result.additionalCardRoomIds)
+      for (const roomId of result.additionalCardRoomIds)
+        this.live.publish({ type: 'invalidate', roomId, reason: 'grant' });
     return {
       grantId,
       status,
@@ -6167,10 +6218,14 @@ export class DaemonService {
             approval: {
               destination: squireRoute
                 ? ('trusty-squire-dm' as const)
+                : kind === 'shared_asset'
+                  ? ('room' as const)
                 : kind === 'mcp' && target === 'wallet'
                   ? ('wallet-dm' as const)
                   : ('system-dm' as const),
-              authority: 'resource-owner' as const,
+              authority: kind === 'shared_asset'
+                ? ('workspace-manager-or-agent-owner' as const)
+                : ('resource-owner' as const),
             },
           }
         : {}),
@@ -6238,7 +6293,7 @@ export class DaemonService {
            WHERE a.agent_id=g.agent_id AND a.yolo_mode AND w.visibility<>'public'
              AND (g.kind='repository' OR g.requested_by=a.owner_id)
          ))
-         AND (g.kind='repository' OR g.auto OR g.decided_by=(
+         AND (g.kind IN ('repository','shared_asset') OR g.auto OR g.decided_by=(
            SELECT owner_id FROM agents WHERE agent_id=g.agent_id
          ) OR (g.app_id IS NOT NULL AND EXISTS (
            SELECT 1 FROM workspace_apps app WHERE app.id=g.app_id
@@ -7886,7 +7941,7 @@ function grantCardPhrase(
     object: grants
       .map(
         (grant) =>
-          `${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : 'use'} ${grant.target}`,
+          `${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`,
       )
       .join(' and '),
   };

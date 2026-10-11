@@ -15,6 +15,7 @@ const VERBS: Readonly<Record<AgentGrantView['kind'], string>> = {
   command: 'run',
   mcp: 'use',
   repository: 'edit',
+  shared_asset: 'isolate',
 };
 
 export function grantAskLine(grant: Pick<AgentGrantView, 'kind' | 'target'>): string {
@@ -27,7 +28,8 @@ export function grantRequestLine(
   agent: string,
   grant: Pick<AgentGrantView, 'kind' | 'target'>,
 ): string {
-  const action = grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : 'use';
+  const action = grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write'
+    : grant.kind === 'shared_asset' ? 'isolate' : 'use';
   return `${requester} wants ${agent} to ${action} ${grant.target}`;
 }
 

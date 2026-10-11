@@ -61,6 +61,8 @@ import {
   grantScriptTooLongMessage,
   interpreterScriptArgument,
   isRequestableAgentGrantKind,
+  isSharedAssetCategory,
+  SHARED_ASSET_CATEGORIES,
   parseCommandGrantTarget,
   type AgentGrantEscalation,
   type CommandGrantRule,
@@ -1569,9 +1571,22 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'request_shared_asset_isolation',
+    description: 'Ask a person to make one named Workspace cache category private for this agent from its next turn. Use when a shared cache breaks your work; explain the failure. The request appears as a grant approval card in this Room. Approval stays in effect until a person revokes it.',
+    inputSchema: {
+      type: 'object',
+      required: ['category', 'reason'],
+      properties: {
+        category: { type: 'string', enum: [...SHARED_ASSET_CATEGORIES] },
+        reason: { type: 'string', minLength: 1, maxLength: AGENT_GRANT_REASON_MAX_LENGTH },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'request_grant',
     description:
-      "Request one resource outside the sandbox: kind path|host|secret|device|command|mcp with one target and reason. Your own owner's files, secrets, tools and connections are available regardless of the root requester or yolo; another person's files or tools require that person's approval. The wallet keeps its separate rule. A command target is one exact line without shell metacharacters; secrets use a `--with SECRET_NAME` suffix. A mounted MCP route uses its exact harness name. A granted route mounts on the next session. A granted device under /dev/ is in the session your turn continues in. A pending card pauses the turn until its owner answers. Exactly two command shapes always wait for a person: a script nobody has read and a named credential or environment file.",
+      "Request one resource outside the sandbox: kind path|host|secret|device|command|mcp|shared_asset with one target and reason. For shared_asset, use a whole cache category and the dedicated request_shared_asset_isolation tool. Your own owner's files, secrets, tools and connections are available regardless of the root requester or yolo; another person's files or tools require that person's approval. The wallet keeps its separate rule. A command target is one exact line without shell metacharacters; secrets use a `--with SECRET_NAME` suffix. A mounted MCP route uses its exact harness name. A granted route mounts on the next session. A granted device under /dev/ is in the session your turn continues in. A pending card pauses the turn until its owner answers. Exactly two command shapes always wait for a person: a script nobody has read and a named credential or environment file.",
     inputSchema: {
       type: 'object',
       required: ['kind', 'target', 'reason'],
@@ -3664,6 +3679,10 @@ export async function requestGrant(
   deps: AgentGrantDeps = agentGrantDepsFromEnv(),
 ): Promise<string> {
   const kind = stringArg(args, 'kind');
+  if (kind === 'shared_asset') {
+    if (args.ttl !== undefined) throw new Error('shared asset isolation must be standing');
+    return requestSharedAssetIsolation({ category: args.target, reason: args.reason }, deps);
+  }
   if (!isRequestableAgentGrantKind(kind)) {
     throw new Error(`kind must be one of ${REQUESTABLE_AGENT_GRANT_KINDS.join(', ')}`);
   }
@@ -3754,6 +3773,24 @@ export async function requestGrant(
       ? 'the approval wake starts the fresh session with that route mounted, so use it immediately without restarting or scheduling another turn.'
       : 'you will be woken with the answer.')
   );
+}
+
+export async function requestSharedAssetIsolation(
+  args: JsonObject,
+  deps: AgentGrantDeps = agentGrantDepsFromEnv(),
+): Promise<string> {
+  const category = stringArg(args, 'category');
+  if (!isSharedAssetCategory(category))
+    throw new Error(`category must be one of ${SHARED_ASSET_CATEGORIES.join(', ')}`);
+  const reason = stringArg(args, 'reason')?.trim();
+  if (!reason || reason.length > AGENT_GRANT_REASON_MAX_LENGTH)
+    throw new Error('reason must explain the failure in at most 1000 characters');
+  const result = await deps.execute('requestAgentGrant', {
+    roomId: deps.roomId, kind: 'shared_asset', target: category, reason,
+  });
+  if (result.status !== 'pending' || result.auto !== false)
+    throw new Error('shared asset isolation did not open a human approval');
+  return `pending, card posted: isolate ${category} [grant ${String(result.grantId)}]. A Workspace owner, admin, or this agent's owner must answer ALWAYS or NO on the card in this Room. Your turn is paused; end it now. If approved, the category becomes private from your next session.`;
 }
 
 /**
@@ -4958,6 +4995,8 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return deleteSchedule(args);
     case 'request_grant':
       return requestGrant(args);
+    case 'request_shared_asset_isolation':
+      return requestSharedAssetIsolation(args);
     case 'list_grants':
       return listGrants();
     case 'store_secret':

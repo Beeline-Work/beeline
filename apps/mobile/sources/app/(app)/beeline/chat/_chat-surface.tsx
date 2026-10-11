@@ -5691,6 +5691,7 @@ export function BuzzChatSurface({
             viewerIsAgent={viewerIsAgent}
             viewerPubkey={cacheViewerPubkey}
             viewerRole={viewerChannelRole}
+            viewerCanManageWorkspace={canManageWorkspace}
             actionId={grantActionId}
             onDecision={handleGrantDecision}
             onOpenSource={(roomId, messageId) =>

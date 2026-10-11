@@ -1661,7 +1661,7 @@ export class PhoneService {
           JOIN identities requester ON requester.id=g.requested_by
           LEFT JOIN identities decider ON decider.id=g.decided_by
           WHERE g.workspace_id=$1 AND g.status<>'pending'
-            AND (g.kind='repository' OR a.owner_id=$2)
+            AND (g.kind IN ('repository','shared_asset') OR a.owner_id=$2)
           ORDER BY g.created_at DESC,g.id LIMIT $4
         ) grant_row),'[]'::jsonb) grant_rows
       FROM authorized JOIN identities viewer ON viewer.id=$2`,
@@ -3356,7 +3356,7 @@ export class PhoneService {
           JOIN identities requester ON requester.id=g.requested_by
           LEFT JOIN identities decider ON decider.id=g.decided_by
           WHERE g.agent_id=$1 AND g.workspace_id=$2 AND g.status<>'pending'
-            AND (g.kind='repository' OR a.owner_id=$3)
+            AND (g.kind IN ('repository','shared_asset') OR a.owner_id=$3)
           ORDER BY g.created_at DESC,g.id LIMIT $6
         ) grant_row),'[]'::jsonb) grants
       FROM memberships agent_membership
@@ -7203,10 +7203,12 @@ export class PhoneService {
         : undefined;
     if (!decision) throw new Error('grant decision is invalid');
     const grant = await this.requireGrantAuthority(input.grantId, viewerId);
+    if (grant.kind === 'shared_asset' && decision === 'once')
+      throw new Error('shared asset isolation: a standing approval is required');
     if (grant.status !== 'pending') throw new Error('grant decision conflict: already decided');
     // Existing pending Squire cards may still live in the source Room. Find
     // the card by its exact grant id so an upgrade settles either placement.
-    const cardRoomId =
+    const cardRoomIds =
       (
         await this.database.query<{ room_id: string }>(
           `SELECT message.room_id FROM messages message
@@ -7216,10 +7218,11 @@ export class PhoneService {
              SELECT 1 FROM jsonb_array_elements(message.card->'grants') entry
              WHERE entry->>'grantId'=$1
            )
-         ORDER BY message.created_at DESC,message.id DESC LIMIT 1`,
+         ORDER BY message.created_at DESC,message.id DESC`,
           [input.grantId, grant.workspace_id],
         )
-      ).rows[0]?.room_id ?? grant.room_id;
+      ).rows.map((row) => row.room_id);
+    if (!cardRoomIds.length) cardRoomIds.push(grant.room_id);
     const status: AgentGrantStatus =
       decision === 'always' ? 'approved' : decision === 'once' ? 'once' : 'denied';
     const decider = await this.requireIdentity(viewerId);
@@ -7231,13 +7234,10 @@ export class PhoneService {
       );
       const decidedAt = updated.rows[0]?.decided_at;
       if (!decidedAt) throw new Error('grant decision conflict: already decided');
-      await settleGrantCard(database, {
-        roomId: cardRoomId,
-        grantId: input.grantId,
-        status,
-        decidedBy: decider,
-        decidedAt,
-      });
+      for (const roomId of new Set(cardRoomIds))
+        await settleGrantCard(database, {
+          roomId, grantId: input.grantId, status, decidedBy: decider, decidedAt,
+        });
       // The text this composes is exactly `formatGrantDecisionLine`'s shape
       // (`<decider> approved command npm test`): the daemon recognises the
       // owner's answer structurally with `parseGrantDecisionLine`, and the
@@ -7268,8 +7268,9 @@ export class PhoneService {
         card: { grantId: input.grantId, status },
       });
     });
-    if (cardRoomId !== grant.room_id)
-      this.live?.publish({ type: 'invalidate', roomId: cardRoomId, reason: 'grant' });
+    for (const roomId of new Set(cardRoomIds))
+      if (roomId !== grant.room_id)
+        this.live?.publish({ type: 'invalidate', roomId, reason: 'grant' });
     return { grantId: input.grantId, status, roomId: grant.room_id };
   }
   /** Revoke is one tap on the profile; a command rule stops matching at once. */
@@ -7364,6 +7365,17 @@ export class PhoneService {
         [grant.workspace_id, viewerId],
       );
       if (!member.rowCount) throw new Error('app approval access denied');
+      return grant;
+    }
+    if (grant.kind === 'shared_asset') {
+      const member = await this.database.query(
+        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+         AND identity_id=$2 AND removed_at IS NULL
+         AND (role IN ('owner','admin') OR $2=$3)`,
+        [grant.workspace_id, viewerId, grant.owner_id],
+      );
+      if (!member.rowCount)
+        throw new Error('shared asset approval access denied: requires a Workspace manager or the agent owner');
       return grant;
     }
     if (grant.kind !== 'repository') {

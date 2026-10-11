@@ -3,10 +3,10 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { detectBwrapSandbox, wrapAgentCommand } from './bwrap-sandbox.js';
+import { detectBwrapSandbox, sandboxMountPlan, wrapAgentCommand } from './bwrap-sandbox.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
 import {
-  prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, prepareWorkspaceAvdBase,
+  isolatedSharedAssetCategories, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAdapter, prepareWorkspaceAssets, prepareWorkspaceAvdBase,
   sharedAssetsEnabled, workspaceAssetRoot, workspaceCacheEnv,
 } from './workspace-assets.js';
 
@@ -17,6 +17,63 @@ afterEach(async () => {
 });
 
 describe('coarse Workspace assets', () => {
+  it('maps approved categories to an agent-private cache and returns to shared paths after revocation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-unshare-'));
+    roots.push(root);
+    const assets = await prepareWorkspaceAssets(workspaceAssetRoot(root, 'A'));
+    const runtime = resolve(root, 'beeline/agents/agent-a');
+    const home = resolve(runtime, 'rooms/room-a/agent-home');
+    const privateAssetRoot = resolve(runtime, 'private-assets');
+    await mkdir(home, { recursive: true });
+    await prepareCodexCacheTargets(resolve(home, 'codex'));
+    await preparePackageCacheTargets(resolve(home, 'user'));
+    await writeFile(resolve(runtime, 'runtime.json'), '{}');
+    const active = isolatedSharedAssetCategories({ grants: [
+      { kind: 'shared_asset', target: 'package-cache', status: 'approved' },
+      { kind: 'shared_asset', target: 'codex-download-cache', status: 'approved' },
+      { kind: 'shared_asset', target: 'codex-plugin-cache', status: 'denied' },
+    ] });
+    await preparePrivateAssets(privateAssetRoot, active);
+    expect(workspaceCacheEnv(assets, undefined, privateAssetRoot).npm_config_cache)
+      .toBe(resolve(privateAssetRoot, 'cache/npm'));
+    const plan = sandboxMountPlan({ mode: 'readonly', cwd: resolve(runtime, 'rooms/room-a'),
+      sharedLayout: { assetRoot: assets.root, agentRuntimeDir: runtime, privateHomeRoot: home,
+        codexHome: resolve(home, 'codex'), packageHome: resolve(home, 'user'),
+        privateAssetRoot, isolatedCategories: active } });
+    expect(plan.requiredMounts).toContainEqual({
+      source: resolve(privateAssetRoot, 'cache/npm'), target: resolve(assets.cache, 'npm'), mode: 'bind',
+    });
+    expect(plan.requiredMounts).toContainEqual({
+      source: resolve(privateAssetRoot, 'cache/codex/download'),
+      target: resolve(home, 'codex/cache'), mode: 'bind',
+    });
+    expect(plan.requiredMounts).toContainEqual({
+      source: resolve(assets.cache, 'codex/plugins'),
+      target: resolve(home, 'codex/plugins/cache'), mode: 'bind',
+    });
+    if (bwrapUsable) {
+      const wrapped = wrapAgentCommand({ bwrapPath: '/usr/bin/bwrap',
+        spec: { mode: 'readonly', cwd: resolve(runtime, 'rooms/room-a'),
+          sharedLayout: { assetRoot: assets.root, agentRuntimeDir: runtime, privateHomeRoot: home,
+            codexHome: resolve(home, 'codex'), packageHome: resolve(home, 'user'),
+            privateAssetRoot, isolatedCategories: active } },
+        command: '/bin/sh', args: ['-c', 'printf private > "$npm_config_cache/probe"; test -f "$1"',
+          'probe', resolve(assets.cache, 'npm/probe')],
+      });
+      const run = spawnSync(wrapped.command, wrapped.args, {
+        encoding: 'utf8', env: { ...process.env,
+          ...workspaceCacheEnv(assets, undefined, privateAssetRoot) },
+      });
+      expect(run.status, run.stderr).toBe(0);
+      expect(await readFile(resolve(privateAssetRoot, 'cache/npm/probe'), 'utf8')).toBe('private');
+      await expect(readFile(resolve(assets.cache, 'npm/probe'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    const revoked = isolatedSharedAssetCategories({ grants: [
+      { kind: 'shared_asset', target: 'package-cache', status: 'revoked' },
+    ] });
+    expect(revoked).toEqual([]);
+    expect(workspaceCacheEnv(assets).npm_config_cache).toBe(resolve(assets.cache, 'npm'));
+  });
   it('keeps one asset root per Workspace and leaves harness HOME private', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-assets-'));
     roots.push(root);

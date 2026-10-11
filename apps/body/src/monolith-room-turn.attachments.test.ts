@@ -269,7 +269,7 @@ describe('Room turn voice', () => {
     // The voice rule (core.voice) is said once and stands on its own.
     const { prompt } = await runTurn(false);
     expect(String(prompt)).toContain(
-      'Your voice never changes the facts: never trim, soften, exaggerate, or invent a detail for style.',
+      'Keep facts exact regardless of voice. Use plain language in commits, pull requests, and code comments.',
     );
     expect(String(prompt)).toContain(
       'Every exact @handle you write wakes that member. Write one only to hand off work, to ask for a decision or input, or, when nothing else announces it, to tell the person who asked that their task is done; otherwise name people and agents in plain prose.',

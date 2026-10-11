@@ -9508,7 +9508,7 @@ describe('monolith integration', () => {
     expect(await owed()).toBe(false);
   });
 
-  it('expires an unanswered tag after a day but never a question, grant or blocked run', async () => {
+  it('expires an unanswered tag after a day but never a question, grant or failed agent wake', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-owed-expiry',
@@ -9559,14 +9559,14 @@ describe('monolith integration', () => {
     expect(await state()).toBe('idle');
 
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,created_at)
-       VALUES('expiry-blocked',$1,$2,'@owner may need to step in · checks still fail','system','corner-checks-blocked',${old})`,
-      [cornerId, AGENT],
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES('expiry-blocked',$1,$2,'Agent could not be reached','system','corner-agent-unreachable',$3::jsonb,${old})`,
+      [cornerId, AGENT, JSON.stringify({ recipientIds: [HUMAN], status: 'open' })],
     );
     expect(await state()).toBe('waiting');
   });
 
-  it('keeps owed tags, questions, grants and blocks waiting past 21 updates', async () => {
+  it('keeps owed tags, questions, grants and failed wakes waiting past 21 updates', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-owed-crowded',
@@ -9642,9 +9642,9 @@ describe('monolith integration', () => {
     expect(await state()).toBe('idle');
 
     await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,created_at)
-       VALUES('crowded-blocked',$1,$2,'@owner may need to step in · checks still fail','system','corner-checks-blocked',now()+$3::interval)`,
-      [cornerId, AGENT, `${updates} seconds`],
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+       VALUES('crowded-blocked',$1,$2,'Agent could not be reached','system','corner-agent-unreachable',$4::jsonb,now()+$3::interval)`,
+      [cornerId, AGENT, `${updates} seconds`, JSON.stringify({ recipientIds: [HUMAN], status: 'open' })],
     );
     await crowd();
     expect(await state()).toBe('waiting');

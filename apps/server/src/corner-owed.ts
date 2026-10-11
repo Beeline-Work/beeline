@@ -1,5 +1,6 @@
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
+  CORNER_AGENT_UNREACHABLE_CARD_TYPE,
   CORNER_CHECKS_BLOCKED_CARD_TYPE,
   CORNER_MERGE_YES_CARD_TYPE,
   CORNER_REVIEW_DEADLOCK_CARD_TYPE,
@@ -9,12 +10,15 @@ import { grantDecidedBySql } from './needs-you.js';
 
 /** A tag, a reply, or a deliverable stops keeping its corner waiting this long after it was posted. */
 const CORNER_OWED_EXPIRY_HOURS = 24;
+/** Historical automatic escalations remain readable but never request action. */
+const RETIRED_AUTOMATIC_ATTENTION = [
+  CORNER_CHECKS_BLOCKED_CARD_TYPE, CORNER_REVIEW_DEADLOCK_CARD_TYPE, CORNER_MERGE_YES_CARD_TYPE,
+].map(type => `'${type}'`).join(',');
 /** Card types owed until resolved, read whatever their age. */
 const NEVER_EXPIRES = [
   CHOICE_CARD_TYPE,
   'grant-request',
-  CORNER_CHECKS_BLOCKED_CARD_TYPE,
-  CORNER_REVIEW_DEADLOCK_CARD_TYPE,
+  CORNER_AGENT_UNREACHABLE_CARD_TYPE,
 ]
   .map((type) => `'${type}'`)
   .join(',');
@@ -42,16 +46,17 @@ export function addressedToPersonSql(
   personKindExpr: string,
   includeCommissioned = true,
 ): string {
-  return `(
+  return `((COALESCE(${m}.card_type,'') NOT IN (${RETIRED_AUTOMATIC_ATTENTION})) AND (
     EXISTS (
       SELECT 1 FROM messages addressed
       WHERE addressed.id = ${m}.reply_to_message_id
         AND addressed.author_id=${personIdExpr}
     )
     OR ${tagsKnownIdentitySql(m, personIdExpr, personHandleExpr, personKindExpr)}
-    -- A green head no agent can review reaches the people whose yes merges it.
-    OR (${m}.card_type='${CORNER_MERGE_YES_CARD_TYPE}'
-      AND COALESCE(${m}.card->'approverIds','[]'::jsonb) ? ${personIdExpr})
+    -- A failed agent wake reaches the requester, or current Workspace managers.
+    OR (${m}.card_type='${CORNER_AGENT_UNREACHABLE_CARD_TYPE}'
+      AND COALESCE(${m}.card->>'status','open')='open'
+      AND COALESCE(${m}.card->'recipientIds','[]'::jsonb) ? ${personIdExpr})
     -- An open question card reaches one person: the one human it
     -- tags, or the requester when it tags nobody. A question that
     -- tags several people, and every poll, reaches nobody.
@@ -67,8 +72,7 @@ export function addressedToPersonSql(
     -- A corner's commissioner hears its final state whether or not
     -- an agent tags them: it landed (the parent Room's merge card),
     -- its worker posted a deliverable (files on a reply in a corner
-    -- with no pull request), its checks are failing with nobody left
-    -- to fix them, or it stopped at the review handback limit.
+    -- with no pull request). Recovery work goes back to the agent.
     -- Each probe reaches corner_facts by its primary key. One OR across
     -- both keys hid corner_id from the index, and the push loop then
     -- scanned the whole table once per candidate message.
@@ -79,28 +83,23 @@ export function addressedToPersonSql(
             THEN (${m}.card->>'cornerId')::uuid END
           AND ${commissionedBySql('finished', personIdExpr)}
       ))
-      OR ((${m}.presentation='message' OR ${m}.card_type IN ('${CORNER_CHECKS_BLOCKED_CARD_TYPE}',
-          '${CORNER_REVIEW_DEADLOCK_CARD_TYPE}')) AND EXISTS (
+      OR (${m}.presentation='message' AND EXISTS (
         SELECT 1 FROM corner_facts finished
         WHERE finished.corner_id=${m}.room_id
           AND ${commissionedBySql('finished', personIdExpr)}
-          AND (
-            (${m}.presentation='message' AND ${m}.author_id=finished.owner_agent_id
-              -- A corner without a pull request path: its parent Room has no repository.
-              AND NOT EXISTS (
-                SELECT 1 FROM rooms finished_corner
-                JOIN rooms finished_parent ON finished_parent.id=finished_corner.parent_id
-                WHERE finished_corner.id=finished.corner_id
-                  AND (finished_parent.repository_resolution='repository'
-                    OR finished_parent.repository_key IS NOT NULL))
-              AND jsonb_typeof(${m}.attachments)='array'
-              AND jsonb_array_length(${m}.attachments)>0)
-            OR ${m}.card_type IN ('${CORNER_CHECKS_BLOCKED_CARD_TYPE}',
-              '${CORNER_REVIEW_DEADLOCK_CARD_TYPE}')
-          )
+          AND ${m}.author_id=finished.owner_agent_id
+          -- A corner without a pull request path: its parent Room has no repository.
+          AND NOT EXISTS (
+            SELECT 1 FROM rooms finished_corner
+            JOIN rooms finished_parent ON finished_parent.id=finished_corner.parent_id
+            WHERE finished_corner.id=finished.corner_id
+              AND (finished_parent.repository_resolution='repository'
+                OR finished_parent.repository_key IS NOT NULL))
+          AND jsonb_typeof(${m}.attachments)='array'
+          AND jsonb_array_length(${m}.attachments)>0
       ))
     ))
-  )`;
+  ))`;
 }
 
 /**
@@ -108,7 +107,7 @@ export function addressedToPersonSql(
  * as `corner_owed` rows. An item is owed while it is open:
  * - a question card until it is answered or closed, and a grant request
  *   until it is decided; neither expires (`expires_at` NULL);
- * - a checks-blocked or review-handback line until that person posts in
+ * - an unresolved failed agent wake until that person posts in
  *   the corner after it; it never expires;
  * - a tag, reply or deliverable until that person posts in the corner after
  *   it, or `CORNER_OWED_EXPIRY_HOURS` pass (`expires_at`).
@@ -129,8 +128,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
         )`;
   return `SELECT item.room_id,person.id,item.id,item.created_at,
       CASE
-        WHEN item.card_type IN ('grant-request','${CORNER_CHECKS_BLOCKED_CARD_TYPE}',
-            '${CORNER_REVIEW_DEADLOCK_CARD_TYPE}') THEN NULL
+        WHEN item.card_type IN ('grant-request','${CORNER_AGENT_UNREACHABLE_CARD_TYPE}') THEN NULL
         WHEN item.card_type='${CHOICE_CARD_TYPE}'
           AND COALESCE(item.card->>'status','open')='open' THEN NULL
         ELSE item.created_at+interval '${CORNER_OWED_EXPIRY_HOURS} hours'
@@ -371,6 +369,11 @@ DROP TRIGGER IF EXISTS corner_owed_grant_update ON agent_grants;
 CREATE TRIGGER corner_owed_grant_update AFTER UPDATE OF status ON agent_grants
   FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
   EXECUTE FUNCTION corner_owed_grant_changed();
+
+-- Existing projection rows from the former automatic escalation policy must
+-- not keep a person waiting after release. History itself stays readable.
+DELETE FROM corner_owed owed USING messages item
+WHERE item.id=owed.message_id AND item.card_type IN (${RETIRED_AUTOMATIC_ATTENTION});
 `;
 }
 

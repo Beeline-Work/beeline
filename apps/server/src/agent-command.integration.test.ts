@@ -1066,8 +1066,8 @@ it('routes subscribed events, grants and changed corner checks through actions',
     verb: 'passed a check',
     kind: 'check-passed',
   });
-  // No reviewer: green checks wake nobody and wait for a person's yes.
-  expect(await commands(B, C)).toHaveLength(0);
+  // No reviewer: the implementer owns arranging review or asking for a decision.
+  expect((await commands(B, C)).map(command => command.reason)).toEqual(['corner_review_needed']);
 });
 it('holds the green review wake while the corner worker still holds a live turn', async () => {
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
@@ -1150,8 +1150,9 @@ it('does not wake the author or consume a green transition when the configured r
   expect(
     (
       await db.query<{ text: string }>(
-        `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%could not be reached%'`,
-        [C],
+        `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%could not be reached%'
+           AND system_event->'subject'->>'id'=$2`,
+        [C, A],
       )
     ).rows.map((row) => row.text),
   ).toEqual(['@hoots could not be reached · not a current member of the parent Room; a Workspace owner or admin must restore reviewer membership']);

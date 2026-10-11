@@ -459,6 +459,20 @@ export class PushDeliveryLoop {
             OR workspace_member.identity_id IS NOT NULL
           )
           AND recipient.push_level IN ('direct','mine','all')
+          -- Execution recovery belongs to the agent even when a person follows
+          -- the corner. An explicit address/ask still reaches that person.
+          -- Use the command's root so an agent-to-agent CI handback stays quiet.
+          AND (attention.direct OR NOT EXISTS (
+            SELECT 1 FROM agent_commands answer
+            JOIN agent_commands root ON root.id=answer.root_command_id
+            JOIN messages cause ON cause.id=root.source_message_id
+            WHERE author.kind='agent' AND m.presentation='message'
+              AND answer.room_id=m.room_id AND answer.agent_id=m.author_id
+              AND answer.turn_request_id=m.request_id
+              AND (root.reason IN ('corner_check','corner_merge_conflict','corner_merge_refused',
+                'corner_merge_unconfirmed','corner_review_needed','corner_land','corner_review_dispatch')
+                OR cause.system_event->>'kind' IN ('check-passed','check-failed'))
+          ))
           AND (
             attention.direct
             OR (recipient.push_level IN ('mine','all')

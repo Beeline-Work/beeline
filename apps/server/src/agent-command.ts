@@ -903,8 +903,11 @@ export async function routeAgentResult(
  */
 export const CORNER_REVIEW_DEADLOCK_CARD_TYPE = 'corner-review-deadlock';
 
-/** Marks the lines `noteBlockedCornerChecks` and the failing-checks cap write; pushed to the commissioner like the one above. */
+/** Legacy discriminator retained for historical checks-blocked lines. */
 export const CORNER_CHECKS_BLOCKED_CARD_TYPE = 'corner-checks-blocked';
+
+/** A failed agent wake, the only server recovery that asks a corner's people to act. */
+export const CORNER_AGENT_UNREACHABLE_CARD_TYPE = 'corner-agent-unreachable';
 
 /**
  * Marks the line a green head with no other reviewer writes. Its card names
@@ -924,8 +927,7 @@ export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
 
 /**
  * How long a failing head may keep a check pending, with no new check result,
- * before the corner counts as blocked. The implementer's wake waits for every
- * check to finish, so a check that never finishes would hold it forever.
+ * before a fresh agent turn investigates the stalled run.
  */
 export const CORNER_CHECK_STUCK_AFTER = '1 hour';
 
@@ -998,6 +1000,14 @@ export async function claimAgentCommand(
            WHERE command.id=eligible.id AND
              (eligible.action='stop' OR eligible.action='restart' OR EXISTS(SELECT 1 FROM working))
            RETURNING command.*
+         ), resolved_corner_attention AS (
+           UPDATE messages notice SET card=jsonb_set(notice.card,'{status}','"resolved"')
+           FROM claimed command
+           WHERE command.action IN ('input','resume') AND notice.room_id=command.room_id
+             AND notice.card_type='${CORNER_AGENT_UNREACHABLE_CARD_TYPE}'
+             AND notice.card->>'agentId'=command.agent_id
+             AND COALESCE(notice.card->>'status','open')='open'
+           RETURNING notice.id
          ), ${workflowOutputBindingCtes('claimed')}
          SELECT claimed.*,true turn_claimed FROM claimed
          UNION ALL
@@ -1468,26 +1478,58 @@ export async function queueCornerMergeConflict(
 }
 
 /**
- * Failing checks wake the worker once per head (`advanceCorner`), and
- * nothing wakes anybody again until the head or the check state changes. So
- * when that one turn ends and the same head is still failing with no other
- * turn pending, the corner is stuck until a person steps in. This writes one
- * line per stuck head, naming the requester, and push delivery sends it to
- * them (`background.ts`). A failing head whose wake is still held by a check
- * that has not finished for `CORNER_CHECK_STUCK_AFTER` is stuck the same way.
- * Runs on the background reconciliation cycle.
+ * Recover failing CI work after a completed fix turn or a stalled run. Fresh
+ * pending CI gets time to finish; its completion webhook wakes the implementer.
+ * Each completed retry gets a new source, so repeated red heads stay with the
+ * agent. Only an agent delivery failure addresses a person.
  */
 export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> {
+  // Delivery already gets its normal push and the 30-second renudge. A
+  // command still unclaimed after two minutes is an agent-start failure,
+  // independent of whether CI happens to be red.
+  const undelivered = await db.query<{ room_id: string; agent_id: string; source_message_id: string }>(
+    `SELECT command.room_id,command.agent_id,command.source_message_id FROM agent_commands command
+     JOIN rooms corner ON corner.id=command.room_id AND corner.archived_at IS NULL
+     JOIN corner_facts fact ON fact.corner_id=corner.id
+     WHERE command.state='pending' AND command.action='input'
+       AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
+       AND command.created_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
+       AND NOT EXISTS (SELECT 1 FROM messages notice WHERE notice.id=encode(sha256(convert_to(
+         'beeline:'||command.room_id::text||':agent-unreachable:'||command.agent_id||':'||command.source_message_id,
+         'UTF8')),'hex'))
+       AND NOT EXISTS (SELECT 1 FROM agent_commands busy WHERE busy.room_id=command.room_id
+         AND busy.agent_id=command.agent_id AND busy.state='claimed' AND busy.lease_expires_at>now())
+     ORDER BY command.created_at LIMIT 100`,
+  );
+  for (const command of undelivered.rows) {
+    await db.transaction(async db => {
+      const pending = await db.query(`SELECT 1 FROM agent_commands command
+        JOIN rooms corner ON corner.id=command.room_id AND corner.archived_at IS NULL
+        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.source_message_id=$3
+          AND command.state='pending' AND command.action='input'
+          AND NOT EXISTS (SELECT 1 FROM agent_commands busy WHERE busy.room_id=command.room_id
+            AND busy.agent_id=command.agent_id AND busy.state='claimed' AND busy.lease_expires_at>now())
+        FOR UPDATE OF command`, [command.room_id, command.agent_id, command.source_message_id]);
+      if (pending.rowCount)
+        await noteCornerAgentUnreachable(db, command.room_id, command.agent_id, command.source_message_id);
+    });
+  }
   const blocked = await db.query<{
     corner_id: string;
     head_sha: string;
     title: string | null;
     number: string | null;
     url: string | null;
-    commissioned_by: string | null;
+    implementer_id: string;
+    last_command_id: string | null;
+    lifecycle: unknown;
     check_stuck: boolean;
   }>(
-    `SELECT fact.corner_id,fact.commissioned_by,
+    `SELECT fact.corner_id,fact.lifecycle,${cornerImplementerSql('fact', 'corner')} implementer_id,
+            (SELECT command.id FROM agent_commands command
+             WHERE command.room_id=fact.corner_id
+               AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
+               AND command.reason='corner_check' ORDER BY command.created_at DESC,command.id DESC LIMIT 1) last_command_id,
             fact.lifecycle->'pr'->>'headSha' head_sha,
             fact.lifecycle->'pr'->>'title' title,
             fact.lifecycle->'pr'->>'number' number,
@@ -1507,14 +1549,22 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
      WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
        AND fact.lifecycle->>'checks'='failing'
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND (stuck.held OR EXISTS (
+       AND (stuck.held OR (NOT EXISTS (
+         SELECT 1 FROM jsonb_array_elements(
+           CASE WHEN jsonb_typeof(fact.lifecycle->'checksSummary'->'checks')='array'
+                THEN fact.lifecycle->'checksSummary'->'checks' ELSE '[]'::jsonb END) running
+         WHERE running->>'status'='pending'
+       ) AND EXISTS (
          SELECT 1 FROM agent_commands command
          JOIN messages source ON source.id=command.source_message_id
          WHERE command.room_id=fact.corner_id AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
            AND command.reason='corner_check' AND command.state IN ('complete','cancelled')
+           AND command.id=(SELECT newest.id FROM agent_commands newest
+             WHERE newest.room_id=fact.corner_id AND newest.agent_id=command.agent_id
+               AND newest.reason='corner_check' ORDER BY newest.created_at DESC,newest.id DESC LIMIT 1)
            AND command.completed_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
            AND source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
-       ))
+       )))
        AND NOT EXISTS (
          SELECT 1 FROM agent_commands working
          WHERE working.room_id=fact.corner_id AND working.agent_id=${cornerImplementerSql('fact', 'corner')}
@@ -1523,28 +1573,78 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
   );
   let written = 0;
   for (const row of blocked.rows) {
-    await ensureSystemIdentity(db);
-    const pullRequest = row.title ?? (row.number ? `pull request #${row.number}` : 'this head');
-    const line = await systemLine(db, {
-      // Deterministic id per head: a head is blocked once, however many cycles see it.
-      id: createHash('sha256')
-        .update(`beeline:${row.corner_id}:checks-blocked:${row.head_sha}`)
-        .digest('hex'),
-      roomId: row.corner_id,
-      authorId: SYSTEM_IDENTITY_ID,
-      subject: row.commissioned_by
-        ? { kind: 'person', id: row.commissioned_by, name: 'the requester' }
-        : { kind: 'system', name: 'Somebody' },
-      verb: 'may need to step in',
-      consequence: row.check_stuck
-        ? `checks fail on ${pullRequest} and a check has not finished for ${CORNER_CHECK_STUCK_AFTER}`
-        : `checks still fail on ${pullRequest} and the fix turn ended with nothing new pushed`,
-      cardType: CORNER_CHECKS_BLOCKED_CARD_TYPE,
-      card: { cornerId: row.corner_id, headSha: row.head_sha, ...(row.url ? { url: row.url } : {}) },
+    await db.transaction(async db => {
+      await lockCornerLifecycle(db, row.corner_id);
+      const current = await db.query(`SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+        WHERE fact.corner_id=$1 AND corner.archived_at IS NULL
+          AND fact.lifecycle->'pr'->>'headSha'=$2 AND fact.lifecycle->>'checks'='failing'
+          AND ${cornerImplementerSql('fact', 'corner')}=$3
+          AND fact.lifecycle=$4::jsonb
+          AND (SELECT newest.id FROM agent_commands newest WHERE newest.room_id=$1
+            AND newest.agent_id=$3 AND newest.reason='corner_check'
+            ORDER BY newest.created_at DESC,newest.id DESC LIMIT 1) IS NOT DISTINCT FROM $5
+          AND NOT EXISTS (SELECT 1 FROM agent_commands active WHERE active.room_id=$1
+            AND active.agent_id=$3 AND active.state IN ('pending','claimed'))`,
+        [row.corner_id, row.head_sha, row.implementer_id, JSON.stringify(row.lifecycle), row.last_command_id]);
+      if (!current.rowCount) return;
+      await ensureSystemIdentity(db);
+      const pullRequest = row.title ?? (row.number ? `pull request #${row.number}` : 'this head');
+      const line = await systemLine(db, {
+        // One source per completed attempt; concurrent sweeps share the same wake.
+        id: createHash('sha256')
+          .update(`beeline:${row.corner_id}:checks-retry:${row.head_sha}:${row.last_command_id ?? 'no-command'}`)
+          .digest('hex'),
+        roomId: row.corner_id,
+        authorId: row.implementer_id,
+        subject: GITHUB_SUBJECT,
+        verb: 'requested another check of',
+        object: { text: pullRequest, headSha: row.head_sha, ...(row.url ? { url: row.url } : {}) },
+        consequence: row.check_stuck
+          ? `checks fail on ${pullRequest} and a check has not finished for ${CORNER_CHECK_STUCK_AFTER}`
+          : `checks still fail on ${pullRequest} and the fix turn ended with nothing new pushed`,
+      });
+      await advanceCorner(db, row.corner_id, {
+        kind: 'checks', result: 'failing', sourceMessageId: line.id, followup: true,
+      });
+      if (line.inserted) written += 1;
     });
-    if (line.inserted) written += 1;
   }
   return written;
+}
+
+/** A person is needed only when the intended agent cannot receive its work. */
+export async function noteCornerAgentUnreachable(
+  db: SqlDatabase, cornerId: string, agentId: string, sourceMessageId: string,
+): Promise<void> {
+  const corner = (await db.query<{ commissioned_by: string | null }>(
+    `SELECT commissioned_by FROM corner_facts WHERE corner_id=$1`, [cornerId],
+  )).rows[0];
+  const people = (await db.query<{ id: string }>(
+    `SELECT DISTINCT person.id FROM rooms corner
+     JOIN memberships member ON member.room_id=corner.id AND member.removed_at IS NULL
+     JOIN identities person ON person.id=member.identity_id AND person.kind='human'
+       AND NOT person.hidden_from_roster
+     LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=corner.workspace_id
+       AND workspace_member.room_id IS NULL AND workspace_member.identity_id=person.id
+       AND workspace_member.removed_at IS NULL
+     WHERE corner.id=$1 AND (person.id=$2 OR workspace_member.role IN ('owner','admin'))`,
+    [cornerId, corner?.commissioned_by ?? null],
+  )).rows.map(person => person.id);
+  const recipientIds = corner?.commissioned_by && people.includes(corner.commissioned_by)
+    ? [corner.commissioned_by] : people;
+  await ensureSystemIdentity(db);
+  await systemLine(db, {
+    id: createHash('sha256').update(`beeline:${cornerId}:agent-unreachable:${agentId}:${sourceMessageId}`).digest('hex'),
+    roomId: cornerId, authorId: SYSTEM_IDENTITY_ID,
+    subject: corner?.commissioned_by
+      ? { kind: 'person', id: corner.commissioned_by, name: 'the requester' }
+      : { kind: 'system', name: 'A Workspace owner or admin' },
+    verb: 'needs to restore agent access',
+    consequence: 'the implementing agent could not be reached to continue this corner',
+    afterMessageId: sourceMessageId,
+    cardType: CORNER_AGENT_UNREACHABLE_CARD_TYPE,
+    card: { cornerId, agentId, recipientIds, status: 'open' },
+  });
 }
 
 /** Recover blocker lifecycles whose note or command was lost before delivery. */

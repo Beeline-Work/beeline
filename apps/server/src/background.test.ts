@@ -1957,11 +1957,13 @@ describe('background advisory-lock ownership', () => {
         ],
       );
 
-      expect(await loop.runOnce()).toBe(3);
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+        VALUES($1,$2,$3,'Agent could not be reached','system','corner-agent-unreachable',$4::jsonb)`,
+        ['5'.repeat(64), corner, SYSTEM_IDENTITY_ID, JSON.stringify({ recipientIds: [commissioner], status: 'open' })]);
+      expect(await loop.runOnce()).toBe(2);
       expect(send.mock.calls.map(([token, message]) => [token, message.messageId]).sort()).toEqual([
         ['owner-device-token-12345678901234567890', '1'.repeat(64)],
-        ['owner-device-token-12345678901234567890', '2'.repeat(64)],
-        ['owner-device-token-12345678901234567890', '4'.repeat(64)],
+        ['owner-device-token-12345678901234567890', '5'.repeat(64)],
       ]);
       expect(send).toHaveBeenCalledWith(
         'owner-device-token-12345678901234567890',

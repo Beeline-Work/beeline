@@ -368,18 +368,15 @@ describe('corner message attribution', () => {
     expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
   });
 
-  it('names the human who must act when a green review loses its configured reviewer', async () => {
+  it('returns missing review configuration to the implementer', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(24, '8'.repeat(40));
     await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, B]);
     await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
     await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toHaveLength(0);
-    expect((await db.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND card_type='corner-merge-yes'`, [C],
-    )).rows.map((row) => row.text)).toEqual([
-      '@human needs to approve this pull request · checks passed and no other agent can review it',
-    ]);
+    expect((await commands(A, C)).map(command => command.reason)).toContain('corner_review_needed');
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='corner-merge-yes'`, [C])).rowCount).toBe(0);
   });
 
   it('names the unavailable reviewer list and the human action on a green head', async () => {
@@ -470,7 +467,7 @@ describe('corner message attribution', () => {
     ).toEqual([{ head_sha: '2'.repeat(40) }]);
   });
 
-  it('tells the requester when failing checks outlast the fix turn with nothing pushed', async () => {
+  it('wakes the implementer without a person push when failing checks outlast a fix with no push', async () => {
     await db.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment)
        VALUES('human-device-token-123456789012345678902',$1,'android','physical')`,
@@ -515,18 +512,18 @@ describe('corner message attribution', () => {
     );
     expect(await noteBlockedCornerChecks(db)).toBe(1);
     expect(await noteBlockedCornerChecks(db)).toBe(0);
-    const line = `@human may need to step in · checks still fail on Fix widget and the fix turn ended with nothing new pushed`;
-    expect(
-      (
-        await db.query<{ text: string; author_id: string }>(
-          `SELECT text,author_id FROM messages WHERE room_id=$1 AND card_type='corner-checks-blocked'`,
-          [C],
-        )
-      ).rows,
-    ).toEqual([{ text: line, author_id: SYSTEM_IDENTITY_ID }]);
+    const retry = (await commands(A, C)).find(command => command.reason === 'corner_check');
+    expect(retry?.source.body).toContain('checks still fail on Fix widget and the fix turn ended with nothing new pushed');
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='corner-checks-blocked'`, [C])).rowCount).toBe(0);
     await push.runOnce();
+    expect(send).not.toHaveBeenCalled();
+    await claim(retry!);
+    await result(retry!, '@human please decide whether this check can be removed?');
+    await push.runOnce();
+    expect(send.mock.calls.map(([, message]) => message.text)).toEqual([
+      'Hoots: @human please decide whether this check can be removed?',
+    ]);
     await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
-    expect(send.mock.calls.map(([, message]) => message.text)).toContain(line);
   });
 
   it('tells the requester when a corner in a Room without a repository posts its deliverable, tag or no tag', async () => {

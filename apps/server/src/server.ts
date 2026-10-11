@@ -4,7 +4,7 @@ import { GitHubHttpError } from '@beeline/auth/github';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { serveComputerSession, serveComputerStatus, startComputerExpirySweep, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter } from './computer-session.js';
+import { serveComputerSession, serveComputerStatus, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter } from './computer-session.js';
 import type { Duplex } from 'node:stream';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
 import { isAppSignInLink } from './composio-apps.js';
@@ -536,7 +536,6 @@ export function createBeelineServer(options: ServerOptions): Server {
     }
   }, heartbeatMs);
   heartbeat.unref?.();
-  const stopComputerExpiry = startComputerExpirySweep(options.database, options.live);
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
@@ -660,7 +659,6 @@ export function createBeelineServer(options: ServerOptions): Server {
     // instance, and this instance's lease releases whatever never returns.
     shuttingDown = true;
     clearInterval(heartbeat);
-    stopComputerExpiry();
     releaseConnectionEpochs?.();
     for (const client of webSockets.clients) client.terminate();
     webSockets.close();

@@ -7,6 +7,7 @@ import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Modal } from '@/modal';
 import { openComputerInDesktopWorkPane } from '@/buzz/desktop-computer-pane';
+import { openExternalUrl } from '@/utils/open-external-url';
 
 export type ComputerSessionView = NonNullable<RoomViewMessage['computerSession']> & { access?: string };
 
@@ -89,9 +90,21 @@ export function ComputerSessionViewer({ session, onClose }: { session: ComputerS
   const [ended, setEnded] = React.useState(session.status === 'ended');
   React.useEffect(() => { if (session.status === 'ended') setEnded(true); }, [session.status]);
   const shownSession = ended ? { ...session, status: 'ended' as const } : session;
+  const openInBrowser = async () => {
+    if (ended || !session.access) return;
+    try {
+      const { access } = await monolithPhoneOperation('openComputerSession', { id: session.id });
+      const url = new URL(session.url);
+      url.searchParams.set('access', access);
+      await openExternalUrl(url.toString());
+    } catch {
+      Modal.alert('Could not open browser', 'The live browser is unavailable. Try again.');
+    }
+  };
   return <View style={styles.viewer} testID="computer-session-viewer">
     <ComputerStream session={shownSession} onEnded={() => setEnded(true)} />
     <View style={[styles.controls, { top: insets.top + 12 }]}>
+      {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void openInBrowser()} accessibilityRole="button" accessibilityLabel="Open in browser" testID="computer-session-open-browser"><Text style={styles.controlText}>Open in browser ↗</Text></Pressable> : null}
       <Pressable style={styles.control} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close browser" testID="computer-session-close"><Text style={styles.controlText}>✕</Text></Pressable>
     </View>
   </View>;
@@ -109,6 +122,7 @@ const styles = StyleSheet.create((theme) => ({
   viewer: { flex: 1, backgroundColor: theme.buzz.bgBase },
   controls: { position: 'absolute', right: 12, flexDirection: 'row', gap: 8 },
   control: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgBase, alignItems: 'center', justifyContent: 'center' },
+  browserControl: { height: 42, paddingHorizontal: theme.buzz.space.sm, borderRadius: 14, borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgBase, alignItems: 'center', justifyContent: 'center' },
   controlText: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
   ended: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: theme.buzz.bgBase },
   endedText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },

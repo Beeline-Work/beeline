@@ -377,8 +377,8 @@ export class ManagedUpdateHandoff {
 
   /**
    * Resolve one handoff tick against the daemon's authoritative turn registry.
-   * The coordinator closes intake before waiting for running turns and only
-   * activates a staged release after the drain or bounded interruption.
+   * The coordinator keeps intake open while turns run and only closes it
+   * in a quiet gap before activating a staged release.
    */
   async restartRequest(readyToRestart: (request: ManagedUpdateRestartRequest) => boolean): Promise<
     | { kind: 'none' }
@@ -466,25 +466,22 @@ export const UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS = 60_000;
 
 export interface ManagedUpdateDrainOptions {
   update: ManagedUpdateHandoff;
-  /** Close intake before waiting for in-flight turns. */
+  /** Atomically prove idle and close intake immediately before restarting. */
   quiesce: () => boolean;
   activeTurnCount: () => number;
-  /** Journal and interrupt turns still running at the absolute drain deadline. */
-  interrupt: () => void;
-  /** Exits the process after the drain or bounded interruption. */
+  /** Exits the process after every active turn has finished. */
   restart: (request: ManagedUpdateRestartRequest, mode: ManagedUpdateRestartMode) => Promise<void>;
   /** Progress report while a turn keeps the armed restart waiting (sd_notify STATUS). */
   waiting?: (request: ManagedUpdateRestartRequest) => Promise<void>;
-  now?: () => number;
   log?: (line: string) => void;
   setTimer?: (callback: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
 }
 
 /**
- * The armed restart's clock. Each completed core tick calls `tick()`. The
- * existing minute timer also enforces the absolute drain deadline, so a
- * continuously busy helper can restart without waiting for another turn tick.
+ * Each completed core tick calls `tick()`. Busy helpers continue serving,
+ * even past the update target; only a quiet gap may close intake. The minute
+ * timer reports the wait and provides a fallback idle check.
  */
 export class ManagedUpdateDrain {
   readonly #options: ManagedUpdateDrainOptions;
@@ -494,7 +491,6 @@ export class ManagedUpdateDrain {
   #waitLogTimer: unknown;
   #resolving: Promise<ManagedUpdateHandoffProgress> | undefined;
   #restarting = false;
-  #drainDeadlineAt: number | undefined;
 
   constructor(options: ManagedUpdateDrainOptions) {
     this.#options = options;
@@ -518,18 +514,11 @@ export class ManagedUpdateDrain {
   }
 
   async #step(): Promise<ManagedUpdateHandoffProgress> {
-    const { update, quiesce, activeTurnCount, interrupt } = this.#options;
+    const { update, quiesce, activeTurnCount } = this.#options;
     let armed: ManagedUpdateRestartRequest | undefined;
     const progress = await coordinateManagedUpdateHandoff(
       update,
-      (request) => {
-        if (!quiesce()) return false;
-        this.#drainDeadlineAt = request.drainDeadlineAt;
-        if (activeTurnCount() === 0) return true;
-        if ((this.#options.now ?? Date.now)() < request.drainDeadlineAt) return false;
-        interrupt();
-        return true;
-      },
+      () => activeTurnCount() === 0 && quiesce(),
       async (request, mode) => {
         this.#disarm();
         await this.#options.restart(request, mode);
@@ -552,21 +541,17 @@ export class ManagedUpdateDrain {
   }
 
   #scheduleWaitLog(): void {
-    const remaining = (this.#drainDeadlineAt ?? Number.POSITIVE_INFINITY) -
-      (this.#options.now ?? Date.now)();
     this.#waitLogTimer = this.#setTimer(() => {
       this.#waitLogTimer = undefined;
       if (this.#restarting) return;
       void this.#resolve().catch((error) => this.#log(`[thin-core] update drain failed: ${String(error)}`));
-    }, remaining > 0
-      ? Math.min(UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS, remaining)
-      : UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS);
+    }, UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS);
   }
 
   #logWaiting(): void {
     this.#log(
       `[thin-core] update restart waiting: ${this.#options.activeTurnCount()} active turn(s); ` +
-        `draining until ${new Date(this.#drainDeadlineAt ?? 0).toISOString()}`,
+        'intake open; waiting for a quiet gap',
     );
   }
 

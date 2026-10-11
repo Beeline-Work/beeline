@@ -11,7 +11,6 @@ import {
 import { settleDaemonStartFailure } from './daemon-failure.js';
 import { helperStatusPath, type AgentSlotState, type HelperStatusFile } from './helper-status.js';
 import { ForceUpdateCoordinator } from './force-update.js';
-import { journalInterruptedTurns } from './force-update-journal.js';
 import { HelperLifecycle, type HelperExitReason } from './helper-lifecycle.js';
 import { supervisor } from './helper-service.js';
 import {
@@ -312,6 +311,7 @@ export async function runMachineHelper(
   const machineKey = () => [...slots.values()].map((slot) => slot.agentId).sort()[0] ?? 'helper';
   if (layout) {
     update = await ManagedUpdateHandoff.create(layout, helperStateDirectory(supervisorRoot), Date.now, {
+      env,
       requiredProbeIds: [
         ...(await runningRuntimeProbeIds(env)),
         ...(await Promise.all(initial.map((path) =>
@@ -320,8 +320,8 @@ export async function runMachineHelper(
       ],
     });
   }
-  // Close intake once across the machine, then let active work finish up to
-  // the absolute drain deadline. Journal any remaining turns for successor replay.
+  // Serve new messages while an update waits. Close intake across the machine
+  // only in a quiet gap, then restart immediately; pending commands stay on the server.
   const updateDrain = update
     ? new ManagedUpdateDrain({
         update,
@@ -329,16 +329,7 @@ export async function runMachineHelper(
           !forceUpdate?.active && lifecycle.serving && quiesceHostedAgents([...hosted.values()]),
         activeTurnCount: () =>
           [...hosted.values()].reduce((sum, agent) => sum + agent.core.activeTurnCount(), 0),
-        interrupt: () => {
-          for (const agent of hosted.values()) {
-            const turns = agent.core.interruptForServerMinimum();
-            journalInterruptedTurns(agent.runtimeDir, turns);
-          }
-        },
-        restart: async ({ desiredRelease, drainDeadlineAt }) => {
-          for (const agent of hosted.values()) agent.core.setDrainDeadlineAt(drainDeadlineAt);
-          const staggerMs = managedRestartStaggerMs(machineKey(), desiredRelease, drainDeadlineAt);
-          if (staggerMs > 0) await sleep(staggerMs);
+        restart: async ({ desiredRelease }) => {
           stoppingStatus =
             `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
             `desired_release=${desiredRelease}; drain complete; intake quiesced`;
@@ -349,7 +340,7 @@ export async function runMachineHelper(
         waiting: async ({ desiredRelease }) => {
           await notifier.progress(
             `loaded_release=${loadedRelease ?? 'unknown'}; update ready; ` +
-              `active agent work draining; handoff armed; ` +
+              `serving messages; waiting for a quiet gap; ` +
               `desired_release=${desiredRelease}`,
           );
         },
@@ -542,9 +533,10 @@ export async function runMachineHelper(
 }
 
 /**
- * Close intake across the machine before draining active turns.
+ * Prove every agent idle before closing any intake, in one synchronous step.
  */
 export function quiesceHostedAgents(agents: readonly HostedAgent[]): boolean {
+  if (agents.some((agent) => agent.core.activeTurnCount() > 0)) return false;
   if (agents.some((agent) => !agent.lifecycle.serving &&
       !(agent.lifecycle.state.kind === 'quiescing' && agent.lifecycle.state.reason === 'update')))
     return false;

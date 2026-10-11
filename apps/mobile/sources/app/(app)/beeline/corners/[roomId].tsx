@@ -51,10 +51,8 @@ export default function BuzzCorners() {
   const corners = useRoomCorners(decodedId || undefined);
   const surface = corners.view ?? null;
   useLatencyRouteFrame('/beeline/corners/[roomId]', surface !== null, true);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const error = actionError ?? corners.error;
+  const error = corners.error;
   const [refreshing, setRefreshing] = useState(false);
-  const loadingOpen = useRef(false);
   const creatingRef = useRef(false);
   const [creating, setCreating] = useState(false);
   const [archivedStatus, setArchivedStatus] = useState<ArchivedFooter>({ status: 'idle' });
@@ -86,22 +84,6 @@ export default function BuzzCorners() {
     () => (surface ? (roomTitle(surface.room.name) ?? surface.room.name) : 'Room'),
     [surface],
   );
-  const refresh = async () => {
-    setActionError(null);
-    await corners.refresh();
-  };
-  const loadMoreOpen = async () => {
-    if (loadingOpen.current) return;
-    loadingOpen.current = true;
-    try {
-      await corners.loadMoreOpen();
-    } catch (reason) {
-      setActionError(phoneOperationFailureReason(reason));
-    } finally {
-      loadingOpen.current = false;
-    }
-  };
-
   /** The list knows only that a brief exists; its text comes with the corner's own view. */
   const openBrief = async (cornerId: string) => {
     try {
@@ -191,7 +173,7 @@ export default function BuzzCorners() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <Text style={[styles.error, styles.errorCentered]}>{error}</Text>
-        <Button label="RETRY" onPress={() => void refresh()} />
+        <Button label="RETRY" onPress={() => void corners.refresh()} />
       </View>
     );
   }
@@ -229,7 +211,7 @@ export default function BuzzCorners() {
           <TouchableOpacity
             accessibilityLabel={`${error}. Retry`}
             accessibilityRole="button"
-            onPress={() => void refresh()}
+            onPress={() => void corners.refresh()}
             style={styles.errorPanel}
           >
             <Text style={styles.error}>! {error}</Text>
@@ -238,7 +220,7 @@ export default function BuzzCorners() {
         <CornerOpenRow roomId={decodedId} />
         <RoomCornersList
           corners={corners.openRows}
-          onMoreOpen={() => void loadMoreOpen()}
+          onMoreOpen={() => void corners.loadMoreOpen()}
           moreOpen={!!corners.record?.nextOpen}
           parentRoomId={decodedId}
           parentRoomName={title}
@@ -255,7 +237,7 @@ export default function BuzzCorners() {
           onOpenBrief={(item) => void openBrief(item.corner.id)}
           onRefresh={() => {
             setRefreshing(true);
-            void refresh().finally(() => setRefreshing(false));
+            void corners.refresh().finally(() => setRefreshing(false));
           }}
         />
       </View>

@@ -11,6 +11,10 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
+import { systemLine } from './system-line.js';
+import { createAgentCommand, claimAgentCommand, readAgentCommands } from './agent-command.js';
+import { DaemonService } from './daemon-service.js';
+import { noteFirstSilence } from './turn-silence-notice.js';
 import { PhoneService } from './phone-service.js';
 import {
   computerViewToken, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, serveComputerSession,
@@ -351,6 +355,152 @@ describe('computer session handoff', () => {
       await new Promise<void>((resolve) => squire.close(() => resolve()));
     }
   }, 60_000);
+
+  it('coalesces each share into one latest observation, behind human requests, with silent failures', async () => {
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'activity-burst', upstreamUrl: 'body:',
+    });
+    const observe = (name: string) => systemLine(database, {
+      roomId: ROOM, authorId: SYSTEM_IDENTITY_ID, subject: { kind: 'system', name: 'A person' },
+      verb: 'used', object: `the shared browser ${name}`, kind: 'computer-session-activity',
+      payload: { sessionId: share.id, activity: name }, wakes: [AGENT],
+    });
+    const opened = await observe('viewer-opened');
+    const snapshot = (await readAgentCommands(database, ROOM, AGENT)).commands.find((c) => c.sourceMessageId === opened.id)!;
+    await observe('pointer');
+    const latest = await observe('navigation');
+    const pending = await database.query<{ id: string; source_message_id: string }>(
+      `SELECT id,source_message_id FROM agent_commands WHERE reason='computer_activity'
+       AND source_message_id IN (SELECT id FROM messages WHERE system_event->'payload'->>'sessionId'=$1)
+       AND state='pending'`, [share.id]);
+    expect(pending.rows).toEqual([{ id: snapshot.id, source_message_id: latest.id }]);
+    const humanId = '9'.repeat(64);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Please answer')`, [humanId, ROOM, HUMAN]);
+    const human = await createAgentCommand(database, { roomId: ROOM, agentId: AGENT, sourceMessageId: humanId, reason: 'human_tag' });
+    const duringHumanRequest = (await readAgentCommands(database, ROOM, AGENT)).commands;
+    expect(duringHumanRequest.some((c) => c.id === human!.id)).toBe(true);
+    expect(duringHumanRequest.some((c) => c.id === snapshot.id)).toBe(false);
+    await expect(claimAgentCommand(database, ROOM, AGENT, snapshot.id, 'activity-generation')).rejects.toThrow('command claim conflict');
+    await claimAgentCommand(database, ROOM, AGENT, human!.id, 'human-generation');
+    await expect(claimAgentCommand(database, ROOM, AGENT, snapshot.id, 'activity-generation')).rejects.toThrow('command claim conflict');
+    await database.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [human!.id]);
+    const daemon = new DaemonService(database, live, origin);
+    const claimed = await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: snapshot.id, generationId: 'activity-generation' }, AGENT);
+    expect(claimed.activitySource).toMatchObject({ body: 'A person used the shared browser navigation',
+      systemEvent: { payload: { sessionId: share.id, activity: 'navigation' } } });
+    expect(claimed.recoveryContext).toBe('A person used the shared browser viewer-opened\nA person used the shared browser pointer\nA person used the shared browser navigation');
+    await observe('typing');
+    await observe('handback');
+    // Lost claim responses remain replayable even when a person arrives next.
+    const anotherHumanId = '8'.repeat(64);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Another request')`, [anotherHumanId, ROOM, HUMAN]);
+    const anotherHuman = await createAgentCommand(database, { roomId: ROOM, agentId: AGENT, sourceMessageId: anotherHumanId, reason: 'human_tag' });
+    await expect(claimAgentCommand(database, ROOM, AGENT, snapshot.id, 'activity-generation')).resolves.toMatchObject({ id: snapshot.id });
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [anotherHuman!.id]);
+    expect((await readAgentCommands(database, ROOM, AGENT)).commands.filter((c) =>
+      (c.source.systemEvent?.payload as { sessionId?: string })?.sessionId === share.id)).toHaveLength(1);
+    const silence = await noteFirstSilence(database, live, { roomId: ROOM, agentId: AGENT,
+      requestId: snapshot.turnRequestId, generationId: 'activity-generation', reason: 'harness returned no text' });
+    expect(silence).toMatchObject({ hiccupRestart: false, updateRequeued: false });
+    expect((await database.query(`SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
+      AND card->>'requestId'=$2`, [ROOM, snapshot.turnRequestId])).rowCount).toBe(0);
+    await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1 AND reason='computer_activity'`, [ROOM]);
+  });
+
+  it('replays authorized HTML to the source machine that owns the preview cache', async () => {
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'machine-cache', upstreamUrl: 'body:',
+    });
+    const access = await computerViewToken(database, share.id, HUMAN);
+    const previous = process.env.FLY_MACHINE_ID;
+    try {
+      await database.query(`UPDATE computer_sessions SET relay_instance_id='source-machine' WHERE id=$1`, [share.id]);
+      process.env.FLY_MACHINE_ID = 'other-machine';
+      const denied = await fetch(`${origin}/s/${share.id}/`, { redirect: 'manual' });
+      expect(denied.status).toBe(403);
+      expect(denied.headers.get('fly-replay')).toBeNull();
+      const replay = await fetch(`${origin}/s/${share.id}/?access=${access}`, { redirect: 'manual' });
+      expect(replay.status).toBe(307);
+      expect(replay.headers.get('fly-replay')).toBe('instance=source-machine');
+    } finally {
+      if (previous === undefined) delete process.env.FLY_MACHINE_ID;
+      else process.env.FLY_MACHINE_ID = previous;
+      await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+    }
+  });
+
+  it('keeps one Squire tunnel and cached HTML/frame through five full-view reopenings beside a preview', async () => {
+    let htmlReads = 0;
+    const frame = JSON.stringify({ type: 'frame', data: Buffer.from('warm preview').toString('base64') });
+    const squire = createServer((_request, response) => {
+      htmlReads++;
+      response.end('<!doctype html><head></head><body><script>const socket=new WebSocket(new URL("stream", location.href));</script></body>');
+    });
+    const streams = new WebSocketServer({ noServer: true });
+    let tunnels = 0;
+    let source: WebSocket | undefined;
+    squire.on('upgrade', (request, socket, head) => streams.handleUpgrade(request, socket, head, (client) => {
+      tunnels++;
+      source = client;
+      client.send(frame);
+    }));
+    await new Promise<void>((resolve) => squire.listen(0, '127.0.0.1', resolve));
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'warm-squire',
+      upstreamUrl: `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/warm/`,
+    });
+    const access = await computerViewToken(database, share.id, HUMAN);
+    const url = `${origin}/s/${share.id}/?access=${access}`;
+    await fetch(url + '&preview=1');
+    const preview = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}&preview=1`);
+    const ready = next(preview);
+    await opened(preview);
+    expect(await ready).toBe(frame);
+    try {
+      for (let sample = 0; sample < 5; sample++) {
+        const html = await fetch(url);
+        expect(html.headers.get('server-timing')).toContain('cached');
+        expect(await html.text()).toContain(`atob('${Buffer.from(frame).toString('base64')}')`);
+        const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
+        const cached = next(viewer);
+        await opened(viewer);
+        expect(await Promise.race([cached, new Promise((r) => setTimeout(() => r('no cached frame'), 1000))])).toBe(frame);
+        const liveFrame = next(viewer);
+        source!.send(frame);
+        expect(await liveFrame).toBe(frame);
+        const input = next(source!);
+        viewer.send(JSON.stringify({ type: 'text', text: `sample ${sample}` }));
+        expect(JSON.parse(await input)).toEqual({ type: 'text', text: `sample ${sample}` });
+        viewer.close();
+        await new Promise<void>((resolve) => viewer.once('close', resolve));
+      }
+      expect(tunnels).toBe(1);
+      expect(htmlReads).toBe(1);
+      // The upstream web canvas sends pointer; touch is the phone path.
+      const pointerViewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
+      await opened(pointerViewer);
+      const pointer = next(source!);
+      pointerViewer.send(JSON.stringify({ type: 'pointer', phase: 'down', x: 0.5, y: 0.5 }));
+      expect(JSON.parse(await pointer)).toMatchObject({ type: 'pointer' });
+      await until(async () => (await database.query(
+        `SELECT 1 FROM computer_session_events WHERE session_id=$1 AND name='input' AND detail='pointer'`, [share.id],
+      )).rowCount ? true : undefined);
+      pointerViewer.close();
+      await new Promise<void>((resolve) => pointerViewer.once('close', resolve));
+      const blockedInput: string[] = [];
+      source!.on('message', (data) => blockedInput.push(data.toString()));
+      preview.send(JSON.stringify({ type: 'text', text: 'preview cannot control' }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(blockedInput).toEqual([]);
+    } finally {
+      await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+      preview.close();
+      for (const client of streams.clients) client.close();
+      await new Promise<void>((resolve) => streams.close(() => resolve()));
+      await new Promise<void>((resolve) => squire.close(() => resolve()));
+    }
+  });
 
   it('ends an unanswered Squire handoff wait at the upstream share expiry', async () => {
     const share = await createComputerSession(database, live, {

@@ -194,7 +194,13 @@ describe('command intake mechanics', () => {
       terminate() { this.close(); }
     }
     const socket = new Socket();
-    const request = vi.fn<typeof fetch>(async () => Response.json({ commandProtocol: 1, commands: [] }));
+    let pendingRequeue = false;
+    const request = vi.fn<typeof fetch>(async (url) => {
+      if (String(url).endsWith('/getAgentCommands'))
+        return Response.json({ commandProtocol: 1, commands: pendingRequeue ? [command()] : [] });
+      if (String(url).endsWith('/claimAgentCommand')) pendingRequeue = false;
+      return Response.json({ id: 'ok' });
+    });
     const api = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'agent', request,
       (() => socket) as DaemonWebSocketFactory);
     const abort = new AbortController();
@@ -209,6 +215,7 @@ describe('command intake mechanics', () => {
     const frame = { type: 'commands', roomId: 'room', commandProtocol: 1, commands: [command()] };
     socket.message(frame);
     await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    pendingRequeue = true;
     socket.message(frame);
     socket.message(frame);
     expect(run).toHaveBeenCalledOnce();
@@ -485,6 +492,35 @@ describe('command intake mechanics', () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(2);
   });
+  it('does not mistake a stale snapshot received during claim for a server requeue', async () => {
+    const abort = new AbortController();
+    let queued = true;
+    let finishClaim!: () => void;
+    const errors: unknown[] = [];
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: queued ? [command()] : [] };
+      if (name === 'claimAgentCommand') {
+        if (!queued) { errors.push(new Error('command claim conflict')); abort.abort(); throw errors.at(-1); }
+        await new Promise<void>((resolve) => { finishClaim = resolve; });
+        queued = false;
+      }
+      return { id: 'ok' };
+    });
+    const socket = socketApi(execute);
+    const run = vi.fn(async () => {});
+    const running = runServerCommandIntake({ api: socket.api, roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, run, stop: vi.fn() });
+    await vi.waitFor(() => expect(finishClaim).toBeTypeOf('function'));
+    socket.push([command()]); // subscription snapshot was read before the claim committed
+    finishClaim();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    abort.abort();
+    await running;
+    expect(errors).toEqual([]);
+    expect(execute.mock.calls.filter(([name]) => name === 'claimAgentCommand')).toHaveLength(1);
+  });
+
   it('binds output to the claimed generation and request', async () => {
     const ctx = await context();
     await ctx.enter(command());

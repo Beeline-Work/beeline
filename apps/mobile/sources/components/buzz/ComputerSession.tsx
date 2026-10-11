@@ -94,8 +94,9 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
   }, [session.id, session.status, session.access]);
   const open = async () => {
     if (!access || session.status !== 'live') return;
-    const freshAccess = await openComputerSessionViewer(session, isDesktop, currentViewerConversation()?.roomId, agentHandle);
-    setAccess(freshAccess);
+    // Keep the preview on its existing authorized stream. Replacing its URL
+    // tears down the warm connection just as the full viewer needs its frame.
+    await openComputerSessionViewer(session, isDesktop, currentViewerConversation()?.roomId, agentHandle);
   };
   return <View style={styles.card} testID={`computer-session-card-${session.status}`}>
     {session.status === 'live' && access ? <Pressable onPress={() => void open()} accessibilityRole="button" accessibilityLabel={`Open ${session.title} browser`}>

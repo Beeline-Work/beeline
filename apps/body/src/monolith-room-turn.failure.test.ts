@@ -23,6 +23,7 @@ async function runTurn(options: {
   agentCommand: string;
   agentKind: string;
   turnCount?: number;
+  activity?: boolean;
   /** Applied over the default config: an OpenRouter pin needs a key and a cache. */
   configOverrides?: Partial<BodyConfig>;
   /** Model id the fake harness advertises, so a selection can be applied. */
@@ -117,6 +118,9 @@ async function runTurn(options: {
               type: 'message',
               body: "what's up",
               attachments: [],
+              ...(options.activity ? { type: 'system', fixtureCommandReason: 'computer_activity',
+                systemEvent: { subject: { kind: 'system', name: 'A person' }, verb: 'used',
+                  kind: 'computer-session-activity', payload: { sessionId: 'share', activity: 'input' } } } : {}),
             },
           ],
           cursor: requestId,
@@ -1142,4 +1146,16 @@ describe('Room turn failure receipt', () => {
     );
     expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(false);
   });
+});
+
+ it.each(['end_turn', 'refusal', 'max_tokens'])('silently completes a textless Codex activity update (%s) without retry', async (stopReason) => {
+  const outcome = await runTurn({ agentCommand: '/fake/codex-acp', agentKind: 'codex', activity: true,
+    prompt: async () => ({ stopReason, agentText: '', toolCalls: [],
+      updates: [{ sessionId: 'room-session', update: { sessionUpdate: 'usage_update' } }] }),
+  });
+  expect(outcome.attempts).toBe(1);
+  expect(outcome.posted).toEqual([]);
+  expect(outcome.receipts.filter((receipt) => receipt.status !== 'working')).toEqual([
+    expect.objectContaining({ status: 'complete' }),
+  ]);
 });

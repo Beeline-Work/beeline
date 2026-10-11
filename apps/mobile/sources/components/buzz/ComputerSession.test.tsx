@@ -26,6 +26,7 @@ vi.mock('@/buzz/desktop-computer-pane', () => ({ openComputerInDesktopWorkPane: 
 vi.mock('@/modal', () => ({ Modal: { show: vi.fn(), alert: vi.fn() } }));
 vi.mock('@/components/buzz/ViewerConversationDock', () => ({ ViewerConversationDock: () => null }));
 
+import { Modal } from '@/modal';
 import { ComputerSessionCard, ComputerSessionViewer, type ComputerSessionView } from './ComputerSession';
 
 const session = {
@@ -110,5 +111,17 @@ it('offers no browser handoff without steering access', async () => {
   let tree: ReturnType<typeof create>;
   await act(async () => { tree = create(<ComputerSessionViewer session={{ ...session, access: undefined }} onClose={() => undefined} />); });
   expect(tree!.root.findAllByProps({ testID: 'computer-session-open-browser' })).toHaveLength(0);
+  await act(async () => tree!.unmount());
+});
+
+it('keeps the already-live preview token and connection when minting a token for the full view', async () => {
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionCard session={session} />); });
+  const preview = () => tree!.root.findAll((node: { type: unknown; props: Record<string, any> }) => typeof node.type === 'function' && node.props.preview === true)[0]!;
+  expect(preview().props.session.access).toBe('old-token');
+  const open = tree!.root.findAllByType('Pressable').find((node: { props: Record<string, any> }) => node.props.testID === 'computer-session-open')!;
+  await act(async () => { await open.props.onPress(); });
+  expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({props: expect.objectContaining({session: expect.objectContaining({access: 'fresh-token'})})}));
+  expect(preview().props.session.access).toBe('old-token');
   await act(async () => tree!.unmount());
 });

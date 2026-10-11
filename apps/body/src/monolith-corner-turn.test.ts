@@ -1609,6 +1609,36 @@ describe('corner close-request delivery', () => {
     };
   }
 
+  it('silently acknowledges a textless browser update without nudging existing repository work', async () => {
+    const execute = vi.fn(async (name: string, _input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', closeRequested: false,
+        brief: { id: 'corner-id', revision: 1,
+          spec: '## Intent\nBuild\n## User stories\n- user\n## Acceptance criteria\n- done\n## Non-goals\n- none\n## Risks\n- none\n## References\n- none',
+          authorId: TEST_AGENT_PUBLIC_KEY, sourceRoomId: 'room-id', attachments: [] } };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      return { id: 'write', createdAt: 1 };
+    });
+    const fixture = await cornerHarness(execute, 5, undefined, undefined, undefined, undefined, {
+      type: 'system', body: 'A person opened the shared browser',
+      systemEvent: { subject: { kind: 'system', name: 'A person' }, verb: 'opened',
+        kind: 'computer-session-activity', payload: { sessionId: 'share', activity: 'viewer-opened' } },
+    });
+    await writeFile(join(fixture.root, 'unfinished.txt'), 'existing repository work');
+    vi.mocked(fixture.acp.sessionPrompt).mockResolvedValue({ stopReason: 'end_turn',
+      updates: [{ sessionId: 'corner-session', update: { sessionUpdate: 'usage_update' } }],
+      agentText: '', toolCalls: [] });
+    await fixture.loop.run();
+    await fixture.scheduler.dispose();
+    expect(fixture.acp.sessionPrompt).toHaveBeenCalledOnce();
+    const receipts = execute.mock.calls.filter(([name]) => name === 'postAgentTurnReceipt');
+    expect(receipts).toContainEqual(['postAgentTurnReceipt', expect.objectContaining({status: 'complete'})]);
+    expect(receipts.some(([, input]) => (input as { completionKind?: string })?.completionKind === 'no-reply')).toBe(false);
+    expect(execute.mock.calls.some(([name]) => name === 'postRoomMessage')).toBe(false);
+  });
+
   it.each(['repository', 'scratch', 'android-operator', 'goose-unpinned', 'capacity-fallback', 'registry-fallback'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
     vi.stubEnv('ANDROID_HOME', '');
     vi.stubEnv('ANDROID_SDK_ROOT', '');

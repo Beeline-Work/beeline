@@ -319,23 +319,32 @@ export async function serveComputerSession(
     response.end('This browser session has ended.');
     return;
   }
+  // HTTP and WebSocket requests must reach the same machine: the warm
+  // preview's HTML and JPEG cache live with its source channel.
+  if (row.relay_instance_id && process.env.FLY_MACHINE_ID && row.relay_instance_id !== process.env.FLY_MACHINE_ID) {
+    response.writeHead(307, { 'fly-replay': `instance=${row.relay_instance_id}`, 'cache-control': 'no-store' }).end();
+    return;
+  }
   if (row.upstream_url !== 'body:') {
     if (new URL(request.url ?? '/', 'http://beeline.local').pathname === `/s/${id}`) {
       response.writeHead(308, { location: `/s/${id}/`, 'cache-control': 'no-store' }).end();
       return;
     }
     const fetchStartedAt = Date.now();
-    const upstream = await fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(4_000) })
+    const channel = squireChannel(id);
+    const htmlWasCached = Boolean(channel.html);
+    const upstream = channel.html ? undefined : await fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(4_000) })
       .catch(() => undefined);
-    if (!upstream) { console.warn(`[computer-share] Squire HTML unavailable session=${id.slice(0, 8)}`); serveComputerRetry(request, response); return; }
-    if (!upstream.ok) {
+    if (!upstream && !channel.html) { console.warn(`[computer-share] Squire HTML unavailable session=${id.slice(0, 8)}`); serveComputerRetry(request, response); return; }
+    if (upstream && !upstream.ok) {
       console.warn(`[computer-share] Squire HTML status=${upstream.status} session=${id.slice(0, 8)}`);
       if (upstream.status === 410 || upstream.status === 404) response.writeHead(410, { 'cache-control': 'no-store' }).end();
       else serveComputerRetry(request, response);
       return;
     }
-    const html = await upstream.text().catch(() => undefined);
-    if (!html) { serveComputerRetry(request, response); return; }
+    const html = channel.html ?? await upstream!.text().catch(() => undefined);
+    if (!html) { squireChannels.delete(id); serveComputerRetry(request, response); return; }
+    channel.html = html;
     // The Squire page uses a relative "stream" URL. This small host bridge
     // reconciles one close with our session row and notifies the artifact view.
     const coverStyle = `<style>
@@ -400,11 +409,14 @@ export async function serveComputerSession(
           drag=undefined;if(pointers.size===1){const [id,p]=[...pointers.entries()][0];drag={id,x:p.x,y:p.y,moved:true};}},true);
         beelineCanvas.addEventListener('pointercancel',event=>{if(event.pointerType==='touch'){pointers.delete(event.pointerId);drag=undefined;pinch=undefined;}},true);
       }
+      // Signal a decoded canvas paint, not merely the receipt of JPEG bytes.
       let beelineFirstFrame=false;
-      socket.addEventListener('message',event=>{if(beelineFirstFrame)return;
-        try{if(JSON.parse(event.data).type!=='frame')return;}catch{return;}
-        beelineFirstFrame=true;requestAnimationFrame(()=>{const value={type:'computer-first-frame',id:'${id}',at:Date.now()};
-          parent.postMessage(value,'*');window.ReactNativeWebView?.postMessage(JSON.stringify(value));});});
+      const beelineContext=beelineCanvas?.getContext('2d');
+      if(beelineContext){const draw=beelineContext.drawImage.bind(beelineContext);
+        beelineContext.drawImage=(...args)=>{draw(...args);if(beelineFirstFrame)return;beelineFirstFrame=true;
+          requestAnimationFrame(()=>{const value={type:'computer-first-frame',id:'${id}',at:Date.now()};
+            parent.postMessage(value,'*');window.ReactNativeWebView?.postMessage(JSON.stringify(value));});};}
+      ${channel.lastFrame ? `if(!beelinePreview)socket.dispatchEvent(new MessageEvent('message',{data:atob('${channel.lastFrame.data.toString('base64')}')}));` : ''}
       socket.addEventListener('close',async()=>{
         try{const reply=await fetch('status'+location.search,{cache:'no-store'});const state=await reply.json();
           if(state.status==='live'&&!new URLSearchParams(location.search).has('reconnected')){
@@ -421,7 +433,7 @@ export async function serveComputerSession(
     if (securedHtml === html) { serveComputerRetry(request, response); return; }
     response.writeHead(200, {
       'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
-      'server-timing': `squire-html;dur=${Date.now() - fetchStartedAt}`,
+      'server-timing': `squire-html;dur=${Date.now() - fetchStartedAt};desc="${htmlWasCached ? 'cached' : 'fetched'}"`,
       'content-security-policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self' wss: ws:; base-uri 'none'; form-action 'none'",
       'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
     });
@@ -547,8 +559,16 @@ export function computerViewerHtml(id: string): string {
 const computerWebSockets = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
 type BodyChannel = { source?: WebSocket; lastFrame?: { data: Buffer; binary: boolean }; viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; pausedViewers: Set<WebSocket>; previewSentAt: Map<WebSocket, number>; controller?: WebSocket; ending?: boolean };
 const bodyChannels = new Map<string, BodyChannel>();
-type SquireChannel = { viewers: Set<WebSocket>; upstreams: Set<WebSocket>; humanControl: boolean; lastFrame?: { data: Buffer; binary: boolean } };
+type SquireChannel = { viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; upstreams: Set<WebSocket>; humanControl: boolean; html?: string; lastFrame?: { data: Buffer; binary: boolean }; previewSentAt: Map<WebSocket, number> };
 const squireChannels = new Map<string, SquireChannel>();
+function squireChannel(id: string): SquireChannel {
+  let channel = squireChannels.get(id);
+  if (!channel) {
+    channel = { viewers: new Set(), interactiveViewers: new Set(), upstreams: new Set(), humanControl: false, previewSentAt: new Map() };
+    squireChannels.set(id, channel);
+  }
+  return channel;
+}
 
 /** Only an authenticated person's explicit action completes a share. */
 export async function handBackComputerSession(database: SqlDatabase, id: string, viewerId: string): Promise<void> {
@@ -772,119 +792,128 @@ export async function upgradeComputerSession(
   if (target.protocol === 'http:') target.protocol = 'ws:';
   if (!['ws:', 'wss:'].includes(target.protocol)) { socket.destroy(); return; }
   const preview = new URL(request.url ?? '/', 'http://beeline.local').searchParams.has('preview');
-  // Accept the viewer before the Squire tunnel opens. A warm preview has a
-  // cached JPEG ready now, so the full viewer need not wait for another tunnel.
   computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
-      const upstreamStartedAt = Date.now();
-      const upstream = new WebSocket(target.toString());
-      let channel = squireChannels.get(id);
-      if (!channel) { channel = { viewers: new Set(), upstreams: new Set(), humanControl: false }; squireChannels.set(id, channel); }
+    const channel = squireChannel(id);
+    const startedAt = Date.now();
+    channel.viewers.add(viewer);
+    if (!preview) channel.interactiveViewers.add(viewer);
+    if (channel.lastFrame) {
+      viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
+      console.info(`[computer-share] squire cached JPEG session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`);
+    }
+    if (!preview) void recordComputerActivity(database, row, 'viewer-opened').catch(() => {});
+    let upstream = [...channel.upstreams][0];
+    const newTunnel = !upstream;
+    if (!upstream) {
+      upstream = new WebSocket(target.toString(), { maxPayload: 2 * 1024 * 1024 });
       channel.upstreams.add(upstream);
-      if (!preview) channel.viewers.add(viewer);
-      if (channel.lastFrame) viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
-      if (!preview) void recordComputerActivity(database, row, 'viewer-opened').catch(() => {});
-      let sessionEnded = false;
-      let viewerGone = false;
-      const pendingInput: Array<{ data: Buffer; binary: boolean }> = [];
-      upstream.once('open', () => {
-        console.info(`[computer-share] squire tunnel open session=${id.slice(0, 8)} ms=${Date.now() - upstreamStartedAt}`);
-        for (const pending of pendingInput) upstream.send(pending.data, { binary: pending.binary });
+    }
+    const source = upstream;
+    const pendingInput: Array<{ data: Buffer; binary: boolean }> = [];
+    const flushPending = () => {
+      for (const pending of pendingInput) source.send(pending.data, { binary: pending.binary });
+      pendingInput.length = 0;
+    };
+    if (source.readyState === WebSocket.CONNECTING) source.once('open', flushPending);
+    const lastInputAt = new Map<string, number>();
+    viewer.on('message', (data, binary) => {
+      if (preview || Buffer.byteLength(data.toString()) > 4_096) return;
+      let message: { type?: string };
+      try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
+      if (message.type === 'handback') {
+        channel.humanControl = false;
         pendingInput.length = 0;
-      });
-      const lastInputAt = new Map<string, number>();
-      const handBack = () => {
-        if (preview || sessionEnded) return;
-        pendingInput.length = 0;
-        channel!.humanControl = false;
-        if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify({ type: 'release' }));
+        if (source.readyState === WebSocket.OPEN) source.send(JSON.stringify({ type: 'release' }));
         void noteComputerHandback(database, row);
-      };
-      viewer.on('message', (data, binary) => {
-        // Squire validates and arbitrates input. A transcript preview never
-        // sends control, even if an embedded client is compromised.
-        if (preview || Buffer.byteLength(data.toString()) > 4_096) return;
-        let message: { type?: string } | undefined;
-        try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
-        if (message?.type === 'handback') { handBack(); return; }
-        if (message?.type === 'end-share') { void endComputerSession(database, live, row); return; }
-        if (message?.type && ['touch', 'wheel', 'text', 'key', 'click'].includes(message.type)) {
-          const category = message.type === 'wheel' ? 'scroll'
-            : message.type === 'text' ? 'typing' : message.type === 'key' ? 'key' : 'pointer';
-          const now = Date.now();
-          if (now - (lastInputAt.get(category) ?? 0) >= 1_000) {
-            lastInputAt.set(category, now);
-            void recordComputerActivity(database, row, 'input', category).catch(() => {});
-          }
+        return;
+      }
+      if (message.type === 'end-share') { void endComputerSession(database, live, row); return; }
+      if (message.type && ['touch', 'pointer', 'wheel', 'text', 'key', 'click'].includes(message.type)) {
+        const category = message.type === 'wheel' ? 'scroll'
+          : message.type === 'text' ? 'typing' : message.type === 'key' ? 'key' : 'pointer';
+        const now = Date.now();
+        if (now - (lastInputAt.get(category) ?? 0) >= 1_000) {
+          lastInputAt.set(category, now);
+          void recordComputerActivity(database, row, 'input', category).catch(() => {});
         }
-        if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary });
-        else if (upstream.readyState === WebSocket.CONNECTING && pendingInput.length < 8)
-          pendingInput.push({ data: Buffer.from(data.toString()), binary });
-      });
-      let lastPreviewFrameAt = 0;
-      let firstJpegLogged = false;
-      upstream.on('message', (data, binary) => {
-        let message: { type?: string; state?: string; url?: string } | undefined;
-        try { message = JSON.parse(data.toString()) as typeof message; } catch { /* Forward unknown frames. */ }
-        if (message?.type === 'control') {
-          if (message.state === 'human' && !channel!.humanControl) {
-            channel!.humanControl = true;
-            void recordComputerActivity(database, row, 'takeover').catch(() => {});
-          }
-          if (message.state === 'agent' && channel!.humanControl) {
-            channel!.humanControl = false;
-          }
+      }
+      if (source.readyState === WebSocket.OPEN) source.send(data, { binary });
+      else if (source.readyState === WebSocket.CONNECTING && pendingInput.length < 8)
+        pendingInput.push({ data: Buffer.from(data.toString()), binary });
+    });
+    viewer.once('close', () => {
+      source.off('open', flushPending);
+      pendingInput.length = 0;
+      channel.viewers.delete(viewer);
+      channel.interactiveViewers.delete(viewer);
+      channel.previewSentAt.delete(viewer);
+      if (!preview) void recordComputerActivity(database, row, 'viewer-closed').catch(() => {});
+      if (!channel.interactiveViewers.size && channel.humanControl) {
+        channel.humanControl = false;
+        if (source.readyState === WebSocket.OPEN) source.send(JSON.stringify({ type: 'release' }));
+      }
+      if (!channel.viewers.size) {
+        if (squireChannels.get(id) === channel) squireChannels.delete(id);
+        source.close();
+      }
+    });
+    if (!newTunnel) return;
+    source.once('open', () => console.info(`[computer-share] squire tunnel open session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`));
+    let firstJpegLogged = false;
+    source.on('message', (data, binary) => {
+      let message: { type?: string; state?: string; url?: string } | undefined;
+      try { message = JSON.parse(data.toString()) as typeof message; } catch { /* Forward unknown frames. */ }
+      if (message?.type === 'control') {
+        if (message.state === 'human' && !channel.humanControl) {
+          channel.humanControl = true;
+          void recordComputerActivity(database, row, 'takeover').catch(() => {});
         }
-        if (message?.type === 'navigation') {
-          let origin: string | undefined;
-          try { if (message.url) origin = new URL(message.url).origin; } catch { /* Do not pass page content. */ }
-          void recordComputerActivity(database, row, 'navigation', origin).catch(() => {});
-        }
-        const frame = isFrameMessage(data);
-        if (frame && !firstJpegLogged) {
+        if (message.state === 'agent') channel.humanControl = false;
+      }
+      if (message?.type === 'navigation') {
+        let origin: string | undefined;
+        try { if (message.url) origin = new URL(message.url).origin; } catch { /* No page content. */ }
+        void recordComputerActivity(database, row, 'navigation', origin).catch(() => {});
+      }
+      const frame = isFrameMessage(data);
+      if (message?.type === 'blank') channel.lastFrame = undefined;
+      if (frame) {
+        channel.lastFrame = { data: Buffer.from(data.toString()), binary };
+        if (!firstJpegLogged) {
           firstJpegLogged = true;
-          console.info(`[computer-share] squire first JPEG session=${id.slice(0, 8)} ms=${Date.now() - upstreamStartedAt}`);
+          console.info(`[computer-share] squire first JPEG session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`);
         }
-        if (frame) channel!.lastFrame = { data: Buffer.from(data.toString()), binary };
-        if (frame && preview) {
+      }
+      for (const recipient of channel.viewers) {
+        if (frame && !channel.interactiveViewers.has(recipient)) {
           const now = Date.now();
-          if (now - lastPreviewFrameAt < 1_000) return;
-          lastPreviewFrameAt = now;
+          if (now - (channel.previewSentAt.get(recipient) ?? 0) < 1_000) continue;
+          channel.previewSentAt.set(recipient, now);
         }
-        if (viewer.readyState === WebSocket.OPEN) {
-          if (viewer.bufferedAmount < MAX_VIEWER_BUFFERED_BYTES) viewer.send(data, { binary });
-          else viewer.close(1013, 'screen backpressure');
-        }
-      });
-      viewer.once('close', () => {
-        viewerGone = true;
-        channel!.viewers.delete(viewer);
-        channel!.upstreams.delete(upstream);
-        if (!preview) void recordComputerActivity(database, row, 'viewer-closed').catch(() => {});
-        if (!channel!.viewers.size) squireChannels.delete(id);
-        upstream.close();
-      });
-      upstream.once('close', (code, reason) => {
-        // A viewer closes its own upstream socket. An upstream close first
-        // may be a transient tunnel loss. Reconcile once against Squire.
-        if (code === 1000 && reason.toString() === 'share ended') {
-          sessionEnded = true;
-          squireChannels.delete(id);
-          void endComputerSession(database, live, row).finally(() => viewer.close());
-          return;
-        }
-        if (!viewerGone) void fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(5_000) })
-          .then((reply) => {
-            sessionEnded = reply.status === 404 || reply.status === 410;
-            if (!sessionEnded) { viewer.close(); return; }
-            squireChannels.delete(id);
-            const closeViewer = () => {
-              if (viewer.readyState === WebSocket.OPEN) viewer.send(JSON.stringify({ type: 'ended' }));
-              viewer.close();
-            };
-            void endComputerSession(database, live, row).then(closeViewer, closeViewer);
-          }).catch(() => viewer.close());
-        else viewer.close();
-      });
-      upstream.once('error', () => viewer.close());
+        if (recipient.readyState !== WebSocket.OPEN) continue;
+        if (recipient.bufferedAmount < MAX_VIEWER_BUFFERED_BYTES) recipient.send(data, { binary });
+        else recipient.close(1013, 'screen backpressure');
+      }
+    });
+    const closeViewers = () => { for (const recipient of channel.viewers) recipient.close(); };
+    source.once('close', (code, reason) => {
+      channel.upstreams.delete(source);
+      if (squireChannels.get(id) === channel) squireChannels.delete(id);
+      if (!channel.viewers.size) return;
+      if (code === 1000 && reason.toString() === 'share ended') {
+        void endComputerSession(database, live, row).finally(closeViewers);
+        return;
+      }
+      // Tunnel loss is not share expiry. Reconcile the upstream status once.
+      void fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(5_000) })
+        .then(async (reply) => {
+          if (reply.status === 404 || reply.status === 410) {
+            for (const recipient of channel.viewers) if (recipient.readyState === WebSocket.OPEN)
+              recipient.send(JSON.stringify({ type: 'ended' }));
+            await endComputerSession(database, live, row);
+          }
+        }).finally(closeViewers).catch(() => {});
+    });
+    source.once('error', closeViewers);
   });
 }

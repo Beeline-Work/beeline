@@ -18,6 +18,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: async () => 'https://test.invalid',
 }));
 vi.mock('@/sync/client-reset', () => ({
+  clientResetGeneration: () => 0,
   subscribeClientReset: (listener: () => void) => {
     fixture.identityChange = listener;
     return () => {
@@ -99,6 +100,7 @@ vi.mock('@tauri-apps/plugin-notification', () => ({
 }));
 
 import { startDesktopNotifications } from './desktop-notifications';
+import { getRoomCorners } from '@/buzz/room-corner-store';
 
 afterEach(() => {
   fixture.roomListener = null;
@@ -169,6 +171,8 @@ describe('signed-in desktop native notification delivery', () => {
         body: 'Test sender: Review this',
       }),
     );
+    // The corner read landed in the corner store, the copy the notifier reads.
+    expect(getRoomCorners('room-1').rows?.map((item) => item.corner.id)).toEqual(['corner-1']);
     stop();
   });
 

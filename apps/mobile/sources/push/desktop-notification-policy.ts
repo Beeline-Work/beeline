@@ -4,7 +4,7 @@ import type { PushLevel } from '@beeline/api-contract/phone';
 /** Mirror the direct-message/tag/reply ceiling used by the server push worker. */
 export function desktopMessageMayNotify(input: {
   message: RoomViewMessage;
-  room: ChatListItem;
+  room: Pick<ChatListItem, 'room' | 'directMessage'>;
   viewerPubkey: string;
   level: PushLevel;
   repliedToViewer?: boolean;

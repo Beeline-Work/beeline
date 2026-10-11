@@ -8,6 +8,7 @@ import type { ChatListItem } from '@beeline/buzz-client';
 import fonts from 'room-card-fonts';
 import { ConversationRow } from '../sources/components/buzz/ConversationRow';
 import { RoomCornerSummary } from '../sources/components/buzz/RoomCornerSummary';
+import { applyChatListCorners, getRoomCornerSummary } from '../sources/buzz/room-corner-store';
 
 /**
  * Mobile Room list cards as the Room list draws them: the card surface around
@@ -52,6 +53,8 @@ const cards = [
     kind: 'human',
   }),
 ];
+// The Room list surfaces read corner facts from the corner store, as the list store fills it.
+applyChatListCorners(cards, -1);
 
 function Card({ entry, desktop }: { entry: ChatListItem; desktop: boolean }) {
   const { theme } = useUnistyles();
@@ -82,9 +85,9 @@ function Card({ entry, desktop }: { entry: ChatListItem; desktop: boolean }) {
         }}
       >
         {row}
-        {!entry.directMessage && !!entry.cornerCount && (
+        {!entry.directMessage && !!getRoomCornerSummary(entry.room.id)?.cornerCount && (
           <RoomCornerSummary
-            count={entry.cornerCount}
+            count={getRoomCornerSummary(entry.room.id)!.cornerCount}
             onPress={() => undefined}
             testID={`room-corners-toggle-${entry.room.id}`}
           />

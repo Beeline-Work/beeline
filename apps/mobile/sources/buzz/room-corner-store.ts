@@ -4,8 +4,9 @@ import type {
   ChatListItem,
   CornerListItem,
   CornerListView,
+  RoomCornerSummary as RoomCornerSummaryView,
 } from '@beeline/api-contract/phone';
-import { subscribeClientReset } from '@/sync/client-reset';
+import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 
 /**
  * The client's one copy of each Room's corner rows. The live connection
@@ -16,10 +17,10 @@ import { subscribeClientReset } from '@/sync/client-reset';
  *
  * It also owns each Room's corner summary: the counts and the capped list of
  * open corners the Room list row, its dropdown, the repository guard and
- * notifications read. A `corner-status` frame, a first-page corners read and
- * a Room list read each carry the whole summary and replace it; any other
- * corners read patches the summary's corners by id. Either applies only when
- * its source started after the held summary's source.
+ * notifications read. Only a `corner-status` frame, a first-page corners read
+ * that carries `summary` and a Room list read touch it: each carries the whole
+ * summary and replaces it when its source started after the held summary's
+ * source. No other read changes it.
  *
  * Order: every read and frame takes its own clock tick, so no two share a
  * mark. Frames are ordered by the Room lane's sequence, and a frame is newer
@@ -41,10 +42,7 @@ type CornerListHeader = Omit<CornerListView, 'corners' | 'nextOpen' | 'nextArchi
 
 /** A Room's open-corner summary. The count is the server's, never counted here;
  *  the list keeps every Mine corner and fills to the server's cap. */
-export type RoomCornerSummary = {
-  readonly cornerCount: number;
-  readonly openCorners: readonly ChatListCorner[];
-};
+export type RoomCornerSummary = Pick<RoomCornerSummaryView, 'cornerCount' | 'openCorners'>;
 
 export type RoomCorners = {
   readonly header?: CornerListHeader;
@@ -119,7 +117,6 @@ const factListeners = new Map<string, Set<() => void>>();
 const summaryListeners = new Set<() => void>();
 let summaries: ReadonlyMap<string, RoomCornerSummary> = new Map();
 let clock = 0;
-let generation = 0;
 
 function entry(roomId: string): Entry {
   return entries.get(roomId) ?? EMPTY;
@@ -138,10 +135,7 @@ function write(roomId: string, next: Entry): void {
   if (next.summary !== before) for (const listener of [...summaryListeners]) listener();
 }
 
-/**
- * The one summary rule: a source started after the held summary's source
- * replaces it when whole, and patches its corners by id when partial.
- */
+/** The one summary rule: a source started after the held summary's source replaces it. */
 function withSummary(
   current: Entry,
   summary: RoomCornerSummary,
@@ -149,53 +143,6 @@ function withSummary(
 ): Entry {
   if (current.summaryAt !== undefined && startedAt <= current.summaryAt) return current;
   return { ...current, summary, summaryAt: startedAt };
-}
-
-/** The summary corner `item` names, as that row now says it. */
-function patchedCorner(held: ChatListCorner, item: CornerListItem): ChatListCorner {
-  if (item.state === 'archived') return held;
-  const { mine: _mine, waitingSince, attention, ...rest } = held;
-  const mine = item.mine === true;
-  // The server's rule: only a waiting corner hands back or owes attention.
-  const waiting = item.state === 'waiting';
-  const since = waiting && mine
-    ? waitingSince ?? item.latestMessage?.createdAt
-    : undefined;
-  return {
-    ...rest,
-    name: item.corner.name,
-    state: item.state,
-    ...(mine ? { mine: true as const } : {}),
-    ...(since !== undefined ? { waitingSince: since } : {}),
-    ...(waiting && held.state === 'waiting' && attention ? { attention } : {}),
-  };
-}
-
-/** A partial read's rows patch the held summary's corners by id. */
-function withSummaryRows(
-  current: Entry,
-  rows: readonly CornerListItem[],
-  startedAt: number,
-): Entry {
-  const summary = current.summary;
-  if (!summary || (current.summaryAt !== undefined && startedAt <= current.summaryAt))
-    return current;
-  const byId = new Map(rows.map((item) => [item.corner.id, item]));
-  let named = false;
-  let changed = false;
-  const openCorners = summary.openCorners.map((held) => {
-    const item = byId.get(held.id);
-    if (!item) return held;
-    named = true;
-    const next = patchedCorner(held, item);
-    if (JSON.stringify(next) !== JSON.stringify(held)) changed = true;
-    return next;
-  });
-  if (!named) return current;
-  // A read that agrees with the summary still proves it as of its start, so
-  // an older read that lands later cannot restore what this read saw gone.
-  if (!changed) return { ...current, summaryAt: startedAt };
-  return { ...current, summary: { ...summary, openCorners }, summaryAt: startedAt };
 }
 
 function emitFacts(roomId: string): void {
@@ -291,18 +238,18 @@ export function subscribeRoomCornerFacts(roomId: string, listener: () => void): 
 export function cornerReadMark(roomId: string): CornerReadMark {
   const current = entry(roomId);
   clock += 1;
-  return { generation, clock, laneEpoch: current.laneEpoch, laneHeld: current.laneHeld };
+  return {
+    generation: clientResetGeneration(),
+    clock,
+    laneEpoch: current.laneEpoch,
+    laneHeld: current.laneHeld,
+  };
 }
 
 /** The clock tick a Room list read takes when it starts. */
 export function cornerStoreClock(): number {
   clock += 1;
   return clock;
-}
-
-/** The store's generation, without taking a read mark. */
-export function cornerStoreGeneration(): number {
-  return generation;
 }
 
 /**
@@ -417,7 +364,7 @@ export function applyCornerListRead(
   view: CornerListView,
   mark: CornerReadMark,
 ): void {
-  if (mark.generation !== generation) return;
+  if (mark.generation !== clientResetGeneration()) return;
   const { corners, nextOpen, nextArchived: _archived, summary, ...header } = view;
   const current = summary
     ? withSummary(
@@ -425,7 +372,7 @@ export function applyCornerListRead(
       { cornerCount: summary.cornerCount, openCorners: summary.openCorners },
       mark.clock,
     )
-    : withSummaryRows(entry(roomId), corners, mark.clock);
+    : entry(roomId);
   if (current.rows &&
       (current.changedAt > mark.clock || (current.rowsReadAt ?? 0) > mark.clock)) {
     // A frame or a read started after this one holds newer rows; keep them.
@@ -465,8 +412,8 @@ export function applyOpenCornerPage(
   mark: CornerReadMark,
   replace = false,
 ): void {
-  if (mark.generation !== generation) return;
-  const current = withSummaryRows(entry(roomId), rows, mark.clock);
+  if (mark.generation !== clientResetGeneration()) return;
+  const current = entry(roomId);
   const { nextOpen: _held, ...rest } = current;
   write(roomId, {
     ...rest,
@@ -488,7 +435,7 @@ export function applyArchivedCorners(
   append: boolean,
   mark: CornerReadMark,
 ): void {
-  if (mark.generation !== generation) return;
+  if (mark.generation !== clientResetGeneration()) return;
   const current = entry(roomId);
   const missed = current.archivedChangedAt > mark.clock;
   write(roomId, {
@@ -524,7 +471,6 @@ export function applyChatListCorners(
 
 /** A new identity must not see the last one's corners, nor a read started for it. */
 export function resetRoomCornerStore(): void {
-  generation += 1;
   const rooms = [...entries.keys()];
   entries.clear();
   summaries = new Map();

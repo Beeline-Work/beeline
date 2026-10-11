@@ -14,6 +14,7 @@ import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { roomListSections } from '@/buzz/room-list-row';
 import { filterConversations, type RoomListFilter } from '@/buzz/room-list-preferences';
 import { useCornerDropdowns } from '@/buzz/corner-dropdowns';
+import { applyChatListCorners, getRoomCornerSummary } from '@/buzz/room-corner-store';
 
 const ROW_HEIGHT = 64;
 const BEFORE_FIX = false;
@@ -57,6 +58,8 @@ const initialRooms: ChatListItem[] = [
     makeRoom(`room-${i}`, 'bbc', `Message number ${i} in this room`, base - 600 - i * 300, i % 3),
   ),
 ];
+// The Room list surfaces read corner facts from the corner store, as the list store fills it.
+applyChatListCorners(initialRooms, -1);
 
 export default function Harness() {
   const [chats, setChats] = useState(initialRooms);
@@ -138,7 +141,7 @@ export default function Harness() {
                 onToggleCorners={() => cornerDropdowns.toggle(item.room.id)}
                 testID={`room-${item.room.id}`}
               />
-              {!item.directMessage && (item.cornerCount ?? 0) > 0 && cornersExpanded && (
+              {!item.directMessage && (getRoomCornerSummary(item.room.id)?.cornerCount ?? 0) > 0 && cornersExpanded && (
                 <DesktopRoomCorners
                   item={item}
                   mobile

@@ -127,7 +127,6 @@ import {
 import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
 import { TurnBandSlot, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { useCornerHeaderItem, useRoomCorners } from '@/buzz/use-room-corners';
-import { roomOpenCornerRows } from '@/buzz/room-corner-store';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { openAppSignIn } from '@/buzz/app-sign-in';
@@ -2111,16 +2110,16 @@ export function BuzzChatSurface({
   );
   const channelCorners = useMemo(() => {
     const view = channelCornerRecord.view;
-    if (!view || !channelCornerRecord.record) return null;
+    if (!view) return null;
     return {
       roomId: view.room.id,
       room: { name: view.room.name },
-      corners: roomOpenCornerRows(channelCornerRecord.record).map((item) => ({
+      corners: channelCornerRecord.openRows.map((item) => ({
         id: item.corner.id,
         name: item.corner.name,
       })),
     };
-  }, [channelCornerRecord.record, channelCornerRecord.view]);
+  }, [channelCornerRecord.openRows, channelCornerRecord.view]);
   const channelSuggestions = useMemo(() => {
     if (!activeChannel) return { matches: [], overflow: 0 };
     const corners = channelCorners?.roomId === channelCornerRoomId ? channelCorners : null;
@@ -6373,7 +6372,7 @@ export function BuzzChatSurface({
             that links to GitHub, where review and merge happen. */}
             {isCorner && (
               <CornerStatusLine
-                lifecycle={roomSurface?.cornerLifecycle}
+                lifecycle={cornerHeaderSource?.lifecycle}
                 archived={isArchived}
                 onOpenPullRequest={(url) => {
                   void openExternalUrl(url).catch(() => {

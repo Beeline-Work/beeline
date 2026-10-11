@@ -145,6 +145,7 @@ import {
   type ChatCornerSummary,
   type OpenCornerFactsRow,
 } from './chat-corner-counts.js';
+import { cornerRoomColumnsSql } from './corner-row-projection.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
@@ -429,7 +430,10 @@ interface AgentGrantRow {
   created_at: Date; decided_at: Date | null; expires_at: Date | null;
   requester: IdentityRow; decider: IdentityRow | null; script: unknown;
 }
-interface CornerRow extends RoomRow {
+type RoomHeaderRow = Pick<RoomRow, 'id' | 'workspace_id' | 'parent_id' | 'name' |
+  'about' | 'avatar' | 'visibility' | 'reviewer_agent_id' | 'reviewer_fallback_ids' |
+  'archived_at' | 'created_at' | 'updated_at'>;
+interface CornerRow extends RoomHeaderRow {
   lifecycle: RoomView['cornerLifecycle'] | null;
   /** The corner lifecycle's projected state and the outcome that reached it. */
   workflow_state: string | null;
@@ -658,7 +662,7 @@ function effortCatalogAxis(
     )
   );
 }
-function roomHeader(row: RoomRow, publicOrigin: string) {
+function roomHeader(row: RoomHeaderRow, publicOrigin: string) {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -3174,7 +3178,7 @@ export class PhoneService {
     const limit = `LIMIT ${(archived ? ARCHIVED_CORNER_PAGE : OPEN_CORNER_PAGE) + 1}`;
     const facts = cornerFactsSql('$2');
     return `
-      SELECT c.*,${facts.columns},f.objective,lm.id latest_id,lm.text latest_text,lm.author_id latest_author_id,
+      SELECT ${cornerRoomColumnsSql},${facts.columns},f.objective,lm.id latest_id,lm.text latest_text,lm.author_id latest_author_id,
         initiator.id initiator_id,initiator.name initiator_name,
         initiator.handle initiator_handle,initiator.avatar initiator_avatar,
         initiator.face_id initiator_face,

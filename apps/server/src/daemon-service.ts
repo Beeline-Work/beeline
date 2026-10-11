@@ -3,7 +3,7 @@ import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscriptio
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
 import { activeCornerHolds, setCornerHold } from './corner-holds.js';
-import { visibleChatMessageSql } from './read-cursor.js';
+import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
 import { renderAgentAvatar } from './agent-avatar.js';
 import {
   authorizeCommandOutput,
@@ -1207,6 +1207,7 @@ export class DaemonService {
       case 'getCornerRestoreState':
         return (await this.cornerRestore(
           (input as Input<'getCornerRestoreState'>).cornerId,
+          authenticatedAgentId,
         )) as Output<Name>;
       case 'listCornerBriefRevisions':
         return (await this.listCornerBriefRevisions(
@@ -3161,12 +3162,12 @@ export class DaemonService {
       })),
     };
   }
-  private async cornerRestore(cornerId: string) {
+  private async cornerRestore(cornerId: string, agentId: string) {
     const brief = await currentCornerBrief(this.database, cornerId);
+    const facts = cornerFactsSql('$2');
     const row = (
-      await this.database.query<{
+      await this.database.query<CornerStateRow & {
         parent_room_id: string;
-        archived: boolean;
         objective: string;
         title: string;
         title_generated: boolean;
@@ -3178,36 +3179,29 @@ export class DaemonService {
         lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
         pull_request_number: number | null;
         approval_head_sha: string | null;
-        running: boolean;
         last_author_id: string | null;
-        last_author_kind: 'human' | 'agent' | null;
         last_created_at: Date | null;
-        last_type: 'message' | 'system' | 'card' | null;
+        last_type: 'message' | 'system' | null;
         last_excerpt: string | null;
       }>(
-        `SELECT room.parent_id parent_room_id,room.archived_at IS NOT NULL archived,
-           fact.objective,room.name title,fact.title_generated,fact.kind,fact.feature_branch,fact.request_id,fact.close_requested,fact.lifecycle,
+        `SELECT c.parent_id parent_room_id,c.archived_at,${facts.columns},
+           f.objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
            requester.handle requester_handle,
            approval.pull_request_number,approval.head_sha approval_head_sha,
-           EXISTS(SELECT 1 FROM agent_turns turn WHERE turn.room_id=fact.corner_id AND turn.status='working') running,
-           last.author_id last_author_id,last_author.kind last_author_kind,last.created_at last_created_at,
-           last.presentation last_type,left(last.text,280) last_excerpt
-         FROM corner_facts fact
-         JOIN rooms room ON room.id=fact.corner_id
-         LEFT JOIN corner_merge_approvals approval ON approval.corner_id=fact.corner_id
-         LEFT JOIN identities requester ON requester.id=fact.commissioned_by
-         LEFT JOIN LATERAL (SELECT author_id,created_at,presentation,text FROM messages message
-           WHERE message.room_id=fact.corner_id AND ${visibleChatMessageSql('message')}
-           ORDER BY created_at DESC,id DESC LIMIT 1) last ON true
-         LEFT JOIN identities last_author ON last_author.id=last.author_id
-         WHERE fact.corner_id=$1`,
-        [cornerId],
+           lm.author_id last_author_id,lm.created_at last_created_at,
+           lm.presentation last_type,left(lm.text,280) last_excerpt
+         FROM rooms c ${facts.joins}
+         LEFT JOIN corner_merge_approvals approval ON approval.corner_id=c.id
+         LEFT JOIN identities requester ON requester.id=f.commissioned_by
+         WHERE c.id=$1 AND f.corner_id IS NOT NULL`,
+        [cornerId, agentId],
       )
     ).rows[0];
+    const derived = row ? cornerRowState(row) : undefined;
     const held = (await activeCornerHolds(this.database, cornerId)).length > 0;
     return {
       cornerId,
-      ...(row ? { archived: row.archived, parentRoomId: row.parent_room_id } : {}),
+      ...(row ? { archived: Boolean(row.archived_at), parentRoomId: row.parent_room_id } : {}),
       objective: row?.objective ?? '',
       ...(held ? { held: true } : {}),
       ...(brief ? { brief } : {}),
@@ -3226,7 +3220,9 @@ export class DaemonService {
             },
           }
         : {}),
-      ...(row ? { activity: row.running ? ('running' as const) : ('idle' as const) } : {}),
+      ...(derived
+        ? { activity: derived.state === 'working' ? ('running' as const) : ('idle' as const) }
+        : {}),
       ...(row?.last_author_id && row.last_created_at && row.last_type
         ? {
             lastMessage: {
@@ -3237,9 +3233,7 @@ export class DaemonService {
             },
           }
         : {}),
-      ...(row && !row.running && !row.lifecycle?.pr && row.last_author_kind === 'agent'
-        ? { awaiting: 'reply' as const }
-        : {}),
+      ...(derived?.state === 'waiting' && row?.owed ? { awaiting: 'reply' as const } : {}),
     };
   }
   private async listCornerBriefRevisions(
@@ -3329,7 +3323,6 @@ export class DaemonService {
       verb: 'closed',
       object: { text: closed.title, url: closed.url },
     });
-    this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });
     return { status: 'closed', pullRequestNumber: closed.number, url: closed.url };
   }
 
@@ -7471,7 +7464,6 @@ export class DaemonService {
           [commandRoomId, agentId, cornerId],
         );
     });
-    this.live.publish({ type: 'invalidate', roomId, reason: 'corner', agentId });
     const watch = (
       await this.database.query<{ kinds: CornerWatchKind[] }>(
         `SELECT kinds FROM corner_watches WHERE watcher_room_id=$1 AND agent_id=$2 AND corner_id=$3`,
@@ -7594,7 +7586,6 @@ export class DaemonService {
         queued: false, reason: 'No lifecycle wake queued',
       } };
     });
-    this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });
     return brief!;
   }
   private async archiveCorner(cornerId: string, agentId: string) {

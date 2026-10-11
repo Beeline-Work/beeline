@@ -3178,7 +3178,8 @@ describe('Reproduction IDLE-1: corner status says whether its agent runs or wait
       lifecycle: expect.objectContaining({ lifecycle: 'working' }),
       activity: 'running',
     });
-    const outline = `Outline for approval. ${'x'.repeat(400)}`;
+    // The outline asks the human, so the corner owes them a reply.
+    const outline = `@human Outline for approval. ${'x'.repeat(400)}`;
     await db.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
        VALUES($1,$2,$3,$4,'message',now()+interval '1 second'),

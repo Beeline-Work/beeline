@@ -1188,7 +1188,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                         } as const)
                       : undefined;
                   if (!target) {
-                    if ((event.reason === 'corner-status' || event.reason === 'corner') &&
+                    if (event.reason === 'corner-status' &&
                         typeof options.phone.liveChatCornerStatus === 'function') {
                       const statusKey = `${roomId}:corner-status`;
                       beginRowRead(statusKey);

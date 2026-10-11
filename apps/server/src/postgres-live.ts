@@ -3,6 +3,12 @@ import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import { askSql } from './needs-you.js';
+import {
+  CORNER_ROW_FACT_COLUMNS,
+  CORNER_ROW_MESSAGE_COLUMNS,
+  CORNER_ROW_ROOM_COLUMNS,
+  rowChangedSql,
+} from './corner-row-projection.js';
 
 export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
 
@@ -84,7 +90,12 @@ BEGIN
         'agentId', COALESCE(NEW.author_id, OLD.author_id),
         'needsYouCandidate', COALESCE(NEW.presentation,OLD.presentation) IN ('card','system')
           OR (COALESCE(NEW.presentation,OLD.presentation)='message' AND
-            ${askSql('COALESCE(NEW.text,OLD.text)')})
+            ${askSql('COALESCE(NEW.text,OLD.text)')}),
+        -- The newest chat message is a column of the parent's corner row.
+        'cornerParentId', CASE WHEN (NEW.presentation IN ('message','system')
+            OR OLD.presentation IN ('message','system'))
+            AND ${rowChangedSql(CORNER_ROW_MESSAGE_COLUMNS)}
+          THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)) END
       );
     WHEN 'room_read_marks' THEN
       payload = jsonb_build_object(
@@ -159,11 +170,7 @@ BEGIN
           ROW(OLD.repository_key,OLD.repository_remote,OLD.repository_target_branch,
               OLD.repository_resolution,OLD.github_installation_id)
           ELSE false END,
-        -- A corner's name and archive state are rows in its parent's corner list.
-        'cornerParentId', CASE WHEN TG_OP <> 'UPDATE'
-            OR NEW.name IS DISTINCT FROM OLD.name
-            OR NEW.archived_at IS DISTINCT FROM OLD.archived_at
-            OR NEW.parent_id IS DISTINCT FROM OLD.parent_id
+        'cornerParentId', CASE WHEN ${rowChangedSql(CORNER_ROW_ROOM_COLUMNS)}
           THEN COALESCE(NEW.parent_id, OLD.parent_id) END
       );
     WHEN 'github_installations' THEN
@@ -229,14 +236,10 @@ BEGIN
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
         'cornerId', COALESCE(NEW.corner_id, OLD.corner_id),
         'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false),
-        'cornerParentId', CASE WHEN TG_OP <> 'UPDATE'
-            OR NEW.lifecycle IS DISTINCT FROM OLD.lifecycle
-            OR NEW.close_requested IS DISTINCT FROM OLD.close_requested
-            OR NEW.workflow_state IS DISTINCT FROM OLD.workflow_state
-            OR NEW.workflow_outcome IS DISTINCT FROM OLD.workflow_outcome
+        'cornerParentId', CASE WHEN ${rowChangedSql(CORNER_ROW_FACT_COLUMNS)}
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
       );
-    WHEN 'corner_owed', 'corner_follows' THEN
+    WHEN 'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_app_bindings' THEN
       -- Only the parent's corner list reads these rows. One owed refresh
       -- deletes and reinserts many rows; a fixed operation and a per-
       -- transaction trace make every row's payload equal, so PostgreSQL
@@ -300,7 +303,8 @@ BEGIN
   END CASE;
   -- A section clear can touch hundreds of marks in one transaction. Equal
   -- room/reader payloads let PostgreSQL collapse them into one notification.
-  IF TG_TABLE_NAME IN ('needs_you_marks', 'corner_owed', 'corner_follows') THEN
+  IF TG_TABLE_NAME IN ('needs_you_marks', 'corner_owed', 'corner_follows',
+      'corner_brief_revisions', 'corner_app_bindings') THEN
     payload = payload || jsonb_build_object(
       'traceId', md5(txid_current()::text || payload::text),
       'databaseAt', floor(extract(epoch FROM transaction_timestamp()) * 1000)::bigint
@@ -335,7 +339,7 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
-    'corner_facts', 'corner_owed', 'corner_follows',
+    'corner_facts', 'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_app_bindings',
     'permission_authority', 'room_read_marks', 'message_bookmarks',
     'needs_you_marks',
     'agent_grants', 'agent_schedules', 'agent_commands',
@@ -360,6 +364,11 @@ BEGIN
 END;
 $$;
 `;
+
+/** Tables only a parent's corner list reads; their rows publish nothing else. */
+const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
+  'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_app_bindings',
+]);
 
 interface PgNotification {
   channel: string;
@@ -620,8 +629,7 @@ export class PostgresLiveListener {
     const key = (payload.table === 'agent_config' || payload.table === 'connector_assignment') &&
         payload.agentId
       ? `${payload.table}:${payload.agentId}`
-      : (payload.table === 'corner_owed' || payload.table === 'corner_follows') &&
-          payload.cornerParentId
+      : PARENT_ONLY_TABLES.has(payload.table) && payload.cornerParentId
         ? `corner-status:${payload.cornerParentId}`
       : (payload.table === 'github_installations' && payload.installationId) ||
           (payload.table === 'github_repositories' && payload.repositoryId)
@@ -857,7 +865,7 @@ export class PostgresLiveListener {
       }
       return;
     }
-    if (payload.table === 'corner_owed' || payload.table === 'corner_follows') {
+    if (PARENT_ONLY_TABLES.has(payload.table)) {
       if (payload.cornerParentId)
         this.live.publish({ type: 'invalidate', roomId: payload.cornerParentId,
           reason: 'corner-status' });

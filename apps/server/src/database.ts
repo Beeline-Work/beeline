@@ -2793,6 +2793,12 @@ export async function migrate(
      ON push_delivery_claims(completed_at)
      WHERE status IN ('delivered','suppressed','failed')`,
   ));
+  await retryMigrationStep('pending read-clear claim index', () => createIndexConcurrently(
+    database, 'push_delivery_claims_read_clear_idx',
+    `CREATE INDEX CONCURRENTLY push_delivery_claims_read_clear_idx
+     ON push_delivery_claims(device_token,message_id)
+     WHERE status='delivered' AND read_cleared_at IS NULL`,
+  ));
   await ddl('wallet delegation',
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );

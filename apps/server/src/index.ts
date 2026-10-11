@@ -18,8 +18,7 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
-import { NeedsYouExpiryLoop } from './needs-you-expiry.js';
-import { CornerOwedExpiry } from './corner-owed-expiry.js';
+import { DeadlineExpiry } from './deadline-expiry.js';
 import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
 import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { ConnectionPresence } from './connection-presence.js';
@@ -271,8 +270,7 @@ async function main() {
       })
     : new MediaExpiryLoop(jobsDatabase);
   const choiceExpiry = new ChoiceExpiryLoop(jobsDatabase);
-  const needsYouExpiry = new NeedsYouExpiryLoop(jobsDatabase);
-  const owedExpiry = new CornerOwedExpiry(jobsDatabase);
+  const deadlineExpiry = new DeadlineExpiry(jobsDatabase);
   const sendPushTest = pushSender || webPushSender
     ? createPushTestSender(database, pushSender, apnsPushSender, webPushSender)
     : undefined;
@@ -405,8 +403,8 @@ async function main() {
       }
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
-      await backgroundJobs.run('corner-owed-expiry', () => owedExpiry.runOnce(newLeader));
-      const needsYouDue = await backgroundJobs.run('needs-you-expiry', () => needsYouExpiry.runOnce());
+      const deadlineDue = await backgroundJobs.run('deadline-expiry', () =>
+        deadlineExpiry.runOnce(newLeader));
       // Recovery scans run once per leadership tenure. Normal writes and
       // Repository events drive their own transitions; failures retry on the next cycle.
       if (githubJobs && !recoveredCornerMerges) {
@@ -445,13 +443,11 @@ async function main() {
           }));
       }
       const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
-      const nextOwed = await backgroundJobs.run('corner-owed-next-due', () => owedExpiry.msUntilNextDue());
       return Math.min(
         reconciliationMs,
         ...(nextDue.ok && nextDue.value ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
-        ...(nextOwed.ok && nextOwed.value !== null ? [Math.max(0, nextOwed.value)] : []),
-        ...(needsYouDue.ok && needsYouDue.value !== null
-          ? [Math.max(0, needsYouDue.value - Date.now())] : []),
+        ...(deadlineDue.ok && deadlineDue.value !== null
+          ? [Math.max(0, deadlineDue.value)] : []),
       );
     },
     reconciliationMs,

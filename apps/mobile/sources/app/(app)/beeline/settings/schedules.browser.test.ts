@@ -82,7 +82,6 @@ function fontsCss(mobile: string): string {
 }
 
 type Page = {
-  beforeRetry: string[];
   text: string[];
   eyebrowFont: string | null;
   titleFont: string | null;
@@ -198,20 +197,19 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.inputs).toContainEqual(['deleteRoomSchedule', { roomId: 'room-1', scheduleId: 'daily' }]);
   }, 120_000);
 
-  it('shows the saved workflow steps on timer and event detail pages', async () => {
+  it('links workflow timer and event details to the steps on the workflow page', async () => {
     for (const [pageName, id, stop] of [
       ['schedule', 'video', 'deleteRoomSchedule'],
       ['subscription', 'sub-2', 'deleteRoomSubscription'],
     ] as const) {
       const page = await proof(`?page=${pageName}&roomId=room-1&${pageName === 'schedule' ? 'scheduleId' : 'subscriptionId'}=${id}`);
       expect(page.text).toEqual(expect.arrayContaining(['When', 'Agent', 'Where', 'Does', 'Feedback triage']));
-      expect(page.steps.length).toBeGreaterThan(2);
-      expect(page.pendingCircles).toBe(page.allCircles);
-      expect(page.detailAxis).toEqual([16, 16, 16, 16, 16, 16, 16]);
-      expect(page.inputs).toContainEqual(['readWorkflowDefinition', { roomId: 'corner-1', name: 'feedback-triage' }]);
-      if (pageName === 'subscription') expect(page.pushed).toContainEqual({
-        pathname: '/beeline/workflow', params: { roomId: 'corner-1', name: 'feedback-triage',
-          parentRoomId: 'room-1', subscriptionId: 'sub-2' },
+      expect(page.steps).toEqual([]);
+      expect(page.pendingCircles).toBe(0);
+      expect(page.detailAxis).toEqual([16, 16, 16, 16, 16, 16]);
+      expect(page.inputs).not.toContainEqual(['readWorkflowDefinition', { roomId: 'corner-1', name: 'feedback-triage' }]);
+      expect(page.pushed).toContainEqual({
+        pathname: '/beeline/workflow', params: { roomId: 'corner-1', name: 'feedback-triage' },
       });
       stopped(page, stop);
     }
@@ -240,62 +238,44 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     ]);
   }, 120_000);
 
-  it('opens a workflow schedule on the workflow page: its schedule rows, every step pending on the rail, then Stop', async () => {
+  it('opens a workflow from a schedule with its steps and history, without trigger details', async () => {
     const page = await proof(
       '?page=workflow&roomId=corner-1&name=feedback-triage&scheduleId=video&parentRoomId=room-1',
     );
     expect(page.text[0]).toBe('Feedback triage');
-    expect(page.text).toEqual(
-      expect.arrayContaining([
-        'When',
-        expect.stringMatching(/^Daily at 14:00 America\/New_York · next /),
-        'Agent',
-        '@Ruby',
-        'Where',
-        'issues-triage',
-        'Steps',
-        'History',
-        'No runs yet.',
-        'Stop schedule',
-      ]),
-    );
+    expect(page.text).toEqual(expect.arrayContaining(['Steps', 'History', 'No runs yet.']));
+    for (const triggerDetail of ['When', 'Agent', 'Where', 'Stop schedule']) {
+      expect(page.text).not.toContain(triggerDetail);
+    }
     // The contract's path from its start state, every step pending: no run status is claimed.
     expect(page.steps.length).toBeGreaterThan(2);
     expect(page.steps[0]).toBe('workflow-steps-step-notify');
     expect(page.pendingCircles).toBe(page.allCircles);
     expect(page.text.indexOf('Steps')).toBeLessThan(page.text.indexOf('History'));
-    // The workflow is read from the schedule's own corner.
+    // The workflow is read from the schedule's own corner without loading its trigger again.
     expect(page.inputs).toContainEqual(['readWorkflowDefinition', { roomId: 'corner-1', name: 'feedback-triage' }]);
-    stopped(page, 'deleteRoomSchedule');
-    expect(page.inputs).toContainEqual(['deleteRoomSchedule', { roomId: 'room-1', scheduleId: 'video' }]);
+    expect(page.operations).not.toContain('listRoomSchedules');
+    expect(page.operations).not.toContain('deleteRoomSchedule');
   }, 120_000);
 
-  it('keeps subscription facts and two-step Stop on the workflow page opened from Does', async () => {
+  it('keeps subscription trigger details and Stop on its own page', async () => {
     const page = await proof('?page=workflow&roomId=corner-1&name=feedback-triage&subscriptionId=sub-2&parentRoomId=room-1');
-    expect(page.text).toEqual(expect.arrayContaining([
-      'When', 'On someone joining this Room', 'Agent', '@Ruby', 'Where', 'issues-triage',
-      'Steps', 'History', 'Stop subscription',
-    ]));
+    expect(page.text).toEqual(expect.arrayContaining(['Steps', 'History']));
+    for (const triggerDetail of ['When', 'Agent', 'Where', 'Stop subscription']) {
+      expect(page.text).not.toContain(triggerDetail);
+    }
     expect(page.steps.length).toBeGreaterThan(2);
     expect(page.pendingCircles).toBe(page.allCircles);
-    expect(page.afterStop.slice(-2)).toEqual(['Confirm: Stop subscription', 'Cancel']);
-    stopped(page, 'deleteRoomSubscription');
-    expect(page.inputs).toContainEqual(['deleteRoomSubscription', { roomId: 'room-1', subscriptionId: 'sub-2' }]);
+    expect(page.operations).not.toContain('listRoomSubscriptions');
+    expect(page.operations).not.toContain('deleteRoomSubscription');
   }, 120_000);
 
-  it('shows a failed schedule read on the workflow page, and Retry restores its rows and Stop', async () => {
+  it('does not need schedule reads to show the workflow', async () => {
     const page = await proof(
       '?page=workflow&roomId=corner-1&name=feedback-triage&scheduleId=video&parentRoomId=room-1&failScheduleRead=1',
     );
-    expect(page.beforeRetry).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^Could not load schedules and subscriptions: .*schedule read unavailable · Retry$/),
-        'Steps',
-      ]),
-    );
-    expect(page.beforeRetry).not.toContain('Stop schedule');
-    expect(page.text).toEqual(expect.arrayContaining(['Agent', '@Ruby', 'issues-triage', 'Stop schedule']));
+    expect(page.text).toContain('Steps');
     expect(page.text.some((line) => line.includes('Could not load'))).toBe(false);
-    stopped(page, 'deleteRoomSchedule');
+    expect(page.operations).not.toContain('listRoomSchedules');
   }, 120_000);
 });

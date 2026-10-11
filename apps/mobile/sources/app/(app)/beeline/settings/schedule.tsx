@@ -76,8 +76,8 @@ export default function PromptSchedule() {
             where={scheduleWhere(schedule, work?.roomName)}
             whereCorner={schedule.corner}
           />
-          <ScheduledWorkDoes roomId={schedule.roomId} parentRoomId={roomId}
-            scheduleId={schedule.id} prompt={schedule.message} workflowSlug={schedule.workflowSlug} />
+          <ScheduledWorkDoes roomId={schedule.roomId}
+            prompt={schedule.message} workflowSlug={schedule.workflowSlug} />
           <StopScheduledWork
             label="Stop schedule"
             onStop={() => void stop()}

@@ -37,12 +37,6 @@ async function run() {
   createRoot(document.getElementById('root')!).render(<Page />);
   for (let i = 0; i < 8; i += 1) await pause();
   await document.fonts.ready;
-  // A failed schedule read shows its error; Retry reads it again.
-  const beforeRetry = leaves().map((node) => node.textContent);
-  if (document.querySelector('[data-testid="workflow-schedule-error"]')) {
-    click('workflow-schedule-error');
-    for (let i = 0; i < 4; i += 1) await pause();
-  }
   const nodes = leaves();
   const text = nodes.map((node) => node.textContent);
   const find = (value: string) => nodes.find((node) => node.textContent === value);
@@ -53,9 +47,9 @@ async function run() {
   const glyphs = ids(/^(scheduled-work-glyph-|subscription-glyph-)/);
   const workflowFills = glyphs.map((id) =>
     document.querySelector(`[data-testid="${id}"] polygon`)?.getAttribute('fill'));
-  const steps = ids(/^(workflow-steps|scheduled-work-steps)-step-[^-]+$/);
-  const pendingCircles = ids(/^(workflow-steps|scheduled-work-steps)-step-.*-circle-pending$/).length;
-  const allCircles = ids(/^(workflow-steps|scheduled-work-steps)-step-.*-circle-/).length;
+  const steps = ids(/^workflow-steps-step-[^-]+$/);
+  const pendingCircles = ids(/^workflow-steps-step-.*-circle-pending$/).length;
+  const allCircles = ids(/^workflow-steps-step-.*-circle-/).length;
   const listAxes = ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1', 'subscription-sub-2']
     .map((id) => document.querySelector(`[data-testid="${id}"]`))
     .filter((row): row is Element => Boolean(row))
@@ -78,26 +72,22 @@ async function run() {
   const detailAxis = [
     'scheduled-work-facts-when', 'scheduled-work-facts-agents', 'scheduled-work-facts-where',
     'scheduled-work-does-header', 'scheduled-work-prompt', 'scheduled-work-workflow',
-    'scheduled-work-steps-step-notify-circle-pending',
     page === 'subscription' ? 'stop-subscription' : 'stop-schedule',
   ].map((id) => document.querySelector(`[data-testid="${id}"]`))
     .filter((node): node is Element => Boolean(node))
     .map((node) => (node.querySelector('[dir=auto]') ?? node).getBoundingClientRect().x);
   for (const id of ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1', 'subscription-sub-2']) click(id);
-  if (page === 'subscription') click('scheduled-work-workflow');
+  if (page === 'schedule' || page === 'subscription') click('scheduled-work-workflow');
   const stopId = page === 'subscription' ? 'stop-subscription'
-    : page === 'workflow' ? new URLSearchParams(location.search).has('subscriptionId')
-      ? 'stop-workflow-subscription' : 'stop-workflow-schedule'
-      : 'stop-schedule';
-  click(stopId);
+    : page === 'schedule' ? 'stop-schedule' : null;
+  if (stopId) click(stopId);
   await pause();
   const afterStop = leaves().map((node) => node.textContent);
   const operationsBeforeConfirm = [...((globalThis as { __operations?: string[] }).__operations ?? [])];
-  click(`${stopId}-confirm`);
+  if (stopId) click(`${stopId}-confirm`);
   for (let i = 0; i < 3; i += 1) await pause();
   report(
     JSON.stringify({
-      beforeRetry,
       text,
       eyebrowFont: font(eyebrow),
       titleFont: font(title),

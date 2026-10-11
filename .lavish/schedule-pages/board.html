@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beeline schedule and workflow pages · approval board</title>
+  <style>
+    @font-face { font-family: SpaceGrotesk; src: url(../../apps/mobile/sources/assets/fonts/SpaceGrotesk-Regular.ttf); }
+    @font-face { font-family: SpaceGrotesk; src: url(../../apps/mobile/sources/assets/fonts/SpaceGrotesk-SemiBold.ttf); font-weight: 600; }
+    :root { color-scheme: dark; font-family: SpaceGrotesk, sans-serif; background: #160e1c; color: #f5ecf4; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 28px; }
+    header { max-width: 1240px; margin: 0 auto 28px; }
+    h1 { font-size: 27px; line-height: 1.2; margin: 0 0 8px; }
+    p { max-width: 850px; color: #baaebd; line-height: 1.5; margin: 0; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; max-width: 1240px; margin: auto; }
+    .card { padding: 20px; border: 1px solid #4b384e; border-radius: 16px; background: #201527; }
+    .card h2 { font-size: 19px; margin: 0 0 5px; }
+    .card p { font-size: 14px; margin-bottom: 18px; }
+    .shot { display: block; max-width: 100%; height: auto; border: 1px solid #4b384e; }
+    .phone .shot { width: 390px; margin: 0 auto; }
+    .desktop .shot { width: 100%; }
+    a { color: #d3a867; }
+    @media (max-width: 840px) { body { padding: 16px; } .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Schedule → Feedback triage</h1>
+    <p>Approved layout rendered from the actual Beeline screens, fonts, and dark theme. Schedule details keep When, Agent, Where, the linked Does row, and Stop; the workflow owns Steps and History. The schedule shown is Daily 10:00 America/New_York with @Ruby in issues-triage. Rebuild the interactive frames with <code>node --import tsx .lavish/schedule-pages/build.ts</code>.</p>
+  </header>
+  <main class="grid">
+    <section class="card phone"><h2>Schedule · phone</h2><p>390 × 900. Tap Does to open the workflow.</p><img class="shot" src="schedule-phone.png" alt="Schedule phone preview"></section>
+    <section class="card phone"><h2>Workflow · phone</h2><p>390 × 900. Steps and History live here.</p><img class="shot" src="workflow-phone.png" alt="Workflow phone preview"></section>
+    <section class="card desktop"><h2>Schedule · desktop</h2><p>1200 × 900 viewport.</p><img class="shot" src="schedule-desktop.png" alt="Schedule desktop preview"></section>
+    <section class="card desktop"><h2>Workflow · desktop</h2><p>1200 × 900 viewport.</p><img class="shot" src="workflow-desktop.png" alt="Workflow desktop preview"></section>
+  </main>
+</body>
+</html>

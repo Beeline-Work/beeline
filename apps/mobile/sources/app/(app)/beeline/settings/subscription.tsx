@@ -68,8 +68,8 @@ export default function Subscription() {
             where={subscriptionWhere(subscription, work?.roomName)}
             whereCorner={subscription.corner}
           />
-          <ScheduledWorkDoes roomId={subscription.roomId} parentRoomId={roomId}
-            subscriptionId={subscription.id} prompt={subscription.prompt ?? 'React to this event.'}
+          <ScheduledWorkDoes roomId={subscription.roomId}
+            prompt={subscription.prompt ?? 'React to this event.'}
             workflowSlug={subscription.workflowSlug} />
           <View style={styles.stop}>
             <StopScheduledWork

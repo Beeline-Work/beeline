@@ -26,7 +26,9 @@ describe('corner-open approval card design contract', () => {
 
   it('inscribes one PR status line in corners and offers no merge or objective panel', () => {
     expect(source).toContain('<CornerStatusLine');
-    expect(source).toContain('lifecycle={roomSurface?.cornerLifecycle}');
+    // 9.4: the line reads the header's row, the one check-state source.
+    expect(source).toContain('lifecycle={cornerHeaderSource?.lifecycle}');
+    expect(source).not.toContain('roomSurface?.cornerLifecycle');
     expect(source).not.toContain('CornerLifecyclePanel');
     expect(source).not.toContain('CornerPlanPin');
     expect(source).not.toContain("monolithPhoneOperation('approveCornerMerge'");

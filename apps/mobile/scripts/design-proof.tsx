@@ -18,6 +18,7 @@ import { AppSignInCard } from '../sources/app/(app)/beeline/chat/RoomMessageVari
 import WorkflowsScreen from '../sources/app/(app)/beeline/settings/workflows';
 import TextSelectionScreen from '../sources/app/(app)/text-selection';
 import { Typography } from '../sources/constants/Typography';
+import { applyChatListCorners } from '../sources/buzz/room-corner-store';
 
 /**
  * The design-inconsistency proof (DESIGN.md, PR #2044). Paints the changed
@@ -38,6 +39,16 @@ const latestMessage = {
 };
 const row = (name: string, unread: boolean) =>
   ({ room: { id: name, name, updatedAt: Date.now() }, latestMessage, unread }) as never;
+
+// The corner dropdown reads the Room's corners from the corner store.
+applyChatListCorners([{
+  room: { id: 'r' } as never,
+  cornerCount: 2,
+  openCorners: [
+    { id: 'c1', name: 'Docs refresh', state: 'waiting', mine: true },
+    { id: 'c2', name: 'Design fixes', state: 'working', mine: true },
+  ],
+}], -1);
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const { theme } = useUnistyles();
@@ -143,13 +154,7 @@ function Board() {
         <Section title="7 · Corner approved link (44pt) · corner dropdown # mark">
           <WritePermissionOutcome status="allowed" subchannelId="c1" onOpen={() => undefined} />
           <DesktopRoomCorners
-            item={{
-              room: { id: 'r', name: 'alpha', updatedAt: 1 },
-              openCorners: [
-                { id: 'c1', name: 'Docs refresh', state: 'waiting', mine: true },
-                { id: 'c2', name: 'Design fixes', state: 'working', mine: true },
-              ],
-            } as never}
+            item={{ room: { id: 'r', name: 'alpha', updatedAt: 1 } } as never}
             onOpen={() => undefined}
           />
         </Section>

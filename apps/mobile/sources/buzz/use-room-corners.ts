@@ -9,6 +9,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
+import { clientResetGeneration } from '@/sync/client-reset';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 import { cornerHeaderItem, type CornerDisplayItem } from '@/buzz/corner-display-state';
 import {
@@ -16,7 +17,6 @@ import {
   applyCornerListRead,
   applyOpenCornerPage,
   cornerReadMark,
-  cornerStoreGeneration,
   findRoomCornerRow,
   getRoomCorners,
   hydrateRoomCorners,
@@ -63,7 +63,7 @@ async function roomReader(roomId: string, client: CornersClient | undefined): Pr
  * reads once more.
  */
 function readFirstPage(roomId: string, reader: Reader, force: boolean): Promise<void> {
-  const generation = cornerStoreGeneration();
+  const generation = clientResetGeneration();
   const running = firstPageReads.get(roomId);
   // A read started before a store reset belongs to the previous account.
   if (running?.generation === generation) {
@@ -80,7 +80,7 @@ function readFirstPage(roomId: string, reader: Reader, force: boolean): Promise<
         if (mark.generation !== generation) return;
         const view = await reader.client.corners(roomId);
         applyCornerListRead(roomId, view, mark);
-        if (cornerStoreGeneration() !== generation) return;
+        if (clientResetGeneration() !== generation) return;
         const held = roomCornerListView(getRoomCorners(roomId));
         if (held && reader.address)
           void mobileSurfaceCache.write(reader.address, held, isCornerListView);
@@ -98,7 +98,7 @@ function readFirstPage(roomId: string, reader: Reader, force: boolean): Promise<
  * again while a frame that landed mid-read left them unproven.
  */
 async function rereadOpenPages(roomId: string, reader: Reader): Promise<void> {
-  const generation = cornerStoreGeneration();
+  const generation = clientResetGeneration();
   do {
     const mark = cornerReadMark(roomId);
     if (mark.generation !== generation) return;

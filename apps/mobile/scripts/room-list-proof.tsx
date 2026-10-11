@@ -12,6 +12,7 @@ import { DirectMessageHeaderIdentity } from '../sources/components/buzz/DirectMe
 import { ChannelHeaderTitle } from '../sources/components/buzz/ChannelHeaderTitle';
 import { SYSTEM_IDENTITY_PUBKEY } from '../sources/buzz/system-identity';
 import { RoomCornerSummary } from '../sources/components/buzz/RoomCornerSummary';
+import { applyChatListCorners, getRoomCornerSummary } from '../sources/buzz/room-corner-store';
 import { RoomListSectionHeader } from '../sources/components/buzz/RoomListSectionHeader';
 import { DesktopRoomCorners } from '../sources/components/buzz/DesktopRoomCorners';
 import { DesktopWorkspaceStrip } from '../sources/components/buzz/DesktopWorkspaceStrip';
@@ -97,6 +98,8 @@ if (systemMode) {
     },
   } as unknown as ChatListItem);
 }
+// The Room list surfaces read corner facts from the corner store, as the list store fills it.
+applyChatListCorners(rooms, -1);
 function Proof() {
   const { theme } = useUnistyles();
   const t = theme.buzz;
@@ -195,7 +198,7 @@ function Proof() {
               }
               testID={`room-${item.room.id}`}
             />
-            {!!item.cornerCount &&
+            {!!getRoomCornerSummary(item.room.id)?.cornerCount &&
               (desktop ? (
                 <DesktopRoomCorners
                   item={item}
@@ -203,7 +206,7 @@ function Proof() {
                 />
               ) : (
                 <RoomCornerSummary
-                  count={item.cornerCount}
+                  count={getRoomCornerSummary(item.room.id)!.cornerCount}
                   waiting={(item as any).waitingCornerCount}
                   onPress={() => action(`corners/${item.room.id}`)}
                   testID={`corners-${item.room.id}`}

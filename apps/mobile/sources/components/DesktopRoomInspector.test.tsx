@@ -617,6 +617,16 @@ describe('DesktopRoomInspector work pane', () => {
     expect(() => tree.root.findByProps({ accessibilityLabel: 'Back to work overview' })).toThrow();
   });
 
+  it('3.6: shows the composer unless the server says the corner is archived', async () => {
+    const { archived: _archived, ...unstated } = corners[0].corner;
+    for (const [corner, composer] of [[unstated, 1], [{ ...unstated, archived: true }, 0]] as const) {
+      const detail = { ...room(), room: corner, parent: room().room } as any;
+      const tree = await render(props({ client: { room: vi.fn(async () => detail) }, selectedCornerId: 'working' }));
+      expect(tree.root.findAllByType('ConversationComposer' as any)).toHaveLength(composer);
+      act(() => tree.unmount());
+    }
+  });
+
   it('links the pinned objective to the latest brief only when the corner has one', async () => {
     const cornerBrief = { revision: 2, spec: 'Spec', attachments: [] };
     const detail = { ...room(), room: corners[0].corner, parent: room().room, cornerBrief } as any;

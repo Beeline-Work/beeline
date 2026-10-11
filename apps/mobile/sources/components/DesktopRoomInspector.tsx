@@ -47,6 +47,7 @@ import {
 import { subscribeClientReset } from '@/sync/client-reset';
 import { useRoomCorners } from '@/buzz/use-room-corners';
 import { findRoomCornerRow } from '@/buzz/room-corner-store';
+import { roomIsArchived } from '@/buzz/corner-display-state';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
@@ -675,7 +676,7 @@ function CornerCockpit({
           testID="desktop-work-corner-transcript"
         />
       )}
-      {detail && detail.room.archived === false ? (
+      {detail && !roomIsArchived(detail.room) ? (
         <View style={styles.cockpitComposer}>
           {sendError ? <Text style={styles.error}>{sendError}</Text> : null}
           <View style={styles.cockpitStatusSlot} testID="desktop-work-corner-status-slot">

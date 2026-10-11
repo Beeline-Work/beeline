@@ -8,6 +8,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { machineHost } from './machine-host.js';
+import { markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
+import { admitSharedAssets } from './shared-asset-capacity.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import {
@@ -461,6 +463,7 @@ export class MonolithRoomTurnLoop {
   private sessionCodegraphReady = false;
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
+  private sharedAssetsActive = false;
   /**
    * The real size of the last settled prompt, captured while the session that
    * sent it is still alive — `discardSession` clears both the client and the id,
@@ -565,6 +568,8 @@ export class MonolithRoomTurnLoop {
    * rather than widening the boundary.
    */
   private grantWritePolicy(): GrantWritePolicy {
+    const assetRoot = this.sharedAssetsActive ? this.options.config.agentSharedAssetRoot : undefined;
+    const runtimeDir = runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey);
     return {
       surface: 'room',
       ...(this.options.config.bwrapPath ? { bwrapPath: this.options.config.bwrapPath } : {}),
@@ -575,10 +580,27 @@ export class MonolithRoomTurnLoop {
           this.options.config.sandboxMaskPaths,
           this.options.config.operatorHome ?? homedir(),
         ),
-        ...siblingAgentMaskPaths(
-          runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
-        ),
+        ...(assetRoot ? [] : siblingAgentMaskPaths(runtimeDir)),
       ],
+      ...(assetRoot && this.options.config.agentHomeRoot
+        ? { sharedLayout: {
+            assetRoot,
+            agentRuntimeDir: runtimeDir,
+            privateHomeRoot: this.options.config.agentHomeRoot,
+            ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
+            ...(this.options.config.agentKind === 'codex' && this.agentEnv.CODEX_HOME ? { codexHome: this.agentEnv.CODEX_HOME } : {}),
+            ...(this.agentEnv.HOME ? { packageHome: this.agentEnv.HOME } : {}),
+          } }
+        : {}),
+      ...(assetRoot && this.agentEnv
+        ? { toolEnv: {
+            ...(this.agentEnv.HOME ? { HOME: this.agentEnv.HOME } : {}),
+            ...(this.agentEnv.PATH ? { PATH: this.agentEnv.PATH } : {}),
+            ...(this.agentEnv.GRADLE_USER_HOME ? { GRADLE_USER_HOME: this.agentEnv.GRADLE_USER_HOME } : {}),
+            ...(this.agentEnv.CARGO_HOME ? { CARGO_HOME: this.agentEnv.CARGO_HOME } : {}),
+            ...workspaceCacheEnv(workspaceAssetPaths(assetRoot)),
+          } }
+        : {}),
     };
   }
 
@@ -956,7 +978,36 @@ export class MonolithRoomTurnLoop {
       kind: this.options.config.agentKind,
       command,
     });
-    const agentEnv = { ...this.options.config.agentEnv, ...homeOverlay };
+    let assets = sharedAssetsEnabled() && this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath && homeOverlay.HOME &&
+      await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
+      ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
+      : undefined;
+    let toolchain;
+    if (assets) {
+      try {
+        toolchain = await prepareWorkspaceAdapter(assets, this.options.config.agentKind, command, {
+          ...this.options.config.agentEnv, ...homeOverlay, ...workspaceCacheEnv(assets),
+        });
+      } catch (error) {
+        // Pinning is optional: a failed install or registry lookup leaves the
+        // host adapter usable, while the Workspace download cache stays shared.
+        console.warn('[body] Workspace adapter pinning failed; using host adapter:', error);
+      }
+    }
+    this.sharedAssetsActive = Boolean(assets);
+    const cacheEnv = assets ? workspaceCacheEnv(assets) : {};
+    if (assets && this.options.config.agentKind === 'codex' && homeOverlay.CODEX_HOME)
+      await prepareCodexCacheTargets(homeOverlay.CODEX_HOME);
+    if (assets && homeOverlay.HOME) await preparePackageCacheTargets(homeOverlay.HOME);
+    await Promise.all(Object.values(cacheEnv).map((path) => mkdir(path, { recursive: true, mode: 0o700 })));
+    if (assets && this.options.config.agentPrivateRoot)
+      await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
+    const agentEnv: Record<string, string> = { ...this.options.config.agentEnv, ...homeOverlay, ...cacheEnv };
+    if (toolchain && assets) {
+      agentEnv.PATH = `${join(toolchain.binDir, '../../bin')}:${toolchain.binDir}:${agentEnv.PATH ?? ''}`;
+      if (this.options.config.agentKind === 'pi') agentEnv.PI_ACP_PI_COMMAND = toolchain.cliCommand;
+    }
+    const selectedCommand = toolchain?.command ?? command;
     this.agentEnv = agentEnv;
     this.modelContextTokens = await modelContextWindowTokens(
       selectionModel,
@@ -1029,12 +1080,22 @@ export class MonolithRoomTurnLoop {
         devices: grantedDevices,
         maskPaths: [
           ...credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
-          ...siblingAgentMaskPaths(
+          ...(assets ? [] : siblingAgentMaskPaths(
             runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
-          ),
+          )),
         ],
+        ...(assets && this.options.config.agentHomeRoot
+          ? { sharedLayout: {
+              assetRoot: assets.root,
+              agentRuntimeDir: runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
+              privateHomeRoot: this.options.config.agentHomeRoot,
+              ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
+              ...(this.options.config.agentKind === 'codex' && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
+              ...(agentEnv.HOME ? { packageHome: agentEnv.HOME } : {}),
+            } }
+          : {}),
       },
-      command,
+      command: selectedCommand,
       args: agentArgs,
     });
     // Built before the client: the permission allowlist resolves a harness's
@@ -1128,6 +1189,7 @@ export class MonolithRoomTurnLoop {
       clientOptions,
     );
     await this.client.start();
+    if (assets) await markWorkspaceLayoutLive(assets);
     this.watchClaudeLogin();
     const persona = configuration.soul ?? self?.soul;
     const repositoryInfo =

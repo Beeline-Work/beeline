@@ -60,7 +60,7 @@ export async function sweepStaleCornerScratch(
   let bytes = 0;
   const visit = async (dir: string, top: boolean): Promise<void> => {
     for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
-      if (top && (entry.name === 'agent-home' || entry.name === '.git')) continue;
+      if (top && (entry.name === 'agent-home' || entry.name === 'agent-private' || entry.name === '.git')) continue;
       const path = join(dir, entry.name);
       const info = await lstat(path).catch(() => undefined);
       if (!info || info.isSymbolicLink()) continue;

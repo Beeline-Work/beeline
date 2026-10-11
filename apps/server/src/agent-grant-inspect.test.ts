@@ -6,8 +6,10 @@ import { LiveHub } from './live.js';
 
 const OWNER = 'a'.repeat(64);
 const AGENT = 'c'.repeat(64);
+const OTHER_AGENT = 'd'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
+const OTHER_ROOM = '33333333-3333-4333-8333-333333333333';
 
 /**
  * listAgentGrantRequests is the inspect surface behind the agent's `list_grants`
@@ -79,7 +81,7 @@ describe('listAgentGrantRequests', () => {
   });
 
   it('exposes nothing to an agent that owns no grants', async () => {
-    const stranger = 'd'.repeat(64);
+    const stranger = OTHER_AGENT;
     await db.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Nope','nope')`,
       [stranger],
@@ -95,5 +97,23 @@ describe('listAgentGrantRequests', () => {
       stranger,
     );
     expect(listed.grants).toEqual([]);
+  });
+
+  it('keeps pending decisions separate across agents in different Rooms of one Workspace', async () => {
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other')`, [OTHER_ROOM, WORKSPACE]);
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WORKSPACE, OTHER_ROOM, OTHER_AGENT],
+    );
+    await db.query(
+      `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,auto,created_at)
+       VALUES('10000000-0000-4000-8000-000000000004',$1,$2,'command','npm publish','publish package',$3,$4,'pending',false,now())`,
+      [OTHER_AGENT, WORKSPACE, OWNER, OTHER_ROOM],
+    );
+    const first = await daemon.execute('listAgentGrantRequests', { roomId: ROOM }, AGENT);
+    const second = await daemon.execute('listAgentGrantRequests', { roomId: OTHER_ROOM }, OTHER_AGENT);
+    expect(first.grants.map((grant) => grant.target)).toContain('fly deploy -a preview --with FLY_TOKEN');
+    expect(first.grants.map((grant) => grant.target)).not.toContain('npm publish');
+    expect(second.grants.map((grant) => grant.target)).toEqual(['npm publish']);
   });
 });

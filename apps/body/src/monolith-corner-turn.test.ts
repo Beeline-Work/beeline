@@ -1,5 +1,5 @@
 import { commandFixtureApi } from './command-fixture.test-support.js';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,11 +25,13 @@ import {
   cornerReviewerInstruction,
   CORNER_REVIEWER_AUTHOR_MERGE,
 } from './prompt-assembly.js';
-import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
+import { identityFromKey, runtimeDirectory, type AgentRuntimeRecord } from './runtime.js';
+import * as workspaceAssets from './workspace-assets.js';
+import { SharedAssetCapacityError } from './shared-asset-capacity.js';
+import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
 import {
-  sharedCargoTargetDir,
   sharedNpmCacheDir,
   sharedPnpmStoreDir,
 } from './warm-node-modules.js';
@@ -45,6 +47,7 @@ const TAGGING_RULE =
 vi.mock('./corner-branch-sync.js', () => ({ syncCornerBranch: vi.fn(async () => 'unchanged') }));
 
 const roots: string[] = [];
+const bwrapUsable = Boolean(detectBwrapSandbox().path);
 const execFileAsync = promisify(execFile);
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -1570,11 +1573,13 @@ describe('corner close-request delivery', () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
     const onPoll = vi.fn();
+    let clientOptions: ConstructorParameters<typeof AcpClient>[0] | undefined;
     return {
       acp,
       abort,
       onPoll,
       root,
+      clientOptions: () => clientOptions,
       loop: (loop = new MonolithCornerTurnLoop({
         cornerId: 'corner-id',
         parentRoomId: 'room-id',
@@ -1597,12 +1602,123 @@ describe('corner close-request delivery', () => {
         onPoll,
         onFailure: vi.fn(),
         onCloseRequested: async () => undefined,
-        createAcpClient: () => acp,
+        createAcpClient: (value) => { clientOptions = value; return acp; },
         ...(fetchImpl ? { fetchImpl } : {}),
       })),
       scheduler,
     };
   }
+
+  it.each(['repository', 'scratch', 'android-operator', 'goose-unpinned', 'capacity-fallback', 'registry-fallback'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
+    vi.stubEnv('ANDROID_HOME', '');
+    vi.stubEnv('ANDROID_SDK_ROOT', '');
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getCornerRestoreState') return {
+        cornerId: 'corner-id', closeRequested: false,
+        brief: { id: 'corner-id', revision: 1,
+          spec: '## Intent\nBuild\n## User stories\n- user\n## Acceptance criteria\n- done\n## Non-goals\n- none\n## Risks\n- none\n## References\n- none',
+          authorId: TEST_AGENT_PUBLIC_KEY, sourceRoomId: 'room-id', attachments: [] },
+      };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      return { id: 'write', createdAt: 1 };
+    });
+    const fixture = await cornerHarness(execute, 5);
+    const internal = fixture.loop as unknown as {
+      options: { config: BodyConfig; runtime: AgentRuntimeRecord; worktreePath: string; repository?: { gitCommonDir: string } };
+      activate(): Promise<string>;
+    };
+    const runtimeDir = runtimeDirectory(fixture.root, internal.options.runtime.agent.publicKey);
+    const cornerRoot = join(runtimeDir, 'rooms/corner-id');
+    const worktree = shape === 'scratch' ? join(cornerRoot, 'scratch') : join(fixture.root, 'checkout');
+    await mkdir(worktree, { recursive: true });
+    if (shape !== 'scratch') {
+      await execFileAsync('git', ['init', worktree]);
+      internal.options.repository!.gitCommonDir = join(worktree, '.git');
+    } else internal.options.repository = undefined;
+    internal.options.worktreePath = worktree;
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(join(runtimeDir, 'runtime.json'), '{}');
+    Object.assign(internal.options.config, {
+      agentBinary: 'codex-acp', agentCommand: 'codex-acp', agentKind: 'codex',
+      agentEnv: { PATH: process.env.PATH ?? '' },
+      operatorHome: join(fixture.root, 'operator-home'),
+      bwrapPath: '/usr/bin/bwrap',
+      agentSharedAssetRoot: workspaceAssets.workspaceAssetRoot(fixture.root, 'workspace'),
+      agentHomeRoot: join(shape === 'scratch' ? worktree : cornerRoot, 'agent-home'),
+      agentPrivateRoot: join(shape === 'scratch' ? worktree : cornerRoot, 'agent-private'),
+    });
+    if (shape === 'goose-unpinned') {
+      internal.options.config.agentKind = 'goose';
+      internal.options.config.agentCommand = 'goose';
+      internal.options.config.agentBinary = 'goose';
+      Object.assign(internal.options.config.agentEnv, {
+        RUSTUP_HOME: '/operator/rustup', CARGO_HOME: '/operator/cargo',
+        MAVEN_ARGS: '--offline', MAVEN_CONFIG: '/operator/maven-config',
+        GRADLE_USER_HOME: '/operator/gradle', JAVA_HOME: '/operator/jdk',
+      });
+    }
+    if (shape === 'android-operator') {
+      const operatorHome = internal.options.config.operatorHome!;
+      await mkdir(join(operatorHome, 'android-sdk/platform-tools'), { recursive: true });
+      await mkdir(join(operatorHome, 'android-sdk/emulator'), { recursive: true });
+      await mkdir(join(operatorHome, '.android/avd/test.avd'), { recursive: true });
+      await writeFile(join(operatorHome, 'android-sdk/platform-tools/adb'), 'operator adb');
+      await writeFile(join(operatorHome, 'android-sdk/emulator/emulator'), 'operator emulator');
+      await writeFile(join(operatorHome, '.android/avd/test.ini'), 'path=/operator/test.avd\n');
+      await writeFile(join(operatorHome, '.android/avd/test.avd/config.ini'), 'image.sysdir.1=system-images/android-36/\n');
+    }
+    const pinningFailure = shape.endsWith('-fallback')
+      ? vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter').mockRejectedValueOnce(
+          shape === 'capacity-fallback' ? new SharedAssetCapacityError() : new Error('npm registry timed out'))
+      : undefined;
+    try {
+      await internal.activate();
+      expect(fixture.clientOptions()).toBeDefined();
+      const selected = fixture.clientOptions()!;
+      expect(selected.agentCommand).toBe('/usr/bin/bwrap');
+      if (shape === 'android-operator') {
+        const operatorSdk = join(internal.options.config.operatorHome!, 'android-sdk');
+        expect(selected.agentEnv?.ANDROID_HOME).toBe(operatorSdk);
+        expect(selected.agentEnv?.ANDROID_SDK_ROOT).toBe(operatorSdk);
+        expect(selected.agentEnv?.BEELINE_ANDROID_EMULATOR_BINARY).toBe(join(operatorSdk, 'emulator/emulator'));
+        expect(selected.agentEnv?.BEELINE_ANDROID_BASE_AVD_HOME).toContain('/avd-base/');
+        expect(selected.agentEnv?.BEELINE_ANDROID_BASE_AVD_HOME).not.toContain('/sdk/');
+      }
+      if (pinningFailure) {
+        expect(pinningFailure).toHaveBeenCalledOnce();
+        expect(selected.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
+        const args = selected.agentArgs!;
+        expect(args[args.lastIndexOf('--') + 1]).toBe('codex-acp');
+      }
+      if (shape === 'goose-unpinned') {
+        expect(selected.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
+        const args = selected.agentArgs!;
+        expect(args[args.lastIndexOf('--') + 1]).toBe('goose');
+        expect(selected.agentEnv).toMatchObject({
+          RUSTUP_HOME: '/operator/rustup', CARGO_HOME: '/operator/cargo',
+          MAVEN_ARGS: '--offline', MAVEN_CONFIG: '/operator/maven-config',
+          GRADLE_USER_HOME: '/operator/gradle', JAVA_HOME: '/operator/jdk',
+        });
+      }
+      const args = selected.agentArgs!;
+      const separator = args.lastIndexOf('--');
+      if (bwrapUsable) {
+        const child = spawnSync('/usr/bin/bwrap', [...args.slice(0, separator + 1), '/bin/sh', '-c',
+          'test -d "$1" && test -d "$2" && touch "$3" && ! touch "$4" 2>/dev/null', 'probe',
+          internal.options.config.agentHomeRoot!, internal.options.config.agentPrivateRoot!,
+          selected.agentEnv!.npm_config_cache + '/corner-proof',
+          join(selected.agentEnv!.npm_config_cache!, '../../tools/should-fail'),
+        ], { env: selected.agentEnv, encoding: 'utf8' });
+        expect(child.status, child.stderr).toBe(0);
+      }
+    } finally {
+      pinningFailure?.mockRestore();
+      fixture.abort.abort();
+      await fixture.scheduler.dispose();
+    }
+  }, 30_000);
 
   it.each(['context', 'retry', 'first brief'])(
     'Reproduction BP-01: refreshes the next prompt after a revision during %s', async (timing) => {
@@ -3302,14 +3418,14 @@ describe('thin monolith corner turn', () => {
           expect.objectContaining({
             name: 'buzz-dev-mcp',
             // Exact, not a superset: this server's env carries this corner's
-            // own repository token and the shared package cache, and nothing
+            // own repository token, shared download cache and private build
             // else of the host's.
             env: [
               { name: 'GH_TOKEN', value: 'room-installation-token' },
               { name: 'GITHUB_TOKEN', value: 'room-installation-token' },
               { name: 'npm_config_cache', value: sharedNpmCacheDir(root) },
               { name: 'PNPM_CONFIG_STORE_DIR', value: sharedPnpmStoreDir(root) },
-              { name: 'CARGO_TARGET_DIR', value: sharedCargoTargetDir(root) },
+              { name: 'CARGO_TARGET_DIR', value: join(worktree, '.beeline-cargo-target') },
               { name: 'HF_HOME', value: join(root, 'beeline', 'model-cache') },
               { name: 'HUGGINGFACE_HUB_CACHE', value: join(root, 'beeline', 'model-cache', 'hub') },
             ],

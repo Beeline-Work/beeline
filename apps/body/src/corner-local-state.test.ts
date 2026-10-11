@@ -9,7 +9,7 @@ import { RoomRuntimeCoordinator } from './room-runtime.js';
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
 
-it('reaps legacy chat-only scratch and agent home after exact server archive proof', async () => {
+it('reaps legacy chat-only work while retaining agent history after exact server archive proof', async () => {
   const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-chat-reap-'));
   roots.push(supervisorRoot);
   const identity = identityFromKey('12'.repeat(32), 'Bee');
@@ -42,7 +42,8 @@ it('reaps legacy chat-only scratch and agent home after exact server archive pro
   };
 
   await sweep.sweepCornerLocalState(new Map(), new Set());
-  await expect(access(scratch)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(access(resolve(scratch, 'work.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(access(resolve(home, 'session.txt'))).resolves.toBeUndefined();
   expect(execute).toHaveBeenCalledWith('getCornerRestoreState', { cornerId: 'corner-chat' });
   await coordinator.shutdown();
 });

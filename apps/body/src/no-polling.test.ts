@@ -118,6 +118,8 @@ describe('no timer-driven helper server reads', () => {
     expect(intervals.sort()).toEqual([
       'agent-runtime.ts', // scratch sweep (local disk)
       'session-scheduler.ts', // idle session sweep (local)
+      'shared-asset-capacity.ts', // private recovery reserve check (local disk)
+      'startup-cleanup.ts', // systemd startup deadline extension during local cleanup
       'systemd.ts', // local watchdog feed
       'turn-receipt-heartbeat.ts', // receipt heartbeat while a turn runs
     ]);

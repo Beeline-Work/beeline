@@ -16,6 +16,15 @@ export async function pruneDeletedRuntimes(supervisorRoot: string, now = Date.no
     if (!entry.isDirectory() || !match || now - Number(match[2]) < DELETED_RUNTIME_TTL_MS) continue;
     const path = join(root, entry.name);
     if (!(await lstat(path)).isDirectory()) continue;
+    // Retired runtime tombstones can still contain Room harness transcripts.
+    // Only the operator's explicit duplicate-cache cleanup may touch homes.
+    const rooms = resolve(path, 'rooms');
+    let retainsHome = false;
+    for (const room of await readdir(rooms).catch(() => [])) {
+      const home = await lstat(resolve(rooms, room, 'agent-home')).catch(() => undefined);
+      if (home) { retainsHome = true; break; }
+    }
+    if (retainsHome) continue;
     await rm(path, { recursive: true, force: true });
     removed.push(path);
   }

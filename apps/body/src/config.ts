@@ -79,6 +79,8 @@ export interface BodyConfig {
    * already-provisioned Room from before per-room homes must keep using.
    */
   agentHomeRoot?: string;
+  /** Rebuildable assets shared by agents in this machine and Workspace. */
+  agentSharedAssetRoot?: string;
   /**
    * Agent-level cache for live-derived OpenRouter provider sets
    * (`openrouter-routing.ts`); one directory per daemon, shared by every Room.

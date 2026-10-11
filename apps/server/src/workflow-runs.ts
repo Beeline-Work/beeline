@@ -22,6 +22,7 @@ import {
   type WorkflowReceipt,
 } from '@beeline/api-contract/daemon';
 import { workflowRunStatus } from '@beeline/api-contract/phone';
+import { FEEDBACK_TRIAGE_CONTRACT, FEEDBACK_TRIAGE_SLUG } from './feedback-triage-workflow.js';
 import type { SystemSubject, WorkflowRunStatus } from '@beeline/api-contract/phone';
 import { bindWorkflowStepOutput } from './workflow-step-output.js';
 import type { CommandRow } from './agent-command.js';
@@ -2135,43 +2136,68 @@ export async function archiveWorkflow(
   });
 }
 
-function describedLegacyWorkflowState(name: string, raw: unknown): unknown {
+const LEGACY_STEP_PLACEHOLDER = /^Step .+: describe what this step does$/;
+
+function stepDescription(name: string, state: Record<string, unknown>): string {
+  const hint = typeof state.hint === 'string' ? state.hint.replace(/\s+/g, ' ').trim() : '';
+  if (hint && !hint.includes('describe what this step does')) return hint.slice(0, 140).trim();
+  if (state.kind === 'terminal') {
+    const endings: Record<string, string> = {
+      done: 'The workflow finished.',
+      failed: 'The workflow stopped because a step failed.',
+      abandoned: 'The workflow was closed before it finished.',
+    };
+    return endings[String(state.status)] ?? 'The workflow ended.';
+  }
+  const fields = Array.isArray(state.requires)
+    ? state.requires.filter((field): field is string => typeof field === 'string')
+        .map((field) => field.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ')
+          .replace(/\bpr\b/gi, 'PR').replace(/\burl\b/gi, 'URL'))
+    : [];
+  if (state.kind === 'gate')
+    return fields.length ? `Ask a person for ${fields.join(', ')}.`.slice(0, 140) : 'Ask a person to choose how the workflow continues.';
+  if (fields.length) return `Produce ${fields.join(', ')} for ${name.replace(/[_-]/g, ' ')}.`.slice(0, 140);
+  return `Complete ${name.replace(/[_-]/g, ' ')} and report its outcome.`.slice(0, 140);
+}
+
+function describedLegacyWorkflowState(name: string, raw: unknown, seeded?: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
   const state = raw as Record<string, unknown>;
-  if (typeof state.does === 'string' && state.does.trim()) return state;
-  const role = typeof state.role === 'string' ? state.role : undefined;
+  if (typeof state.does === 'string' && state.does.trim() && !LEGACY_STEP_PLACEHOLDER.test(state.does)) return state;
+  const seededDoes = seeded && typeof seeded === 'object' && !Array.isArray(seeded)
+    ? (seeded as Record<string, unknown>).does : undefined;
   return {
     ...state,
-    does: role
-      ? `Step ${name} (${role}): describe what this step does`
-      : `Step ${name}: describe what this step does`,
+    does: typeof seededDoes === 'string' && seededDoes.trim() ? seededDoes : stepDescription(name, state),
   };
 }
 
 /**
  * The pure half of `backfillWorkflowSkillDescriptions`: fills whichever of
- * `summary`/per-step `does` a contract is missing, with the exact
- * placeholders the backfill writes to storage, leaving every edge, role
+ * `summary`/per-step `does` a contract is missing or previously received as
+ * a placeholder, leaving every edge, role
  * binding and loop rule untouched. Every `handoffs` entry gets a `does`,
  * terminal states included: `validateSavedWorkflow` (PR #2083) requires one on
  * every state with no exception, so a contract missing it on even one
  * terminal state would still be refused the next time it is saved. Exported
- * so a caller that must describe a legacy contract before saving it through
- * the NORMAL save path can match the backfill exactly instead of
- * hand-writing prose that could drift from it.
+ * so a caller describing a legacy contract before saving it uses the same
+ * deterministic wording as the migration.
  */
-export function describedLegacyWorkflowContract(contract: WorkflowReadContract): WorkflowReadContract {
+export function describedLegacyWorkflowContract(
+  contract: WorkflowReadContract,
+  seeded?: WorkflowContract,
+): WorkflowReadContract {
   const next: Record<string, unknown> = { ...contract };
-  if (typeof next.summary !== 'string' || !(next.summary as string).trim()) {
+  if (typeof next.summary !== 'string' || !(next.summary as string).trim() || next.summary === 'Summary not written yet') {
     const description = typeof next.description === 'string' ? (next.description as string).trim() : '';
-    next.summary = description || 'Summary not written yet';
+    next.summary = seeded?.summary || description || `Run the ${contract.name} workflow.`;
   }
   const handoffs = next.handoffs;
   if (handoffs && typeof handoffs === 'object' && !Array.isArray(handoffs)) {
     next.handoffs = Object.fromEntries(
       Object.entries(handoffs as Record<string, unknown>).map(([name, raw]) => [
         name,
-        describedLegacyWorkflowState(name, raw),
+        describedLegacyWorkflowState(name, raw, seeded?.handoffs[name]),
       ]),
     );
   }
@@ -2186,15 +2212,15 @@ export function describedLegacyWorkflowContract(contract: WorkflowReadContract):
  * re-validated on their own. Keeps `content_hash` honest (every
  * other reader treats it as `sha256(markdown)`, e.g.
  * `feedback-triage-workflow.ts`'s re-seed check). Idempotent: a version
- * already carrying both fields round-trips to the same markdown and is left
+ * already carrying useful fields round-trips to the same markdown and is left
  * untouched. Run from `migrateData()`.
  */
 export async function backfillWorkflowSkillDescriptions(database: SqlDatabase): Promise<number> {
-  const rows = await database.query<{ skill_id: string; version: number; markdown: string }>(
-    `SELECT version.skill_id,version.version,version.markdown
+  const rows = await database.query<{ skill_id: string; version: number; markdown: string; slug: string; extractor_version: string }>(
+    `SELECT version.skill_id,version.version,version.markdown,version.extractor_version,skill.slug
      FROM workspace_skill_versions version
      JOIN workspace_skills skill ON skill.id=version.skill_id
-     WHERE skill.kind='workflow' AND version.source_deleted_at IS NULL
+     WHERE skill.kind='workflow'
      ORDER BY version.skill_id,version.version`,
   );
   let changed = 0;
@@ -2205,8 +2231,11 @@ export async function backfillWorkflowSkillDescriptions(database: SqlDatabase): 
     } catch {
       continue;
     }
-    const markdown = JSON.stringify(describedLegacyWorkflowContract(contract));
-    if (markdown === row.markdown) continue;
+    const seeded = row.slug === FEEDBACK_TRIAGE_SLUG && row.extractor_version === 'feedback-triage-v1'
+      ? FEEDBACK_TRIAGE_CONTRACT : undefined;
+    const described = describedLegacyWorkflowContract(contract, seeded);
+    if (JSON.stringify(described) === JSON.stringify(contract)) continue;
+    const markdown = JSON.stringify(described);
     await database.query(
       `UPDATE workspace_skill_versions SET markdown=$3,content_hash=$4
        WHERE skill_id=$1 AND version=$2`,

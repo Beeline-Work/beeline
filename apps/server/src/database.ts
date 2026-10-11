@@ -3019,6 +3019,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'feedback-triage-v2', backfillFeedbackTriageWorkflow));
   await dataStep('workflow skill summary/does', () =>
     workflowBackfillOnce(database, 'workflow-descriptions-v1', backfillWorkflowSkillDescriptions));
+  await dataStep('repair workflow step descriptions', () =>
+    workflowBackfillOnce(database, 'workflow-descriptions-v2', backfillWorkflowSkillDescriptions));
   await dataStep('stale workflow gate choices', () =>
     workflowBackfillOnce(database, 'stale-workflow-gates-v1', closeStaleWorkflowGateChoices));
   await dataStep('workflow run storage', () =>

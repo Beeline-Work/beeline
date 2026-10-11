@@ -234,6 +234,8 @@ export function validateSavedWorkflow(value: unknown): string | null {
   for (const [name, state] of Object.entries(contract.handoffs)) {
     const at = `handoffs.${name}`;
     if (!state.does?.trim()) return `${at}: does is required and must be nonempty`;
+    if (state.does.includes('describe what this step does'))
+      return `${at}: does must describe this step`;
     // Only a person's cancel or a corner close abandons a run; an author's ending succeeds or fails.
     if (state.kind === 'terminal' && state.status === 'abandoned')
       return `${at}: a saved workflow's ending must be done or failed`;

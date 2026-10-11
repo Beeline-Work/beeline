@@ -94,3 +94,16 @@ it('names an opened corner from the parent Room record, and follows a rename', a
   expect(opened).toEqual(['renamed']);
   await act(async () => tree.unmount());
 });
+
+it('does not render a cached legacy step placeholder', async () => {
+  const stale = { ...detail, contract: { ...detail.contract, handoffs: {
+    ...detail.contract.handoffs,
+    build: { ...detail.contract.handoffs.build, does: 'Step build (worker): describe what this step does' },
+  } } } as WorkflowRunDetailView;
+  let tree!: ReactTestRenderer;
+  await act(async () => {
+    tree = create(<WorkflowRunLine detail={stale} now={3} onOpenCorner={() => undefined} />);
+  });
+  expect(JSON.stringify(tree.toJSON())).not.toContain('describe what this step does');
+  await act(async () => tree.unmount());
+});

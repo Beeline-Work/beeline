@@ -13,21 +13,26 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import type { MessageBookmarkListResult, MessageBookmarkView, NeedsYouItemView } from '@beeline/api-contract/phone';
+import type { MessageBookmarkView, NeedsYouItemView } from '@beeline/api-contract/phone';
 import { isWorkspaceListView, isWorkspaceView, type RoomView } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { subscribeClientReset } from '@/sync/client-reset';
+import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
   forgetNeedsYouList,
+  forgetSavedList,
   holdNeedsYou,
   loadNeedsYouList,
+  loadSavedList,
   NEEDS_YOU_GAP_REASONS,
   removeNeedsYou,
   seedNeedsYouList,
+  seedSavedList,
+  updateSavedList,
   useNeedsYouList,
+  useSavedList,
 } from '@/buzz/needs-you-store';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
@@ -57,18 +62,6 @@ function lostWorkspace(reason: unknown): boolean {
 
 function first(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function isBookmarkList(value: unknown): value is MessageBookmarkListResult {
-  return isRecord(value) && (value.next === undefined || typeof value.next === 'string') &&
-    Array.isArray(value.bookmarks) && value.bookmarks.every((item: unknown) =>
-    isRecord(item) && typeof item.messageId === 'string' && typeof item.workspaceId === 'string' &&
-    typeof item.roomId === 'string' && typeof item.roomName === 'string' &&
-    typeof item.bookmarkedAt === 'number' && typeof item.available === 'boolean');
 }
 
 function sourceTitle(bookmark: MessageBookmarkView): string {
@@ -113,17 +106,6 @@ type Row =
   | { readonly key: string; readonly type: 'saved-empty' }
   | { readonly key: string; readonly type: 'saved-more' };
 
-type BookmarkDelta = { readonly messageId: string; readonly bookmark: MessageBookmarkView | null };
-function applyBookmarkChange(
-  current: readonly MessageBookmarkView[], delta: BookmarkDelta,
-): MessageBookmarkView[] {
-  const next = current.filter((item) => item.messageId !== delta.messageId);
-  if (delta.bookmark) next.push(delta.bookmark);
-  next.sort((a, b) => b.bookmarkedAt - a.bookmarkedAt ||
-    a.messageId.localeCompare(b.messageId));
-  return next;
-}
-
 /**
  * The tray: exactly two sections, Needs you then Saved. Needs you is the
  * server's per-person projection (`readNeedsYou`); Saved is every bookmark,
@@ -149,17 +131,13 @@ export default function TrayScreen() {
   const noWorkspace = (!routeWorkspaceId && activeWorkspaceId === null) || workspaceLost;
   // The badge reads the same store, so its count is this list's length.
   const needsList = useNeedsYouList(workspaceId);
-  const [bookmarks, setBookmarks] = useState<readonly MessageBookmarkView[]>([]);
-  const [savedNext, setSavedNext] = useState<string | undefined>();
+  const { bookmarks, next: savedNext } = useSavedList(workspaceId);
   const loadingSaved = useRef(false);
   const savedScroll = useRef(false);
   const [selected, setSelected] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
   const loadedWorkspaceRef = useRef<string | null>(null);
   const loadGenerationRef = useRef(0);
-  const loadInFlightRef = useRef(false);
-  const bookmarksDuringLoadRef = useRef<BookmarkDelta[]>([]);
-  const bookmarksDuringPageRef = useRef<BookmarkDelta[]>([]);
   useLatencyRouteFrame('/beeline/tray', !loading, true);
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<MessageBookmarkView | null>(null);
@@ -173,28 +151,21 @@ export default function TrayScreen() {
   const [paneCornerId, setPaneCornerId] = useState<string | null>(null);
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const loadedSections = useRef({ workspaceId: '', bookmarks: false });
-  const bookmarksVersionRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
     const generation = ++loadGenerationRef.current;
-    loadInFlightRef.current = true;
-    bookmarksDuringLoadRef.current = [];
     savedScroll.current = false;
-    if (loadedSections.current.workspaceId !== workspaceId)
-      loadedSections.current = { workspaceId, bookmarks: false };
     setError(null);
     setNow(Date.now());
     // Each section reads on its own: a failed Saved read must not hide what
     // needs the person, and the other way round.
     const [needsResult, savedResult] = await Promise.allSettled([
       loadNeedsYouList(workspaceId),
-      monolithPhoneOperation('listMessageBookmarks', { workspaceId }),
+      loadSavedList(workspaceId),
     ]);
     const results = [needsResult, savedResult];
     if (generation !== loadGenerationRef.current) return;
-    loadInFlightRef.current = false;
     // Once membership is lost, only a refresh that reads both sections shows
     // access is back; any other failure keeps the No Workspace message.
     if (
@@ -203,28 +174,17 @@ export default function TrayScreen() {
     ) {
       lostWorkspaceRef.current = workspaceId;
       setLostWorkspaceId(workspaceId);
-      loadedSections.current = { workspaceId, bookmarks: true };
       forgetNeedsYouList(workspaceId);
-      setBookmarks([]);
-      setSavedNext(undefined);
+      forgetSavedList(workspaceId);
+      pendingRef.current = pendingRef.current.filter((clear) => clear.workspaceId !== workspaceId);
+      setPending(pendingRef.current);
       setSelected(null);
       setLoading(false);
       loadedWorkspaceRef.current = null;
-      void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
-        if (!identity) return;
-        void mobileSurfaceCache.remove(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/bookmarks', { workspaceId }));
-      });
       return;
     }
     lostWorkspaceRef.current = null;
     setLostWorkspaceId(null);
-    const mergedBookmarks = savedResult.status === 'fulfilled'
-      ? bookmarksDuringLoadRef.current.reduce(applyBookmarkChange, [...savedResult.value.bookmarks]) : null;
-    if (mergedBookmarks) {
-      loadedSections.current.bookmarks = true;
-      setBookmarks(mergedBookmarks);
-      if (savedResult.status === 'fulfilled') setSavedNext(savedResult.value.next);
-    }
     const failed = [needsResult, savedResult].find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected')
       setError(failed.reason instanceof Error ? failed.reason.message : String(failed.reason));
@@ -235,23 +195,16 @@ export default function TrayScreen() {
 
   // The previous account's sections and lost Workspace do not carry over.
   useEffect(() => subscribeClientReset(() => {
-    loadedSections.current = { workspaceId: '', bookmarks: false };
+    loadGenerationRef.current += 1;
+    loadedWorkspaceRef.current = null;
     lostWorkspaceRef.current = null;
+    pendingRef.current = [];
+    setPending([]);
+    setRemoved(null);
+    setSelected(null);
     setLostWorkspaceId(null);
-  }), []);
-
-  // Persist the reconciled Saved list, including later live changes, for a
-  // zero-request paint when this route mounts again. The store keeps the
-  // Needs-you disk copy itself.
-  useEffect(() => {
-    if (!workspaceId || loadedSections.current.workspaceId !== workspaceId ||
-        !loadedSections.current.bookmarks || lostWorkspaceRef.current === workspaceId) return;
-    void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
-      if (identity && loadedSections.current.workspaceId === workspaceId &&
-          lostWorkspaceRef.current !== workspaceId) void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey,
-        '/workspace/:id/bookmarks', { workspaceId }), { bookmarks, next: savedNext }, isBookmarkList);
-    });
-  }, [workspaceId, bookmarks, savedNext]);
+    void load();
+  }), [load]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -261,12 +214,7 @@ export default function TrayScreen() {
       unsubscribe = await sharedLiveConnection().register([], (event) => {
         if (!('monolithLive' in event)) return;
         const live = (event as MonolithSurfaceEvent).monolithLive;
-        if (live.type === 'bookmark-delta' && live.workspaceId === workspaceId) {
-          bookmarksVersionRef.current += 1;
-          if (loadInFlightRef.current) bookmarksDuringLoadRef.current.push(live);
-          if (loadingSaved.current) bookmarksDuringPageRef.current.push(live);
-          setBookmarks((current) => applyBookmarkChange(current, live));
-        } else if (live.type === 'invalidate' &&
+        if (live.type === 'invalidate' &&
             (live.reason === 'bookmark-gap' || NEEDS_YOU_GAP_REASONS.has(live.reason))) {
           void load();
         }
@@ -280,48 +228,26 @@ export default function TrayScreen() {
     if (!workspaceId || !savedNext || loadingSaved.current) return;
     const generation = loadGenerationRef.current;
     loadingSaved.current = true;
-    bookmarksDuringPageRef.current = [];
     try {
-      const page = await monolithPhoneOperation('listMessageBookmarks', {
-        workspaceId, before: savedNext,
-      });
+      await loadSavedList(workspaceId, savedNext);
       if (generation !== loadGenerationRef.current) return;
-      const deltas = bookmarksDuringPageRef.current;
-      setBookmarks((current) => {
-        const seen = new Set(current.map((item) => item.messageId));
-        const combined = [...current, ...page.bookmarks.filter((item) => !seen.has(item.messageId))];
-        return deltas.reduce(applyBookmarkChange, combined).sort((a, b) =>
-          b.bookmarkedAt - a.bookmarkedAt || a.messageId.localeCompare(b.messageId));
-      });
-      setSavedNext(page.next);
     } catch (cause) {
       if (generation === loadGenerationRef.current)
         setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       loadingSaved.current = false;
-      bookmarksDuringPageRef.current = [];
     }
   }, [workspaceId, savedNext]);
 
   useEffect(() => {
     if (!workspaceId) return;
-    if (loadedSections.current.workspaceId !== workspaceId)
-      loadedSections.current = { workspaceId, bookmarks: false };
-    const bookmarksVersion = bookmarksVersionRef.current;
     let cancelled = false;
     void (async () => {
-      const [identity, relayUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
-      if (!identity || cancelled) return;
       const [savedNeeds, savedBookmarks] = await Promise.all([
         seedNeedsYouList(workspaceId),
-        mobileSurfaceCache.read(surfaceAddress(relayUrl, identity.publicKey,
-          '/workspace/:id/bookmarks', { workspaceId }), isBookmarkList),
+        seedSavedList(workspaceId),
       ]);
       if (cancelled) return;
-      if (savedBookmarks && !loadedSections.current.bookmarks && bookmarksVersion === bookmarksVersionRef.current) {
-        setBookmarks(savedBookmarks.bookmarks);
-        setSavedNext(savedBookmarks.next);
-      }
       if (savedNeeds || savedBookmarks) setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -492,6 +418,7 @@ export default function TrayScreen() {
 
   /** Send one Workspace-scoped operation after Undo expires. */
   const commitClear = useCallback(async (clear: PendingClear) => {
+    const generation = clientResetGeneration();
     const ids = new Set(clear.items.map((item) => item.messageId));
     if (clear.kind === 'needs') {
       const removal = removeNeedsYou(clear.workspaceId, ids);
@@ -503,15 +430,19 @@ export default function TrayScreen() {
       }
       return;
     }
-    setBookmarks((current) => current.filter((item) => !ids.has(item.messageId)));
+    const edit = updateSavedList(clear.workspaceId,
+      (current) => current.filter((item) => !ids.has(item.messageId)));
     try {
       await monolithPhoneOperation('clearMessageBookmarks', { workspaceId: clear.workspaceId });
-      setBookmarks([]);
-      setSavedNext(undefined);
+      if (generation !== clientResetGeneration()) return;
+      edit.settle();
+      updateSavedList(clear.workspaceId, () => [], null).settle();
     } catch (cause) {
-      setBookmarks((current) =>
+      if (generation !== clientResetGeneration() || lostWorkspaceRef.current === clear.workspaceId) return;
+      edit.cancel();
+      updateSavedList(clear.workspaceId, (current) =>
         [...clear.items, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
-      );
+      ).settle();
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, []);
@@ -593,7 +524,9 @@ export default function TrayScreen() {
   }, []);
 
   const remove = useCallback(async (bookmark: MessageBookmarkView) => {
-    setBookmarks((current) => current.filter((item) => item.messageId !== bookmark.messageId));
+    const generation = clientResetGeneration();
+    const edit = updateSavedList(bookmark.workspaceId,
+      (current) => current.filter((item) => item.messageId !== bookmark.messageId));
     setRemoved(bookmark);
     AccessibilityInfo.announceForAccessibility('Bookmark removed. Undo available.');
     try {
@@ -602,9 +535,12 @@ export default function TrayScreen() {
         messageId: bookmark.messageId,
         bookmarked: false,
       });
+      edit.settle();
     } catch (cause) {
+      if (generation !== clientResetGeneration()) return;
+      edit.cancel();
       setRemoved(null);
-      setBookmarks((current) => [bookmark, ...current]);
+      updateSavedList(bookmark.workspaceId, (current) => [bookmark, ...current]).settle();
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, []);
@@ -612,8 +548,9 @@ export default function TrayScreen() {
   const undo = useCallback(async () => {
     if (!removed?.available) return;
     const bookmark = removed;
+    const generation = clientResetGeneration();
     setRemoved(null);
-    setBookmarks((current) => [bookmark, ...current]);
+    const edit = updateSavedList(bookmark.workspaceId, (current) => [bookmark, ...current]);
     AccessibilityInfo.announceForAccessibility('Bookmark restored');
     try {
       await monolithPhoneOperation('setMessageBookmark', {
@@ -621,8 +558,12 @@ export default function TrayScreen() {
         messageId: bookmark.messageId,
         bookmarked: true,
       });
+      edit.settle();
     } catch (cause) {
-      setBookmarks((current) => current.filter((item) => item.messageId !== bookmark.messageId));
+      if (generation !== clientResetGeneration()) return;
+      edit.cancel();
+      updateSavedList(bookmark.workspaceId,
+        (current) => current.filter((item) => item.messageId !== bookmark.messageId)).settle();
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, [removed]);

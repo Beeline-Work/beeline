@@ -13,7 +13,7 @@ import type {
   WorkspaceView,
 } from '@beeline/api-contract/phone';
 import type { SurfaceCacheAddress } from '@beeline/buzz-client';
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { subscribeClientReset } from '@/sync/client-reset';
 
 export type WorkspaceHeaderChange = { id: string; name: string; avatar?: string };
@@ -46,17 +46,15 @@ subscribeClientReset(() => {
 
 /** Re-render a surface that is not a registry entry (the open Room) when any record changes. */
 export function useIdentityRecords(): number {
-  const [current, setCurrent] = useState(version);
-  useEffect(() => {
-    const listener = () => setCurrent(version);
-    listeners.add(listener);
-    setCurrent(version);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
-  return current;
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+function snapshot(): number { return version; }
 
 export function identityScope(relayOrigin: string, viewerPubkey: string): string {
   return JSON.stringify([new URL(relayOrigin).origin, viewerPubkey]);
@@ -125,39 +123,23 @@ export class IdentitySelection {
     return identity === member.identity ? member : { ...member, identity };
   }
 
+  private people<T extends object>(value: T, ...keys: (keyof T)[]): T {
+    return fields(value, Object.fromEntries(keys.map((key) =>
+      [key, this.person(value[key] as RoomViewIdentity | undefined)])) as Partial<T>);
+  }
+
   message(message: RoomViewMessage): RoomViewMessage {
     const author = this.person(message.author);
     const reactions = list(message.reactions, (reaction) => {
       const members = list(reaction.members, (member) => this.person(member));
       return members === reaction.members ? reaction : { ...reaction, members };
     });
-    const permission = message.permission && fields(message.permission, {
-      agent: this.person(message.permission.agent),
-      requester: this.person(message.permission.requester),
-      decider: this.person(message.permission.decider),
-    });
-    const grantRequest = message.grantRequest && fields(message.grantRequest, {
-      agent: this.person(message.grantRequest.agent),
-      owner: this.person(message.grantRequest.owner),
-      requester: this.person(message.grantRequest.requester),
-    });
-    const squireApproval = message.squireApproval && fields(message.squireApproval, {
-      agent: this.person(message.squireApproval.agent),
-    });
-    const connectorOffer = message.connectorOffer && fields(message.connectorOffer, {
-      agent: this.person(message.connectorOffer.agent),
-      addressee: this.person(message.connectorOffer.addressee),
-      acceptedBy: this.person(message.connectorOffer.acceptedBy),
-    });
-    const choice = message.choice && fields(message.choice, {
-      agent: this.person(message.choice.agent),
-      requester: this.person(message.choice.requester),
-      answeredBy: this.person(message.choice.answeredBy),
-    });
-    const targetBranch = message.targetBranch && fields(message.targetBranch, {
-      agent: this.person(message.targetBranch.agent),
-      requester: this.person(message.targetBranch.requester),
-    });
+    const permission = message.permission && this.people(message.permission, 'agent', 'requester', 'decider');
+    const grantRequest = message.grantRequest && this.people(message.grantRequest, 'agent', 'owner', 'requester');
+    const squireApproval = message.squireApproval && this.people(message.squireApproval, 'agent');
+    const connectorOffer = message.connectorOffer && this.people(message.connectorOffer, 'agent', 'addressee', 'acceptedBy');
+    const choice = message.choice && this.people(message.choice, 'agent', 'requester', 'answeredBy');
+    const targetBranch = message.targetBranch && this.people(message.targetBranch, 'agent', 'requester');
     return fields(message, {
       author, reactions, permission, grantRequest, squireApproval, connectorOffer, choice, targetBranch,
     });
@@ -191,12 +173,8 @@ export class IdentitySelection {
       workspace: this.workspace(view.workspace),
       viewer: this.person(view.viewer),
       chats: list(view.chats, (chat) => fields(chat, {
-        latestMessage: chat.latestMessage && fields(chat.latestMessage, {
-          author: this.person(chat.latestMessage.author),
-        }),
-        directMessage: chat.directMessage && fields(chat.directMessage, {
-          peer: this.person(chat.directMessage.peer),
-        }),
+        latestMessage: chat.latestMessage && this.people(chat.latestMessage, 'author'),
+        directMessage: chat.directMessage && this.people(chat.directMessage, 'peer'),
       })),
     });
   }
@@ -214,27 +192,19 @@ export class IdentitySelection {
 
   corners(view: CornerListView): CornerListView {
     return fields(view, {
-      corners: list(view.corners, (corner) => fields(corner, {
-        initiator: this.person(corner.initiator),
-        agent: this.person(corner.agent),
-        latestMessage: corner.latestMessage && fields(corner.latestMessage, {
-          author: this.person(corner.latestMessage.author),
-        }),
+      corners: list(view.corners, (corner) => fields(this.people(corner, 'initiator', 'agent'), {
+        latestMessage: corner.latestMessage && this.people(corner.latestMessage, 'author'),
       })),
     });
   }
 
   needsYou(view: { items: readonly NeedsYouItemView[] }): { items: readonly NeedsYouItemView[] } {
-    return fields(view, {
-      items: list(view.items, (item) => fields(item, { author: this.person(item.author) })),
-    });
+    return fields(view, { items: list(view.items, (item) => this.people(item, 'author')) });
   }
 
   bookmarks<T extends { bookmarks: readonly MessageBookmarkView[] }>(view: T): T {
     return fields(view, {
-      bookmarks: list(view.bookmarks, (bookmark) => fields(bookmark, {
-        author: this.person(bookmark.author),
-      })),
+      bookmarks: list(view.bookmarks, (bookmark) => this.people(bookmark, 'author')),
     } as Partial<T>);
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import type {
   AgentDetailView,
   SurfaceCacheAddress,
@@ -8,7 +8,6 @@ import type {
 import { subscribeClientReset } from '@/sync/client-reset';
 import { IdentitySelection, identityScope, useIdentityRecords } from './identity-records';
 import { mobileSurfaceCache } from './surface-storage';
-import { workspaceAgentFromDetail } from './workspace-surface';
 
 type MemberRecord = WorkspaceView['members'][number];
 type AgentRecord = WorkspaceView['agents'][number];
@@ -17,20 +16,11 @@ export type WorkspaceRecord = MemberRecord | AgentRecord;
 type Page = { ids: string[]; total?: number; truncated: boolean; stamp: number };
 
 type Scope = {
-  /** `null` records a removal. `stamp` orders server answers: an older one never replaces a newer one. */
   readonly rows: Map<string, { record: WorkspaceRecord | null; stamp: number }>;
-  /** Ordered roster pages and counts per search (`''` is the whole roster). */
   readonly pages: Map<string, { people?: Page; agents?: Page }>;
 };
 
-/**
- * The one store of Workspace roster rows and pages, per relay, viewer and
- * Workspace. Pages keep only the ids they list and select rows and counts
- * here, so a server read, a write receipt, a removal or a live identity
- * change reaches every roster page at once. The store hears every value of
- * `/workspace/:id`, agent details and member profiles that the surface
- * registry stores, whoever wrote it.
- */
+/** One roster per relay, viewer and Workspace; server reads use one surface clock. */
 const scopes = new Map<string, Scope>();
 const listeners = new Map<string, Set<() => void>>();
 const versions = new Map<string, number>();
@@ -89,12 +79,7 @@ function storePage(
   scoped.pages.set(query, pages);
 }
 
-/**
- * Store one roster page read at `stamp` (`currentSurfaceStamp()` when the
- * request started). `query` names the search whose totals it answers (`''`
- * for the whole roster; absent for a filtered page that counts nothing
- * shown); `kind` the list it pages, or both; `append` a load-more page.
- */
+/** Store a page using the stamp captured when its request started. */
 export function recordWorkspacePage(
   scope: string,
   page: Pick<WorkspaceMemberListView, 'members' | 'agents'> &
@@ -116,10 +101,7 @@ export function recordWorkspacePage(
   notify(scope);
 }
 
-/**
- * A full Workspace read is the whole roster: a record of a kind whose list is
- * complete and leaves it out was removed, unless it was stored after the read.
- */
+/** A complete Workspace read removes older rows it omits. */
 function recordWorkspaceView(scope: string, view: WorkspaceView, stamp: number): void {
   const scoped = records(scope);
   storeRows(scoped, [...view.members, ...view.agents], stamp);
@@ -136,11 +118,7 @@ function recordWorkspaceView(scope: string, view: WorkspaceView, stamp: number):
   notify(scope);
 }
 
-/**
- * A member profile read names the person and the agents they own; no person
- * means removed. A complete agent list is every agent they own: an agent it
- * leaves out, stored before the read, is no longer theirs.
- */
+/** A complete profile read removes its missing person and unlinks missing agents. */
 function recordMemberProfile(scope: string, memberId: string, view: WorkspaceMemberListView, stamp: number): void {
   const scoped = records(scope);
   const person = view.members.find((row) => row.identity.pubkey === memberId);
@@ -160,13 +138,20 @@ function recordMemberProfile(scope: string, memberId: string, view: WorkspaceMem
   notify(scope);
 }
 
-/** An agent write receipt or detail read updates that agent's roster row. */
 function recordAgentDetail(scope: string, detail: AgentDetailView, stamp: number): void {
   const scoped = records(scope);
   const pubkey = detail.agent.identity.pubkey;
   const current = scoped.rows.get(pubkey);
   if (!current?.record || current.record.identity.kind !== 'agent' || current.stamp > stamp) return;
-  scoped.rows.set(pubkey, { record: workspaceAgentFromDetail(current.record as AgentRecord, detail), stamp });
+  const axis = detail.catalog.find((candidate) => candidate.category === 'model');
+  const value = detail.selected?.model ?? axis?.currentValue;
+  const model = value && (axis?.options?.find((option) => option.id === value)?.name ?? value);
+  const { model: _model, owner: _owner, ...member } = current.record as AgentRecord;
+  scoped.rows.set(pubkey, { record: {
+    ...member, identity: detail.agent.identity,
+    ...(model ? { model } : {}),
+    ...(detail.owner ? { owner: detail.owner } : {}),
+  }, stamp });
   notify(scope);
 }
 
@@ -187,7 +172,6 @@ function removeRow(scoped: Scope, pubkey: string, stamp: number): void {
   }
 }
 
-/** A roster write the server accepted: a Workspace read already in flight predates it. */
 function writeStamp(scope: string): number {
   const [origin, viewer] = JSON.parse(scope) as [string, string, string];
   return mobileSurfaceCache.fenceEndpoint(origin, viewer, '/workspace/:id');
@@ -223,27 +207,21 @@ function selectRecord(scope: string, row: { record: WorkspaceRecord | null; stam
   return selected === owner ? member : { ...member, owner: selected };
 }
 
-/** The rows of these ids, in order, without removed or unknown ones. */
 export function workspaceRows<T extends WorkspaceRecord = WorkspaceRecord>(
   scope: string | null,
   ids: readonly string[],
 ): T[] {
-  const scoped = scope ? scopes.get(scope) : undefined;
-  if (!scope || !scoped) return [];
   return ids.flatMap((id) => {
-    const row = scoped.rows.get(id);
-    const record = row ? selectRecord(scope, row) : null;
+    const record = workspaceRecord(scope, id);
     return record ? [record as T] : [];
   });
 }
 
-/** One row; `null` when removed, `undefined` when never read. */
 export function workspaceRecord(scope: string | null, pubkey: string): WorkspaceRecord | null | undefined {
   const row = scope ? scopes.get(scope)?.rows.get(pubkey) : undefined;
   return row && scope ? selectRecord(scope, row) : undefined;
 }
 
-/** Every known agent this person owns, in the order the store first heard them. */
 export function workspaceOwnedAgents(scope: string | null, ownerPubkey: string): AgentRecord[] {
   const scoped = scope ? scopes.get(scope) : undefined;
   if (!scope || !scoped) return [];
@@ -253,19 +231,14 @@ export function workspaceOwnedAgents(scope: string | null, ownerPubkey: string):
   });
 }
 
-/** The ordered pages of a search (`''` is the whole roster); absent when unknown. */
 export function workspacePage(scope: string | null, query: string): { people?: Page; agents?: Page } {
   return scope ? scopes.get(scope)?.pages.get(query) ?? {} : {};
 }
 
-/** Re-render whenever any record in this Workspace changes. */
 export function useWorkspaceRecords(scope: string | null): number {
   const identityVersion = useIdentityRecords();
-  const [version, setVersion] = useState(() => (scope ? versions.get(scope) ?? 0 : 0));
-  useEffect(() => {
-    if (!scope) return;
-    setVersion(versions.get(scope) ?? 0);
-    const listener = () => setVersion(versions.get(scope) ?? 0);
+  const subscribe = useCallback((listener: () => void) => {
+    if (!scope) return () => undefined;
     const scoped = listeners.get(scope) ?? new Set<() => void>();
     scoped.add(listener);
     listeners.set(scope, scoped);
@@ -274,7 +247,8 @@ export function useWorkspaceRecords(scope: string | null): number {
       if (scoped.size === 0) listeners.delete(scope);
     };
   }, [scope]);
-  return version + identityVersion;
+  const snapshot = () => (scope ? versions.get(scope) ?? 0 : 0);
+  return useSyncExternalStore(subscribe, snapshot, snapshot) + identityVersion;
 }
 
 function addressScope(address: SurfaceCacheAddress): string | null {

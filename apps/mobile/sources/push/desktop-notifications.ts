@@ -95,17 +95,14 @@ export function startDesktopNotifications(): () => void {
         roomOpenCornerRows(getRoomCorners(parent.room.id)).map((item) => ({ parent, item })));
     }
 
-    function roomFor(roomId: string): ChatListItem | undefined {
-      for (const { handle } of lists.values()) {
-        const item = handle.current()?.chats.find((chat) => chat.room.id === roomId);
-        if (item) return item;
-      }
-      const item = cornerRows().find(({ item }) => item.corner.id === roomId)?.item;
-      return item && { room: item.corner, unread: false } as ChatListItem;
-    }
-
-    function parentNameOf(roomId: string): string | undefined {
-      return cornerRows().find(({ item }) => item.corner.id === roomId)?.parent.room.name;
+    function notificationRoom(roomId: string) {
+      const room = parents().find((item) => item.room.id === roomId);
+      if (room) return { room, parentName: undefined };
+      const found = cornerRows().find(({ item }) => item.corner.id === roomId);
+      return found && {
+        room: { room: found.item.corner, unread: false } as ChatListItem,
+        parentName: found.parent.room.name,
+      };
     }
     const seen = new Set<string>();
     const startedAt = Date.now();
@@ -116,8 +113,9 @@ export function startDesktopNotifications(): () => void {
       if (seen.size > 1_000) seen.delete(seen.values().next().value!);
       // Replayed socket frames and edits must not turn old content into a new alert.
       if ((message.createdAtMs ?? message.createdAt * 1000) < startedAt) return;
-      const room = roomFor(roomId);
-      if (!room) return;
+      const found = notificationRoom(roomId);
+      if (!found) return;
+      const { room, parentName } = found;
       // Most live rows need no network or plugin work. In particular a
       // foreground message must never wait on the notification path.
       if (document.hasFocus() || getOpenBuzzChannelId() === roomId) return;
@@ -160,7 +158,7 @@ export function startDesktopNotifications(): () => void {
       const notification = await import('@tauri-apps/plugin-notification');
       if (!(await notification.isPermissionGranted()) || disposed || current !== generation) return;
       notification.sendNotification({
-        title: desktopNotificationTitle(room, parentNameOf(roomId)),
+        title: desktopNotificationTitle(room, parentName),
         body: (room.directMessage ? message.text : `${message.author.name}: ${message.text}`).slice(
           0,
           240,

@@ -3165,6 +3165,67 @@ describe('migrating a no-code corner onto implement', () => {
   });
 });
 
+describe('Reproduction IDLE-1: corner status says whether its agent runs or waits', () => {
+  it('reports an agent that posted and ended its turn as idle and awaiting a reply', async () => {
+    const cornerId = await open('owner/widgets');
+    await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
+    await db.query(
+      `INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,'outline',$2,'working')`,
+      [cornerId, A],
+    );
+    await expect(daemon.execute('getCornerRestoreState', { cornerId }, A)).resolves.toMatchObject({
+      lifecycle: expect.objectContaining({ lifecycle: 'working' }),
+      activity: 'running',
+    });
+    const outline = `Outline for approval. ${'x'.repeat(400)}`;
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+       VALUES($1,$2,$3,$4,'message',now()+interval '1 second'),
+             ($5,$2,$3,'thinking','activity',now()+interval '2 seconds')`,
+      [randomBytes(32).toString('hex'), cornerId, A, outline, randomBytes(32).toString('hex')],
+    );
+    await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
+    const status = await daemon.execute('getCornerRestoreState', { cornerId }, A);
+    expect(status).toMatchObject({
+      activity: 'idle',
+      awaiting: 'reply',
+      lastMessage: { authorId: A, type: 'message', excerpt: outline.slice(0, 280) },
+    });
+    expect(status.lastMessage!.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // A human reply is the newest message: the corner no longer waits on one.
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+       VALUES($1,$2,$3,'approve','message',now()+interval '3 seconds')`,
+      [randomBytes(32).toString('hex'), cornerId, H],
+    );
+    const replied = await daemon.execute('getCornerRestoreState', { cornerId }, A);
+    expect(replied).toMatchObject({ activity: 'idle', lastMessage: { authorId: H, excerpt: 'approve' } });
+    expect(replied.awaiting).toBeUndefined();
+  });
+
+  it('pages a conversation backward from the newest messages with a before cursor', async () => {
+    const cornerId = await open('owner/widgets');
+    for (const text of ['one', 'two', 'three', 'four']) await say(cornerId, text);
+    const newest = await daemon.execute(
+      'getRoomConversation',
+      { roomId: cornerId, limit: 2, window: 'recent' },
+      A,
+    );
+    const all = await daemon.execute('getRoomConversation', { roomId: cornerId, limit: 200, window: 'recent' }, A);
+    expect(all.items.length).toBeGreaterThan(2);
+    expect(newest.items.map((item) => item.id)).toEqual(all.items.slice(-2).map((item) => item.id));
+    const older = await daemon.execute(
+      'getRoomConversation',
+      { roomId: cornerId, limit: 2, window: 'recent', before: newest.items[0]!.cursor },
+      A,
+    );
+    expect(older.items.map((item) => item.id)).toEqual(all.items.slice(-4, -2).map((item) => item.id));
+    await expect(
+      daemon.execute('getRoomConversation', { roomId: cornerId, window: 'earliest', before: newest.items[0]!.cursor }, A),
+    ).rejects.toThrow(/before cursor/);
+  });
+});
+
 describe('every contract edge (AC-1)', () => {
   it('is taken by some test in this file', () => {
     const expected = new Set<string>();

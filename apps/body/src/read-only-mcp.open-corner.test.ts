@@ -82,6 +82,13 @@ async function daemonDoor(
                       mergeability: 'clean',
                     },
                   },
+                  activity: 'running',
+                  lastMessage: {
+                    authorId: 'agent',
+                    createdAt: '2026-10-10T00:00:00.000Z',
+                    type: 'message',
+                    excerpt: 'Tests pending',
+                  },
                 }
               : operation === 'getPrChecksStatus'
                 ? {
@@ -495,7 +502,14 @@ describe('relay tools', () => {
     expect(response.result?.isError).not.toBe(true);
     expect(JSON.parse(response.result!.content[0]!.text)).toEqual({
       cornerId: CORNER,
-      state: 'in-review',
+      lifecycle: 'in-review',
+      activity: 'running',
+      lastMessage: {
+        authorId: 'agent',
+        createdAt: '2026-10-10T00:00:00.000Z',
+        type: 'message',
+        excerpt: 'Tests pending',
+      },
       pr: { number: 42, url: 'https://github.com/owner/widgets/pull/42', title: 'Ship endpoint' },
       head: 'b'.repeat(40),
       checks: 'pending',
@@ -531,6 +545,43 @@ describe('relay tools', () => {
       roomId: CORNER,
       limit: 9,
       after: '123,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    });
+  });
+  it('starts a transcript from the newest messages with a cursor to older ones', async () => {
+    const items = Array.from({ length: 9 }, (_, index) => ({
+      id: `message-${index}`,
+      cursor: `${index + 1},${'a'.repeat(64)}`,
+      authorId: 'agent',
+      createdAt: index,
+      type: 'message',
+      body: `body ${index}`,
+      attachments: [],
+    }));
+    const door = await daemonDoor(undefined, items);
+    const response = await callTool(
+      door.origin,
+      { cornerId: CORNER, mode: 'transcript', from: 'newest' },
+      { name: 'inspect_corner' },
+    );
+    const page = JSON.parse(response.result!.content[0]!.text);
+    expect(page.items.map((item: { id: string }) => item.id)).toEqual(
+      items.slice(1).map((item) => item.id),
+    );
+    expect(page.next).toEqual({ before: items[1]!.cursor });
+    expect(door.calls.find((call) => call.operation === 'getRoomConversation')).toEqual({
+      operation: 'getRoomConversation',
+      roomId: CORNER,
+      limit: 9,
+      window: 'recent',
+    });
+    await callTool(
+      door.origin,
+      { cornerId: CORNER, mode: 'transcript', from: 'newest', before: page.next.before },
+      { name: 'inspect_corner' },
+    );
+    expect(door.calls.filter((call) => call.operation === 'getRoomConversation').at(-1)).toMatchObject({
+      window: 'recent',
+      before: items[1]!.cursor,
     });
   });
   it('caps a transcript page and carries a cursor to its remaining rows', async () => {

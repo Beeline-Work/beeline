@@ -231,6 +231,7 @@ async function main() {
       '--platform=node',
       '--format=esm',
       '--target=node20',
+      "--banner:js=import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);",
       `--outfile=${resolve(staging, 'lib', 'beeline', 'beeline-readonly-mcp.mjs')}`,
     ]);
     // Pi receives MCP through this release-owned, version-pinned adapter. It is

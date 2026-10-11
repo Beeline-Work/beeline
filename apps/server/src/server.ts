@@ -4,7 +4,7 @@ import { GitHubHttpError } from '@beeline/auth/github';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { serveComputerLastFrame, serveComputerSession, serveComputerStatus, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter } from './computer-session.js';
+import { serveComputerSession, serveComputerStatus, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter } from './computer-session.js';
 import type { Duplex } from 'node:stream';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
 import { isAppSignInLink } from './composio-apps.js';
@@ -1469,14 +1469,9 @@ async function route(
     await serveComputerSession(request, response, options.database, options.live, computer[1]!);
     return;
   }
-  const lastFrame = /^\/s\/([A-Za-z0-9_-]{43})\/last\.jpg$/.exec(url.pathname);
-  if (method === 'GET' && lastFrame) {
-    await serveComputerLastFrame(response, options.database, lastFrame[1]!);
-    return;
-  }
   const computerStatus = /^\/s\/([A-Za-z0-9_-]{43})\/status$/.exec(url.pathname);
   if (method === 'GET' && computerStatus) {
-    await serveComputerStatus(response, options.database, computerStatus[1]!);
+    await serveComputerStatus(request, response, options.database, computerStatus[1]!);
     return;
   }
   if (method === 'GET' && url.pathname === '/v1/link/oauth/callback') {

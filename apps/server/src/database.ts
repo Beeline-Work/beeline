@@ -903,7 +903,7 @@ CREATE TABLE IF NOT EXISTS computer_sessions (
   source_session_id text NOT NULL,
   upstream_url text NOT NULL,
   relay_instance_id text,
-  last_frame bytea,
+  view_secret bytea,
   handoff_count integer NOT NULL DEFAULT 0,
   status text NOT NULL DEFAULT 'live' CHECK (status IN ('live', 'ended')),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -911,6 +911,8 @@ CREATE TABLE IF NOT EXISTS computer_sessions (
 );
 CREATE INDEX IF NOT EXISTS computer_sessions_room_idx ON computer_sessions(room_id);
 CREATE INDEX IF NOT EXISTS computer_sessions_agent_idx ON computer_sessions(agent_id);
+ALTER TABLE computer_sessions ADD COLUMN IF NOT EXISTS view_secret bytea;
+ALTER TABLE computer_sessions DROP COLUMN IF EXISTS last_frame;
 -- Private message bookmarks deliberately keep their pointer after a source is
 -- deleted or becomes inaccessible. Reads never cache or reveal source text;
 -- they return an unavailable row that the viewer can remove.

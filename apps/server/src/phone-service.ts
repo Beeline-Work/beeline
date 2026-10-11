@@ -16,6 +16,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { computerViewToken } from './computer-session.js';
 import { composioToolkitForApp, type ComposioApps } from './composio-apps.js';
 import { appIdentity } from '@beeline/api-contract/workbench';
 import { beginComposioAppSignIn, completeComposioSignIn } from './app-connections.js';
@@ -4058,6 +4059,11 @@ export class PhoneService {
   ): Promise<Output<Name>> {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(name))
       throw new Error(REVIEW_IDENTITY_MESSAGE);
+    if (name === 'openComputerSession') {
+      const access = await computerViewToken(this.database, (input as Input<'openComputerSession'>).id, viewerId);
+      if (!access) throw new Error('computer session access denied');
+      return { access } as Output<Name>;
+    }
     const scope = input as { workspaceId?: string; roomId?: string };
     // The spectator guard below casts nonempty scope ids to uuid. Wallet
     // grants need a plain input error before that generic SQL gate runs.

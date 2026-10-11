@@ -29,7 +29,7 @@ describe('desktop workbench wiring', () => {
 
   it('mounts the one-content work pane beside the transcript, with no handle or list', () => {
     expect(room).toContain('<DesktopRoomInspector');
-    expect(room).toContain('content={desktopWorkPaneContent}');
+    expect(room).toContain('content={displayedDesktopWorkPaneContent!}');
     expect(room).not.toContain('DesktopWorkPaneHandle');
     expect(room).not.toContain('isDesktopWorkPaneCommand');
     expect(room).not.toContain('WorkPanePreference');

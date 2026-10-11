@@ -21,12 +21,13 @@ const theme = beelineThemes[light ? 'bone' : 'obsidian'];
 const ended = frame.includes('ended');
 const desktop = frame.startsWith('desktop');
 const control = frame.includes('control');
+const readOnly = frame.includes('read-only');
 const session = {
   id: 'frame-share',
   url: `${location.origin}/browser.html${control ? '?control=1' : ''}`,
   title: 'Checkout · Chrome',
   status: ended ? 'ended' as const : 'live' as const,
-  lastFrameUrl: `${location.origin}/browser-ended.svg`,
+  access: readOnly ? undefined : 'mock-viewer-access',
 };
 
 const sheet = document.createElement('style');
@@ -56,7 +57,7 @@ function CardRoom() {
   return <div className="phone"><div className="statusbar"><span>9:41</span><span>●●●  ▰</span></div>
     <div className="phone-top"><span className="back">‹</span><span className="face">✦</span><span>Design Room</span></div>
     <div className="room"><div className="time">TODAY · 9:41 AM</div><div className="agent">Moth · agent</div>
-      <div className="line">I reached the sign in step. The browser is ready for you to finish it.</div>
+      <div className="line">{readOnly ? 'I reached the sign in step. An allowed member can finish it in the browser.' : 'I reached the sign in step. The browser is ready for you to finish it.'}</div>
       <div className="card-wrap"><ComputerSessionCard session={session} /></div></div>
     <div className="composer"><div className="composer-inner">Message Design Room</div></div></div>;
 }

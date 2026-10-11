@@ -1,4 +1,5 @@
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -16,21 +17,52 @@ export type ComputerSessionRow = {
   status: 'live' | 'ended';
   relay_instance_id: string | null;
   handoff_count: number;
+  view_secret: Buffer | null;
 };
-const latestFrames = new Map<string, Buffer>();
-const savedFrameAt = new Map<string, number>();
 const handbackWaiters = new Map<string, Set<WebSocket>>();
 const MAX_VIEWER_BUFFERED_BYTES = 4 * 1024 * 1024;
 
-/** Persist a bounded recent frame so an end request on another server instance has a snapshot. */
-function rememberFrame(database: SqlDatabase, id: string, frame: Buffer | undefined): void {
-  if (!frame) return;
-  latestFrames.set(id, frame);
-  const now = Date.now();
-  if (now - (savedFrameAt.get(id) ?? 0) < 5_000) return;
-  savedFrameAt.set(id, now);
-  void database.query(`UPDATE computer_sessions SET last_frame=$2 WHERE id=$1 AND status='live'`, [id, frame])
-    .catch(() => { savedFrameAt.delete(id); });
+const VIEW_TOKEN_LIFETIME_MS = 60 * 60_000;
+
+async function mayViewComputer(database: SqlDatabase, row: ComputerSessionRow, viewerId: string): Promise<boolean> {
+  const result = await database.query<{ access_policy: unknown; owner_id: string | null }>(
+    `SELECT agent.access_policy,agent.owner_id FROM agents agent
+     JOIN identities viewer ON viewer.id=$3 AND viewer.kind='human'
+     JOIN rooms room ON room.id=$1 AND room.archived_at IS NULL
+     JOIN memberships member ON member.room_id=room.id AND member.identity_id=$3
+       AND member.removed_at IS NULL AND member.role<>'spectator'
+     JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+       AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
+       AND workspace_member.removed_at IS NULL AND workspace_member.role<>'spectator'
+     JOIN memberships agent_member ON agent_member.room_id=room.id
+       AND agent_member.identity_id=$2 AND agent_member.removed_at IS NULL
+     WHERE agent.agent_id=$2`, [row.room_id, row.agent_id, viewerId],
+  );
+  const agent = result.rows[0];
+  return Boolean(agent && senderMayAddressAgent(
+    parseAgentAccessPolicy(agent.access_policy), viewerId, agent.owner_id ?? undefined,
+  ));
+}
+
+/** A Room reader obtains a short-lived, viewer-bound URL only through phone auth. */
+export async function computerViewToken(database: SqlDatabase, id: string, viewerId: string): Promise<string | null> {
+  const row = await getComputerSession(database, id);
+  if (!row || row.status !== 'live' || !row.view_secret || !(await mayViewComputer(database, row, viewerId))) return null;
+  const expires = Date.now() + VIEW_TOKEN_LIFETIME_MS;
+  const body = `${row.id}.${viewerId}.${expires}`;
+  const signature = createHmac('sha256', row.view_secret).update(body).digest('hex');
+  return `${viewerId}.${expires}.${signature}`;
+}
+
+async function authorizedViewer(request: IncomingMessage, database: SqlDatabase, row: ComputerSessionRow): Promise<boolean> {
+  const url = new URL(request.url ?? '/', 'http://beeline.local');
+  const token = url.searchParams.get('access') ?? '';
+  const [, viewerId, expiresText, signature] = /^(?:([0-9a-f]{64})\.([0-9]{13})\.([0-9a-f]{64}))$/.exec(token) ?? [];
+  if (!viewerId || !expiresText || !signature || !row.view_secret || Number(expiresText) <= Date.now()) return false;
+  const expected = createHmac('sha256', row.view_secret)
+    .update(`${row.id}.${viewerId}.${expiresText}`).digest();
+  if (!timingSafeEqual(expected, Buffer.from(signature, 'hex'))) return false;
+  return mayViewComputer(database, row, viewerId);
 }
 
 function notifyWaiters(id: string, value: { type: 'handoff' | 'ended'; note?: string }): void {
@@ -84,12 +116,12 @@ export async function createComputerSession(
       object: 'a live browser',
       presentation: 'card',
       cardType: 'computer-session',
-      card: { id, url, title, status: 'live', lastFrameUrl: `${url}last.jpg` },
+      card: { id, url, title, status: 'live' },
     });
     await db.query(
-      `INSERT INTO computer_sessions(id,room_id,message_id,agent_id,source_session_id,upstream_url,relay_instance_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7)`,
-      [id, input.roomId, messageId, input.agentId, input.sessionId, upstream?.toString() ?? 'body:', process.env.FLY_MACHINE_ID ?? null],
+      `INSERT INTO computer_sessions(id,room_id,message_id,agent_id,source_session_id,upstream_url,relay_instance_id,view_secret)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [id, input.roomId, messageId, input.agentId, input.sessionId, upstream?.toString() ?? 'body:', process.env.FLY_MACHINE_ID ?? null, randomBytes(32)],
     );
   });
   live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId: input.agentId });
@@ -99,7 +131,7 @@ export async function createComputerSession(
 export async function getComputerSession(database: SqlDatabase, id: string): Promise<ComputerSessionRow | undefined> {
   if (!/^[A-Za-z0-9_-]{43}$/.test(id)) return undefined;
   return (await database.query<ComputerSessionRow>(
-    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,status,relay_instance_id,handoff_count
+    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,status,relay_instance_id,handoff_count,view_secret
      FROM computer_sessions WHERE id=$1`, [id],
   )).rows[0];
 }
@@ -108,13 +140,12 @@ export async function endComputerSession(
   database: SqlDatabase,
   live: LiveHub,
   row: ComputerSessionRow,
-  lastFrame?: Buffer,
 ): Promise<void> {
   if (row.status === 'ended') return;
   const changed = await database.transaction(async (db) => {
     const update = await db.query(
-      `UPDATE computer_sessions SET status='ended',ended_at=now(),last_frame=COALESCE($2,last_frame)
-       WHERE id=$1 AND status='live'`, [row.id, lastFrame ?? latestFrames.get(row.id) ?? null],
+      `UPDATE computer_sessions SET status='ended',ended_at=now()
+       WHERE id=$1 AND status='live'`, [row.id],
     );
     if (!update.rowCount) return false;
     await db.query(
@@ -124,24 +155,13 @@ export async function endComputerSession(
     return true;
   });
   if (changed) live.publish({ type: 'invalidate', roomId: row.room_id, reason: 'message', agentId: row.agent_id });
-  latestFrames.delete(row.id);
-  savedFrameAt.delete(row.id);
   if (changed) notifyWaiters(row.id, { type: 'ended' });
 }
 
-export async function serveComputerLastFrame(response: ServerResponse, database: SqlDatabase, id: string): Promise<void> {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(id)) { response.writeHead(404).end(); return; }
-  const found = (await database.query<{ last_frame: Buffer | null }>(
-    `SELECT last_frame FROM computer_sessions WHERE id=$1 AND status='ended'`, [id],
-  )).rows[0];
-  if (!found?.last_frame) { response.writeHead(404, { 'cache-control': 'no-store' }).end(); return; }
-  response.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff' });
-  response.end(found.last_frame);
-}
-
 /** One authoritative read when a live viewer's socket reconnects. */
-export async function serveComputerStatus(response: ServerResponse, database: SqlDatabase, id: string): Promise<void> {
+export async function serveComputerStatus(request: IncomingMessage, response: ServerResponse, database: SqlDatabase, id: string): Promise<void> {
   const row = await getComputerSession(database, id);
+  if (!row || !(await authorizedViewer(request, database, row))) { response.writeHead(403).end(); return; }
   response.writeHead(row ? 200 : 404, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
@@ -150,17 +170,15 @@ export async function serveComputerStatus(response: ServerResponse, database: Sq
   response.end(JSON.stringify({ status: row?.status ?? 'ended' }));
 }
 
-function frameBytes(data: WebSocket.RawData): Buffer | undefined {
+function isFrameMessage(data: WebSocket.RawData): boolean {
   try {
     const message = JSON.parse(data.toString()) as { method?: string; params?: { data?: string }; type?: string; data?: string };
     const encoded = message.type === 'frame' ? message.data : message.method === 'Page.screencastFrame' ? message.params?.data : undefined;
-    if (typeof encoded !== 'string') return undefined;
-    const bytes = Buffer.from(encoded, 'base64');
-    return bytes.length <= 2 * 1024 * 1024 ? bytes : undefined;
-  } catch { return undefined; }
+    return typeof encoded === 'string';
+  } catch { return false; }
 }
 
-/** A bearer URL is the only public entry. Never redirect to the Squire host. */
+/** The public session path needs a viewer token and current Room/agent authority. */
 export async function serveComputerSession(
   request: IncomingMessage,
   response: ServerResponse,
@@ -169,6 +187,7 @@ export async function serveComputerSession(
   id: string,
 ): Promise<void> {
   const row = await getComputerSession(database, id);
+  if (!row || !(await authorizedViewer(request, database, row))) { response.writeHead(403).end(); return; }
   if (!row || row.status !== 'live') {
     response.writeHead(410, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
     response.end('This browser session has ended.');
@@ -227,7 +246,7 @@ export async function serveComputerSession(
         beelineCanvas.addEventListener('pointercancel',event=>{if(event.pointerType==='touch')drag=undefined;},true);
       }
       socket.addEventListener('close',async()=>{
-        try{const reply=await fetch('status',{cache:'no-store'});const state=await reply.json();
+        try{const reply=await fetch('status'+location.search,{cache:'no-store'});const state=await reply.json();
           if(state.status==='live'&&!new URLSearchParams(location.search).has('reconnected')){
             const next=new URL(location.href);next.searchParams.set('reconnected','1');location.replace(next.href);return;
           }
@@ -238,12 +257,14 @@ export async function serveComputerSession(
         }catch{}
       });
     </script>`;
+    const securedHtml = html.replace('new URL("stream", location.href)', 'new URL("stream" + location.search, location.href)');
+    if (securedHtml === html) { response.writeHead(502, { 'cache-control': 'no-store' }).end(); return; }
     response.writeHead(200, {
       'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
       'content-security-policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self' wss: ws:; base-uri 'none'; form-action 'none'",
       'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
     });
-    response.end(html.replace('</head>', `${coverStyle}</head>`).replace('</body>', `${bridge}</body>`));
+    response.end(securedHtml.replace('</head>', `${coverStyle}</head>`).replace('</body>', `${bridge}</body>`));
     return;
   }
   response.writeHead(200, {
@@ -267,11 +288,11 @@ export function computerViewerHtml(id: string): string {
   button,a{border:1px solid #ffffff44;border-radius:999px;background:#261a2ad9;color:#f6edf4;padding:10px 14px;font:500 13px system-ui,sans-serif;text-decoration:none;cursor:pointer}
   body.embedded #controls{display:none}
   #keys{position:absolute;opacity:0;width:1px;height:1px;left:0;bottom:0}
-  </style></head><body><div id="stage"><img id="screen" alt="Live browser"></div><div id="ended">Browser session ended</div><input id="keys" autocomplete="off" autocapitalize="off"><div id="controls"><button id="back" aria-label="Close browser">✕</button><a id="external" target="_blank" rel="noopener noreferrer" href="/s/${id}/">Open in browser ↗</a></div><script>
+  </style></head><body><div id="stage"><img id="screen" alt="Live browser"></div><div id="ended">Browser session ended</div><input id="keys" autocomplete="off" autocapitalize="off"><div id="controls"><button id="back" aria-label="Close browser">✕</button></div><script>
   const query=new URLSearchParams(location.search), preview=query.has('preview');
   if(query.has('embedded')) document.body.classList.add('embedded');
   const image=document.getElementById('screen'), stage=document.getElementById('stage'), ended=document.getElementById('ended'), keys=document.getElementById('keys');
-  const socketUrl=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/s/${id}/ws'+(preview?'?preview=1':'');
+  const socketUrl=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/s/${id}/ws'+location.search;
   let wire, serial=1, controlling=false, width=1, height=1, leaving=false, endedSession=false, reconnected=false;
   function fit(){if(width<=1||height<=1)return;const scale=Math.max(stage.clientWidth/width,stage.clientHeight/height);
     image.style.width=Math.ceil(width*scale)+'px';image.style.height=Math.ceil(height*scale)+'px';}
@@ -280,7 +301,7 @@ export function computerViewerHtml(id: string): string {
   function cdp(method,params={}){send({id:serial++,method,params});}
   function takeover(){if(!controlling){controlling=true;send({type:'takeover'});}}
   function finish(){if(leaving)return;leaving=true;if(controlling){send({type:'release'});controlling=false;}if(!preview)send({type:'leave'});}
-  function showEnded(){endedSession=true;image.style.display='none';ended.textContent='Browser session ended';ended.style.display='grid';document.getElementById('external').style.display='none';
+  function showEnded(){endedSession=true;image.style.display='none';ended.textContent='Browser session ended';ended.style.display='grid';
     const notice=JSON.stringify({type:'computer-ended',id:'${id}'});parent.postMessage({type:'computer-ended',id:'${id}'},'*');window.ReactNativeWebView?.postMessage(notice);}
   function showLost(){ended.textContent='Connection lost · reopen to retry';ended.style.display='grid';}
   function connect(){wire=new WebSocket(socketUrl);
@@ -291,7 +312,7 @@ export function computerViewerHtml(id: string): string {
     }catch{}};
     wire.onclose=async()=>{if(leaving||endedSession)return;controlling=false;
       if(reconnected){showLost();return;}reconnected=true;
-      try{const response=await fetch('/s/${id}/status',{cache:'no-store'});const status=await response.json();
+      try{const response=await fetch('/s/${id}/status'+location.search,{cache:'no-store'});const status=await response.json();
         if(status.status==='ended'){showEnded();return;}
         if(status.status!=='live'){showLost();return;}
         setTimeout(()=>{if(!leaving)connect();},300);
@@ -322,7 +343,7 @@ export function computerViewerHtml(id: string): string {
 }
 
 const computerWebSockets = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
-type BodyChannel = { source?: WebSocket; viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; pausedViewers: Set<WebSocket>; previewSentAt: Map<WebSocket, number>; controller?: WebSocket; handoffComplete?: boolean; pendingHandback?: ReturnType<typeof setTimeout>; ending?: boolean; lastFrame?: Buffer; lastFrameMessage?: WebSocket.RawData; lastFrameBinary?: boolean };
+type BodyChannel = { source?: WebSocket; viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; pausedViewers: Set<WebSocket>; previewSentAt: Map<WebSocket, number>; controller?: WebSocket; handoffComplete?: boolean; pendingHandback?: ReturnType<typeof setTimeout>; ending?: boolean };
 const bodyChannels = new Map<string, BodyChannel>();
 type SquireChannel = { viewers: Set<WebSocket>; humanControl: boolean; handoffComplete: boolean; pendingHandback?: ReturnType<typeof setTimeout> };
 const squireChannels = new Map<string, SquireChannel>();
@@ -383,13 +404,7 @@ export async function upgradeBodyComputerSource(
     channel.source?.close();
     channel.source = source;
     source.on('message', (data, binary) => {
-      const frame = frameBytes(data);
-      channel.lastFrame = frame ?? channel.lastFrame;
-      if (frame) {
-        channel.lastFrameMessage = data;
-        channel.lastFrameBinary = binary;
-        rememberFrame(database, id, frame);
-      }
+      const frame = isFrameMessage(data);
       const now = Date.now();
       for (const viewer of channel.viewers) {
         if (frame && channel.pausedViewers.has(viewer)) continue;
@@ -414,7 +429,7 @@ export async function upgradeBodyComputerSource(
         }
         bodyChannels.delete(id);
       };
-      void endComputerSession(database, live, row, channel.lastFrame).then(closeViewers, closeViewers);
+      void endComputerSession(database, live, row).then(closeViewers, closeViewers);
     });
   });
 }
@@ -446,8 +461,6 @@ function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffe
       if (message.type === 'pause-view') channel.pausedViewers.add(viewer);
       else if (message.type === 'resume-view') {
         channel.pausedViewers.delete(viewer);
-        if (channel.lastFrameMessage && viewer.readyState === WebSocket.OPEN)
-          viewer.send(channel.lastFrameMessage, { binary: channel.lastFrameBinary });
       } else if (message.type === 'takeover' && !channel.controller && !channel.handoffComplete) {
         channel.controller = viewer;
         channel.source?.send(data);
@@ -490,6 +503,7 @@ export async function upgradeComputerSession(
 ): Promise<void> {
   const row = await getComputerSession(database, id);
   if (!row || row.status !== 'live') { socket.destroy(); return; }
+  if (!(await authorizedViewer(request, database, row))) { socket.destroy(); return; }
   if (replayToSourceMachine(socket, row)) return;
   const path = new URL(request.url ?? '/', 'http://beeline.local').pathname;
   if (row.upstream_url === 'body:') {
@@ -502,7 +516,6 @@ export async function upgradeComputerSession(
   if (target.protocol === 'http:') target.protocol = 'ws:';
   if (!['ws:', 'wss:'].includes(target.protocol)) { socket.destroy(); return; }
   const upstream = new WebSocket(target.toString());
-  let lastFrame: Buffer | undefined;
   const preview = new URL(request.url ?? '/', 'http://beeline.local').searchParams.has('preview');
   upstream.once('open', () => {
     computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
@@ -545,9 +558,7 @@ export async function upgradeComputerSession(
             handBack();
           }
         }
-        const frame = frameBytes(data);
-        lastFrame = frame ?? lastFrame;
-        if (frame) rememberFrame(database, id, frame);
+        const frame = isFrameMessage(data);
         if (frame && preview) {
           const now = Date.now();
           if (now - lastPreviewFrameAt < 1_000) return;
@@ -572,7 +583,7 @@ export async function upgradeComputerSession(
           sessionEnded = true;
           if (channel!.pendingHandback) clearTimeout(channel!.pendingHandback);
           squireChannels.delete(id);
-          void endComputerSession(database, live, row, lastFrame).finally(() => viewer.close());
+          void endComputerSession(database, live, row).finally(() => viewer.close());
           return;
         }
         if (!viewerGone) void fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(5_000) })
@@ -585,7 +596,7 @@ export async function upgradeComputerSession(
               if (viewer.readyState === WebSocket.OPEN) viewer.send(JSON.stringify({ type: 'ended' }));
               viewer.close();
             };
-            void endComputerSession(database, live, row, lastFrame).then(closeViewer, closeViewer);
+            void endComputerSession(database, live, row).then(closeViewer, closeViewer);
           }).catch(() => viewer.close());
         else viewer.close();
       });

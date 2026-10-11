@@ -12,11 +12,12 @@ import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import {
-  createComputerSession, endComputerSession, getComputerSession, serveComputerLastFrame, serveComputerSession, serveComputerStatus,
+  computerViewToken, createComputerSession, endComputerSession, getComputerSession, serveComputerSession, serveComputerStatus,
   upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter,
 } from './computer-session.js';
 
 const HUMAN = 'a'.repeat(64);
+const OTHER = 'c'.repeat(64);
 const AGENT = 'b'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111119';
 const ROOM = '22222222-2222-4222-8222-222222222229';
@@ -47,11 +48,10 @@ describe('computer session handoff', () => {
       response.end('<!doctype html><title>Start</title><button onclick="document.title=\'clicked\'">Click</button><div id="tick"></div><script>let n=0;setInterval(()=>document.getElementById("tick").textContent=String(++n),100)</script>');
       return;
     }
-    const last = /^\/s\/([A-Za-z0-9_-]{43})\/last\.jpg$/.exec(request.url ?? '')?.[1];
-    if (last) { void serveComputerLastFrame(response, database, last); return; }
-    const status = /^\/s\/([A-Za-z0-9_-]{43})\/status$/.exec(request.url ?? '')?.[1];
-    if (status) { void serveComputerStatus(response, database, status); return; }
-    const id = /^\/s\/([A-Za-z0-9_-]{43})\/?$/.exec(request.url ?? '')?.[1];
+    const path = new URL(request.url ?? '/', 'http://beeline.local').pathname;
+    const status = /^\/s\/([A-Za-z0-9_-]{43})\/status$/.exec(path)?.[1];
+    if (status) { void serveComputerStatus(request, response, database, status); return; }
+    const id = /^\/s\/([A-Za-z0-9_-]{43})\/?$/.exec(path)?.[1];
     if (!id) { response.writeHead(404).end(); return; }
     void serveComputerSession(request, response, database, live, id);
   });
@@ -59,13 +59,15 @@ describe('computer session handoff', () => {
 
   beforeAll(async () => {
     await migrate(database);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Human'),($2,'agent','Agent')`, [HUMAN, AGENT]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Human'),($2,'agent','Agent'),($3,'human','Other')`, [HUMAN, AGENT, OTHER]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, HUMAN]);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Computer')`, [WORKSPACE]);
     await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [ROOM, WORKSPACE]);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, AGENT]);
     await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, HUMAN]);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [WORKSPACE, ROOM, HUMAN]);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member')`, [WORKSPACE, OTHER]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, OTHER]);
     server.on('upgrade', (request, socket, head) => {
       const url = new URL(request.url ?? '/', 'http://beeline.local');
       const match = /^\/s\/([A-Za-z0-9_-]{43})\/(source|ws|stream|wait)$/.exec(url.pathname);
@@ -89,18 +91,21 @@ describe('computer session handoff', () => {
       roomId: ROOM, agentId: AGENT, sessionId: 'chromium-page-1', upstreamUrl: 'body:', title: 'Dashboard',
     });
     const row = await getComputerSession(database, share.id);
+    const access = await computerViewToken(database, share.id, HUMAN);
+    expect(access).toBeTruthy();
     expect(row?.status).toBe('live');
     const card = await database.query<{ card: { status: string; url: string } }>(
       'SELECT card FROM messages WHERE id=$1', [row!.message_id]);
     expect(card.rows[0]?.card).toMatchObject({ status: 'live', url: share.url });
     expect((await phone.readRoom(ROOM, HUMAN))?.messages.find((message) => message.id === row!.message_id)?.computerSession)
       .toMatchObject({ id: share.id, status: 'live', url: share.url });
-    const page = await fetch(`${origin}/s/${share.id}`);
+    expect((await fetch(`${origin}/s/${share.id}`)).status).toBe(403);
+    const page = await fetch(`${origin}/s/${share.id}?access=${access}`);
     expect(page.status).toBe(200);
     expect(await page.text()).toContain('Page.screencastFrame');
     const source = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/source`);
     await opened(source);
-    let viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws`);
+    let viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
     await opened(viewer);
     const waiter = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/wait?since=0`);
     await opened(waiter);
@@ -110,8 +115,8 @@ describe('computer session handoff', () => {
     expect(await receivedFrame).toBe(frame);
     viewer.close(); // A transport drop is not a deliberate handback.
     await new Promise<void>((resolve) => viewer.once('close', resolve));
-    expect((await (await fetch(`${origin}/s/${share.id}/status`)).json()).status).toBe('live');
-    viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws`);
+    expect((await (await fetch(`${origin}/s/${share.id}/status?access=${access}`)).json()).status).toBe('live');
+    viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
     await opened(viewer);
     await new Promise<void>((resolve) => setTimeout(resolve, 5_100));
     expect((await getComputerSession(database, share.id))?.handoff_count).toBe(0);
@@ -124,6 +129,7 @@ describe('computer session handoff', () => {
     expect(pausedFrames).toEqual([]);
     const resumedFrame = next(viewer);
     viewer.send(JSON.stringify({ type: 'resume-view' }));
+    source.send(frame);
     expect(await resumedFrame).toBe(frame);
     const takeover = next(source);
     viewer.send(JSON.stringify({ type: 'takeover' }));
@@ -145,9 +151,45 @@ describe('computer session handoff', () => {
     expect((await getComputerSession(database, share.id))?.status).toBe('ended');
     expect((await phone.readRoom(ROOM, HUMAN))?.messages.find((message) => message.id === row!.message_id)?.computerSession?.status)
       .toBe('ended');
-    const ended = await fetch(`${origin}/s/${share.id}`);
+    const ended = await fetch(`${origin}/s/${share.id}?access=${access}`);
     expect(ended.status).toBe(410);
+    expect((await fetch(`${origin}/s/${share.id}/last.jpg`)).status).toBe(404);
   }, 60_000);
+
+  it('keeps the card readable while refusing a reader who cannot steer the agent', async () => {
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'restricted-browser', upstreamUrl: 'body:',
+    });
+    await database.query(`UPDATE agents SET access_policy='{"type":"creator"}'::jsonb WHERE agent_id=$1`, [AGENT]);
+    try {
+      const room = await phone.readRoom(ROOM, OTHER);
+      expect(room?.messages.some((message) => message.computerSession?.id === share.id)).toBe(true);
+      await expect(phone.execute('openComputerSession', { id: share.id }, OTHER)).rejects.toThrow('access denied');
+      expect(await computerViewToken(database, share.id, OTHER)).toBeNull();
+      expect((await fetch(`${origin}/s/${share.id}`)).status).toBe(403);
+      expect((await fetch(`${origin}/s/${share.id}/status`)).status).toBe(403);
+      const { access } = await phone.execute('openComputerSession', { id: share.id }, HUMAN);
+      expect((await fetch(`${origin}/s/${share.id}?access=${access}`)).status).toBe(200);
+      const refused = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws`);
+      await new Promise<void>((resolve) => { refused.once('error', () => resolve()); });
+      const allowed = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
+      await opened(allowed);
+      allowed.close();
+      await new Promise<void>((resolve) => allowed.once('close', resolve));
+      await database.query(`UPDATE agents SET access_policy='{"type":"allowlist","allow":[]}'::jsonb WHERE agent_id=$1`, [AGENT]);
+      expect((await fetch(`${origin}/s/${share.id}?access=${access}`)).status).toBe(403);
+      expect((await fetch(`${origin}/s/${share.id}/status?access=${access}`)).status).toBe(403);
+      const revoked = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
+      await new Promise<void>((resolve) => { revoked.once('error', () => resolve()); });
+      await database.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb WHERE agent_id=$1`, [AGENT]);
+      await database.query(`UPDATE memberships SET role='spectator' WHERE room_id IS NULL AND identity_id=$1`, [OTHER]);
+      expect(await computerViewToken(database, share.id, OTHER)).toBeNull();
+    } finally {
+      await database.query(`UPDATE memberships SET role='member' WHERE room_id IS NULL AND identity_id=$1`, [OTHER]);
+      await database.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb WHERE agent_id=$1`, [AGENT]);
+      await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+    }
+  });
 
   it('proxies Squire page and stream without exposing its bearer URL, then hands back and expires', async () => {
     const token = 's'.repeat(43);
@@ -171,11 +213,12 @@ describe('computer session handoff', () => {
       const share = await createComputerSession(database, live, {
         roomId: ROOM, agentId: AGENT, sessionId: 'squire-operate-1', upstreamUrl, title: 'Squire tab',
       });
-      const html = await (await fetch(`${origin}/s/${share.id}/`)).text();
+      const access = await computerViewToken(database, share.id, HUMAN);
+      const html = await (await fetch(`${origin}/s/${share.id}/?access=${access}`)).text();
       expect(html).not.toContain(upstreamUrl);
       expect(html).not.toContain(token);
-      expect(html).toContain('new URL("stream", location.href)');
-      const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream`);
+      expect(html).toContain('new URL("stream" + location.search, location.href)');
+      const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
       await opened(viewer);
       await until(async () => upstream);
       const frame = JSON.stringify({ type: 'frame', data: Buffer.from('frame').toString('base64') });
@@ -196,8 +239,8 @@ describe('computer session handoff', () => {
       upstream!.close(1000, 'session ended');
       expect(JSON.parse(await endedNotice)).toEqual({ type: 'ended' });
       await until(async () => (await getComputerSession(database, share.id))?.status === 'ended' ? true : undefined);
-      expect((await fetch(`${origin}/s/${share.id}`)).status).toBe(410);
-      expect((await fetch(`${origin}/s/${share.id}/last.jpg`)).status).toBe(200);
+      expect((await fetch(`${origin}/s/${share.id}?access=${access}`)).status).toBe(410);
+      expect((await fetch(`${origin}/s/${share.id}/last.jpg`)).status).toBe(404);
     } finally {
       for (const client of upstreamSockets.clients) client.close();
       await new Promise<void>((resolve) => upstreamSockets.close(() => resolve()));
@@ -236,9 +279,10 @@ describe('computer session handoff', () => {
       const share = await createComputerSession(database, live, {
         roomId: ROOM, agentId: AGENT, sessionId: page.id, upstreamUrl: 'body:', title: 'Live Chrome',
       });
+      const access = await computerViewToken(database, share.id, HUMAN);
       await shareChromiumPage({ page, serverBaseUrl: origin, shareId: share.id,
         daemonToken: 'test-token', onEnded: async () => {} });
-      const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws`);
+      const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
       await opened(viewer);
       const screen = await until(async () => {
         const message = await Promise.race([
@@ -261,17 +305,15 @@ describe('computer session handoff', () => {
       chrome.kill('SIGTERM');
       await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
       await until(async () => (await getComputerSession(database, share.id))?.status === 'ended' ? true : undefined);
-      const ended = await fetch(`${origin}/s/${share.id}`);
+      const ended = await fetch(`${origin}/s/${share.id}?access=${access}`);
       expect(ended.status).toBe(410);
-      const last = await fetch(`${origin}/s/${share.id}/last.jpg`);
-      expect(last.status).toBe(200);
-      expect((await last.arrayBuffer()).byteLength).toBeGreaterThan(100);
+      expect((await fetch(`${origin}/s/${share.id}/last.jpg`)).status).toBe(404);
     } finally {
       if (chrome.exitCode === null) {
         chrome.kill('SIGTERM');
         await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
       }
-      await rm(profile, { recursive: true, force: true });
+      await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }, 60_000);
 });

@@ -1147,7 +1147,7 @@ export function BuzzChatSurface({
       ?? desktopWorkRoom?.messages.find((message) => message.computerSession?.id === desktopWorkPaneContent.session.id)?.computerSession)
     : undefined;
   const displayedDesktopWorkPaneContent = desktopWorkPaneContent?.kind === 'computer' && currentComputerSession
-    ? { ...desktopWorkPaneContent, session: currentComputerSession }
+    ? { ...desktopWorkPaneContent, session: { ...currentComputerSession, access: desktopWorkPaneContent.session.access } }
     : desktopWorkPaneContent;
   // A direct message has no second pane: artifacts open in the full-screen
   // viewer and the transcript keeps the width.

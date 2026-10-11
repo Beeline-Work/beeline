@@ -290,7 +290,6 @@ export type RoomViewMessage = {
     readonly url: string;
     readonly title: string;
     readonly status: 'live' | 'ended';
-    readonly lastFrameUrl: string;
   };
   /** One connector offer: the agent reaches for a Workbench tool it needs (R5). */
   readonly connectorOffer?: ConnectorOfferCardView;

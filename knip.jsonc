@@ -56,6 +56,8 @@
         "scripts/identity-picture-seat-proof.tsx",
         "scripts/identity-picture-seat-frames.tsx",
         "scripts/render-identity-picture-seat-frames.mjs",
+        "scripts/computer-session-frame.tsx",
+        "scripts/render-computer-session-frame.mjs",
         "scripts/transcript-dates-proof.tsx",
         "scripts/tool-output-sheet-proof.tsx",
         "scripts/beeline-mark-proof.tsx",

@@ -182,6 +182,11 @@ it('enforces strict role authority and spectator writes and lists Workspace-owne
     (await phone.readWorkspaceMembers(workspace, other, { kind: 'agent', ownerId: viewer }))
       ?.agents,
   ).toEqual([]);
+  // The profile read names the person and the agents they own in one answer.
+  const profile = await phone.readWorkspaceMembers(workspace, viewer, { memberId: other });
+  expect(profile?.members.map((member) => member.identity.pubkey)).toEqual([other]);
+  expect(profile?.agents.map((member) => member.identity.pubkey)).toEqual([agent]);
+  expect(profile?.agentTotal).toBe(1);
 });
 
 it('Reproduction R12-1: exposes grant Room names only to authorized viewers', async () => {

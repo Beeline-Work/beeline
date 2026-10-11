@@ -278,10 +278,13 @@ BEGIN
       END IF;
     WHEN 'identities' THEN
       -- The public identity (name, handle, picture, face) and the owner's push level.
+      -- A push level change alone is the owner's own setting, so only they hear it.
       IF TG_OP = 'UPDATE' AND ROW(NEW.name,NEW.handle,NEW.avatar,NEW.face_id,NEW.push_level)
           IS DISTINCT FROM ROW(OLD.name,OLD.handle,OLD.avatar,OLD.face_id,OLD.push_level) THEN
         payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
-          'roomId', '', 'identityId', NEW.id);
+          'roomId', '', 'identityId', NEW.id,
+          'ownerOnly', ROW(NEW.name,NEW.handle,NEW.avatar,NEW.face_id)
+            IS NOT DISTINCT FROM ROW(OLD.name,OLD.handle,OLD.avatar,OLD.face_id));
       END IF;
     WHEN 'push_devices' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '');
@@ -386,6 +389,8 @@ interface LiveNotificationPayload {
   turnStatus?: string;
   agentId?: string;
   identityId?: string;
+  /** An identities change only its owner may hear: the push level alone. */
+  ownerOnly?: boolean;
   workspaceId?: string;
   sourceRoomId?: string;
   needsYouCandidate?: boolean;
@@ -441,6 +446,7 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.version === 'string' ? { version: parsed.version } : {}),
       ...(typeof parsed.agentId === 'string' ? { agentId: parsed.agentId } : {}),
       ...(typeof parsed.identityId === 'string' ? { identityId: parsed.identityId } : {}),
+      ...(parsed.ownerOnly === true ? { ownerOnly: true } : {}),
       ...(typeof parsed.workspaceId === 'string' ? { workspaceId: parsed.workspaceId } : {}),
       ...(typeof parsed.sourceRoomId === 'string' ? { sourceRoomId: parsed.sourceRoomId } : {}),
       ...(typeof parsed.needsYouCandidate === 'boolean'
@@ -879,7 +885,8 @@ export class PostgresLiveListener {
           reason: 'postgres:workspaces', workspaceId: payload.workspaceId });
       if (payload.table === 'identities' && payload.identityId)
         this.live.publish({ type: 'invalidate', roomId: '',
-          reason: 'postgres:identities', personId: payload.identityId });
+          reason: 'postgres:identities', personId: payload.identityId,
+          ...(payload.ownerOnly ? { readerId: payload.identityId } : {}) });
       return;
     }
     if (payload.table === 'message_bookmarks' && payload.identityId &&

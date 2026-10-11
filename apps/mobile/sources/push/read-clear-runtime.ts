@@ -25,13 +25,15 @@ export async function handleReadClearPayload(
 let installed = false;
 
 /**
- * iOS wakes the app for the server's silent read-clear push (a Room read on
- * another device). Defined while the bundle loads, like the action task, so a
- * background launch finds it. An older binary without expo-task-manager
- * simply keeps clearing only when this device opens the Room.
+ * iOS and Android wake the app for the server's silent read-clear push (a
+ * Room read on another device): a background APNs push on iOS, a
+ * high-priority FCM data message on Android. Defined while the bundle loads,
+ * like the action task, so a background launch finds it. An older binary
+ * without expo-task-manager simply keeps clearing only when this device
+ * opens the Room.
  */
 export function installReadClearTask(): void {
-  if (installed || Platform.OS !== 'ios') return;
+  if (installed || (Platform.OS !== 'ios' && Platform.OS !== 'android')) return;
   installed = true;
   let TaskManager: typeof import('expo-task-manager');
   try {

@@ -14,13 +14,13 @@ import type {
 } from '@beeline/buzz-client';
 import {
   ROOM_VIEW_AGENT_LIMIT,
+  cornerShortTitle,
   type SystemEvent,
 } from '@beeline/api-contract/phone';
 import type { AgentActivityItem } from '@/sync/transport';
 import type { DisplayableAgent } from '@/buzz/agent-display';
 import type { CornerSummary } from '@/buzz/corners';
 import type { CornerState } from '@beeline/api-contract/phone';
-import { cornerName } from '@/buzz/corners';
 
 export type AgentTurnStatus = 'working' | 'complete' | 'failed';
 export type CornerProcessState = 'live' | 'suspended' | 'waiting-for-slot';
@@ -628,7 +628,7 @@ export function cornerSummaries(corners: readonly CornerListItem[]): CornerSumma
       id: item.corner.id,
       // Every consumer of a corner summary — the Room row's fact line, the
       // corner deck, the header — reads the SHORT title (C89).
-      name: cornerName(item.corner.name, item.corner.id),
+      name: cornerShortTitle(undefined, item.corner.name, item.corner.id),
       state: item.state,
       ...(item.reason ? { reason: item.reason } : {}),
       ...(stateAt === undefined ? {} : { stateAt }),

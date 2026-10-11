@@ -1117,7 +1117,7 @@ describe('Tray Needs you', () => {
       expect(tree.root.findByProps({ testID: 'needs-you-detail-grant-1' }).props.children).toBe(
         'Push ledger fixes to feat/ledger.',
       );
-      expect(textOf(tree)).toContain('for Johnny · experiments / sec-filing-desk');
+      expect(textOf(tree)).toContain('for Johnny · experiments/sec-filing-desk');
       // Older than a day: the age takes the warning tone.
       expect(textOf(tree)).toContain('2d');
       // Opening an approval leaves it; a separate swipe can dismiss its tray row.

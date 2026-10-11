@@ -556,13 +556,21 @@ describe('background advisory-lock ownership', () => {
         [room, corner, workspace],
       );
       await db.query(
-        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$4,'hello'),($3,$5,$4,'hi')`,
-        ['1'.repeat(64), room, '2'.repeat(64), agent, corner],
+        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
+         ($1,$2,$4,'hello',now()-interval '2 minutes'),($3,$5,$4,'hi',now()-interval '2 minutes'),
+         ($6,$2,$4,'again',now()-interval '1 minute')`,
+        ['1'.repeat(64), room, '2'.repeat(64), agent, corner, '3'.repeat(64)],
       );
       await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
-         ($1,$3,'android','physical'),($2,$3,'ios','physical')`,
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at) VALUES
+         ($1,$3,'android','physical',now()-interval '1 hour'),
+         ($2,$3,'ios','physical',now()-interval '1 hour')`,
         [android, ios, human],
+      );
+      await db.query(
+        `INSERT INTO push_delivery_claims(message_id,device_token,status)
+         SELECT id,$1,'delivered' FROM messages`,
+        [ios],
       );
       const firebaseSend = vi.fn().mockResolvedValue(undefined);
       const clearRead = vi.fn().mockResolvedValue(undefined);
@@ -574,14 +582,15 @@ describe('background advisory-lock ownership', () => {
       await loop.runOnce();
       expect(clearRead).not.toHaveBeenCalled();
 
-      const read = (roomId: string, messageId: string) =>
+      const read = (messageId: string) =>
         db.query(
-          `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
-           SELECT room_id,$2,created_at,id,clock_timestamp() FROM messages WHERE id=$1
-           ON CONFLICT(room_id,identity_id) DO UPDATE SET read_at=clock_timestamp()`,
+          `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+           SELECT room_id,$2,created_at,id FROM messages WHERE id=$1
+           ON CONFLICT(room_id,identity_id) DO UPDATE SET message_id=EXCLUDED.message_id,
+             message_created_at=EXCLUDED.message_created_at`,
           [messageId, human],
-        ).then(() => roomId);
-      await read(room, '1'.repeat(64));
+        );
+      await read('1'.repeat(64));
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
@@ -589,8 +598,8 @@ describe('background advisory-lock ownership', () => {
       ]);
 
       // Reads inside the interval wait and then go out together, once.
-      await read(corner, '2'.repeat(64));
-      await read(room, '1'.repeat(64));
+      await read('2'.repeat(64));
+      await read('3'.repeat(64));
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
       await db.query(
@@ -614,7 +623,7 @@ describe('background advisory-lock ownership', () => {
     }
   });
   // G9-R1: a push names at most READ_CLEAR_MAX_CHANNELS Rooms. Overflow,
-  // including marks tied on read_at, must go out in later pushes.
+  // including marks tied on their message's created_at, must go out in later pushes.
   // G9-R5: each push must also fit APNs's 4,096-byte payload limit; 50 Rooms
   // with 64-character message ids made 6,103 bytes.
   it('clears every read Room across throttled pushes that each fit the APNs limit', async () => {
@@ -642,15 +651,20 @@ describe('background advisory-lock ownership', () => {
           [workspace, count],
         )
       ).rows.map((row) => row.id);
+      // One statement, so every mark's message shares the same created_at.
       await db.query(
         `INSERT INTO messages(id,room_id,author_id,text)
          SELECT md5(id::text)||md5(id::text),id,$1,'hi' FROM rooms`,
         [agent],
       );
-      // One statement, so every mark shares the same read_at.
       await db.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
-         SELECT room_id,$1,created_at,id,now() FROM messages`,
+        `INSERT INTO push_delivery_claims(message_id,device_token,status)
+         SELECT id,$1,'delivered' FROM messages`,
+        [ios],
+      );
+      await db.query(
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT room_id,$1,created_at,id FROM messages`,
         [human],
       );
       const clearRead = vi.fn().mockResolvedValue(undefined);
@@ -723,8 +737,14 @@ describe('background advisory-lock ownership', () => {
         [first, second, room, agent],
       );
       await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical')`,
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES($1,$2,'ios','physical',now()-interval '1 hour')`,
         [ios, human],
+      );
+      await db.query(
+        `INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES
+         ($1,$3,'delivered'),($2,$3,'delivered')`,
+        [first, second, ios],
       );
       const phone = new PhoneService(db, 'http://local.test');
       const clearRead = vi.fn().mockResolvedValue(undefined);
@@ -738,34 +758,28 @@ describe('background advisory-lock ownership', () => {
           `UPDATE push_read_clears SET sent_at=now()-interval '${READ_CLEAR_INTERVAL_SECONDS + 1} seconds'`,
         );
 
-      await phone.markRead(room, second, human);
+      await phone.markRead(room, first, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
       // G9-R3: the push carries the server read cursor, so the phone keeps
       // notifications for messages after the read one.
-      const readAt = (
-        await db.query<{ read_at: number }>(
-          `SELECT ceil(extract(epoch FROM read_at)*1000)::float8 read_at
-           FROM room_read_marks WHERE room_id=$1 AND identity_id=$2`,
-          [room, human],
-        )
-      ).rows[0]!.read_at;
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
-        { channelId: room, readAt, messageId: second, readMessageIds: [] },
+        { channelId: room, messageId: first, readMessageIds: [] },
       ]);
 
+      // The mark moves back past every message; second stays in the shade.
       await ageThrottle();
-      await phone.markUnread(room, second, human);
+      await phone.markUnread(room, first, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(1);
 
-      // Reading it again is a read, and clears the shade again.
+      // Reading it is a read, and clears it.
       await ageThrottle();
       await phone.markRead(room, second, human);
       await loop.runOnce();
       expect(clearRead).toHaveBeenCalledTimes(2);
       expect(clearRead).toHaveBeenLastCalledWith(ios, [
-        expect.objectContaining({ channelId: room }),
+        { channelId: room, messageId: second, readMessageIds: [] },
       ]);
     } finally {
       await db.close();
@@ -802,7 +816,8 @@ describe('background advisory-lock ownership', () => {
         [zero, first, second, room, agent],
       );
       await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical')`,
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES($1,$2,'ios','physical',now()-interval '2 hours')`,
         [ios, human],
       );
       await db.query(
@@ -818,10 +833,10 @@ describe('background advisory-lock ownership', () => {
       );
       const read = (messageId: string) =>
         db.query(
-          `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
-           SELECT room_id,$2,created_at,id,clock_timestamp() FROM messages WHERE id=$1
+          `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+           SELECT room_id,$2,created_at,id FROM messages WHERE id=$1
            ON CONFLICT(room_id,identity_id) DO UPDATE SET message_id=EXCLUDED.message_id,
-             message_created_at=EXCLUDED.message_created_at,read_at=clock_timestamp()`,
+             message_created_at=EXCLUDED.message_created_at`,
           [messageId, human],
         );
 
@@ -870,7 +885,8 @@ describe('background advisory-lock ownership', () => {
         workspace,
       ]);
       await db.query(
-        `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'ios','physical')`,
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES($1,$2,'ios','physical',now()-interval '2 hours')`,
         [ios, human],
       );
       for (const [index, id] of [...readIds, unread].entries()) {
@@ -885,8 +901,8 @@ describe('background advisory-lock ownership', () => {
         );
       }
       await db.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
-         SELECT room_id,$2,created_at,id,clock_timestamp() FROM messages WHERE id=$1`,
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
         [readIds.at(-1), human],
       );
       const clearRead = vi.fn().mockResolvedValue(undefined);
@@ -914,8 +930,8 @@ describe('background advisory-lock ownership', () => {
     }
   });
   // G9-R7: read notifications delivered hours before the read must still
-  // clear. The one-hour claim cleanup keeps an iOS device's delivered claims
-  // until a read-clear push names them; other claims still expire.
+  // clear. The one-hour claim cleanup keeps an iOS or Android device's
+  // delivered claims until a read-clear push names them.
   it('clears read notifications delivered more than an hour before the read', async () => {
     const db = new PgliteDatabase();
     try {
@@ -959,8 +975,8 @@ describe('background advisory-lock ownership', () => {
         );
       }
       await db.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
-         SELECT room_id,$2,created_at,id,clock_timestamp() FROM messages WHERE id=$1`,
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
         [readIds.at(-1), human],
       );
       const clearRead = vi.fn().mockResolvedValue(undefined);
@@ -989,14 +1005,14 @@ describe('background advisory-lock ownership', () => {
             [android],
           )
         ).rows[0]?.count,
-      ).toBe(0);
+      ).toBe(readIds.length + 1);
     } finally {
       await db.close();
     }
   });
-  // G9-R8: a read older than a day whose cursor message was delivered but
-  // never named still clears it; a newer unread notification stays.
-  it('clears an unnamed cursor notification of a read older than a day', async () => {
+  // G9-R8: a read days old whose cursor message was delivered but never
+  // named still clears it; a newer unread notification stays.
+  it('clears an unnamed cursor notification of a read days old', async () => {
     const db = new PgliteDatabase();
     try {
       await migrate(db);
@@ -1034,7 +1050,7 @@ describe('background advisory-lock ownership', () => {
         );
       }
       await db.query(
-        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
          SELECT room_id,$2,created_at,id,now()-interval '2 days' FROM messages WHERE id=$1`,
         [cursor, human],
       );
@@ -1054,6 +1070,195 @@ describe('background advisory-lock ownership', () => {
         reads.flatMap((read) => [read.messageId, ...read.readMessageIds]),
       );
       expect(dismissed).toEqual([cursor]);
+    } finally {
+      await db.close();
+    }
+  });
+  // Audit 9.3: the viewer's own message from another device advances their
+  // read mark (advanceAuthorReadMark), so it clears the notifications before
+  // it like any other read.
+  it('clears read notifications when the viewer replies from another device', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        first = '1'.repeat(64),
+        second = '2'.repeat(64),
+        reply = '3'.repeat(64),
+        ios = 'c0ffee'.repeat(10) + 'abcd';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,NULL,$3,'owner'),($1,$2,$3,'owner'),($1,NULL,$4,'member'),($1,$2,$4,'member')`,
+        [workspace, room, human, agent],
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
+         ($1,$3,$4,'one',now()-interval '2 minutes'),($2,$3,$4,'two',now()-interval '1 minute')`,
+        [first, second, room, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES($1,$2,'ios','physical',now()-interval '1 hour')`,
+        [ios, human],
+      );
+      await db.query(
+        `INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES
+         ($1,$3,'delivered'),($2,$3,'delivered')`,
+        [first, second, ios],
+      );
+      const clearRead = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(
+        db,
+        undefined,
+        { send: vi.fn().mockResolvedValue(undefined), clearRead },
+      );
+      await loop.runOnce();
+      expect(clearRead).not.toHaveBeenCalled();
+
+      await new PhoneService(db, 'http://local.test').execute(
+        'sendRoomMessage',
+        { roomId: room, text: 'on it', messageId: reply },
+        human,
+      );
+      await loop.runOnce();
+      expect(clearRead).toHaveBeenCalledOnce();
+      expect(clearRead).toHaveBeenLastCalledWith(ios, [
+        { channelId: room, messageId: reply, readMessageIds: [second, first] },
+      ]);
+    } finally {
+      await db.close();
+    }
+  });
+  // Audit 9.3 Android: the same rule clears an Android phone's shade through FCM.
+  it('clears an Android device through its own sender with the same read rule', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        other = '33333333-3333-4333-8333-333333333333',
+        first = '1'.repeat(64),
+        second = '2'.repeat(64),
+        later = '3'.repeat(64),
+        elsewhere = '4'.repeat(64),
+        android = 'android-device-token-12345678901234567890';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(
+        `INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Room'),($2,$3,'Other')`,
+        [room, other, workspace],
+      );
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
+         ($1,$5,$7,'one',now()-interval '3 minutes'),($2,$5,$7,'two',now()-interval '2 minutes'),
+         ($3,$5,$7,'three',now()-interval '1 minute'),($4,$6,$7,'there',now()-interval '2 minutes')`,
+        [first, second, later, elsewhere, room, other, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES($1,$2,'android','physical',now()-interval '1 hour')`,
+        [android, human],
+      );
+      await db.query(
+        `INSERT INTO push_delivery_claims(message_id,device_token,status)
+         SELECT id,$1,'delivered' FROM messages`,
+        [android],
+      );
+      const androidClear = vi.fn().mockResolvedValue(undefined);
+      const iosClear = vi.fn().mockResolvedValue(undefined);
+      const loop = new PushDeliveryLoop(
+        db,
+        { send: vi.fn().mockResolvedValue(undefined), clearRead: androidClear },
+        { send: vi.fn().mockResolvedValue(undefined), clearRead: iosClear },
+      );
+      await db.query(
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
+        [second, human],
+      );
+      await loop.runOnce();
+      expect(iosClear).not.toHaveBeenCalled();
+      expect(androidClear).toHaveBeenCalledOnce();
+      expect(androidClear).toHaveBeenLastCalledWith(android, [
+        { channelId: room, messageId: second, readMessageIds: [first] },
+      ]);
+      const unnamed = await db.query<{ message_id: string }>(
+        `SELECT message_id FROM push_delivery_claims WHERE read_cleared_at IS NULL ORDER BY message_id`,
+      );
+      // The newer message and the unread Room keep their notifications.
+      expect(unnamed.rows.map((row) => row.message_id)).toEqual([later, elsewhere]);
+    } finally {
+      await db.close();
+    }
+  });
+  // A token handed to another person must not clear the last person's
+  // notifications when the new owner reads the same Room.
+  it('names only claims for messages since the device registered', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      const human = 'a'.repeat(64),
+        agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        before = '1'.repeat(64),
+        after = '2'.repeat(64),
+        ios = 'c0ffee'.repeat(10) + 'abcd';
+      await db.query(
+        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
+        [human, agent],
+      );
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
+        room,
+        workspace,
+      ]);
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
+         ($1,$3,$4,'one',now()-interval '2 hours'),($2,$3,$4,'two',now()-interval '1 minute')`,
+        [before, after, room, agent],
+      );
+      await db.query(
+        `INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+         VALUES($1,$2,'ios','physical',now()-interval '1 hour')`,
+        [ios, human],
+      );
+      await db.query(
+        `INSERT INTO push_delivery_claims(message_id,device_token,status) VALUES
+         ($1,$3,'delivered'),($2,$3,'delivered')`,
+        [before, after, ios],
+      );
+      await db.query(
+        `INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT room_id,$2,created_at,id FROM messages WHERE id=$1`,
+        [after, human],
+      );
+      const clearRead = vi.fn().mockResolvedValue(undefined);
+      await new PushDeliveryLoop(
+        db,
+        undefined,
+        { send: vi.fn().mockResolvedValue(undefined), clearRead },
+      ).runOnce();
+      expect(clearRead).toHaveBeenLastCalledWith(ios, [
+        { channelId: room, messageId: after, readMessageIds: [] },
+      ]);
     } finally {
       await db.close();
     }

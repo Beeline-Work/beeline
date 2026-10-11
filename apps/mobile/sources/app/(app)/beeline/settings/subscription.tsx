@@ -65,7 +65,7 @@ export default function Subscription() {
           <ScheduledWorkFacts
             agents={[creatorName]}
             runs={subscriptionRuns(subscription)}
-            where={subscriptionWhere(subscription)}
+            where={subscriptionWhere(subscription, work?.roomName)}
             whereCorner={subscription.corner}
           />
           <ScheduledWorkDoes roomId={subscription.roomId} parentRoomId={roomId}

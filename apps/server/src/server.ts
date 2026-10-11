@@ -892,6 +892,8 @@ export function createBeelineServer(options: ServerOptions): Server {
           return;
         }
         if (event.reason === 'postgres:identities' && event.personId) {
+          // A push level change alone carries its owner as the only reader.
+          if (event.readerId && event.readerId !== principal.identityId) return;
           const read = readPersonChange(event, event.personId);
           identityDelivery = identityDelivery.then(() => read.then((change) => {
             if (!change?.viewers.has(principal.identityId)) return;

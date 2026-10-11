@@ -73,7 +73,7 @@ export default function PromptSchedule() {
           <ScheduledWorkFacts
             agents={[work?.agentNames.get(schedule.agentId) ?? 'Agent']}
             runs={scheduleRuns(schedule)}
-            where={scheduleWhere(schedule)}
+            where={scheduleWhere(schedule, work?.roomName)}
             whereCorner={schedule.corner}
           />
           <ScheduledWorkDoes roomId={schedule.roomId} parentRoomId={roomId}

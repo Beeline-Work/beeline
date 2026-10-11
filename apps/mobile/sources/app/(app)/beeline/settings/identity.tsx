@@ -21,7 +21,6 @@ import {
   clearBuzzIdentity,
   loadBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
-import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
 import {
   ensurePersonNameForWorkspace,
@@ -58,7 +57,7 @@ import { roomOpenTraceEnabled } from '@/buzz/room-open-trace';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { monolithSession } from '@/auth/monolith-session';
 import { clearMobileSurfaceStorage, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { saveStoredPushLevel, subscribeStoredPushLevel } from '@/push/push-level-storage';
+import { saveStoredPushLevel, watchStoredPushLevel } from '@/push/push-level-storage';
 import { subscribeOwnIdentityChange } from '@/buzz/identity-live';
 import { reconcilePresentedNotificationBadge } from '@/push/presented-notifications';
 import { loadAppConfig } from '@/sync/appConfig';
@@ -128,9 +127,7 @@ export default function BuzzIdentitySettings() {
     // A change on another device reaches this mounted page through the
     // server's identity subscription, which also refreshes the device copies.
     if (!profilePubkey) return;
-    const stopLevel = subscribeStoredPushLevel((pubkey, level) => {
-      if (pubkey === profilePubkey) setPushLevel(level);
-    });
+    const stopLevel = watchStoredPushLevel(profilePubkey, setPushLevel);
     const stopIdentity = subscribeOwnIdentityChange((person) => {
       setProfileName(person.name);
       setFace(person.face ?? null);
@@ -197,7 +194,9 @@ export default function BuzzIdentitySettings() {
     }
   }, []);
 
+  // The profile name is read for the current Workspace, again after a switch.
   useEffect(() => {
+    if (currentWorkspaceId === undefined) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -224,20 +223,18 @@ export default function BuzzIdentitySettings() {
         if (cachedWorkspaces && !cancelled)
           setWorkspaceList({ workspaces: cachedWorkspaces.workspaces, confirmed: false });
         const client = await clientPromise;
-        const [freshWorkspaces, activeCommunityId, enabled, registration, permission] =
-          await Promise.all([
-            workspacePromise,
-            loadActiveCommunityId(identity.publicKey),
-            getBuzzPushEnabled(identity.publicKey),
-            getBuzzPushRegistrationState(identity.publicKey),
-            getPushPermissionInfo(),
-          ]);
+        const [freshWorkspaces, enabled, registration, permission] = await Promise.all([
+          workspacePromise,
+          getBuzzPushEnabled(identity.publicKey),
+          getBuzzPushRegistrationState(identity.publicKey),
+          getPushPermissionInfo(),
+        ]);
         // Null: an eviction overtook the read, so it confirms nothing.
         if (!cancelled && freshWorkspaces)
           setWorkspaceList({ workspaces: freshWorkspaces.workspaces, confirmed: true });
         const workspaces = freshWorkspaces?.workspaces ?? [];
-        const communityId = workspaces.some((item) => item.id === activeCommunityId)
-          ? (activeCommunityId ?? undefined)
+        const communityId = workspaces.some((item) => item.id === currentWorkspaceId)
+          ? (currentWorkspaceId ?? undefined)
           : workspaces[0]?.id;
         const profile = communityId
           ? await ensurePersonNameForWorkspace(client, communityId, identity.publicKey)
@@ -270,7 +267,6 @@ export default function BuzzIdentitySettings() {
             const hosted = await monolithPhoneOperation('getManagedIdentity', {});
             if (!cancelled) {
               setFace(hosted.face ?? null);
-              setPushLevel(hosted.pushLevel);
               await saveStoredPushLevel(identity.publicKey, hosted.pushLevel);
               setManagedIdentity(
                 hosted.handle
@@ -304,7 +300,7 @@ export default function BuzzIdentitySettings() {
     return () => {
       cancelled = true;
     };
-  }, [monolithEnabled]);
+  }, [currentWorkspaceId, monolithEnabled]);
 
   // Role and Workbench follow the current Workspace when a Room opens elsewhere.
   useEffect(() => {
@@ -384,7 +380,6 @@ export default function BuzzIdentitySettings() {
         const updated = await monolithPhoneOperation('updateIdentityPushLevel', {
           pushLevel: next,
         });
-        setPushLevel(updated.pushLevel);
         await saveStoredPushLevel(profileIdentity.publicKey, updated.pushLevel);
         if (updated.pushLevel === 'off') {
           const notifications = await import('expo-notifications');

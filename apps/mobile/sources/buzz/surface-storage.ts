@@ -8,6 +8,7 @@ import {
   type SignedOutboxRecord,
   type SurfaceCacheAddress,
 } from '@beeline/buzz-client';
+import { selectIdentities } from './identity-records';
 import { stripRetiredAgentNotices } from './retired-agent-notices';
 import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
 import { SurfaceRegistry } from './surface-registry';
@@ -45,7 +46,8 @@ const durableSurfaceCache = new SurfaceResponseCache(
   },
   stripRetiredAgentNotices,
 );
-export const mobileSurfaceCache = new SurfaceRegistry(durableSurfaceCache, stripRetiredAgentNotices);
+export const mobileSurfaceCache = new SurfaceRegistry(
+  durableSurfaceCache, stripRetiredAgentNotices, selectIdentities);
 
 function storedValue(encoded: string | null): unknown {
   if (encoded === null) return undefined;

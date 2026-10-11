@@ -38,6 +38,7 @@ import {
   MONOLITH_REQUEST_TIMEOUT_MS,
 } from '@/auth/monolith-session';
 import { roomReadStamp, stampRoomRead } from '@/buzz/room-message-records';
+import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { recordRoomReadNetworkTiming } from '@/buzz/room-open-trace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { liveFrameEpoch } from './live-frame-epoch';
@@ -336,8 +337,9 @@ export function readPushedMonolithRoom(roomId: string): Promise<RoomView> {
 }
 
 /** A Room read or history page, its rows marked with when it started. */
-function stamped<T>(read: Promise<T>, stamp = roomReadStamp()): Promise<T> {
-  return read.then((value) => stampRoomRead(value, stamp));
+function stamped<T>(read: Promise<T>, stamp = roomReadStamp(),
+  surfaceStamp = currentSurfaceStamp()): Promise<T> {
+  return read.then((value) => stampRoomRead(value, stamp, surfaceStamp));
 }
 
 /** Stable read seam: OTA config chooses the monolith or untouched relay reader. */

@@ -39,7 +39,7 @@ describe('phone cold launch after the deck replace', () => {
     // launch opened a Room nobody chose this launch.
     const bootstrap = deckSource.slice(
       deckSource.indexOf('const nextIdentity = await loadBuzzIdentity()'),
-      deckSource.indexOf('const storedWorkspaceId = await loadActiveCommunityId'),
+      deckSource.indexOf('const cachedWorkspaces = await mobileSurfaceCache.read('),
     );
     expect(bootstrap).not.toContain('/beeline/chat/');
     expect(bootstrap).not.toContain(WELCOME_ROOM_ID);

@@ -4,6 +4,8 @@ import { act, create } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { RoomViewMessage } from '@beeline/buzz-client';
 import { resetClientState } from '@/sync/client-reset';
+import { recordPerson } from './identity-records';
+import { currentSurfaceStamp, nextSurfaceStamp } from './surface-clock';
 import {
   applyRoomBookmark,
   applyRoomMessage,
@@ -301,5 +303,21 @@ describe('room message records', () => {
     expect(roomMessageRecord(scope, 'room-z', 'm1')).toBeUndefined();
     expect(transcript.texts()).toEqual([]);
     transcript.unmount();
+  });
+
+  it('a live rename reaches rows read before it, not rows read after it', () => {
+    const before = currentSurfaceStamp();
+    const early = stampRoomRead({ messages: [row('m1', 'early', 1)] }, roomReadStamp(), before).messages;
+    const transcript = mount('room-rename', 'tail', early);
+    act(() => recordPerson(scope, { pubkey: 'person-a', kind: 'human', name: 'Ada Renamed' }, nextSurfaceStamp()));
+    expect(transcript.rows().map((message) => message.author.name)).toEqual(['Ada Renamed']);
+    const after = currentSurfaceStamp();
+    const served = { ...row('m2', 'late', 1, 2), author: { pubkey: 'person-a', kind: 'human', name: 'Ada Server' } } as RoomViewMessage;
+    const late = stampRoomRead({ messages: [served] }, roomReadStamp(), after).messages;
+    const second = mount('room-rename-later', 'tail', late);
+    // A read started after the rename already carries the server's identity.
+    expect(second.rows().map((message) => message.author.name)).toEqual(['Ada Server']);
+    transcript.unmount();
+    second.unmount();
   });
 });

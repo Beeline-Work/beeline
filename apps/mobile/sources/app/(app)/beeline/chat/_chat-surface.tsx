@@ -71,7 +71,9 @@ import {
 } from '@beeline/buzz-client';
 import {
   cornerDisplayName,
+  cornerShortTitle,
   directMessageTitle,
+  roomTitle,
   type AgentComposerCommand,
   type WorkflowRunSummaryView,
   type WorkspaceView,
@@ -113,7 +115,6 @@ import { continuedSpeakerIds, ledgerSpeakerKey } from '@/buzz/ledger-attribution
 import { publishFailurePresentation } from '@/buzz/publish-failure';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { cornerProposalDecision } from '@/buzz/corner-proposal';
-import { cornerName } from '@/buzz/corners';
 import { CHANGES_LABEL, CORNER_LABEL, ROOM_LABEL } from '@/buzz/vocabulary';
 import { buildSpeechLexicon } from '@/buzz/speech-lexicon';
 import {
@@ -173,7 +174,7 @@ import {
   roomViewParentId,
 } from '@/buzz/corner-display-state';
 import {
-  directMessageHeaderName,
+  directMessageHeaderIdentity,
   fallbackMemberHandle,
   fallbackMemberName,
   personIdentityLabel,
@@ -329,6 +330,7 @@ import {
   phoneOperationFailureReason,
 } from '@/sync/transport/monolith-operation';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
+import { useWorkspaceRecords, workspaceRecordScope, workspaceRows } from '@/buzz/workspace-records';
 import { promptAndReportMessageIssue, reportIssueToastCopy } from '@/buzz/report-message-issue';
 import { useCopiedToast } from '@/components/buzz/CopiedToast';
 import {
@@ -951,8 +953,26 @@ export function BuzzChatSurface({
   // conversation that preceded it. Corner-only; a Room never reads it.
   const [addingMembers, setAddingMembers] = useState(false);
   /** The shared `/workspace/:id` entry behind bylines and member and mention pickers. */
-  const [workspaceRoster, setWorkspaceRoster] = useState<WorkspaceView | null>(null);
+  const [workspaceRosterEntry, setWorkspaceRoster] = useState<WorkspaceView | null>(null);
   const [workspaceRosterAddress, setWorkspaceRosterAddress] = useState<SurfaceCacheAddress | null>(null);
+  // The entry's rows select the shared Workspace records, which every
+  // roster write reaches; the entry supplies only the ids and header.
+  const workspaceRosterScope = workspaceRosterAddress
+    ? workspaceRecordScope(workspaceRosterAddress.relayOrigin, workspaceRosterAddress.viewerPubkey,
+      String(workspaceRosterAddress.params?.workspaceId))
+    : null;
+  const workspaceRosterRecords = useWorkspaceRecords(workspaceRosterScope);
+  const workspaceRoster = useMemo<WorkspaceView | null>(() => workspaceRosterEntry && workspaceRosterScope
+    ? {
+        ...workspaceRosterEntry,
+        members: workspaceRows(workspaceRosterScope,
+          workspaceRosterEntry.members.map((member) => member.identity.pubkey)),
+        agents: workspaceRows(workspaceRosterScope,
+          workspaceRosterEntry.agents.map((agent) => agent.identity.pubkey)),
+      }
+    : workspaceRosterEntry,
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the records version re-selects the rows
+  [workspaceRosterEntry, workspaceRosterScope, workspaceRosterRecords]);
   const workspaceRosterScopeRef = useRef<string | null>(null);
   // The repo this Room owns, or `null` for a chat-only Room. Corners never
   // read this — a corner has no room-repository binding of its own; the
@@ -2378,12 +2398,14 @@ export function BuzzChatSurface({
     if (!dmPeerPubkey) return roomName;
     // One title rule with the Room list row: `@<handle>` from the peer.
     if (dmPeerAgentDisplay) return directMessageTitle(dmPeerIdentity ?? dmPeerAgentDisplay);
-    return directMessageHeaderName(
-      dmPeerIdentity,
-      dmPeerProfile,
-      dmPeerPubkey,
-      isReadOnlyDirectMessage,
-      dmAnnouncementAuthor,
+    return directMessageTitle(
+      directMessageHeaderIdentity(
+        dmPeerIdentity,
+        dmPeerProfile,
+        dmPeerPubkey,
+        isReadOnlyDirectMessage,
+        dmAnnouncementAuthor,
+      ),
     );
   }, [
     dmAnnouncementAuthor,
@@ -4773,7 +4795,7 @@ export function BuzzChatSurface({
           if (!confirmed) return;
           await transport.deleteRoom(decodedId);
         } else {
-          const title = displayRoomName.startsWith('#') ? displayRoomName : `#${displayRoomName}`;
+          const title = roomTitle(displayRoomName) ?? displayRoomName;
           const left = await leaveRoomWithConfirmation(
             title,
             roomSurface?.leaveDeletesRoom === true,
@@ -5301,7 +5323,7 @@ export function BuzzChatSurface({
       return (
         <View key={marker.id}>
           <CornerOpenedMarker
-            title={cornerName(fact.name ?? cornerDisplayName(fact.objective), fact.cornerId)}
+            title={cornerShortTitle(undefined, fact.name ?? cornerDisplayName(fact.objective), fact.cornerId)}
             closed={fact.type === 'corner-complete' || fact.type === 'worktree-cleaned'}
             onOpen={() => openCorner(fact.cornerId)}
             testID={`corner-opened-marker-${fact.cornerId}`}

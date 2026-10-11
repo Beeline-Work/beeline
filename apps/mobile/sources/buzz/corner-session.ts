@@ -1,7 +1,5 @@
 import { resolveCornerCardAgentPubkey } from '@/buzz/agent-display';
-import { cornerName } from '@/buzz/corners';
-import { cornerTitle } from '@beeline/api-contract/phone';
-import { displayRoomIndexTitle } from '@/buzz/room-list-row';
+import { cornerShortTitle, cornerTitle, roomTitle } from '@beeline/api-contract/phone';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
 import type { ChatDisplayMessage, CornerProcessState } from '@/buzz/room-view-presentation';
 
@@ -70,7 +68,7 @@ export function channelHeaderTitle(
 ): string | null {
   if (kind === 'corner') {
     if (resolvedName === null) return null;
-    if (options.directMessage) return cornerName(resolvedName, channelId);
+    if (options.directMessage) return cornerShortTitle(undefined, resolvedName, channelId);
     return cornerTitle(options.parentRoomName, resolvedName, channelId);
   }
   if (resolvedName !== null && resolvedName.trim()) {
@@ -78,7 +76,7 @@ export function channelHeaderTitle(
     // The kind can still be unresolved while a cached name has landed; that
     // legacy shape keeps showing the plain name rather than guessing which
     // mark form applies. Only a confirmed Room takes the room mark.
-    if (!options.directMessage && kind === 'room') return displayRoomIndexTitle(trimmed) ?? trimmed;
+    if (!options.directMessage && kind === 'room') return roomTitle(trimmed) ?? trimmed;
     return trimmed;
   }
   return kind === 'room' ? ROOM_LABEL : null;

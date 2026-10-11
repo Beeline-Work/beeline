@@ -274,13 +274,18 @@ export default function RootLayout() {
     // later change is stored and announced, so the device copy is only the
     // cold-start hint until the server answers.
     let readPushLevelFor: string | null = null;
+    // The last level the subscription announced; the device copy only stands
+    // in until it has announced one for this identity.
+    let heardPushLevel: { pubkey: string; level: PushLevel } | null = null;
     const reconcileLevel = (changed?: { pubkey: string; level: PushLevel }) => {
+      if (changed) heardPushLevel = changed;
       if (AppState.currentState !== 'active') return;
       void (async () => {
         const identity = await loadBuzzIdentity();
         if (changed && changed.pubkey !== identity?.publicKey) return;
+        const heard = heardPushLevel?.pubkey === identity?.publicKey ? heardPushLevel?.level : undefined;
         const pushLevel =
-          changed?.level ?? (identity ? await loadStoredPushLevel(identity.publicKey) : 'mine');
+          heard ?? (identity ? await loadStoredPushLevel(identity.publicKey) : 'mine');
         if (!changed && identity && readPushLevelFor !== identity.publicKey) {
           const managed = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
           if (managed) {

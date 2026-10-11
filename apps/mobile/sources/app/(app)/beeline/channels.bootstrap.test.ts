@@ -16,12 +16,11 @@ describe('Room deck bootstrap', () => {
   });
 
   it('restores the persisted Workspace before choosing server recency order', () => {
-    expect(source).toContain('const [storedWorkspaceId, cachedWorkspaces] = await Promise.all([');
-    expect(source).toContain('loadActiveCommunityId(nextIdentity.publicKey)');
+    expect(source).toContain('const storedWorkspaceId = useActiveCommunityId();');
+    expect(source).toContain('const deckWorkspaceId = requestedWorkspaceId ?? storedWorkspaceId;');
+    expect(source).toContain('if (deckWorkspaceId === undefined) return;');
     expect(source).toContain('mobileSurfaceCache.read(workspaceCacheAddress, isWorkspaceListView)');
-    expect(source).toContain(
-      'requestedWorkspaceId ?? storedWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id',
-    );
+    expect(source).toContain('deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id');
   });
 
   it('shows the Room loader whenever the Room deck itself is loading', () => {
@@ -84,7 +83,7 @@ describe('Room deck bootstrap', () => {
   it('does not auto-open a Room before the stored Workspace is read', () => {
     const bootstrap = source.slice(
       source.indexOf('const nextIdentity = await loadBuzzIdentity()'),
-      source.indexOf('const [storedWorkspaceId, cachedWorkspaces] = await Promise.all(['),
+      source.indexOf('const cachedWorkspaces = await mobileSurfaceCache.read('),
     );
     expect(bootstrap).not.toContain('claimFirstLaunchLanding');
     expect(bootstrap).not.toContain('welcomeRoomHref');

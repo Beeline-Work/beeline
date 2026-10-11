@@ -2,6 +2,8 @@ import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { RoomViewMessage } from '@beeline/buzz-client';
 import { ROOM_VIEW_MESSAGE_LIMIT, ROOM_VIEW_TOOL_ROW_LIMIT } from '@beeline/api-contract/phone';
 import { subscribeClientReset } from '@/sync/client-reset';
+import { IdentitySelection, useIdentityRecords } from './identity-records';
+import { currentSurfaceStamp } from './surface-clock';
 
 /**
  * One id-keyed record per committed message, per Room, per relay and viewer.
@@ -62,6 +64,12 @@ const rooms = new Map<string, RoomRecords>();
 let viewerClock = 0;
 /** The viewer-state clock when the read that returned each row started. */
 const readStartedAt = new WeakMap<RoomViewMessage, number>();
+/**
+ * The surface clock when each row's server copy was read: a read row's read
+ * start, otherwise when it was stored. A live identity record newer than
+ * this applies to the row; a row read later already carries the change.
+ */
+const identityReadAt = new WeakMap<RoomViewMessage, number>();
 
 /** Call when a Room read starts; pass the result to `stampRoomRead`. */
 export function roomReadStamp(): number {
@@ -72,7 +80,7 @@ export function roomReadStamp(): number {
  * Mark the rows of a Room read or history page with when the read started.
  * A row without a mark counts as older than every viewer-state write.
  */
-export function stampRoomRead<T>(read: T, stamp: number): T {
+export function stampRoomRead<T>(read: T, stamp: number, surfaceStamp?: number): T {
   const { messages, toolRows } = read as {
     readonly messages?: readonly RoomViewMessage[];
     readonly toolRows?: readonly RoomViewMessage[];
@@ -80,6 +88,10 @@ export function stampRoomRead<T>(read: T, stamp: number): T {
   for (const row of [...(messages ?? []), ...(toolRows ?? [])]) {
     const earlier = readStartedAt.get(row);
     readStartedAt.set(row, earlier === undefined ? stamp : Math.min(earlier, stamp));
+    if (surfaceStamp !== undefined) {
+      const read = identityReadAt.get(row);
+      identityReadAt.set(row, read === undefined ? surfaceStamp : Math.min(read, surfaceStamp));
+    }
   }
   return read;
 }
@@ -162,6 +174,8 @@ function put(room: RoomRecords, incoming: RoomViewMessage, source: 'shared' | 'r
   const message = held && staleViewerState ? withBookmark(incoming, held.bookmarked) : incoming;
   if (!supersedes(held, message)) return false;
   if (held && sameJson(held, message)) return false;
+  if (!identityReadAt.has(message))
+    identityReadAt.set(message, identityReadAt.get(incoming) ?? currentSurfaceStamp());
   room.records.set(message.id, message);
   return true;
 }
@@ -417,24 +431,6 @@ export function pruneRoomTail(
   notify(room);
 }
 
-/** Rewrite held records in place, for a change no message version covers (a renamed author). */
-export function patchRoomMessages(
-  scope: RoomRecordScope,
-  roomId: string,
-  patch: (message: RoomViewMessage) => RoomViewMessage,
-): void {
-  const room = rooms.get(roomKey(scope, roomId));
-  if (!room) return;
-  let changed = false;
-  for (const [id, message] of room.records) {
-    const next = patch(message);
-    if (next === message) continue;
-    room.records.set(id, next);
-    changed = true;
-  }
-  if (changed) notify(room);
-}
-
 export function roomTail(
   scope: RoomRecordScope | undefined,
   roomId: string,
@@ -523,7 +519,25 @@ export function useRoomMessages(
   ids: readonly string[],
 ): readonly RoomViewMessage[] {
   useRoomRecordRevision(scope, roomId);
-  return useStableRows(roomId ? selectRoomMessages(scope, roomId, ids) : []);
+  const identityVersion = useIdentityRecords();
+  const rows = roomId ? selectRoomMessages(scope, roomId, ids) : [];
+  return useStableRows(scope ? rows.map((row) => withLiveIdentity(scope, row, identityVersion)) : rows);
+}
+
+const identitySelected = new WeakMap<RoomViewMessage, { version: number; row: RoomViewMessage }>();
+
+/**
+ * A record with the live identity records newer than its read selected over
+ * it. The record scope and the identity scope name the same relay and viewer.
+ * One selected copy is kept per record and records version, so the rows keep
+ * their identity between renders.
+ */
+function withLiveIdentity(scope: RoomRecordScope, row: RoomViewMessage, version: number): RoomViewMessage {
+  const cached = identitySelected.get(row);
+  if (cached?.version === version) return cached.row;
+  const selected = new IdentitySelection(scope, identityReadAt.get(row) ?? 0).message(row);
+  identitySelected.set(row, { version, row: selected });
+  return selected;
 }
 
 /** One tail's ids, current with every delta that joins it. */

@@ -64,12 +64,11 @@ export const READ_CLEAR_PUSH_TYPE = 'read-clear';
  * (the last read message's id) and the ids of the other read messages the
  * server pushed to this device. The phone dismisses only those messages'
  * notifications, so a newer, unread message keeps its notification even when
- * iOS presented both at the same second. A `null` cursor means the payload
- * gave none.
+ * iOS presented both at the same second.
  */
 export type ReadClear = {
   channelId: string;
-  messageId: string | null;
+  messageId: string;
   readMessageIds: string[];
 };
 
@@ -91,8 +90,9 @@ export function readClearPushData(
 
 /**
  * The Rooms and corners a read-clear push names, or `null` for any other
- * push. The phone's background task may hand the payload over flat, under
- * `data`, or as a `dataString` JSON body, so each of those shapes is searched.
+ * push. A Room without a read cursor names nothing to clear and is dropped.
+ * The phone's background task may hand the payload over flat, under `data`,
+ * or as a `dataString` JSON body, so each of those shapes is searched.
  */
 export function readClearReads(payload: unknown, depth = 0): ReadClear[] | null {
   if (!payload || typeof payload !== 'object' || depth > 3) return null;
@@ -108,11 +108,12 @@ export function readClearReads(payload: unknown, depth = 0): ReadClear[] | null 
     return ids.flatMap((id, index): ReadClear[] => {
       if (typeof id !== 'string' || id.trim() === '') return [];
       const messageId = messageIds[index];
+      if (typeof messageId !== 'string' || messageId === '') return [];
       const read = readMessageIds[index];
       return [
         {
           channelId: id,
-          messageId: typeof messageId === 'string' && messageId ? messageId : null,
+          messageId,
           readMessageIds: Array.isArray(read)
             ? read.filter((value): value is string => typeof value === 'string' && value !== '')
             : [],

@@ -5,8 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import type { RoomScheduleView, RoomSubscriptionView } from '@beeline/api-contract/phone';
-import { displayRoomIndexTitle } from '@/buzz/room-list-row';
+import { roomTitle, type RoomScheduleView, type RoomSubscriptionView } from '@beeline/api-contract/phone';
 import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
 import {
   scheduleTitle,
@@ -98,7 +97,7 @@ export default function ScheduledWork() {
   const renderSchedule = (schedule: RoomScheduleView) => (
     <SettingsRow
       chevron="right"
-      description={`· @${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule)}`}
+      description={`· @${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule, work?.roomName)}`}
       descriptionContent={<ListTail agent={work?.agentNames.get(schedule.agentId) ?? 'Agent'}
         compact={scheduleCadenceLabel(schedule.cadence).length > 24} corner={schedule.corner} />}
       descriptionLead={scheduleCadenceLabel(schedule.cadence)}
@@ -117,7 +116,7 @@ export default function ScheduledWork() {
   const renderSubscription = (subscription: RoomSubscriptionView) => (
     <SettingsRow
       chevron="right"
-      description={`· @${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
+      description={`· @${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription, work?.roomName)}`}
       descriptionContent={<ListTail agent={work?.agentNames.get(subscription.agentId) ?? 'Agent'}
         compact={subscriptionWhen(subscription).length > 24} corner={subscription.corner} />}
       descriptionLead={subscriptionWhen(subscription)}
@@ -142,7 +141,7 @@ export default function ScheduledWork() {
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back to Room"
-        eyebrow={displayRoomIndexTitle(work?.roomName ?? undefined) ?? 'Room'}
+        eyebrow={roomTitle(work?.roomName) ?? 'Room'}
         onBack={() => router.back()}
         testID="scheduled-work-header"
         title="Schedules and subscriptions"

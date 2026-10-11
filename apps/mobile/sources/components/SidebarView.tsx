@@ -2,11 +2,7 @@ import { useTextDraft } from '@/buzz/use-text-draft';
 import { useNeedsYouCount } from '@/buzz/needs-you-store';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import {
-  loadActiveCommunityId,
-  saveActiveCommunityId,
-  subscribeActiveCommunityId,
-} from '@/buzz/community-storage';
+import { saveActiveCommunityId, subscribeActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom, roomCornersHref } from '@/buzz/corner-navigation';
 import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
 import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
@@ -24,6 +20,7 @@ import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { chatListSnapshot, refreshChatList, useChatList } from '@/buzz/chat-list-store';
+import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
@@ -194,18 +191,19 @@ export const SidebarView = React.memo(function SidebarView() {
   const refreshedForWorkspaceIds = React.useRef(new Set<string>());
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = React.useState(false);
   const attentionWorkspaceIds = new Set(workspaces.filter((workspace) => workspace.attention).map((workspace) => workspace.id));
+  const storedWorkspaceId = useActiveCommunityId();
+  const storedWorkspaceKnown = storedWorkspaceId !== undefined;
 
   React.useEffect(() => {
+    if (!storedWorkspaceKnown) return;
+    const stored = storedWorkspaceId;
     let cancelled = false;
     let stopWorkspaces: (() => void) | undefined;
     setNavigationError(null);
     void (async () => {
       const identity = await loadBuzzIdentity();
       if (!identity) return;
-      const [baseUrl, stored] = await Promise.all([
-        getEffectiveRelayUrl(),
-        loadActiveCommunityId(identity.publicKey),
-      ]);
+      const baseUrl = await getEffectiveRelayUrl();
       const address = surfaceAddress(baseUrl, identity.publicKey, '/workspaces');
       const cached = await mobileSurfaceCache.read(address, isWorkspaceListView);
       if (cancelled) return;
@@ -238,7 +236,7 @@ export const SidebarView = React.memo(function SidebarView() {
       cancelled = true;
       stopWorkspaces?.();
     };
-  }, []);
+  }, [storedWorkspaceKnown]);
 
   React.useEffect(() => {
     if (!client || !relayUrl || !identityPubkey) return;

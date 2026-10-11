@@ -55,16 +55,16 @@ import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
-import { patchWorkspaceAgent } from '@/buzz/workspace-surface';
 import {
-  currentWorkspaceRows,
-  recordAgentDetail,
+  recordWorkspacePage,
   recordWorkspaceRemoval,
-  recordWorkspaceRows,
-  recordWorkspaceView,
   useWorkspaceRecords,
   workspaceRecordScope,
+  workspaceRows,
+  workspaceTotals,
 } from '@/buzz/workspace-records';
+import { watchWorkspace } from '@/buzz/workspace-watch';
+import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import {
   AGENT_MODEL_PICKER_VISIBLE_ROWS,
   effortConfigAxis,
@@ -98,12 +98,13 @@ function first(value: string | string[] | undefined): string | undefined {
 }
 
 
-function appendUniqueMembers<T extends { identity: { pubkey: string } }>(
-  current: readonly T[],
-  incoming: readonly T[],
-): T[] {
-  const seen = new Set(current.map((item) => item.identity.pubkey));
-  return [...current, ...incoming.filter((item) => !seen.has(item.identity.pubkey))];
+function rosterIds(rows: readonly { identity: { pubkey: string } }[]): string[] {
+  return rows.map((row) => row.identity.pubkey);
+}
+
+function appendUniqueIds(current: readonly string[], incoming: readonly string[]): string[] {
+  const seen = new Set(current);
+  return [...current, ...incoming.filter((id) => !seen.has(id))];
 }
 
 function countedKindLabel(
@@ -276,10 +277,10 @@ export default function BuzzMembers({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
   const [memberQuery, setMemberQuery] = useTextDraft(`member-search:${workspaceId}`, '');
-  const [rosterPeople, setRosterPeople] = useState<WorkspaceView['members'] | null>(null);
-  const [rosterAgents, setRosterAgents] = useState<WorkspaceView['agents'] | null>(null);
-  const [rosterPeopleTotal, setRosterPeopleTotal] = useState<number | null>(null);
-  const [rosterAgentTotal, setRosterAgentTotal] = useState<number | null>(null);
+  // A search or load-more page lists ids only; rows and totals come from the records.
+  const [rosterPeople, setRosterPeople] = useState<string[] | null>(null);
+  const [rosterAgents, setRosterAgents] = useState<string[] | null>(null);
+  const [rosterQuery, setRosterQuery] = useState('');
   const [peopleHasMore, setPeopleHasMore] = useState(false);
   const [agentsHasMore, setAgentsHasMore] = useState(false);
   const [rosterLoading, setRosterLoading] = useState(false);
@@ -332,11 +333,9 @@ export default function BuzzMembers({
         '/workspace/:id/agents/:agentId', {
           workspaceId, agentPubkey: value.agent.identity.pubkey,
         });
+      // The one write: the Workspace records hear it and update the roster row.
       void mobileSurfaceCache.write(address, value, isAgentDetailView);
-      void patchWorkspaceAgent(relayUrl, identity.publicKey, workspaceId,
-        value.agent.identity.pubkey, value).catch(() => undefined);
     }
-    if (recordScope) recordAgentDetail(recordScope, value);
   };
 
   const finishConfigWrite = (agentId: string) => {
@@ -394,28 +393,19 @@ export default function BuzzMembers({
   };
 
   const applyMemberPage = (
-    page: {
-      members: WorkspaceView['members'];
-      agents: WorkspaceView['agents'];
-      peopleTotal?: number;
-      agentTotal?: number;
-      membersTruncated: boolean;
-      agentsTruncated: boolean;
-    },
+    page: Awaited<ReturnType<typeof readMemberPage>>,
     kind: 'human' | 'agent' | undefined,
-    append: { people: WorkspaceView['members']; agents: WorkspaceView['agents'] } | false,
+    append: { people: readonly string[]; agents: readonly string[] } | false,
   ) => {
-    if (recordScope) recordWorkspaceRows(recordScope, [...page.members, ...page.agents]);
-    setRosterPeopleTotal(page.peopleTotal ?? null);
-    setRosterAgentTotal(page.agentTotal ?? null);
+    if (recordScope)
+      recordWorkspacePage(recordScope, page, { query: page.query, kind, append: Boolean(append), stamp: page.stamp });
+    setRosterQuery(page.query);
     if (kind !== 'agent') {
-      setRosterPeople(
-        append ? appendUniqueMembers(append.people, page.members) : [...page.members],
-      );
+      setRosterPeople(append ? appendUniqueIds(append.people, rosterIds(page.members)) : rosterIds(page.members));
       setPeopleHasMore(page.membersTruncated);
     }
     if (kind !== 'human') {
-      setRosterAgents(append ? appendUniqueMembers(append.agents, page.agents) : [...page.agents]);
+      setRosterAgents(append ? appendUniqueIds(append.agents, rosterIds(page.agents)) : rosterIds(page.agents));
       setAgentsHasMore(page.agentsTruncated);
     }
   };
@@ -426,17 +416,18 @@ export default function BuzzMembers({
     offset?: number;
   }) => {
     if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
-    return new RoomViewClient({ baseUrl: relayUrl, identity }).workspaceMembers(workspaceId, input);
+    // A removal or receipt recorded while this page is in flight is newer than it.
+    const stamp = currentSurfaceStamp();
+    const page = await new RoomViewClient({ baseUrl: relayUrl, identity }).workspaceMembers(workspaceId, input);
+    return { ...page, query: input.q ?? '', stamp };
   };
 
   useEffect(() => {
     if (!workspaceId) return;
     let cancelled = false;
-    let unsubscribe: (() => void) | undefined;
+    let stopWatch: (() => void) | undefined;
     let stopSurface: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
-    let subscribedFilters = '';
-    let subscriptionChange = Promise.resolve();
     void (async () => {
       const [nextIdentity, nextRelayUrl] = await Promise.all([
         loadBuzzIdentity(), getEffectiveRelayUrl(),
@@ -454,55 +445,29 @@ export default function BuzzMembers({
       setRelayUrl(nextRelayUrl);
       if (cached) setSurface(cached);
       // Every Members instance (the list under an agent profile included)
-      // paints the one shared entry; paged rows read the shared records.
+      // paints the one shared entry; rows and totals read the shared records,
+      // which hear every write of this entry.
       stopSurface = mobileSurfaceCache.subscribe(address, () => {
         const next = mobileSurfaceCache.peek(address, isWorkspaceView);
         if (!cancelled && next) setSurface(next);
       });
-      const recordScopeForRead = workspaceRecordScope(nextRelayUrl, nextIdentity.publicKey, workspaceId);
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
-      const relay = await new BuzzRigTransport(nextIdentity).ensureClient();
-      const bootstrapFilters: WorkspaceView['watchFilters'] = [
-        { kinds: [0, 9, 9000, 9001], '#h': [workspaceId] },
-      ];
-      const listen = (filters: WorkspaceView['watchFilters']): Promise<void> => {
-        const effectiveFilters = filters.length > 0 ? filters : bootstrapFilters;
-        const key = JSON.stringify(effectiveFilters);
-        subscriptionChange = subscriptionChange
-          .catch(() => undefined)
-          .then(async () => {
-            if (cancelled || key === subscribedFilters) return;
-            const nextUnsubscribe = await relay.surfaceSubscribe(effectiveFilters, () =>
-              scheduler?.signal(),
-            );
-            if (cancelled) {
-              nextUnsubscribe();
-              return;
-            }
-            const previousUnsubscribe = unsubscribe;
-            unsubscribe = nextUnsubscribe;
-            subscribedFilters = key;
-            previousUnsubscribe?.();
-          });
-        return subscriptionChange;
-      };
       scheduler = new SurfaceRefreshScheduler({
         fetch: () => mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
         apply: (value) => {
-          // Null: an eviction overtook the read; there is nothing to paint.
+          // Null: a newer write or an eviction overtook the read; the entry
+          // listener already painted whatever is current.
           if (!value) return;
-          recordWorkspaceView(recordScopeForRead, value);
           setSurface(value);
           setWorkspaceError(null);
-          // The bootstrap subscription cannot name an agent paired after the
-          // screen opened. The indexed Workspace response is authoritative for
-          // the Room-scoped presence filters that can refresh its roster.
-          void listen(value.watchFilters).catch((reason) => setWorkspaceError(String(reason)));
         },
         onError: (reason) => setWorkspaceError(String(reason)),
       });
       schedulerRef.current = scheduler;
-      await listen(cached?.watchFilters ?? bootstrapFilters);
+      const watch = watchWorkspace(nextIdentity, nextRelayUrl, workspaceId,
+        () => scheduler?.signal(), (reason) => setWorkspaceError(String(reason)));
+      stopWatch = watch.release;
+      await watch.ready;
       if (cancelled) return;
       await scheduler.startAfter(Promise.resolve());
     })().catch((reason) => {
@@ -511,14 +476,13 @@ export default function BuzzMembers({
     return () => {
       cancelled = true;
       agentRequestGenerationRef.current += 1;
-      unsubscribe?.();
+      stopWatch?.();
       stopSurface?.();
       scheduler?.dispose();
       schedulerRef.current = null;
       setRosterPeople(null);
       setRosterAgents(null);
-      setRosterPeopleTotal(null);
-      setRosterAgentTotal(null);
+      setRosterQuery('');
     };
   }, [retryGeneration, workspaceId]);
 
@@ -635,8 +599,7 @@ export default function BuzzMembers({
     if (!q) {
       setRosterPeople(null);
       setRosterAgents(null);
-      setRosterPeopleTotal(null);
-      setRosterAgentTotal(null);
+      setRosterQuery('');
       return;
     }
     let cancelled = false;
@@ -660,8 +623,8 @@ export default function BuzzMembers({
 
   const loadMoreMembers = async (kind: 'human' | 'agent') => {
     if (!surface || rosterLoading) return;
-    const people = rosterPeople ?? surface.members;
-    const agents = rosterAgents ?? surface.agents;
+    const people = rosterPeople ?? rosterIds(surface.members);
+    const agents = rosterAgents ?? rosterIds(surface.agents);
     const q = memberQuery.trim();
     setRosterLoading(true);
     setError(null);
@@ -976,9 +939,6 @@ export default function BuzzMembers({
     try {
       const client = await writeClient();
       await client.removeAgent(workspaceId, pubkey);
-      if (identity && relayUrl)
-        void patchWorkspaceAgent(relayUrl, identity.publicKey, workspaceId, pubkey, null)
-          .catch(() => undefined);
       if (recordScope) recordWorkspaceRemoval(recordScope, pubkey);
       closeAgentSettings();
       if (profileAgentId) (onClose ?? (() => router.back()))();
@@ -1312,17 +1272,11 @@ export default function BuzzMembers({
   }
 
   const canManage = surface.viewer.permissions.manage;
-  const pagePeople = rosterPeople ?? surface.members;
-  const pageAgents = rosterAgents ?? surface.agents;
-  const people = currentWorkspaceRows(recordScope, pagePeople);
-  const agents = currentWorkspaceRows(recordScope, pageAgents);
-  // A removal recorded after this page was read leaves its total one high.
-  const withoutRemoved = (total: number | undefined | null, listed: number, current: number) =>
-    total === undefined || total === null ? total ?? undefined : Math.max(0, total - (listed - current));
-  const peopleTotal = withoutRemoved(rosterPeopleTotal ?? surface.peopleTotal,
-    pagePeople.length, people.length);
-  const agentTotal = withoutRemoved(rosterAgentTotal ?? surface.agentTotal,
-    pageAgents.length, agents.length);
+  const people = workspaceRows<WorkspaceView['members'][number]>(recordScope,
+    rosterPeople ?? rosterIds(surface.members));
+  const agents = workspaceRows<WorkspaceView['agents'][number]>(recordScope,
+    rosterAgents ?? rosterIds(surface.agents));
+  const { people: peopleTotal, agents: agentTotal } = workspaceTotals(recordScope, rosterQuery);
   const canLoadMorePeople =
     (rosterPeople !== null ? peopleHasMore : surface.membersTruncated) && !rosterLoading;
   const canLoadMoreAgents =

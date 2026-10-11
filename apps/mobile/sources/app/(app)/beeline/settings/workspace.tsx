@@ -12,6 +12,7 @@ import {
   type BuzzClient,
   type WorkspaceView,
 } from '@beeline/buzz-client';
+import { roomTitle } from '@beeline/api-contract/phone';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -20,7 +21,6 @@ import { refreshChatList, useChatList, type ChatListKey } from '@/buzz/chat-list
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { isWorkspaceOwnerRole } from '@/buzz/workspace-role';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import {
@@ -377,7 +377,7 @@ export default function WorkspaceSettings() {
   const showRoomDetails = useCallback((room: WorkspaceRoomSetting) => {
     // Display-only channel mark; the stored name and copied id stay raw.
     Modal.actionSheet(
-      displayRoomIndexTitle(room.name) ?? room.name,
+      roomTitle(room.name) ?? room.name,
       [
         {
           text: `Copy ${ROOM_LABEL} ID`,
@@ -599,7 +599,7 @@ export default function WorkspaceSettings() {
               </Text>
             )}
             {rooms.map((room) => {
-              const displayName = displayRoomIndexTitle(room.name) ?? room.name;
+              const displayName = roomTitle(room.name) ?? room.name;
               const duplicateName = duplicateRoomNames.has(room.name.trim().toLocaleLowerCase());
               const nextVisibility = room.visibility === 'public' ? 'invite-only' : 'public';
               const nextVisibilityLabel = ROOM_VISIBILITY_LABELS[nextVisibility];

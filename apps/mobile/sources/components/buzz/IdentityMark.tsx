@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Image, Platform, StyleSheet, View } from 'react-native';
 import Svg, { G, Path, Rect, SvgUri } from 'react-native-svg';
+import { isConnectorLogoUrl } from '@beeline/api-contract/phone';
 import {
   ALIVE_RING_PAD,
   CYPHER_MIN_SIZE,
@@ -70,9 +71,6 @@ export type IdentityMarkProps = AgentIdentityMarkProps | NonAgentIdentityMarkPro
 /** The one box radius in the product (`groknight.radius`). */
 const FACE_PLATE_RADIUS = 3;
 
-export function isConnectorLogoUrl(url: string | undefined): boolean {
-  return Boolean(url && /\/v1\/connectors\/logo\/[a-z0-9-]+\.svg(?:\?|$)/.test(url));
-}
 // The alive ring sits `ALIVE_RING_PAD` (`buzz/identity-mark.ts`) outside the
 // plate: the mark's layout box stays `size` so tiles of both classes share one
 // column edge, and the ring is the one thing that paints past it.

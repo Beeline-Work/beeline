@@ -1,7 +1,8 @@
 import React from 'react';
+import { isConnectorLogoUrl } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 import { HeaderIdentitySlot } from './HeaderLadder';
-import { IdentityMark, isConnectorLogoUrl } from './IdentityMark';
+import { IdentityMark } from './IdentityMark';
 
 export function DirectMessageHeaderIdentity({
   isDirectMessage,

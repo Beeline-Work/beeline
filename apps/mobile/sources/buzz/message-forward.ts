@@ -1,6 +1,6 @@
-import type { AttachmentReference } from '@beeline/api-contract/phone';
+import { identityHandle, type AttachmentReference } from '@beeline/api-contract/phone';
 import type { ChatListItem, RoomViewIdentity, WorkspaceView } from '@beeline/buzz-client';
-import { previewHandle, roomRowName } from '@/buzz/room-list-row';
+import { roomRowName } from '@/buzz/room-list-row';
 
 const FORWARD_CAPTION = /\n\n(FORWARDED FROM #[^\n]+)$/;
 const FORWARD_SOURCE =
@@ -23,7 +23,7 @@ export function formatForwardedMessage(
     .join('\n');
   const normalizedRoomName = roomName.trim().replace(/^#+/, '');
   const caption =
-    existingForward.caption ?? `FORWARDED FROM #${normalizedRoomName} · @${previewHandle(author)}`;
+    existingForward.caption ?? `FORWARDED FROM #${normalizedRoomName} · @${identityHandle(author)}`;
   const originalSource = existingForward.source ?? source;
   return originalSource
     ? `${quote}\n\n[${caption}](beeline://message-source/${encodeURIComponent(originalSource.roomId)}/${encodeURIComponent(originalSource.messageId)})`
@@ -160,7 +160,7 @@ export function forwardTargets(
     .map(({ identity }) => ({
       kind: 'member',
       id: identity.pubkey,
-      label: `@${previewHandle(identity)}`,
+      label: `@${identityHandle(identity)}`,
       memberId: identity.pubkey,
       group: identity.kind === 'agent' ? ('agents' as const) : ('people' as const),
     }));

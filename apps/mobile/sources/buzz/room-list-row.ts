@@ -203,24 +203,12 @@ export type RoomRowName = {
   name: string;
 };
 
-/**
- * The short form of an identity for an `@` prefix: the local part of a
- * `name@domain` handle, else the display name. Never carries a leading `@`,
- * because the sigil is drawn separately in brass. One rule with every other
- * title surface: `identityHandle` in the contract's chat-title module.
- */
-export function previewHandle(
-  identity: Pick<RoomViewIdentity, 'name' | 'handle'> & Partial<Pick<RoomViewIdentity, 'avatar'>>,
-): string {
-  return identityHandle(identity);
-}
-
 export function roomRowName(item: Pick<ChatListItem, 'room' | 'directMessage'>): RoomRowName {
   const peer = item.directMessage?.peer;
   if (peer) {
     return {
       sigil: '@',
-      name: previewHandle(peer),
+      name: identityHandle(peer),
     };
   }
   return { sigil: '#', name: roomTitle(item.room.name)?.slice(1) ?? item.room.id };
@@ -252,7 +240,7 @@ export function roomRowPreview(
   // The connector DM itself is the authority for the sender shown in the list.
   const peer = item.directMessage?.peer;
   const author = peer && isConnectorIdentity(peer) ? peer : latest.author;
-  return { attribution: 'other', handle: previewHandle(author), text: preview };
+  return { attribution: 'other', handle: identityHandle(author), text: preview };
 }
 
 export type DirectMessagePresence = {
@@ -328,7 +316,7 @@ export function roomRowAttentionReason(
   }
   // Only while unread: the mention fact stays true after the viewer reads it.
   if (item.unread && item.latestMessage?.mentionsViewer) {
-    return `mention \u00b7 @${previewHandle(item.latestMessage.author)}`;
+    return `mention \u00b7 @${identityHandle(item.latestMessage.author)}`;
   }
   return null;
 }
@@ -581,21 +569,6 @@ function projectEntries<T extends RoomRowInput>(
         : item;
     return { item: displayItem, row };
   });
-}
-
-/**
- * Captain's channel-mark convention (2026-08): Room index rows display
- * `#<name>`. Extended across flat surfaces that expose a room or corner name
- * (2026-08): chat headers, breadcrumbs, cross-Room lists, Workspace settings,
- * and Members references render through this derivation, or `cornerTitle` /
- * `cornerShortTitle` from the contract's chat-title module for a corner.
- * Strictly presentation — the stored name, search keys, sorting, unread
- * state, navigation params, cache writes, and identity never see the prefix.
- * A Room whose title fell back to the placeholder id gains no mark: nothing
- * fabricated is decorated.
- */
-export function displayRoomIndexTitle(storedTitle: string | undefined): string | undefined {
-  return roomTitle(storedTitle);
 }
 
 /**

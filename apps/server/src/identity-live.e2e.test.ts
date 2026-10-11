@@ -78,7 +78,8 @@ describe('live Workspace and identity changes across sessions', () => {
     await until(() => listener.projectionHealth().connected);
     server = createBeelineServer({
       database,
-      auth: { authenticatePhone: async (raw: string) => raw === 'outsider' ? OUTSIDER : VIEWER } as unknown as TokenAuth,
+      auth: { authenticatePhone: async (raw: string) =>
+        raw === 'outsider' ? OUTSIDER : raw === 'mate' ? MATE : VIEWER } as unknown as TokenAuth,
       phone: new PhoneService(database, 'http://local.test'),
       daemon: {} as DaemonService,
       live,
@@ -136,11 +137,19 @@ describe('live Workspace and identity changes across sessions', () => {
 
   it('sends a push level change from another device to its owner only', async () => {
     const viewer = await open('viewer');
+    const mate = await open('mate');
+    const outsider = await open('outsider');
     const viewerFrames = frames(viewer, 'person-changed');
+    const mateFrames = frames(mate, 'person-changed');
+    const outsiderFrames = frames(outsider, 'person-changed');
     const phone = new PhoneService(database, 'http://local.test');
     await phone.execute('updateIdentityPushLevel', { pushLevel: 'off' }, VIEWER);
     await until(() => viewerFrames.length > 0);
     expect(viewerFrames).toEqual([{ type: 'person-changed', roomId: '',
       person: { pubkey: VIEWER, kind: 'human', name: 'Viewer' }, pushLevel: 'off' }]);
+    // A Workspace co-member shares the person but not their own setting.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(mateFrames).toEqual([]);
+    expect(outsiderFrames).toEqual([]);
   });
 });

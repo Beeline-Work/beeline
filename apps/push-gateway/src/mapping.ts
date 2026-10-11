@@ -1,3 +1,4 @@
+import { cornerTitle, roomTitle } from '@beeline/api-contract/phone';
 import { fallbackPersonName } from '@beeline/buzz-client';
 import type { NostrEvent } from '@beeline/nostr';
 
@@ -134,19 +135,12 @@ export function isSuppressedFixtureNotification(
   );
 }
 
-/** The single notification-content policy seam, including message-preview privacy. */
-const roomTitle = (resolvedRoomName: string | undefined): string | undefined =>
-  resolvedRoomName
-    ? resolvedRoomName.startsWith('#')
-      ? resolvedRoomName
-      : `#${resolvedRoomName}`
-    : undefined;
-
 /**
  * Channel-naming convention (captain, 2026-08): a Room notification is titled
  * `#<room>`; a Corner notification is titled `#<room>/<corner>`, where the Room
  * half is the PARENT Room's current display name resolved from relay truth —
- * never invented, duplicated, or derived from the corner's own name.
+ * never invented, duplicated, or derived from the corner's own name. Both come
+ * from the contract's chat-title module, like every in-app title.
  *
  * When the parent metadata is absent or deleted, the title falls back to this
  * gateway's long-standing shape: the event channel's own resolved name, then
@@ -156,13 +150,13 @@ const locationTitle = (
   resolvedParentRoomName: string | undefined,
   resolvedCornerName: string | undefined,
   resolvedRoomName: string | undefined,
+  cornerId: string,
 ): string | undefined => {
   if (!resolvedParentRoomName) return roomTitle(resolvedRoomName);
-  return resolvedCornerName
-    ? `${roomTitle(resolvedParentRoomName)}/${resolvedCornerName}`
-    : roomTitle(resolvedParentRoomName);
+  return cornerTitle(resolvedParentRoomName, resolvedCornerName, cornerId);
 };
 
+/** The single notification-content policy seam, including message-preview privacy. */
 export function mapEventToNotification(
   event: NostrEvent,
   context: NotificationContext,
@@ -205,6 +199,7 @@ export function mapEventToNotification(
     normalizedDisplayText(context.parentRoomName, 80),
     normalizedDisplayText(context.cornerName),
     resolvedRoomName,
+    attentionTarget,
   );
   const cornerId =
     isPullRequestFact || context.parentChannelId

@@ -8,11 +8,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
-import {
-  loadActiveCommunityId,
-  saveActiveCommunityId,
-  saveLastViewedChannel,
-} from '@/buzz/community-storage';
+import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
 import { useCornerDropdowns } from '@/buzz/corner-dropdowns';
 import { agentPairingCommand } from '@/buzz/agent-pairing-command';
@@ -30,6 +26,7 @@ import { cornerOpenTappedAgain } from '@/buzz/corner-open-status';
 import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { useRoomListGestures } from '@/buzz/use-room-list-gestures';
+import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { readWelcomeCards } from '@/buzz/welcome-cards';
 import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { validRoomSlug } from '@/buzz/room-name';
@@ -174,6 +171,9 @@ export default function BuzzChannels() {
     newDirectMessage?: string | string[];
   }>();
   const requestedWorkspaceId = firstParam(params.communityId);
+  // The route's Workspace wins; without one the deck follows the current Workspace.
+  const storedWorkspaceId = useActiveCommunityId();
+  const deckWorkspaceId = requestedWorkspaceId ?? storedWorkspaceId;
   const requestedNewRoom = firstParam(params.newRoom);
   const requestedNewDirectMessage = firstParam(params.newDirectMessage);
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -389,6 +389,7 @@ export default function BuzzChannels() {
   );
 
   useEffect(() => {
+    if (deckWorkspaceId === undefined) return;
     let cancelled = false;
     let unsubscribeWorkspaces: (() => void) | undefined;
     let unsubscribeChats: (() => void) | undefined;
@@ -424,14 +425,10 @@ export default function BuzzChannels() {
         nextIdentity.publicKey,
         '/workspaces',
       );
-      const [storedWorkspaceId, cachedWorkspaces] = await Promise.all([
-        loadActiveCommunityId(nextIdentity.publicKey),
-        mobileSurfaceCache.read(workspaceCacheAddress, isWorkspaceListView),
-      ]);
+      const cachedWorkspaces = await mobileSurfaceCache.read(workspaceCacheAddress, isWorkspaceListView);
       if (cancelled) return;
       if (cachedWorkspaces) setWorkspaceList(cachedWorkspaces);
-      const selectedId =
-        requestedWorkspaceId ?? storedWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
+      const selectedId = deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
       let selectedWorkspaceRemoved = false;
 
       workspaceRefresh = new SurfaceRefreshScheduler({
@@ -536,7 +533,7 @@ export default function BuzzChannels() {
       workspaceScheduler.current = null;
       chatStore.current = null;
     };
-  }, [deckVisible, requestedWorkspaceId, retryGeneration]);
+  }, [deckVisible, deckWorkspaceId, retryGeneration]);
 
   useFocusEffect(
     useCallback(() => {
@@ -573,12 +570,13 @@ export default function BuzzChannels() {
       .read(address, isWorkspaceView)
       .then((cached) => {
         if (!cancelled && cached) setWorkspaceDetail(cached);
-        return http.workspace(activeCommunityId);
+        // The shared fetch orders this read against roster writes made while it is in flight.
+        return mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(activeCommunityId));
       })
       .then((value) => {
         if (cancelled) return;
-        setWorkspaceDetail(value);
-        return mobileSurfaceCache.write(address, value, isWorkspaceView);
+        const current = value ?? mobileSurfaceCache.peek(address, isWorkspaceView);
+        if (current) setWorkspaceDetail(current);
       })
       .catch((reason) => {
         if (!cancelled) setError(String(reason));

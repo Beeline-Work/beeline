@@ -8,10 +8,10 @@ import { describe, expect, it } from 'vitest';
  * surface). What is pinned is authority and immutability, not looks:
  *
  * - the header renders through `channelHeaderTitle` with the mark options —
- *   one naming model (`buzz/room-list-row.ts`), never an ad-hoc prefix;
+ *   one naming model (the contract's chat-title module), never an ad-hoc prefix;
  * - the mark NEVER reaches a mutation path: rename drafts seed from the
  *   STORED name, and cache writes keep raw names;
- * - a corner name composes `#<room>/<corner>` through `displayCornerTitle`,
+ * - a corner name composes `#<room>/<corner>` through `cornerTitle`,
  *   the same derivation every other surface uses. The Room's retired pinned
  *   line was one caller; the corners list is the one that survives.
  */
@@ -37,7 +37,7 @@ describe('the # channel-mark convention on the chat surface', () => {
     // The screen never concatenates a bare `#` onto a name itself.
     expect(chatSource).not.toMatch(/`\$\{headerTitle\}|' #' \+/);
     // The convention lives in exactly one module.
-    expect(sessionSource).toContain("from '@/buzz/room-list-row'");
+    expect(sessionSource).toContain("from '@beeline/api-contract/phone'");
   });
 
   it('never lets the mark reach a mutation path', () => {
@@ -61,6 +61,6 @@ describe('the # channel-mark convention on the chat surface', () => {
     );
     expect(chatSource).not.toContain('displayCornerTitle');
     expect(rowSource).not.toContain('export function displayCornerTitle(');
-    expect(rowSource).toContain('export function displayRoomIndexTitle(');
+    expect(rowSource).not.toContain('export function displayRoomIndexTitle(');
   });
 });

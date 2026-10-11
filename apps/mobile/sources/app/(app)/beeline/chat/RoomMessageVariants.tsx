@@ -12,6 +12,7 @@ import {
 import {
   CHOICE_NOTE_MAX_LENGTH,
   cornerDisplayName,
+  cornerShortTitle,
   formatChoiceClock,
 } from '@beeline/api-contract/phone';
 
@@ -59,7 +60,6 @@ import { ArtifactCard } from '@/components/buzz/ArtifactCard';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { showPictureActions } from '@/buzz/picture-actions';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
-import { cornerName } from '@/buzz/corners';
 import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -986,7 +986,7 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
   // The NAME titles the card; the objective is its body. A card written
   // before the name existed falls back to the same three-word derivation
   // every other corner surface uses (C89).
-  const title = cornerName(fact.name ?? cornerDisplayName(fact.objective), fact.cornerId);
+  const title = cornerShortTitle(undefined, fact.name ?? cornerDisplayName(fact.objective), fact.cornerId);
   const prNumber = fact.pullRequest?.number;
   const closedCorner = fact.type === 'corner-complete' || fact.type === 'worktree-cleaned';
   const state = landedCorner

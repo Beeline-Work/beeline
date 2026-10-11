@@ -415,6 +415,14 @@ interface MemberRow extends IdentityRow {
   presence_body: { status: 'online' | 'offline'; observedAt: number; held?: unknown } | null;
   presence_updated_at: Date | null;
 }
+/** A roster agent row with the configuration its Members row shows. */
+type RosterAgentRow = MemberRow & {
+  selected_model: string | null;
+  model_catalog: AgentDetailView['catalog'] | null;
+  owner_id: string | null;
+  owner_name: string | null;
+  owner_handle: string | null;
+};
 interface AgentGrantRow {
   id: string; kind: AgentGrantView['kind']; target: string; reason: string;
   status: AgentGrantStatus; room_id: string; auto: boolean;
@@ -1606,11 +1614,14 @@ export class PhoneService {
         membersTruncated: roster.membersTruncated,agentsTruncated: roster.agentsTruncated,
       };
     }
+    // One profile read: the person, their grants and the agents they own.
     const detail = await this.database.query<{
       role: 'owner' | 'admin' | 'member' | 'spectator';
       viewer_row: IdentityRow;
       member_row: MemberRow | null;
       grant_rows: MemberGrantRow[];
+      owned_rows: RosterAgentRow[];
+      owned_total: string;
     }>(`WITH authorized AS (
         SELECT role FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
           AND identity_id=$2 AND removed_at IS NULL
@@ -1620,9 +1631,23 @@ export class PhoneService {
         FROM memberships m JOIN identities i ON i.id=m.identity_id
         WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.identity_id=$3
           AND m.removed_at IS NULL AND i.kind='human' AND i.hidden_from_roster=false
+      ), owned AS (
+        SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
+          NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
+          agent.selected_model,agent.model_catalog,
+          owner.id owner_id,owner.name owner_name,owner.handle owner_handle
+        FROM agents agent JOIN identities i ON i.id=agent.agent_id
+        JOIN memberships m ON m.identity_id=i.id
+        JOIN identities owner ON owner.id=agent.owner_id
+        WHERE agent.owner_id=$3 AND m.workspace_id=$1 AND m.room_id IS NULL
+          AND m.removed_at IS NULL AND i.kind='agent' AND i.hidden_from_roster=false
       )
       SELECT authorized.role,to_jsonb(viewer) viewer_row,
         (SELECT to_jsonb(member_row) FROM member_row) member_row,
+        COALESCE((SELECT jsonb_agg(to_jsonb(page)) FROM (
+          SELECT * FROM owned ORDER BY lower(name),id LIMIT $5
+        ) page),'[]'::jsonb) owned_rows,
+        (SELECT count(*)::text FROM owned) owned_total,
         COALESCE((SELECT jsonb_agg(to_jsonb(grant_row) ORDER BY created_at DESC,id) FROM (
           SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,g.created_at,
             g.decided_at,g.expires_at,
@@ -1643,27 +1668,35 @@ export class PhoneService {
           ORDER BY g.created_at DESC,g.id LIMIT $4
         ) grant_row),'[]'::jsonb) grant_rows
       FROM authorized JOIN identities viewer ON viewer.id=$2`,
-      [workspaceId, viewerId, query.memberId, PROFILE_GRANT_LIMIT]);
+      [workspaceId, viewerId, query.memberId, PROFILE_GRANT_LIMIT, WORKSPACE_MEMBER_PAGE_SIZE + 1]);
     const row = detail.rows[0];
     if (!row) return null;
     const member = row.member_row ? reviveDates(row.member_row, ['presence_updated_at']) : null;
-    if (member) {
+    const ownedRows = row.owned_rows.slice(0, WORKSPACE_MEMBER_PAGE_SIZE);
+    const presenceRows: MemberRow[] = [...(member ? [member] : []), ...ownedRows];
+    if (presenceRows.length) {
       const presence = await this.optionalEnrichment('member-presence',
-        this.enrichmentDatabase.query<{ presence_body: MemberRow['presence_body'];
-          presence_updated_at: Date }>(`SELECT body presence_body,updated_at presence_updated_at
-          FROM live_outputs WHERE agent_id=$1 AND kind='presence'
-          ORDER BY updated_at DESC LIMIT 1`, [member.id]));
-      member.presence_body = presence?.rows[0]?.presence_body ?? null;
-      member.presence_updated_at = presence?.rows[0]?.presence_updated_at ?? null;
+        this.enrichmentDatabase.query<{ id: string; presence_body: MemberRow['presence_body'];
+          presence_updated_at: Date }>(`SELECT DISTINCT ON (agent_id) agent_id id,body presence_body,
+            updated_at presence_updated_at
+          FROM live_outputs WHERE agent_id=ANY($1::text[]) AND kind='presence'
+          ORDER BY agent_id,updated_at DESC`, [presenceRows.map((entry) => entry.id)]));
+      const byId = new Map(presence?.rows.map((entry) => [entry.id, entry]) ?? []);
+      for (const entry of presenceRows) {
+        entry.presence_body = byId.get(entry.id)?.presence_body ?? null;
+        entry.presence_updated_at = byId.get(entry.id)?.presence_updated_at ?? null;
+      }
     }
     const role = row.role;
     return {
       viewer: { identity: identity(row.viewer_row, this.publicOrigin), role,
         permissions: { send: role !== 'spectator', manage: role === 'owner' || role === 'admin' } },
       members: member ? this.projectMembers([member], null) : [],
-      agents: [],grants: this.projectMemberGrantRows(row.grant_rows.map((grant) =>
+      agents: this.projectWorkspaceAgents(ownedRows, ownedRows),
+      grants: this.projectMemberGrantRows(row.grant_rows.map((grant) =>
         reviveDates(grant, ['created_at', 'decided_at', 'expires_at']))),
-      membersTruncated: false,agentsTruncated: false,
+      agentTotal: Number(row.owned_total),
+      membersTruncated: false,agentsTruncated: row.owned_rows.length > WORKSPACE_MEMBER_PAGE_SIZE,
     };
   }
 
@@ -4608,11 +4641,11 @@ export class PhoneService {
            AND workspace_member.removed_at IS NULL
          WHERE message.id=$3 AND room.id=$1
        ), written AS (
-         INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,read_at)
-         SELECT $1,$2,created_at,id,now() FROM eligible
+         INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id)
+         SELECT $1,$2,created_at,id FROM eligible
          ON CONFLICT(room_id,identity_id) DO UPDATE
            SET message_created_at=EXCLUDED.message_created_at,message_id=EXCLUDED.message_id,
-             updated_at=now(),read_at=now()
+             updated_at=now()
          WHERE (EXCLUDED.message_created_at,EXCLUDED.message_id)>
            (room_read_marks.message_created_at,room_read_marks.message_id)
          RETURNING message_id
@@ -9490,13 +9523,6 @@ export class PhoneService {
     const offset = Number.isSafeInteger(query.offset) && (query.offset ?? 0) > 0
       ? query.offset! : 0;
     const kind = query.kind === 'human' || query.kind === 'agent' ? query.kind : undefined;
-    type RosterAgentRow = MemberRow & {
-      selected_model: string | null;
-      model_catalog: AgentDetailView['catalog'] | null;
-      owner_id: string | null;
-      owner_name: string | null;
-      owner_handle: string | null;
-    };
     const result = await this.database.query<{
       workspace_row: {
         id: string; name: string; about: string | null; avatar: string | null;
@@ -9599,10 +9625,21 @@ export class PhoneService {
       }
     }
     const people = this.projectMembers(pageRows.filter((row) => row.kind === 'human'), null);
-    const agentConfig = new Map(agentPage.map((row) => [row.id, row]));
-    const agents: WorkspaceAgentView[] = this.projectMembers(
-      pageRows.filter((row) => row.kind === 'agent'), null,
-    ).map((member) => {
+    const agents = this.projectWorkspaceAgents(pageRows.filter((row) => row.kind === 'agent'), agentPage);
+    return {
+      workspaceRow: reviveDates(data.workspace_row, ['created_at', 'updated_at']),
+      viewerIdentity: identity(data.viewer_row, this.publicOrigin),
+      managedRoomRows: data.managed_room_rows.map((row) => reviveDates(row, ['created_at'])),
+      members: people,agents,
+      peopleTotal: Number(data.people_total),agentTotal: Number(data.agent_total),
+      membersTruncated: peopleTruncated,agentsTruncated,
+    };
+  }
+
+  /** Roster agent rows with their selected model and owner, as every roster read shows them. */
+  private projectWorkspaceAgents(rows: MemberRow[], configs: RosterAgentRow[]): WorkspaceAgentView[] {
+    const agentConfig = new Map(configs.map((row) => [row.id, row]));
+    return this.projectMembers(rows, null).map((member) => {
       const config = agentConfig.get(member.identity.pubkey);
       const model = config ? selectedModelLabel(config.selected_model, config.model_catalog ?? []) : undefined;
       return {
@@ -9614,14 +9651,6 @@ export class PhoneService {
         } } : {}),
       };
     });
-    return {
-      workspaceRow: reviveDates(data.workspace_row, ['created_at', 'updated_at']),
-      viewerIdentity: identity(data.viewer_row, this.publicOrigin),
-      managedRoomRows: data.managed_room_rows.map((row) => reviveDates(row, ['created_at'])),
-      members: people,agents,
-      peopleTotal: Number(data.people_total),agentTotal: Number(data.agent_total),
-      membersTruncated: peopleTruncated,agentsTruncated,
-    };
   }
 
   private async members(

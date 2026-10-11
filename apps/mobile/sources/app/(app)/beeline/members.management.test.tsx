@@ -2,7 +2,7 @@ import { HumanProfile } from './human-profile';
 import AgentProfileRoute from './agent-profile';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act, create as createRenderer, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -247,11 +247,15 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
 const surfaces = vi.hoisted(() => ({
   values: new Map<string, unknown>(),
   listeners: new Map<string, Set<() => void>>(),
+  observers: new Map<string, Set<(address: any, value: unknown, stamp: number) => void>>(),
 }));
-vi.mock('@/buzz/surface-storage', () => {
+vi.mock('@/buzz/surface-storage', async () => {
+  const { nextSurfaceStamp } = await import('@/buzz/surface-clock');
   const key = (address: any) => JSON.stringify(address);
-  const write = async (address: unknown, value: unknown) => {
+  const write = async (address: any, value: unknown) => {
     surfaces.values.set(key(address), value);
+    const stamp = nextSurfaceStamp();
+    for (const observer of surfaces.observers.get(address.endpoint) ?? []) observer(address, value, stamp);
     for (const listener of surfaces.listeners.get(key(address)) ?? []) listener();
   };
   return {
@@ -270,6 +274,13 @@ vi.mock('@/buzz/surface-storage', () => {
         surfaces.listeners.set(key(address), listeners);
         return () => listeners.delete(listener);
       }),
+      observe: vi.fn((endpoint: string, observer: (address: any, value: unknown, stamp: number) => void) => {
+        const observers = surfaces.observers.get(endpoint) ?? new Set();
+        observers.add(observer);
+        surfaces.observers.set(endpoint, observers);
+        return () => observers.delete(observer);
+      }),
+      fenceEndpoint: vi.fn(() => nextSurfaceStamp()),
     },
     surfaceAddress: vi.fn((relayOrigin: string, viewerPubkey: string, endpoint: string, params?: unknown) => ({
       relayOrigin, viewerPubkey, endpoint, ...(params ? { params } : {}),
@@ -433,7 +444,10 @@ function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
         presence: { status: 'online', observedAt: 1 },
       },
     ],
-    managerSettings: { visibility: 'invite-only' },
+    managerSettings: {
+      visibility: 'invite-only',
+      rooms: [{ id: '33333333-3333-4333-8333-333333333333', name: 'general', visibility: 'public', createdAt: 1 }],
+    },
     peopleTotal: 3,
     agentTotal: 1,
     membersTruncated: false,
@@ -486,6 +500,15 @@ function baseAgent() {
   };
 }
 
+// Every screen unmounts before the next case, so it releases the shared
+// Workspace watch and the next case opens its own.
+const mounted: ReactTestRenderer[] = [];
+function create(element: React.ReactElement): ReactTestRenderer {
+  const renderer = createRenderer(element);
+  mounted.push(renderer);
+  return renderer;
+}
+
 async function render(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
@@ -521,6 +544,9 @@ async function openAgentManagement(renderer: ReactTestRenderer): Promise<void> {
 }
 
 beforeEach(() => {
+  act(() => {
+    for (const renderer of mounted.splice(0)) renderer.unmount();
+  });
   liveListeners.clear();
   surfaces.values.clear();
   surfaces.listeners.clear();
@@ -816,6 +842,27 @@ describe('Members workspace management', () => {
     }
   });
 
+  it('Reproduction 2315-R3: rendered profile keeps live identity after saving role', async () => {
+    const renderer = await personProfile();
+    const identities = await import('@/buzz/identity-records');
+    const records = await import('@/buzz/workspace-records');
+    const { nextSurfaceStamp } = await import('@/buzz/surface-clock');
+    const { ProfileIdentity } = await import('@/components/buzz/ProfileIdentity');
+    await act(async () => {
+      identities.recordPerson(identities.identityScope('https://relay.test', VIEWER),
+        {...state.workspace.members.find((row: any) => row.identity.pubkey === MEMBER).identity, name: 'Builder Renamed'}, nextSurfaceStamp());
+      records.notifyWorkspaceIdentity('https://relay.test', VIEWER);
+    });
+    expect(renderer.root.findByType(ProfileIdentity).props.identity.name).toBe('Builder Renamed');
+    await press(renderer, 'edit-person-role');
+    await press(renderer, 'person-role-admin');
+    await press(renderer, 'save-person-role');
+    const shown = renderer.root.findByType(ProfileIdentity).props;
+    console.log('Reproduction 2315-R3 rendered profile after Save:', shown.identity.name, shown.role);
+    expect(shown.identity.name).toBe('Builder Renamed');
+    expect(shown.role).toBe('admin');
+  });
+
   it('saves role edits from the human profile and supports cancel', async () => {
     const renderer = await personProfile();
     expect(roomView.workspace).not.toHaveBeenCalled(); // R12c
@@ -867,6 +914,160 @@ describe('Members workspace management', () => {
     expect(roomView.workspace).not.toHaveBeenCalled();
     console.log('R12c Demonstrated: human profile shows role edit and Room ship-the-slab; zero Workspace reads.');
     expect(phoneOperation).not.toHaveBeenCalled();
+  });
+
+  it('Reproduction 2315-R4: live socket grant event refreshes the rendered profile', async () => {
+    const { LiveConnection } = await vi.importActual<any>('@/sync/transport/live-connection');
+    let socket: any;
+    class TestSocket {
+      readyState = 0;
+      sent: string[] = [];
+      onopen?: () => void;
+      onmessage?: (event: {data: string}) => void;
+      constructor() { socket = this; }
+      send(value: string) { this.sent.push(value); }
+      close() { this.readyState = 3; }
+    }
+    vi.stubGlobal('WebSocket', TestSocket);
+    const connection = new LiveConnection({
+      authorization: async () => 'test-session', liveUrl: () => 'wss://test.invalid/live',
+      recordScope: async () => undefined,
+      subscribeIdentityChange: () => () => {}, subscribeForeground: () => () => {},
+    });
+    (client.surfaceSubscribe as any).mockImplementation((filters: any, listener: any) => connection.register(filters, listener));
+    try {
+      await render();
+      const renderer = await personProfile();
+      socket.readyState = 1;
+      socket.onopen();
+      const first = await roomView.workspaceMembers.mock.results[0]!.value as any;
+      roomView.workspaceMembers.mockImplementation(async () => ({
+        ...first, grants: [{...first.grants[0], grantId: 'updated-room-grant', target: 'new/target'}],
+      }));
+      await act(async () => {
+        socket.onmessage({data: JSON.stringify({type: 'invalidate', roomId: first.grants[0].roomId, reason: 'postgres:agent_grants'})});
+      });
+      console.log('Reproduction 2315-R4 subscribe frames:', socket.sent);
+      console.log('Reproduction 2315-R4 profile reads after socket grant event:', roomView.workspaceMembers.mock.calls.length);
+      expect(renderer.root.findAll((node: any) =>
+        typeof node.type === 'string' && node.props.testID === 'member-grant-updated-room-grant')).toHaveLength(1);
+    } finally {
+      connection.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('refreshes the profile grants live with one read per relay signal, on the watch Members shares (J27)', async () => {
+    const list = await render();
+    const renderer = await personProfile();
+    // Members and the profile hold one relay watch for this Workspace: the
+    // profile's grant Room joins the managed Room on the same subscription.
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
+    expect(subscribes.at(-1)![0]).toEqual([{ kinds: [0, 9, 9000, 9001],
+      '#h': ['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'] }]);
+    expect(subscribes).toHaveLength(2);
+    expect(roomView.workspaceMembers).toHaveBeenCalledTimes(1);
+    expect(roomView.workspaceMembers).toHaveBeenCalledWith(WORKSPACE, { memberId: MEMBER });
+    const ownedAgent = state.workspace.agents[0];
+    const first = (await roomView.workspaceMembers.mock.results[0]!.value) as any;
+    roomView.workspaceMembers.mockImplementation(async () => ({
+      ...first,
+      agents: [ownedAgent],
+      grants: [{ ...first.grants[0], grantId: 'live-grant', target: 'beeline-work/live' }],
+    }));
+    const signal = subscribes.at(-1)![1];
+    await act(async () => signal());
+    expect(roomView.workspaceMembers).toHaveBeenCalledTimes(2);
+    expect(renderer.root.findByProps({ testID: 'member-grant-live-grant' }).props.title)
+      .toBe('beeline-work/live');
+    list.unmount();
+  });
+
+  it('Reproduction 2315-R6: a complete refresh without the owned agent drops it from the rendered profile', async () => {
+    const owned = {
+      ...state.workspace.agents[0],
+      owner: { pubkey: MEMBER, kind: 'human', name: 'Builder', handle: 'builder' },
+    };
+    state.workspace = { ...state.workspace, agents: [owned] };
+    const base = roomView.workspaceMembers.getMockImplementation()!;
+    roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
+      ...(await (base as any)(...args)), agents: [owned], agentsTruncated: false,
+    }));
+    const list = await render();
+    const renderer = await personProfile();
+    const shown = () => renderer.root.findAll((node: any) =>
+      node.props.title === '@clara').length;
+    expect(shown()).toBeGreaterThan(0);
+    roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
+      ...(await (base as any)(...args)), agents: [], agentsTruncated: false,
+    }));
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
+    await act(async () => subscribes.at(-1)![1]());
+    expect(shown()).toBe(0);
+    list.unmount();
+  });
+
+  it('keeps an owned agent a truncated profile refresh only leaves out', async () => {
+    const owned = {
+      ...state.workspace.agents[0],
+      owner: { pubkey: MEMBER, kind: 'human', name: 'Builder', handle: 'builder' },
+    };
+    state.workspace = { ...state.workspace, agents: [owned] };
+    const base = roomView.workspaceMembers.getMockImplementation()!;
+    roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
+      ...(await (base as any)(...args)), agents: [owned], agentsTruncated: false,
+    }));
+    const list = await render();
+    const renderer = await personProfile();
+    roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
+      ...(await (base as any)(...args)), agents: [], agentsTruncated: true,
+    }));
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
+    await act(async () => subscribes.at(-1)![1]());
+    expect(renderer.root.findAll((node: any) =>
+      node.props.title === '@clara').length).toBeGreaterThan(0);
+    list.unmount();
+  });
+
+  it('Reproduction 2315-R7: unlinking ownership preserves the live agent identity in rendered Members', async () => {
+    const owned = {
+      ...state.workspace.agents[0],
+      owner: { pubkey: MEMBER, kind: 'human', name: 'Builder', handle: 'builder' },
+    };
+    state.workspace = { ...state.workspace, agents: [owned] };
+    const base = roomView.workspaceMembers.getMockImplementation()!;
+    roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
+      ...(await (base as any)(...args)), agents: [owned], agentsTruncated: false,
+    }));
+    const list = await render();
+    await personProfile();
+    const identities = await import('@/buzz/identity-records');
+    const records = await import('@/buzz/workspace-records');
+    const { nextSurfaceStamp } = await import('@/buzz/surface-clock');
+    const { mobileSurfaceCache, surfaceAddress } = await import('@/buzz/surface-storage');
+    const { isWorkspaceMemberListView } = await import('@beeline/buzz-client');
+    await act(async () => {
+      identities.recordPerson(
+        identities.identityScope('https://relay.test', VIEWER),
+        { ...owned.identity, name: 'Clara Renamed', handle: 'renamedagent' },
+        nextSurfaceStamp(),
+      );
+      records.notifyWorkspaceIdentity('https://relay.test', VIEWER);
+    });
+    const shown = () => list.root.findAll((node: any) => node.props.name === 'Clara Renamed').length;
+    expect(shown()).toBeGreaterThan(0);
+    const first = await roomView.workspaceMembers.mock.results[0]!.value as any;
+    await act(async () => {
+      await mobileSurfaceCache.write(
+        surfaceAddress('https://relay.test', VIEWER, '/workspace/:id/members/:memberId', {
+          workspaceId: WORKSPACE, memberId: MEMBER,
+        }),
+        { ...first, agents: [], agentsTruncated: false },
+        isWorkspaceMemberListView,
+      );
+    });
+    expect(shown()).toBeGreaterThan(0);
+    list.unmount();
   });
 
   it('keeps peers and owners outside admin role edit authority', async () => {

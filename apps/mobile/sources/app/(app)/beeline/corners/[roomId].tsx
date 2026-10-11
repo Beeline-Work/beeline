@@ -5,9 +5,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Identity } from '@beeline/buzz-client';
+import { roomTitle } from '@beeline/api-contract/phone';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { CHANGES_LABEL, CORNER_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -83,7 +83,7 @@ export default function BuzzCorners() {
   );
 
   const title = useMemo(
-    () => (surface ? (displayRoomIndexTitle(surface.room.name) ?? surface.room.name) : 'Room'),
+    () => (surface ? (roomTitle(surface.room.name) ?? surface.room.name) : 'Room'),
     [surface],
   );
   const refresh = async () => {

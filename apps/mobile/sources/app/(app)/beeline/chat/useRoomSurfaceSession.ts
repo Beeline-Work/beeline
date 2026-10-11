@@ -41,7 +41,6 @@ import {
   applyRoomTailRead,
   heldRoomMessages,
   holdRoomMessages,
-  patchRoomMessages,
   pruneRoomTail,
   roomDeltaMessage,
   roomRecordRevision,
@@ -62,7 +61,8 @@ import {
 } from '@/buzz/live-draft-drain';
 import { applyRoomDraft, useRoomDraftLanes } from '@/buzz/room-live-drafts';
 import { createRoomOutbox, mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { patchIdentity, subscribePersonChange } from '@/buzz/identity-live';
+import { IdentitySelection, identityScope, useIdentityRecords } from '@/buzz/identity-records';
+import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { liveChatList } from '@/buzz/chat-list-store';
 import { BuzzRigTransport } from '@/sync/transport';
 import type { LiveWireTrace, MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
@@ -442,22 +442,18 @@ export function useRoomSurfaceSession({
   liveOverlaysRef.current = thoughtOverlays;
 
   // A rename, handle or face change of a member or author reaches this open
-  // Room without a refetch.
-  useEffect(() => subscribePersonChange((person) => {
-    const scope = recordScopeRef.current;
-    if (scope) {
-      patchRoomMessages(scope, channelIdRef.current, (message) =>
-        patchIdentity(message, person) as RoomViewMessage,
-      );
-    }
-    setRoomSurface((current) => {
-      if (!current) return current;
-      const next = patchIdentity(current, person) as RoomSurfaceHeader;
-      if (next === current) return current;
-      reconciledViewRef.current = next;
-      return next;
-    });
-  }), []);
+  // Room without a refetch: the Room selects the identity records newer than
+  // its last server read.
+  const [identityRecordScope, setIdentityRecordScope] = useState<string | null>(null);
+  const roomReadStampRef = useRef(0);
+  const identityRecords = useIdentityRecords();
+  const selectedRoomSurface = useMemo(
+    () => roomSurface && identityRecordScope
+      ? new IdentitySelection(identityRecordScope, roomReadStampRef.current).roomView(roomSurface)
+      : roomSurface,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the records version re-selects
+    [roomSurface, identityRecordScope, identityRecords],
+  );
 
   useEffect(() => {
     const traces = pendingPaintTracesRef.current;
@@ -641,6 +637,7 @@ export function useRoomSurfaceSession({
     // seconds, so the read cannot tell a same-second retry from a stale turn;
     // replaying these in order on top of the read keeps what the socket said.
     let turnDeltasDuringRead: RoomViewAgentTurn[] | undefined;
+    let readStamp = 0;
     let messageDeltasDuringRead: RoomViewMessage[] | undefined;
     let decoder: LiveOverlayDecoder | undefined;
     let pendingOverlayEvents: Parameters<LiveOverlayDecoder['decode']>[0][] = [];
@@ -1150,6 +1147,7 @@ export function useRoomSurfaceSession({
         const relayUrl = await getEffectiveRelayUrl();
         markRoomOpen('relay-ready');
         if (cancelled) return;
+        setIdentityRecordScope(identityScope(relayUrl, viewerPubkey));
         const scope = roomRecordScope(relayUrl, viewerPubkey);
         recordScopeRef.current = scope;
         setRecordScope(scope);
@@ -1228,6 +1226,7 @@ export function useRoomSurfaceSession({
             markRoomOpen('room-read-start');
             turnDeltasDuringRead = [];
             messageDeltasDuringRead = [];
+            readStamp = currentSurfaceStamp();
             try {
               const prefetched = openingPrefetch;
               openingPrefetch = null;
@@ -1256,6 +1255,7 @@ export function useRoomSurfaceSession({
               liveReadApplied && !heardSinceRead && readFoundUnheardMessage(painted, view);
             heardSinceRead = false;
             liveReadApplied = true;
+            roomReadStampRef.current = readStamp;
             const replayedTurns = turnDeltasDuringRead ?? [];
             const replayedMessages = messageDeltasDuringRead ?? [];
             turnDeltasDuringRead = undefined;
@@ -1398,7 +1398,7 @@ export function useRoomSurfaceSession({
     transport,
     adoptTransport: setTransport,
     roomClient,
-    roomSurface,
+    roomSurface: selectedRoomSurface,
     recordScope,
     applyRoomRepositoryResult,
     clearRoomRepository,

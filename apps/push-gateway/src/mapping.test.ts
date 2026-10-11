@@ -320,6 +320,26 @@ describe('mapEventToNotification', () => {
       expect(result?.body).toBe('@Codex: Which target branch should I use?');
     });
 
+    it('titles a Corner with the shared chat-title rule', () => {
+      const title = (context: Partial<typeof cornerContext>) =>
+        mapEventToNotification(
+          event([
+            ['h', 'corner-1'],
+            ['p', 'a'.repeat(64)],
+            ['t', 'agent-message'],
+          ]),
+          { ...cornerContext, ...context },
+          { recipientMentioned: true },
+        )?.title;
+      // A legacy room-prefixed corner name keeps one Room half.
+      expect(title({ cornerName: 'Launch room/fix-login-loop' })).toBe(
+        '#Launch room/fix-login-loop',
+      );
+      // An unnamed corner reads by its id slug, as it does in the app.
+      expect(title({ cornerName: undefined })).toBe('#Launch room/corner-corner-1');
+      expect(title({ parentRoomName: '##Launch room' })).toBe('#Launch room/fix-login-loop');
+    });
+
     it('serializes the exact routing payload a corner tap needs', () => {
       expect(
         mapEventToNotification(

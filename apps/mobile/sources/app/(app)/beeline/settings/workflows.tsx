@@ -4,12 +4,15 @@ import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import type { RoomWorkflowListResult, RoomWorkflowView } from '@beeline/api-contract/phone';
+import {
+  roomTitle,
+  type RoomWorkflowListResult,
+  type RoomWorkflowView,
+} from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { Typography } from '@/constants/Typography';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { PageHeader } from '@/components/buzz/PageHeader';
-import { displayRoomIndexTitle } from '@/buzz/room-list-row';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Modal } from '@/modal/ModalManager';
@@ -98,7 +101,7 @@ export default function RoomWorkflows() {
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <PageHeader
         backAccessibilityLabel="Back to Room"
-        eyebrow={displayRoomIndexTitle(roomName) ?? 'Room'}
+        eyebrow={roomTitle(roomName) ?? 'Room'}
         onBack={() => router.back()}
         testID="workflows-room"
         title="Workflows"

@@ -124,3 +124,24 @@ describe('read-clear push on iOS', () => {
     expect(api.setBadgeCountAsync).not.toHaveBeenCalled();
   });
 });
+
+describe('read-clear push on Android', () => {
+  // Audit 9.3 Android: the same server rule reaches Android as an FCM data
+  // message, which Expo hands to the task with its `body` as `dataString`.
+  it('dismisses only the read notifications and leaves the badge to the shade', async () => {
+    const api = shade([
+      push('a1', roomA, roomA),
+      push('a2', roomA, roomA),
+      push('a3', roomA, roomA),
+      push('b1', roomB, roomB),
+    ]);
+    const body = JSON.stringify(readClearPushData([cursor(roomA, 'a2', ['a1'])]));
+    const payload = { data: { body, dataString: body }, from: 'fcm', priority: 1 };
+
+    await expect(handleReadClearPayload(payload, api, 'android')).resolves.toBe(true);
+
+    expect(api.dismissNotificationAsync.mock.calls).toEqual([['a1'], ['a2']]);
+    // Android's launcher badge follows the shade; there is no count to set.
+    expect(api.setBadgeCountAsync).not.toHaveBeenCalled();
+  });
+});

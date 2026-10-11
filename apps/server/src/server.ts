@@ -1,5 +1,3 @@
-import { RoomWebhooks, WebhookError } from './room-webhooks.js';
-import { WEBHOOK_MAX_BYTES } from '@beeline/api-contract/phone';
 import { WorkflowAuthorizationError } from './workflow-admin.js';
 import { WorkspaceSkillNotFoundError } from './institutional-skills.js';
 import { GitHubHttpError } from '@beeline/auth/github';
@@ -124,7 +122,7 @@ const QUIET_PHONE_OPERATIONS: ReadonlySet<string> = new Set([
 export interface GitHubServerHooks {
   webhookSecret?: string;
   roomToken?: (identityId: string, roomId: string) => Promise<{ token: string; expiresAt: number }>;
-  onWebhook?: (eventType: string, payload: unknown) => Promise<void>;
+  onWebhook?: (eventType: string, payload: unknown, deliveryId?: string) => Promise<void>;
   completeInstallation?: (state: string, installationId: number) => Promise<string>;
 }
 
@@ -324,7 +322,7 @@ function clientKey(request: IncomingMessage): string {
   return first || request.socket.remoteAddress || 'unknown';
 }
 export function requestLogPath(path: string): string {
-  return path.startsWith('/v1/hooks/') ? '/v1/hooks/[redacted]' : path;
+  return path;
 }
 function signatureMatches(secret: string, payload: Buffer, header: string | undefined) {
   if (!header?.startsWith('sha256=')) return false;
@@ -607,7 +605,6 @@ export function createBeelineServer(options: ServerOptions): Server {
       const message = error instanceof Error ? error.message : 'request failed';
       let status =
         error instanceof WorkflowAuthorizationError ||
-        error instanceof WebhookError ||
         error instanceof RelayRefusalError ||
         error instanceof WorkspaceSkillNotFoundError
           ? error.status
@@ -1841,16 +1838,6 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
-  if (method === 'POST' && url.pathname.startsWith('/v1/hooks/')) {
-    let raw: Buffer;
-    try { raw = await bytes(request, WEBHOOK_MAX_BYTES); } catch { throw new WebhookError(413, 'webhook body too large'); }
-    const header = (name: string) => typeof request.headers[name] === 'string' ? request.headers[name] as string : undefined;
-    const result = await new RoomWebhooks(options.database).receive(url.pathname.slice('/v1/hooks/'.length), raw,
-      header('x-beeline-timestamp'), header('x-beeline-signature'), header('idempotency-key'), signatureMatches);
-    json(response, 202, result);
-    return;
-  }
-
   if (method === 'POST' && url.pathname === '/v1/github/webhook') {
     const payload = await bytes(request, MAX_JSON_BYTES);
     if (
@@ -1877,7 +1864,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       json(response, 200, { accepted: false, duplicate: true });
       return;
     }
-    if (options.github?.onWebhook) await options.github.onWebhook(event, parsed);
+    if (options.github?.onWebhook) await options.github.onWebhook(event, parsed, delivery);
     const inserted = await options.database.query(
       `INSERT INTO github_webhook_deliveries(delivery_id) VALUES($1) ON CONFLICT DO NOTHING`,
       [delivery],

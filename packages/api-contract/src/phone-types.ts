@@ -1,4 +1,3 @@
-import type { WebhookRequestCard } from './room-webhooks.js';
 import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './agent-grants.js';
 import type { ChoiceMode, ChoiceOptionView, ChoiceStatus } from './room-choices.js';
@@ -161,8 +160,8 @@ export type RoomViewHeader = {
   readonly reviewerAgentId?: string;
   /** Agents tried in order after `reviewerAgentId` when it is unhealthy or its review turn fails. */
   readonly reviewerFallbackIds?: readonly string[];
-  /** Absent when this bundle could not read it: a Room whose live/closed state
-   *  is unknown is never painted as live. */
+  /** Absent when this bundle could not read it. Only `true` paints a Room as
+   *  archived. */
   readonly archived?: boolean;
   readonly createdAt?: number;
   /** Absent when this bundle could not read it; a surface omits the age rather
@@ -276,7 +275,6 @@ export type RoomViewMessage = {
   };
   /** One grant card: the agent asks its owner; several asks in one turn share a card. */
   readonly grantRequest?: GrantRequestCardView;
-  readonly webhookRequest?: WebhookRequestCard;
   /** One Squire-owned approval page relayed into the owner's connector DM.
    * Beeline presents the link but never decides the request. */
   readonly squireApproval?: SquireApprovalCardView;
@@ -428,7 +426,6 @@ export type NeedsYouApprovalKind =
   | 'squire'
   | 'choice'
   | 'connector'
-  | 'webhook'
   | 'sign-in';
 
 /**
@@ -764,6 +761,14 @@ export type ChatListCorner = {
   /** The corner owes the viewer something they have not opened it to see
    * since. Only these open the Room's corner dropdown on their own. */
   readonly attention?: true;
+};
+
+/** A Room's open-corner summary: exact counts and the capped list of open corners. */
+export type RoomCornerSummary = {
+  readonly cornerCount: number;
+  readonly waitingCornerCount: number;
+  readonly mineCornerCount: number;
+  readonly openCorners: readonly ChatListCorner[];
 };
 
 export type ChatListItem = {
@@ -1116,6 +1121,9 @@ export type CornerListView = {
   readonly nextArchived?: string;
   /** Cursor for the next page of open corners. */
   readonly nextOpen?: string;
+  /** On the first open page of a top-level Room: the Room list row's corner
+   *  summary, read in the same statement as the rows. */
+  readonly summary?: RoomCornerSummary;
   /** Apps connected to this Workspace and available for a new corner. */
   readonly apps?: readonly CornerAppInstallationView[];
   readonly viewer: RoomViewer;

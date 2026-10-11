@@ -11,6 +11,8 @@ import {
   cornerHeaderStateLabel,
   cornerDisplayItems,
   cornerHeaderAgent,
+  cornerHeaderItem,
+  roomIsArchived,
 } from './corner-display-state';
 
 const lifecycle = (overrides: Partial<CornerLifecycleView> = {}): CornerLifecycleView => ({
@@ -141,6 +143,28 @@ describe('server-owned corner display state', () => {
         }).reviewerTurnRunning,
       ).toBe(false);
     });
+  });
+});
+
+describe('one archived meaning (3.6/J14)', () => {
+  it('treats only the server\'s archived: true as archived, for the header and the composer', () => {
+    expect(roomIsArchived({ archived: true })).toBe(true);
+    expect(roomIsArchived({ archived: false })).toBe(false);
+    expect(roomIsArchived({})).toBe(false);
+    expect(roomIsArchived(undefined)).toBe(false);
+    expect(cornerHeaderItem(undefined, roomIsArchived({}))).toBeUndefined();
+    expect(cornerHeaderItem(undefined, roomIsArchived({ archived: true }))?.state).toBe('archived');
+  });
+
+  it('feeds the chat surface composer, turn stream and header from the one rule', () => {
+    const surface = readFileSync(
+      new URL('../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(surface).toContain('const isArchived = roomIsArchived(roomSurface?.room);');
+    expect(surface).toMatch(/useCornerHeaderItem\([\s\S]*?decodedId,\s*isArchived,/);
+    expect(surface).toContain('projectActiveTurnStream(messages, activeAgentTurns, isArchived)');
+    expect(surface).not.toMatch(/\.archived [!=]==/);
   });
 });
 

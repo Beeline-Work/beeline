@@ -17,7 +17,7 @@ const DATABASE_READS: ReadonlySet<string> = new Set<keyof PhoneOperationMap>([
   'listRoomWorkflowRuns',
   'readWorkflowRun',
   'listRoomSchedules',
-  'readRoomWebhooks',
+  'listRoomSubscriptions',
   'listWorkflowDefinitions',
   'readWorkflowDefinition',
   'getManagedIdentity',

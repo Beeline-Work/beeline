@@ -24,12 +24,31 @@ import { tagsKnownIdentitySql } from './message-mentions.js';
  * A question leaves the tray when the person taps or dismisses it
  * (`needs_you_marks.cleared_at`), replies anywhere in that Room or corner
  * after it, or 24 hours after they first saw it on any device
- * (`needs_you_marks.first_seen_at`). An approval also leaves when dismissed
+ * (`needs_you_marks.first_seen_at`), or at the 7-day lookback if that comes
+ * first (`questionLeavesAtSql`). An approval also leaves when dismissed
  * from the tray, decided, expired or closed; opening it does not clear it.
  */
 export const NEEDS_YOU_TRIGGER_WORDS = ['please', 'approve', 'feedback'] as const;
 /** A cell's life, counted from the first time the person saw it in the tray. */
 export const NEEDS_YOU_EXPIRY_HOURS = 24;
+/** A card's `expiresAt` in epoch milliseconds, or NULL; `messages_needs_you_expiry_idx` indexes it. */
+export function cardExpiresAtSql(card = 'card'): string {
+  return `(CASE WHEN ${card}->>'expiresAt' ~ '^[0-9]{1,15}$' THEN (${card}->>'expiresAt')::bigint END)`;
+}
+/** The approval cards whose only exit is their `expiresAt`. */
+export const EXPIRING_CARD_TYPES = `card_type IN ('squire-approval','agent-sign-in')`;
+/**
+ * An expiring approval card `m` that waits on `identity`: any member of its
+ * Room for a Squire approval, the card's owner for an agent sign-in. The
+ * projection shows it until its `expiresAt`; the expiry sweep announces that
+ * deadline to the same people.
+ */
+export function expiringCardForSql(m: string, identity: string): string {
+  return `(${m}.${EXPIRING_CARD_TYPES} AND ${m}.deleted_at IS NULL
+    AND (${m}.card_type='squire-approval' OR ${m}.card->>'ownerId'=${identity}))`;
+}
+/** Now, in the epoch milliseconds `cardExpiresAtSql` returns. */
+const NOW_MS = `(extract(epoch FROM now())*1000)::bigint`;
 /**
  * How far back a tagged message is considered at all — a deliberate bound for
  * launch and backfill, not part of the approved expiry rule. The 24-hour clock
@@ -38,7 +57,17 @@ export const NEEDS_YOU_EXPIRY_HOURS = 24;
  * Workspace's history. Inside the window, the 24-hour clock still starts only
  * on first sight.
  */
-const NEEDS_YOU_LOOKBACK_DAYS = 7;
+export const NEEDS_YOU_LOOKBACK = `interval '7 days'`;
+/**
+ * When question `m` leaves `mark`'s owner's tray by the clock alone: 24
+ * hours after first sight, or at the lookback edge if that comes first. An
+ * unseen question has no first sight, so `LEAST` gives the lookback edge.
+ * The read keeps cells before it; the expiry sweep announces it.
+ */
+export function questionLeavesAtSql(m = 'm', mark = 'mark'): string {
+  return `LEAST(${m}.created_at+${NEEDS_YOU_LOOKBACK},
+    ${mark}.first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours')`;
+}
 /** Roughly two lines of a phone cell; the desktop list pane is the same width. */
 export const NEEDS_YOU_TEXT_MAX = 80;
 /** A safety cap on qualifying rows only: `askSql` runs before it, so no near-miss can crowd out an ask. */
@@ -65,6 +94,13 @@ export function isNeedsYouAsk(text: string): boolean {
 export function askSql(textExpr: string): string {
   return `(${textExpr} ~ '\\?[ \\t\\n\\r\\f\\v]*$'
     OR ${textExpr} ~* '(^|[^[:alnum:]_])(${NEEDS_YOU_TRIGGER_WORDS.join('|')})($|[^[:alnum:]_])')`;
+}
+
+/** Message `m` (or the bare row) is a live ask; `messages_needs_you_question_idx` indexes it. */
+export function askingMessageSql(m?: string): string {
+  const column = (name: string) => (m ? `${m}.${name}` : name);
+  return `${column('presentation')}='message' AND ${column('deleted_at')} IS NULL
+    AND ${askSql(column('text'))}`;
 }
 
 function sentences(text: string): string[] {
@@ -193,9 +229,13 @@ const ROW_COLUMNS = `
   author.id author_id,author.kind author_kind,author.name author_name,
   author.handle author_handle,author.avatar author_avatar,author.face_id author_face`;
 
-const VIEWER_MEMBER = `EXISTS (SELECT 1 FROM memberships workspace_member
-  WHERE workspace_member.workspace_id=$1 AND workspace_member.room_id IS NULL
-    AND workspace_member.identity_id=$2 AND workspace_member.removed_at IS NULL)`;
+/** The viewer is a current member of the Workspace. */
+export function viewerMemberSql(workspaceId: string, viewerId: string): string {
+  return `EXISTS (SELECT 1 FROM memberships workspace_member
+  WHERE workspace_member.workspace_id=${workspaceId} AND workspace_member.room_id IS NULL
+    AND workspace_member.identity_id=${viewerId} AND workspace_member.removed_at IS NULL)`;
+}
+const VIEWER_MEMBER = viewerMemberSql('$1', '$2');
 
 const VIEWER_ROOMS = `
   viewer_rooms AS (
@@ -206,20 +246,27 @@ const VIEWER_ROOMS = `
       AND ${VIEWER_MEMBER}
   )`;
 
-/** Keep the section clear's candidate rule identical to the read, without its 500-row display bound. */
-const QUESTION_WHERE = `m.presentation='message' AND m.deleted_at IS NULL AND m.author_id<>$2
-  AND m.created_at>now()-interval '${NEEDS_YOU_LOOKBACK_DAYS} days'
+/**
+ * Message `m` asks identity `viewer` (with `mark`, the viewer's mark on it)
+ * and nothing has cleared it: no tap or dismiss, no later reply. Only the
+ * clock is left out, so the expiry sweep can find who a question leaves.
+ */
+export function questionForSql(viewerId: string): string {
+  return `${askingMessageSql('m')} AND m.author_id<>${viewerId}
   AND mark.cleared_at IS NULL
-  AND (mark.first_seen_at IS NULL
-    OR mark.first_seen_at>now()-interval '${NEEDS_YOU_EXPIRY_HOURS} hours')
-  AND ${askSql('m.text')}
   AND ${tagsKnownIdentitySql('m', 'viewer.id', 'viewer.handle', 'viewer.kind')}
   AND NOT EXISTS (
     SELECT 1 FROM messages reply
-    WHERE reply.room_id=m.room_id AND reply.author_id=$2
+    WHERE reply.room_id=m.room_id AND reply.author_id=${viewerId}
       AND reply.presentation='message' AND reply.deleted_at IS NULL
       AND reply.created_at>m.created_at
   )`;
+}
+
+/** Keep the section clear's candidate rule identical to the read, without its 500-row display bound. */
+const QUESTION_WHERE = `${questionForSql('$2')}
+  AND m.created_at>now()-${NEEDS_YOU_LOOKBACK}
+  AND ${questionLeavesAtSql()}>now()`;
 
 /** Clear every current question, including ones past the tray read's display limit. */
 export async function clearNeedsYouQuestions(
@@ -316,22 +363,10 @@ const APPROVAL_BRANCHES: readonly string[] = [
    WHERE m.deleted_at IS NULL
      AND (offer.addressee_id=$2
        OR (offer.connector_type<>'wallet' AND ${VIEWER_MANAGES_WORKSPACE}))`,
-  // `RoomWebhooks.decide`: a human Room or Workspace owner/admin.
-  `${APPROVAL_FROM('webhook', 'webhook.expires_at')}
-   JOIN room_webhook_requests webhook ON webhook.room_id=room.id
-     AND webhook.status='pending' AND webhook.expires_at>now()
-   JOIN messages m ON m.id=webhook.message_id
-   JOIN identities viewer ON viewer.id=$2 AND viewer.kind='human'
-   JOIN memberships viewer_member ON viewer_member.room_id=room.id
-     AND viewer_member.identity_id=$2 AND viewer_member.removed_at IS NULL
-   ${APPROVAL_JOINS}
-   WHERE m.deleted_at IS NULL
-     AND (viewer_member.role IN ('owner','admin') OR ${VIEWER_MANAGES_WORKSPACE})`,
   // A sign-in only its owner can finish, while it still waits on them.
   `${APPROVAL_FROM(
      'sign-in',
-     `CASE WHEN m.card->>'expiresAt' ~ '^[0-9]+$'
-       THEN to_timestamp((m.card->>'expiresAt')::bigint/1000.0) END`,
+     `to_timestamp(${cardExpiresAtSql('m.card')}/1000.0)`,
      `(SELECT signing_in.name FROM identities signing_in WHERE signing_in.id=m.card->>'agentId')`,
    )}
    JOIN messages m ON m.room_id=room.id
@@ -339,20 +374,19 @@ const APPROVAL_BRANCHES: readonly string[] = [
    ${APPROVAL_JOINS}
    WHERE m.deleted_at IS NULL AND m.card->>'ownerId'=$2
      AND CASE m.card_type
-       WHEN 'agent-sign-in' THEN m.card->>'status' IN ('starting','pending')
-         AND (m.card->>'expiresAt' IS NULL
-           OR to_timestamp((m.card->>'expiresAt')::bigint/1000.0)>now())
+       WHEN 'agent-sign-in' THEN ${expiringCardForSql('m', '$2')}
+         AND m.card->>'status' IN ('starting','pending')
+         AND (${cardExpiresAtSql('m.card')} IS NULL OR ${cardExpiresAtSql('m.card')}>${NOW_MS})
        ELSE m.card->>'status'='pending'
      END`,
   // A Trusty Squire approval in the owner's connector DM. Squire decides it;
   // the decision (or Squire's expiry) lands in the Room the paused turn ran in.
-  `${APPROVAL_FROM('squire', `to_timestamp((m.card->>'expiresAt')::bigint/1000.0)`)}
+  `${APPROVAL_FROM('squire', `to_timestamp(${cardExpiresAtSql('m.card')}/1000.0)`)}
    JOIN messages m ON m.room_id=room.id AND m.card_type='squire-approval'
    ${APPROVAL_JOINS}
-   WHERE m.deleted_at IS NULL AND m.card->>'approvalId' IS NOT NULL
+   WHERE ${expiringCardForSql('m', '$2')} AND m.card->>'approvalId' IS NOT NULL
      AND m.card->>'status' IS DISTINCT FROM 'expired'
-     AND m.card->>'expiresAt' ~ '^[0-9]+$'
-     AND to_timestamp((m.card->>'expiresAt')::bigint/1000.0)>now()
+     AND ${cardExpiresAtSql('m.card')}>${NOW_MS}
      AND m.card->>'sourceRoomId' ~ '^[0-9a-f-]{36}$'
      AND NOT EXISTS (
        SELECT 1 FROM messages decision
@@ -419,7 +453,6 @@ const VISIBLE_CANDIDATE = `(approval_kind IS NULL OR cleared_at IS NULL) AND CAS
     THEN card->>'tool' ELSE card->>'repository' END),'') IS NOT NULL
   WHEN 'choice' THEN NULLIF(btrim(card->>'prompt'),'') IS NOT NULL
   WHEN 'connector' THEN NULLIF(btrim(card->>'connectorName'),'') IS NOT NULL
-  WHEN 'webhook' THEN NULLIF(btrim(card->>'source'),'') IS NOT NULL
   WHEN 'sign-in' THEN CASE WHEN card->>'harness' IS NOT NULL
     THEN card->>'harness' IN (${Object.keys(AGENT_SIGN_IN_SERVICE_LABELS)
       .map((value) => `'${value}'`)
@@ -634,8 +667,6 @@ function approvalView(
         false,
         text(card.reason),
       );
-    case 'webhook':
-      return view('webhook', 'asks for a webhook from', text(card.source), true, text(card.reason));
     case 'sign-in':
       return view(
         'sign-in',

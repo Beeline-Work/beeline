@@ -3,6 +3,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { readChatListView } from '@beeline/api-contract/phone';
 import { DesktopRoomCorners } from '../sources/components/buzz/DesktopRoomCorners';
+import { applyChatListCorners } from '../sources/buzz/room-corner-store';
 
 /**
  * The desktop rail under two Rooms, fed a chat-list response exactly as the
@@ -51,6 +52,7 @@ const report = (text: string) => {
 async function run() {
   const view = readChatListView(response);
   if (!view) throw new Error('chat list did not parse');
+  applyChatListCorners(view.chats, 1);
   createRoot(document.getElementById('root')!).render(
     <div style={{ width: 360 }}>
       {view.chats.map((item) => (

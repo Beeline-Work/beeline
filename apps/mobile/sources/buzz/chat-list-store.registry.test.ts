@@ -121,7 +121,7 @@ describe('the Room list store over the real surface registry', () => {
     expect(roomA.room.name).toBe('Renamed');
     expect(roomA.latestMessage?.id).toBe(M2);
     // The registry holds the reconciled value, never the raw read.
-    expect(mobileSurfaceCache.peek(address, isChatListView)).toBe(value);
+    expect(mobileSurfaceCache.peek(address, isChatListView)).toStrictEqual(value);
     handle.release();
   });
 });

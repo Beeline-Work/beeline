@@ -95,6 +95,7 @@ import {
   type MessageReactionEmoji,
 } from '@beeline/api-contract/phone';
 import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
+import { REPOSITORY_SUBSCRIPTION_EVENTS } from '@beeline/api-contract/daemon';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 import { allocatedDirectoryBytes, assertScratchWriteBudget, scratchBudgetMessage } from './scratch-lifecycle.js';
 import { validateArtifact } from './artifact-validation.js';
@@ -876,13 +877,15 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'inspect_corner',
     description:
-      'Read compact status of a corner you are a member of, or of any corner under a Room you are a member of, by default. Set mode to transcript for bounded oldest-first pages; pass the returned next.after and next.offset to continue, including long messages.',
+      'Read compact status of a corner you are a member of, or of any corner under a Room you are a member of, by default. Status `activity` is running while its agent has a turn, else idle; `awaiting: reply` means it is idle with no PR and its newest message is from an agent, so it waits on a reply. `lifecycle` is the work stage, not activity. Set mode to transcript for bounded oldest-first pages; pass the returned next.after and next.offset to continue, including long messages. Set from to newest for the newest messages; pass the returned next.before for older ones.',
     inputSchema: {
       type: 'object',
       required: ['cornerId'],
       properties: {
         cornerId: { type: 'string' },
         mode: { type: 'string', enum: ['status', 'transcript'] },
+        from: { type: 'string', enum: ['oldest', 'newest'], description: 'Transcript start; oldest by default.' },
+        before: { type: 'string', description: 'The before cursor from a newest-first transcript next.' },
         after: { type: 'string', description: 'The after cursor from transcript next.' },
         offset: {
           type: 'integer',
@@ -1043,16 +1046,27 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    name: 'request_webhook',
-    description: 'Request an incoming webhook for a named source in this Room. A human Room admin approves the card; approval resumes your paused turn. Approval returns the URL once in your resumed turn. Put it in the sender configuration; do not post it in the Room.',
-    inputSchema: { type: 'object', required: ['source', 'reason'], properties: {
-      source: { type: 'string', pattern: '^[a-z0-9-]{1,40}$' }, reason: { type: 'string', maxLength: 1000 },
+    name: 'create_subscription',
+    description: `Run a prompt or start a saved workflow in this Room when an event arrives. No approval or URL setup. Room events: ${eventKindCatalogLines().join('; ')}. Repository events: ${REPOSITORY_SUBSCRIPTION_EVENTS.join(', ')}. A repository must be covered by this Workspace's installed connection.`,
+    inputSchema: { type: 'object', required: ['source', 'event', 'prompt'], properties: {
+      source: { type: 'string', enum: ['room', 'repository'] },
+      event: { type: 'string' },
+      repository: { type: 'string', description: 'For repository events, owner/name of a covered repository.' },
+      prompt: { type: 'string', description: 'The action to perform on each event. For a workflow, tell yourself to call start_workflow for the saved workflow.' },
+      workflowName: { type: 'string', description: 'Saved workflow targeted by this subscription, if the action starts one.' },
     }, additionalProperties: false },
   },
   {
-    name: 'list_webhooks',
-    description: 'List this Room’s webhook sources and recent deliveries. Contains no URLs or signing secrets.',
+    name: 'list_subscriptions',
+    description: 'List your event-driven subscriptions in this Room, including their IDs for removal.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'delete_subscription',
+    description: 'Stop one of your subscriptions in this Room.',
+    inputSchema: { type: 'object', required: ['subscriptionId'], properties: {
+      subscriptionId: { type: 'string' },
+    }, additionalProperties: false },
   },
   {
     name: 'subscribe_events',
@@ -1060,7 +1074,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       'Choose which things happening in this Room wake you for a turn. This REPLACES your ' +
       'current list, so send every kind you want, not just the new one; call list_event_subscriptions ' +
       'first if you are not sure what you already react to, and send an empty list to react to nothing. ' +
-      `Available kinds: ${eventKindCatalogLines().join('; ')}; webhook:<source> carries quoted untrusted outside data. ` +
+      `Available kinds: ${eventKindCatalogLines().join('; ')}. ` +
       'Subscribe to joined and every newcomer wakes you, so you can greet them - a person arriving ' +
       'in the Workspace wakes you too when that arrival projects into this Room. ' +
       'A corner merging wakes nobody in its parent Room by default: if you still have work to do after ' +
@@ -2383,7 +2397,7 @@ const SAFE_TO_REPEAT_DAEMON_OPERATIONS: ReadonlySet<string> = new Set([
   'listAppTools',
   'listCornerBriefRevisions',
   'listRoomCorners',
-  'listRoomWebhooks',
+  'listAgentSubscriptions',
   'loadWorkspaceSkill',
   'retrieveLinkSpendRequest',
   'searchInstitutionalHistory',
@@ -4509,6 +4523,15 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
         throw new Error('mode must be status or transcript');
       if (args.after && args.mode !== 'transcript')
         throw new Error('after requires transcript mode');
+      if (args.from !== undefined && args.from !== 'oldest' && args.from !== 'newest')
+        throw new Error('from must be oldest or newest');
+      if (args.from !== undefined && args.mode !== 'transcript')
+        throw new Error('from requires transcript mode');
+      if (args.before !== undefined && (typeof args.before !== 'string' || !args.before))
+        throw new Error('before must be a nonempty cursor');
+      if (args.before && args.from !== 'newest') throw new Error('before requires from newest');
+      if (args.from === 'newest' && (args.after || args.offset !== undefined))
+        throw new Error('from newest pages with before, not after or offset');
       if (
         args.offset !== undefined &&
         (!Number.isSafeInteger(args.offset) ||
@@ -4518,6 +4541,42 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
         throw new Error('offset requires transcript mode and a nonnegative safe integer');
       // The server authorizes each read against the target corner: a member of
       // the corner or of its parent Room reaches it; anyone else is refused.
+      if (args.mode === 'transcript' && args.from === 'newest') {
+        const page = (await daemonExecute('getRoomConversation', {
+          roomId: args.cornerId,
+          limit: 9,
+          window: 'recent',
+          ...(args.before ? { before: args.before } : {}),
+        })) as unknown as RoomConversationResult;
+        // Walk back from the newest message; return the kept rows in transcript order.
+        const items: Record<string, unknown>[] = [];
+        for (const item of page.items.slice(-8).reverse()) {
+          let body = item.body.slice(0, 1000);
+          const row = {
+            id: item.id,
+            cursor: item.cursor,
+            authorId: item.authorId,
+            createdAt: item.createdAt,
+            type: item.type,
+            ...(item.attachments.length ? { attachmentCount: item.attachments.length } : {}),
+          };
+          while (body && JSON.stringify([...items, { ...row, body }]).length > 11000)
+            body = body.slice(0, Math.floor(body.length / 2));
+          if (!body && item.body) break;
+          items.unshift({
+            ...row,
+            body,
+            ...(body.length < item.body.length ? { bodyContinues: true } : {}),
+          });
+        }
+        const oldest = items[0]?.cursor as string | undefined;
+        return JSON.stringify({
+          cornerId: args.cornerId,
+          items,
+          ...(oldest && page.items.length > items.length ? { next: { before: oldest } } : {}),
+          limits: { items: 8, bodyChars: 1000, responseChars: 12000 },
+        });
+      }
       if (args.mode === 'transcript') {
         const page = (await daemonExecute('getRoomConversation', {
           roomId: args.cornerId,
@@ -4589,7 +4648,10 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
         : undefined;
       return JSON.stringify({
         cornerId: args.cornerId,
-        state: status.lifecycle?.lifecycle ?? 'unknown',
+        lifecycle: status.lifecycle?.lifecycle ?? 'unknown',
+        activity: status.activity ?? 'unknown',
+        ...(status.awaiting ? { awaiting: status.awaiting } : {}),
+        ...(status.lastMessage ? { lastMessage: status.lastMessage } : {}),
         ...(pr ? { pr: { number: pr.number, url: pr.url, title: pr.title } } : {}),
         ...(verdict?.headSha || pr?.headSha ? { head: verdict?.headSha ?? pr?.headSha } : {}),
         checks: verdict?.checks ?? status.lifecycle?.checks ?? 'unknown',
@@ -4717,14 +4779,28 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     }
     case 'create_schedule':
       return createSchedule(args);
-    case 'request_webhook': {
-      const context = await activeCommandContext();
-      const result = await daemonExecute('requestWebhook', { roomId: agentScheduleRoomId(), source: args.source,
-        reason: args.reason, requestId: context.requestId, generationId: context.generationId });
-      return `pending, card posted [webhook request ${String(result.requestId)}]`;
+    case 'create_subscription': {
+      const source = stringArg(args, 'source');
+      const event = stringArg(args, 'event');
+      const prompt = stringArg(args, 'prompt');
+      if (source !== 'room' && source !== 'repository') throw new Error('source must be room or repository');
+      if (!event) throw new Error('event is required');
+      if (!prompt) throw new Error('prompt is required');
+      const result = await daemonExecute('createAgentSubscription', {
+        roomId: agentScheduleRoomId(), source, event, prompt,
+        ...(typeof args.repository === 'string' ? { repository: args.repository } : {}),
+        ...(typeof args.workflowName === 'string' ? { workflowName: args.workflowName } : {}),
+      });
+      return `Subscription ${String(result.id)} created for ${source} ${event}. It runs your action when the event arrives.`;
     }
-    case 'list_webhooks':
-      return JSON.stringify(await daemonExecute('listRoomWebhooks', { roomId: agentScheduleRoomId() }));
+    case 'list_subscriptions':
+      return JSON.stringify(await daemonExecute('listAgentSubscriptions', { roomId: agentScheduleRoomId() }));
+    case 'delete_subscription': {
+      const subscriptionId = stringArg(args, 'subscriptionId');
+      if (!subscriptionId) throw new Error('subscriptionId is required');
+      await daemonExecute('deleteAgentSubscription', { roomId: agentScheduleRoomId(), subscriptionId });
+      return `Subscription ${subscriptionId} stopped.`;
+    }
     case 'subscribe_events':
       return subscribeEvents(args);
     case 'watch_corner': {

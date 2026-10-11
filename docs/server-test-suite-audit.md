@@ -118,7 +118,7 @@ This inventory covers every current `apps/server/src/**/*.test.ts` file after th
 | `release-push-catchup.test.ts` | release push catch-up at device registration | retained |
 | `review-access.test.ts` | the review identity; the Google Play review secret | retained |
 | `reviewer-approval-surface.test.ts` | the turn a reconciled reviewer is woken into | retained |
-| `room-webhooks.integration.test.ts` | demonstrates request → admin card → private one-time URL → quoted subscriber wake and all endpoint controls; denied and expired requests mint no tokens; direct creation and explicitly shared secret work; requires human admin authority, accepts a Room admin without a Workspace role, and refuses agent-forged webhook events; related cases | retained |
+| `agent-subscriptions.test.ts` | covered repository subscriptions, one wake per delivery, outside-data quoting, and removal | retained |
 | `server-cors.regression-1.test.ts` | web app CORS | retained |
 | `server.test.ts` | HTTP readiness, auth, live command push, and phone committed-row delivery | retained |
 | `speech-transcription.test.ts` | POST /v1/phone/transcriptions; SpeechTranscriber | retained |

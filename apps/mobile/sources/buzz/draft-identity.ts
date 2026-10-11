@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { loadBuzzViewerPubkey } from '@/auth/buzz-identity-storage';
-import { monolithSession } from '@/auth/monolith-session';
+import { subscribeClientReset } from '@/sync/client-reset';
 
 /** Public addressing only. Explicit identity owners bypass this fallback. */
 export function useDraftIdentity(explicit: string | null | undefined) {
@@ -19,7 +19,7 @@ export function useDraftIdentity(explicit: string | null | undefined) {
         .catch(() => undefined);
     };
     refresh();
-    const unsubscribe = monolithSession.subscribeIdentityChange(refresh);
+    const unsubscribe = subscribeClientReset(refresh);
     return () => {
       alive = false;
       unsubscribe();

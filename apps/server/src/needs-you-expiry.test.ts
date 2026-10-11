@@ -6,7 +6,6 @@ import { LiveHub, type LiveEvent } from './live.js';
 import { NeedsYouExpiryLoop } from './needs-you-expiry.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
-import { RoomWebhooks } from './room-webhooks.js';
 import { PgliteDatabase } from './test-support.js';
 
 const VIEWER = 'a'.repeat(64);
@@ -153,6 +152,77 @@ describe('Needs-you expiry sweep', () => {
     expect(await delta()).toEqual({ workspaceId: WORKSPACE, count: 0, items: [] });
   });
 
+  it('wakes the viewer when a question nobody saw passes the 7-day lookback', async () => {
+    const question = await post('@ada can you look?');
+    // Asked just under 7 days ago; only the badge count has held it, so no clock started.
+    await database.query(
+      `UPDATE messages SET created_at=now()-interval '7 days'+interval '300 milliseconds'
+       WHERE id=$1`, [question],
+    );
+    const badge = await phone.execute('countNeedsYou', { workspaceId: WORKSPACE }, VIEWER);
+    expect(badge).toEqual(expect.objectContaining({ count: 1 }));
+    expect((await database.query(`SELECT 1 FROM needs_you_marks`)).rows).toEqual([]);
+    const loop = new NeedsYouExpiryLoop(database);
+    await loop.runOnce();
+    expect(markWakes()).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    events.length = 0;
+    await loop.runOnce();
+    await eventually(() => markWakes().length > 0);
+    expect(markWakes()).toEqual([
+      expect.objectContaining({ roomId: '', readerId: VIEWER, sourceRoomId: ROOM }),
+    ]);
+    // The held tray list and badge both take this delta; neither waits for a reconnect.
+    expect(await delta()).toEqual({ workspaceId: WORKSPACE, count: 0, items: [] });
+  });
+
+  it('wakes the viewer at the lookback when it comes before 24 hours from first sight', async () => {
+    const question = await post('@ada can you look?');
+    await database.query(
+      `UPDATE messages SET created_at=now()-interval '7 days 1 second' WHERE id=$1`, [question],
+    );
+    await database.query(
+      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,first_seen_at)
+       VALUES($1,$2,$3,now()-interval '1 hour')`, [VIEWER, question, WORKSPACE],
+    );
+    events.length = 0;
+    await new NeedsYouExpiryLoop(database).runOnce();
+    await eventually(() => markWakes().length > 0);
+    expect(markWakes()).toEqual([
+      expect.objectContaining({ readerId: VIEWER, sourceRoomId: ROOM }),
+    ]);
+  });
+
+  it('wakes nobody when an unseen question at the lookback was already answered', async () => {
+    const question = await post('@ada can you look?');
+    await database.query(
+      `UPDATE messages SET created_at=now()-interval '7 days 1 second' WHERE id=$1`, [question],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$2,$3,'Done.',now()-interval '6 days')`, ['f'.repeat(64), ROOM, VIEWER],
+    );
+    client.payloads.length = 0;
+    await new NeedsYouExpiryLoop(database).runOnce();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(expiryWakes()).toEqual([]);
+  });
+
+  it('reads deadlines on the database clock, not an app clock that runs ahead', async () => {
+    const question = await post('@ada can you look?');
+    await read();
+    // Its 24 hours end 5 minutes from now on the database clock.
+    await database.query(
+      `UPDATE needs_you_marks SET first_seen_at=now()-interval '24 hours'+interval '5 minutes'
+       WHERE message_id=$1`, [question],
+    );
+    client.payloads.length = 0;
+    await new NeedsYouExpiryLoop(database).runOnce(Date.now() + 10 * 60_000);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(expiryWakes()).toEqual([]);
+    expect((await delta()).items.map((item) => item.messageId)).toEqual([question]);
+  });
+
   it('wakes the owner when an agent sign-in passes its expiresAt', async () => {
     const expiresAt = Date.now() + 200;
     const signIn = await card('agent-sign-in', {
@@ -189,26 +259,6 @@ describe('Needs-you expiry sweep', () => {
     expect(markWakes().map((event) => event.type === 'invalidate' && event.readerId).sort())
       .toEqual([VIEWER, PEER].sort());
     expect(await delta()).toEqual({ workspaceId: WORKSPACE, count: 0, items: [] });
-  });
-
-  it('leaves webhook expiry to its own job, whose write already wakes the tray', async () => {
-    const message = await card('webhook-request', {
-      agentName: 'Hoots', source: 'github', reason: 'Watch release tags.', status: 'pending',
-    });
-    await database.query(
-      `INSERT INTO room_webhook_requests(id,room_id,agent_id,source,reason,request_id,message_id,expires_at)
-       VALUES('88888888-8888-4888-8888-888888888888',$1,$2,'github','Watch release tags.','request',$3,
-         now()+interval '1 hour')`,
-      [ROOM, AGENT, message],
-    );
-    expect((await delta()).items.map((item) => item.messageId)).toEqual([message]);
-    await database.query(`UPDATE room_webhook_requests SET expires_at=now()-interval '1 second'`);
-    events.length = 0;
-    await new RoomWebhooks(database).expireRequests();
-    await eventually(() => events.some((event) => event.type === 'invalidate' &&
-      event.reason === 'postgres:messages' && event.messageId === message));
-    expect(await delta()).toEqual({ workspaceId: WORKSPACE, count: 0, items: [] });
-    expect(await new NeedsYouExpiryLoop(database).runOnce()).toBeNull();
   });
 
   it('sends each deadline once and nothing for a clock that has not run out', async () => {

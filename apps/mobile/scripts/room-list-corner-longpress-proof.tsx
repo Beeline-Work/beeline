@@ -7,6 +7,7 @@ import type { ChatListItem } from '@beeline/buzz-client';
 import { ConversationRow } from '../sources/components/buzz/ConversationRow';
 import { cornerHref } from '../sources/buzz/corner-navigation';
 import { openRoomListCorner } from '../sources/buzz/room-list-new-corner';
+import { applyChatListCorners } from '../sources/buzz/room-corner-store';
 
 /**
  * Drives the REAL Room-list corner glyph in a browser through a real pointer
@@ -42,6 +43,8 @@ const item = (id: string, name: string, cornerCount: number) =>
       author: { pubkey: 'emberus', name: 'emberus', handle: 'emberus' },
     },
   }) as unknown as ChatListItem;
+// A Room's corners reach its row through the corner store, as a server read would put them.
+applyChatListCorners([item('room-a', 'Product', 2), item('room-b', 'Launch planning', 2)], 1);
 
 const lines: string[] = [];
 function say(line: string) {

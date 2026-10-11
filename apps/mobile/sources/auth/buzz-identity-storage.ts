@@ -19,6 +19,7 @@ import * as SecureStore from 'expo-secure-store';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { monolithSession } from '@/auth/monolith-session';
 import { resetClientState } from '@/sync/client-reset';
+import { webStringStorage, type BrowserStringStorage } from '@/sync/browser-string-storage';
 import { webRuntimeStorage } from '@/utils/web-storage';
 
 // SecureStore on Android requires keys matching [A-Za-z0-9._-]+
@@ -34,51 +35,59 @@ const NSEC_STORAGE_OPTIONS: SecureStore.SecureStoreOptions = {
 
 export const DEFAULT_RELAY_URL = 'https://usebeeline.app';
 
-function isWeb(): boolean {
-  return webRuntimeStorage() !== null;
+/**
+ * The web build (browser and Tauri) keeps identity in the origin's storage,
+ * or in memory for this page where the browser denies storage. Native uses
+ * SecureStore.
+ */
+function webStore(): BrowserStringStorage | null {
+  const web = webRuntimeStorage();
+  return web ? webStringStorage(web.storage) : null;
 }
 
 async function storageGet(key: string): Promise<string | null> {
-  if (isWeb()) {
-    return localStorage.getItem(key);
-  }
+  const web = webStore();
+  if (web) return web.getString(key) ?? null;
   return SecureStore.getItemAsync(key);
 }
 
 async function storageSet(key: string, value: string): Promise<void> {
-  if (isWeb()) {
-    localStorage.setItem(key, value);
+  const web = webStore();
+  if (web) {
+    web.set(key, value);
     return;
   }
   await SecureStore.setItemAsync(key, value);
 }
 
 async function storageRemove(key: string): Promise<void> {
-  if (isWeb()) {
-    localStorage.removeItem(key);
+  const web = webStore();
+  if (web) {
+    web.delete(key);
     return;
   }
   await SecureStore.deleteItemAsync(key);
 }
 
 async function secretGetAt(key: string): Promise<string | null> {
-  if (isWeb()) {
-    return localStorage.getItem(key);
-  }
+  const web = webStore();
+  if (web) return web.getString(key) ?? null;
   return SecureStore.getItemAsync(key, NSEC_STORAGE_OPTIONS);
 }
 
 async function secretSetAt(key: string, value: string): Promise<void> {
-  if (isWeb()) {
-    localStorage.setItem(key, value);
+  const web = webStore();
+  if (web) {
+    web.set(key, value);
     return;
   }
   await SecureStore.setItemAsync(key, value, NSEC_STORAGE_OPTIONS);
 }
 
 async function secretRemoveAt(key: string): Promise<void> {
-  if (isWeb()) {
-    localStorage.removeItem(key);
+  const web = webStore();
+  if (web) {
+    web.delete(key);
     return;
   }
   await SecureStore.deleteItemAsync(key, NSEC_STORAGE_OPTIONS);

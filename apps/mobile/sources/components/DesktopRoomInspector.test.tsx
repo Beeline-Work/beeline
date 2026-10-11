@@ -335,7 +335,7 @@ describe('DesktopRoomInspector work pane', () => {
     expect(reads).toHaveBeenCalledTimes(1);
     await act(async () => {
       acceptCornerStatusFrame({ roomId: 'room', sequence: 1, cornerCount: 2,
-        waitingCornerCount: 0, openCorners: [],
+        openCorners: [],
         corners: [{ ...corners[0], corner: { ...corners[0].corner, name: 'Fix fixture again' } },
           corners[1]] });
     });

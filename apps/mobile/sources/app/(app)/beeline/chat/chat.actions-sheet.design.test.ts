@@ -158,12 +158,10 @@ describe('Room and corner actions sheets', () => {
 
   it('keeps values and section-head capitals out of the row titles', () => {
     expect(chat).toContain('label="Mute notifications"');
-    expect(chat).toContain('label="Schedules and webhooks"');
+    expect(chat).toContain('label="Schedules and subscriptions"');
     // Workflows and Webhooks are not Room settings: definitions belong to
-    // agents, and live webhooks show read-only beside schedules.
+    // agents, and subscriptions show beside schedules.
     expect(chat).not.toContain('testID="room-workflows-trigger"');
-    expect(chat).not.toContain('testID="room-webhooks-action"');
-    expect(chat).not.toContain("pathname: '/beeline/settings/webhooks'");
     expect(chat).toContain('label="Members"');
     expect(chat).toContain('<RoomReviewerActions');
     // The old titles crammed the value and the verb into the label, and the

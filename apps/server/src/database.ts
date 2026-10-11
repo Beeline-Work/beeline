@@ -1,5 +1,5 @@
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
-import { ROOM_WEBHOOK_SCHEMA } from './room-webhooks.js';
+import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
 import { hyphenateCornerNames } from './migrations/corner-names.js';
 import {
@@ -37,7 +37,7 @@ import {
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
-import { cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you-expiry.js';
+import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
 import { cancelArchivedCornerAssignments } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
@@ -2795,7 +2795,11 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
-  await ddlScript('room webhooks', ROOM_WEBHOOK_SCHEMA);
+  await ddlScript('agent subscriptions', AGENT_SUBSCRIPTIONS_SCHEMA);
+  await ddl('retire room webhooks', `
+    DROP TABLE IF EXISTS room_webhook_idempotency, room_webhook_rates,
+      room_webhook_deliveries, room_webhook_requests, room_webhooks;
+  `);
   await ddlScript('github star prompt schema', GITHUB_STAR_PROMPT_SCHEMA);
   await retryMigrationStep('message cursor index', () => createIndexConcurrently(
     database, 'messages_room_cursor_idx',
@@ -2924,8 +2928,8 @@ export async function migrate(
      WHERE card_type IN ('agent-sign-in','app-sign-in','squire-approval') AND deleted_at IS NULL`,
   ));
   // The Needs-you expiry sweep (needs-you-expiry.ts) finds the cells whose
-  // clock passed since its last run: open marks by first sight, and expiring
-  // approval cards by their `expiresAt`.
+  // clock passed since its last run: open marks by first sight, questions by
+  // the lookback edge, and expiring approval cards by their `expiresAt`.
   await retryMigrationStep('needs-you mark expiry index', () => createIndexConcurrently(
     database, 'needs_you_marks_open_first_seen_idx',
     `CREATE INDEX CONCURRENTLY needs_you_marks_open_first_seen_idx
@@ -2936,6 +2940,11 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY messages_needs_you_expiry_idx
      ON messages(${cardExpiresAtSql()})
      WHERE ${EXPIRING_CARD_TYPES} AND deleted_at IS NULL`,
+  ));
+  await retryMigrationStep('needs-you question lookback index', () => createIndexConcurrently(
+    database, 'messages_needs_you_question_idx',
+    `CREATE INDEX CONCURRENTLY messages_needs_you_question_idx
+     ON messages(created_at) WHERE ${askingMessageSql()}`,
   ));
   await retryMigrationStep('squire decision index', () => createIndexConcurrently(
     database, 'messages_squire_decision_idx',

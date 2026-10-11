@@ -159,27 +159,24 @@ export class SurfaceRegistry {
     await this.durable.remove(address);
   }
 
-  async evictViewer(relayOrigin: string, viewerPubkey: string): Promise<void> {
-    const origin = new URL(relayOrigin).origin;
-    this.epoch += 1;
-    for (const key of new Set([...this.values.keys(), ...this.reads.keys(), ...this.fetches.keys()])) {
-      const parts = JSON.parse(key) as unknown[];
-      if (parts[1] === origin && parts[2] === viewerPubkey) {
-        this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
-        this.values.delete(key);
-        this.notify(key);
-      }
-    }
-    await this.durable.evictViewer(relayOrigin, viewerPubkey);
+  /**
+   * Another tab wrote (or removed, when `value` is undefined) this stored
+   * projection. A copy this tab holds or watches takes the stored value.
+   */
+  adoptStored(key: string, value: unknown): void {
+    if (!this.values.has(key) && !this.listeners.has(key)) return;
+    this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
+    if (value === undefined) this.values.delete(key);
+    else this.remember(key, this.normalize(value));
+    this.notify(key);
   }
 
+  /** Drop every hot projection. The epoch fences reads and fetches already in flight. */
   clear(): void {
     this.epoch += 1;
-    for (const key of this.values.keys()) {
-      this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1);
-      this.values.delete(key);
-      this.notify(key);
-    }
+    const keys = [...this.values.keys()];
+    this.values.clear();
     this.revisions.clear();
+    for (const key of keys) this.notify(key);
   }
 }

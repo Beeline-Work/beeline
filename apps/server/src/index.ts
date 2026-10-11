@@ -1,4 +1,3 @@
-import { RoomWebhooks } from './room-webhooks.js';
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { retryMigrationStep } from './migration-retry.js';
@@ -166,9 +165,9 @@ async function main() {
       return mountedAuth.verifyGitHubTicket(ticket);
     }),
   );
-  const processGitHubWebhook = async (event: string, payload: unknown) => {
+  const processGitHubWebhook = async (event: string, payload: unknown, deliveryId?: string) => {
     if (!github) throw new Error('GitHub webhook processor is unavailable');
-    await github.processWebhook(event, payload);
+    await github.processWebhook(event, payload, deliveryId);
   };
   const webAppOrigins = (process.env.BEELINE_WEB_APP_ORIGINS ?? '')
     .split(',')
@@ -404,10 +403,9 @@ async function main() {
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       await backgroundJobs.run('corner-owed-expiry', () => owedExpiry.runOnce(newLeader));
-      await backgroundJobs.run('webhook-expiry', () => new RoomWebhooks(jobsDatabase).expireRequests());
       const needsYouDue = await backgroundJobs.run('needs-you-expiry', () => needsYouExpiry.runOnce());
       // Recovery scans run once per leadership tenure. Normal writes and
-      // webhooks drive their own transitions; failures retry on the next cycle.
+      // Repository events drive their own transitions; failures retry on the next cycle.
       if (githubJobs && !recoveredCornerMerges) {
         const result = await backgroundJobs.run('corner-merge-recovery', () =>
           githubJobs.recoverUnfinishedMergeClaims());

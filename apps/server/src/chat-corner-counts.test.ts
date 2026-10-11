@@ -42,8 +42,8 @@ describe('chat corner counts', () => {
       undefined,
     ]);
   });
-  it('marks a corner the viewer commissioned as Mine', () => {
-    const result = chatCornerCounts([{ ...row(), commissioned_viewer: true }, row()]);
+  it('marks a corner the viewer commissioned as Mine through its follow row', () => {
+    const result = chatCornerCounts([{ ...row(), follows_viewer: true }, row()]);
     expect(result.get('room')?.openCorners.map((corner) => corner.mine)).toEqual([true, undefined]);
     expect(result.get('room')?.mineCornerCount).toBe(1);
   });

@@ -864,6 +864,7 @@ describe('desktop Workspace navigation', () => {
     await act(async () => {
       tree.update(<SidebarView key="deep-linked-workspace" />);
     });
+    await vi.waitFor(() => expect(chats).toHaveBeenCalledWith('workspace-empty'));
     await settle();
 
     expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe(

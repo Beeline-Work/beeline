@@ -53,6 +53,7 @@ import {
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { readGitHubAccess, updateGitHubAccess, useGitHubAccess, writeGitHubAccess } from '@/buzz/github-access-surface';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import { Modal } from '@/modal';
@@ -972,8 +973,6 @@ export function BuzzChatSurface({
   // read this — a corner has no room-repository binding of its own; the
   // daemon resolves its working repo from its parent Room instead.
   const [showRoomRepoPicker, setShowRoomRepoPicker] = useState(false);
-  const [roomRepoCandidates, setRoomRepoCandidates] = useState<RepoCandidate[]>([]);
-  const [githubInstallations, setGitHubInstallations] = useState<GitHubInstallationAccess[]>([]);
   const [roomRepoBusy, setRoomRepoBusy] = useState(false);
   const [roomRepoListLoading, setRoomRepoListLoading] = useState(false);
   const [roomRepoError, setRoomRepoError] = useState<string | null>(null);
@@ -1183,6 +1182,11 @@ export function BuzzChatSurface({
       : null),
     [activeCommunityId, chatListRelayUrl, userPubkey],
   );
+  const githubScope = chatListRelayUrl && userPubkey
+    ? { relay: chatListRelayUrl, viewer: userPubkey } : null;
+  const githubAccess = useGitHubAccess(githubScope);
+  const roomRepoCandidates = githubAccess?.candidates ?? [];
+  const githubInstallations = githubAccess?.installations ?? [];
   const workspaceChatList = useChatList(chatListKey);
   const workspaceChats = useMemo<readonly ChatListItem[]>(
     () => workspaceChatList?.chats ?? [],
@@ -3986,12 +3990,7 @@ export function BuzzChatSurface({
       ) {
         setCornerOpenRepoPrompt(true);
         if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
-          void transport
-            .workspaceGitHubAccess({ refresh: true })
-            .then((access) => {
-              setRoomRepoCandidates(access.candidates);
-              setGitHubInstallations(access.installations);
-            })
+          if (githubScope) void readGitHubAccess(transport, githubScope, true)
             .catch(() => undefined);
         }
         return;
@@ -4985,12 +4984,10 @@ export function BuzzChatSurface({
 
   const loadRoomRepoPicker = useCallback(
     async (refresh = false) => {
-      if (!transport || !activeCommunityId) return;
+      if (!transport || !activeCommunityId || !githubScope) return;
       setRoomRepoListLoading(true);
       try {
-        const access = await transport.workspaceGitHubAccess({ refresh });
-        setRoomRepoCandidates(access.candidates);
-        setGitHubInstallations(access.installations);
+        const access = await readGitHubAccess(transport, githubScope, refresh);
         setRoomRepoError(
           access.githubReconnectNeeded
             ? 'GitHub sign-in expired — reconnect GitHub in Settings to see new repositories.'
@@ -4998,13 +4995,14 @@ export function BuzzChatSurface({
         );
       } catch (error) {
         if (refresh) throw error;
-        setRoomRepoCandidates(await transport.workspaceRoomRepositoryCandidates());
-        setGitHubInstallations([]);
+        const candidates = await transport.workspaceRoomRepositoryCandidates();
+        await writeGitHubAccess(githubScope, { installed: false, candidates,
+          installations: [], githubReconnectNeeded: false });
       } finally {
         setRoomRepoListLoading(false);
       }
     },
-    [activeCommunityId, transport],
+    [activeCommunityId, transport, chatListRelayUrl, userPubkey],
   );
 
   const loadRoomRepoChoice = useCallback(async () => {
@@ -5119,7 +5117,8 @@ export function BuzzChatSurface({
           name,
           private: true,
         });
-        setRoomRepoCandidates((current) => [...current, candidate]);
+        if (githubScope) await updateGitHubAccess(githubScope,
+          (current) => ({ ...current, candidates: [...current.candidates, candidate] }));
         await applyRoomRepository(candidate);
       } catch (err) {
         setRoomRepoError(`Could not create repo: ${String(err)}`);
@@ -5195,11 +5194,10 @@ export function BuzzChatSurface({
     let candidates: RepoCandidate[];
     let installations: GitHubInstallationAccess[];
     try {
-      const access = await transport.workspaceGitHubAccess({ refresh: true });
+      if (!githubScope) return;
+      const access = await readGitHubAccess(transport, githubScope, true);
       candidates = access.candidates;
       installations = access.installations;
-      setRoomRepoCandidates(candidates);
-      setGitHubInstallations(installations);
       setRoomRepoNotice(null);
     } catch {
       setRoomRepoNotice(null);

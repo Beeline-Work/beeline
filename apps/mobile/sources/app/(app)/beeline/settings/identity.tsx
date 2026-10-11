@@ -1,9 +1,9 @@
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
-import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import * as Updates from 'expo-updates';
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   fallbackPersonName,
@@ -12,7 +12,6 @@ import {
   isWorkspaceListView,
   type Identity,
   type ManagedIdentity,
-  type WorkspaceListView,
 } from '@beeline/buzz-client';
 import type { PushLevel } from '@beeline/api-contract/phone';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
@@ -28,8 +27,10 @@ import {
   savePreferredPersonName,
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { workbenchSummary, type WorkbenchSummary } from '@/buzz/workbench';
-import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { workbenchSummary } from '@/buzz/workbench';
+import { useSharedWorkbench } from '@/buzz/workbench-surface';
+import { isManagedIdentity, publishManagedIdentity, readIdentitySettings } from '@/buzz/managed-identity-surface';
+import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
 import { Typography } from '@/constants/Typography';
 import { PixelGateReveal, PixelLoader } from '@/components/buzz/MonoHull';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
@@ -87,18 +88,28 @@ export default function BuzzIdentitySettings() {
   const [pushPermission, setPushPermission] = useState<PushPermissionInfo | null>(null);
   const [pushWorking, setPushWorking] = useState(false);
   const [pushLevel, setPushLevel] = useState<PushLevel>('mine');
-  const [managedIdentity, setManagedIdentity] = useState<ManagedIdentity | null>(null);
-  const [workbenchScope, setWorkbenchScope] = useState<{
-    workspaceId: string;
-    viewerId: string;
-  } | null>(null);
-  const [workbench, setWorkbench] = useState<WorkbenchSummary | null>(null);
-  const [workspaceRole, setWorkspaceRole] = useState<string | null>(null);
-  const [workspaceList, setWorkspaceList] = useState<{
-    workspaces: WorkspaceListView['workspaces'];
-    confirmed: boolean;
-  } | null>(null);
+  const [legacyManagedIdentity, setLegacyManagedIdentity] = useState<ManagedIdentity | null>(null);
+  const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
   const currentWorkspaceId = useActiveCommunityId();
+  const [profileRelay, setProfileRelay] = useState<string | null>(null);
+  const managedAddress = useMemo(() => profileRelay && profilePubkey
+    ? surfaceAddress(profileRelay, profilePubkey, '/identity/managed') : null,
+    [profileRelay, profilePubkey]);
+  const managedProjection = useSurfaceSnapshot(managedAddress, isManagedIdentity);
+  const [workspaceListConfirmed, setWorkspaceListConfirmed] = useState(false);
+  const workspaceAddress = useMemo(() => profileRelay && profilePubkey
+    ? surfaceAddress(profileRelay, profilePubkey, '/workspaces') : null,
+    [profileRelay, profilePubkey]);
+  const workspaceListView = useSurfaceSnapshot(workspaceAddress, isWorkspaceListView);
+  const workspaceList = workspaceListView && {
+    workspaces: workspaceListView.workspaces,
+    confirmed: workspaceListConfirmed,
+  };
+  const selectedWorkspace = workspaceList?.workspaces.find((item) => item.id === currentWorkspaceId) ??
+    workspaceList?.workspaces[0];
+  const workspaceRole = selectedWorkspace?.role ?? null;
+  const workbenchScope = selectedWorkspace && workspaceListConfirmed && profilePubkey
+    ? { workspaceId: selectedWorkspace.id, viewerId: profilePubkey } : null;
   const [face, setFace] = useState<string | null>(null);
   const [facePickerOpen, setFacePickerOpen] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
@@ -122,7 +133,6 @@ export default function BuzzIdentitySettings() {
     else if (githubReconnect === 'failed')
       setGitHubNotice('Could not reconnect GitHub. Try again.');
   }, [githubReconnect]);
-  const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
   useEffect(() => {
     // A change on another device reaches this mounted page through the
     // server's identity subscription, which also refreshes the device copies.
@@ -130,8 +140,8 @@ export default function BuzzIdentitySettings() {
     const stopLevel = watchStoredPushLevel(profilePubkey, setPushLevel);
     const stopIdentity = subscribeOwnIdentityChange((person) => {
       setProfileName(person.name);
-      setFace(person.face ?? null);
-      setManagedIdentity((current) =>
+      setFace(monolithEnabled ? null : person.face ?? null);
+      setLegacyManagedIdentity((current) =>
         current && person.handle
           ? { ...current, handle: person.handle, displayName: person.name }
           : current);
@@ -140,7 +150,7 @@ export default function BuzzIdentitySettings() {
       stopLevel();
       stopIdentity();
     };
-  }, [profilePubkey]);
+  }, [profilePubkey, monolithEnabled]);
 
   const signOut = useCallback(async () => {
     await Promise.all([
@@ -198,6 +208,7 @@ export default function BuzzIdentitySettings() {
   useEffect(() => {
     if (currentWorkspaceId === undefined) return;
     let cancelled = false;
+    setWorkspaceListConfirmed(false);
     void (async () => {
       try {
         const identity = await loadBuzzIdentity();
@@ -213,15 +224,29 @@ export default function BuzzIdentitySettings() {
         // The device copy of the name is only a cold-start hint until the server answers.
         const preferredName = await loadPreferredPersonName(identity.publicKey);
         if (preferredName && !cancelled) setProfileName(preferredName);
+        setProfileRelay(await getEffectiveRelayUrl());
+        if (monolithEnabled) {
+          const [settings, enabled, registration, permission] = await Promise.all([
+            readIdentitySettings(currentWorkspaceId ?? undefined),
+            getBuzzPushEnabled(identity.publicKey),
+            getBuzzPushRegistrationState(identity.publicKey),
+            getPushPermissionInfo(),
+          ]);
+          if (cancelled) return;
+          setWorkspaceListConfirmed(true);
+          setPushEnabledState(enabled);
+          setPushRegistration(registration);
+          setPushPermission(permission);
+          await saveStoredPushLevel(identity.publicKey, settings.identity.pushLevel);
+          return;
+        }
         const relayUrl = await getEffectiveRelayUrl();
         const transport = new BuzzRigTransport(identity);
         const clientPromise = transport.ensureClient();
         const workspaceAddress = surfaceAddress(relayUrl, identity.publicKey, '/workspaces');
         const workspacePromise = mobileSurfaceCache.fetch(workspaceAddress, isWorkspaceListView, () =>
           new RoomViewClient({ baseUrl: relayUrl, identity }).workspaces());
-        const cachedWorkspaces = await mobileSurfaceCache.read(workspaceAddress, isWorkspaceListView);
-        if (cachedWorkspaces && !cancelled)
-          setWorkspaceList({ workspaces: cachedWorkspaces.workspaces, confirmed: false });
+        await mobileSurfaceCache.read(workspaceAddress, isWorkspaceListView);
         const client = await clientPromise;
         const [freshWorkspaces, enabled, registration, permission] = await Promise.all([
           workspacePromise,
@@ -230,8 +255,7 @@ export default function BuzzIdentitySettings() {
           getPushPermissionInfo(),
         ]);
         // Null: an eviction overtook the read, so it confirms nothing.
-        if (!cancelled && freshWorkspaces)
-          setWorkspaceList({ workspaces: freshWorkspaces.workspaces, confirmed: true });
+        if (!cancelled && freshWorkspaces) setWorkspaceListConfirmed(true);
         const workspaces = freshWorkspaces?.workspaces ?? [];
         const communityId = workspaces.some((item) => item.id === currentWorkspaceId)
           ? (currentWorkspaceId ?? undefined)
@@ -247,7 +271,7 @@ export default function BuzzIdentitySettings() {
           setProfileName(nextName);
           if (profile?.handle) {
             const handle = profile.handle;
-            setManagedIdentity(
+            setLegacyManagedIdentity(
               (current) =>
                 current ?? {
                   handle,
@@ -263,31 +287,12 @@ export default function BuzzIdentitySettings() {
           setPushPermission(permission);
         }
         try {
-          if (monolithEnabled) {
-            const hosted = await monolithPhoneOperation('getManagedIdentity', {});
-            if (!cancelled) {
-              setFace(hosted.face ?? null);
-              await saveStoredPushLevel(identity.publicKey, hosted.pushLevel);
-              setManagedIdentity(
-                hosted.handle
-                  ? {
-                      handle: hosted.handle,
-                      displayName: hosted.name,
-                      source: 'github',
-                      githubLogin: hosted.handle,
-                      githubRenameAvailable: false,
-                    }
-                  : null,
-              );
-            }
-            return;
-          }
           const hostedIdentity = await lookupManagedIdentity(
             getBuzzRuntimeConfig().relayUrl,
             identity,
           );
           if (!cancelled && hostedIdentity) {
-            setManagedIdentity(hostedIdentity);
+            setLegacyManagedIdentity(hostedIdentity);
             setProfileName(hostedIdentity.displayName);
           }
         } catch {
@@ -302,40 +307,9 @@ export default function BuzzIdentitySettings() {
     };
   }, [currentWorkspaceId, monolithEnabled]);
 
-  // Role and Workbench follow the current Workspace when a Room opens elsewhere.
-  useEffect(() => {
-    if (!workspaceList || currentWorkspaceId === undefined) return;
-    const selected =
-      workspaceList.workspaces.find((item) => item.id === currentWorkspaceId) ??
-      workspaceList.workspaces[0];
-    setWorkspaceRole(selected?.role ?? null);
-    if (selected && workspaceList.confirmed && profilePubkey)
-      setWorkbenchScope((current) =>
-        current?.workspaceId === selected.id && current.viewerId === profilePubkey
-          ? current
-          : { workspaceId: selected.id, viewerId: profilePubkey },
-      );
-  }, [currentWorkspaceId, profilePubkey, workspaceList]);
-
-  // Re-read on every focus, not only on mount: the Workbench page's vault
-  // sync can change the counts while Settings sits underneath it.
-  useFocusEffect(
-    useCallback(() => {
-      if (!workbenchScope) return;
-      let cancelled = false;
-      void (async () => {
-        try {
-          const view = await getWorkbenchSource().readWorkbench(workbenchScope);
-          if (!cancelled) setWorkbench(workbenchSummary(view, workbenchScope.viewerId));
-        } catch {
-          // Best-effort: the row keeps its last value and still opens the Workbench.
-        }
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [workbenchScope]),
-  );
+  const { value: workbenchView } = useSharedWorkbench(workbenchScope);
+  const workbench = workbenchView && workbenchScope
+    ? workbenchSummary(workbenchView, workbenchScope.viewerId) : null;
 
   const applyPushResult = useCallback(
     async (
@@ -380,6 +354,7 @@ export default function BuzzIdentitySettings() {
         const updated = await monolithPhoneOperation('updateIdentityPushLevel', {
           pushLevel: next,
         });
+        await publishManagedIdentity(updated);
         await saveStoredPushLevel(profileIdentity.publicKey, updated.pushLevel);
         if (updated.pushLevel === 'off') {
           const notifications = await import('expo-notifications');
@@ -403,9 +378,11 @@ export default function BuzzIdentitySettings() {
     pushRegistration !== null &&
     !pushRegistration.registered &&
     buzzPushPhaseDetail(pushRegistration.phase) !== null;
-  const managedHandle =
-    managedIdentity?.handle ?? (profileName ? personHandle(profileName, profilePubkey ?? '') : '');
-  const githubLogin = managedIdentity?.githubLogin ?? managedHandle;
+  const displayName = monolithEnabled ? managedProjection?.name ?? profileName : profileName;
+  const displayFace = face ?? (monolithEnabled ? managedProjection?.face : null) ?? null;
+  const managedHandle = (monolithEnabled ? managedProjection?.handle : legacyManagedIdentity?.handle) ??
+    (displayName ? personHandle(displayName, profilePubkey ?? '') : '');
+  const githubLogin = legacyManagedIdentity?.githubLogin ?? managedHandle;
   const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
   const [appearance, setAppearance] = useLocalSettingMutable('appearance');
   const [uiSize, setUiSize] = useLocalSettingMutable('uiSize');
@@ -444,7 +421,7 @@ export default function BuzzIdentitySettings() {
         <View testID="identity-settings">
           <ProfileIdentity
             avatarAccessibilityLabel="Change face"
-            avatarFallback={face ? undefined : <BeelineMark size={PROFILE_IDENTITY_PICTURE_SIZE} />}
+            avatarFallback={displayFace ? undefined : <BeelineMark size={PROFILE_IDENTITY_PICTURE_SIZE} />}
             avatarTestID="identity-face-setting"
             handleAccessibilityLabel={managedHandle ? `@${managedHandle}` : undefined}
             handleTestID="identity-managed-handle"
@@ -452,9 +429,9 @@ export default function BuzzIdentitySettings() {
             identity={{
               kind: 'human',
               pubkey: profilePubkey ?? 'pending-profile',
-              name: profileName || 'You',
+              name: displayName || 'You',
               ...(managedHandle ? { handle: managedHandle } : {}),
-              ...(face ? { face } : {}),
+              ...(displayFace ? { face: displayFace } : {}),
             }}
             identityMarkTestID="identity-face-mark"
             onAvatarPress={
@@ -488,7 +465,7 @@ export default function BuzzIdentitySettings() {
               <PushLevelSetting
                 disabled={pushEnabled === null || pushWorking}
                 onSave={changePushLevel}
-                value={pushLevel}
+                value={monolithEnabled ? managedProjection?.pushLevel ?? pushLevel : pushLevel}
               />
               {pushRegistrationFailed ? (
                 <TouchableOpacity
@@ -634,10 +611,14 @@ export default function BuzzIdentitySettings() {
 
       {profilePubkey && monolithEnabled ? (
         <FacePickerSheet
-          face={face}
+          face={displayFace}
           onClose={() => setFacePickerOpen(false)}
           onFaceChange={setFace}
-          onSave={(next) => monolithPhoneOperation('updateIdentityFace', { faceId: next })}
+          onSave={async (next) => {
+            await monolithPhoneOperation('updateIdentityFace', { faceId: next });
+            if (managedProjection) await publishManagedIdentity({ ...managedProjection, face: next });
+            setFace(null);
+          }}
           seed={profilePubkey}
           visible={facePickerOpen}
         />

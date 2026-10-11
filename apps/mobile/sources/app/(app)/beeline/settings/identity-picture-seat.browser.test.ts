@@ -42,12 +42,6 @@ function seatShims(mobile: string): Record<string, string> {
     '@/buzz/runtime-config': `export const getBuzzRuntimeConfig = () => ({ monolithEnabled: true, relayUrl: 'https://relay.test' });`,
     '@/buzz/workbench': `export const workbenchSummary = () => ({ value: '0 tools · 0 keys' });`,
     '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readWorkbench: async () => ({ connections: [] }) });`,
-    '@/buzz/surface-storage': `export const clearMobileSurfaceStorage = async () => undefined;
-    export const surfaceAddress = () => 'workspace-surface';
-    export const mobileSurfaceCache = {
-      read: async () => null,
-      fetch: async (_address, _guard, request) => request(),
-    };`,
     '@/buzz/room-open-trace': `export const roomOpenTraceEnabled = () => false;`,
     '@/sync/appConfig': `export const loadAppConfig = () => ({ releaseVersion: 'development', releaseSha: null });`,
     '@/sync/storage': `export const useLocalSettingMutable = (name) => [name === 'appearance' ? 'dark' : 'medium', () => undefined];`,
@@ -62,7 +56,11 @@ function seatShims(mobile: string): Record<string, string> {
       }
     }`,
     '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name) => {
-      if (name === 'getManagedIdentity') return { face: 'fox', pushLevel: 'mine', handle: 'captain', name: 'Captain' };
+      if (name === 'readIdentitySettings') return {
+        identity: { personId: 'a'.repeat(64), face: 'fox', pushLevel: 'mine', handle: 'captain', name: 'Captain' },
+        workspaces: { workspaces: [] },
+      };
+      if (name === 'getManagedIdentity') return { personId: 'a'.repeat(64), face: 'fox', pushLevel: 'mine', handle: 'captain', name: 'Captain' };
       return undefined;
     };`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {

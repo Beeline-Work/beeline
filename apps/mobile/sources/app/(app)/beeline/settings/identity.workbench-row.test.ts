@@ -57,7 +57,12 @@ vi.mock('expo-router', () => ({
     React.useEffect(effect, [effect, generation]);
   },
 }));
-vi.mock('@/buzz/workbench-source', () => ({ getWorkbenchSource: () => workbench }));
+vi.mock('@/buzz/workbench-source', () => ({
+  getWorkbenchSource: () => workbench,
+  MonolithWorkbenchSource: class {
+    readWorkbench(_scope: unknown, supplied: unknown) { return Promise.resolve(supplied); }
+  },
+}));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(n) }));
 vi.mock('expo-linking', () => ({
@@ -237,13 +242,9 @@ vi.mock('@/push/push-level-storage', () => ({
 vi.mock('@/buzz/identity-live', () => ({ subscribeOwnIdentityChange: () => () => undefined }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
-vi.mock('@/buzz/surface-storage', () => ({
+vi.mock('@/buzz/surface-storage', async () => ({
+  ...(await import('@/test/mock-surface-storage')).mockSurfaceStorage(),
   clearMobileSurfaceStorage: account.clearSurface,
-  surfaceAddress: vi.fn(() => 'workspace-surface'),
-  mobileSurfaceCache: {
-    read: vi.fn(async () => null),
-    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
-  },
 }));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
@@ -279,6 +280,7 @@ vi.mock('react-native', async () => {
 import { beelineThemes } from '@/buzz/groknight';
 import type { WorkbenchConnection, WorkbenchConnector, WorkbenchView } from '@/buzz/workbench';
 import IdentitySettingsScreen from './identity';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
 const originalConsoleError = console.error;
 
@@ -352,6 +354,7 @@ async function refocus(): Promise<void> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mobileSurfaceCache.clear();
   runtime.monolithEnabled = true;
   workspaceRead.workspaces.mockResolvedValue({ workspaces: [{ id: 'workspace-1' }] });
   client.getGlobalPersonProfile.mockResolvedValue({ name: 'Captain' });
@@ -362,24 +365,29 @@ beforeEach(() => {
     granted: true,
     canAskAgain: true,
   });
-  phoneOperation.mockResolvedValue({ face: null, pushLevel: 'mine', handle: null, name: 'C' });
+  phoneOperation.mockImplementation(async (name: string) => name === 'readIdentitySettings'
+    ? { identity: { personId: VIEWER, face: null, pushLevel: 'mine', handle: null, name: 'C' },
+        workspaces: { workspaces: [{ id: 'workspace-1', role: 'owner' }] },
+        workbench: await workbench.readWorkbench() }
+    : {});
 });
 
-describe('Reproduction R-1: the Settings Workbench row re-reads on focus', () => {
-  it('shows 57 keys after refocus when the first read returned 0', async () => {
+describe('Settings Workbench row shares the held Workbench projection', () => {
+  it('shows 57 keys when the owner changes and does not re-read on focus', async () => {
     workbench.readWorkbench
       .mockResolvedValueOnce(view(0, googleError))
       .mockResolvedValue(view(57, googleError));
     const renderer = await renderScreen();
     await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connection · 0 keys'));
 
+    await act(async () => { await mobileSurfaceCache.write({ relayOrigin: 'https://relay.test',
+      viewerPubkey: VIEWER, endpoint: '/workspace/:id/workbench',
+      params: { workspaceId: 'workspace-1', viewerId: VIEWER } }, view(57, googleError),
+      (value): value is WorkbenchView => Boolean(value)); });
     await refocus();
 
     await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connection · 57 keys'));
-    expect(workbench.readWorkbench).toHaveBeenLastCalledWith({
-      workspaceId: 'workspace-1',
-      viewerId: VIEWER,
-    });
+    expect(workbench.readWorkbench).toHaveBeenCalledTimes(1);
   });
 
   it('names the one broken tool in a danger subtitle', async () => {
@@ -394,7 +402,7 @@ describe('Reproduction R-1: the Settings Workbench row re-reads on focus', () =>
     });
   });
 
-  it('keeps the last value and shows no error when a later read fails', async () => {
+  it('keeps the last value and shows no error on refocus', async () => {
     workbench.readWorkbench
       .mockResolvedValueOnce(view(57, googleError))
       .mockRejectedValue(new Error('offline'));
@@ -403,14 +411,14 @@ describe('Reproduction R-1: the Settings Workbench row re-reads on focus', () =>
 
     await refocus();
 
-    await vi.waitFor(() => expect(workbench.readWorkbench).toHaveBeenCalledTimes(2));
+    expect(workbench.readWorkbench).toHaveBeenCalledTimes(1);
     expect(workbenchRow(renderer).props.value).toBe('1 connection · 57 keys');
     expect(workbenchRow(renderer).props.description).toBe('Google Workspace needs attention');
     expect(headings(renderer).some((text) => text.startsWith('Could not load'))).toBe(false);
   });
 
   it('shows no value when the first read fails, and the row still opens the Workbench', async () => {
-    workbench.readWorkbench.mockRejectedValue(new Error('offline'));
+    workbench.readWorkbench.mockResolvedValue(undefined);
     const renderer = await renderScreen();
     await vi.waitFor(() => expect(workbench.readWorkbench).toHaveBeenCalled());
     expect(workbenchRow(renderer).props.value).toBeUndefined();

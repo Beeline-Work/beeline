@@ -4076,6 +4076,10 @@ export class PhoneService {
         if (!(await humanRoomAdmin(this.database, roomId, viewerId))) throw new Error('room manager required');
         return await listRoomSubscriptions(this.database, roomId) as Output<Name>;
       }
+      case 'readScheduledWork':
+        return (await this.readScheduledWork(
+          (input as Input<'readScheduledWork'>).roomId, viewerId,
+        )) as Output<Name>;
       case 'deleteRoomSubscription': {
         const i = input as Input<'deleteRoomSubscription'>;
         await this.requireTopLevelRoom(i.roomId);
@@ -4131,6 +4135,8 @@ export class PhoneService {
         )) as Output<Name>;
       case 'readNeedsYou':
         return (await this.readNeedsYou(input as Input<'readNeedsYou'>, viewerId)) as Output<Name>;
+      case 'readTray':
+        return (await this.readTray(input as Input<'readTray'>, viewerId)) as Output<Name>;
       case 'countNeedsYou':
         return (await this.countNeedsYou(
           input as Input<'countNeedsYou'>,
@@ -4416,6 +4422,27 @@ export class PhoneService {
         return (await this.identityRecovery(viewerId)) as Output<Name>;
       case 'getManagedIdentity':
         return (await this.managedIdentity(viewerId)) as Output<Name>;
+      case 'readIdentitySettings': {
+        const [identity, workspaces] = await Promise.all([
+          this.managedIdentity(viewerId), this.readWorkspaces(viewerId),
+        ]);
+        const requested = (input as Input<'readIdentitySettings'>).workspaceId;
+        const selected = workspaces.workspaces.find((item) => item.id === requested) ?? workspaces.workspaces[0];
+        return {
+          identity, workspaces,
+          ...(selected ? { workbench: await this.readWorkbench({ workspaceId: selected.id }, viewerId)
+            .catch(() => undefined) } : {}),
+        } as Output<Name>;
+      }
+      case 'readAgentProfile': {
+        const { workspaceId, agentId } = input as Input<'readAgentProfile'>;
+        const [workspace, agent] = await Promise.all([
+          this.readWorkspace(workspaceId, viewerId),
+          this.readAgent(workspaceId, agentId, viewerId),
+        ]);
+        if (!workspace || !agent) throw new Error('agent profile not found');
+        return { workspace, agent } as Output<Name>;
+      }
       case 'adoptGitHubHandle':
         return (await this.adoptGitHubHandle(viewerId)) as Output<Name>;
       case 'claimManagedHandle':
@@ -4466,6 +4493,19 @@ export class PhoneService {
           input as Input<'readWorkbench'>,
           viewerId,
         )) as Output<Name>;
+      case 'readConnectApp': {
+        const [workbench, suggestions] = await Promise.all([
+          this.readWorkbench(input as Input<'readConnectApp'>, viewerId)
+            .then((value) => ({ value }), (error) => ({ error: String(error) })),
+          this.searchWorkbenchApps({ query: '' }, viewerId)
+            .then((value) => ({ value }), (error) => ({ error: String(error) })),
+        ]);
+        if ('error' in workbench && 'error' in suggestions) throw new Error(workbench.error);
+        return {
+          ...('value' in workbench ? { workbench: workbench.value } : { workbenchError: workbench.error }),
+          ...('value' in suggestions ? { suggestions: suggestions.value } : { suggestionsError: suggestions.error }),
+        } as Output<Name>;
+      }
       case 'searchWorkbenchApps':
         return (await this.searchWorkbenchApps(
           input as Input<'searchWorkbenchApps'>,
@@ -4860,6 +4900,27 @@ export class PhoneService {
     );
     return { schedules: schedules.rows.map(roomSchedule) };
   }
+  private async readScheduledWork(roomId: string, viewerId: string): Promise<Output<'readScheduledWork'>> {
+    await this.requireTopLevelRoom(roomId);
+    if (!(await humanRoomAdmin(this.database, roomId, viewerId)))
+      throw new Error('room manager required');
+    const [room, schedules, subscriptions] = await Promise.all([
+      this.database.query<{ name: string | null; agent_id: string; agent_name: string }>(
+        `SELECT room.name, agent.id agent_id, agent.name agent_name
+         FROM rooms room
+         LEFT JOIN memberships member ON member.room_id=room.id AND member.removed_at IS NULL
+         LEFT JOIN identities agent ON agent.id=member.identity_id AND agent.kind='agent'
+         WHERE room.id=$1`, [roomId]),
+      this.listRoomSchedules(roomId, viewerId),
+      listRoomSubscriptions(this.database, roomId),
+    ]);
+    return {
+      roomName: room.rows[0]?.name ?? null,
+      agentNames: room.rows.filter((row) => row.agent_id).map((row) => [row.agent_id, row.agent_name]),
+      schedules: schedules.schedules,
+      subscriptions: subscriptions.subscriptions,
+    };
+  }
   private async listRoomWorkflowRuns(roomId: string, viewerId: string) {
     return listRoomWorkflowRuns(this.database, roomId, viewerId, undefined, this.publicOrigin);
   }
@@ -5146,6 +5207,21 @@ export class PhoneService {
       (row) => identity(row, this.publicOrigin),
     );
     return { items };
+  }
+
+  private async readTray(input: Input<'readTray'>, viewerId: string): Promise<Output<'readTray'>> {
+    await this.requireWorkspaceMember(input.workspaceId, viewerId);
+    const [needs, saved] = await Promise.allSettled([
+      this.readNeedsYou(input, viewerId),
+      this.listMessageBookmarks(input, viewerId),
+    ]);
+    if (needs.status === 'rejected' && saved.status === 'rejected') throw needs.reason;
+    return {
+      ...(needs.status === 'fulfilled' ? { needs: needs.value } : {}),
+      ...(saved.status === 'fulfilled' ? { saved: saved.value } : {}),
+      ...(needs.status === 'rejected' ? { needsError: String(needs.reason) } : {}),
+      ...(saved.status === 'rejected' ? { savedError: String(saved.reason) } : {}),
+    };
   }
 
   private async countNeedsYou(
@@ -9991,10 +10067,12 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'clearMessageBookmarks',
   'listMessageBookmarks',
   'readNeedsYou',
+  'readTray',
   'countNeedsYou',
   'clearNeedsYou',
   'clearNeedsYouSection',
   'listRoomSchedules',
+  'readScheduledWork',
   'deleteRoomSchedule',
   'listRoomWorkflowRuns',
   'readWorkflowRun',
@@ -10057,6 +10135,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'recoverGitHubIdentity',
   'getIdentityRecovery',
   'getManagedIdentity',
+  'readIdentitySettings',
+  'readAgentProfile',
   'adoptGitHubHandle',
   'claimManagedHandle',
   'listGitHubRepositories',
@@ -10070,6 +10150,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'sendPushTest',
   'reportRunningUpdate',
   'readWorkbench',
+  'readConnectApp',
   'searchWorkbenchApps',
   'readConnectorInstall',
   'pairConnector',
@@ -10107,10 +10188,14 @@ const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'setMessageBookmark',
   'clearMessageBookmarks',
   'readNeedsYou',
+  'readTray',
   'countNeedsYou',
   'clearNeedsYou',
   'clearNeedsYouSection',
   'readWorkbench',
+  'readIdentitySettings',
+  'readAgentProfile',
+  'readConnectApp',
   'searchWorkbenchApps',
   'readConnectionDetail',
   'readWallet',

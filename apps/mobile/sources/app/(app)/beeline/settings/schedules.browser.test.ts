@@ -27,23 +27,22 @@ function shims(mobile: string): Record<string, string> {
     export const monolithPhoneOperation = async (name, input) => {
       (globalThis.__operations ??= []).push(name);
       (globalThis.__inputs ??= []).push([name, input]);
-      if (name === 'listRoomSubscriptions') return {
+      if (name === 'deleteRoomSubscription' || name === 'deleteRoomSchedule') return {};
+      if (name === 'readWorkflowDefinition') return { contract: ${contract}, runs: [] };
+      if (name !== 'readScheduledWork') throw new Error('unexpected ' + name);
+      if (new URLSearchParams(location.search).has('failScheduleRead') && !globalThis.__failedScheduleRead) {
+        globalThis.__failedScheduleRead = true;
+        throw new Error('schedule read unavailable');
+      }
+      return {
+        roomName: 'beeline', agentNames: [['agent-1', 'Hoots'], ['agent-2', 'Ruby']],
         subscriptions: [{ id: 'sub-1', roomId: 'room-1', agentId: 'agent-2',
           source: 'repository', event: 'pull_request.opened', repository: 'owner/widgets',
           createdAt: 0, lastFiredAt: ${NEXT_RUN}, prompt: 'Triage incoming work.', firedCount: 3 },
           { id: 'sub-2', roomId: 'corner-1', agentId: 'agent-2', source: 'room', event: 'joined',
             prompt: 'Start feedback triage.', workflowSlug: 'feedback-triage',
             corner: { id: 'corner-1', name: 'issues-triage' } }],
-      };
-      if (name === 'deleteRoomSubscription' || name === 'deleteRoomSchedule') return {};
-      if (name === 'readWorkflowDefinition') return { contract: ${contract}, runs: [] };
-      if (name !== 'listRoomSchedules') throw new Error('unexpected ' + name);
-      if (new URLSearchParams(location.search).has('failScheduleRead') && !globalThis.__failedScheduleRead) {
-        globalThis.__failedScheduleRead = true;
-        throw new Error('schedule read unavailable');
-      }
-      return {
-      schedules: [
+        schedules: [
         { id: 'daily', workspaceId: 'workspace-1', roomId: 'room-1', agentId: 'agent-1',
           creatorId: 'agent-1', cadence: { kind: 'cron', expression: '0 9 * * 1-5', timeZone: 'UTC' },
           message: "Summarize yesterday's merged PRs for the Room. Group them by area and link each PR.",

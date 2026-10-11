@@ -19,14 +19,13 @@ describe('scheduled Agent work', () => {
   });
 
   it('allows managers to inspect and stop existing work without scheduling it', () => {
-    expect(work).toContain("monolithPhoneOperation('listRoomSchedules'");
+    expect(work).toContain("monolithPhoneOperation('readScheduledWork'");
     expect(work).toContain("monolithPhoneOperation('deleteRoomSchedule'");
     expect(work).not.toContain("'createRoomSchedule'");
     // No explainer paragraph stands above the list (DESIGN.md).
     expect(screen).not.toContain('AGENT-MANAGED SCHEDULES');
     expect(screen).not.toContain('repository notifications');
     expect(screen).not.toContain('Alert.alert');
-    expect(work).toContain("monolithPhoneOperation('listRoomSubscriptions'");
     expect(work).toContain("monolithPhoneOperation('deleteRoomSubscription'");
     // Both Stop actions live on the trigger's own page, behind one confirm step.
     expect(schedule).toContain('<StopScheduledWork');

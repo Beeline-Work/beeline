@@ -75,14 +75,22 @@ vi.mock('@/auth/buzz-identity-storage', () => auth);
 vi.mock('@/buzz/surface-storage', () => ({
   surfaceAddress: (_relay: string, _viewer: string, endpoint: string) => endpoint,
   mobileSurfaceCache: {
-    read: vi.fn(async () => null),
-    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
+    read: vi.fn(async (address: string) => hotSurfaces.values.get(address) ?? null),
+    fetch: vi.fn(async (address: string, _guard: unknown, request: () => Promise<unknown>) => {
+      const value = await request();
+      hotSurfaces.values.set(address, value);
+      for (const listener of hotSurfaces.listeners.get(address) ?? []) listener();
+      return value;
+    }),
     publish: (address: string, value: unknown) => {
       hotSurfaces.values.set(address, value);
       for (const listener of hotSurfaces.listeners.get(address) ?? []) listener();
       return value;
     },
-    write: vi.fn(async () => undefined),
+    write: vi.fn(async (address: string, value: unknown) => {
+      hotSurfaces.values.set(address, value);
+      for (const listener of hotSurfaces.listeners.get(address) ?? []) listener();
+    }),
     persist: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
     clear: vi.fn(),

@@ -25,15 +25,15 @@ function dataShims(
       replace: (href) => { window.__replaced = href; },
     });`,
     '@/sync/transport/monolith-operation': withBookmark
-      ? `export const monolithPhoneOperation = async (name) => name === 'readNeedsYou' ? { items: [] } : ({ bookmarks: [{
+      ? `export const monolithPhoneOperation = async (name) => name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [{
           messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'corner-1',
           roomName: 'Fix fixture', roomKind: 'corner',
           messageCreatedAt: Math.floor(Date.now() / 1000) - 7200,
           bookmarkedAt: Math.floor(Date.now() / 1000) - 120,
           available: true, author: { name: 'Avery' }, text: 'The bookmarked line.'
-        }] });`
+        }] } } : { bookmarks: [] };`
       : `export const monolithPhoneOperation = async (name) =>
-          name === 'readNeedsYou' ? { items: [] } : { bookmarks: [] };`,
+          name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [] } } : { bookmarks: [] };`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {
       async workspaces() { return { workspaces: ${link === 'active' ? "[{ id: 'workspace-0' }, { id: 'workspace-1' }]" : '[]'} }; }
       async workspace() { return { workspace: { id: 'workspace-1', name: 'Clover Workspace' } }; }

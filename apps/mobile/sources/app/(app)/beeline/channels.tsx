@@ -53,6 +53,8 @@ import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 import { MessageSearchResults } from '@/components/buzz/MessageSearchResults';
 import { messageSearchHref, useMessageSearch } from '@/buzz/use-message-search';
+import { readGitHubAccess, updateGitHubAccess, useGitHubAccess } from '@/buzz/github-access-surface';
+import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
 import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
 import { WelcomeCards } from '@/components/buzz/WelcomeCards';
 import { Typography } from '@/constants/Typography';
@@ -66,7 +68,6 @@ import {
   isWorkspaceView,
   type ChatListItem,
   type ChatListView,
-  type GitHubInstallationAccess,
   type Identity,
   type WorkspaceListView,
   type WorkspaceView,
@@ -179,7 +180,10 @@ export default function BuzzChannels() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
-  const [workspaceList, setWorkspaceList] = useState<WorkspaceListView | null>(null);
+  const workspaceListAddress = useMemo(() => identity && relayUrl
+    ? surfaceAddress(relayUrl, identity.publicKey, '/workspaces') : null,
+    [identity?.publicKey, relayUrl]);
+  const workspaceList = useSurfaceSnapshot(workspaceListAddress, isWorkspaceListView);
   // Only a live read (never a cached one) may say "you have no Workspace".
   const [workspacesConfirmed, setWorkspacesConfirmed] = useState(false);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
@@ -193,7 +197,6 @@ export default function BuzzChannels() {
     needsYouSignal === 0 ? undefined : needsYouSignal,
   );
   const cornerDropdowns = useCornerDropdowns(chatList?.chats);
-  const [workspaceDetail, setWorkspaceDetail] = useState<WorkspaceView | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletedWorkspaceNotice, setDeletedWorkspaceNotice] = useState<string | null>(null);
@@ -210,8 +213,10 @@ export default function BuzzChannels() {
   const [creatingRepository, setCreatingRepository] = useState(false);
   const [showRepoPicker, setShowRepoPicker] = useState(false);
   const [pendingRepo, setPendingRepo] = useState<RepoCandidate | null>(null);
-  const [repoCandidates, setRepoCandidates] = useState<RepoCandidate[]>([]);
-  const [repoInstallations, setRepoInstallations] = useState<GitHubInstallationAccess[]>([]);
+  const githubScope = relayUrl && identity ? { relay: relayUrl, viewer: identity.publicKey } : null;
+  const githubAccess = useGitHubAccess(githubScope);
+  const repoCandidates = githubAccess?.candidates ?? [];
+  const repoInstallations = githubAccess?.installations ?? [];
   const [repoAccessLoading, setRepoAccessLoading] = useState(false);
   const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
   const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
@@ -235,6 +240,10 @@ export default function BuzzChannels() {
   );
   const activeCommunityId =
     requestedWorkspaceId ?? chatList?.workspace.id ?? communities[0]?.communityId ?? null;
+  const workspaceDetailAddress = useMemo(() => identity && relayUrl && activeCommunityId
+    ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', { workspaceId: activeCommunityId })
+    : null, [identity?.publicKey, relayUrl, activeCommunityId]);
+  const workspaceDetail = useSurfaceSnapshot(workspaceDetailAddress, isWorkspaceView);
   const activeCommunity =
     communities.find((entry) => entry.communityId === activeCommunityId) ?? null;
   const viewerIsAgent = chatList?.viewer.kind === 'agent';
@@ -427,7 +436,6 @@ export default function BuzzChannels() {
       );
       const cachedWorkspaces = await mobileSurfaceCache.read(workspaceCacheAddress, isWorkspaceListView);
       if (cancelled) return;
-      if (cachedWorkspaces) setWorkspaceList(cachedWorkspaces);
       const selectedId = deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
       let selectedWorkspaceRemoved = false;
 
@@ -437,7 +445,6 @@ export default function BuzzChannels() {
           // Null: an eviction overtook the read; there is nothing to paint.
           if (!value) return;
           deckMissedRef.current.workspaces = false;
-          setWorkspaceList(value);
           setWorkspacesConfirmed(true);
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
@@ -449,7 +456,6 @@ export default function BuzzChannels() {
             chatStore.current = null;
             if (chats) void chats.remove();
             setChatList(null);
-            setWorkspaceDetail(null);
             setMemberPickerVisible(false);
             setRefreshing(false);
             setError(null);
@@ -548,17 +554,6 @@ export default function BuzzChannels() {
     }, [activeCommunityId, refreshMissed]),
   );
 
-  // The rail paints the shared `/workspaces` entry, so a rename patched there
-  // by Workspace settings shows here without another read.
-  useEffect(() => {
-    if (!identity || !relayUrl) return;
-    const address = surfaceAddress(relayUrl, identity.publicKey, '/workspaces');
-    return mobileSurfaceCache.subscribe(address, () => {
-      const next = mobileSurfaceCache.peek(address, isWorkspaceListView);
-      if (next) setWorkspaceList(next);
-    });
-  }, [identity, relayUrl]);
-
   useEffect(() => {
     if (!memberPickerVisible || !identity || !relayUrl || !activeCommunityId) return;
     let cancelled = false;
@@ -566,18 +561,9 @@ export default function BuzzChannels() {
     const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', {
       workspaceId: activeCommunityId,
     });
-    void mobileSurfaceCache
-      .read(address, isWorkspaceView)
-      .then((cached) => {
-        if (!cancelled && cached) setWorkspaceDetail(cached);
-        // The shared fetch orders this read against roster writes made while it is in flight.
-        return mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(activeCommunityId));
-      })
-      .then((value) => {
-        if (cancelled) return;
-        const current = value ?? mobileSurfaceCache.peek(address, isWorkspaceView);
-        if (current) setWorkspaceDetail(current);
-      })
+    void mobileSurfaceCache.read(address, isWorkspaceView)
+      .then((cached) => cached ?? mobileSurfaceCache.fetch(address, isWorkspaceView,
+        () => http.workspace(activeCommunityId)))
       .catch((reason) => {
         if (!cancelled) setError(String(reason));
       });
@@ -650,17 +636,15 @@ export default function BuzzChannels() {
 
   const loadRepoPicker = useCallback(
     async (refresh = false) => {
-      if (!transport || !activeCommunityId) return;
-      const access = await transport.workspaceGitHubAccess({ refresh });
-      setRepoCandidates(access.candidates);
-      setRepoInstallations(access.installations);
+      if (!transport || !activeCommunityId || !githubScope) return;
+      const access = await readGitHubAccess(transport, githubScope, refresh);
       setRepoPickerError(
         access.githubReconnectNeeded
           ? 'GitHub sign-in expired — reconnect GitHub in Settings to see new repositories.'
           : null,
       );
     },
-    [activeCommunityId, transport],
+    [activeCommunityId, transport, relayUrl, identity?.publicKey],
   );
 
   const handleLoadRepositories = useCallback(async () => {
@@ -728,7 +712,8 @@ export default function BuzzChannels() {
           name,
           private: true,
         });
-        setRepoCandidates((current) => [...current, repository]);
+        if (githubScope) await updateGitHubAccess(githubScope,
+          (current) => ({ ...current, candidates: [...current.candidates, repository] }));
         setPendingRepo(repository);
         return repository;
       } catch (reason) {

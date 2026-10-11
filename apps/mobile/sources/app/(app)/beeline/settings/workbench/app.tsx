@@ -1,8 +1,8 @@
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
-import React, { useCallback, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { AppMark } from '@/components/buzz/AppMark';
@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { readSharedWorkbench, useSharedWorkbench } from '@/buzz/workbench-surface';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import type { WorkbenchApp } from '@/buzz/workbench';
 import { appBoardColors } from '@/buzz/app-board-style';
@@ -25,7 +26,10 @@ export default function AppDetailScreen() {
   const viewerId = first(params.viewerId) ?? '';
   const appId = first(params.appId) ?? '';
   const insets = useSafeAreaInsets();
-  const [app, setApp] = useState<WorkbenchApp | null>(null);
+  const { value: view, error: loadError } = useSharedWorkbench({ workspaceId, viewerId });
+  const [appOverride, setAppOverride] = useState<WorkbenchApp | null>(null);
+  const app = appOverride ?? view?.apps.find(item => item.id === appId) ?? null;
+  useEffect(() => { setAppOverride(null); }, [view]);
   useLatencyRouteFrame('/beeline/settings/workbench/app', app !== null, true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,16 +37,6 @@ export default function AppDetailScreen() {
   const [statusOpen, setStatusOpen] = useState(false);
   const needsSquire = app?.transport.startsWith('squire-') &&
     app.errorMessage === 'Connect Trusty Squire in Connectors first';
-
-  useFocusEffect(useCallback(() => {
-    let live = true;
-    setError(null);
-    setConnectionNotice(null);
-    void getWorkbenchSource().readWorkbench({ workspaceId, viewerId }).then(view => {
-      if (live) setApp(view.apps.find(item => item.id === appId) ?? null);
-    }).catch(() => { if (live) setError('App unavailable right now'); });
-    return () => { live = false; };
-  }, [appId, viewerId, workspaceId]));
 
   const disconnect = async () => {
     if (!app || working) return;
@@ -79,9 +73,8 @@ export default function AppDetailScreen() {
         if (started.authorizationUrl) {
           await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId, appId: started.appId });
         } else {
-          const view = await source.readWorkbench({ workspaceId, viewerId });
-          const updated = view.apps.find(item => item.id === started.appId);
-          if (updated) setApp(updated);
+          const updatedView = await readSharedWorkbench({ workspaceId, viewerId }, { refresh: true });
+          const updated = updatedView.apps.find(item => item.id === started.appId);
           if (updated?.status === 'connecting')
             setConnectionNotice(`Continue connecting ${app.name} in your chat with ${helper.name}.`);
         }
@@ -89,7 +82,7 @@ export default function AppDetailScreen() {
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'Could not connect app';
       setError(appErrorCopy(message));
-      setApp(current => current ? { ...current, status: 'error', errorMessage: message } : current);
+      setAppOverride(app ? { ...app, status: 'error', errorMessage: message } : null);
     }
     finally { setWorking(false); }
   };
@@ -128,7 +121,7 @@ export default function AppDetailScreen() {
         <Text style={styles.lastUsed}>{lastUsed}</Text>
         {connectionNotice ? <Text accessibilityLiveRegion="polite" style={styles.permission} testID="app-detail-connection-notice">{connectionNotice}</Text> : null}
       </> : null}
-      {error || app?.status === 'error' && app.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{error ?? (app && needsSquire
+      {error || loadError || app?.status === 'error' && app.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{error ?? (loadError ? 'App unavailable right now' : null) ?? (app && needsSquire
         ? `${app.name} connects through Trusty Squire. Connect Trusty Squire, then return here to connect ${app.name}.`
         : app?.transport !== 'composio' && app?.errorMessage === 'App sign-in is unavailable for this person'
           ? `${app.name} connects through your helper. Retry to ask your helper to finish connecting it.`

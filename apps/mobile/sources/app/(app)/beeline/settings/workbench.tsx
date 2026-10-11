@@ -1,9 +1,9 @@
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useState } from 'react';
-import { AppState, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { useIsDesktop } from '@/utils/responsive';
@@ -13,6 +13,8 @@ import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableSta
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { readSharedWorkbench, useSharedWorkbench } from '@/buzz/workbench-surface';
+import { publishSharedWallet } from '@/buzz/wallet-surface';
 import { getWalletSource } from '@/buzz/wallet-source';
 import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
@@ -23,14 +25,12 @@ import { TOOL_BRAND_MARKS } from '@/buzz/tool-brand-marks';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
 import { keyServiceGroups, squireConnectionState } from '@/buzz/connectors-model';
 import { authSessionOptions } from '@/auth/auth-session';
-import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import {
   MonolithPhoneOperationError,
   phoneOperationFailureReason,
 } from '@/sync/transport/monolith-operation';
 import {
   googleEntryConnector,
-  type WorkbenchView,
 } from '@/buzz/workbench';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -60,11 +60,13 @@ export default function WorkbenchScreen() {
   }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const activeWorkspaceId = useActiveCommunityId();
+  const ownerWorkspaceId = workspaceId || activeWorkspaceId || '';
   const viewerId = firstParam(params.viewerId) ?? '';
   const desktop = useIsDesktop();
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
-  const [view, setView] = useState<WorkbenchView | null>(null);
+  const { value: view, error: loadError } = useSharedWorkbench(
+    viewerId ? { workspaceId: ownerWorkspaceId, viewerId } : null);
   const [networkFailure, setNetworkFailure] = useState<'load' | 'wallet' | null>(null);
   const [walletConnecting, setWalletConnecting] = useState(false);
   const [linkConnecting, setLinkConnecting] = useState(false);
@@ -72,17 +74,12 @@ export default function WorkbenchScreen() {
   const [linkError, setLinkError] = useState<string | null>(null);
   const [walletWorkspaceMissing, setWalletWorkspaceMissing] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
-  const [foregroundGeneration, setForegroundGeneration] = useState(0);
   const [statusAction, setStatusAction] = useState<{ title: string; disconnect: () => void } | null>(null);
   const load = useCallback(
     async (refreshVault = false) => {
       try {
-        const next = await getWorkbenchSource().readWorkbench({
-          workspaceId,
-          viewerId,
-          ...(refreshVault ? { refreshVault: true } : {}),
-        });
-        setView(next);
+        const next = await readSharedWorkbench({ workspaceId: ownerWorkspaceId, viewerId },
+          { refresh: true, refreshVault });
         setNetworkFailure(null);
         return next;
       } catch {
@@ -90,39 +87,11 @@ export default function WorkbenchScreen() {
         return undefined;
       }
     },
-    [workspaceId, viewerId],
+    [ownerWorkspaceId, viewerId],
   );
 
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') setForegroundGeneration((generation) => generation + 1);
-    });
-    return () => subscription.remove();
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      let stop: (() => void) | undefined;
-      void sharedLiveConnection().register([], (event) => {
-        if (cancelled || !('monolithLive' in event)) return;
-        const live = event.monolithLive;
-        if ((live.type === 'resource-change' &&
-            (live.resource === 'workbench' || live.resource === 'install' || live.resource === 'agent')) ||
-            (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect'))
-          void load(false);
-      }).then((release) => {
-        if (cancelled) release();
-        else stop = release;
-      });
-      void foregroundGeneration;
-      void load(true);
-      return () => {
-        cancelled = true;
-        stop?.();
-      };
-    }, [foregroundGeneration, load]),
-  );
+  useEffect(() => { setNetworkFailure((current) =>
+    loadError ? 'load' : current === 'load' ? null : current); }, [loadError]);
 
   const apps = view?.apps ?? [];
   const keyGroups = view ? keyServiceGroups(view, viewerId) : [];
@@ -159,9 +128,9 @@ export default function WorkbenchScreen() {
   const openConnectApp = useCallback(() => {
     router.push({
       pathname: '/beeline/settings/workbench/connect-app',
-      params: { workspaceId, viewerId },
+      params: { workspaceId: ownerWorkspaceId, viewerId },
     } as unknown as Href);
-  }, [workspaceId, viewerId]);
+  }, [ownerWorkspaceId, viewerId]);
 
   const openWallet = useCallback(async () => {
     try {
@@ -193,8 +162,12 @@ export default function WorkbenchScreen() {
       setWalletWorkspaceMissing(false);
       // Connecting IS the grant: agents may sign only after it lands, so the
       // row reads connected only then.
-      await getWalletSource().createWallet({ workspaceId: selectedId });
-      await getWalletSource().grantDelegation({ workspaceId: selectedId });
+      const wallet = await getWalletSource().createWallet({ workspaceId: selectedId });
+      const grant = await getWalletSource().grantDelegation({ workspaceId: selectedId });
+      await publishSharedWallet(selectedId, { ...wallet,
+        delegation: { active: true, expiresAt: grant.expiresAt } });
+      if (ownerWorkspaceId) await readSharedWorkbench({ workspaceId: ownerWorkspaceId, viewerId },
+        { refresh: true });
       router.push({
         pathname: '/beeline/settings/workbench/wallet',
         params: { workspaceId: selectedId },
@@ -204,7 +177,7 @@ export default function WorkbenchScreen() {
     } finally {
       setWalletConnecting(false);
     }
-  }, [activeWorkspaceId, walletConnecting, workspaceId]);
+  }, [activeWorkspaceId, ownerWorkspaceId, viewerId, walletConnecting, workspaceId]);
 
   const connectLink = useCallback(async () => {
     if (linkConnecting) return;

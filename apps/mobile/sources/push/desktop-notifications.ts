@@ -7,7 +7,7 @@ import { getBuzzPushEnabled } from './buzz-push-registration';
 import { loadStoredPushLevel } from './push-level-storage';
 import { desktopMessageMayNotify } from './desktop-notification-policy';
 import { RoomViewClient, BuzzRigTransport } from '@/sync/transport';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { readManagedIdentity } from '@/buzz/managed-identity-surface';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { chatWatchFiltersKey } from '@/buzz/chat-list-delta';
 import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
@@ -127,7 +127,7 @@ export function startDesktopNotifications(): () => void {
         return;
       const enabled = await getBuzzPushEnabled(identity!.publicKey);
       if (!enabled) return;
-      const managed = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
+      const managed = await readManagedIdentity().catch(() => null);
       const level = managed?.pushLevel ?? (await loadStoredPushLevel(identity!.publicKey));
       let repliedToViewer = false;
       if (

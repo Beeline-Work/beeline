@@ -30,6 +30,8 @@ function shims(mobile: string): Record<string, string> {
     export const monolithPhoneOperation = async (name, input) => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       if (name === 'readNeedsYou') return { items: mine().map((entry) => ({ ...entry })) };
+      if (name === 'readTray') return { needs: { items: mine().map((entry) => ({ ...entry })) },
+        saved: { bookmarks: [] } };
       if (name === 'countNeedsYou') {
         const viewer = server.viewer;
         await new Promise((resolve) => setTimeout(resolve, server.countDelayMs));

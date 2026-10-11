@@ -13,6 +13,8 @@ import type {
 import type { GrantWalletDelegationInput, GrantWalletDelegationResult } from './wallet.js';
 import type {
   AgentDetailView,
+  WorkspaceListView,
+  WorkspaceView,
   AgentModelSelection,
   AgentPairingClaimView,
   AttachmentReference,
@@ -81,6 +83,7 @@ export type PhoneOperationMap = {
   /** A short-lived browser viewer token, issued only to people who may steer its agent. */
   openComputerSession: { input: { id: string }; output: { access: string } };
   listRoomSubscriptions: { input: { roomId: string }; output: RoomSubscriptionListResult };
+  readScheduledWork: { input: RoomInput; output: ScheduledWorkResult };
   deleteRoomSubscription: { input: { roomId: string; subscriptionId: string }; output: void };
   setCornerHold: { input: CornerHoldInput; output: { holdId: string; roomId: string } };
   readWelcomeCards: { input: Record<string, never>; output: WelcomeCardsView };
@@ -101,6 +104,10 @@ export type PhoneOperationMap = {
   listMessageBookmarks: { input: WorkspaceInput & { readonly before?: string }; output: MessageBookmarkListResult };
   /** The viewer's Needs-you cells, newest first. Reading starts each cell's 24-hour clock. */
   readNeedsYou: { input: WorkspaceInput; output: NeedsYouListResult };
+  readTray: { input: WorkspaceInput; output: {
+    readonly needs?: NeedsYouListResult; readonly saved?: MessageBookmarkListResult;
+    readonly needsError?: string; readonly savedError?: string;
+  } };
   /** The tray badge count. Unlike `readNeedsYou`, it starts no clock. */
   countNeedsYou: { input: WorkspaceInput; output: NeedsYouCountResult };
   /** Tapped or dismissed: the cell leaves the viewer's tray on every device. */
@@ -183,6 +190,14 @@ export type PhoneOperationMap = {
   recoverGitHubIdentity: { input: CompleteBrowserAuthInput; output: IdentityBindResult };
   getIdentityRecovery: { input: EmptyInput; output: IdentityRecoveryResult };
   getManagedIdentity: { input: EmptyInput; output: ManagedIdentityResult };
+  readIdentitySettings: { input: { readonly workspaceId?: string }; output: {
+    readonly identity: ManagedIdentityResult;
+    readonly workspaces: WorkspaceListView;
+    readonly workbench?: WorkbenchView;
+  } };
+  readAgentProfile: { input: WorkspaceAgentInput; output: {
+    readonly workspace: WorkspaceView; readonly agent: AgentDetailView;
+  } };
   adoptGitHubHandle: { input: EmptyInput; output: ManagedIdentityResult };
   claimManagedHandle: { input: ClaimManagedHandleInput; output: ManagedIdentityResult };
   listGitHubRepositories: { input: RefreshInput; output: GitHubRepositoryListResult };
@@ -203,6 +218,10 @@ export type PhoneOperationMap = {
   reportRunningUpdate: { input: RunningUpdateInput; output: void };
   readConnectorInstall: { input: ReadConnectorInstallInput; output: Pick<WorkbenchView['connectors'][number], 'connectorId' | 'status'> | null };
   readWorkbench: { input: ReadWorkbenchInput; output: WorkbenchView };
+  readConnectApp: { input: ReadWorkbenchInput; output: {
+    readonly workbench?: WorkbenchView; readonly suggestions?: WorkbenchAppSearchResult;
+    readonly workbenchError?: string; readonly suggestionsError?: string;
+  } };
   searchWorkbenchApps: { input: SearchWorkbenchAppsInput; output: WorkbenchAppSearchResult };
   pairConnector: { input: PairConnectorInput; output: PairConnectorResult };
   cancelGoogleSignIn: { input: CancelGoogleSignInInput; output: { cancelled: boolean } };
@@ -245,10 +264,12 @@ export type PhoneOperationMap = {
 export const PHONE_READ_OPERATIONS = [
   'openComputerSession',
   'listRoomSubscriptions',
+  'readScheduledWork',
   'readWelcomeCards',
   'readStarPrompt',
   'listMessageBookmarks',
   'readNeedsYou',
+  'readTray',
   'countNeedsYou',
   'listRoomSchedules',
   'listRoomWorkflowRuns',
@@ -260,10 +281,13 @@ export const PHONE_READ_OPERATIONS = [
   'getAuthCapabilities',
   'getIdentityRecovery',
   'getManagedIdentity',
+  'readIdentitySettings',
+  'readAgentProfile',
   'listGitHubRepositories',
   'getGitHubRepositoryAccess',
   'readWebPushKey',
   'readWorkbench',
+  'readConnectApp',
   'searchWorkbenchApps',
   'readGoogleSignIn',
   'readConnectorInstall',
@@ -368,6 +392,10 @@ export type RoomScheduleView = {
   readonly runCount: number;
 };
 export type RoomScheduleListResult = { readonly schedules: readonly RoomScheduleView[] };
+export type ScheduledWorkResult = RoomScheduleListResult & RoomSubscriptionListResult & {
+  readonly roomName: string | null;
+  readonly agentNames: readonly (readonly [string, string])[];
+};
 export type DeleteRoomScheduleInput = RoomInput & { readonly scheduleId: string };
 /** Who holds a workflow role, or who wrote a handoff card. */
 export type WorkflowActorView = {

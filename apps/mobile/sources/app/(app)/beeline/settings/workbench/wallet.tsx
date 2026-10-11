@@ -13,11 +13,11 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { WalletQr } from '@/components/buzz/WalletQr';
 import { chainIcon, tokenIcon } from '@/buzz/wallet-icons';
 import { getWalletSource } from '@/buzz/wallet-source';
+import { useSharedWallet, useSharedWalletHistory } from '@/buzz/wallet-surface';
 import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { CONNECTOR_DESCRIPTIONS, WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
-import type { WalletLedgerEntry, WalletView } from '@beeline/api-contract/wallet';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -53,10 +53,11 @@ export default function WalletScreen() {
   const followedWorkspaceId = routeWorkspaceId ? undefined : activeWorkspaceId;
   const [workspaceId, setWorkspaceId] = useState<string | null | undefined>(undefined);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [wallet, setWallet] = useState<WalletView | null>(null);
-  const [history, setHistory] = useState<WalletLedgerEntry[] | null>(null);
-  const [historyUnavailable, setHistoryUnavailable] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { value: wallet, error, refresh: refreshWallet } = useSharedWallet(workspaceId);
+  const { value: historyView, error: historyError, refresh: refreshHistory } =
+    useSharedWalletHistory(workspaceId);
+  const history = historyView ? [...historyView.entries].reverse() : null;
+  const historyUnavailable = Boolean(historyError);
   const [grantError, setGrantError] = useState<string | null>(null);
   const [granting, setGranting] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
@@ -82,26 +83,8 @@ export default function WalletScreen() {
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
-    try {
-      const view = await getWalletSource().readWallet({ workspaceId });
-      setWallet(view);
-      setError(null);
-    } catch {
-      setError('Wallet is unavailable right now');
-    }
-    try {
-      const result = await getWalletSource().readHistory({ workspaceId, limit: 30 });
-      setHistory([...result.entries].reverse());
-      setHistoryUnavailable(false);
-    } catch {
-      // History degrades alone: the balance and assets stay paintable.
-      setHistoryUnavailable(true);
-    }
-  }, [workspaceId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+    await Promise.allSettled([refreshWallet(), refreshHistory()]);
+  }, [workspaceId, refreshWallet, refreshHistory]);
 
   const grant = useCallback(async () => {
     if (!workspaceId) return;

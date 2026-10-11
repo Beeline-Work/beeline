@@ -53,6 +53,17 @@ try {
         AND m.identity_id=$2 AND m.removed_at IS NULL)`, [workspaceId, reviewId, roomIds]);
     fixtures.push({ roomCount, workspaceId, roomId });
   }
+  // The small fixture can measure a valid agent profile without the separate
+  // 200-Room live burst contaminating another screen's visit window.
+  const small = fixtures[0];
+  await database.query(`INSERT INTO memberships(workspace_id,identity_id,role)
+    SELECT $1,$2,'member' WHERE NOT EXISTS (
+      SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+        AND identity_id=$2 AND removed_at IS NULL)`, [small.workspaceId, agentId]);
+  await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    SELECT $1,$2,$3,'member' WHERE NOT EXISTS (
+      SELECT 1 FROM memberships WHERE room_id=$2 AND identity_id=$3 AND removed_at IS NULL)`,
+  [small.workspaceId, small.roomId, agentId]);
   const busy = fixtures.at(-1);
   await database.query(`INSERT INTO memberships(workspace_id,identity_id,role)
     SELECT $1,$2,'member' WHERE NOT EXISTS (

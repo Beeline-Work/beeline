@@ -13,6 +13,12 @@ const workspace = vi.hoisted(() => ({
   resolve: vi.fn(async (id?: string, activeId?: string): Promise<string | null> => id || activeId || null),
 }));
 vi.mock('@/buzz/wallet-workspace', () => ({ resolveWalletWorkspaceId: workspace.resolve }));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  getEffectiveRelayUrl: async () => 'https://relay.test',
+  loadBuzzIdentity: async () => ({ publicKey: 'human-dani' }),
+}));
+vi.mock('@/buzz/surface-storage', async () =>
+  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
 vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'workspace-active' }));
 const focus = vi.hoisted(() => ({
   effect: undefined as undefined | (() => void | (() => void)),
@@ -125,6 +131,8 @@ import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWalletSource } from '@/buzz/wallet-source';
 import { MockWalletSource } from '@/buzz/wallet-source.mock';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
+import { resetClientState } from '@/sync/client-reset';
 
 const originalConsoleError = console.error;
 
@@ -144,6 +152,8 @@ afterEach(() => vi.useRealTimers());
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetClientState();
+  mobileSurfaceCache.clear();
   liveListeners.clear();
   focus.effect = undefined;
   appState.listener = undefined;
@@ -230,12 +240,15 @@ describe('Connectors settings screen', () => {
     });
   });
 
-  it('refreshes vault metadata on focus and re-reads after a live workbench change', async () => {
+  it('uses the held view on focus and re-reads after a live workbench change', async () => {
     const source = new MockWorkbenchSource();
     const read = vi.spyOn(source, 'readWorkbench');
     setWorkbenchSource(source);
     await render();
-    expect(read).toHaveBeenCalledWith({ workspaceId: 'workspace-1', viewerId: 'human-dani', refreshVault: true });
+    expect(read).toHaveBeenCalledWith({ workspaceId: 'workspace-1', viewerId: 'human-dani' });
+    const firstReads = read.mock.calls.length;
+    await act(async () => { focus.effect?.(); await Promise.resolve(); });
+    expect(read).toHaveBeenCalledTimes(firstReads);
     await act(async () => {
       for (const listener of liveListeners) listener({ monolithLive: {
         type: 'resource-change', roomId: '', resource: 'workbench',
@@ -312,7 +325,12 @@ describe('Connectors settings screen', () => {
     const renderer = await render();
     expect(renderer.root.findAllByType('SettingsRow').some((row: any) => row.props.title === 'Vercel')).toBe(true);
     fail = true;
-    await act(async () => { focus.effect?.(); await Promise.resolve(); });
+    await act(async () => {
+      for (const listener of liveListeners) listener({ monolithLive: {
+        type: 'resource-change', roomId: '', resource: 'workbench',
+      } });
+      await Promise.resolve();
+    });
     expect(renderer.root.findByProps({ testID: 'workbench-network-unavailable' })).toBeDefined();
   });
 });

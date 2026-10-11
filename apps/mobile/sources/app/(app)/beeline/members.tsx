@@ -42,6 +42,7 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
 import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { navigateToRoom } from '@/buzz/corner-navigation';
@@ -238,8 +239,27 @@ export default function BuzzMembers({
   const navigation = useNavigation();
   const workspaceId = workspaceIdOverride ?? first(params.communityId);
   const requestedAction = first(params.action);
-  const [surface, setSurface] = useState<WorkspaceView | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<AgentDetailView | null>(null);
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [relayUrl, setRelayUrl] = useState<string | null>(null);
+  const [localAgentId, setLocalAgentId] = useState<string | null>(null);
+  const workspaceAddress = useMemo(() => identity && relayUrl && workspaceId
+    ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', { workspaceId }) : null,
+    [identity?.publicKey, relayUrl, workspaceId]);
+  const agentId = profileAgentId ?? localAgentId;
+  const agentAddress = useMemo(() => identity && relayUrl && workspaceId && agentId
+    ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId',
+      { workspaceId, agentPubkey: agentId }) : null,
+    [identity?.publicKey, relayUrl, workspaceId, agentId]);
+  const surface = useSurfaceSnapshot(workspaceAddress, isWorkspaceView);
+  const selectedAgent = useSurfaceSnapshot(agentAddress, isAgentDetailView);
+  const setSelectedAgent = (value: AgentDetailView | null) => {
+    if (!value) { setLocalAgentId(null); return; }
+    setLocalAgentId(value.agent.identity.pubkey);
+    if (identity && relayUrl && workspaceId)
+      void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey,
+        '/workspace/:id/agents/:agentId',
+        { workspaceId, agentPubkey: value.agent.identity.pubkey }), value, isAgentDetailView);
+  };
   useLatencyRouteFrame(profileAgentId ? '/beeline/agent-profile' : '/beeline/members',
     profileAgentId ? selectedAgent !== null : surface !== null, true);
   const [editingAgentSoul, setEditingAgentSoul] = useState(false);
@@ -256,8 +276,6 @@ export default function BuzzMembers({
   const [modelAppliesNote, setModelAppliesNote] = useState<ModelAxisKind | null>(null);
   const [modelAxisError, setModelAxisError] = useState<ModelAxisKind | null>(null);
   const modelAppliesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [identity, setIdentity] = useState<Identity | null>(null);
-  const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [working, setWorking] = useState<MembersAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -298,7 +316,6 @@ export default function BuzzMembers({
       agentPubkey,
     );
     if (generation !== agentRequestGenerationRef.current) return value;
-    setSelectedAgent(value);
     const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
       workspaceId,
       agentPubkey,
@@ -310,19 +327,12 @@ export default function BuzzMembers({
   const applyAgentReceipt = (value: AgentDetailView) => {
     agentRequestGenerationRef.current += 1;
     latestConfigVersionRef.current = value.configVersion;
-    setSelectedAgent(value);
     const queued = queuedConfigVersionRef.current;
     queuedConfigVersionRef.current = undefined;
     if (queued && newerConfigVersion(queued, value.configVersion))
       void readAgent(value.agent.identity.pubkey).catch(() => undefined);
-    if (identity && relayUrl && workspaceId) {
-      const address = surfaceAddress(relayUrl, identity.publicKey,
-        '/workspace/:id/agents/:agentId', {
-          workspaceId, agentPubkey: value.agent.identity.pubkey,
-        });
-      // The one write: the Workspace records hear it and update the roster row.
-      void mobileSurfaceCache.write(address, value, isAgentDetailView);
-    }
+    // The one write: the Workspace records hear it and update the roster row.
+    setSelectedAgent(value);
   };
 
   const finishConfigWrite = (agentId: string) => {
@@ -405,7 +415,6 @@ export default function BuzzMembers({
     if (!workspaceId) return;
     let cancelled = false;
     let stopWatch: (() => void) | undefined;
-    let stopSurface: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
     void (async () => {
       const [nextIdentity, nextRelayUrl] = await Promise.all([
@@ -420,16 +429,26 @@ export default function BuzzMembers({
       });
       const cached = await mobileSurfaceCache.read(address, isWorkspaceView);
       if (cancelled) return;
-      setIdentity(nextIdentity);
+      if (profileAgentId && !cached) {
+        // A direct profile open needs both authority and detail, but one wire
+        // response writes the two existing keyed entries for later visits.
+        const profile = await monolithPhoneOperation('readAgentProfile', {
+          workspaceId, agentId: profileAgentId,
+        });
+        if (cancelled) return;
+        await Promise.all([
+          mobileSurfaceCache.write(address, profile.workspace, isWorkspaceView),
+          mobileSurfaceCache.write(surfaceAddress(nextRelayUrl, nextIdentity.publicKey,
+            '/workspace/:id/agents/:agentId', { workspaceId, agentPubkey: profileAgentId }),
+          profile.agent, isAgentDetailView),
+        ]);
+      }
+      if (cancelled) return;
+      setIdentity((current) => current?.publicKey === nextIdentity.publicKey ? current : nextIdentity);
       setRelayUrl(nextRelayUrl);
-      if (cached) setSurface(cached);
       // Every Members instance (the list under an agent profile included)
       // paints the one shared entry; rows and totals read the shared records,
       // which hear every write of this entry.
-      stopSurface = mobileSurfaceCache.subscribe(address, () => {
-        const next = mobileSurfaceCache.peek(address, isWorkspaceView);
-        if (!cancelled && next) setSurface(next);
-      });
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
       scheduler = new SurfaceRefreshScheduler({
         fetch: () => mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
@@ -437,7 +456,6 @@ export default function BuzzMembers({
           // Null: a newer write or an eviction overtook the read; the entry
           // listener already painted whatever is current.
           if (!value) return;
-          setSurface(value);
           setWorkspaceError(null);
         },
         onError: (reason) => setWorkspaceError(String(reason)),
@@ -448,7 +466,7 @@ export default function BuzzMembers({
       stopWatch = watch.release;
       await watch.ready;
       if (cancelled) return;
-      await scheduler.startAfter(Promise.resolve());
+      if (!profileAgentId) await scheduler.startAfter(Promise.resolve());
     })().catch((reason) => {
       if (!cancelled) setWorkspaceError(String(reason));
     });
@@ -456,12 +474,11 @@ export default function BuzzMembers({
       cancelled = true;
       agentRequestGenerationRef.current += 1;
       stopWatch?.();
-      stopSurface?.();
       scheduler?.dispose();
       schedulerRef.current = null;
       setRosterQuery('');
     };
-  }, [retryGeneration, workspaceId]);
+  }, [retryGeneration, workspaceId, profileAgentId]);
 
   const closeAgentSettings = () => {
     agentRequestGenerationRef.current += 1;
@@ -476,6 +493,7 @@ export default function BuzzMembers({
   const openAgent = async (agentPubkey: string) => {
     if (!identity || !relayUrl || !workspaceId) return;
     const generation = ++agentRequestGenerationRef.current;
+    setLocalAgentId(agentPubkey);
     setOpenModelAxis(null);
     setModelAppliesNote(null);
     setEditingAgentSoul(false);
@@ -487,13 +505,12 @@ export default function BuzzMembers({
     try {
       const cached = await mobileSurfaceCache.read(address, isAgentDetailView);
       if (generation !== agentRequestGenerationRef.current) return;
-      if (cached) setSelectedAgent(cached);
+      if (cached && profileRetryGeneration === 0) return;
       const value = await new RoomViewClient({ baseUrl: relayUrl, identity }).agent(
         workspaceId,
         agentPubkey,
       );
       if (generation !== agentRequestGenerationRef.current) return;
-      setSelectedAgent(value);
       await mobileSurfaceCache.write(address, value, isAgentDetailView);
     } catch (reason) {
       if (generation === agentRequestGenerationRef.current) setError(String(reason));

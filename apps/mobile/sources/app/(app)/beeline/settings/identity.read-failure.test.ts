@@ -216,14 +216,8 @@ vi.mock('@/push/push-level-storage', () => ({
 vi.mock('@/buzz/identity-live', () => ({ subscribeOwnIdentityChange: () => () => undefined }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
-vi.mock('@/buzz/surface-storage', () => ({
-  clearMobileSurfaceStorage: vi.fn(),
-  surfaceAddress: vi.fn(() => 'workspace-surface'),
-  mobileSurfaceCache: {
-    read: vi.fn(async () => null),
-    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
-  },
-}));
+vi.mock('@/buzz/surface-storage', async () =>
+  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     create: (styles: unknown) =>
@@ -257,6 +251,7 @@ vi.mock('react-native', async () => {
 // StyleSheet.create calls the screen's theme-taking factory as it imports.
 import { beelineThemes } from '@/buzz/groknight';
 import IdentitySettingsScreen from './identity';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
 const originalConsoleError = console.error;
 
@@ -293,6 +288,7 @@ function headings(renderer: ReactTestRenderer): string[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mobileSurfaceCache.clear();
   runtime.monolithEnabled = false;
   workspaceRead.workspaces.mockResolvedValue({ workspaces: [] });
   client.getGlobalPersonProfile.mockResolvedValue({ name: 'Captain' });
@@ -359,13 +355,13 @@ describe('Reproduction settings-identity-read-failure', () => {
         }),
     );
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('getManagedIdentity', {}));
+    await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('readIdentitySettings', {}));
     expect(renderer.root.findAllByProps({ testID: 'identity-face-mark' })).toHaveLength(0);
     expect(
       renderer.root.findByProps({ testID: 'identity-face-setting' }).findByType('BeelineMark'),
     ).toBeDefined();
     await act(async () => {
-      resolveFace({ face: 'fox', pushLevel: 'mine', handle: null, name: 'Captain' });
+      resolveFace({ identity: { personId: 'a'.repeat(64), face: 'fox', pushLevel: 'mine', handle: null, name: 'Captain' }, workspaces: { workspaces: [] } });
     });
     expect(renderer.root.findByProps({ testID: 'identity-face-mark' }).props).toMatchObject({
       seed: 'a'.repeat(64),
@@ -379,14 +375,11 @@ describe('Reproduction settings-identity-read-failure', () => {
 
   it('keeps the logo when the hosted identity has no face', async () => {
     runtime.monolithEnabled = true;
-    phoneOperation.mockResolvedValue({
-      face: null,
-      pushLevel: 'mine',
-      handle: null,
-      name: 'Captain',
-    });
+    phoneOperation.mockResolvedValue({ identity: {
+      personId: 'a'.repeat(64), face: null, pushLevel: 'mine', handle: null, name: 'Captain',
+    }, workspaces: { workspaces: [] } });
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('getManagedIdentity', {}));
+    await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('readIdentitySettings', {}));
     expect(renderer.root.findAllByProps({ testID: 'identity-face-mark' })).toHaveLength(0);
     expect(
       renderer.root.findByProps({ testID: 'identity-face-setting' }).findByType('BeelineMark'),

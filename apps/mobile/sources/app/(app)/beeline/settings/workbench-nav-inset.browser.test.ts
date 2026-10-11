@@ -26,6 +26,11 @@ describe.skipIf(!existsSync(CHROME))('Workbench above the Android navigation bar
         '@expo/vector-icons': 'export const Ionicons = () => null;',
         '@/buzz/runtime-config':
           "export const getBuzzRuntimeConfig = () => ({ monolithUrl: 'https://server.test', monolithEnabled: true });",
+        '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'human-dani' });
+          export const getEffectiveRelayUrl = async () => 'https://server.test';`,
+        '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
+          register: async () => () => undefined,
+        });`,
       },
       width: 390,
       height: 844,

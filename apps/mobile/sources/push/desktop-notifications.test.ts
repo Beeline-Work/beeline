@@ -27,6 +27,9 @@ vi.mock('@/sync/client-reset', () => ({
   },
 }));
 vi.mock('@/buzz/open-room-tracker', () => ({ getOpenBuzzChannelId: () => null }));
+vi.mock('@/buzz/managed-identity-surface', () => ({
+  readManagedIdentity: async () => ({ pushLevel: 'mine' }),
+}));
 vi.mock('./buzz-push-registration', () => ({ getBuzzPushEnabled: async () => true }));
 vi.mock('./push-level-storage', () => ({ loadStoredPushLevel: async () => 'mine' }));
 vi.mock('@/sync/transport/monolith-operation', () => ({

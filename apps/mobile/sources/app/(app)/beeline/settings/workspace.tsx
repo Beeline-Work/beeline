@@ -1,6 +1,6 @@
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -17,6 +17,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
 import { refreshChatList, useChatList, type ChatListKey } from '@/buzz/chat-list-store';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
@@ -144,7 +145,8 @@ export default function WorkspaceSettings() {
   const params = useLocalSearchParams<{ communityId?: string | string[] }>();
   const communityId = firstParam(params.communityId);
   const [client, setClient] = useState<BuzzClient | null>(null);
-  const [workspaceView, setWorkspaceView] = useState<WorkspaceView | null>(null);
+  const [workspaceAddress, setWorkspaceAddress] = useState<ReturnType<typeof surfaceAddress> | null>(null);
+  const workspaceView = useSurfaceSnapshot(workspaceAddress, isWorkspaceView);
   const paintedWorkspaceId = useRef<string | null>(null);
   const [chatListKey, setChatListKey] = useState<ChatListKey | null>(null);
   const [workspaceName, setWorkspaceName, workspaceDraft] = useTextDraft(`workspace-name:${communityId}`,
@@ -167,6 +169,9 @@ export default function WorkspaceSettings() {
   const chatList = useChatList(chatListKey, { onError: (reason) => setError(String(reason)) });
 
   const workspace = workspaceView?.workspace;
+  useEffect(() => {
+    if (workspace) workspaceDraft.initialize(workspace.name);
+  }, [workspace?.name, workspaceDraft]);
   const canManageWorkspace = workspaceView?.viewer.permissions.manage === true;
   const isWorkspaceOwner = isWorkspaceOwnerRole(workspaceView?.viewer.role);
   const rooms = useMemo<WorkspaceRoomSetting[]>(() => {
@@ -205,11 +210,10 @@ export default function WorkspaceSettings() {
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      let stopWorkspaceEntry: (() => void) | undefined;
       let workspaceScheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
       if (paintedWorkspaceId.current !== communityId) {
         setLoading(true);
-        setWorkspaceView(null);
+        setWorkspaceAddress(null);
         setChatListKey(null);
         paintedWorkspaceId.current = communityId ?? null;
       }
@@ -229,24 +233,14 @@ export default function WorkspaceSettings() {
             router.replace('/beeline/onboarding');
             return;
           }
-          const workspaceAddress = surfaceAddress(currentRelayUrl, currentIdentity.publicKey, '/workspace/:id', { workspaceId: communityId });
-          // Paint the shared entry, so a `workspace-changed` frame from another
-          // session repaints the open page without another read.
-          stopWorkspaceEntry = mobileSurfaceCache.subscribe(workspaceAddress, () => {
-            const next = mobileSurfaceCache.peek(workspaceAddress, isWorkspaceView);
-            if (!next) return;
-            setWorkspaceView(next);
-            workspaceDraft.initialize(next.workspace.name);
-            setLoading(false);
-          });
+          const address = surfaceAddress(currentRelayUrl, currentIdentity.publicKey, '/workspace/:id', { workspaceId: communityId });
+          setWorkspaceAddress(address);
           setChatListKey({
             relayUrl: currentRelayUrl, viewerPubkey: currentIdentity.publicKey, workspaceId: communityId,
           });
-          const cachedWorkspace = await mobileSurfaceCache.read(workspaceAddress, isWorkspaceView);
+          const cachedWorkspace = await mobileSurfaceCache.read(address, isWorkspaceView);
           if (cancelled) return;
           if (cachedWorkspace) {
-            setWorkspaceView(cachedWorkspace);
-            workspaceDraft.initialize(cachedWorkspace.workspace.name);
             setLoading(false);
           }
           const transport = new BuzzRigTransport(currentIdentity);
@@ -255,12 +249,10 @@ export default function WorkspaceSettings() {
           setClient(currentClient);
           const http = new RoomViewClient({ baseUrl: currentRelayUrl, identity: currentIdentity });
           workspaceScheduler = new SurfaceRefreshScheduler({
-            fetch: () => mobileSurfaceCache.fetch(workspaceAddress, isWorkspaceView, () => http.workspace(communityId)),
+            fetch: () => mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(communityId)),
             apply: (value) => {
               // Null: an eviction overtook the read; there is nothing to paint.
               if (!value) return;
-              setWorkspaceView(value);
-              workspaceDraft.initialize(value.workspace.name);
               setLoading(false);
               setError(null);
             },
@@ -279,7 +271,6 @@ export default function WorkspaceSettings() {
       })();
       return () => {
         cancelled = true;
-        stopWorkspaceEntry?.();
         workspaceScheduler?.dispose();
         workspaceSchedulerRef.current = null;
       };

@@ -201,14 +201,10 @@ vi.mock('@/push/push-level-storage', () => ({
 }));
 vi.mock('@/buzz/identity-live', () => ({ subscribeOwnIdentityChange: () => () => undefined }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
-vi.mock('@/buzz/surface-storage', () => ({
-  clearMobileSurfaceStorage: vi.fn(),
-  surfaceAddress: vi.fn(() => 'workspace-surface'),
-  mobileSurfaceCache: {
-    read: vi.fn(async () => null),
-    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
-  },
-}));
+vi.mock('@/buzz/surface-storage', async () => {
+  const { mockSurfaceStorage } = await import('@/test/mock-surface-storage');
+  return mockSurfaceStorage();
+});
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     create: (styles: unknown) =>

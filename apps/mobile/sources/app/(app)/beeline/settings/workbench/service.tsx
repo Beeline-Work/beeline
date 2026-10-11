@@ -1,8 +1,8 @@
-import React, { useCallback, useState } from 'react';
+import React, { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { StyleSheet } from 'react-native-unistyles';
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Typography } from '@/constants/Typography';
 import { PageHeader } from '@/components/buzz/PageHeader';
@@ -10,8 +10,8 @@ import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { readSharedWorkbench, useSharedWorkbench } from '@/buzz/workbench-surface';
 import { keyServiceGroups, squireConnectionState, type KeyServiceGroup } from '@/buzz/connectors-model';
-import type { WorkbenchView } from '@/buzz/workbench';
 
 function param(value: string | string[] | undefined) { return Array.isArray(value) ? value[0] : value; }
 const SQUIRE_VAULT_URL = 'https://trustysquire.ai/vault';
@@ -22,14 +22,13 @@ export default function ConnectorServiceScreen() {
   const viewerId = param(params.viewerId) ?? '';
   const service = param(params.service) ?? '';
   const insets = useSafeAreaInsets();
-  const [view, setView] = useState<WorkbenchView | null>(null);
+  const { value: view, error: loadError } = useSharedWorkbench({ workspaceId, viewerId });
   const [error, setError] = useState<string | null>(null);
   const [statusOpen, setStatusOpen] = useState(false);
-  const load = useCallback(async () => {
-    try { setView(await getWorkbenchSource().readWorkbench({ workspaceId, viewerId, refreshVault: true })); setError(null); }
+  const load = async () => {
+    try { await readSharedWorkbench({ workspaceId, viewerId }, { refresh: true }); setError(null); }
     catch { setError('Connections are unavailable right now'); }
-  }, [viewerId, workspaceId]);
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  };
 
   const groups = view ? keyServiceGroups(view, viewerId) : [];
   const group: KeyServiceGroup | undefined = groups.find(item => item.key === service);
@@ -41,7 +40,7 @@ export default function ConnectorServiceScreen() {
   return <View style={[styles.screen, { paddingTop: insets.top }]} testID="connector-service-screen">
     <PageHeader eyebrow="Connectors" prominent title={title} backAccessibilityLabel="Back to Connectors" onBack={() => router.back()} />
     <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}>
-      {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+      {error || loadError ? <Text accessibilityRole="alert" style={styles.error}>{error ?? 'Connections are unavailable right now'}</Text> : null}
       {isSquire ? <>
         <Text style={styles.explainer}>Trusty Squire signs up and signs in to websites for your agents, so you never do the manual login. It keeps keys it obtains in its vault.</Text>
         <SettingsRow title="Status" value={offline ? 'Offline' : 'Connected'} valueTone={offline ? 'danger' : undefined}

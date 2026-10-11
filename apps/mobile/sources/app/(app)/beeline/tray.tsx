@@ -25,9 +25,8 @@ import {
   holdNeedsYou,
   loadNeedsYouList,
   loadSavedList,
+  loadTrayList,
   removeNeedsYou,
-  seedNeedsYouList,
-  seedSavedList,
   subscribeTrayGap,
   updateSavedList,
   useTrayList,
@@ -145,25 +144,17 @@ export default function TrayScreen() {
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     if (!workspaceId) return;
     const generation = ++loadGenerationRef.current;
     savedScroll.current = false;
     setError(null);
     setNow(Date.now());
-    // Each section reads on its own: a failed Saved read must not hide what
-    // needs the person, and the other way round.
-    const [needsResult, savedResult] = await Promise.allSettled([
-      loadNeedsYouList(workspaceId),
-      loadSavedList(workspaceId),
-    ]);
-    const results = [needsResult, savedResult];
+    const result = await Promise.allSettled([loadTrayList(workspaceId, force)]).then(([answer]) => answer);
     if (generation !== loadGenerationRef.current) return;
-    // Once membership is lost, only a refresh that reads both sections shows
-    // access is back; any other failure keeps the No Workspace message.
     if (
-      results.some((result) => result.status === 'rejected' && lostWorkspace(result.reason)) ||
-      (lostWorkspaceRef.current === workspaceId && results.some((result) => result.status === 'rejected'))
+      result.status === 'rejected' &&
+      (lostWorkspace(result.reason) || lostWorkspaceRef.current === workspaceId)
     ) {
       lostWorkspaceRef.current = workspaceId;
       setLostWorkspaceId(workspaceId);
@@ -177,10 +168,11 @@ export default function TrayScreen() {
     }
     lostWorkspaceRef.current = null;
     setLostWorkspaceId(null);
-    const failed = [needsResult, savedResult].find((result) => result.status === 'rejected');
-    if (failed?.status === 'rejected')
-      setError(failed.reason instanceof Error ? failed.reason.message : String(failed.reason));
-    if (needsResult.status === 'fulfilled' || savedResult.status === 'fulfilled')
+    if (result.status === 'rejected')
+      setError(result.reason instanceof Error ? result.reason.message : String(result.reason));
+    else if (result.value.needsError || result.value.savedError)
+      setError(result.value.needsError ?? result.value.savedError ?? null);
+    if (result.status === 'fulfilled')
       loadedWorkspaceRef.current = workspaceId;
     setLoading(false);
   }, [workspaceId]);
@@ -198,7 +190,11 @@ export default function TrayScreen() {
     void load();
   }), [load]);
 
-  useEffect(() => workspaceId ? subscribeTrayGap(workspaceId, () => { void load(); }) : undefined,
+  useEffect(() => workspaceId ? subscribeTrayGap(workspaceId, (reason) => {
+    if (reason === 'needs-you-gap') void loadNeedsYouList(workspaceId).catch(() => load(true));
+    else if (reason === 'bookmark-gap') void loadSavedList(workspaceId).catch(() => load(true));
+    else void load(true);
+  }) : undefined,
     [workspaceId, load]);
 
   const loadMoreSaved = useCallback(async () => {
@@ -214,20 +210,6 @@ export default function TrayScreen() {
       loadingSaved.current = false;
     }
   }, [workspaceId, savedNext]);
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    let cancelled = false;
-    void (async () => {
-      const [savedNeeds, savedBookmarks] = await Promise.all([
-        seedNeedsYouList(workspaceId),
-        seedSavedList(workspaceId),
-      ]);
-      if (cancelled) return;
-      if (savedNeeds || savedBookmarks) setLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, [workspaceId]);
 
   // A held tray paints its last projection immediately. Socket gaps signal
   // one covering read through the roomless registration above.
@@ -750,7 +732,7 @@ export default function TrayScreen() {
       <PageHeader backAccessibilityLabel="Back to Rooms" eyebrow={workspaceName ?? 'Workspace'}
         onBack={desktop ? undefined : () => router.back()} prominent testID="tray-header" title="Tray" />
       {error ? (
-        <Pressable accessibilityRole="button" onPress={() => void load()} style={styles.error}>
+        <Pressable accessibilityRole="button" onPress={() => void load(true)} style={styles.error}>
           <Text style={styles.errorText}>{error} · Retry</Text>
         </Pressable>
       ) : null}

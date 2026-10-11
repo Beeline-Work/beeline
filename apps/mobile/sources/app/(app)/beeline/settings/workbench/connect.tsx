@@ -12,12 +12,12 @@ import { PulsingText } from '@/components/buzz/PulsingText';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { useInstallObserver } from '@/buzz/use-observed-resource';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { useSharedWorkbench } from '@/buzz/workbench-surface';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import {
   connectorSignInLocationLine,
   type ConnectorInstallState,
-  type WorkbenchHelper,
 } from '@/buzz/workbench';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -81,7 +81,9 @@ function ConnectToolFlow() {
   const offerId = firstParam(params.offerId);
   const roomId = firstParam(params.roomId);
   const offerCeremony = Boolean(offerId && pairedConnectorId && roomId);
-  const [helpers, setHelpers] = useState<readonly WorkbenchHelper[] | null>(null);
+  const { value: workbench, error: helperLoadError } = useSharedWorkbench(
+    offerCeremony ? null : { workspaceId, viewerId });
+  const helpers = workbench?.helpers ?? null;
   const [install, setInstall] = useState<ConnectorInstallState | null>(null);
   const [selectedHelperName, setSelectedHelperName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,22 +94,6 @@ function ConnectToolFlow() {
   useEffect(() => { if (pairedConnectorId) setObservedId(pairedConnectorId); }, [pairedConnectorId]);
   const pairedHelperRef = useRef<string | null>(null);
   const autoPairRef = useRef(false);
-
-  useEffect(() => {
-    if (offerCeremony) return;
-    let cancelled = false;
-    void getWorkbenchSource()
-      .listHelpers({ workspaceId })
-      .then((result) => {
-        if (!cancelled) setHelpers(result);
-      })
-      .catch(() => {
-        if (!cancelled) setError('Helpers are unavailable right now');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [offerCeremony, workspaceId]);
 
   const stopObserving = useCallback(() => setObservedId(undefined), []);
   const startObserving = useCallback((id: string) => {
@@ -343,10 +329,10 @@ function ConnectToolFlow() {
             ) : null}
           </View>
         ) : null}
-        {error ? (
+        {error || helperLoadError ? (
           <View>
             <Text accessibilityRole="alert" style={styles.errorText} testID="connect-error">
-              {error}
+              {error ?? 'Helpers are unavailable right now'}
             </Text>
             {pairedHelperRef.current || observedId ? (
               <Button label="Retry" onPress={retry} testID="connect-pair-retry" variant="secondary" />

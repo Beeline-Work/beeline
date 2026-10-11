@@ -10,6 +10,12 @@ const workspace = vi.hoisted(() => ({
 }));
 
 vi.mock('@/buzz/wallet-workspace', () => ({ resolveWalletWorkspaceId: workspace.resolve }));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  getEffectiveRelayUrl: async () => 'https://relay.test',
+  loadBuzzIdentity: async () => ({ publicKey: 'human-dani' }),
+}));
+vi.mock('@/buzz/surface-storage', async () =>
+  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
 vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'workspace-active' }));
 
 vi.mock('expo-router', () => ({
@@ -123,6 +129,7 @@ import { MockWalletSource } from '@/buzz/wallet-source.mock';
 import { setWalletSource } from '@/buzz/wallet-source';
 import { MonolithPhoneOperationError } from '@/sync/transport/monolith-operation';
 import { WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
 const originalConsoleError = console.error;
 
@@ -142,6 +149,7 @@ afterAll(() => vi.restoreAllMocks());
 describe('Wallet screens (mock §Screens, pass 4)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mobileSurfaceCache.clear();
     route.workspaceId = 'workspace-1';
     workspace.resolve.mockImplementation(async (id?: string) => id ?? 'workspace-1');
     setWalletSource(new MockWalletSource());

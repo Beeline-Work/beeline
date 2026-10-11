@@ -65,6 +65,11 @@ describe('wallet connect in the desktop web renderer', () => {
           '@/auth/auth-session': 'export const authSessionOptions = () => ({});',
           '@/buzz/wallet-workspace': 'export const resolveWalletWorkspaceId = async id => id || "workspace-1";',
           '@/buzz/use-active-community': 'export const useActiveCommunityId = () => "workspace-1";',
+          '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'viewer' });
+            export const getEffectiveRelayUrl = async () => 'https://monolith.test';`,
+          '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
+            register: async () => () => undefined,
+          });`,
           '@/sync/transport/monolith-operation': `const wallet = () => ({ address: '0xabc', solanaAddress: null, totalUsd: '$0.00', coins: [], chains: [], sponsorship: null,
               delegation: { active: globalThis.__server.active, expiresAt: null } });
             export class MonolithPhoneOperationError extends Error {}

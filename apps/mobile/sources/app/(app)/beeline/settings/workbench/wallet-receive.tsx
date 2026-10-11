@@ -1,5 +1,5 @@
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -7,8 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { WalletQr } from '@/components/buzz/WalletQr';
-import { getWalletSource } from '@/buzz/wallet-source';
-import type { WalletView } from '@beeline/api-contract/wallet';
+import { useSharedWallet } from '@/buzz/wallet-surface';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -25,16 +24,9 @@ export default function WalletReceiveScreen() {
   const params = useLocalSearchParams<{ workspaceId?: string | string[] }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const insets = useSafeAreaInsets();
-  const [wallet, setWallet] = useState<WalletView | null>(null);
+  const { value: wallet } = useSharedWallet(workspaceId);
   const address = wallet?.address ?? '';
   const solanaAddress = wallet?.solanaAddress ?? null;
-
-  useEffect(() => {
-    void getWalletSource()
-      .readWallet({ workspaceId })
-      .then(setWallet)
-      .catch(() => setWallet(null));
-  }, [workspaceId]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]} testID="wallet-receive-screen">

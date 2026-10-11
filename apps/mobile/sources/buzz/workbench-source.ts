@@ -43,6 +43,10 @@ export interface WorkbenchSource {
     viewerId: string;
     refreshVault?: boolean;
   }): Promise<WorkbenchView>;
+  readConnectApp(input: { workspaceId: string; viewerId: string }): Promise<{
+    view?: WorkbenchView; suggestions?: WorkbenchAppSearchResult;
+    workbenchError?: string; suggestionsError?: string;
+  }>;
   listHelpers(input: { workspaceId: string }): Promise<readonly WorkbenchHelper[]>;
   /** Pair a machine's helper: returns the connector whose install is polled. */
   pairConnector(input: {
@@ -164,6 +168,15 @@ function toSteps(
  * through the session's own viewer on the server.
  */
 export class MonolithWorkbenchSource implements WorkbenchSource {
+  async readConnectApp(input: { workspaceId: string; viewerId: string }) {
+    const result = await monolithPhoneOperation('readConnectApp', { workspaceId: input.workspaceId });
+    return {
+      ...(result.workbench ? { view: await this.readWorkbench(input, result.workbench) } : {}),
+      ...(result.suggestions ? { suggestions: result.suggestions } : {}),
+      ...(result.workbenchError ? { workbenchError: result.workbenchError } : {}),
+      ...(result.suggestionsError ? { suggestionsError: result.suggestionsError } : {}),
+    };
+  }
   async searchApps(input: { query: string }): Promise<WorkbenchAppSearchResult> {
     return monolithPhoneOperation('searchWorkbenchApps', input);
   }
@@ -183,8 +196,8 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
     workspaceId: string;
     viewerId: string;
     refreshVault?: boolean;
-  }): Promise<WorkbenchView> {
-    const dto = await monolithPhoneOperation('readWorkbench', {
+  }, supplied?: WorkbenchDto): Promise<WorkbenchView> {
+    const dto = supplied ?? await monolithPhoneOperation('readWorkbench', {
       workspaceId: input.workspaceId,
       ...(input.refreshVault ? { refreshVault: true } : {}),
     });

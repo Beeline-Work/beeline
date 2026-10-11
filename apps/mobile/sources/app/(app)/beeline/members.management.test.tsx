@@ -1218,6 +1218,11 @@ describe('Members workspace management', () => {
       ...state.agent,
       catalog: state.agent.catalog.filter((axis: any) => axis.id !== 'fast-mode'),
     };
+    const { mobileSurfaceCache, surfaceAddress } = await import('@/buzz/surface-storage');
+    await act(async () => mobileSurfaceCache.write(
+      surfaceAddress('https://relay.test', VIEWER, '/workspace/:id/agents/:agentId',
+        { workspaceId: WORKSPACE, agentPubkey: AGENT }), state.agent,
+      (value: unknown): value is typeof state.agent => Boolean(value)));
     const unsupported = await render();
     await openAgentManagement(unsupported);
     expect(unsupported.root.findAllByProps({ testID: 'fast-mode-setting' })).toHaveLength(0);

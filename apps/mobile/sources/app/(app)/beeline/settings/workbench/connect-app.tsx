@@ -15,7 +15,7 @@ import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { keyServiceGroups, type KeyServiceGroup } from '@/buzz/connectors-model';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import type { WorkbenchAppSearchResult } from '@beeline/api-contract/workbench';
-import type { WorkbenchApp, WorkbenchHelper } from '@/buzz/workbench';
+import { useSharedConnectApp } from '@/buzz/workbench-surface';
 import { openAppSignIn } from '@/buzz/app-sign-in';
 import { appBoardColors } from '@/buzz/app-board-style';
 import { appErrorCopy } from '@/buzz/app-error-copy';
@@ -30,25 +30,19 @@ export default function ConnectAppScreen() {
   const viewerId = first(params.viewerId) ?? '';
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useTextDraft(`app-search:${workspaceId}`, first(params.query) ?? '', viewerId);
-  const [apps, setApps] = useState<readonly WorkbenchApp[]>([]);
-  const [keyGroups, setKeyGroups] = useState<readonly KeyServiceGroup[]>([]);
+  const { view, suggestions, error: ownerError } = useSharedConnectApp({ workspaceId, viewerId });
+  const apps = view?.apps ?? [];
+  const helpers = view?.helpers ?? [];
+  const keyGroups: readonly KeyServiceGroup[] = view ? keyServiceGroups(view, viewerId) : [];
   const [searchResults, setSearchResults] = useState<WorkbenchAppSearchResult>([]);
   const [resultsQuery, setResultsQuery] = useState<string | null>(null);
-  const [helpers, setHelpers] = useState<readonly WorkbenchHelper[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showOther, setShowOther] = useState(false);
 
-  useEffect(() => {
-    let live = true;
-    void getWorkbenchSource().readWorkbench({ workspaceId, viewerId }).then(view => {
-      if (live) { setApps(view.apps); setHelpers(view.helpers); setKeyGroups(keyServiceGroups(view, viewerId)); }
-    }).catch(() => { if (live) setError('Apps are unavailable right now'); });
-    return () => { live = false; };
-  }, [viewerId, workspaceId]);
-
   const searchQuery = query.trim();
   useEffect(() => {
+    if (!searchQuery) return;
     let live = true;
     const timer = setTimeout(() => {
       void getWorkbenchSource().searchApps({ query: searchQuery }).then(results => {
@@ -56,10 +50,10 @@ export default function ConnectAppScreen() {
       }).catch(() => {
         if (live) { setSearchResults([]); setResultsQuery(searchQuery); setError('App search is unavailable right now'); }
       });
-    }, searchQuery ? 200 : 0);
+    }, 200);
     return () => { live = false; clearTimeout(timer); };
   }, [searchQuery]);
-  const filtered = resultsQuery === searchQuery ? searchResults : [];
+  const filtered = searchQuery ? resultsQuery === searchQuery ? searchResults : [] : suggestions ?? [];
   const byKey = new Map<string, WorkbenchAppSearchResult[number][]>();
   for (const result of filtered) byKey.set(result.appKey, [...(byKey.get(result.appKey) ?? []), result]);
   const recommendations = [...byKey.values()].map(options =>
@@ -126,7 +120,7 @@ export default function ConnectAppScreen() {
           </> : null}
         </> : null}
       </View>
-      {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+      {error || ownerError ? <Text accessibilityRole="alert" style={styles.error}>{error ?? 'Apps are unavailable right now'}</Text> : null}
     </ScrollView>
   </View>;
 }

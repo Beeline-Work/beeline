@@ -248,6 +248,7 @@ function serve({
   bookmarks = [] as unknown[],
 }: { needs?: unknown[]; bookmarks?: unknown[] } = {}) {
   phoneOperation.mockImplementation(async (name: string) => {
+    if (name === 'readTray') return { needs: { items: needs }, saved: { bookmarks } };
     if (name === 'readNeedsYou') return { items: needs };
     if (name === 'listMessageBookmarks') return { bookmarks };
     if (name === 'clearNeedsYouSection') {
@@ -378,8 +379,7 @@ describe('Tray opened without a communityId', () => {
     workspaceSet.active = 'ws';
     workspaceSet.workspaces = [{ id: 'other' }, { id: 'ws' }];
     const tree = await renderTray();
-    expect(phoneOperation).toHaveBeenCalledWith('readNeedsYou', { workspaceId: 'ws' });
-    expect(phoneOperation).toHaveBeenCalledWith('listMessageBookmarks', { workspaceId: 'ws' });
+    expect(phoneOperation).toHaveBeenCalledWith('readTray', { workspaceId: 'ws' });
     expect(tree.root.findAllByProps({ testID: 'tray-loader' })).toHaveLength(0);
     expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
   });
@@ -522,6 +522,7 @@ describe('Bookmarks mobile open', () => {
   it('keeps a live removal while an older saved page finishes loading', async () => {
     let finishPage!: (value: { bookmarks: ReturnType<typeof bookmark>[] }) => void;
     phoneOperation.mockImplementation((name: string, input?: { before?: string }) => {
+      if (name === 'readTray') return Promise.resolve({ needs: { items: [] }, saved: { bookmarks: [bookmark()], next: 'cursor' } });
       if (name === 'readNeedsYou') return Promise.resolve({ items: [] });
       if (name === 'listMessageBookmarks') return input?.before
         ? new Promise((resolve) => { finishPage = resolve; })
@@ -543,13 +544,15 @@ describe('Bookmarks mobile open', () => {
     expect(tree.root.findAllByProps({ testID: 'bookmark-msg-2' })).toHaveLength(0);
     expect(tree.root.findAllByProps({ testID: 'bookmark-msg-3' }).length).toBeGreaterThan(0);
     expect(phoneOperation.mock.calls.filter(([name]) => name === 'listMessageBookmarks'))
-      .toHaveLength(2);
+      .toHaveLength(1);
   });
 
   it('keeps a live removal when an older covering read finishes afterward', async () => {
     let finishSaved!: (value: { bookmarks: ReturnType<typeof bookmark>[] }) => void;
     phoneOperation.mockImplementation((name: string) => name === 'readNeedsYou'
       ? Promise.resolve({ items: [] })
+      : name === 'readTray'
+        ? new Promise((resolve) => { finishSaved = (value) => resolve({ needs: { items: [] }, saved: value }); })
       : name === 'listMessageBookmarks'
         ? new Promise((resolve) => { finishSaved = resolve; })
         : Promise.resolve(undefined));
@@ -688,6 +691,7 @@ describe('Needs-you badge and tray', () => {
   /** The server: `needs` is what a list read sees; the count is its length. */
   function serveNeeds(state: { needs: unknown[]; failClear?: boolean }) {
     phoneOperation.mockImplementation(async (name: string, input: { messageId?: string }) => {
+      if (name === 'readTray') return { needs: { items: state.needs }, saved: { bookmarks: [] } };
       if (name === 'readNeedsYou') return { items: state.needs };
       if (name === 'countNeedsYou') return { count: state.needs.length };
       if (name === 'listMessageBookmarks') return { bookmarks: [] };
@@ -986,6 +990,7 @@ describe('Needs-you badge and tray', () => {
     refused.catch(() => undefined);
     const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
     phoneOperation.mockImplementation(async (name: string) => {
+      if (name === 'readTray') return { needs: { items: server.needs }, saved: { bookmarks: [] } };
       if (name === 'readNeedsYou') return { items: server.needs };
       if (name === 'countNeedsYou') return { count: server.needs.length };
       if (name === 'listMessageBookmarks') return { bookmarks: [] };
@@ -1535,11 +1540,11 @@ it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN â
         export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
         export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });
         export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
-      '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name) => name === 'readNeedsYou' ? { items: [] } : { bookmarks: [{
+      '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name) => name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [{
         messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'Room', roomKind: 'room',
         messageCreatedAt: Math.floor(Date.now()/1000)-7200, bookmarkedAt: Math.floor(Date.now()/1000)-120,
         available: true, author: { name: 'Avery' }, text: 'Bookmarked line'
-      }] };`,
+      }] } } : undefined;`,
       '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
       '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
       '@/sync/transport/live-connection':
@@ -1565,13 +1570,13 @@ function clearProofShims(mobile: string) {
       export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
     '@/sync/transport/monolith-operation': `const now = Math.floor(Date.now() / 1000);
       const base = { workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'launch', roomKind: 'room', createdAt: now - 600, author: { name: 'Avery' } };
-      export const monolithPhoneOperation = async (name) => name === 'readNeedsYou' ? { items: [
+      export const monolithPhoneOperation = async (name) => name === 'readTray' ? { needs: { items: [
         { ...base, messageId: 'grant-1', text: 'BBC asks to run git push', approval: { kind: 'grant', actor: 'BBC', ask: 'asks to run', subject: 'git push', literal: true } },
         ...(!location.search.includes('approvalOnly=1') ? [{ ...base, messageId: 'ask-1', text: 'can you confirm the review note?', expiresAt: now + 80000 }] : []),
-      ] } : name === 'listMessageBookmarks' ? { bookmarks: [{
+      ] }, saved: { bookmarks: [{
         messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'Room', roomKind: 'room',
         messageCreatedAt: now - 7200, bookmarkedAt: now - 120, available: !location.search.includes('remove=1'), author: { name: 'Avery' }, text: 'Bookmarked line'
-      }] } : undefined;`,
+      }] } } : undefined;`,
     '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
     '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
     '@/sync/transport/live-connection':

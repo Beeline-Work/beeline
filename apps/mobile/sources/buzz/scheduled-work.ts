@@ -1,15 +1,19 @@
-import { useCallback, useState } from 'react';
-import { router, useFocusEffect, type Href } from 'expo-router';
+import { useCallback, useEffect, useMemo } from 'react';
 import {
   cornerShortTitle,
   type RoomScheduleView,
   type RoomSubscriptionView,
+  type ScheduledWorkResult,
 } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
 import { workflowDisplayName } from '@/buzz/workflow-graph';
-import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
+import { useSharedSurface } from './use-shared-surface';
+import { sharedLiveConnection } from '@/sync/transport/live-connection';
+import { subscribeClientReset } from '@/sync/client-reset';
+import type { SurfaceCacheAddress } from '@beeline/buzz-client';
 
 
 const NEXT_RUN = new Intl.DateTimeFormat(undefined, {
@@ -120,72 +124,80 @@ export type ScheduledWork = {
   subscriptions: readonly RoomSubscriptionView[];
 };
 
+const isScheduledWork = (value: unknown): value is ScheduledWorkResult => {
+  if (!value || typeof value !== 'object') return false;
+  const view = value as Partial<ScheduledWorkResult>;
+  return (view.roomName === null || typeof view.roomName === 'string') &&
+    Array.isArray(view.agentNames) && Array.isArray(view.schedules) &&
+    Array.isArray(view.subscriptions);
+};
+const scheduledWorkAddress = (relay: string, pubkey: string, roomId: string) =>
+  surfaceAddress(relay, pubkey, '/room/:id/scheduled-work', { roomId });
+const watched = new Map<string, { address: SurfaceCacheAddress; stop?: () => void }>();
+subscribeClientReset(() => {
+  for (const entry of watched.values()) entry.stop?.();
+  watched.clear();
+});
+function holdScheduledWork(roomId: string, address: SurfaceCacheAddress) {
+  if (watched.has(roomId)) return;
+  const entry: { address: SurfaceCacheAddress; stop?: () => void } = { address };
+  watched.set(roomId, entry);
+  // A route can unmount while its projection stays held. Keep its watch with
+  // that owner, so another visit never needs a focus reconciliation.
+  void sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
+    if (!('monolithLive' in event)) return;
+    const live = event.monolithLive;
+    if (live.type === 'invalidate' &&
+        ((live.roomId === roomId &&
+          ['postgres:agent_schedules', 'postgres:agent_subscriptions', 'postgres:memberships'].includes(live.reason)) ||
+         (live.roomId === '' && live.reason === 'reconnect')))
+      void mobileSurfaceCache.fetch(address, isScheduledWork,
+        () => monolithPhoneOperation('readScheduledWork', { roomId })).catch(() => undefined);
+  }).then((stop) => { if (watched.get(roomId) === entry) entry.stop = stop; else stop(); },
+    () => { watched.delete(roomId); });
+  if (watched.size > 16) {
+    const [oldRoom, oldEntry] = watched.entries().next().value!;
+    watched.delete(oldRoom); oldEntry.stop?.();
+  }
+}
+
 /**
- * One read of a Room's schedules and subscriptions, with the Room's name and
- * agent names, for the Schedules and subscriptions list and each entry's page.
- * Room managers only; reloads when the page regains focus.
+ * One server projection and one registry entry shared by the list and details.
+ * A held answer paints without a focus read; Room changes and reconnects reconcile it.
  */
 export function useScheduledWork(roomId: string | undefined) {
-  const [work, setWork] = useState<ScheduledWork | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    if (!roomId) {
-      setError('Schedules target is missing.');
-      setLoading(false);
-      return;
-    }
-    try {
-      const identity = await loadBuzzIdentity();
-      if (!identity) {
-        router.replace('/beeline/onboarding' as Href);
-        return;
-      }
-      const relayUrl = await getEffectiveRelayUrl();
-      const room = await new RoomViewClient({ baseUrl: relayUrl, identity }).room(roomId);
-      if (!room.viewer.permissions.manage) throw new Error('Room manager required');
-      const [listed, subscribed] = await Promise.all([
-        monolithPhoneOperation('listRoomSchedules', { roomId }),
-        monolithPhoneOperation('listRoomSubscriptions', { roomId }),
-      ]);
-      setWork({
-        roomName: room.room.name,
-        agentNames: new Map(
-          room.members
-            .filter((member) => member.identity.kind === 'agent')
-            .map((member) => [member.identity.pubkey, member.identity.name] as const),
-        ),
-        schedules: listed.schedules,
-        subscriptions: subscribed.subscriptions,
-      });
-      setError(null);
-    } catch (caught) {
-      setError(`Could not load schedules and subscriptions: ${String(caught)}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [roomId]);
-
-  useFocusEffect(
-    useCallback(() => {
-      setLoading(true);
-      void reload();
-    }, [reload]),
-  );
-
-  const retry = useCallback(() => {
-    setLoading(true);
-    void reload();
-  }, [reload]);
-
-  return { work, setWork, loading, error, setError, retry };
+  const request = useCallback(() => monolithPhoneOperation('readScheduledWork', { roomId: roomId! }), [roomId]);
+  const { value, address, loading, error, setError, refresh } = useSharedSurface(
+    '/room/:id/scheduled-work', roomId ? { roomId } : undefined, isScheduledWork, request, Boolean(roomId));
+  useEffect(() => { if (roomId && address) holdScheduledWork(roomId, address); }, [address, roomId]);
+  const work = useMemo<ScheduledWork | null>(() => value && ({
+    roomName: value.roomName,
+    agentNames: new Map(value.agentNames),
+    schedules: value.schedules,
+    subscriptions: value.subscriptions,
+  }), [value]);
+  return { work, loading: loading && !value, error: roomId ? error : 'Schedules target is missing.',
+    setError, retry: () => { void refresh(); } };
 }
 
 export async function stopSchedule(roomId: string, scheduleId: string): Promise<void> {
   await monolithPhoneOperation('deleteRoomSchedule', { roomId, scheduleId });
+  const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
+  if (!identity) return;
+  const address = scheduledWorkAddress(relay, identity.publicKey, roomId);
+  const current = mobileSurfaceCache.peek(address, isScheduledWork);
+  if (current) await mobileSurfaceCache.write(address, {
+    ...current, schedules: current.schedules.filter((item) => item.id !== scheduleId),
+  }, isScheduledWork);
 }
 
 export async function stopSubscription(roomId: string, subscriptionId: string): Promise<void> {
   await monolithPhoneOperation('deleteRoomSubscription', { roomId, subscriptionId });
+  const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
+  if (!identity) return;
+  const address = scheduledWorkAddress(relay, identity.publicKey, roomId);
+  const current = mobileSurfaceCache.peek(address, isScheduledWork);
+  if (current) await mobileSurfaceCache.write(address, {
+    ...current, subscriptions: current.subscriptions.filter((item) => item.id !== subscriptionId),
+  }, isScheduledWork);
 }

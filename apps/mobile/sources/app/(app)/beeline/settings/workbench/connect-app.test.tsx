@@ -17,6 +17,12 @@ vi.mock('expo-router', () => ({
 }));
 
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  getEffectiveRelayUrl: async () => 'https://relay.test',
+  loadBuzzIdentity: async () => ({ publicKey: 'human-dani' }),
+}));
+vi.mock('@/buzz/surface-storage', async () =>
+  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
 
 vi.mock('@/components/buzz/Button', async () => {
   const R = await import('react');
@@ -98,6 +104,7 @@ vi.mock('@/components/buzz/PulsingText', async () => {
 import ConnectAppScreen from './connect-app';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
 const originalConsoleError = console.error;
 
@@ -117,6 +124,7 @@ afterEach(() => vi.clearAllMocks());
 
 let source: MockWorkbenchSource;
 beforeEach(() => {
+  mobileSurfaceCache.clear();
   source = new MockWorkbenchSource();
   setWorkbenchSource(source);
 });

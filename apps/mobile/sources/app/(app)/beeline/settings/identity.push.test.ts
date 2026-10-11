@@ -217,14 +217,8 @@ vi.mock('@/push/push-level-storage', () => {
 vi.mock('@/buzz/identity-live', () => ({ subscribeOwnIdentityChange: () => () => undefined }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
-vi.mock('@/buzz/surface-storage', () => ({
-  clearMobileSurfaceStorage: vi.fn(),
-  surfaceAddress: vi.fn(() => 'workspace-surface'),
-  mobileSurfaceCache: {
-    read: vi.fn(async () => null),
-    fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
-  },
-}));
+vi.mock('@/buzz/surface-storage', async () =>
+  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     create: (styles: unknown) =>
@@ -260,6 +254,7 @@ vi.mock('react-native', async () => {
 // StyleSheet.create calls the screen's theme-taking factory as it imports.
 import { beelineThemes } from '@/buzz/groknight';
 import IdentitySettingsScreen from './identity';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { openExternalUrl } from '@/utils/open-external-url';
 
 const originalConsoleError = console.error;
@@ -302,6 +297,7 @@ async function renderScreen(): Promise<ReactTestRenderer> {
 describe('identity settings push row honesty', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mobileSurfaceCache.clear();
     runtime.monolithEnabled = false;
     pushModule.getBuzzPushEnabled.mockResolvedValue(true);
     pushModule.getBuzzPushRegistrationState.mockResolvedValue(null);

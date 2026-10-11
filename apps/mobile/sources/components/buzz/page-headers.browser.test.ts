@@ -20,8 +20,7 @@ function shims(mobile: string): Record<string, string> {
     '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
     export const monolithPhoneOperation = async (name) =>
       name === 'readNeedsYou' ? { items: [] }
-        : name === 'listRoomSchedules' ? { schedules: [] }
-        : name === 'listRoomSubscriptions' ? { subscriptions: [] }
+        : name === 'readScheduledWork' ? { roomName: 'alpha', agentNames: [], schedules: [], subscriptions: [] }
         : name === 'listRoomWorkflowRuns' ? { workflows: [] } : { bookmarks: [] };
     export const phoneOperationFailureReason = (reason) => String(reason);`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {
@@ -37,8 +36,26 @@ function shims(mobile: string): Record<string, string> {
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzViewerPubkey = async () => 'a'.repeat(64);
     export const loadBuzzIdentity = async () => ({ publicKey: '${'a'.repeat(64)}' });`,
-    '@/buzz/surface-storage': `export const surfaceAddress = () => 'address';
-    export const mobileSurfaceCache = { read: async () => null, write: async () => undefined };`,
+    '@/buzz/surface-storage': `export const surfaceAddress = (_relay, _viewer, endpoint) => endpoint;
+    const workspace = { workspace: { id: 'workspace-1', name: 'Workspace', visibility: 'public' },
+      viewer: { role: 'owner', permissions: { manage: true } }, managerSettings: { rooms: [] } };
+    const values = new Map([['/workspace/:id', workspace]]);
+    const listeners = new Map();
+    const write = (address, value) => {
+      values.set(address, value);
+      for (const listener of listeners.get(address) ?? []) listener();
+      return value;
+    };
+    export const mobileSurfaceCache = {
+      read: async (address) => values.get(address) ?? null,
+      peek: (address) => values.get(address) ?? null,
+      subscribe: (address, listener) => {
+        const set = listeners.get(address) ?? new Set(); set.add(listener); listeners.set(address, set);
+        return () => set.delete(listener);
+      },
+      fetch: async (address, _guard, request) => write(address, await request()),
+      write: async (address, value) => { write(address, value); },
+    };`,
     '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({
       readWorkbench: () => new Promise(() => undefined) });`,
     '@/buzz/wallet-source': 'export const getWalletSource = () => ({});',

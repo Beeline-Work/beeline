@@ -2,6 +2,16 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  getEffectiveRelayUrl: async () => 'https://relay.test',
+  loadBuzzIdentity: async () => ({ publicKey: 'human-dani' }),
+}));
+vi.mock('@/buzz/surface-storage', async () =>
+  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
+  register: async () => () => undefined,
+}) }));
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import AppDetailScreen from './app';
@@ -28,6 +38,7 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
 
 let source: MockWorkbenchSource;
 beforeEach(() => {
+  mobileSurfaceCache.clear();
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   source = new MockWorkbenchSource();
   source.setApps([{ id: 'app-slack', key: 'slack', name: 'Slack', domain: 'slack.com', transport: 'composio', status: 'connected', accountLabel: 'lunchbox', workspaceName: 'Tubing Crew', useCount: 1, lastUse: { agentId: 'monarch', agentName: 'Monarch', roomId: 'launch', roomName: 'launch', usedAt: 60 * 60 * 10 + 3 * 60 } }]);

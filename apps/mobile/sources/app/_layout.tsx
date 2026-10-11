@@ -74,7 +74,8 @@ import {
   subscribeStoredPushLevel,
 } from '@/push/push-level-storage';
 import type { PushLevel } from '@beeline/api-contract/phone';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { readIdentitySettings } from '@/buzz/managed-identity-surface';
+import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
@@ -287,11 +288,13 @@ export default function RootLayout() {
         const pushLevel =
           heard ?? (identity ? await loadStoredPushLevel(identity.publicKey) : 'mine');
         if (!changed && identity && readPushLevelFor !== identity.publicKey) {
-          const managed = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
-          if (managed) {
+          const settings = await loadActiveCommunityId(identity.publicKey)
+            .then((workspaceId) => readIdentitySettings(workspaceId ?? undefined))
+            .catch(() => null);
+          if (settings) {
             readPushLevelFor = identity.publicKey;
             // The save announces the server level; that announcement reconciles.
-            return saveStoredPushLevel(identity.publicKey, managed.pushLevel);
+            return saveStoredPushLevel(identity.publicKey, settings.identity.pushLevel);
           }
         }
         if (pushLevel !== 'off' && getOpenBuzzChannelId()) return;

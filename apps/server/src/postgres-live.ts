@@ -268,12 +268,13 @@ BEGIN
         'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
         'grantId', COALESCE(NEW.id, OLD.id)
       );
-    WHEN 'agent_schedules' THEN
+    WHEN 'agent_schedules', 'agent_subscriptions' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
         'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
-        'scheduleId', COALESCE(NEW.id, OLD.id)
+        'scheduleId', COALESCE(NEW.id, OLD.id),
+        'cornerParentId', (SELECT parent_id FROM rooms WHERE id=COALESCE(NEW.room_id,OLD.room_id))
       );
     WHEN 'workspaces' THEN
       -- Only the header every rail, list and settings page paints.
@@ -343,7 +344,7 @@ BEGIN
     'corner_facts', ${PARENT_ONLY_SQL},
     'permission_authority', 'room_read_marks', 'message_bookmarks',
     'needs_you_marks',
-    'agent_grants', 'agent_schedules', 'agent_commands',
+    'agent_grants', 'agent_schedules', 'agent_subscriptions', 'agent_commands',
     'github_installations', 'github_repositories',
     'workspace_connectors', 'workspace_connections', 'agents', 'agent_avatars',
     'registry_mcp_oauth_attempts', 'push_devices',
@@ -950,7 +951,8 @@ export class PostgresLiveListener {
       this.live.publish({
         type: 'invalidate',
         roomId: payload.cornerParentId,
-        reason: 'corner-status',
+        reason: payload.table === 'agent_schedules' || payload.table === 'agent_subscriptions'
+          ? `postgres:${payload.table}` : 'corner-status',
       });
     }
   }

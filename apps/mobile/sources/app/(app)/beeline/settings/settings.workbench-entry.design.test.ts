@@ -29,8 +29,9 @@ describe('Settings Workbench entry', () => {
     expect(settings).not.toMatch(/title="Connections"/);
   });
 
-  it('re-reads the Workbench on focus without a vault sync', () => {
-    expect(settings).toMatch(/useFocusEffect\(/);
+  it('uses the shared Workbench owner without a focus read', () => {
+    expect(settings).toContain('useSharedWorkbench(');
+    expect(settings).not.toMatch(/useFocusEffect\(/);
     expect(settings).not.toMatch(/refreshVault/);
   });
 });

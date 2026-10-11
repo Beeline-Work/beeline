@@ -11,6 +11,10 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
 vi.mock('@/buzz/community-storage', () => ({
   loadActiveCommunityId: async () => state.active,
 }));
+vi.mock('@/buzz/surface-storage', async () => {
+  const { mockSurfaceStorage } = await import('@/test/mock-surface-storage');
+  return mockSurfaceStorage();
+});
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspaces() {
@@ -20,9 +24,11 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 }));
 
 import { resolveWalletWorkspaceId } from './wallet-workspace';
+import { mobileSurfaceCache } from './surface-storage';
 
 describe('Wallet Workspace selection', () => {
   beforeEach(() => {
+    mobileSurfaceCache.clear();
     state.active = 'workspace-current';
     state.workspaces = [{ id: 'workspace-current' }, { id: 'workspace-other' }];
   });
@@ -35,6 +41,8 @@ describe('Wallet Workspace selection', () => {
   it('uses the selected Workspace for personal Settings and handles an empty account', async () => {
     expect(await resolveWalletWorkspaceId()).toBe('workspace-current');
     state.workspaces = [];
+    // A membership change invalidates the server-indexed Workspace list.
+    mobileSurfaceCache.clear();
     expect(await resolveWalletWorkspaceId('workspace-stranger')).toBeNull();
   });
 

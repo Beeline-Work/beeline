@@ -11,6 +11,7 @@ import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { StateDot } from '@/components/buzz/StateDot';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
+import { publishConnectionDetail, useSharedConnectionDetail } from '@/buzz/workbench-surface';
 import {
   connectionCompany,
   connectionCreatedByLine,
@@ -48,35 +49,13 @@ export default function ConnectionDetailScreen() {
   const viewerId = singleParam(params.viewerId) ?? '';
   const connectionId = singleParam(params.connectionId) ?? '';
   const insets = useSafeAreaInsets();
-  const [detail, setDetail] = useState<ConnectionDetailView | null>(null);
+  const { value: detail, address: detailAddress, error: loadError, refresh: retry } =
+    useSharedConnectionDetail({ workspaceId, viewerId }, connectionId);
   useLatencyRouteFrame('/beeline/settings/workbench/connection', detail !== null, true);
   const [error, setError] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [revokedLine, setRevokedLine] = useState<string | null>(null);
-  const [loadGeneration, setLoadGeneration] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setDetail(null);
-    setError(null);
-    void getWorkbenchSource()
-      .readConnectionDetail({ workspaceId, connectionId, viewerId })
-      .then((result) => {
-        if (cancelled) return;
-        if (result === null) {
-          setError('Key not found — it belongs to another member or no longer exists');
-        } else {
-          setDetail(result);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setError('Key unavailable right now');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadGeneration, connectionId, viewerId, workspaceId]);
 
   const revoke = useCallback(async () => {
     if (!detail) return;
@@ -84,7 +63,7 @@ export default function ConnectionDetailScreen() {
     try {
       const { revoked, pending } = await getWorkbenchSource().revokeAllGrants({ workspaceId, connectionId });
       if (pending) {
-        setDetail({
+        await publishConnectionDetail(detailAddress, {
           ...detail,
           grants: detail.grants.map((grant) =>
             grant.revokingAt ? grant : { ...grant, revokingAt: Math.floor(Date.now() / 1000) },
@@ -92,7 +71,7 @@ export default function ConnectionDetailScreen() {
         });
         setRevokedLine(`Revoking ${pending} ${pending === 1 ? 'grant' : 'grants'} — waiting for the helper`);
       } else {
-        setDetail({
+        await publishConnectionDetail(detailAddress, {
           ...detail,
           grants: [],
           connection: { ...detail.connection, grantCount: 0 },
@@ -147,7 +126,7 @@ export default function ConnectionDetailScreen() {
         contentContainerStyle={styles.contentInner}
         testID="connection-detail-scroll"
       >
-        {!detail && !error ? (
+        {!detail && !error && !loadError ? (
           <View style={styles.centered} testID="connection-loading">
             <SurfaceGlyphLoader testID="connection-loader" />
           </View>
@@ -324,14 +303,16 @@ export default function ConnectionDetailScreen() {
             {revokedLine ?? pendingLine}
           </Text>
         ) : null}
-        {error ? (
+        {error || loadError ? (
           <View style={styles.error} testID="connection-error-state">
             <Text accessibilityRole="alert" style={styles.errorText} testID="connection-error">
-              {error}
+              {error ?? (loadError?.includes('Key not found')
+                ? 'Key not found — it belongs to another member or no longer exists'
+                : 'Key unavailable right now')}
             </Text>
             {!detail ? (
               <SettingsRow
-                onPress={() => setLoadGeneration((generation) => generation + 1)}
+                onPress={() => void retry()}
                 testID="connection-retry"
                 title="Try again"
                 tone="action"

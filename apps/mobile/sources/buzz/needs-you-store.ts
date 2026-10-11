@@ -21,11 +21,12 @@ type Slot = { key: string; relay: string; pubkey: string; workspaceId: string;
   /** One order for both sections, count reads, and local edits. */
   entry: Entry; clock: number; needsRead: number; savedRead: number;
   reads: Set<number>; changes: Change[]; countRead?: Promise<{ count: number; at: number }>;
+  trayRead?: Promise<{ needsError?: string; savedError?: string }>;
   forgotten?: boolean };
 const EMPTY: Entry = { needs: null, count: null, saved: null, held: new Set() };
 const slots = new Map<string, Slot>();
 const listeners = new Set<() => void>();
-const trayReaders = new Map<string, Set<() => void>>();
+const trayReaders = new Map<string, Set<(reason: string) => void>>();
 let viewer: { key: string; relay: string; pubkey: string } | undefined;
 let resolving: Promise<NonNullable<typeof viewer>> | undefined;
 let liveStop: (() => void) | undefined;
@@ -111,7 +112,7 @@ function startLive(): void {
         slot.clock += 1;
         write(slot, { ...slot.entry, needs: null, count: null }, false);
       }
-      for (const readers of trayReaders.values()) for (const read of readers) read();
+      for (const readers of trayReaders.values()) for (const read of readers) read(signal.reason);
     }
   }).then((stop) => {
     if (generation !== clientResetGeneration()) { stop(); return; }
@@ -184,6 +185,40 @@ export async function loadSavedList(workspaceId: string, before?: string): Promi
     slot.forgotten = false;
     write(slot, entry);
   } finally { slot.reads.delete(at); trim(slot); }
+}
+
+/** One cold tray response seeds both sections; a held pair costs no request. */
+export async function loadTrayList(workspaceId: string, force = false): Promise<{ needsError?: string; savedError?: string }> {
+  const slot = slotFor(await resolveViewer(), workspaceId);
+  if (!slot.entry.needs) await seed(workspaceId, 'needs-you');
+  if (!slot.entry.saved) await seed(workspaceId, 'bookmarks');
+  if (!force && !slot.forgotten && slot.entry.needs && slot.entry.saved) return {};
+  if (slot.trayRead) return slot.trayRead;
+  const at = ++slot.clock;
+  slot.reads.add(at);
+  const read = monolithPhoneOperation('readTray', { workspaceId }).then((result) => {
+    if (!active(slot) || (slot.forgotten && at <= Math.max(slot.needsRead, slot.savedRead))) return {};
+    let entry = slot.entry;
+    if (result.needs && at > slot.needsRead) {
+      entry = replay(slot, 'needs', at,
+        { ...entry, needs: orderedNeeds([...result.needs.items]), count: null });
+      slot.needsRead = at;
+    }
+    if (result.saved && at > slot.savedRead) {
+      entry = replay(slot, 'saved', at,
+        { ...entry, saved: result.saved.bookmarks, next: result.saved.next });
+      slot.savedRead = at;
+    }
+    slot.forgotten = false;
+    write(slot, entry);
+    return { needsError: result.needsError, savedError: result.savedError };
+  }).finally(() => {
+    slot.reads.delete(at);
+    trim(slot);
+    if (slot.trayRead === read) slot.trayRead = undefined;
+  });
+  slot.trayRead = read;
+  return read;
 }
 async function seed(workspaceId: string, kind: 'needs-you' | 'bookmarks'): Promise<boolean> {
   const slot = slotFor(await resolveViewer(), workspaceId);
@@ -261,8 +296,8 @@ export function holdNeedsYou(workspaceId: string, messageIds: readonly string[])
   const slot = current(workspaceId);
   if (slot) write(slot, { ...slot.entry, held: new Set(messageIds) }, false);
 }
-export function subscribeTrayGap(workspaceId: string, read: () => void): () => void {
-  const readers = trayReaders.get(workspaceId) ?? new Set<() => void>();
+export function subscribeTrayGap(workspaceId: string, read: (reason: string) => void): () => void {
+  const readers = trayReaders.get(workspaceId) ?? new Set<(reason: string) => void>();
   readers.add(read);
   trayReaders.set(workspaceId, readers);
   return () => { readers.delete(read); if (!readers.size) trayReaders.delete(workspaceId); };

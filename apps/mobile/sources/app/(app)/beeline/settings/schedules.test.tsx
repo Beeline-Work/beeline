@@ -4,11 +4,10 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { beforeEach, expect, it, vi } from 'vitest';
 const room = vi.hoisted(() => vi.fn(async () => ({ room: { name: 'Room' }, viewer: { permissions: { manage: true } }, members: [{ identity: { kind: 'agent', pubkey: 'agent-1', name: 'Hoots' } }] })));
-const operation = vi.hoisted(() => vi.fn(async (name: string, _input?: unknown) => name === 'listRoomSchedules' ? { schedules: [
+const operation = vi.hoisted(() => vi.fn(async (name: string, _input?: unknown) => name === 'readScheduledWork' ? { roomName: 'Room', agentNames: [['agent-1', 'Hoots']], schedules: [
   { id: 'daily', roomId: 'room', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Morning summary', nextRunAt: 1790000000, runCount: 14 },
   { id: 'video', roomId: 'corner-1', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 1440 }, message: 'Start the workflow', nextRunAt: 1790000000, runCount: 2, workflowSlug: 'post_youtube_video', corner: { id: 'corner-1', name: 'video' } },
-] }
-  : name === 'listRoomSubscriptions' ? { subscriptions: [{ id: 'sub', roomId: 'room', agentId: 'agent-1', source: 'repository', event: 'issue.opened', repository: 'owner/widgets', prompt: 'Triage new issues.', firedCount: 3 }] } : {}));
+], subscriptions: [{ id: 'sub', roomId: 'room', agentId: 'agent-1', source: 'repository', event: 'issue.opened', repository: 'owner/widgets', prompt: 'Triage new issues.', firedCount: 3 }] } : {}));
 const params = vi.hoisted(() => ({ value: { roomId: 'room', workspaceId: 'ws' } as Record<string, string> }));
 const router = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 vi.mock('expo-router', () => ({ router, useLocalSearchParams: () => params.value, useFocusEffect: (effect: any) => React.useEffect(effect, [effect]) }));
@@ -32,15 +31,49 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', () => ({ SurfaceGlyphLoader: () 
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: 'viewer' }), getEffectiveRelayUrl: async () => 'http://local' }));
 vi.mock('@/sync/transport/room-view-client', () => ({ RoomViewClient: class { room = room; } }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: operation }));
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
+  register: async () => () => undefined,
+}) }));
+vi.mock('@/buzz/surface-storage', () => {
+  const values = new Map<string, unknown>();
+  const listeners = new Map<string, Set<() => void>>();
+  const key = (address: { endpoint: string; params?: Record<string, unknown> }) =>
+    `${address.endpoint}:${JSON.stringify(address.params ?? {})}`;
+  const notify = (address: { endpoint: string; params?: Record<string, unknown> }) =>
+    listeners.get(key(address))?.forEach((listener) => listener());
+  return {
+    surfaceAddress: (_relay: string, _viewer: string, endpoint: string, params?: Record<string, unknown>) =>
+      ({ endpoint, params }),
+    mobileSurfaceCache: {
+      clear: () => { values.clear(); listeners.forEach((items) => items.forEach((listener) => listener())); },
+      peek: (address: { endpoint: string; params?: Record<string, unknown> }) => values.get(key(address)) ?? null,
+      read: async (address: { endpoint: string; params?: Record<string, unknown> }) => values.get(key(address)) ?? null,
+      write: async (address: { endpoint: string; params?: Record<string, unknown> }, value: unknown) => {
+        values.set(key(address), value); notify(address);
+      },
+      fetch: async (address: { endpoint: string; params?: Record<string, unknown> }, _guard: unknown,
+        request: () => Promise<unknown>) => { const value = await request(); values.set(key(address), value); notify(address); return value; },
+      subscribe: (address: { endpoint: string; params?: Record<string, unknown> }, listener: () => void) => {
+        const items = listeners.get(key(address)) ?? new Set<() => void>();
+        items.add(listener); listeners.set(key(address), items);
+        return () => { items.delete(listener); };
+      },
+    },
+  };
+});
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
+import { resetClientState } from '@/sync/client-reset';
 import ScheduledWork, { orderScheduledWork } from './schedules';
 import PromptSchedule from './schedule';
 import Subscription from './subscription';
 
 beforeEach(() => {
+  resetClientState();
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   router.push.mockClear();
   router.back.mockClear();
   operation.mockClear();
+  mobileSurfaceCache.clear();
 });
 
 /** The pressable row itself, not the part that passes its testID down. */
@@ -125,10 +158,10 @@ it('names empty and legacy corner names through the shared title grammar (J40)',
   params.value = { roomId: 'room', workspaceId: 'ws' };
   const original = operation.getMockImplementation()!;
   const base = { agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Check in', nextRunAt: 1790000000, runCount: 1 };
-  operation.mockImplementation(async (name: string): Promise<any> => name === 'listRoomSchedules' ? { schedules: [
+  operation.mockImplementation(async (name: string): Promise<any> => name === 'readScheduledWork' ? { roomName: 'Room', agentNames: [['agent-1', 'Hoots']], schedules: [
     { ...base, id: 'unnamed', roomId: 'abcdef12-3456', corner: { id: 'abcdef12-3456', name: '' } },
     { ...base, id: 'legacy', roomId: 'corner-2', corner: { id: 'corner-2', name: '#Room/fix-auth' } },
-  ] } : name === 'listRoomSubscriptions' ? { subscriptions: [
+  ], subscriptions: [
     { id: 'sub', roomId: 'corner-3', agentId: 'agent-1', source: 'repository', event: 'issue.opened', repository: 'owner/widgets', prompt: 'Triage.', firedCount: 0, corner: { id: 'corner-3', name: 'room/triage' } },
   ] } : {});
   try {

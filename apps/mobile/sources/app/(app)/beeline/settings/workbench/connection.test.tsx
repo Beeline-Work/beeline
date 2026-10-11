@@ -2,6 +2,13 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  getEffectiveRelayUrl: async () => 'https://relay.test',
+  loadBuzzIdentity: async () => ({ publicKey: 'human-dani' }),
+}));
+vi.mock('@/buzz/surface-storage', async () =>
+  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const searchParams = vi.hoisted(() => ({
@@ -87,6 +94,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
+  mobileSurfaceCache.clear();
   vi.clearAllMocks();
   setWorkbenchSource(new MockWorkbenchSource());
   searchParams.params = {

@@ -2,6 +2,13 @@ import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  getEffectiveRelayUrl: async () => 'https://relay.test',
+  loadBuzzIdentity: async () => ({ publicKey: 'human-dani' }),
+}));
+vi.mock('@/buzz/surface-storage', async () =>
+  (await import('@/test/mock-surface-storage')).mockSurfaceStorage());
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
 const phoneOperation = vi.hoisted(() => vi.fn());
 const liveListeners = vi.hoisted(() => new Set<(event: any) => void>());
@@ -122,6 +129,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  mobileSurfaceCache.clear();
   vi.clearAllMocks();
   liveListeners.clear();
   setWorkbenchSource(new MockWorkbenchSource());
@@ -235,7 +243,10 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
   });
 
   it('with no connected machine, honestly says what to run and offers no picker', async () => {
-    setWorkbenchSource(Object.assign(new MockWorkbenchSource(), { listHelpers: async () => [] }));
+    const source = new MockWorkbenchSource();
+    const read = source.readWorkbench.bind(source);
+    source.readWorkbench = async (input) => ({ ...await read(input), helpers: [] });
+    setWorkbenchSource(source);
     const renderer = await render();
     const empty = renderer.root.findByProps({ testID: 'connect-no-helper' });
     expect(empty).toBeDefined();
@@ -248,9 +259,10 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
   });
 
   it('with exactly one online helper, pairs without asking for a choice', async () => {
-    const source = Object.assign(new MockWorkbenchSource(), {
-        listHelpers: async () => [{ id: 'helper-squire-box', name: 'squire-box', online: true }],
-      });
+    const source = new MockWorkbenchSource();
+    const read = source.readWorkbench.bind(source);
+    source.readWorkbench = async (input) => ({ ...await read(input),
+      helpers: [{ id: 'helper-squire-box', name: 'squire-box', online: true }] });
     const pairing = vi.spyOn(source, 'pairConnector');
     setWorkbenchSource(source);
     const renderer = await render();

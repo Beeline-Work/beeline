@@ -152,6 +152,12 @@ export const INSTALL_STEP_OUTPUTS = [
  * helper reason, both for the failure UI and its render tests.
  */
 export class MockWorkbenchSource implements WorkbenchSource {
+  async readConnectApp(input: { workspaceId: string; viewerId: string }) {
+    const [view, suggestions] = await Promise.all([
+      this.readWorkbench(input), this.searchApps({ query: '' }),
+    ]);
+    return { view, suggestions };
+  }
   async searchApps(input: { query: string }) {
     const query = input.query.trim().toLowerCase();
     return [...POPULAR_APPS, { name: 'Resend', domain: 'resend.com' },

@@ -81,8 +81,13 @@ test('release workflow keeps signing keys vaulted and rolls back the manifest co
   assert.match(desktopWorkflow, /workflow_dispatch:[\s\S]*desktop_version:/);
   assert.match(desktopWorkflow, /one '\*\.exe\.sig' 'Beeline-x86_64-setup\.exe\.sig'/);
   assert.match(releaseWorkflow, /desktop_version:.*steps\.plan\.outputs\.desktop_version/);
-  assert.match(releaseWorkflow, /release_assets\+=\("\$previous"\)/);
-  assert.match(releaseWorkflow, /\/releases\/latest never points at a half-published/);
+  assert.match(releaseWorkflow, /ghr_create "\$RELEASE_VERSION"[^\n]*--draft/);
+  assert.match(releaseWorkflow, /ghr_upload_verified "\$RELEASE_VERSION" "\$previous"/);
+  assert.match(releaseWorkflow, /ghr_publish "\$RELEASE_VERSION" "\$notes"/);
+  assert.ok(releaseWorkflow.indexOf('ghr_upload_verified "$RELEASE_VERSION" "$manifest"') <
+    releaseWorkflow.indexOf('ghr_publish "$RELEASE_VERSION" "$notes"'));
+  assert.ok(releaseWorkflow.indexOf('ghr_publish "$RELEASE_VERSION" "$notes"') <
+    releaseWorkflow.indexOf('desktop-update.mjs verify'));
   assert.match(releaseWorkflow, /The manifest is the commit point/);
   assert.match(releaseWorkflow, /trap rollback_on_exit EXIT/);
   assert.match(releaseWorkflow, /manifest_committed=true/);

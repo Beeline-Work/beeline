@@ -170,6 +170,7 @@ import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/
 import {
   cornerDisplayState,
   cornerHeaderAgent,
+  roomIsArchived,
   roomViewParentId,
 } from '@/buzz/corner-display-state';
 import {
@@ -1098,7 +1099,7 @@ export function BuzzChatSurface({
   }, [commitDesktopWorkPane, decodedId]);
 
   const cacheViewerPubkey = userPubkey;
-  const isArchived = roomSurface ? roomSurface.room.archived !== false : false;
+  const isArchived = roomIsArchived(roomSurface?.room);
   const surfaceParentId = roomSurface ? roomViewParentId(roomSurface) : undefined;
   const parentChannelId = surfaceParentId ?? routeParentChannelId;
   const desktopWorkRoomId = parentChannelId ?? decodedId;
@@ -2517,7 +2518,7 @@ export function BuzzChatSurface({
   const cornerHeaderSource = useCornerHeaderItem(
     isCorner ? (parentChannelId ?? undefined) : undefined,
     decodedId,
-    roomSurface?.room.archived,
+    isArchived,
     roomClient,
   );
   const cornerHeaderDisplay = cornerHeaderSource ? cornerDisplayState(cornerHeaderSource) : undefined;
@@ -5111,7 +5112,7 @@ export function BuzzChatSurface({
     openCornerCount,
     selectCandidate: handleSelectRoomRepoCandidate,
     createRepository: handleCreateRoomRepository,
-  } = useRoomRepoReplacementGuard(workspaceChats, parentChannelId ?? decodedId, roomRepository, {
+  } = useRoomRepoReplacementGuard(parentChannelId ?? decodedId, roomRepository, {
     link: applyRoomRepository,
     create: handleCreateGitHubRepository,
   });
@@ -5826,6 +5827,7 @@ export function BuzzChatSurface({
         return (
           <NotificationLifecycleCard
             message={item}
+            cornerLifecycle={cornerHeaderSource?.lifecycle}
             onOpenCorner={openCorner}
             onOpenUrl={handleOpenGitHubEvent}
           />
@@ -6033,6 +6035,7 @@ export function BuzzChatSurface({
       isArchived,
       isCorner,
       decodedId,
+      cornerHeaderSource?.lifecycle,
     ],
   );
   const renderItem = useRoomMessageRenderItem({

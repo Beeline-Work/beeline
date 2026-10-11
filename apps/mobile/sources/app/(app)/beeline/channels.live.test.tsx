@@ -234,6 +234,11 @@ import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { cornerOpenEnded } from '@/buzz/corner-open-status';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { resetChatListStoresForTest } from '@/buzz/chat-list-store';
+import {
+  applyChatListCorners,
+  getRoomCornerSummary,
+  resetRoomCornerStore,
+} from '@/buzz/room-corner-store';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -324,6 +329,7 @@ async function mountDeck(): Promise<ReactTestRenderer> {
 beforeEach(() => {
   // A case that never unmounts its deck must not hand its live list to the next.
   resetChatListStoresForTest();
+  resetRoomCornerStore();
   deck.appState = 'active';
   deck.appStateListeners = [];
   deck.bottomInset = 0;
@@ -646,13 +652,11 @@ describe('Room deck live path', () => {
 
   it("toggles the Room's corner dropdown on mobile without a selected conversation state", async () => {
     const renderer = await mountDeck();
-    const item = {
-      ...paintedRows(renderer)[0],
-      cornerCount: 1,
-      openCorners: [
-        { id: 'corner-1', name: 'fix', state: 'working' as const, mine: true as const },
-      ],
-    };
+    const item = paintedRows(renderer)[0]!;
+    // The row and its dropdown read the Room's corners from the corner store.
+    applyChatListCorners([{ room: item.room, cornerCount: 1, openCorners: [
+      { id: 'corner-1', name: 'fix', state: 'working' as const, mine: true as const },
+    ] }], -1);
     const renderRow = () => {
       const list = renderer.root.find((node: any) => node.type === 'SectionList');
       return create(list.props.renderItem({ item, index: 0, section: { data: [item] } }));
@@ -862,7 +866,9 @@ describe('Room deck live path', () => {
       }),
     ]);
     const renderer = await mountDeck();
-    expect(paintedRows(renderer)[0]).toMatchObject({ unread: true, cornerCount: 2 });
+    expect(paintedRows(renderer)[0]).toMatchObject({ unread: true });
+    expect(getRoomCornerSummary('room-a')).toEqual({ cornerCount: 2,
+      openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }] });
 
     deck.chatsResponse = listOf([room('room-a', 10)], { unavailable: ['unread', 'corners'] });
     await act(async () =>
@@ -872,12 +878,10 @@ describe('Room deck live path', () => {
     );
     await quiet();
 
-    expect(paintedRows(renderer)[0]).toMatchObject({
-      unread: true,
-      cornerCount: 2,
-      waitingCornerCount: 1,
-      openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }],
-    });
+    expect(paintedRows(renderer)[0]).toMatchObject({ unread: true });
+    // The corner store keeps the last known summary; a read without it says nothing.
+    expect(getRoomCornerSummary('room-a')).toEqual({ cornerCount: 2,
+      openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }] });
     await act(async () => renderer.unmount());
   });
 

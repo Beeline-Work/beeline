@@ -72,6 +72,11 @@ import type { RepoCandidate } from './room-repo-picker';
 import { resetClientState } from '@/sync/client-reset';
 import { useRoomRepoReplacementGuard } from './room-repo-replacement';
 import { acquireChatList, liveChatList, resetChatListStoresForTest, useChatList } from './chat-list-store';
+import {
+  acceptCornerStatusFrame,
+  getRoomCornerSummary,
+  resetRoomCornerStore,
+} from './room-corner-store';
 
 const key = { relayUrl: 'https://relay.test', viewerPubkey: 'viewer', workspaceId: 'workspace' };
 const agent = { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' };
@@ -96,6 +101,9 @@ function listOf(chats: ChatListItem[]): ChatListView {
 }
 
 function emit(event: unknown): void {
+  // The live connection hands every corner status to the corner store first.
+  const frame = (event as { monolithLive?: { type?: string } }).monolithLive;
+  if (frame?.type === 'corner-status') acceptCornerStatusFrame(frame as never);
   for (const registration of live.registrations)
     if (!registration.closed) registration.listener(event);
 }
@@ -115,6 +123,7 @@ function join(chats: () => Promise<ChatListView>, consumer: { visible: () => boo
 beforeEach(() => {
   vi.useFakeTimers();
   resetChatListStoresForTest();
+  resetRoomCornerStore();
   disk.rows.clear();
   disk.writes = [];
   live.registrations = [];
@@ -164,8 +173,11 @@ describe('app-level Room list store', () => {
         openCorners: [], agentState: 'working',
       },
     });
-    expect(roomScreen.current()?.chats.find((item) => item.room.id === 'room-a'))
-      .toMatchObject({ cornerCount: 1, agentState: 'working' });
+    const roomA = roomScreen.current()?.chats.find((item) => item.room.id === 'room-a');
+    expect(roomA).toMatchObject({ agentState: 'working' });
+    // The corner store owns the count; the row holds no copy of it.
+    expect(roomA).not.toHaveProperty('cornerCount');
+    expect(getRoomCornerSummary('room-a')?.cornerCount).toBe(1);
     expect(chats).toHaveBeenCalledTimes(1);
 
     sidebar.release();
@@ -439,6 +451,27 @@ describe('a read that cannot say unread', () => {
     handle.release();
   });
 
+  it('hands corner facts to the corner store and keeps them only on the saved copy', async () => {
+    const corners = [{ id: 'corner-a', name: 'fix', state: 'working' as const, mine: true as const }];
+    const chats = vi.fn(async () => listOf([row('room-a', 10, { cornerCount: 1, openCorners: corners })]));
+    const handle = join(chats, visible);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(handle.current()?.chats[0]).not.toHaveProperty('openCorners');
+    expect(getRoomCornerSummary('room-a')).toEqual({ cornerCount: 1, openCorners: corners });
+    expect((disk.rows.get(address) as ChatListView).chats[0])
+      .toMatchObject({ cornerCount: 1, openCorners: corners });
+    handle.release();
+
+    // A cold start paints the saved summary before its read lands.
+    resetChatListStoresForTest();
+    resetRoomCornerStore();
+    const cold = join(() => new Promise<ChatListView>(() => undefined), visible);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(cold.current()?.chats[0]).not.toHaveProperty('cornerCount');
+    expect(getRoomCornerSummary('room-a')).toEqual({ cornerCount: 1, openCorners: corners });
+    cold.release();
+  });
+
   it('keeps a Room unknown across a second incomplete read, in memory and on disk', async () => {
     const incomplete = (latestAt: number): ChatListView => ({
       ...listOf([row('room-a', latestAt)]), unavailable: ['unread'],
@@ -478,8 +511,8 @@ describe('the Room screen reads the live list', () => {
     const createRepository = vi.fn(async () => undefined);
     let selectCandidate!: (candidate: RepoCandidate) => void;
     function RoomScreen() {
-      const list = useChatList(key);
-      selectCandidate = useRoomRepoReplacementGuard(list?.chats ?? [], 'room-a', repository, {
+      useChatList(key);
+      selectCandidate = useRoomRepoReplacementGuard('room-a', repository, {
         link: roomRepositorySet,
         create: createRepository,
       }).selectCandidate;

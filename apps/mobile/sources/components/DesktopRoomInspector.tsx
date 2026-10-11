@@ -31,7 +31,7 @@ import { buildChannelReferenceIndex, type ChannelReferenceIndex, type ChannelRef
 import { openExternalUrl } from '@/utils/open-external-url';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { useRoomCorners } from '@/buzz/use-room-corners';
-import { roomOpenCornerRows } from '@/buzz/room-corner-store';
+import { findRoomCornerRow } from '@/buzz/room-corner-store';
 import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
@@ -125,10 +125,6 @@ export function DesktopRoomInspector({
   // The Room's one corner record, the same rows its Corners screen and Room
   // list dropdown paint; frames keep it current while the inspector is open.
   const cornerRecord = useRoomCorners(client ? room.room.id : undefined, client).record;
-  const corners = React.useMemo(
-    () => (cornerRecord ? roomOpenCornerRows(cornerRecord) : []),
-    [cornerRecord],
-  );
   const [width, setWidth] = React.useState(DESKTOP_INSPECTOR_DEFAULT_WIDTH);
   const dragStart = React.useRef(width);
 
@@ -181,7 +177,9 @@ export function DesktopRoomInspector({
     [],
   );
 
-  const summary = corners.find((corner) => corner.corner.id === selectedCornerId);
+  const summary = cornerRecord && selectedCornerId
+    ? findRoomCornerRow(cornerRecord, selectedCornerId)
+    : undefined;
 
   return (
     <View

@@ -6,7 +6,8 @@ vi.mock('react-native', () => ({
 
 import { LiveConnection } from './live-connection';
 import { liveFrameEpoch } from './live-frame-epoch';
-import { getRoomCorners } from '@/buzz/room-corner-store';
+import { getRoomCornerSummary, getRoomCorners } from '@/buzz/room-corner-store';
+import { resetClientState } from '@/sync/client-reset';
 
 const ROOM_A = 'room-a';
 const ROOM_B = 'room-b';
@@ -192,7 +193,7 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('replays the held corner status to a late join', async () => {
+  it('gives a late join the corner store, not a replayed corner status', async () => {
     const { connection } = createConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
     sockets[0]!.open();
@@ -208,8 +209,9 @@ describe('LiveConnection', () => {
     expect(late).toEqual([
       { monolithLive: { type: 'subscribed', roomId: ROOM_A,
         epoch: 'epoch-1', cursor: 0, resumed: true } },
-      { monolithLive: status('working') },
     ]);
+    expect(getRoomCorners(ROOM_A).rows).toEqual([{ corner: { id: 'corner-1' }, state: 'working' }]);
+    expect(getRoomCornerSummary(ROOM_A)).toEqual({ cornerCount: 1, openCorners: [] });
     connection.dispose();
   });
 
@@ -235,8 +237,9 @@ describe('LiveConnection', () => {
     expect(getRoomCorners(ROOM_A).current).toBe(false);
     sockets[0]!.emit(status(1, 'working'));
     expect(getRoomCorners(ROOM_A).rows?.[0]?.state).toBe('working');
-    // A new identity never sees the last one's corners.
+    // A new identity never sees the last one's corners: the store is on the client reset.
     changeIdentity();
+    resetClientState();
     expect(getRoomCorners(ROOM_A).rows).toBeUndefined();
     connection.dispose();
   });

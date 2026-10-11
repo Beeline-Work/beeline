@@ -17,6 +17,7 @@ import {
   NO_ACTIVITY_PREVIEW,
 } from '@/buzz/room-list-row';
 import { compactRelativeTime } from '@/buzz/relative-time';
+import { useRoomCornerSummary } from '@/buzz/room-corner-store';
 import { CornerGlyph } from './CornerGlyph';
 import { PinGlyph } from './PinGlyph';
 
@@ -57,8 +58,9 @@ export function ConversationRow({
   const needsYou = Boolean(reason);
   const showReason = item.agentState === 'needs-you' && reason;
   const status = needsYou ? 'needs you' : item.unread ? 'new messages' : null;
-  const hasCorners = roomRowShowsCornerMark(item);
-  const cornerCount = item.openCorners?.filter((corner) => corner.mine).length ?? 0;
+  const cornerSummary = useRoomCornerSummary(item.room.id);
+  const hasCorners = roomRowShowsCornerMark(item, cornerSummary);
+  const cornerCount = cornerSummary?.openCorners.filter((corner) => corner.mine).length ?? 0;
   const cornerPosition = desktop ? styles.desktopCornerToggle : styles.mobileCornerToggle;
   const cornerRotation = useSharedValue(cornersExpanded ? 1 : 0);
   React.useEffect(() => {

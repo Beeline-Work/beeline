@@ -55,6 +55,15 @@ vi.mock('@/components/buzz/CornerWaitingPulse', () => hostModule('CornerWaitingP
 vi.mock('@/components/buzz/SurfaceGlyphLoader', () => hostModule('SurfaceGlyphLoader'));
 vi.mock('@/components/buzz/RoomCornersHeader', () => hostModule('RoomCornersHeader'));
 vi.mock('@/components/buzz/RoomCornersList', () => hostModule('RoomCornersList'));
+vi.mock('@/components/buzz/PinGlyph', () => hostModule('PinGlyph'));
+vi.mock('react-native-reanimated', () => ({
+  default: { View: (props: any) => React.createElement('AnimatedView', props, props.children) },
+  Easing: { out: () => 'out', cubic: 'cubic' },
+  ReduceMotion: { System: 'system' },
+  useAnimatedStyle: (style: () => unknown) => style(),
+  useSharedValue: (value: number) => ({ value }),
+  withTiming: (value: number) => value,
+}));
 vi.mock('@/components/buzz/CommunityRail', () => hostModule('BuzzCommunityShell'));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
@@ -105,7 +114,10 @@ vi.mock('@/sync/transport', () => ({
 }));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
-    async corners(_id: string, options?: { archived?: boolean }): Promise<CornerListView> {
+    async corners(
+      _id: string,
+      options?: { archived?: boolean; openBefore?: string },
+    ): Promise<CornerListView> {
       const read: { options: unknown; settle?: () => void } = { options };
       list.reads.push(read);
       const state = list.state;
@@ -115,7 +127,8 @@ vi.mock('@/sync/transport/room-view-client', () => ({
       if (options?.archived) {
         return { ...cornerList(state), corners: archived.map((id) => corner(id, 'archived')) };
       }
-      return cornerList(state, extra);
+      const view = cornerList(state, extra);
+      return options?.openBefore ? view : { ...view, summary: summaryOf(view.corners) };
     }
   },
 }));
@@ -129,6 +142,7 @@ import {
   resetRoomCornerStore,
 } from '@/buzz/room-corner-store';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
+import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { LiveConnection } from '@/sync/transport/live-connection';
 import { router } from 'expo-router';
 import { cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
@@ -175,6 +189,21 @@ function cornerList(state: string, extra: readonly string[] = []): CornerListVie
     // What the server sends for this surface today.
     watchFilters: [],
   } as unknown as CornerListView;
+}
+
+/** The Room list summary the server sends with a first page that holds every open corner. */
+function summaryOf(rows: readonly CornerListItem[]): NonNullable<CornerListView['summary']> {
+  return {
+    cornerCount: rows.length,
+    waitingCornerCount: rows.filter((item) => item.state === 'waiting').length,
+    mineCornerCount: rows.filter((item) => item.mine).length,
+    openCorners: rows.map((item) => ({
+      id: item.corner.id,
+      name: item.corner.name,
+      state: item.state as 'working',
+      ...(item.mine ? { mine: true as const } : {}),
+    })),
+  };
 }
 
 type TestSocket = {
@@ -235,7 +264,7 @@ function CornerHeader({ cornerId, archived, turns = [] }: {
   archived?: boolean;
   turns?: readonly string[];
 }) {
-  const item = useCornerHeaderItem('room-a', cornerId, archived);
+  const item = useCornerHeaderItem('room-a', cornerId, archived === true);
   const display = item ? cornerDisplayState(item) : undefined;
   const header = cornerHeaderAgent({
     ownerPubkey: 'agent-owner',
@@ -339,7 +368,7 @@ afterEach(() => {
 });
 
 describe('Corner list live path', () => {
-  it('shows corners the Room lane heard while Corners was closed, with no read', async () => {
+  it('shows corners the Room lane heard while Corners was closed at once, and reads once for its saved header (D3)', async () => {
     // The Room list holds the parent lane. While Corners is closed, two
     // corners open and the server sends their rows.
     await holdLaneElsewhere();
@@ -348,10 +377,20 @@ describe('Corner list live path', () => {
       corner('corner-1', 'waiting')]);
     // Corners saved an older list the last time it was open.
     list.cached = cornerList('waiting');
+    list.extra = ['corner-newer', 'corner-new'];
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => (release = resolve));
     const renderer = await openCorners();
+    // The rows the lane proved paint before the read answers.
     await vi.waitFor(() => expect(painted(renderer)).toEqual(
       ['corner-newer:working', 'corner-new:working', 'corner-1:waiting']));
-    expect(openReads()).toBe(0);
+    // Only a read makes the saved header current.
+    await vi.waitFor(() => expect(openReads()).toBe(1));
+    await act(async () => release());
+    await settle();
+    expect(painted(renderer)).toEqual(
+      ['corner-newer:working', 'corner-new:working', 'corner-1:waiting']);
+    expect(openReads()).toBe(1);
   });
 
   it('Reproduction G3-3.1: reads once when the Room list holds the lane but nothing proved the saved list', async () => {
@@ -711,5 +750,43 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     const followed = await mountHeader({ cornerId: 'corner-1' });
     expect(headerText(followed)).toBe('RUBY · waiting');
     expect(dropdownStates()).toEqual(['Open corner corner-1, waiting']);
+  });
+
+  it('Reproduction G3-split3: one corners read updates the Room row badge and its dropdown together', async () => {
+    // The Room list read saw two Mine corners waiting.
+    const chat = {
+      room: { id: 'room-a', name: 'general' },
+      cornerCount: 2,
+      openCorners: [
+        { id: 'corner-closed', name: 'corner-closed', state: 'waiting' as const, mine: true as const },
+        { id: 'corner-1', name: 'corner-1', state: 'waiting' as const, mine: true as const },
+      ],
+    } as unknown as import('@beeline/buzz-client').ChatListItem;
+    applyChatListCorners([chat], cornerStoreClock());
+    let room!: ReactTestRenderer;
+    await act(async () => {
+      room = create(React.createElement(React.Fragment, null,
+        React.createElement(ConversationRow, { item: chat, now: 0, onPress: () => undefined,
+          onPin: () => undefined, onToggleCorners: () => undefined, testID: 'room' }),
+        React.createElement(DesktopRoomCorners, { item: chat, onOpen: () => undefined })));
+    });
+    const badge = () => room.root.findByProps({ testID: 'room-corners' }).props.accessibilityLabel;
+    const dropdown = () => room.root
+      .findAll((node: { type: unknown; props: { testID?: string } }) =>
+        node.type === 'Pressable' && node.props.testID?.startsWith('desktop-corner-'))
+      .map((node: { props: { accessibilityLabel: string } }) => node.props.accessibilityLabel);
+    expect(badge()).toBe('Expand 2 corners');
+    expect(dropdown()).toHaveLength(2);
+    // corner-closed closed unheard; the Corners read sends the server's summary.
+    list.state = 'idle';
+    list.mine = true;
+    const renderer = await openCorners();
+    await vi.waitFor(() => expect(server.sockets).toHaveLength(1));
+    server.open();
+    server.subscribed();
+    await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:idle']));
+    await settle();
+    expect(badge()).toBe('Expand 1 corners');
+    expect(dropdown()).toEqual(['Open corner corner-1, idle']);
   });
 });

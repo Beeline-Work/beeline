@@ -17,7 +17,6 @@ export type HelperExitReason =
   | 'restart-requested'
   | 'update'
   | 'failed'
-  | 'rolled-back'
   | 'force-update-failed'
   | 'distress'
   | 'agent-removed'
@@ -28,15 +27,13 @@ export type HelperExitReason =
  * One code per reason. 0 and 75 are restarted by the service manager; 77, 78
  * and 79 are in RestartPreventExitStatus and wait for an operator (77), mean
  * the agent was removed (78), or name an agent with no runtime (79). The
- * machine helper exits 79 when it has no agent to host, or handed its agents
- * back to per-agent units after a rollback.
+ * machine helper exits 79 only when it has no agent to host.
  */
 export const HELPER_EXIT_CODES: Readonly<Record<HelperExitReason, 0 | 75 | 77 | 78 | 79>> = {
   stopped: 0,
   'restart-requested': 0,
   update: 0,
   failed: 75,
-  'rolled-back': 75,
   'force-update-failed': 75,
   distress: DAEMON_DISTRESS_EXIT_STATUS as 77,
   'agent-removed': DELIBERATE_REMOVAL_EXIT_STATUS as 78,
@@ -179,32 +176,16 @@ export function isTransientServerFailure(error: unknown): boolean {
 }
 
 /**
- * Whether a successor that failed before READY may be rolled back now. An
- * outage is not the release's fault, so it only counts once the pending
- * attempt's confirmation deadline has passed.
- */
-export function successorRollbackAllowed(
-  error: unknown,
-  deadlineAt: number | undefined,
-  now = Date.now(),
-): boolean {
-  return !isTransientServerFailure(error) || (deadlineAt !== undefined && now >= deadlineAt);
-}
-
-/**
  * Before READY, a transient server failure is not this release's fault. Wait
  * for the live socket to open again (asking the service manager for more start
  * time meanwhile) and retry on every open, plus the bounded early retries.
- * Only past `deadlineAt` — a pending update attempt's confirmation deadline —
- * does the failure escape, so a successor is never rolled back for an outage
- * before its attempt deadline.
+ * Network failures retry until recovery or shutdown.
  */
 export async function retryBeforeReady<T>(
   work: () => Promise<T>,
   options: {
     onLinkOpen: (listener: () => void) => () => void;
     extendStartTimeout: (ms: number) => Promise<void>;
-    deadlineAt?: number;
     signal?: AbortSignal;
     now?: () => number;
     /** How much start time each extension asks for while waiting. */
@@ -219,7 +200,6 @@ export async function retryBeforeReady<T>(
       return await work();
     } catch (error) {
       if (!isTransientServerFailure(error) || options.signal?.aborted) throw error;
-      if (options.deadlineAt !== undefined && now() >= options.deadlineAt) throw error;
       failures += 1;
       const timedRetry = ROOM_RETRY_DELAYS_MS[failures - 1];
       console.warn(
@@ -239,7 +219,6 @@ export async function retryBeforeReady<T>(
         while (!opened && !options.signal?.aborted) {
           const remaining = [
             slice,
-            options.deadlineAt === undefined ? Infinity : options.deadlineAt - now(),
             timedRetry === undefined ? Infinity : timedRetry - (now() - waitStarted),
           ];
           const wait = Math.min(...remaining);

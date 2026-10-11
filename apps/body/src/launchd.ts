@@ -7,16 +7,13 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { SQUIRE_BROKER_FLAG, squireHostRewriteEnv, updateSquireBrokerInstall, writeSquireBrokerUnitMarker, type SquireInstallRunner } from './squire-host.js';
 import {
-  DAEMON_DISTRESS_EXIT_STATUS,
-  DELIBERATE_REMOVAL_EXIT_STATUS,
   isCanonicalInstalledLauncher,
   NO_AGENTS_EXIT_STATUS,
-  UNKNOWN_AGENT_EXIT_STATUS,
 } from './systemd.js';
 
 const execFileAsync = promisify(execFile);
 
-/** Pre-machine per-agent jobs; only migration and rollback still name them. */
+/** Pre-machine per-agent jobs; migration still names them. */
 export const LAUNCHD_AGENT_LABEL_PREFIX = 'app.usebeeline.agent.';
 /** One helper job per machine hosts every paired agent. */
 export const LAUNCHD_HELPER_LABEL = 'app.usebeeline.helper';
@@ -97,8 +94,8 @@ export function launchdHelperSupervisorPath(env: NodeJS.ProcessEnv = process.env
 }
 
 /**
- * The machine helper's wrapper: the same SIGTERM forwarding and status
- * mapping as the per-agent one. A helper that found no agent to host exits
+ * The machine helper's wrapper forwards SIGTERM and maps exit statuses.
+ * A helper that found no agent to host exits
  * with the no-agents status, which maps to 0 so KeepAlive leaves it stopped
  * until pairing starts it again; every other exit is restarted.
  */
@@ -169,48 +166,7 @@ export function launchdBrokerPlistPath(env: NodeJS.ProcessEnv = process.env): st
   return resolve(launchdHome(env), 'Library', 'LaunchAgents', `${LAUNCHD_BROKER_LABEL}.plist`);
 }
 
-export function launchdAgentSupervisorPath(env: NodeJS.ProcessEnv = process.env): string {
-  return resolve(
-    launchdHome(env),
-    'Library',
-    'Application Support',
-    'Beeline',
-    'bin',
-    'supervise-agent',
-  );
-}
 
-/**
- * launchd cannot express systemd's RestartPreventExitStatus list. The small
- * installed wrapper preserves the same contract instead: launchd restarts a
- * failed job, so ordinary clean/hiccup exits become 1 while the three
- * deliberate terminal statuses become 0 and remain stopped.
- *
- * The daemon runs as a backgrounded child with SIGTERM forwarded to it: a
- * non-interactive shell dies on SIGTERM without signalling or waiting for a
- * FOREGROUND child, which would skip the daemon's own drain and make the
- * plist's ExitTimeOut ceiling unreachable. `wait` interrupted by the trapped
- * signal returns >128 while the child is still draining, so it is resumed
- * until the child's real status is in hand.
- */
-export function launchdAgentSupervisorScript(): string {
-  return `#!/bin/sh
-set -u
-"$2" daemon --agent "$1" &
-child=$!
-trap 'kill -TERM "$child" 2>/dev/null' TERM INT
-wait "$child"
-status=$?
-while [ "$status" -gt 128 ] && kill -0 "$child" 2>/dev/null; do
-  wait "$child"
-  status=$?
-done
-case "$status" in
-  ${DAEMON_DISTRESS_EXIT_STATUS}|${DELIBERATE_REMOVAL_EXIT_STATUS}|${UNKNOWN_AGENT_EXIT_STATUS}) exit 0 ;;
-  *) exit 1 ;;
-esac
-`;
-}
 
 /**
  * What a Beeline launchd job may resolve binaries from. `nodeBinDirectory()`
@@ -232,51 +188,6 @@ function environmentXml(environment: Readonly<Record<string, string>>): string {
   return Object.entries(environment)
     .map(([key, value]) => `    <key>${xml(key)}</key>\n    <string>${xml(value)}</string>`)
     .join('\n');
-}
-
-export function launchdAgentPlist(publicKey: string, env: NodeJS.ProcessEnv = process.env): string {
-  const home = launchdHome(env);
-  const label = launchdAgentLabel(publicKey);
-  const logDir = resolve(home, 'Library', 'Logs', 'Beeline');
-  const path = launchdJobPath(home);
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${xml(label)}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${xml(launchdAgentSupervisorPath(env))}</string>
-    <string>${xml(publicKey.toLowerCase())}</string>
-    <string>${xml(resolve(home, '.local', 'bin', 'beeline'))}</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-${environmentXml({ HOME: home, PATH: path })}
-  </dict>
-  <key>WorkingDirectory</key>
-  <string>${xml(home)}</string>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-  </dict>
-  <key>ThrottleInterval</key>
-  <integer>5</integer>
-  <key>ExitTimeOut</key>
-  <integer>${LAUNCHD_EXIT_TIMEOUT_SECONDS}</integer>
-  <key>Umask</key>
-  <integer>63</integer>
-  <key>StandardOutPath</key>
-  <string>${xml(resolve(logDir, `agent-${publicKey.toLowerCase()}.log`))}</string>
-  <key>StandardErrorPath</key>
-  <string>${xml(resolve(logDir, `agent-${publicKey.toLowerCase()}.log`))}</string>
-</dict>
-</plist>
-`;
 }
 
 export function launchdBrokerPlist(env: NodeJS.ProcessEnv = process.env): string {
@@ -528,30 +439,6 @@ export async function retireLegacyLaunchdAgents(
     await run(['bootout', `${domain}/${label}`]).catch(() => undefined);
   }
   return labels;
-}
-
-/**
- * A rollback restored a release that may predate the machine helper. Give each
- * paired agent its per-agent job back and stand the helper job down; a restored
- * release that knows the machine helper migrates straight back.
- */
-export async function restoreLegacyLaunchdAgents(
-  publicKeys: readonly string[],
-  options: { env?: NodeJS.ProcessEnv; run?: LaunchdRunner } = {},
-): Promise<void> {
-  const env = options.env ?? process.env;
-  const run = options.run ?? runLaunchctl;
-  const domain = launchdUserDomain();
-  await writeManagedFile(launchdAgentSupervisorPath(env), launchdAgentSupervisorScript(), 0o700);
-  for (const publicKey of publicKeys) {
-    if (!/^[0-9a-f]{64}$/i.test(publicKey)) continue;
-    await writeManagedFile(launchdAgentPlistPath(publicKey, env), launchdAgentPlist(publicKey, env), 0o600);
-    await run(['enable', `${domain}/${launchdAgentLabel(publicKey)}`]);
-    await run(['bootstrap', domain, launchdAgentPlistPath(publicKey, env)]).catch((error) =>
-      console.error(`[beeline] could not restore ${launchdAgentLabel(publicKey)}:`, error));
-  }
-  await run(['disable', `${domain}/${LAUNCHD_HELPER_LABEL}`]);
-  await rm(launchdHelperPlistPath(env), { force: true });
 }
 
 /** A retired agent's per-agent job, if one is still installed, must not resurrect it. */

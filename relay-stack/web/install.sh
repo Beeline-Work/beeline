@@ -122,7 +122,7 @@ command -v node >/dev/null 2>&1 && printf '%s\n' "$(command -v node)" > "$target
 
 # Converge an existing non-release install: a REAL directory at the anchor is
 # legacy (installer v1 output, flat or release-shaped). Preserve it as a
-# release so rollback language stays meaningful, normalizing flat bundles by
+# release without overwriting its files, normalizing flat bundles by
 # moving their root-level files down into lib/beeline/. A symlink anchor just
 # gets repointed; any stale top-level files a v1 repair reinstall once copied
 # THROUGH the old symlink are abandoned with their release, not propagated.
@@ -175,7 +175,7 @@ find "$releases_root" -maxdepth 2 \( -name 'beeline.new.*' -o -name 'beeline.new
 # installers created on repeated installs of the same bundle. Only a
 # <base>-<digits> sibling of an EXISTING <base> directory carrying the SAME
 # bundle identity qualifies, and never one the anchor pointed at before or
-# points at now — those stay as meaningful rollback copies.
+# points at now — those may still be used by a running helper.
 for dup in "$releases_root"/*-[0-9]*; do
   [ -d "$dup" ] || continue
   dup_name=$(basename "$dup")

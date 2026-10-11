@@ -17,8 +17,8 @@ describe('ACP scopes during managed startup', () => {
       vi.mocked(readFileSync).mockReturnValue(`0::/user.slice/user@1000.service/app.slice/${owner}\n`);
       const launch = new AcpResourceScope().launch('codex-acp', [], { PATH: '/usr/bin' });
       expect(launch.args).toContain(`--property=BindsTo=${owner}`);
-      // Type=notify owners wait for a served ACP update probe before READY.
-      // An After=owner ordering edge makes that probe wait for its own READY,
+      // Type=notify owners may initialize ACP sessions before READY.
+      // An After=owner ordering edge makes initialization wait for its own READY,
       // so initialize times out even when the harness is healthy.
       expect(launch.args.some((arg) => arg.startsWith('--property=After='))).toBe(false);
       expect(launch.args).toContain('--property=KillMode=control-group');

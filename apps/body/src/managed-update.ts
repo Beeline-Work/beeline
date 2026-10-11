@@ -6,29 +6,19 @@ import {
   activeReleaseId,
   readInstalledBundleIdentity,
   readUpdateState,
-  rollbackToPreviousRelease,
   runningReleaseId,
   SelfUpdateManager,
   activateRelease,
-  readUpdateAttempt,
-  replaceUpdateAttempt,
-  writeUpdateAttempt,
   writeUpdateState,
   type BeelineInstallLayout,
-  type UpdateAttemptRecord,
 } from './self-update.js';
-import { findAgentRuntimeConfigPaths, readRuntimeRecord, runtimeDaemonPid } from './runtime.js';
 import { convergeLaunchdTrustySquireBrokerService } from './launchd.js';
 import { convergeHelperServiceUnit, convergeTrustySquireBrokerService } from './systemd.js';
-import type { UpdateFunctionalProbeResult } from './update-functional-probe.js';
-import { UpdateFunctionalProbeError } from './update-functional-probe.js';
-import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
 import { withAdapterInstallLock } from './adapter-install-lock.js';
 
 export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
 export const DEFAULT_UPDATE_INTERVAL_MS = 30_000;
-// Reserve the 90-second service stop ceiling and one minute for successor
-// startup/proof before the shared attempt's confirmation deadline.
+// Leave time for service shutdown and successor startup within the convergence target.
 export const UPDATE_DRAIN_DEADLINE_MS = UPDATE_CONVERGENCE_SLO_MS - 150_000;
 export const MAX_HOST_RESTART_STAGGER_MS = 15_000;
 
@@ -99,7 +89,6 @@ export async function forceInstallMinimum(input: {
   minVersion: string;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
-  requiredProbeIds?: string[];
 }): Promise<string> {
   const env = input.env ?? process.env;
   return withInstallLock(input.layout, async () => {
@@ -125,22 +114,7 @@ export async function forceInstallMinimum(input: {
     if (!target?.version || !versionAtLeast(target.version, input.minVersion))
       throw new Error(`published helper ${target?.version ?? 'unknown'} is below required ${input.minVersion}`);
     return withAdapterInstallLock(async () => {
-      const { previousReleaseId } = await activateRelease(input.layout, staged);
-      const now = Date.now();
-      await writeUpdateAttempt(input.layout, {
-        version: 1,
-        from: installed ?? {},
-        to: target,
-        releaseId: staged,
-        previousReleaseId,
-        appliedAt: now,
-        confirmBy: now + UPDATE_CONVERGENCE_SLO_MS,
-        status: 'pending',
-        forcedMinimum: input.minVersion,
-        ...(input.requiredProbeIds?.length
-          ? { requiredProbeIds: [...new Set(input.requiredProbeIds)].sort(), confirmedProbeIds: [] }
-          : {}),
-      });
+      await activateRelease(input.layout, staged);
       const { stagedReleaseId: _stagedReleaseId, ...withoutStagedRelease } = state;
       await writeUpdateState(input.layout, withoutStagedRelease);
       return staged;
@@ -170,7 +144,6 @@ export class ManagedUpdateHandoff {
   readonly #env: NodeJS.ProcessEnv;
   readonly #runUpdateWorker: () => Promise<void>;
   readonly #drainDeadlineMs: number;
-  readonly #requiredProbeIds: string[];
   #nextUpdateCheckAt: number;
   #updateCycleDeadlineAt: number | undefined;
   #worker: Promise<void> | undefined;
@@ -181,13 +154,11 @@ export class ManagedUpdateHandoff {
 
   private constructor(options: {
     layout: BeelineInstallLayout;
-    runtimeDir: string;
     loadedRelease: string | undefined;
     now?: () => number;
     env?: NodeJS.ProcessEnv;
     runUpdateWorker?: () => Promise<void>;
     drainDeadlineMs?: number;
-    requiredProbeIds?: string[];
   }) {
     this.#layout = options.layout;
     this.#loadedRelease = options.loadedRelease;
@@ -195,7 +166,6 @@ export class ManagedUpdateHandoff {
     this.#env = options.env ?? process.env;
     this.#runUpdateWorker = options.runUpdateWorker ?? runManagedUpdateWorkerProcess;
     this.#drainDeadlineMs = options.drainDeadlineMs ?? UPDATE_DRAIN_DEADLINE_MS;
-    this.#requiredProbeIds = [...new Set(options.requiredProbeIds ?? [])].sort();
     this.#nextUpdateCheckAt =
       this.#now() +
       numberEnv(this.#env, 'BEELINE_UPDATE_INITIAL_DELAY_MS', DEFAULT_UPDATE_INITIAL_DELAY_MS);
@@ -203,19 +173,16 @@ export class ManagedUpdateHandoff {
 
   static async create(
     layout: BeelineInstallLayout,
-    runtimeDir: string,
     now: () => number = Date.now,
     options: {
       env?: NodeJS.ProcessEnv;
       runUpdateWorker?: () => Promise<void>;
       drainDeadlineMs?: number;
-      requiredProbeIds?: string[];
     } = {},
   ): Promise<ManagedUpdateHandoff> {
     const env = options.env ?? process.env;
     return new ManagedUpdateHandoff({
       layout,
-      runtimeDir,
       loadedRelease: runningReleaseId(layout, env) ?? (await activeReleaseId(layout)),
       now,
       ...options,
@@ -230,9 +197,9 @@ export class ManagedUpdateHandoff {
   }
 
   /**
-   * Return true once either a verified release is staged behind the serving
-   * daemon's idle gate or desired-release drift is represented by the single
-   * install-scoped update attempt. Restart intent itself is process-local.
+   * Return true once the active release differs from the serving release.
+   * restartRequest() also observes staged releases behind the idle gate.
+   * Restart intent is process-local.
    *
    * The core calls this only after a completed progress tick. Manifest I/O,
    * archive verification, extraction, and smoke tests run in a disposable
@@ -242,16 +209,9 @@ export class ManagedUpdateHandoff {
   async check(): Promise<boolean> {
     if (this.#requested || !this.#loadedRelease) return this.#requested;
     if (this.#stagedReleaseId) return false;
-    let desiredRelease = await activeReleaseId(this.#layout).catch(() => undefined);
+    const desiredRelease = await activeReleaseId(this.#layout).catch(() => undefined);
     if (desiredRelease && desiredRelease !== this.#loadedRelease) {
-      try {
-        return await this.#journalDrift(desiredRelease);
-      } catch (error) {
-        console.error(
-          `[thin-core] could not persist update handoff yet: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        return false;
-      }
+      return this.#armRestart(desiredRelease);
     }
 
     const state = await readUpdateState(this.#layout);
@@ -267,7 +227,7 @@ export class ManagedUpdateHandoff {
         `[thin-core] staged update ${state.stagedReleaseId} is waiting for active turns to drain`,
       );
       // `check()` retains its historical meaning: true means the stable anchor
-      // already drifted and has an update-attempt journal. The staged state is
+      // already drifted. The staged state is
       // consumed only by restartRequest(), which owns the idle/quiesce gate.
       return false;
     }
@@ -320,48 +280,12 @@ export class ManagedUpdateHandoff {
     return false;
   }
 
-  async #journalDrift(desiredRelease: string): Promise<boolean> {
+  #armRestart(desiredRelease: string): boolean {
     const requestedAt = this.#now();
     const drainDeadlineAt = Math.min(
       requestedAt + this.#drainDeadlineMs,
       this.#updateCycleDeadlineAt ?? Number.POSITIVE_INFINITY,
     );
-    await withInstallLock(this.#layout, async () => {
-      const attempt = await readUpdateAttempt(this.#layout);
-      if (!attempt || attempt.releaseId !== desiredRelease || attempt.status !== 'pending') {
-        const from =
-          (await readInstalledBundleIdentity({
-            ...this.#layout,
-            libDir: resolve(this.#layout.releasesRoot, this.#loadedRelease!),
-          }).catch(() => undefined)) ?? {};
-        const to = (await readInstalledBundleIdentity(this.#layout).catch(() => undefined)) ?? {};
-        const record: UpdateAttemptRecord = {
-          version: 1,
-          from,
-          to,
-          releaseId: desiredRelease,
-          previousReleaseId: this.#loadedRelease,
-          appliedAt: requestedAt,
-          confirmBy: requestedAt + UPDATE_CONVERGENCE_SLO_MS,
-          status: 'pending',
-          ...(this.#requiredProbeIds.length > 0
-            ? { requiredProbeIds: this.#requiredProbeIds, confirmedProbeIds: [] }
-            : {}),
-        };
-        await writeUpdateAttempt(this.#layout, record);
-      } else if (this.#requiredProbeIds.length > 0) {
-        // Keep the live-fleet snapshot complete for diagnostics even though
-        // one verified successor is enough to confirm the shared release.
-        const requiredProbeIds = [
-          ...new Set([...(attempt.requiredProbeIds ?? []), ...this.#requiredProbeIds]),
-        ].sort();
-        await replaceUpdateAttempt(this.#layout, {
-          ...attempt,
-          requiredProbeIds,
-          confirmedProbeIds: attempt.confirmedProbeIds ?? [],
-        });
-      }
-    });
     this.#restartRequest = {
       loadedRelease: this.#loadedRelease!,
       desiredRelease,
@@ -437,7 +361,7 @@ export class ManagedUpdateHandoff {
       this.#stagedReleaseId = undefined;
       this.#requested = false;
       this.#restartRequest = undefined;
-      await this.#journalDrift(stagedReleaseId);
+      this.#armRestart(stagedReleaseId);
     }
     return { kind: 'restart', request: this.#restartRequest ?? request };
   }
@@ -579,25 +503,11 @@ export async function runManagedUpdateWorker(): Promise<{ activeRelease?: string
     env: process.env,
     isIdle: () => true,
     stageOnly: true,
-    requiredProbeIds: await runningRuntimeProbeIds(process.env),
     logger: (line) => console.error(line),
   });
   await manager.checkAndApply();
   const activeRelease = await activeReleaseId(layout);
   return activeRelease ? { activeRelease } : {};
-}
-
-/** Stable agent identities whose live daemons will cross this shared install boundary. */
-export async function runningRuntimeProbeIds(
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string[]> {
-  const ids: string[] = [];
-  for (const path of await findAgentRuntimeConfigPaths(env).catch(() => [] as string[])) {
-    if (!(await runtimeDaemonPid(path).catch(() => undefined))) continue;
-    const runtime = await readRuntimeRecord(path).catch(() => undefined);
-    if (runtime?.agent.publicKey) ids.push(runtime.agent.publicKey);
-  }
-  return [...new Set(ids)].sort();
 }
 
 /** Spawn the update worker as a killable process group with an absolute deadline. */
@@ -658,221 +568,5 @@ async function runManagedUpdateWorkerProcess(): Promise<void> {
         finish(new Error(`update worker returned invalid JSON: ${stdout.slice(-500)}`));
       }
     });
-  });
-}
-
-/** A served ACP turn is valid only for the exact pending update attempt. */
-export async function proveLoadedReleaseReady(
-  layout: BeelineInstallLayout,
-  runtimeDir: string,
-  loadedRelease: string | undefined,
-  options: {
-    probeId?: string;
-    functionalProof?: UpdateFunctionalProbeResult;
-    now?: () => number;
-  } = {},
-): Promise<boolean> {
-  const attempt = await readUpdateAttempt(layout);
-  const desiredRelease = attempt?.status === 'pending' ? attempt.releaseId : undefined;
-  if (!desiredRelease || !loadedRelease || desiredRelease !== loadedRelease) return false;
-  if ((await activeReleaseId(layout).catch(() => undefined)) !== loadedRelease) return false;
-  if (!options.functionalProof) return false;
-  const probeId = options.probeId ?? runtimeDir;
-  const accepted = await withInstallLock(layout, async () => {
-    if ((await activeReleaseId(layout).catch(() => undefined)) !== loadedRelease) return false;
-    const current = await readUpdateAttempt(layout);
-    if (!current || current.releaseId !== loadedRelease || current.status !== 'pending')
-      return false;
-    const confirmed = [...new Set([...(current.confirmedProbeIds ?? []), probeId])].sort();
-    await replaceUpdateAttempt(layout, {
-      ...current,
-      confirmedProbeIds: confirmed,
-      // One verified successor is sufficient to validate the shared bundle.
-      // A peer still running the old release cannot hold this journal pending.
-      status: 'confirmed',
-    });
-    return true;
-  });
-  if (!accepted) return false;
-  await writeFile(
-    resolve(runtimeDir, 'daemon-ready.json'),
-    `${JSON.stringify(
-      {
-        readyAt: (options.now ?? Date.now)(),
-        loadedRelease,
-        functionalProof: options.functionalProof,
-      },
-      null,
-      2,
-    )}\n`,
-    { mode: 0o600 },
-  );
-  return true;
-}
-
-export type ManagedSuccessorGateResult =
-  | { kind: 'passed'; proof: UpdateFunctionalProbeResult }
-  | { kind: 'agent-unavailable'; error: UpdateFunctionalProbeError }
-  | { kind: 'agent-failed'; error: unknown }
-  | { kind: 'failed'; error: unknown; rolledBack: boolean };
-
-async function recordUnavailableProbe(input: {
-  layout: BeelineInstallLayout;
-  loadedRelease: string | undefined;
-  probeId: string;
-}): Promise<boolean> {
-  return withInstallLock(input.layout, async () => {
-    const current = await readUpdateAttempt(input.layout);
-    if (
-      !current ||
-      current.status !== 'pending' ||
-      current.releaseId !== input.loadedRelease ||
-      (await activeReleaseId(input.layout)) !== input.loadedRelease
-    )
-      return false;
-    const unavailableProbeIds = [
-      ...new Set([...(current.unavailableProbeIds ?? []), input.probeId]),
-    ].sort();
-    const required = current.requiredProbeIds ?? [input.probeId];
-    const satisfied = [...(current.confirmedProbeIds ?? []), ...unavailableProbeIds];
-    await replaceUpdateAttempt(input.layout, {
-      ...current,
-      unavailableProbeIds,
-      ...(required.every((id) => satisfied.includes(id)) ? { status: 'confirmed' as const } : {}),
-    });
-    return true;
-  });
-}
-
-/**
- * Every daemon on this host shares ONE update attempt, so the first sibling to
- * prove a genuine successor fault reverts it for the fleet — and every other
- * daemon's own proof is then refused. That coupling is deliberate; reporting it
- * as this daemon's own probe failing is not (2026-09-06: helpers whose probes
- * had passed logged `did not produce functional proof` and the release was read
- * as a bad bundle). Name the sibling and its failure instead.
- */
-function siblingRevertNote(
-  attempt: UpdateAttemptRecord | undefined,
-  loadedRelease: string | undefined,
-): string | undefined {
-  if (!loadedRelease || attempt?.releaseId !== loadedRelease || attempt.status !== 'reverted') {
-    return undefined;
-  }
-  return (
-    `shared update attempt reverted by sibling ${attempt.revertedBy ?? 'unknown'}: ` +
-    `${attempt.failure ?? 'no failure recorded'}`
-  );
-}
-
-/** What this daemon's own probe actually did, so the journal does not blame it. */
-function describeOwnProof(proof: UpdateFunctionalProbeResult): string {
-  return proof.modelAnswer === 'unavailable'
-    ? `this daemon's own probe reached the model boundary without an answer ` +
-        `(${proof.modelAnswerReason ?? 'no reason recorded'})`
-    : "this daemon's own probe passed";
-}
-
-/** One line of failure text for the shared attempt, so siblings can quote it. */
-export function attemptFailureText(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\s+/g, ' ').trim().slice(0, 300);
-}
-
-/** One fail-closed transaction from an update attempt to a served ACP turn. */
-export async function gateManagedSuccessor(input: {
-  layout: BeelineInstallLayout;
-  runtimeDir: string;
-  loadedRelease: string | undefined;
-  probeId: string;
-  probe: () => Promise<UpdateFunctionalProbeResult>;
-}): Promise<ManagedSuccessorGateResult> {
-  try {
-    const attempt = await readUpdateAttempt(input.layout);
-    const desiredRelease = attempt?.status === 'pending' ? attempt.releaseId : undefined;
-    if (!desiredRelease || !input.loadedRelease || desiredRelease !== input.loadedRelease) {
-      const reverted = siblingRevertNote(attempt, input.loadedRelease);
-      throw new Error(
-        reverted
-          ? `successor release ${input.loadedRelease} was reverted before this daemon probed it: ${reverted}`
-          : `successor loaded release ${input.loadedRelease ?? 'unknown'}, not the pending desired release`,
-      );
-    }
-    const proof = await input.probe();
-    if (
-      !(await proveLoadedReleaseReady(input.layout, input.runtimeDir, input.loadedRelease, {
-        probeId: input.probeId,
-        functionalProof: proof,
-      }))
-    ) {
-      const reverted = siblingRevertNote(
-        await readUpdateAttempt(input.layout),
-        input.loadedRelease,
-      );
-      throw new Error(
-        reverted
-          ? `successor release ${input.loadedRelease} lost its attempt while this daemon proved it: ` +
-              `${describeOwnProof(proof)}; ${reverted}`
-          : `successor release ${input.loadedRelease} did not produce functional proof`,
-      );
-    }
-    return { kind: 'passed', proof };
-  } catch (error) {
-    const attempt = await readUpdateAttempt(input.layout);
-    if (attempt?.forcedMinimum && attempt.releaseId === input.loadedRelease) {
-      // A server minimum is host authority. A broken model or agent-local
-      // configuration must not roll the shared machine back below that floor.
-      await recordUnavailableProbe(input);
-      return { kind: 'agent-failed', error };
-    }
-    if (
-      error instanceof UpdateFunctionalProbeError &&
-      error.reason === 'model-unavailable' &&
-      (await recordUnavailableProbe(input))
-    ) {
-      return { kind: 'agent-unavailable', error };
-    }
-    return {
-      kind: 'failed',
-      error,
-      rolledBack: await rollbackFailedSuccessor(input.layout, input.runtimeDir, {
-        probeId: input.probeId,
-        failure: attemptFailureText(error),
-      }),
-    };
-  }
-}
-
-/** One rollback, without self-spawning; the native service manager owns the next process. */
-export async function rollbackFailedSuccessor(
-  layout: BeelineInstallLayout,
-  runtimeDir?: string,
-  /** Recorded on the shared attempt so a sibling's journal can quote the cause. */
-  cause: { probeId?: string; failure?: string } = {},
-): Promise<boolean> {
-  return withInstallLock(layout, async () => {
-    const attempt = await readUpdateAttempt(layout);
-    if (!attempt || attempt.status !== 'pending') return false;
-    if (attempt.forcedMinimum) return false;
-    const attribution = cause.probeId ? { revertedBy: cause.probeId } : {};
-    if (!attempt.previousReleaseId) {
-      await replaceUpdateAttempt(layout, {
-        ...attempt,
-        status: 'reverted',
-        failure:
-          cause.failure ?? 'functional served-turn proof failed, but no previous release exists',
-        ...attribution,
-      });
-      return false;
-    }
-    await rollbackToPreviousRelease(layout, attempt.previousReleaseId);
-    await replaceUpdateAttempt(layout, {
-      ...attempt,
-      status: 'reverted',
-      failure: cause.failure ?? 'functional served-turn proof failed before confirmation',
-      ...attribution,
-    });
-    if (runtimeDir) await queueUpdateRollbackAlert(runtimeDir, attempt.releaseId);
-    return true;
   });
 }

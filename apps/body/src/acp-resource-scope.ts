@@ -45,9 +45,9 @@ export class AcpResourceScope {
         '--property=OOMPolicy=continue',
         '--property=KillMode=control-group',
         '--property=TimeoutStopSec=1s',
-        // The helper is Type=notify and waits for ACP update probes before
+        // The helper is Type=notify and can launch ACP sessions before
         // READY. Ordering this scope After the helper would prevent the
-        // harness from starting until the very probe it must answer finishes.
+        // harness from starting until the initialization needing it finishes.
         // BindsTo still tears the scope down when its helper disappears.
         ...(owner ? [`--property=BindsTo=${owner}`] : []),
         '/usr/bin/env',

@@ -247,8 +247,7 @@ async function main() {
       '--format=esm',
       '--target=node20',
       // Pi supplies these as virtual host modules. Bundling them duplicates the
-      // whole Pi runtime inside the generated extension and makes cold loading
-      // exceed the managed-update functional gate's 10-second startup window.
+      // whole Pi runtime inside the generated extension and slows cold loading.
       '--external:@earendil-works/pi-*',
       '--external:typebox',
       '--external:typebox/*',

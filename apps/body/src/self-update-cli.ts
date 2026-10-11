@@ -1,11 +1,9 @@
 /**
  * `beeline update` — the on-demand half of the daemon self-update path.
  *
- * Applies the published bundle to the local install (download, sha256
- * verify, atomic swap) and records one bounded confirmation attempt. Running
- * daemons observe the stable anchor at their completed progress tick, drain,
- * then restart through systemd; the replacement must serve a real turn before
- * the deadline or the anchor is rolled back and a durable alert is recorded.
+ * Downloads and verifies the published bundle. A serving helper activates it
+ * and restarts through its service manager in a quiet gap between turns.
+ * With no helper running, the install is activated for the next start.
  */
 import pc from 'picocolors';
 import {
@@ -32,10 +30,7 @@ import {
   discoveredBeelineInstallLayout,
   hostPlatformKey,
   readInstalledBundleIdentity,
-  readUpdateAttempt,
   readUpdateState,
-  rollbackToPreviousRelease,
-  writeUpdateAttempt,
   type BeelineInstallLayout,
 } from './self-update.js';
 import {
@@ -104,7 +99,6 @@ ${pc.dim('Usage:')}
                                      running daemons restart onto it once idle
   beeline update --check             Report only — no download, no swap
   beeline update --status            Show installed identity, releases, and state
-  beeline update --rollback          Restore the previous release (stable-anchor restart)
   beeline update --force             Apply even when the comparison is indeterminate
   beeline update --manifest-url <u>  Override the published manifest URL
 
@@ -155,7 +149,6 @@ async function printStatus(layout: BeelineInstallLayout): Promise<void> {
   const installed = await readInstalledBundleIdentity(layout);
   const active = await activeReleaseId(layout);
   const state = await readUpdateState(layout);
-  const attempt = await readUpdateAttempt(layout);
   console.log(`${pc.bold('installed bundle')}  ${describeIdentity(installed)}`);
   console.log(`${pc.bold('active release')}    ${active ?? 'none (legacy layout, never updated)'}`);
   if (state.lastCheckAt) {
@@ -163,36 +156,33 @@ async function printStatus(layout: BeelineInstallLayout): Promise<void> {
       `${pc.bold('last check')}         ${new Date(state.lastCheckAt).toISOString()} — ${state.lastCheckResult ?? 'unknown'}`,
     );
   }
-  if (attempt) {
-    console.log(
-      `${pc.bold('update attempt')}      ${attempt.status}: ${describeIdentity(attempt.to)} ` +
-        `(previous: ${attempt.previousReleaseId ?? 'none'}, ` +
-        (attempt.startedAt === undefined
-          ? 'confirmation starts on successor launch)'
-          : `confirm by ${new Date(attempt.confirmBy).toISOString()})`) +
-        `${attempt.failure ? ` — ${attempt.failure}` : ''}`,
-    );
-  }
 }
 
-async function runningDaemonProbeIds(): Promise<string[]> {
+async function reportRunningDaemons(): Promise<number> {
   const running = await runningDaemonConfigPaths();
-  const ids: string[] = [];
   for (const configPath of running) {
     const runtime = await readRuntimeRecord(configPath).catch(() => undefined);
-    if (runtime?.agent.publicKey) ids.push(runtime.agent.publicKey);
     console.log(
       `[beeline] daemon ${runtime?.agent.publicKey?.slice(0, 12) ?? configPath} is running; ` +
-        'it will observe the install anchor and restart after a bounded drain; unfinished work resumes.',
+        'it will activate the staged bundle and restart in a quiet gap; unfinished work resumes.',
     );
   }
-  return [...new Set(ids)].sort();
+  return running.length;
 }
 
 export async function runUpdateCommand(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     updateUsage();
     return;
+  }
+
+  const supported = new Set(['update', '--check', '--status', '--force', '--manifest-url']);
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    if (!supported.has(arg)) throw new Error(`unknown update argument: ${arg}`);
+    if (arg === '--manifest-url') {
+      if (!args[++index]) throw new Error('--manifest-url requires a URL');
+    }
   }
 
   const layout = await requireLayout();
@@ -203,29 +193,6 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
       : resolveManifestUrl(process.env);
   const checkOnly = args.includes('--check');
   const force = args.includes('--force');
-  const rollback = args.includes('--rollback');
-
-  if (rollback) {
-    const attempt = await readUpdateAttempt(layout);
-    const previous = attempt?.previousReleaseId;
-    if (!previous) throw new Error('no previous release recorded to roll back to');
-    await withInstallLock(layout, async () => {
-      await rollbackToPreviousRelease(layout, previous);
-      await writeUpdateAttempt(layout, {
-        ...attempt,
-        status: 'reverted',
-        failure: 'operator rolled the release back',
-      });
-    });
-    console.log(`[beeline] rolled back to release ${previous}.`);
-    const running = await runningDaemonProbeIds();
-    console.log(
-      running.length > 0
-        ? '[beeline] running daemons will restart onto it once idle.'
-        : '[beeline] no running daemon; the rollback takes effect on the next `beeline start`.',
-    );
-    return;
-  }
 
   if (args.includes('--status')) {
     await printStatus(layout);
@@ -273,18 +240,20 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
   }
 
   console.log(`[beeline] applying ${publishedLabel} …`);
-  const requiredProbeIds = await runningDaemonProbeIds();
+  const running = await reportRunningDaemons();
   const manager = new SelfUpdateManager({
     layout,
-    env: process.env,
-    // This command only swaps the stable anchor. The daemon coordinator owns
-    // every restart after it observes that anchor on a completed tick.
+    env: { ...process.env, BEELINE_UPDATE_MANIFEST_URL: manifestUrl },
+    // A serving helper owns activation at its idle gate. With no helper,
+    // activate now so the next start uses the new bundle.
     isIdle: () => true,
-    requiredProbeIds,
+    stageOnly: running > 0,
   });
   await withInstallLock(layout, () => manager.checkAndApply({ force: true }));
-  console.log('[beeline] bundle applied (sha256 verified, previous release kept for rollback).');
-  if (requiredProbeIds.length === 0) {
+  console.log(running > 0
+    ? '[beeline] bundle staged (sha256 verified); the helper will install and restart in a quiet gap.'
+    : '[beeline] bundle applied (sha256 verified).');
+  if (running === 0) {
     console.log(
       '[beeline] no running daemon found; the new bundle is used on the next `beeline start`.',
     );

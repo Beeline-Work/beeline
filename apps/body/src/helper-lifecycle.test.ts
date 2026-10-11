@@ -5,13 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
+import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   HELPER_EXIT_CODES,
   HELPER_HARD_STOP_MS,
   HelperLifecycle,
   retryBeforeReady,
-  successorRollbackAllowed,
 } from './helper-lifecycle.js';
 import { ManagedUpdateDrain, type ManagedUpdateHandoff } from './managed-update.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
@@ -84,7 +83,6 @@ describe('HelperLifecycle', () => {
       'restart-requested': 0,
       update: 0,
       failed: 75,
-      'rolled-back': 75,
       'force-update-failed': 75,
       distress: 77,
       'agent-removed': 78,
@@ -192,7 +190,7 @@ setTimeout(() => console.log('still serving'), 50);
 });
 
 describe('before READY', () => {
-  it('waits for the link while the network is down, extending the start timeout, with no rollback', async () => {
+  it('waits for the link while the network is down, extending the start timeout until recovery', async () => {
     vi.useFakeTimers();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const opens = new Set<() => void>();
@@ -202,7 +200,6 @@ describe('before READY', () => {
       if (!networkUp) throw networkFailure();
       return 'replayed';
     });
-    const deadlineAt = Date.now() + 10 * 60_000;
     let settled: unknown;
     const replay = retryBeforeReady(work, {
       onLinkOpen: (listener) => {
@@ -210,7 +207,6 @@ describe('before READY', () => {
         return () => opens.delete(listener);
       },
       extendStartTimeout: extend,
-      deadlineAt,
     }).then((value) => (settled = value), (error) => (settled = error));
     // The bounded early retries, then nothing but waiting on the link.
     await vi.advanceTimersByTimeAsync(1_000 + 5_000 + 30_000);
@@ -220,8 +216,6 @@ describe('before READY', () => {
     expect(settled).toBeUndefined();
     expect(extend).toHaveBeenCalled();
     expect(extend.mock.calls.every(([ms]) => (ms as number) <= 75_000)).toBe(true);
-    // While waiting, a failure is never grounds for a successor rollback.
-    expect(successorRollbackAllowed(networkFailure(), deadlineAt)).toBe(false);
     networkUp = true;
     for (const open of [...opens]) open();
     await vi.advanceTimersByTimeAsync(0);
@@ -230,26 +224,20 @@ describe('before READY', () => {
     expect(work).toHaveBeenCalledTimes(5);
   });
 
-  it('lets the failure through only at the attempt deadline, or at once for a real fault', async () => {
+  it('stops waiting on shutdown and propagates a real fault immediately', async () => {
     vi.useFakeTimers();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const deadlineAt = Date.now() + 120_000;
-    const replay = retryBeforeReady(async () => {
-      throw networkFailure();
-    }, { onLinkOpen: () => () => undefined, extendStartTimeout: async () => undefined, deadlineAt });
+    const controller = new AbortController();
+    const replay = retryBeforeReady(async () => { throw networkFailure(); }, {
+      onLinkOpen: () => () => undefined, extendStartTimeout: async () => undefined,
+      signal: controller.signal });
     const failed = expect(replay).rejects.toThrow('fetch failed');
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    controller.abort();
     await failed;
-    expect(successorRollbackAllowed(networkFailure(), deadlineAt, deadlineAt)).toBe(true);
-
-    const fault = new Error('successor cannot read its runtime');
-    await expect(
-      retryBeforeReady(async () => {
-        throw fault;
-      }, { onLinkOpen: () => () => undefined, extendStartTimeout: async () => undefined, deadlineAt }),
-    ).rejects.toBe(fault);
-    expect(successorRollbackAllowed(fault, Date.now() + 60_000)).toBe(true);
-    expect(successorRollbackAllowed(new DaemonApiError('bad', 502, true), Date.now() + 60_000))
-      .toBe(false);
+    const fault = new Error('cannot read runtime');
+    await expect(retryBeforeReady(async () => { throw fault; }, {
+      onLinkOpen: () => () => undefined, extendStartTimeout: async () => undefined,
+    })).rejects.toBe(fault);
   });
 });

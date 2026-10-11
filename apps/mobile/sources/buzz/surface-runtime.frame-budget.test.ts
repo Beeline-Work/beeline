@@ -10,8 +10,8 @@ import {
   type RoomViewMessage,
 } from '@beeline/buzz-client';
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { createRoomMessageProjector } from './room-view-presentation';
-import { applyRoomTailRead, selectRoomMessages } from './room-message-records';
+import { createRoomMessageProjector, reconcileRoomView } from './room-view-presentation';
+import { useRoomMessageRecords } from './room-message-records';
 import { useRoomSendFrame } from './room-send-frame';
 
 vi.mock('react-native-mmkv', () => ({
@@ -115,18 +115,26 @@ describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
     const fetch = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
     const projector = createRoomMessageProjector();
     const frames: ChatDisplayMessage[][] = [];
-    // Each read lands in the Room's message records; the tail holds ids.
+    let selected: ChatDisplayMessage[] = [];
+    let renderer: ReactTestRenderer | undefined;
+    let previous: RoomView | null = null;
+    function Projection({ view: current }: { view: RoomView }) {
+      const [messages] = useRoomMessageRecords('scope', current.room.id, [current.messages]);
+      selected = projector.project(messages, current.viewer.identity.pubkey);
+      return null;
+    }
+    const show = (view: RoomView) => {
+      const stable = reconcileRoomView(previous, view);
+      previous = stable;
+      act(() => {
+        if (renderer) renderer.update(React.createElement(Projection, { view: stable }));
+        else renderer = create(React.createElement(Projection, { view: stable }));
+      });
+      frames.push(selected);
+    };
     const scheduler = new SurfaceRefreshScheduler({
       fetch,
-      apply: (fresh: RoomView) => {
-        const tail = applyRoomTailRead('scope', 'room', 'tail', fresh, false);
-        frames.push(
-          projector.project(
-            selectRoomMessages('scope', 'room', tail.ids),
-            fresh.viewer.identity.pubkey,
-          ),
-        );
-      },
+      apply: show,
     });
 
     await scheduler.startAfter(Promise.resolve());
@@ -148,19 +156,16 @@ describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
     ]);
 
     const edited = view([{ ...structuredClone(firstMessage), text: 'Agent reply edited' }]);
-    const changedTail = applyRoomTailRead('scope', 'room', 'tail', edited, false);
-    const changed = { messages: selectRoomMessages('scope', 'room', changedTail.ids) };
-    const changedProjection = projector.project(
-      changed.messages,
-      edited.viewer.identity.pubkey,
-    )[0]!;
+    show(edited);
+    const changedProjection = selected[0]!;
     expect(changedProjection).not.toBe(refetchedParent);
     expect(changedProjection.text).toBe('Agent reply edited');
 
-    const otherViewerProjection = projector.project(changed.messages, 'c'.repeat(64))[0]!;
+    const otherViewerProjection = projector.project(edited.messages, 'c'.repeat(64))[0]!;
     expect(otherViewerProjection).not.toBe(changedProjection);
     projector.reset();
-    expect(projector.project(changed.messages, 'c'.repeat(64))[0]).not.toBe(otherViewerProjection);
+    expect(projector.project(edited.messages, 'c'.repeat(64))[0]).not.toBe(otherViewerProjection);
+    act(() => renderer?.unmount());
   });
 
   it('keeps an optimistic send in a constant-size partition until the screen merges it by time', () => {

@@ -18,7 +18,7 @@ vi.mock('@/sync/transport/live-connection', () => ({
       });
       return () => undefined;
     },
-    liveDrafts: () => new Map([...cached.values()].map(({ agentId, text }) => [agentId, text])),
+    liveDrafts: () => new Map([...cached].map(([turn, { text }]) => [turn, text])),
   }),
 }));
 

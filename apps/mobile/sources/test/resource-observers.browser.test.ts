@@ -137,7 +137,7 @@ describe('resource observers in the desktop web renderer', () => {
         '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'a' });`,
         // Every registration hears each event, as on the real shared socket.
         '@/sync/transport/live-connection': `const listeners = new Set(); globalThis.__invalidate = event => [...listeners].forEach(listener => listener(event));
-          export const sharedLiveConnection = () => ({ register: async (_, listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; } });`,
+          export const sharedLiveConnection = () => ({ liveDrafts: () => new Map(), register: async (_, listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; } });`,
         '@/components/buzz/IdentityMark': `export const IdentityMark = () => null;`,
         '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async operation => {
           globalThis.__reads = (globalThis.__reads ?? 0) + 1; if (globalThis.__offline) throw new Error('offline'); const detail = ${JSON.stringify(detail)};

@@ -202,7 +202,7 @@ export class LiveConnection {
     if (!cache) return texts;
     dropExpiredOverlays(cache, Date.now());
     for (const { event } of cache.drafts.values())
-      if (event.latestChunk?.trim()) texts.set(event.agentId, event.latestChunk);
+      if (event.latestChunk?.trim()) texts.set(overlayKey(event.agentId, event.turnId), event.latestChunk);
     return texts;
   }
 

@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -21,6 +22,14 @@ export type ComputerSessionRow = {
 };
 const handbackWaiters = new Map<string, Set<WebSocket>>();
 const MAX_VIEWER_BUFFERED_BYTES = 4 * 1024 * 1024;
+
+export type ComputerActivityEvent = {
+  type: 'event';
+  seq: number;
+  at: string;
+  name: 'viewer-opened' | 'viewer-closed' | 'takeover' | 'input' | 'navigation' | 'handback';
+  detail?: string;
+};
 
 const VIEW_TOKEN_LIFETIME_MS = 60 * 60_000;
 
@@ -74,11 +83,58 @@ function notifyWaiters(id: string, value: { type: 'handoff' | 'ended'; note?: st
   }
 }
 
+async function recordComputerActivity(
+  database: SqlDatabase, row: ComputerSessionRow, name: ComputerActivityEvent['name'], detail?: string,
+): Promise<void> {
+  const result = await database.query<{ id: string; created_at: Date }>(
+    `INSERT INTO computer_session_events(session_id,name,detail)
+     SELECT id,$2,$3 FROM computer_sessions WHERE id=$1 AND status='live'
+     RETURNING id,created_at`, [row.id, name, detail ?? null],
+  );
+  const saved = result.rows[0];
+  if (!saved) return;
+  const event: ComputerActivityEvent = {
+    type: 'event', seq: Number(saved.id), at: new Date(saved.created_at).toISOString(), name,
+    ...(detail ? { detail } : {}),
+  };
+  for (const waiter of handbackWaiters.get(row.id) ?? []) {
+    if (waiter.readyState === WebSocket.OPEN) waiter.send(JSON.stringify(event));
+  }
+  const words: Record<ComputerActivityEvent['name'], { verb: string; object: string }> = {
+    'viewer-opened': { verb: 'opened', object: 'the shared browser' },
+    'viewer-closed': { verb: 'closed', object: 'the shared browser view' },
+    takeover: { verb: 'took', object: 'control of the shared browser' },
+    input: { verb: 'used', object: `the shared browser ${detail ?? 'input'}` },
+    navigation: { verb: 'navigated', object: 'the shared browser' },
+    handback: { verb: 'returned', object: 'control of the shared browser' },
+  };
+  const phrase = words[name];
+  void systemLine(database, {
+    roomId: row.room_id,
+    authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', name: 'A person' },
+    verb: phrase.verb,
+    object: { text: phrase.object, ...(name === 'navigation' && detail ? { url: detail } : {}) },
+    kind: 'computer-session-activity',
+    payload: { sessionId: row.id, activity: name, ...(detail ? { detail } : {}) },
+    wakes: [row.agent_id],
+  }).catch((error: unknown) => console.warn('[computer-share] activity Room event failed', error));
+  if (event.seq % 20 === 0) void database.query(
+    `DELETE FROM computer_session_events WHERE session_id=$1 AND id <
+      (SELECT id FROM computer_session_events WHERE session_id=$1 ORDER BY id DESC OFFSET 199 LIMIT 1)`,
+    [row.id],
+  ).catch(() => {});
+}
+
 export async function noteComputerHandback(database: SqlDatabase, row: ComputerSessionRow): Promise<void> {
   const changed = await database.query(
-    `UPDATE computer_sessions SET handoff_count=handoff_count+1 WHERE id=$1 AND status='live'`, [row.id],
+    `UPDATE computer_sessions SET handoff_count=handoff_count+1
+     WHERE id=$1 AND status='live'`, [row.id],
   );
-  if (changed.rowCount) notifyWaiters(row.id, { type: 'handoff', note: 'Human handed the browser back' });
+  if (changed.rowCount) {
+    await recordComputerActivity(database, row, 'handback');
+    notifyWaiters(row.id, { type: 'handoff', note: 'Human handed the browser back' });
+  }
 }
 
 /** The public origin can move to computer.usebeeline.app after DNS and TLS are ready. */
@@ -138,7 +194,7 @@ export async function getComputerSession(database: SqlDatabase, id: string): Pro
 
 export async function endComputerSession(
   database: SqlDatabase,
-  live: LiveHub,
+  live: LiveHub | undefined,
   row: ComputerSessionRow,
 ): Promise<void> {
   if (row.status === 'ended') return;
@@ -154,8 +210,18 @@ export async function endComputerSession(
     );
     return true;
   });
-  if (changed) live.publish({ type: 'invalidate', roomId: row.room_id, reason: 'message', agentId: row.agent_id });
-  if (changed) notifyWaiters(row.id, { type: 'ended' });
+  if (changed) live?.publish({ type: 'invalidate', roomId: row.room_id, reason: 'message', agentId: row.agent_id });
+  if (changed) {
+    notifyWaiters(row.id, { type: 'ended' });
+    const body = bodyChannels.get(row.id);
+    body?.source?.close();
+    for (const viewer of body?.viewers ?? []) viewer.close();
+    const squire = squireChannels.get(row.id);
+    for (const upstream of squire?.upstreams ?? []) upstream.close();
+    for (const viewer of squire?.viewers ?? []) viewer.close();
+    bodyChannels.delete(row.id);
+    squireChannels.delete(row.id);
+  }
 }
 
 /** One authoritative read when a live viewer's socket reconnects. */
@@ -178,6 +244,23 @@ function isFrameMessage(data: WebSocket.RawData): boolean {
   } catch { return false; }
 }
 
+function serveComputerRetry(request: IncomingMessage, response: ServerResponse): void {
+  const retry = Math.min(10, Math.max(0, Number(new URL(request.url ?? '/', 'http://beeline.local').searchParams.get('retry')) || 0));
+  const delay = Math.min(2_000, 300 * 2 ** retry);
+  response.writeHead(200, {
+    'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+    'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'",
+    'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
+  });
+  response.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    body{margin:0;display:grid;place-items:center;height:100vh;background:#1b1320;color:#f6edf4;font:15px system-ui,sans-serif}
+    button{border:1px solid #ffffff44;border-radius:12px;background:#261a2a;color:inherit;padding:10px 14px}
+    </style><div>${retry < 10 ? 'Connecting to browser…' : '<button id="retry">Try again</button>'}</div><script>
+    const next=new URL(location.href);next.searchParams.set('retry','${retry < 10 ? retry + 1 : 0}');
+    ${retry < 10 ? `setTimeout(()=>location.replace(next.href),${delay});` : "document.getElementById('retry').onclick=()=>location.replace(next.href);"}
+    </script>`);
+}
+
 /** The public session path needs a viewer token and current Room/agent authority. */
 export async function serveComputerSession(
   request: IncomingMessage,
@@ -198,23 +281,27 @@ export async function serveComputerSession(
       response.writeHead(308, { location: `/s/${id}/`, 'cache-control': 'no-store' }).end();
       return;
     }
-    const upstream = await fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(10_000) })
+    const fetchStartedAt = Date.now();
+    const upstream = await fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(4_000) })
       .catch(() => undefined);
-    if (!upstream) { response.writeHead(502, { 'cache-control': 'no-store' }).end(); return; }
+    if (!upstream) { console.warn(`[computer-share] Squire HTML unavailable session=${id.slice(0, 8)}`); serveComputerRetry(request, response); return; }
     if (!upstream.ok) {
-      response.writeHead(upstream.status === 410 || upstream.status === 404 ? 410 : 502,
-        { 'cache-control': 'no-store' }).end();
+      console.warn(`[computer-share] Squire HTML status=${upstream.status} session=${id.slice(0, 8)}`);
+      if (upstream.status === 410 || upstream.status === 404) response.writeHead(410, { 'cache-control': 'no-store' }).end();
+      else serveComputerRetry(request, response);
       return;
     }
     const html = await upstream.text().catch(() => undefined);
-    if (!html) { response.writeHead(502, { 'cache-control': 'no-store' }).end(); return; }
+    if (!html) { serveComputerRetry(request, response); return; }
     // The Squire page uses a relative "stream" URL. This small host bridge
     // reconciles one close with our session row and notifies the artifact view.
     const coverStyle = `<style>
       html,body{background:#1b1320!important}
-      #screen{display:block!important;overflow:auto!important;align-items:unset!important;justify-content:unset!important;touch-action:none!important}
-      canvas{display:block!important;max-width:none!important;max-height:none!important;object-fit:fill!important;touch-action:none!important}
-      #bar{position:fixed!important;z-index:2;right:12px;bottom:12px;padding:0!important;background:transparent!important}
+      #screen{display:block!important;position:relative!important;overflow:hidden!important;align-items:unset!important;justify-content:unset!important;touch-action:none!important}
+      canvas{display:block!important;position:absolute!important;max-width:none!important;max-height:none!important;object-fit:fill!important;touch-action:none!important}
+      #bar{position:fixed!important;z-index:2;right:12px;bottom:max(12px,env(safe-area-inset-bottom))!important;padding:0!important;background:transparent!important}
+      #beeline-handback{position:fixed;z-index:2;right:12px;bottom:72px;border:1px solid #ffffff44;border-radius:14px;padding:10px 14px;background:#261a2ae8;color:#f6edf4;font:500 13px system-ui,sans-serif}
+      #beeline-end{position:fixed;z-index:2;right:12px;bottom:122px;border:1px solid #ffffff44;border-radius:14px;padding:10px 14px;background:#261a2ae8;color:#f6edf4;font:500 13px system-ui,sans-serif}
       #state{display:none!important}
       #focus{width:42px;height:42px;margin:0!important;padding:0;border:1px solid #ffffff44;border-radius:14px;background:#261a2ae8;color:#f6edf4;font-size:0}
       #focus::before{content:'⌨';font-size:20px}
@@ -222,29 +309,54 @@ export async function serveComputerSession(
     </style>`;
     const bridge = `<script>
       const beelineScreen=document.getElementById('screen'),beelineCanvas=document.getElementById('canvas');
-      if(new URLSearchParams(location.search).has('preview'))document.getElementById('bar').style.display='none';
+      const beelineQuery=new URLSearchParams(location.search),beelinePreview=beelineQuery.has('preview');
+      if(beelinePreview)document.getElementById('bar').style.display='none';
+      let beelineZoom=1,beelineLeft=0,beelineTop=0;
       function beelineFit(){if(!beelineCanvas.width||!beelineCanvas.height)return;
-        const scale=Math.max(beelineScreen.clientWidth/beelineCanvas.width,beelineScreen.clientHeight/beelineCanvas.height);
-        beelineCanvas.style.width=Math.ceil(beelineCanvas.width*scale)+'px';
-        beelineCanvas.style.height=Math.ceil(beelineCanvas.height*scale)+'px';}
+        const scale=(beelinePreview?Math.max:Math.min)(beelineScreen.clientWidth/beelineCanvas.width,beelineScreen.clientHeight/beelineCanvas.height)*beelineZoom;
+        const w=beelineCanvas.width*scale,h=beelineCanvas.height*scale;
+        if(beelineZoom===1){beelineLeft=(beelineScreen.clientWidth-w)/2;beelineTop=(beelineScreen.clientHeight-h)/2;}
+        else{beelineLeft=Math.min(0,Math.max(beelineScreen.clientWidth-w,beelineLeft));beelineTop=Math.min(0,Math.max(beelineScreen.clientHeight-h,beelineTop));}
+        beelineCanvas.style.width=Math.ceil(w)+'px';beelineCanvas.style.height=Math.ceil(h)+'px';
+        beelineCanvas.style.left=Math.round(beelineLeft)+'px';beelineCanvas.style.top=Math.round(beelineTop)+'px';}
       new MutationObserver(beelineFit).observe(beelineCanvas,{attributes:true,attributeFilter:['width','height']});
       addEventListener('resize',beelineFit);beelineFit();
-      if(matchMedia('(pointer:coarse)').matches){let drag;
+      if(!beelinePreview&&!beelineQuery.has('embedded')){const button=document.createElement('button');
+        button.id='beeline-handback';button.textContent='Hand back';button.onclick=()=>send({type:'handback'});document.body.append(button);
+        const end=document.createElement('button');end.id='beeline-end';end.textContent='End share';
+        end.onclick=()=>send({type:'end-share'});document.body.append(end);}
+      if(matchMedia('(pointer:coarse)').matches){let drag,pinch;const pointers=new Map();
         beelineCanvas.addEventListener('pointerdown',event=>{if(event.pointerType!=='touch')return;
           event.preventDefault();event.stopImmediatePropagation();beelineCanvas.setPointerCapture(event.pointerId);
-          drag={id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};beelineCanvas.focus();},true);
-        beelineCanvas.addEventListener('pointermove',event=>{if(event.pointerType!=='touch'||drag?.id!==event.pointerId)return;
-          event.preventDefault();event.stopImmediatePropagation();const dx=drag.x-event.clientX,dy=drag.y-event.clientY;
+          pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+          if(pointers.size===1)drag={id:event.pointerId,x:event.clientX,y:event.clientY,moved:false};
+          if(pointers.size===2){const [a,b]=[...pointers.values()];pinch={distance:Math.hypot(a.x-b.x,a.y-b.y),zoom:beelineZoom,
+            left:beelineLeft,top:beelineTop,x:(a.x+b.x)/2-beelineScreen.getBoundingClientRect().left,
+            y:(a.y+b.y)/2-beelineScreen.getBoundingClientRect().top};if(drag)drag.moved=true;}
+          beelineCanvas.focus();},true);
+        beelineCanvas.addEventListener('pointermove',event=>{if(event.pointerType!=='touch'||!pointers.has(event.pointerId))return;
+          event.preventDefault();event.stopImmediatePropagation();pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+          if(pinch&&pointers.size>=2){const [a,b]=[...pointers.values()],distance=Math.hypot(a.x-b.x,a.y-b.y),ratio=Math.max(.25,distance/pinch.distance);
+            beelineZoom=Math.min(4,Math.max(1,pinch.zoom*ratio));const z=beelineZoom/pinch.zoom;
+            beelineLeft=(a.x+b.x)/2-beelineScreen.getBoundingClientRect().left-(pinch.x-pinch.left)*z;
+            beelineTop=(a.y+b.y)/2-beelineScreen.getBoundingClientRect().top-(pinch.y-pinch.top)*z;beelineFit();return;}
+          if(drag?.id!==event.pointerId)return;const dx=drag.x-event.clientX,dy=drag.y-event.clientY;
           if(Math.abs(dx)+Math.abs(dy)>3){drag.moved=true;
-            if(Math.abs(dx)>Math.abs(dy)&&beelineScreen.scrollWidth>beelineScreen.clientWidth)beelineScreen.scrollLeft+=dx;
+            if(beelineZoom>1){beelineLeft-=dx;beelineTop-=dy;beelineFit();}
             else send({type:'wheel',delta_x:dx,delta_y:dy,...point(event)});}
           drag.x=event.clientX;drag.y=event.clientY;},true);
-        beelineCanvas.addEventListener('pointerup',event=>{if(event.pointerType!=='touch'||drag?.id!==event.pointerId)return;
-          event.preventDefault();event.stopImmediatePropagation();
-          if(!drag.moved){const p=point(event);send({type:'touch',phase:'start',...p});send({type:'touch',phase:'end',...p});}
-          drag=undefined;},true);
-        beelineCanvas.addEventListener('pointercancel',event=>{if(event.pointerType==='touch')drag=undefined;},true);
+        beelineCanvas.addEventListener('pointerup',event=>{if(event.pointerType!=='touch')return;
+          event.preventDefault();event.stopImmediatePropagation();const wasPinch=Boolean(pinch);pointers.delete(event.pointerId);
+          if(pointers.size<2)pinch=undefined;
+          if(drag?.id===event.pointerId&&!drag.moved&&!wasPinch){const p=point(event);send({type:'touch',phase:'start',...p});send({type:'touch',phase:'end',...p});}
+          drag=undefined;if(pointers.size===1){const [id,p]=[...pointers.entries()][0];drag={id,x:p.x,y:p.y,moved:true};}},true);
+        beelineCanvas.addEventListener('pointercancel',event=>{if(event.pointerType==='touch'){pointers.delete(event.pointerId);drag=undefined;pinch=undefined;}},true);
       }
+      let beelineFirstFrame=false;
+      socket.addEventListener('message',event=>{if(beelineFirstFrame)return;
+        try{if(JSON.parse(event.data).type!=='frame')return;}catch{return;}
+        beelineFirstFrame=true;requestAnimationFrame(()=>{const value={type:'computer-first-frame',id:'${id}',at:Date.now()};
+          parent.postMessage(value,'*');window.ReactNativeWebView?.postMessage(JSON.stringify(value));});});
       socket.addEventListener('close',async()=>{
         try{const reply=await fetch('status'+location.search,{cache:'no-store'});const state=await reply.json();
           if(state.status==='live'&&!new URLSearchParams(location.search).has('reconnected')){
@@ -258,9 +370,10 @@ export async function serveComputerSession(
       });
     </script>`;
     const securedHtml = html.replace('new URL("stream", location.href)', 'new URL("stream" + location.search, location.href)');
-    if (securedHtml === html) { response.writeHead(502, { 'cache-control': 'no-store' }).end(); return; }
+    if (securedHtml === html) { serveComputerRetry(request, response); return; }
     response.writeHead(200, {
       'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+      'server-timing': `squire-html;dur=${Date.now() - fetchStartedAt}`,
       'content-security-policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self' wss: ws:; base-uri 'none'; form-action 'none'",
       'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
     });
@@ -279,37 +392,43 @@ export async function serveComputerSession(
 
 /** Viewer for an agent-owned CDP tab; Squire serves its own canvas viewer through the proxy. */
 export function computerViewerHtml(id: string): string {
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>Browser · Beeline</title><style>
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Browser · Beeline</title><style>
   html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#1b1320;color:#f6edf4;font-family:system-ui,sans-serif}
-  #stage{position:absolute;inset:0;overflow:auto;background:#1b1320}
-  #screen{display:block;height:100%;width:auto;max-width:none;object-fit:fill;touch-action:none}
+  #stage{position:absolute;inset:0;overflow:hidden;background:#1b1320}
+  #screen{position:absolute;display:block;max-width:none;object-fit:fill;touch-action:none}
   #ended{display:none;position:absolute;inset:0;place-items:center;font-size:16px}
   #controls{position:absolute;top:env(safe-area-inset-top,12px);right:12px;display:flex;gap:8px}
   button,a{border:1px solid #ffffff44;border-radius:999px;background:#261a2ad9;color:#f6edf4;padding:10px 14px;font:500 13px system-ui,sans-serif;text-decoration:none;cursor:pointer}
   body.embedded #controls{display:none}
   #keys{position:absolute;opacity:0;width:1px;height:1px;left:0;bottom:0}
-  </style></head><body><div id="stage"><img id="screen" alt="Live browser"></div><div id="ended">Browser session ended</div><input id="keys" autocomplete="off" autocapitalize="off"><div id="controls"><button id="back" aria-label="Close browser">✕</button></div><script>
+  </style></head><body><div id="stage"><img id="screen" alt="Live browser"></div><div id="ended">Browser session ended</div><input id="keys" autocomplete="off" autocapitalize="off"><div id="controls"><button id="handback" aria-label="Hand browser back to agent">Hand back</button><button id="end" aria-label="End browser share">End share</button><button id="back" aria-label="Close browser">✕</button></div><script>
   const query=new URLSearchParams(location.search), preview=query.has('preview');
   if(query.has('embedded')) document.body.classList.add('embedded');
   const image=document.getElementById('screen'), stage=document.getElementById('stage'), ended=document.getElementById('ended'), keys=document.getElementById('keys');
   const socketUrl=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/s/${id}/ws'+location.search;
   let wire, serial=1, controlling=false, width=1, height=1, leaving=false, endedSession=false, reconnected=false;
-  function fit(){if(width<=1||height<=1)return;const scale=(preview?Math.max:Math.min)(stage.clientWidth/width,stage.clientHeight/height);
-    image.style.width=Math.ceil(width*scale)+'px';image.style.height=Math.ceil(height*scale)+'px';
-    image.style.margin=preview?'0':'auto';}
+  let zoom=1,offsetX=0,offsetY=0;
+  const pointers=new Map();
+  function fit(){if(width<=1||height<=1)return;
+    const base=(preview?Math.max:Math.min)(stage.clientWidth/width,stage.clientHeight/height);
+    const w=width*base*zoom,h=height*base*zoom;
+    if(zoom===1){offsetX=(stage.clientWidth-w)/2;offsetY=(stage.clientHeight-h)/2;}
+    else{offsetX=Math.min(0,Math.max(stage.clientWidth-w,offsetX));offsetY=Math.min(0,Math.max(stage.clientHeight-h,offsetY));}
+    image.style.width=Math.ceil(w)+'px';image.style.height=Math.ceil(h)+'px';
+    image.style.left=Math.round(offsetX)+'px';image.style.top=Math.round(offsetY)+'px';}
   addEventListener('resize',fit);
   function send(value){if(wire.readyState===WebSocket.OPEN) wire.send(JSON.stringify(value));}
   function cdp(method,params={}){send({id:serial++,method,params});}
   function takeover(){if(!controlling){controlling=true;send({type:'takeover'});}}
-  function finish(){if(leaving)return;leaving=true;if(controlling){send({type:'release'});controlling=false;}if(!preview)send({type:'leave'});}
+  function finish(){if(leaving)return;leaving=true;if(!preview)send({type:'leave'});}
   function showEnded(){endedSession=true;image.style.display='none';ended.textContent='Browser session ended';ended.style.display='grid';
     const notice=JSON.stringify({type:'computer-ended',id:'${id}'});parent.postMessage({type:'computer-ended',id:'${id}'},'*');window.ReactNativeWebView?.postMessage(notice);}
   function showLost(){ended.textContent='Connection lost · reopen to retry';ended.style.display='grid';}
   function connect(){wire=new WebSocket(socketUrl);
-    wire.onopen=()=>{cdp('Page.startScreencast',{format:'jpeg',quality:preview?45:65,maxWidth:preview?640:1280,maxHeight:preview?450:900,everyNthFrame:1});if(document.hidden)send({type:'pause-view'});};
+    wire.onopen=()=>{if(document.hidden)send({type:'pause-view'});};
     wire.onmessage=event=>{try{const message=JSON.parse(event.data);
       if(message.type==='ended'){showEnded();return;}
-      if(message.method==='Page.screencastFrame'){const p=message.params;image.src='data:image/jpeg;base64,'+p.data;width=p.metadata?.deviceWidth||image.naturalWidth||width;height=p.metadata?.deviceHeight||image.naturalHeight||height;fit();cdp('Page.screencastFrameAck',{sessionId:p.sessionId});}
+      if(message.method==='Page.screencastFrame'){const p=message.params;image.src='data:image/jpeg;base64,'+p.data;width=p.metadata?.deviceWidth||width;height=p.metadata?.deviceHeight||height;fit();}
     }catch{}};
     wire.onclose=async()=>{if(leaving||endedSession)return;controlling=false;
       if(reconnected){showLost();return;}reconnected=true;
@@ -320,34 +439,92 @@ export function computerViewerHtml(id: string): string {
       }catch{showLost();}};
   }
   connect();
+  let firstFrame=false;
+  image.onload=()=>{if(width<=1||height<=1){width=image.naturalWidth;height=image.naturalHeight;}fit();
+    if(!firstFrame){firstFrame=true;const value={type:'computer-first-frame',id:'${id}',at:Date.now()};
+      parent.postMessage(value,'*');window.ReactNativeWebView?.postMessage(JSON.stringify(value));}};
   document.addEventListener('visibilitychange',()=>send({type:document.hidden?'pause-view':'resume-view'}));
-  function point(event){const r=image.getBoundingClientRect(),scale=Math.min(r.width/width,r.height/height),left=r.left+(r.width-width*scale)/2,top=r.top+(r.height-height*scale)/2;return {x:Math.max(0,Math.min(width,(event.clientX-left)/scale)),y:Math.max(0,Math.min(height,(event.clientY-top)/scale))};}
-  let touch;
+  function point(event){const r=image.getBoundingClientRect(),scale=r.width/width;return {x:Math.max(0,Math.min(width,(event.clientX-r.left)/scale)),y:Math.max(0,Math.min(height,(event.clientY-r.top)/scale))};}
+  let touch,pinch;
+  function mid(a,b){return {x:(a.x+b.x)/2,y:(a.y+b.y)/2,d:Math.hypot(a.x-b.x,a.y-b.y)};}
   image.addEventListener('pointerdown',event=>{if(preview)return;takeover();const p=point(event);image.setPointerCapture(event.pointerId);
-    if(event.pointerType==='touch'){touch={id:event.pointerId,x:p.x,y:p.y,clientX:event.clientX,clientY:event.clientY,moved:false};return;}
+    if(event.pointerType==='touch'){
+      event.preventDefault();pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+      if(pointers.size===1)touch={id:event.pointerId,clientX:event.clientX,clientY:event.clientY,moved:false};
+      if(pointers.size===2){const pair=[...pointers.values()],m=mid(pair[0],pair[1]);
+        pinch={d:m.d,zoom,offsetX,offsetY,x:m.x-stage.getBoundingClientRect().left,y:m.y-stage.getBoundingClientRect().top};
+        if(touch)touch.moved=true;}
+      return;}
     keys.focus();cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});});
-  image.addEventListener('pointermove',event=>{if(!controlling||!event.buttons)return;const p=point(event);
-    if(touch?.id===event.pointerId){const dx=touch.clientX-event.clientX,dy=touch.clientY-event.clientY;if(Math.abs(dx)+Math.abs(dy)>3){touch.moved=true;
-      if(Math.abs(dx)>Math.abs(dy)&&stage.scrollWidth>stage.clientWidth)stage.scrollLeft+=dx;
-      else cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:dx,deltaY:dy});}
-      touch.x=p.x;touch.y=p.y;touch.clientX=event.clientX;touch.clientY=event.clientY;return;}
+  image.addEventListener('pointermove',event=>{if(!controlling)return;
+    if(event.pointerType==='touch'&&pointers.has(event.pointerId)){
+      event.preventDefault();pointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+      if(pinch&&pointers.size>=2){const pair=[...pointers.values()],m=mid(pair[0],pair[1]),ratio=Math.max(.25,m.d/pinch.d);
+        zoom=Math.min(4,Math.max(1,pinch.zoom*ratio));const z=zoom/pinch.zoom;
+        offsetX=m.x-stage.getBoundingClientRect().left-(pinch.x-pinch.offsetX)*z;
+        offsetY=m.y-stage.getBoundingClientRect().top-(pinch.y-pinch.offsetY)*z;fit();return;}
+      if(touch?.id===event.pointerId){const dx=touch.clientX-event.clientX,dy=touch.clientY-event.clientY;
+        if(Math.abs(dx)+Math.abs(dy)>3){touch.moved=true;
+          if(zoom>1){offsetX-=dx;offsetY-=dy;fit();}
+          else{const p=point(event);cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:dx,deltaY:dy});}}
+        touch.clientX=event.clientX;touch.clientY=event.clientY;return;}}
+    if(!event.buttons)return;const p=point(event);
     cdp('Input.dispatchMouseEvent',{type:'mouseMoved',x:p.x,y:p.y,button:'left',buttons:1});});
   image.addEventListener('pointerup',event=>{if(!controlling)return;const p=point(event);
-    if(touch?.id===event.pointerId){if(!touch.moved){cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});keys.focus();}touch=undefined;return;}
+    if(event.pointerType==='touch'){
+      const wasPinch=Boolean(pinch);pointers.delete(event.pointerId);
+      if(pointers.size<2)pinch=undefined;
+      if(touch?.id===event.pointerId&&!touch.moved&&!wasPinch){cdp('Input.dispatchMouseEvent',{type:'mousePressed',x:p.x,y:p.y,button:'left',clickCount:1});cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});keys.focus();}
+      touch=undefined;
+      if(pointers.size===1){const [id,remaining]=[...pointers.entries()][0];touch={id,clientX:remaining.x,clientY:remaining.y,moved:true};}
+      return;}
     cdp('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x,y:p.y,button:'left',clickCount:1});});
-  image.addEventListener('wheel',event=>{if(preview)return;event.preventDefault();takeover();const p=point(event);cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:event.deltaX,deltaY:event.deltaY});},{passive:false});
+  image.addEventListener('pointercancel',event=>{pointers.delete(event.pointerId);touch=undefined;pinch=undefined;});
+  image.addEventListener('wheel',event=>{if(preview)return;event.preventDefault();takeover();
+    if(event.ctrlKey){zoom=Math.min(4,Math.max(1,zoom*Math.exp(-event.deltaY/300)));fit();return;}
+    const p=point(event);cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:event.deltaX,deltaY:event.deltaY});},{passive:false});
   keys.addEventListener('input',()=>{if(keys.value){takeover();cdp('Input.insertText',{text:keys.value});keys.value='';}});
   keys.addEventListener('keydown',event=>{if(['Enter','Backspace','Tab','Escape','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){takeover();cdp('Input.dispatchKeyEvent',{type:'keyDown',key:event.key,code:event.code});cdp('Input.dispatchKeyEvent',{type:'keyUp',key:event.key,code:event.code});event.preventDefault();}});
+  document.getElementById('handback').onclick=()=>{send({type:'handback'});controlling=false;};
+  document.getElementById('end').onclick=()=>send({type:'end-share'});
   document.getElementById('back').onclick=()=>{finish();window.close();history.back();};
   addEventListener('pagehide',finish);
   </script></body></html>`;
 }
 
 const computerWebSockets = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
-type BodyChannel = { source?: WebSocket; lastFrame?: { data: Buffer; binary: boolean }; viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; pausedViewers: Set<WebSocket>; previewSentAt: Map<WebSocket, number>; controller?: WebSocket; handoffComplete?: boolean; pendingHandback?: ReturnType<typeof setTimeout>; ending?: boolean };
+type BodyChannel = { source?: WebSocket; lastFrame?: { data: Buffer; binary: boolean }; viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; pausedViewers: Set<WebSocket>; previewSentAt: Map<WebSocket, number>; controller?: WebSocket; ending?: boolean };
 const bodyChannels = new Map<string, BodyChannel>();
-type SquireChannel = { viewers: Set<WebSocket>; humanControl: boolean; handoffComplete: boolean; pendingHandback?: ReturnType<typeof setTimeout> };
+type SquireChannel = { viewers: Set<WebSocket>; upstreams: Set<WebSocket>; humanControl: boolean; lastFrame?: { data: Buffer; binary: boolean } };
 const squireChannels = new Map<string, SquireChannel>();
+
+/** Only an authenticated person's explicit action completes a share. */
+export async function handBackComputerSession(database: SqlDatabase, id: string, viewerId: string): Promise<void> {
+  const row = await getComputerSession(database, id);
+  if (!row || row.status !== 'live' || !(await mayViewComputer(database, row, viewerId)))
+    throw new Error('computer session access denied');
+  const body = bodyChannels.get(id);
+  if (body) {
+    if (body.controller) {
+      body.source?.send(JSON.stringify({ type: 'release' }));
+      body.controller = undefined;
+    }
+  }
+  const squire = squireChannels.get(id);
+  if (squire) {
+    for (const upstream of squire.upstreams) {
+      if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify({ type: 'release' }));
+    }
+  }
+  await noteComputerHandback(database, row);
+}
+
+export async function endComputerSessionByViewer(database: SqlDatabase, live: LiveHub | undefined, id: string, viewerId: string): Promise<void> {
+  const row = await getComputerSession(database, id);
+  if (!row || row.status !== 'live' || !(await mayViewComputer(database, row, viewerId)))
+    throw new Error('computer session access denied');
+  await endComputerSession(database, live, row);
+}
 
 function bodyChannel(id: string): BodyChannel {
   let channel = bodyChannels.get(id);
@@ -371,11 +548,21 @@ export async function upgradeComputerWaiter(
       waiting!.delete(waiter);
       if (!waiting!.size) handbackWaiters.delete(id);
     });
-    void getComputerSession(database, id).then((current) => {
+    void Promise.all([
+      getComputerSession(database, id),
+      database.query<{ id: string; name: ComputerActivityEvent['name']; detail: string | null; created_at: Date }>(
+        `SELECT id,name,detail,created_at FROM computer_session_events
+         WHERE session_id=$1 AND id>$2 ORDER BY id ASC LIMIT 200`, [id, since],
+      ),
+    ]).then(([current, events]) => {
       if (waiter.readyState !== WebSocket.OPEN) return;
+      for (const event of events.rows) {
+        waiter.send(JSON.stringify({ type: 'event', seq: Number(event.id), at: new Date(event.created_at).toISOString(),
+          name: event.name, ...(event.detail ? { detail: event.detail } : {}) } satisfies ComputerActivityEvent));
+      }
       if (!current || current.status === 'ended') {
         waiter.send(JSON.stringify({ type: 'ended' })); waiter.close();
-      } else if (current.handoff_count > since) {
+      } else if (current.handoff_count > 0) {
         waiter.send(JSON.stringify({ type: 'handoff', note: 'Human handed the browser back' })); waiter.close();
       }
     }).catch(() => waiter.close());
@@ -406,6 +593,13 @@ export async function upgradeBodyComputerSource(
     channel.source = source;
     channel.lastFrame = undefined;
     source.on('message', (data, binary) => {
+      try {
+        const event = JSON.parse(data.toString()) as { type?: string; name?: string; detail?: string };
+        if (event.type === 'share-event' && event.name === 'navigation') {
+          void recordComputerActivity(database, row, 'navigation', event.detail?.slice(0, 200)).catch(() => {});
+          return;
+        }
+      } catch { /* An unrelated source frame is still forwarded below. */ }
       const frame = isFrameMessage(data);
       // A quiet Chromium tab may emit its only frame before anyone opens the card.
       if (frame) channel.lastFrame = { data: Buffer.from(data.toString()), binary };
@@ -424,7 +618,6 @@ export async function upgradeBodyComputerSource(
     source.once('close', () => {
       if (channel.source !== source) return;
       channel.ending = true;
-      if (channel.pendingHandback) clearTimeout(channel.pendingHandback);
       channel.source = undefined;
       const closeViewers = () => {
         for (const viewer of channel.viewers) {
@@ -438,49 +631,56 @@ export async function upgradeBodyComputerSource(
   });
 }
 
-function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffer, database: SqlDatabase, row: ComputerSessionRow): void {
+function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffer, database: SqlDatabase, live: LiveHub, row: ComputerSessionRow): void {
   const preview = new URL(request.url ?? '/', 'http://beeline.local').searchParams.has('preview');
   computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
     const channel = bodyChannel(row.id);
-    if (channel.pendingHandback) { clearTimeout(channel.pendingHandback); channel.pendingHandback = undefined; }
-    if (row.handoff_count > 0) channel.handoffComplete = true;
     channel.viewers.add(viewer);
     if (!preview) channel.interactiveViewers.add(viewer);
     if (channel.lastFrame) viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
+    if (!preview) void recordComputerActivity(database, row, 'viewer-opened').catch(() => {});
+    const lastInputAt = new Map<string, number>();
     const handBack = () => {
-      if (preview || channel.handoffComplete || channel.ending) return;
-      if (channel.pendingHandback) { clearTimeout(channel.pendingHandback); channel.pendingHandback = undefined; }
-      channel.handoffComplete = true;
+      if (preview || channel.ending) return;
+      if (channel.controller) {
+        channel.source?.send(JSON.stringify({ type: 'release' }));
+        channel.controller = undefined;
+      }
       void noteComputerHandback(database, row);
     };
-    const scheduleHandBack = () => {
-      if (preview || channel.handoffComplete || channel.ending || channel.pendingHandback) return;
-      channel.pendingHandback = setTimeout(() => {
-        channel.pendingHandback = undefined;
-        if (!channel.interactiveViewers.size) handBack();
-      }, 5_000);
-    };
     viewer.on('message', (data) => {
-      let message: { type?: string; method?: string };
+      let message: { type?: string; method?: string; params?: { type?: string } };
       try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
       if (message.type === 'pause-view') channel.pausedViewers.add(viewer);
       else if (message.type === 'resume-view') {
         channel.pausedViewers.delete(viewer);
-      } else if (message.type === 'takeover' && !channel.controller && !channel.handoffComplete) {
+      } else if (message.type === 'takeover' && !channel.controller) {
         channel.controller = viewer;
         channel.source?.send(data);
+        void recordComputerActivity(database, row, 'takeover').catch(() => {});
       } else if (message.type === 'release' && channel.controller === viewer) {
         channel.controller = undefined;
         channel.source?.send(data);
         handBack();
+      } else if (message.type === 'handback') {
+        handBack();
+      } else if (message.type === 'end-share' && !preview) {
+        void endComputerSession(database, live, row);
       } else if (message.type === 'leave') {
         if (channel.controller === viewer) {
           channel.controller = undefined;
           channel.source?.send(JSON.stringify({ type: 'release' }));
         }
-        handBack();
       } else if (message.method?.startsWith('Input.') && channel.controller === viewer) {
         channel.source?.send(data);
+        const category = message.method === 'Input.insertText' ? 'typing'
+          : message.params?.type === 'mouseWheel' ? 'scroll'
+          : message.method === 'Input.dispatchKeyEvent' ? 'key' : 'pointer';
+        const now = Date.now();
+        if (now - (lastInputAt.get(category) ?? 0) >= 1_000) {
+          lastInputAt.set(category, now);
+          void recordComputerActivity(database, row, 'input', category).catch(() => {});
+        }
       }
     });
     viewer.once('close', () => {
@@ -491,9 +691,8 @@ function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffe
       if (channel.controller === viewer) {
         channel.controller = undefined;
         channel.source?.send(JSON.stringify({ type: 'release' }));
-        handBack();
       }
-      if (!channel.interactiveViewers.size) scheduleHandBack();
+      if (!preview) void recordComputerActivity(database, row, 'viewer-closed').catch(() => {});
     });
   });
 }
@@ -513,57 +712,87 @@ export async function upgradeComputerSession(
   const path = new URL(request.url ?? '/', 'http://beeline.local').pathname;
   if (row.upstream_url === 'body:') {
     if (!path.endsWith('/ws')) { socket.destroy(); return; }
-    upgradeBodyViewer(request, socket, head, database, row); return;
+    upgradeBodyViewer(request, socket, head, database, live, row); return;
   }
   if (!path.endsWith('/stream')) { socket.destroy(); return; }
   const target = new URL('stream', row.upstream_url);
   if (target.protocol === 'https:') target.protocol = 'wss:';
   if (target.protocol === 'http:') target.protocol = 'ws:';
   if (!['ws:', 'wss:'].includes(target.protocol)) { socket.destroy(); return; }
-  const upstream = new WebSocket(target.toString());
   const preview = new URL(request.url ?? '/', 'http://beeline.local').searchParams.has('preview');
-  upstream.once('open', () => {
-    computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
+  // Accept the viewer before the Squire tunnel opens. A warm preview has a
+  // cached JPEG ready now, so the full viewer need not wait for another tunnel.
+  computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
+      const upstreamStartedAt = Date.now();
+      const upstream = new WebSocket(target.toString());
       let channel = squireChannels.get(id);
-      if (!channel) { channel = { viewers: new Set(), humanControl: false, handoffComplete: row.handoff_count > 0 }; squireChannels.set(id, channel); }
-      if (channel.pendingHandback) { clearTimeout(channel.pendingHandback); channel.pendingHandback = undefined; }
+      if (!channel) { channel = { viewers: new Set(), upstreams: new Set(), humanControl: false }; squireChannels.set(id, channel); }
+      channel.upstreams.add(upstream);
       if (!preview) channel.viewers.add(viewer);
+      if (channel.lastFrame) viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
+      if (!preview) void recordComputerActivity(database, row, 'viewer-opened').catch(() => {});
       let sessionEnded = false;
       let viewerGone = false;
+      const pendingInput: Array<{ data: Buffer; binary: boolean }> = [];
+      upstream.once('open', () => {
+        console.info(`[computer-share] squire tunnel open session=${id.slice(0, 8)} ms=${Date.now() - upstreamStartedAt}`);
+        for (const pending of pendingInput) upstream.send(pending.data, { binary: pending.binary });
+        pendingInput.length = 0;
+      });
+      const lastInputAt = new Map<string, number>();
       const handBack = () => {
-        if (preview || channel!.handoffComplete || sessionEnded) return;
-        if (channel!.pendingHandback) { clearTimeout(channel!.pendingHandback); channel!.pendingHandback = undefined; }
-        channel!.handoffComplete = true;
+        if (preview || sessionEnded) return;
+        pendingInput.length = 0;
+        channel!.humanControl = false;
+        if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify({ type: 'release' }));
         void noteComputerHandback(database, row);
-      };
-      const scheduleHandBack = () => {
-        if (preview || channel!.handoffComplete || sessionEnded || channel!.pendingHandback) return;
-        channel!.pendingHandback = setTimeout(() => {
-          channel!.pendingHandback = undefined;
-          if (!channel!.viewers.size) {
-            handBack();
-            squireChannels.delete(id);
-          }
-        }, 5_000);
       };
       viewer.on('message', (data, binary) => {
         // Squire validates and arbitrates input. A transcript preview never
         // sends control, even if an embedded client is compromised.
         if (preview || Buffer.byteLength(data.toString()) > 4_096) return;
-        if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary });
-      });
-      let lastPreviewFrameAt = 0;
-      upstream.on('message', (data, binary) => {
-        let message: { type?: string; state?: string } | undefined;
-        try { message = JSON.parse(data.toString()) as typeof message; } catch { /* Forward unknown frames. */ }
-        if (message?.type === 'control') {
-          if (message.state === 'human') channel!.humanControl = true;
-          if (message.state === 'agent' && channel!.humanControl) {
-            channel!.humanControl = false;
-            handBack();
+        let message: { type?: string } | undefined;
+        try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
+        if (message?.type === 'handback') { handBack(); return; }
+        if (message?.type === 'end-share') { void endComputerSession(database, live, row); return; }
+        if (message?.type && ['touch', 'wheel', 'text', 'key', 'click'].includes(message.type)) {
+          const category = message.type === 'wheel' ? 'scroll'
+            : message.type === 'text' ? 'typing' : message.type === 'key' ? 'key' : 'pointer';
+          const now = Date.now();
+          if (now - (lastInputAt.get(category) ?? 0) >= 1_000) {
+            lastInputAt.set(category, now);
+            void recordComputerActivity(database, row, 'input', category).catch(() => {});
           }
         }
+        if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary });
+        else if (upstream.readyState === WebSocket.CONNECTING && pendingInput.length < 8)
+          pendingInput.push({ data: Buffer.from(data.toString()), binary });
+      });
+      let lastPreviewFrameAt = 0;
+      let firstJpegLogged = false;
+      upstream.on('message', (data, binary) => {
+        let message: { type?: string; state?: string; url?: string } | undefined;
+        try { message = JSON.parse(data.toString()) as typeof message; } catch { /* Forward unknown frames. */ }
+        if (message?.type === 'control') {
+          if (message.state === 'human' && !channel!.humanControl) {
+            channel!.humanControl = true;
+            void recordComputerActivity(database, row, 'takeover').catch(() => {});
+          }
+          if (message.state === 'agent' && channel!.humanControl) {
+            channel!.humanControl = false;
+          }
+        }
+        if (message?.type === 'navigation') {
+          let origin: string | undefined;
+          try { if (message.url) origin = new URL(message.url).origin; } catch { /* Do not pass page content. */ }
+          void recordComputerActivity(database, row, 'navigation', origin).catch(() => {});
+        }
         const frame = isFrameMessage(data);
+        if (frame && !firstJpegLogged) {
+          firstJpegLogged = true;
+          console.info(`[computer-share] squire first JPEG session=${id.slice(0, 8)} ms=${Date.now() - upstreamStartedAt}`);
+        }
+        if (frame) channel!.lastFrame = { data: Buffer.from(data.toString()), binary };
         if (frame && preview) {
           const now = Date.now();
           if (now - lastPreviewFrameAt < 1_000) return;
@@ -577,8 +806,9 @@ export async function upgradeComputerSession(
       viewer.once('close', () => {
         viewerGone = true;
         channel!.viewers.delete(viewer);
-        if (!channel!.viewers.size) scheduleHandBack();
-        if (!channel!.viewers.size && channel!.handoffComplete) squireChannels.delete(id);
+        channel!.upstreams.delete(upstream);
+        if (!preview) void recordComputerActivity(database, row, 'viewer-closed').catch(() => {});
+        if (!channel!.viewers.size) squireChannels.delete(id);
         upstream.close();
       });
       upstream.once('close', (code, reason) => {
@@ -586,7 +816,6 @@ export async function upgradeComputerSession(
         // may be a transient tunnel loss. Reconcile once against Squire.
         if (code === 1000 && reason.toString() === 'share ended') {
           sessionEnded = true;
-          if (channel!.pendingHandback) clearTimeout(channel!.pendingHandback);
           squireChannels.delete(id);
           void endComputerSession(database, live, row).finally(() => viewer.close());
           return;
@@ -595,7 +824,6 @@ export async function upgradeComputerSession(
           .then((reply) => {
             sessionEnded = reply.status === 404 || reply.status === 410;
             if (!sessionEnded) { viewer.close(); return; }
-            if (channel!.pendingHandback) clearTimeout(channel!.pendingHandback);
             squireChannels.delete(id);
             const closeViewer = () => {
               if (viewer.readyState === WebSocket.OPEN) viewer.send(JSON.stringify({ type: 'ended' }));
@@ -606,7 +834,5 @@ export async function upgradeComputerSession(
         else viewer.close();
       });
       upstream.once('error', () => viewer.close());
-    });
   });
-  upstream.once('error', () => socket.destroy());
 }

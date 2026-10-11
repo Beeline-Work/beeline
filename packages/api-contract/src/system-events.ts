@@ -75,6 +75,7 @@ export const SERVER_EVENT_KINDS = [
   'poll-closed',
   'workflow-handoff',
   'subscription-fired',
+  'computer-session-activity',
 ] as const;
 export type ServerEventKind = (typeof SERVER_EVENT_KINDS)[number];
 
@@ -104,6 +105,7 @@ export const SERVER_EVENT_KIND_DETAIL: Readonly<Record<ServerEventKind, string>>
   'poll-closed': 'fires when a posted poll closes, starting a new turn for the asking agent',
   'workflow-handoff': 'fires when a workflow run starts or hands off to its next role',
   'subscription-fired': 'wakes the agent that subscribed to one outside event',
+  'computer-session-activity': 'wakes the sharing agent when a person opens, controls, uses, hands back, or closes its browser view',
 };
 
 /**
@@ -124,6 +126,7 @@ export const PER_ITEM_EVENT_KINDS: readonly ServerEventKind[] = [
   'choice-skipped',
   'poll-closed',
   'subscription-fired',
+  'computer-session-activity',
 ];
 export function isPerItemEventKind(value: unknown): value is ServerEventKind {
   return (PER_ITEM_EVENT_KINDS as readonly string[]).includes(value as string);

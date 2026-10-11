@@ -101,10 +101,30 @@ export function ComputerSessionViewer({ session, onClose }: { session: ComputerS
       Modal.alert('Could not open browser', 'The live browser is unavailable. Try again.');
     }
   };
-  return <View style={styles.viewer} testID="computer-session-viewer">
-    <ComputerStream session={shownSession} onEnded={() => setEnded(true)} />
+  const handBack = async () => {
+    if (ended) return;
+    try {
+      await monolithPhoneOperation('handbackComputerSession', { id: session.id });
+      onClose();
+    } catch {
+      Modal.alert('Could not hand back browser', 'The live browser is unavailable. Try again.');
+    }
+  };
+  const endShare = async () => {
+    if (ended) return;
+    try {
+      await monolithPhoneOperation('endComputerSession', { id: session.id });
+      setEnded(true);
+    } catch {
+      Modal.alert('Could not end browser share', 'The live browser is unavailable. Try again.');
+    }
+  };
+  return <View style={[styles.viewer, { paddingTop: insets.top + 48 + 16, paddingBottom: insets.bottom }]} testID="computer-session-viewer">
+    <View style={styles.viewerStream}><ComputerStream session={shownSession} onEnded={() => setEnded(true)} /></View>
     <View style={[styles.controls, { top: insets.top + 12 }]}>
-      {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void openInBrowser()} accessibilityRole="button" accessibilityLabel="Open in browser" testID="computer-session-open-browser"><Text style={styles.controlText}>Open in browser ↗</Text></Pressable> : null}
+      {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void openInBrowser()} accessibilityRole="button" accessibilityLabel="Open in browser" testID="computer-session-open-browser"><Text style={styles.controlText}>Open ↗</Text></Pressable> : null}
+      {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void handBack()} accessibilityRole="button" accessibilityLabel="Hand browser back to agent" testID="computer-session-handback"><Text style={styles.controlText}>Hand back</Text></Pressable> : null}
+      {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void endShare()} accessibilityRole="button" accessibilityLabel="End browser share" testID="computer-session-end"><Text style={styles.controlText}>End share</Text></Pressable> : null}
       <Pressable style={styles.control} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close browser" testID="computer-session-close"><Text style={styles.controlText}>✕</Text></Pressable>
     </View>
   </View>;
@@ -120,6 +140,7 @@ const styles = StyleSheet.create((theme) => ({
   footer: { minHeight: theme.buzz.transcriptCard.footerMinHeight, paddingHorizontal: theme.buzz.transcriptCard.side, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: theme.buzz.border },
   link: { ...theme.buzz.type.body, color: theme.buzz.accent },
   viewer: { flex: 1, backgroundColor: theme.buzz.bgBase },
+  viewerStream: { flex: 1, minHeight: 0 },
   controls: { position: 'absolute', right: 12, flexDirection: 'row', gap: 8 },
   control: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgBase, alignItems: 'center', justifyContent: 'center' },
   browserControl: { height: 42, paddingHorizontal: theme.buzz.space.sm, borderRadius: 14, borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgBase, alignItems: 'center', justifyContent: 'center' },

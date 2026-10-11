@@ -11,7 +11,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
   return { Platform: { OS: 'ios' }, Pressable: host('Pressable'), Text: host('Text'), View: host('View') };
 });
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 24 }) }));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: { create: (factory: any) => factory({ buzz: {
     transcriptCard: { marginTop: 8, cornerRadius: 12, side: 16, footerMinHeight: 40 },
@@ -70,6 +70,21 @@ it('mints a fresh steering token before opening the system browser', async () =>
   });
   expect(phoneOperation).toHaveBeenCalledWith('openComputerSession', { id: 'session-1' });
   expect(openExternalUrl).toHaveBeenCalledWith('https://computer.usebeeline.app/s/session-1/?access=fresh-token');
+  expect(phoneOperation).not.toHaveBeenCalledWith('handbackComputerSession', expect.anything());
+  await act(async () => tree!.unmount());
+});
+
+it('hands back only on the explicit control, while close leaves the share live', async () => {
+  const onClose = vi.fn();
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionViewer session={session} onClose={onClose} />); });
+  expect(tree!.root.findByProps({ testID: 'computer-session-viewer' }).props.style[1]).toEqual({ paddingTop: 64, paddingBottom: 24 });
+  await act(async () => tree!.root.findByProps({ testID: 'computer-session-close' }).props.onPress());
+  expect(onClose).toHaveBeenCalledOnce();
+  expect(phoneOperation).not.toHaveBeenCalled();
+  await act(async () => tree!.root.findByProps({ testID: 'computer-session-handback' }).props.onPress());
+  await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('handbackComputerSession', { id: 'session-1' }));
+  expect(onClose).toHaveBeenCalledTimes(2);
   await act(async () => tree!.unmount());
 });
 
@@ -77,6 +92,16 @@ it('offers no browser handoff after the session ends', async () => {
   let tree: ReturnType<typeof create>;
   await act(async () => { tree = create(<ComputerSessionViewer session={{ ...session, status: 'ended' }} onClose={() => undefined} />); });
   expect(tree!.root.findAllByProps({ testID: 'computer-session-open-browser' })).toHaveLength(0);
+  expect(tree!.root.findAllByProps({ testID: 'computer-session-end' })).toHaveLength(0);
+  await act(async () => tree!.unmount());
+});
+
+it('ends a share only when End share is pressed', async () => {
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionViewer session={session} onClose={() => undefined} />); });
+  await act(async () => tree!.root.findByProps({ testID: 'computer-session-end' }).props.onPress());
+  await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('endComputerSession', { id: 'session-1' }));
+  expect(tree!.root.findAllByProps({ testID: 'computer-session-ended' }).length).toBeGreaterThan(0);
   await act(async () => tree!.unmount());
 });
 

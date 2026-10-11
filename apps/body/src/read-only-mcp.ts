@@ -99,7 +99,8 @@ import {
 import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
 import { REPOSITORY_SUBSCRIPTION_EVENTS } from '@beeline/api-contract/daemon';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
-import { findChromiumPage, shareChromiumPage, waitForComputerHandback } from './browser-share.js';
+import { findChromiumPage } from './browser-share.js';
+import { startHostedBrowserShare } from './browser-share-host.js';
 import { allocatedDirectoryBytes, assertScratchWriteBudget, scratchBudgetMessage } from './scratch-lifecycle.js';
 import { validateArtifact } from './artifact-validation.js';
 import {
@@ -1304,7 +1305,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'share_browser',
-    description: 'Share an already open browser tab in this Room or corner when you need a person to finish a step. Squire requires an existing operate session id. Chromium attaches to an already running debug port and selects an open tab; it does not launch a browser. This call WAITS until the person backs out or closes the viewer, or the session ends. Do not touch this browser again until share_browser returns. The Room gets a live Beeline browser card while you wait.',
+    description: 'Share an already open browser tab in this Room or corner while you keep using that same browser session. Squire requires an existing operate session id. Chromium attaches to an already running debug port and selects an open tab; it does not launch a browser. The tool returns as soon as the live card is ready. Human browser activity arrives as Room events. End the share explicitly with end_browser_share.',
     inputSchema: {
       type: 'object',
       required: ['source'],
@@ -1315,6 +1316,16 @@ const AGENT_TOOLS: ToolDefinition[] = [
         debugUrl: { type: 'string', description: 'Chromium remote debugging origin; defaults to the local port 9222.' },
         title: { type: 'string', maxLength: 120 },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'end_browser_share',
+    description: 'Explicitly end one of your live browser shares in this Room. Use the source sessionId returned by share_browser. Closing a viewer or handing control back leaves the share live.',
+    inputSchema: {
+      type: 'object',
+      required: ['sessionId'],
+      properties: { sessionId: { type: 'string' } },
       additionalProperties: false,
     },
   },
@@ -3954,27 +3965,20 @@ async function squireShareEndpoint(sessionId: string): Promise<{ url: string; ex
 }
 
 async function shareBrowser(args: JsonObject): Promise<string> {
+  const startedAt = Date.now();
+  console.error(`[computer-share] tool started source=${String(args.source ?? 'unknown')} at=${new Date(startedAt).toISOString()}`);
   const context = await activeCommandContext();
   const title = typeof args.title === 'string' ? args.title : 'Browser';
   if (args.source === 'squire') {
     if (typeof args.sessionId !== 'string' || !args.sessionId.trim())
       throw new Error('An existing Squire operate session id is required');
-    const { url: upstreamUrl, expiresAt } = await squireShareEndpoint(args.sessionId);
+    const { url: upstreamUrl } = await squireShareEndpoint(args.sessionId);
+    console.error(`[computer-share] Squire operate_share completed ms=${Date.now() - startedAt}`);
     const result = await daemonExecute('postComputerSession', {
       roomId: context.roomId, sessionId: args.sessionId, upstreamUrl, title,
     });
-    const handback = await waitForComputerHandback({
-      serverBaseUrl: requiredEnv('BEELINE_DAEMON_BASE_URL'),
-      shareId: String(result.id),
-      daemonToken: requiredEnv('BEELINE_DAEMON_TOKEN'),
-      expiresAt,
-    });
-    if (handback.note === 'Squire live share expired')
-      await daemonExecute('endComputerSession', { roomId: context.roomId, sessionId: args.sessionId });
-    return JSON.stringify({ cardId: result.id, url: result.url,
-      status: handback.type === 'handoff' ? 'human handed back' : 'session ended',
-      ...(handback.note ? { note: handback.note } : {}),
-    });
+    console.error(`[computer-share] card published ms=${Date.now() - startedAt}`);
+    return JSON.stringify({ cardId: result.id, url: result.url, sessionId: args.sessionId, status: 'live' });
   }
   if (args.source !== 'chromium') throw new Error('Choose an open Squire or Chromium browser');
   const debugUrl = typeof args.debugUrl === 'string' ? args.debugUrl : 'http://127.0.0.1:9222';
@@ -3983,36 +3987,18 @@ async function shareBrowser(args: JsonObject): Promise<string> {
   const result = await daemonExecute('postComputerSession', {
     roomId: context.roomId, sessionId: page.id, upstreamUrl: 'body:', title: args.title ?? page.title ?? 'Browser',
   });
+  console.error(`[computer-share] card published ms=${Date.now() - startedAt}`);
   try {
-    await shareChromiumPage({
-      page,
+    await startHostedBrowserShare(requiredEnv('BEELINE_BROWSER_SHARE_HOST_SOCKET'), {
+      page, shareId: String(result.id), roomId: context.roomId,
       serverBaseUrl: requiredEnv('BEELINE_DAEMON_BASE_URL'),
-      shareId: String(result.id),
       daemonToken: requiredEnv('BEELINE_DAEMON_TOKEN'),
-      onEnded: async () => {
-        // This callback can run after the turn file disappears, so it uses
-        // the daemon token and session ownership rather than turn context.
-        await fetch(new URL('/v1/daemon/operations/endComputerSession', requiredEnv('BEELINE_DAEMON_BASE_URL')), {
-          method: 'POST',
-          headers: { authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ roomId: context.roomId, sessionId: page.id }),
-          signal: AbortSignal.timeout(10_000),
-        }).catch(() => {});
-      },
     });
   } catch (error) {
     await daemonExecute('endComputerSession', { roomId: context.roomId, sessionId: page.id });
     throw error;
   }
-  const handback = await waitForComputerHandback({
-    serverBaseUrl: requiredEnv('BEELINE_DAEMON_BASE_URL'),
-    shareId: String(result.id),
-    daemonToken: requiredEnv('BEELINE_DAEMON_TOKEN'),
-  });
-  return JSON.stringify({ cardId: result.id, url: result.url,
-    status: handback.type === 'handoff' ? 'human handed back' : 'session ended',
-    ...(handback.note ? { note: handback.note } : {}),
-  });
+  return JSON.stringify({ cardId: result.id, url: result.url, sessionId: page.id, status: 'live' });
 }
 
 /** Only known causes reach chat or the Workbench; provider payloads may hold secrets. */
@@ -4335,7 +4321,9 @@ async function daemonUploadArtifact(
   };
 }
 
-export async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
+export async function callAgentTool(
+  name: string, args: JsonObject, toolCallId: string,
+): Promise<string> {
   switch (name) {
     case 'get_room_message': {
       const message = await daemonExecute('getRoomMessage', {
@@ -4891,6 +4879,12 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return postArtifact(args);
     case 'share_browser':
       return shareBrowser(args);
+    case 'end_browser_share': {
+      if (typeof args.sessionId !== 'string' || !args.sessionId.trim())
+        throw new Error('A shared browser sessionId is required');
+      await daemonExecute('endComputerSession', { roomId: agentScheduleRoomId(), sessionId: args.sessionId });
+      return 'Browser share ended';
+    }
     case 'publish_corner_app': {
       const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
       if (!cornerId) throw new Error('publish_corner_app requires a corner turn');

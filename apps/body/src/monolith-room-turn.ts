@@ -1086,6 +1086,7 @@ export class MonolithRoomTurnLoop {
         harnessHomeStateDirs: homeStateDirs,
         ...(tmpDir ? { tmpDir } : {}),
         additionalWritablePaths: [
+          ...(this.options.config.browserShareHostSocket ? [dirname(this.options.config.browserShareHostSocket)] : []),
           ...(attachScratchRoot ? [attachScratchRoot] : []),
           ...(codegraphReady ? [codegraphIndexDirectory(this.options.cwd)] : []),
           ...registryMcpHostBindPaths(

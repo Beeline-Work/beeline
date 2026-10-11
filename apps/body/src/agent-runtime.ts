@@ -19,6 +19,7 @@ import {
 } from './agent-sign-in.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
 import { RegistryMcpHostBroker } from './registry-mcp.js';
+import { BrowserShareHost } from './browser-share-host.js';
 import { ThinDaemonCore } from './thin-core.js';
 import {
   HelperLifecycle,
@@ -280,6 +281,7 @@ export async function runAgentRuntime(
   let connectorLoop: ConnectorAssignmentLoop | undefined;
   let agentSignIn: AgentSignIn | undefined;
   let registryMcpBroker: RegistryMcpHostBroker | undefined;
+  let browserShareHost: BrowserShareHost | undefined;
   let catalogRefresh: Promise<void> | undefined;
   let leaveHost: (() => void) | undefined;
   const refreshCatalog = (): Promise<void> => {
@@ -323,6 +325,11 @@ export async function runAgentRuntime(
     );
     await registryMcpBroker.start();
     config.registryMcpBrokerSocket = registryMcpBroker.socketPath;
+    // Unix socket paths are capped at 108 bytes, so keep this near the state root.
+    browserShareHost = new BrowserShareHost(join(process.env.XDG_STATE_HOME ?? config.operatorHome ?? homedir(),
+      '.bs', `${process.pid}-${agentId.slice(0, 8)}.sock`));
+    await browserShareHost.start();
+    config.browserShareHostSocket = browserShareHost.socketPath;
     let lifecycleRestart: Promise<void> | undefined;
     const core = new ThinDaemonCore(runtime, configPath, config, {
       daemonApi,
@@ -561,6 +568,7 @@ export async function runAgentRuntime(
     connectorLoop?.stop();
     agentSignIn?.stop();
     await registryMcpBroker?.stop();
+    await browserShareHost?.stop();
     daemonApi.closeLive();
     // Only clear the pid record while it still names THIS process.
     await clearDaemonPidRecordIfPid(configPath, process.pid);

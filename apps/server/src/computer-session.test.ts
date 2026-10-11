@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 import { findChromiumPage, shareChromiumPage, waitForComputerHandback } from '../../body/src/browser-share.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
@@ -28,6 +29,15 @@ function opened(socket: WebSocket): Promise<void> {
 function next(socket: WebSocket): Promise<string> {
   return new Promise((resolve) => socket.once('message', (data) => resolve(data.toString())));
 }
+function nextType(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    const listen = (data: WebSocket.RawData) => {
+      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (message.type === type) { socket.off('message', listen); resolve(message); }
+    };
+    socket.on('message', listen);
+  });
+}
 async function until<T>(read: () => Promise<T | undefined>, timeoutMs = 20_000): Promise<T> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -45,7 +55,7 @@ describe('computer session handoff', () => {
   const server = createServer((request, response) => {
     if (request.url === '/page') {
       response.writeHead(200, { 'content-type': 'text/html' });
-      response.end('<!doctype html><title>Start</title><button onclick="document.title=\'clicked\'">Click</button><div id="tick"></div><script>let n=0;setInterval(()=>document.getElementById("tick").textContent=String(++n),100)</script>');
+      response.end('<!doctype html><title>Start</title><button onclick="document.title=\'clicked\'">Click</button>');
       return;
     }
     const path = new URL(request.url ?? '/', 'http://beeline.local').pathname;
@@ -60,6 +70,7 @@ describe('computer session handoff', () => {
   beforeAll(async () => {
     await migrate(database);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Human'),($2,'agent','Agent'),($3,'human','Other')`, [HUMAN, AGENT, OTHER]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','System')`, [SYSTEM_IDENTITY_ID]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, HUMAN]);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Computer')`, [WORKSPACE]);
     await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [ROOM, WORKSPACE]);
@@ -140,11 +151,30 @@ describe('computer session handoff', () => {
     viewer.send(JSON.stringify({ id: 1, method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: 10, y: 12 } }));
     expect(JSON.parse(await click).method).toBe('Input.dispatchMouseEvent');
     const release = next(source);
-    const handback = next(waiter);
+    const handback = nextType(waiter, 'handoff');
     viewer.send(JSON.stringify({ type: 'leave' }));
     viewer.close();
     expect(JSON.parse(await release)).toEqual({ type: 'release' });
-    expect(JSON.parse(await handback)).toEqual({ type: 'handoff', note: 'Human handed the browser back' });
+    await new Promise<void>((resolve) => setTimeout(resolve, 5_100));
+    expect((await getComputerSession(database, share.id))?.handoff_count).toBe(0);
+    viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
+    await opened(viewer);
+    await phone.execute('handbackComputerSession', { id: share.id }, HUMAN);
+    expect(await handback).toMatchObject({ type: 'handoff', note: 'Human handed the browser back' });
+    const activity = await until(async () => {
+      const result = await database.query<{ id: string; system_event: { payload: { activity: string } } }>(
+        `SELECT id,system_event FROM messages WHERE room_id=$1
+         AND system_event->>'kind'='computer-session-activity' ORDER BY created_at`, [ROOM],
+      );
+      return result.rows.some((event) => event.system_event.payload.activity === 'handback') ? result.rows : undefined;
+    });
+    expect(activity.map((event) => event.system_event.payload.activity))
+      .toEqual(expect.arrayContaining(['viewer-opened', 'viewer-closed', 'takeover', 'input', 'handback']));
+    expect((await database.query(
+      `SELECT id FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`,
+      [activity.find((event) => event.system_event.payload.activity === 'handback')!.id, AGENT],
+    )).rowCount).toBe(1);
+    viewer.close();
     expect((await getComputerSession(database, share.id))?.status).toBe('live');
     source.close();
     await new Promise<void>((resolve) => source.once('close', resolve));
@@ -167,6 +197,7 @@ describe('computer session handoff', () => {
       const room = await phone.readRoom(ROOM, OTHER);
       expect(room?.messages.some((message) => message.computerSession?.id === share.id)).toBe(true);
       await expect(phone.execute('openComputerSession', { id: share.id }, OTHER)).rejects.toThrow('access denied');
+      await expect(phone.execute('handbackComputerSession', { id: share.id }, OTHER)).rejects.toThrow('access denied');
       expect(await computerViewToken(database, share.id, OTHER)).toBeNull();
       expect((await fetch(`${origin}/s/${share.id}`)).status).toBe(403);
       expect((await fetch(`${origin}/s/${share.id}/status`)).status).toBe(403);
@@ -196,9 +227,11 @@ describe('computer session handoff', () => {
   it('proxies Squire page and stream without exposing its bearer URL, then hands back and expires', async () => {
     const token = 's'.repeat(43);
     let expired = false;
+    let failOnce = true;
     const squire = createServer((request, response) => {
       if (request.url !== `/s/${token}/`) { response.writeHead(404).end(); return; }
       if (expired) { response.writeHead(410).end(); return; }
+      if (failOnce) { failOnce = false; response.writeHead(503).end(); return; }
       response.writeHead(200, { 'content-type': 'text/html' });
       response.end('<!doctype html><div id="bar"></div><script>const socket = new WebSocket(new URL("stream", location.href));</script></body>');
     });
@@ -210,16 +243,20 @@ describe('computer session handoff', () => {
     await new Promise<void>((resolve) => squire.listen(0, '127.0.0.1', resolve));
     const upstreamUrl = `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/${token}/`;
     let upstream: WebSocket | undefined;
-    upstreamSockets.on('connection', (socket) => { upstream = socket; });
+    upstreamSockets.on('connection', (socket) => { upstream ??= socket; });
     try {
       const share = await createComputerSession(database, live, {
         roomId: ROOM, agentId: AGENT, sessionId: 'squire-operate-1', upstreamUrl, title: 'Squire tab',
       });
       const access = await computerViewToken(database, share.id, HUMAN);
+      const loading = await (await fetch(`${origin}/s/${share.id}/?access=${access}`)).text();
+      expect(loading).toContain('Connecting to browser');
+      expect(loading).toContain('location.replace(next.href)');
       const html = await (await fetch(`${origin}/s/${share.id}/?access=${access}`)).text();
       expect(html).not.toContain(upstreamUrl);
       expect(html).not.toContain(token);
       expect(html).toContain('new URL("stream" + location.search, location.href)');
+      expect(html).toContain('(beelinePreview?Math.max:Math.min)');
       const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
       await opened(viewer);
       await until(async () => upstream);
@@ -227,15 +264,23 @@ describe('computer session handoff', () => {
       const received = next(viewer);
       upstream!.send(frame);
       expect(await received).toBe(frame);
+      const secondViewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
+      const cachedFrame = next(secondViewer);
+      await opened(secondViewer);
+      expect(await cachedFrame).toBe(frame);
+      secondViewer.close();
+      await new Promise<void>((resolve) => secondViewer.once('close', resolve));
+      expect((await getComputerSession(database, share.id))?.handoff_count).toBe(0);
       const waiter = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/wait?since=0`);
       await opened(waiter);
       const input = next(upstream!);
       viewer.send(JSON.stringify({ type: 'text', text: 'human' }));
       expect(JSON.parse(await input)).toEqual({ type: 'text', text: 'human' });
       upstream!.send(JSON.stringify({ type: 'control', state: 'human' }));
-      const handback = next(waiter);
+      const handback = nextType(waiter, 'handoff');
       upstream!.send(JSON.stringify({ type: 'control', state: 'agent' }));
-      expect(JSON.parse(await handback)).toMatchObject({ type: 'handoff' });
+      viewer.send(JSON.stringify({ type: 'handback' }));
+      expect(await handback).toMatchObject({ type: 'handoff' });
       const endedNotice = next(viewer);
       expired = true;
       upstream!.close(1000, 'session ended');
@@ -257,8 +302,42 @@ describe('computer session handoff', () => {
     const answer = await waitForComputerHandback({
       serverBaseUrl: origin, shareId: share.id, daemonToken: 'test-token', expiresAt: Date.now() + 100,
     });
-    expect(answer).toEqual({ type: 'ended', note: 'Squire live share expired' });
+    expect(answer).toEqual({ type: 'ended', note: 'Squire live share expired', events: [] });
     await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+  });
+
+  it('delivers a screenshot when Chromium accepts screencast but emits no frames', async () => {
+    const debuggerServer = createServer();
+    const debuggerSockets = new WebSocketServer({ noServer: true });
+    debuggerServer.on('upgrade', (request, socket, head) =>
+      debuggerSockets.handleUpgrade(request, socket, head, (client) => debuggerSockets.emit('connection', client, request)));
+    debuggerSockets.on('connection', (socket) => socket.on('message', (data) => {
+      const command = JSON.parse(data.toString()) as { id: number; method: string };
+      if (command.method === 'Page.captureScreenshot')
+        socket.send(JSON.stringify({ id: command.id, result: { data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64') } }));
+      else socket.send(JSON.stringify({ id: command.id, result: {} }));
+    }));
+    await new Promise<void>((resolve) => debuggerServer.listen(0, '127.0.0.1', resolve));
+    try {
+      const share = await createComputerSession(database, live, {
+        roomId: ROOM, agentId: AGENT, sessionId: 'silent-cdp', upstreamUrl: 'body:',
+      });
+      const port = (debuggerServer.address() as AddressInfo).port;
+      await shareChromiumPage({ page: { id: 'silent-cdp', type: 'page', webSocketDebuggerUrl: `ws://127.0.0.1:${port}/` },
+        serverBaseUrl: origin, shareId: share.id, daemonToken: 'test-token', onEnded: async () => {} });
+      const access = await computerViewToken(database, share.id, HUMAN);
+      const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
+      const message = next(viewer);
+      await opened(viewer);
+      expect(JSON.parse(await message)).toMatchObject({ method: 'Page.screencastFrame', params: { data: '/9j/2Q==' } });
+      viewer.close();
+      for (const client of debuggerSockets.clients) client.close();
+      await until(async () => (await getComputerSession(database, share.id))?.status === 'ended' ? true : undefined);
+    } finally {
+      for (const client of debuggerSockets.clients) client.close();
+      await new Promise<void>((resolve) => debuggerSockets.close(() => resolve()));
+      await new Promise<void>((resolve) => debuggerServer.close(() => resolve()));
+    }
   });
 
   const chromeBinary = process.env.CHROME_BIN || '/usr/bin/google-chrome';
@@ -301,6 +380,10 @@ describe('computer session handoff', () => {
       const page = await until(async () => {
         try { return await findChromiumPage(debugUrl, '/page'); } catch { return undefined; }
       });
+      // A browser automation client may already be attached to the shared tab.
+      const existingDevtools = new WebSocket(page.webSocketDebuggerUrl!);
+      await opened(existingDevtools);
+      existingDevtools.send(JSON.stringify({ id: 1, method: 'Page.enable' }));
       const share = await createComputerSession(database, live, {
         roomId: ROOM, agentId: AGENT, sessionId: page.id, upstreamUrl: 'body:', title: 'Live Chrome',
       });
@@ -327,9 +410,12 @@ describe('computer session handoff', () => {
       viewer.send(JSON.stringify({ id: 1, method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: 30, y: 20, button: 'left', clickCount: 1 } }));
       viewer.send(JSON.stringify({ id: 2, method: 'Input.dispatchMouseEvent', params: { type: 'mouseReleased', x: 30, y: 20, button: 'left', clickCount: 1 } }));
       await until(async () => (await findChromiumPage(debugUrl, page.id)).title === 'clicked' ? true : undefined);
-      viewer.send(JSON.stringify({ type: 'leave' }));
+      viewer.send(JSON.stringify({ type: 'handback' }));
       viewer.close();
-      expect(await agentWait).toMatchObject({ type: 'handoff' });
+      const answer = await agentWait;
+      expect(answer).toMatchObject({ type: 'handoff' });
+      expect(answer.events.map((event) => event.name)).toEqual(expect.arrayContaining(['viewer-opened', 'takeover', 'input', 'handback']));
+      expect(answer.events.every((event) => Number.isFinite(Date.parse(event.at)))).toBe(true);
       expect((await getComputerSession(database, share.id))?.status).toBe('live');
       chrome.kill('SIGTERM');
       await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
@@ -337,6 +423,7 @@ describe('computer session handoff', () => {
       const ended = await fetch(`${origin}/s/${share.id}?access=${access}`);
       expect(ended.status).toBe(410);
       expect((await fetch(`${origin}/s/${share.id}/last.jpg`)).status).toBe(404);
+      existingDevtools.close();
     } finally {
       if (chrome && !spawnFailed && chrome.exitCode === null && chrome.signalCode === null) {
         chrome.kill('SIGTERM');

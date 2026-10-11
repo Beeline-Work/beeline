@@ -66,6 +66,9 @@ export function beelineAgentMcpServer(
       { name: 'BEELINE_DAEMON_TOKEN', value: connection.daemonToken },
       { name: 'BEELINE_HELPER_VERSION', value: connection.helperVersion },
       { name: 'BEELINE_DAEMON_AGENT_ID', value: connection.agentId },
+      ...(config.browserShareHostSocket
+        ? [{ name: 'BEELINE_BROWSER_SHARE_HOST_SOCKET', value: config.browserShareHostSocket }]
+        : []),
       { name: 'BEELINE_OPERATOR_HOME', value: config.operatorHome ?? homedir() },
       { name: 'BEELINE_DAEMON_ROOM_ID', value: context.roomId },
       { name: 'BEELINE_DAEMON_WORKSPACE_ID', value: context.workspaceId },

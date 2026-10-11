@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import {
-  ensureSquireBrokerInstall,
+  updateSquireBrokerInstall,
   TRUSTY_SQUIRE_BROKER_UNIT_NAME,
   trustySquireBrokerUnit,
   writeSquireBrokerUnitMarker,
@@ -199,8 +199,9 @@ export async function installTrustySquireBrokerService(
      * activation and must be re-executed onto the new bundle.
      */
     restart?: boolean;
-    /** Injectable for tests; forwarded to `ensureSquireBrokerInstall`. */
+    /** Injectable for tests; forwarded to `updateSquireBrokerInstall`. */
     squireInstallRun?: SquireInstallRunner;
+    squireUpdateMode?: 'latest' | 'minimum';
   } = {},
 ): Promise<void> {
   const env = options.env ?? process.env;
@@ -209,9 +210,9 @@ export async function installTrustySquireBrokerService(
   writeSquireBrokerUnitMarker(home);
   // Deliberate update point: pin the durable broker install before the unit
   // (re)starts, so a crash-restart never has to touch npm at all.
-  await ensureSquireBrokerInstall(
+  const install = await updateSquireBrokerInstall(
     home,
-    options.squireInstallRun ? { run: options.squireInstallRun } : {},
+    { ...(options.squireInstallRun ? { run: options.squireInstallRun } : {}), mode: options.squireUpdateMode ?? 'latest' },
   );
   const path = systemdBrokerUnitPath(env);
   const content = trustySquireBrokerUnit();
@@ -227,7 +228,7 @@ export async function installTrustySquireBrokerService(
   // A rewritten unit (or an explicit update) must be re-executed: the running
   // elector keeps the old PATH until systemd restarts it. An unchanged,
   // already-running elector is left alone.
-  if (changed || options.restart) {
+  if (changed || install.changed || options.restart) {
     await run(['restart', '--no-block', TRUSTY_SQUIRE_BROKER_UNIT_NAME]);
   } else {
     await run(['start', TRUSTY_SQUIRE_BROKER_UNIT_NAME]);
@@ -257,7 +258,6 @@ export async function convergeTrustySquireBrokerService(options: {
     await installTrustySquireBrokerService({
       env: { ...env, BEELINE_LIB_DIR: options.libDir },
       invocationPath: resolve(options.libDir, 'lib', 'beeline', 'beeline-cli.mjs'),
-      restart: true,
       ...(options.run ? { run: options.run } : {}),
     });
     return true;

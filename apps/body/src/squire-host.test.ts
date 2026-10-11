@@ -13,6 +13,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   statSync,
   symlinkSync,
@@ -25,7 +26,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { rewriteHostMcpDeclaration } from './host-mcp-route.js';
 import {
-  ensureSquireBrokerInstall,
+  updateSquireBrokerInstall,
   ensureSquireHostDir,
   SQUIRE_BROKER_FLAG,
   SQUIRE_BROKER_INSTALL_DIRNAME,
@@ -36,6 +37,8 @@ import {
   SQUIRE_MCP_PACKAGE_NAME,
   squireBrokerInstallDir,
   squireBrokerInstallEntry,
+  squireBrokerInstalledVersion,
+  squireBrokerMeetsComputerUseMinimum,
   squireBrokerSocketReady,
   squireFacadeLaunch,
   squireHostBindPaths,
@@ -374,45 +377,81 @@ describe('host broker unit', () => {
 });
 
 describe('durable broker install', () => {
-  it('installs once, from the pinned spec, and never touches npm again while the entry exists', async () => {
+  it('installs an exact published version, then leaves an unchanged version alone', async () => {
     const home = await scratch('beeline-squire-install-');
     const calls: Array<{ command: string; args: readonly string[]; cwd: string }> = [];
     const run = async (
       command: string,
       args: readonly string[],
       options: { cwd: string },
-    ): Promise<{ code: number | null; stderr: string }> => {
+    ): Promise<{ code: number | null; stderr: string; stdout?: string }> => {
       calls.push({ command, args, cwd: options.cwd });
-      const entry = squireBrokerInstallEntry(home);
+      if (args[0] === 'view') return { code: 0, stderr: '', stdout: '1.1.32\n' };
+      const entry = join(options.cwd, 'node_modules', '@trusty-squire', 'mcp', 'dist', 'bin.js');
       mkdirSync(dirname(entry), { recursive: true });
       writeFileSync(entry, '// fake bin.js\n');
+      writeFileSync(join(dirname(entry), '..', 'package.json'), JSON.stringify({ version: '1.1.32' }));
       return { code: 0, stderr: '' };
     };
-    const entry = await ensureSquireBrokerInstall(home, { run });
+    const first = await updateSquireBrokerInstall(home, { run });
+    const entry = first.entry;
+    expect(first.changed).toBe(true);
     expect(entry).toBe(squireBrokerInstallEntry(home));
     expect(squireBrokerInstallDir(home)).toBe(join(home, '.trusty-squire', SQUIRE_BROKER_INSTALL_DIRNAME));
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.command).toBe('npm');
-    expect(calls[0]!.args).toEqual(
-      expect.arrayContaining(['install', '--prefix', squireBrokerInstallDir(home), `${SQUIRE_MCP_PACKAGE_NAME}@latest`]),
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.args).toEqual(
+      expect.arrayContaining(['install', `${SQUIRE_MCP_PACKAGE_NAME}@1.1.32`]),
     );
-    // The entry already exists: a second call never runs npm at all.
-    const again = await ensureSquireBrokerInstall(home, {
-      run: async () => {
-        throw new Error('must not be called once the entry exists');
-      },
-    });
-    expect(again).toBe(entry);
+    expect(squireBrokerInstalledVersion(home)).toBe('1.1.32');
+    expect(squireBrokerMeetsComputerUseMinimum(home)).toBe(true);
+    const again = await updateSquireBrokerInstall(home, { run });
+    expect(again).toEqual({ entry, changed: false });
+    expect(calls).toHaveLength(3); // registry lookup only
+    await updateSquireBrokerInstall(home, { mode: 'minimum', run });
+    expect(calls).toHaveLength(3); // helper startup is network-free at the floor
     expect(existsSync(entry)).toBe(true);
   });
 
-  it('fails loudly, and never silently falls back to npx, when the install cannot be produced', async () => {
+  it('keeps the working version when a newer install fails', async () => {
     const home = await scratch('beeline-squire-install-fail-');
+    const old = squireBrokerInstallEntry(home);
+    mkdirSync(dirname(old), { recursive: true });
+    writeFileSync(old, '// old');
+    writeFileSync(join(dirname(old), '..', 'package.json'), JSON.stringify({ version: '1.1.31' }));
     await expect(
-      ensureSquireBrokerInstall(home, {
-        run: async () => ({ code: 1, stderr: 'network unreachable' }),
+      updateSquireBrokerInstall(home, {
+        run: async (_command, args) => args[0] === 'view'
+          ? { code: 0, stderr: '', stdout: '1.1.32' }
+          : { code: 1, stderr: 'network unreachable' },
       }),
     ).rejects.toThrow(/network unreachable/);
+    expect(readFileSync(old, 'utf8')).toBe('// old');
+    expect(squireBrokerInstalledVersion(home)).toBe('1.1.31');
+    expect(readdirSync(join(home, '.trusty-squire')).some((name) => name.startsWith('mcp-broker-install-next-'))).toBe(false);
+  });
+
+  it('swaps a newer version in and retains the previous directory for rollback', async () => {
+    const home = await scratch('beeline-squire-upgrade-');
+    const old = squireBrokerInstallEntry(home);
+    mkdirSync(dirname(old), { recursive: true });
+    writeFileSync(old, '// old');
+    writeFileSync(join(dirname(old), '..', 'package.json'), JSON.stringify({ version: '1.1.31' }));
+    expect(squireBrokerMeetsComputerUseMinimum(home)).toBe(false);
+    const result = await updateSquireBrokerInstall(home, { mode: 'minimum', run: async (_command, args, options) => {
+      if (args[0] === 'view') return { code: 0, stderr: '', stdout: '1.1.32' };
+      const candidate = join(options.cwd, 'node_modules', '@trusty-squire', 'mcp');
+      mkdirSync(join(candidate, 'dist'), { recursive: true });
+      writeFileSync(join(candidate, 'dist', 'bin.js'), '// new');
+      writeFileSync(join(candidate, 'package.json'), JSON.stringify({ version: '1.1.32' }));
+      return { code: 0, stderr: '' };
+    } });
+    expect(result.changed).toBe(true);
+    expect(readFileSync(result.entry, 'utf8')).toBe('// new');
+    expect(squireBrokerInstalledVersion(home)).toBe('1.1.32');
+    expect(squireBrokerMeetsComputerUseMinimum(home)).toBe(true);
+    const backups = readdirSync(join(home, '.trusty-squire')).filter((name) => name.startsWith('mcp-broker-install.bak-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(home, '.trusty-squire', backups[0]!, 'node_modules', '@trusty-squire', 'mcp', 'dist', 'bin.js'), 'utf8')).toBe('// old');
   });
 });
 

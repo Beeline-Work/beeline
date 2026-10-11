@@ -1,5 +1,6 @@
 import type { EventEmitter } from 'node:events';
 import { mkdir, rename, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import {
   interruptHostedAgent,
@@ -55,6 +56,7 @@ import {
   SystemdNotifier,
 } from './systemd.js';
 import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
+import { squireBrokerMeetsComputerUseMinimum } from './squire-host.js';
 import { pruneDeletedRuntimes, pruneRepositoryCaches } from './host-disk-retention.js';
 import { pruneSharedModelCache } from './scratch-lifecycle.js';
 
@@ -191,15 +193,17 @@ export async function runMachineHelper(
     }
     loadedRelease = await activeReleaseId(layout);
     loadedReleaseIdentity = await readInstalledBundleIdentity(layout);
-    if (settle.kind === 'pending') {
-      // This is the first process on a newly activated bundle. The process
-      // that activated it may have run the PREVIOUS release, so converge the
-      // host Squire elector here too. Best-effort: the release is live.
+    if (settle.kind === 'pending' ||
+        !squireBrokerMeetsComputerUseMinimum(env.HOME?.trim() || homedir())) {
+      // The first process on a new bundle converges the elector. Other starts
+      // only do so when the durable install is below the computer-use floor.
+      // A broker crash restart never reaches this path.
+      const squireUpdateMode = settle.kind === 'pending' ? 'latest' : 'minimum';
       if (managedBy === 'systemd')
-        await installTrustySquireBrokerService({ env }).catch((error) => console.error(
+        await installTrustySquireBrokerService({ env, squireUpdateMode }).catch((error) => console.error(
           `[beeline] host Squire broker unit not converged: ${error instanceof Error ? error.message : String(error)}`));
       else if (managedBy === 'launchd')
-        await installLaunchdTrustySquireBrokerService({ env }).catch((error) => console.error(
+        await installLaunchdTrustySquireBrokerService({ env, squireUpdateMode }).catch((error) => console.error(
           `[beeline] host Squire broker launchd job not converged: ${error instanceof Error ? error.message : String(error)}`));
     }
   }

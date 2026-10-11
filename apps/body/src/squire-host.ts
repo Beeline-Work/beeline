@@ -13,9 +13,15 @@ import {
   accessSync,
   constants as fsConstants,
   existsSync,
+  lstatSync,
   mkdirSync,
+  mkdtempSync,
+  readFileSync,
   realpathSync,
+  renameSync,
+  rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -33,6 +39,7 @@ export const SQUIRE_FACADE_FLAG = '--squire-facade';
 /** Hidden CLI flag so the host user unit can elect through the installed launcher. */
 export const SQUIRE_BROKER_FLAG = '--squire-broker';
 export const SQUIRE_MCP_PACKAGE_NAME = '@trusty-squire/mcp';
+export const SQUIRE_COMPUTER_USE_MIN_VERSION = '1.1.32';
 /** Bounds a crash-restart storm (RestartSec=5s) to this many attempts per window. */
 export const SQUIRE_BROKER_START_LIMIT_INTERVAL_SEC = 60;
 export const SQUIRE_BROKER_START_LIMIT_BURST = 6;
@@ -232,46 +239,121 @@ export type SquireInstallRunner = (
   command: string,
   args: readonly string[],
   options: { cwd: string },
-) => Promise<{ code: number | null; stderr: string }>;
+) => Promise<{ code: number | null; stderr: string; stdout?: string }>;
 
 const defaultSquireInstallRunner: SquireInstallRunner = (command, args, options) =>
   new Promise((resolveRun) => {
-    const child = spawn(command, [...args], { cwd: options.cwd, stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(command, [...args], { cwd: options.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
+    let stdout = '';
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+    });
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
     });
     child.once('error', (error) => resolveRun({ code: 1, stderr: error.message }));
-    child.once('close', (code) => resolveRun({ code, stderr }));
+    child.once('close', (code) => resolveRun({ code, stderr, stdout }));
   });
 
+const squirePackagePath = (dir: string) =>
+  join(dir, 'node_modules', '@trusty-squire', 'mcp', 'package.json');
+const squireEntryPath = (dir: string) =>
+  join(dir, 'node_modules', '@trusty-squire', 'mcp', 'dist', 'bin.js');
+
+function versionParts(version: string): number[] | undefined {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return undefined;
+  return version.split('.').map(Number);
+}
+
+function compareSquireVersions(left: string, right: string): number {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  if (!a || !b) throw new Error(`Invalid Trusty Squire version: ${!a ? left : right}`);
+  for (let i = 0; i < 3; i++) {
+    if (a[i]! !== b[i]!) return a[i]! - b[i]!;
+  }
+  return 0;
+}
+
+export function squireBrokerInstalledVersion(home: string): string | undefined {
+  if (!existsSync(squireBrokerInstallEntry(home))) return undefined;
+  try {
+    const version = (JSON.parse(readFileSync(squirePackagePath(squireBrokerInstallDir(home)), 'utf8')) as { version?: unknown }).version;
+    return typeof version === 'string' && versionParts(version) ? version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function squireBrokerMeetsComputerUseMinimum(home: string): boolean {
+  const version = squireBrokerInstalledVersion(home);
+  return version !== undefined && compareSquireVersions(version, SQUIRE_COMPUTER_USE_MIN_VERSION) >= 0;
+}
+
 /**
- * Pin the durable broker install, installing it only when it is missing.
- * This is the one deliberate update point: `beeline start`/pairing and the
- * managed update converge path call it before the unit (re)starts, so
- * `runSquireBroker` itself never has to reach the network. Idempotent and
- * network-free once the entry exists on disk.
+ * Network work belongs to install/update convergence, never the broker's
+ * crash-restart path. A complete candidate is installed in a sibling directory
+ * before the stable entry is switched to it. The former target is retained.
  */
-export async function ensureSquireBrokerInstall(
+export async function updateSquireBrokerInstall(
   home: string,
-  options: { run?: SquireInstallRunner; spec?: string } = {},
-): Promise<string> {
+  options: { run?: SquireInstallRunner; mode?: 'latest' | 'minimum' } = {},
+): Promise<{ entry: string; changed: boolean }> {
   const entry = squireBrokerInstallEntry(home);
-  if (existsSync(entry)) return entry;
+  const installed = squireBrokerInstalledVersion(home);
+  if (options.mode === 'minimum' && installed &&
+      compareSquireVersions(installed, SQUIRE_COMPUTER_USE_MIN_VERSION) >= 0)
+    return { entry, changed: false };
   const dir = squireBrokerInstallDir(home);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(dir), { recursive: true, mode: 0o700 });
   const run = options.run ?? defaultSquireInstallRunner;
-  const spec = options.spec ?? `${SQUIRE_MCP_PACKAGE_NAME}@latest`;
-  const result = await run(
-    'npm',
-    ['install', '--prefix', dir, spec, '--no-save', '--no-audit', '--no-fund', '--no-package-lock'],
-    { cwd: dir },
-  );
-  if (result.code !== 0 || !existsSync(entry))
-    throw new Error(
-      `Trusty Squire broker install failed: ${result.stderr.trim() || `${entry} is missing`}`,
+  const view = await run('npm', ['view', `${SQUIRE_MCP_PACKAGE_NAME}@latest`, 'version'], { cwd: dirname(dir) });
+  const latest = view.stdout?.trim() ?? '';
+  if (view.code !== 0 || !versionParts(latest))
+    throw new Error(`Trusty Squire version lookup failed: ${view.stderr.trim() || latest || 'no version returned'}`);
+  if (compareSquireVersions(latest, SQUIRE_COMPUTER_USE_MIN_VERSION) < 0)
+    throw new Error(`Trusty Squire ${latest} is older than required ${SQUIRE_COMPUTER_USE_MIN_VERSION}`);
+  if (installed && compareSquireVersions(installed, latest) >= 0) return { entry, changed: false };
+
+  const candidate = mkdtempSync(join(dirname(dir), `${SQUIRE_BROKER_INSTALL_DIRNAME}-next-`));
+  const link = join(dirname(dir), `${SQUIRE_BROKER_INSTALL_DIRNAME}-link-${basename(candidate)}`);
+  let activated = false;
+  try {
+    const install = await run(
+      'npm',
+      ['install', '--prefix', candidate, `${SQUIRE_MCP_PACKAGE_NAME}@${latest}`, '--no-save', '--no-audit', '--no-fund', '--no-package-lock'],
+      { cwd: candidate },
     );
-  return entry;
+    let candidateVersion: string | undefined;
+    try {
+      candidateVersion = (JSON.parse(readFileSync(squirePackagePath(candidate), 'utf8')) as { version?: string }).version;
+    } catch { /* incomplete install */ }
+    if (install.code !== 0 || !existsSync(squireEntryPath(candidate)) || candidateVersion !== latest)
+      throw new Error(`Trusty Squire broker install failed: ${install.stderr.trim() || 'candidate entry or version is missing'}`);
+
+    symlinkSync(basename(candidate), link);
+    if (existsSync(dir)) {
+      const previous = realpathSync(dir);
+      const backup = join(dirname(dir), `${SQUIRE_BROKER_INSTALL_DIRNAME}.bak-${installed ?? 'unknown'}-${basename(candidate)}`);
+      if (!lstatSync(dir).isSymbolicLink()) {
+        // One-time migration from the original directory layout. A failed
+        // activation puts the original directory back.
+        renameSync(dir, backup);
+        try { renameSync(link, dir); } catch (error) { renameSync(backup, dir); throw error; }
+      } else {
+        symlinkSync(previous, backup);
+        renameSync(link, dir); // replacing a symlink is atomic
+      }
+    } else {
+      renameSync(link, dir);
+    }
+    activated = true;
+    return { entry, changed: true };
+  } finally {
+    if (!activated) rmSync(candidate, { recursive: true, force: true });
+    rmSync(link, { force: true });
+  }
 }
 
 /** The host elector: one user unit, no PrivateTmp, same socket every façade sees. */
@@ -314,7 +396,7 @@ function spawnSquireBrokerProcess(entry: string, env: NodeJS.ProcessEnv): void {
  * Host elector: spawn Squire's broker even when no socket exists yet. A live
  * same-profile broker the unit did not start is stopped first; any other
  * holder of the unit's sockets fails the start with a reason naming it.
- * Never `npx`: the durable install pinned by `ensureSquireBrokerInstall` is
+ * Never `npx`: the durable install pinned by `updateSquireBrokerInstall` is
  * the only thing this ever launches, so a restart never resolves `@latest`
  * from the registry or reloads the whole npm package.
  */
@@ -332,7 +414,8 @@ export async function runSquireBroker(env: NodeJS.ProcessEnv = process.env): Pro
   }
   let entry: string;
   try {
-    entry = await ensureSquireBrokerInstall(home);
+    entry = squireBrokerInstallEntry(home);
+    if (!existsSync(entry)) throw new Error('durable broker entry is missing');
   } catch (error) {
     process.stderr.write(
       `[beeline] Trusty Squire broker not started: ${

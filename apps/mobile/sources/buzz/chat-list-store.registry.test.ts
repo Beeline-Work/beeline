@@ -13,6 +13,7 @@ vi.mock('react-native', () => ({ AppState: { currentState: 'active' } }));
 vi.mock('./surface-storage', async () => {
   const { SurfaceResponseCache } = await import('@beeline/buzz-client');
   const { SurfaceRegistry } = await import('./surface-registry');
+  const { selectIdentities } = await import('./identity-records');
   const rows = new Map<string, string>();
   const durable = new SurfaceResponseCache({
     get: async (key) => rows.get(key) ?? null,
@@ -22,12 +23,17 @@ vi.mock('./surface-storage', async () => {
   });
   return {
     rows,
-    mobileSurfaceCache: new SurfaceRegistry(durable),
+    mobileSurfaceCache: new SurfaceRegistry(durable, (value) => value, selectIdentities),
     surfaceAddress: (relayOrigin: string, viewerPubkey: string, endpoint: string, params?: object) =>
       ({ relayOrigin, viewerPubkey, endpoint, ...(params ? { params } : {}) }),
   };
 });
-vi.mock('./chat-list-read', () => ({ readChatListFromServer: () => server.chats() }));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  loadBuzzIdentity: async () => ({ publicKey: 'c'.repeat(64) }),
+}));
+vi.mock('@/sync/transport/room-view-client', () => ({
+  RoomViewClient: class { chats() { return server.chats(); } },
+}));
 vi.mock('@/sync/transport/live-connection', () => ({
   sharedLiveConnection: () => ({
     register: async (_filters: unknown, listener: (event: unknown) => void) => {
@@ -43,6 +49,7 @@ vi.mock('@/sync/transport/live-connection', () => ({
 }));
 
 import { acquireChatList, resetChatListStoresForTest } from './chat-list-store';
+import { identityScope, recordPerson, recordWorkspaceHeader } from './identity-records';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 
 const WORKSPACE = '00000000-0000-4000-8000-000000000001';
@@ -88,6 +95,37 @@ afterEach(() => {
 });
 
 describe('the Room list store over the real surface registry', () => {
+  it('selects live identity and Workspace changes over an in-flight list read', async () => {
+    const answers: Array<(value: ChatListView) => void> = [];
+    const chats = vi.fn(() => new Promise<ChatListView>((resolve) => { answers.push(resolve); }));
+    server.chats = chats;
+    const handle = acquireChatList(key, { visible: () => true });
+    await vi.advanceTimersByTimeAsync(0);
+    answers[0]!(listOf([row(ROOM_A, 'Alpha', { id: M1, createdAt: 10 })]));
+    await vi.advanceTimersByTimeAsync(10);
+
+    handle.force();
+    await vi.advanceTimersByTimeAsync(0);
+    const changed = vi.fn();
+    handle.subscribe(changed);
+    const scope = identityScope(key.relayUrl, key.viewerPubkey);
+    mobileSurfaceCache.fenceViewer(key.relayUrl, key.viewerPubkey, (stamp) => {
+      recordPerson(scope, { ...agent, name: 'Fox' }, stamp);
+      recordWorkspaceHeader(scope, { id: WORKSPACE, name: 'New Work' }, stamp);
+    });
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(handle.current()?.chats[0]?.latestMessage?.author.name).toBe('Fox');
+    expect(handle.current()?.workspace.name).toBe('New Work');
+    expect(chats).toHaveBeenCalledTimes(2);
+
+    // The old server answer started before these records and cannot undo them.
+    answers[1]!(listOf([row(ROOM_A, 'Alpha', { id: M1, createdAt: 10 })]));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(handle.current()?.chats[0]?.latestMessage?.author.name).toBe('Fox');
+    expect(handle.current()?.workspace.name).toBe('New Work');
+    handle.release();
+  });
+
   it('keeps the server read when a delta lands while it is in flight', async () => {
     const answers: Array<(value: ChatListView) => void> = [];
     server.chats = () => new Promise((resolve) => { answers.push(resolve); });

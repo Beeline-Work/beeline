@@ -118,7 +118,11 @@ export class SurfaceRegistry {
 
   async write<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>, stamp?: number): Promise<void> {
     const normalized = this.publish(address, value, guard, stamp);
-    await this.durable.write(address, normalized, guard);
+    await this.persist(address, normalized, guard);
+  }
+
+  persist<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>): Promise<void> {
+    return this.durable.write(address, value, guard);
   }
 
   /**

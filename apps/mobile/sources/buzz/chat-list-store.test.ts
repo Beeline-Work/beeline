@@ -6,6 +6,8 @@ import type { ChatListItem, ChatListView } from '@beeline/buzz-client';
 
 const disk = vi.hoisted(() => ({
   rows: new Map<string, unknown>(),
+  hot: new Map<string, unknown>(),
+  listeners: new Map<string, Set<() => void>>(),
   writes: [] as unknown[],
 }));
 const server = vi.hoisted(() => ({
@@ -22,19 +24,44 @@ vi.mock('./surface-storage', () => ({
   surfaceAddress: (_relay: string, _viewer: string, endpoint: string, params?: { workspaceId?: string }) =>
     `${endpoint}:${params?.workspaceId ?? ''}`,
   mobileSurfaceCache: {
-    peek: () => null,
-    read: async (key: string) => disk.rows.get(key) ?? null,
-    publish: (_key: string, value: unknown) => value,
-    write: async (key: string, value: unknown) => {
+    peek: (key: string) => disk.hot.get(key) ?? null,
+    read: async (key: string) => {
+      const value = disk.hot.get(key) ?? disk.rows.get(key) ?? null;
+      if (value) disk.hot.set(key, value);
+      return value;
+    },
+    publish: (key: string, value: unknown) => {
+      disk.hot.set(key, value);
+      for (const listener of disk.listeners.get(key) ?? []) listener();
+      return value;
+    },
+    persist: async (key: string, value: unknown) => {
       disk.rows.set(key, value);
       disk.writes.push(value);
     },
+    subscribe: (key: string, listener: () => void) => {
+      const listeners = disk.listeners.get(key) ?? new Set<() => void>();
+      listeners.add(listener);
+      disk.listeners.set(key, listeners);
+      return () => listeners.delete(listener);
+    },
     remove: async (key: string) => {
+      disk.hot.delete(key);
       disk.rows.delete(key);
+      for (const listener of disk.listeners.get(key) ?? []) listener();
+    },
+    clear: () => {
+      disk.hot.clear();
+      for (const listeners of disk.listeners.values()) for (const listener of listeners) listener();
     },
   },
 }));
-vi.mock('./chat-list-read', () => ({ readChatListFromServer: () => server.chats() }));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  loadBuzzIdentity: async () => ({ publicKey: 'viewer' }),
+}));
+vi.mock('@/sync/transport/room-view-client', () => ({
+  RoomViewClient: class { chats() { return server.chats(); } },
+}));
 vi.mock('@/modal', async () => ({ Modal: (await import('@/modal/ModalManager')).Modal }));
 // The real ModalProvider and confirm dialog render; only the native Hull
 // primitives under them become host elements so a test can press a button.
@@ -242,7 +269,10 @@ describe('app-level Room list store', () => {
     await vi.advanceTimersByTimeAsync(10);
     const writesAfterRead = disk.writes.length;
     emit(agentMessage('room-a', 'm-late', 40));
+    const removed = vi.fn();
+    handle.subscribe(() => removed(handle.current()));
     await handle.remove();
+    expect(removed).toHaveBeenCalledWith(null);
     await vi.advanceTimersByTimeAsync(2_000);
     expect(disk.writes.length).toBe(writesAfterRead);
     expect(disk.rows.has(address)).toBe(false);

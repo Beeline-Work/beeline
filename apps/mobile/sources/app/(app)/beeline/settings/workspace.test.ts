@@ -77,9 +77,15 @@ vi.mock('@/buzz/surface-storage', () => ({
   mobileSurfaceCache: {
     read: vi.fn(async () => null),
     fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
-    publish: (_address: string, value: unknown) => value,
+    publish: (address: string, value: unknown) => {
+      hotSurfaces.values.set(address, value);
+      for (const listener of hotSurfaces.listeners.get(address) ?? []) listener();
+      return value;
+    },
     write: vi.fn(async () => undefined),
+    persist: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
+    clear: vi.fn(),
     peek: (address: string) => hotSurfaces.values.get(address) ?? null,
     subscribe: (address: string, listener: () => void) => {
       const listeners = hotSurfaces.listeners.get(address) ?? new Set<() => void>();

@@ -95,6 +95,8 @@ vi.mock('@/buzz/surface-storage', () => {
         surfaceRows.set(key, value);
         notify(key);
       },
+      persist: async () => undefined,
+      clear: () => { surfaceRows.clear(); },
       remove: async (key: string) => {
         surfaceRows.delete(key);
         notify(key);
@@ -538,6 +540,8 @@ describe('desktop Workspace navigation', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    await vi.waitFor(() => expect(chats).toHaveBeenCalledWith('workspace-empty'));
+    await settle();
 
     expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe(
       'Empty Workspace',
@@ -860,6 +864,7 @@ describe('desktop Workspace navigation', () => {
     await act(async () => {
       tree.update(<SidebarView key="deep-linked-workspace" />);
     });
+    await vi.waitFor(() => expect(chats).toHaveBeenCalledWith('workspace-empty'));
     await settle();
 
     expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe(

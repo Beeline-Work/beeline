@@ -94,9 +94,6 @@ describe('Room deck bootstrap', () => {
     const store = readFileSync(path.join(__dirname, '../../../buzz/chat-list-store.ts'), 'utf8');
     expect(source).toContain('acquireChatList(');
     expect(source).not.toContain('surfaceSubscribe(filters, (event)');
-    expect(store).toContain('chatWatchFiltersKey(value.watchFilters) !== this.watchKey');
-    expect(store).toContain("this.value?.watchFilters ?? []");
     expect(store).not.toContain("'#h': [");
-    expect(store).toContain('if (filters.length === 0) {');
   });
 });

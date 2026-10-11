@@ -32,6 +32,10 @@ const deck = vi.hoisted(() => ({
   blur: null as null | (() => void),
   storedInvite: null as string | null,
 }));
+const hotSurfaces = vi.hoisted(() => ({
+  values: new Map<string, unknown>(),
+  listeners: new Map<string, Set<() => void>>(),
+}));
 
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
@@ -148,20 +152,37 @@ vi.mock('@/buzz/community-storage', () => ({
   }),
 }));
 vi.mock('@/buzz/surface-storage', () => {
+  const notify = (address: string) => {
+    for (const listener of hotSurfaces.listeners.get(address) ?? []) listener();
+  };
   const cache = {
-    peek: vi.fn(() => null),
+    peek: vi.fn((address: string) => hotSurfaces.values.get(address) ?? null),
     read: vi.fn(async () => null),
-    write: vi.fn(async (_address: unknown, _value: unknown, _guard: unknown) => undefined),
-    remove: vi.fn(async () => undefined),
-    publish: vi.fn((_address: unknown, value: unknown) => value),
-    subscribe: vi.fn(() => () => undefined),
-    fetch: vi.fn(async (address: unknown, guard: unknown, request: () => Promise<unknown>) => {
+    write: vi.fn(async (address: string, value: unknown, _guard: unknown) => {
+      cache.publish(address, value);
+    }),
+    persist: vi.fn(async () => undefined),
+    remove: vi.fn(async (address: string) => { hotSurfaces.values.delete(address); notify(address); }),
+    clear: vi.fn(() => { hotSurfaces.values.clear(); }),
+    publish: vi.fn((address: string, value: unknown) => {
+      hotSurfaces.values.set(address, value);
+      notify(address);
+      return value;
+    }),
+    subscribe: vi.fn((address: string, listener: () => void) => {
+      const listeners = hotSurfaces.listeners.get(address) ?? new Set<() => void>();
+      listeners.add(listener);
+      hotSurfaces.listeners.set(address, listeners);
+      return () => { listeners.delete(listener); };
+    }),
+    fetch: vi.fn(async (address: string, guard: unknown, request: () => Promise<unknown>) => {
       const value = await request();
       await cache.write(address, value, guard);
       return value;
     }),
   };
-  return { mobileSurfaceCache: cache, surfaceAddress: vi.fn(() => 'surface-address') };
+  return { mobileSurfaceCache: cache, surfaceAddress: vi.fn((relay, viewer, endpoint, params) =>
+    JSON.stringify([relay, viewer, endpoint, params])) };
 });
 vi.mock('@/buzz/room-open-prefetch', () => ({ dispatchRoomOpenTap: vi.fn() }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
@@ -329,6 +350,7 @@ async function mountDeck(): Promise<ReactTestRenderer> {
 beforeEach(() => {
   // A case that never unmounts its deck must not hand its live list to the next.
   resetChatListStoresForTest();
+  vi.mocked(mobileSurfaceCache.read).mockReset().mockResolvedValue(null);
   resetRoomCornerStore();
   deck.appState = 'active';
   deck.appStateListeners = [];
@@ -360,7 +382,9 @@ describe('Deleted workspace removal', () => {
       .mockResolvedValueOnce({ workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }], viewer, truncated: false, watchFilters: [] } as never)
       .mockResolvedValueOnce(chatList({ id: 'cached', text: 'old room', createdAt: 1 }) as never);
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
-    const renderer = await mountDeck();
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await quiet();
     expect(router.replace).toHaveBeenCalledWith('/beeline/community');
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', null);
     expect(mobileSurfaceCache.remove).toHaveBeenCalled();
@@ -926,7 +950,10 @@ describe('Room deck live path', () => {
     // Reproduction 4.3: a stored list whose Rooms all resume never read again.
     vi.mocked(mobileSurfaceCache.read)
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(chatList({ id: 'cached', text: 'stale', createdAt: 1 }) as never);
+      .mockImplementationOnce(async (address) => mobileSurfaceCache.publish(
+        address, chatList({ id: 'cached', text: 'stale', createdAt: 1 }),
+        (_value): _value is ChatListView => true,
+      ) as never);
     deck.chatsResponse = chatList({ id: 'm9', text: 'current', createdAt: 50 });
     let renderer!: ReactTestRenderer;
     await act(async () => {

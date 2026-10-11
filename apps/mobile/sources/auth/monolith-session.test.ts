@@ -299,6 +299,7 @@ describe('monolith phone session', () => {
     }
   });
 
+  // The real PGlite migration takes close to Vitest's 5 s default on CI.
   it('stays signed in when a refresh commits on the server but its reply times out', async () => {
     const db = new PgliteDatabase();
     try {
@@ -347,7 +348,7 @@ describe('monolith phone session', () => {
     } finally {
       await db.close();
     }
-  });
+  }, 20_000);
 
   it('leaves a request without timeoutMs unbounded, so large uploads are never aborted', async () => {
     let hang = false;

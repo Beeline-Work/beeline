@@ -14,6 +14,7 @@ export const AGENT_GRANT_KINDS = [
   'command',
   'mcp',
   'repository',
+  'shared_asset',
 ] as const;
 export type AgentGrantKind = (typeof AGENT_GRANT_KINDS)[number];
 
@@ -57,7 +58,20 @@ export const AGENT_GRANT_VERBS: Readonly<Record<AgentGrantKind, string>> = {
   command: 'run',
   mcp: 'use',
   repository: 'edit',
+  shared_asset: 'isolate',
 };
+
+/** Only these whole cache trees may be made private for one agent. */
+export const SHARED_ASSET_CATEGORIES = [
+  'package-cache',
+  'codex-download-cache',
+  'codex-plugin-cache',
+] as const;
+export type SharedAssetCategory = (typeof SHARED_ASSET_CATEGORIES)[number];
+export function isSharedAssetCategory(value: unknown): value is SharedAssetCategory {
+  return typeof value === 'string' &&
+    (SHARED_ASSET_CATEGORIES as readonly string[]).includes(value);
+}
 
 /**
  * A command grant is one exact line the agent may say. Shell metacharacters are

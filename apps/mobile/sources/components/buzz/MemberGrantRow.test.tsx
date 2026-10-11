@@ -16,6 +16,10 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
+vi.mock('./Button', async () => {
+  const ReactModule = await import('react');
+  return { Button: (props: any) => ReactModule.createElement('Button', props) };
+});
 
 const theme = vi.hoisted(() => ({
   buzz: {
@@ -84,6 +88,17 @@ function detailLines(renderer: ReactTestRenderer): string[] {
 }
 
 describe('MemberGrantRow', () => {
+  it('offers a revocation action on an active shared asset grant', () => {
+    const onRevoke = vi.fn();
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<MemberGrantRow grant={{ ...BASE, kind: 'shared_asset',
+        target: 'package-cache' }} onRevoke={onRevoke} />);
+    });
+    act(() => renderer.root.findByProps({ testID: 'member-grant-g-1' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'member-grant-g-1-revoke' }).props.onPress());
+    expect(onRevoke).toHaveBeenCalledTimes(1);
+  });
   it('states the target, reason, and provenance, and only discloses on tap', () => {
     const renderer = render(BASE, 'ship-the-slab');
     const head = renderer.root.findByProps({ testID: 'member-grant-g-1' });

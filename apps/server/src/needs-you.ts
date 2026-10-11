@@ -388,11 +388,14 @@ const APPROVAL_BRANCHES: readonly string[] = [
  * `requireGrantAuthority` rule).
  */
 export function grantDecidedBySql(grant: string, identityExpr: string): string {
-  return `CASE WHEN ${grant}.kind='repository' THEN EXISTS (
+  return `CASE WHEN ${grant}.kind IN ('repository','shared_asset') THEN EXISTS (
       SELECT 1 FROM memberships manager
       WHERE manager.workspace_id=${grant}.workspace_id AND manager.room_id IS NULL
         AND manager.identity_id=${identityExpr} AND manager.removed_at IS NULL
-        AND manager.role IN ('owner','admin'))
+        AND (manager.role IN ('owner','admin') OR
+          (${grant}.kind='shared_asset' AND EXISTS (
+            SELECT 1 FROM agents a WHERE a.agent_id=${grant}.agent_id
+              AND a.owner_id=${identityExpr}))))
     ELSE EXISTS (
       SELECT 1 FROM agents grant_agent
       WHERE grant_agent.agent_id=${grant}.agent_id AND grant_agent.owner_id=${identityExpr})

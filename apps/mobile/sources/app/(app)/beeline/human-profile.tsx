@@ -83,10 +83,6 @@ export function HumanProfile({
       const [identity, baseUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
       if (!identity) throw new Error('Sign in to view this profile.');
       if (cancelled) return;
-      if (identity.publicKey === memberId) {
-        router.replace('/beeline/settings');
-        return;
-      }
       setRecordScope(workspaceRecordScope(baseUrl, identity.publicKey, workspaceId));
       const address = surfaceAddress(baseUrl, identity.publicKey, '/workspace/:id/members/:memberId',
         { workspaceId, memberId });
@@ -397,6 +393,15 @@ export function HumanProfile({
                   key={grant.grantId}
                   grant={grant}
                   roomName={grant.roomName}
+                  revokeBusy={busy}
+                  onRevoke={grant.kind === 'shared_asset' && grant.status === 'approved' &&
+                    (viewer?.role === 'owner' || viewer?.role === 'admin' ||
+                      viewer?.identity.pubkey === memberId)
+                    ? () => void perform(async () => {
+                        await monolithPhoneOperation('revokeAgentGrant', { grantId: grant.grantId });
+                        setRetry((value) => value + 1);
+                      })
+                    : undefined}
                 />
               ))
             ) : (

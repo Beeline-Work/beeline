@@ -161,6 +161,8 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 import { executableOnPath } from './agent-command.js';
 import type { SessionMode } from './config.js';
 import { CURSOR_HARNESS_COMMAND } from './cursor-acp-bridge.js';
+import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
+import { PACKAGE_CACHE_DIRS } from './workspace-assets.js';
 
 /** Operator switch, persisted on the runtime record and mirrored onto BodyConfig. */
 export type SandboxPolicy = 'bwrap' | 'off';
@@ -433,6 +435,8 @@ export interface SandboxSessionSpec {
     privateRoot?: string;
     codexHome?: string;
     packageHome?: string;
+    privateAssetRoot?: string;
+    isolatedCategories?: readonly SharedAssetCategory[];
   };
 }
 
@@ -545,6 +549,8 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
       add(cwd, spec.mode === 'edit' ? 'bind' : 'ro-bind');
     add(shared.privateHomeRoot, 'bind');
     if (shared.privateRoot) add(shared.privateRoot, 'bind');
+    if (shared.privateAssetRoot && shared.isolatedCategories?.length)
+      add(shared.privateAssetRoot, 'bind');
     add(resolve(shared.agentRuntimeDir, 'runtime.json'), 'ro-bind');
     // The selected repository-free Room is read-only, but its generated
     // CodeGraph index remains writable after rebinding that Room cwd.
@@ -554,12 +560,27 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
         add(path, 'bind');
     }
     add(resolve(assetRoot, 'cache'), 'bind');
+    const source = (category: SharedAssetCategory, suffix: string): string =>
+      shared.privateAssetRoot && shared.isolatedCategories?.includes(category)
+        ? resolve(shared.privateAssetRoot, suffix)
+        : resolve(assetRoot, suffix);
+    if (shared.privateAssetRoot) {
+      for (const suffix of shared.isolatedCategories?.includes('package-cache') ? PACKAGE_CACHE_DIRS : [])
+        add(resolve(shared.privateAssetRoot, 'cache', suffix), 'bind', resolve(assetRoot, 'cache', suffix));
+      for (const [category, suffix] of [
+        ['codex-download-cache', 'cache/codex/download'],
+        ['codex-plugin-cache', 'cache/codex/plugins'],
+      ] as const) {
+        if (shared.isolatedCategories?.includes(category))
+          add(resolve(shared.privateAssetRoot, suffix), 'bind', resolve(assetRoot, suffix));
+      }
+    }
     if (shared.codexHome) {
-      add(resolve(assetRoot, 'cache/codex/download'), 'bind', resolve(shared.codexHome, 'cache'));
-      add(resolve(assetRoot, 'cache/codex/plugins'), 'bind', resolve(shared.codexHome, 'plugins/cache'));
+      add(source('codex-download-cache', 'cache/codex/download'), 'bind', resolve(shared.codexHome, 'cache'));
+      add(source('codex-plugin-cache', 'cache/codex/plugins'), 'bind', resolve(shared.codexHome, 'plugins/cache'));
     }
     if (shared.packageHome) {
-      add(resolve(assetRoot, 'cache/cargo/registry'), 'bind', resolve(shared.packageHome, '.cargo/registry'));
+      add(source('package-cache', 'cache/cargo/registry'), 'bind', resolve(shared.packageHome, '.cargo/registry'));
     }
     for (const name of ['tools', 'avd-base']) add(resolve(assetRoot, name), 'ro-bind');
   }

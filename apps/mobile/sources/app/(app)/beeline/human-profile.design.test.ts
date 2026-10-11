@@ -44,7 +44,7 @@ describe('Human profile layout contract', () => {
     expect(grantRow).toContain("from './SettingsRow'");
     expect(grantRow).toContain('descriptionDetail={provenance}');
     expect(grantRow).toContain("chevron={expanded ? 'up' : 'down'}");
-    // Display only: the ledger never carries a grant mutation.
+    // The row delegates its one revocation action; the server owns authority.
     expect(grantRow).not.toMatch(/monolithPhoneOperation|decideAgentGrant|revokeAgentGrant/);
   });
 });

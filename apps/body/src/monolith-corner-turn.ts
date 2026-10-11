@@ -15,13 +15,17 @@ import { machineHost } from './machine-host.js';
 import {
   prepareCodexCacheTargets,
   preparePackageCacheTargets,
+  preparePrivateAssets,
   prepareWorkspaceAdapter,
   markWorkspaceLayoutLive,
   prepareWorkspaceAssets,
   prepareWorkspaceAvdBase,
   sharedAssetsEnabled,
+  workspaceAssetPaths,
   workspaceCacheEnv,
+  isolatedSharedAssetCategories,
 } from './workspace-assets.js';
+import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
 import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capacity.js';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
@@ -758,11 +762,12 @@ export class MonolithCornerTurnLoop {
       this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId }),
       hasCornerPrepareScript(this.options.worktreePath),
     ]);
-    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const registryRoutes = configuration.registryMcpRoutes ?? [];
     return sessionConfigFingerprint({
       devices: grantedDevices,
+      isolatedCategories,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -790,7 +795,7 @@ export class MonolithCornerTurnLoop {
     });
   }
 
-  private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[] }> {
+  private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[]; isolatedCategories: SharedAssetCategory[] }> {
     try {
       const grants = await this.options.api.execute('listAgentGrants', {
         agentId: this.agent.publicKey,
@@ -812,9 +817,10 @@ export class MonolithCornerTurnLoop {
           ]),
         ],
         devices: grantedSandboxDevices(grants),
+        isolatedCategories: isolatedSharedAssetCategories(grants),
       };
     } catch {
-      return { hostRoutes: [], devices: [] };
+      return { hostRoutes: [], devices: [], isolatedCategories: [] };
     }
   }
 
@@ -839,7 +845,9 @@ export class MonolithCornerTurnLoop {
       this.grantedResources(),
       this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId }),
     ]);
-    const { hostRoutes: grantedHostRoutes, devices: grantedDevices } = grants;
+    const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
+    const privateAssetRoot = resolve(runtimeDirectory(this.options.runtime.supervisorRoot,
+      this.options.runtime.agent.publicKey), 'private-assets');
     const self = roster.members.find((member) => member.identityId === this.agent.publicKey);
     const opener = this.options.openedBy
       ? roster.members.find((member) => member.identityId === this.options.openedBy)
@@ -974,10 +982,14 @@ export class MonolithCornerTurnLoop {
       ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
       : undefined;
     let toolchain;
+    if (isolatedCategories.length)
+      await preparePrivateAssets(privateAssetRoot, isolatedCategories);
     if (assets) {
       try {
         toolchain = await prepareWorkspaceAdapter(assets, this.options.config.agentKind, command, {
-          ...this.options.config.agentEnv, ...homeOverlay, ...workspaceCacheEnv(assets),
+          ...this.options.config.agentEnv, ...homeOverlay,
+          ...workspaceCacheEnv(assets, undefined,
+            isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined),
         });
       } catch (error) {
         // Pinning is optional: use the installed host adapter while keeping
@@ -995,20 +1007,25 @@ export class MonolithCornerTurnLoop {
         assets = undefined; // private legacy paths remain available this turn
       }
     }
-    const cacheEnv = assets ? workspaceCacheEnv(assets, this.options.worktreePath) : {};
+    const cacheEnv = assets
+      ? workspaceCacheEnv(assets, this.options.worktreePath,
+          isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined)
+      : isolatedCategories.includes('package-cache')
+        ? workspaceCacheEnv(workspaceAssetPaths(privateAssetRoot), this.options.worktreePath, privateAssetRoot)
+        : {};
     if (assets && this.options.config.agentKind === 'codex' && homeOverlay.CODEX_HOME)
       await prepareCodexCacheTargets(homeOverlay.CODEX_HOME);
     if (assets && homeOverlay.HOME) await preparePackageCacheTargets(homeOverlay.HOME);
     // A build output belongs to this corner, even when its package downloads
     // come from the Workspace cache.
     const cargoTargetDir = resolve(this.options.worktreePath, '.beeline-cargo-target');
-    const npmCacheDir = assets ? cacheEnv.npm_config_cache! : sharedNpmCacheDir(this.options.runtime.supervisorRoot);
-    const pnpmStoreDir = assets ? cacheEnv.PNPM_CONFIG_STORE_DIR! : sharedPnpmStoreDir(this.options.runtime.supervisorRoot);
+    const npmCacheDir = cacheEnv.npm_config_cache ?? sharedNpmCacheDir(this.options.runtime.supervisorRoot);
+    const pnpmStoreDir = cacheEnv.PNPM_CONFIG_STORE_DIR ?? sharedPnpmStoreDir(this.options.runtime.supervisorRoot);
     // Turbo derives its cache directory from the repository's GIT COMMON
     // directory; in a linked corner worktree that is the read-only
     // `repositories/.turbo/cache`, so every `turbo run` fails before it starts.
-    const turboCacheDir = assets ? cacheEnv.TURBO_CACHE_DIR! : sharedTurboCacheDir(this.options.runtime.supervisorRoot);
-    const modelCacheDir = assets ? cacheEnv.HF_HUB_CACHE! : resolve(this.options.runtime.supervisorRoot, 'beeline', 'model-cache');
+    const turboCacheDir = cacheEnv.TURBO_CACHE_DIR ?? sharedTurboCacheDir(this.options.runtime.supervisorRoot);
+    const modelCacheDir = cacheEnv.HF_HUB_CACHE ?? resolve(this.options.runtime.supervisorRoot, 'beeline', 'model-cache');
     const hfHomeDir = assets && this.options.config.agentHomeRoot
       ? resolve(this.options.config.agentHomeRoot, 'cache/huggingface-private')
       : modelCacheDir;
@@ -1038,7 +1055,8 @@ export class MonolithCornerTurnLoop {
       CARGO_TARGET_DIR: cargoTargetDir,
       TURBO_CACHE_DIR: turboCacheDir,
       HF_HOME: hfHomeDir,
-      HUGGINGFACE_HUB_CACHE: assets ? modelCacheDir : join(modelCacheDir, 'hub'),
+      HUGGINGFACE_HUB_CACHE: assets || isolatedCategories.includes('package-cache')
+        ? modelCacheDir : join(modelCacheDir, 'hub'),
       ...(assets && androidAssets && this.options.config.agentHomeRoot
         ? {
             BEELINE_ANDROID_LEASE_ROOT: resolve(assets.cache, 'android-leases'),
@@ -1125,6 +1143,8 @@ export class MonolithCornerTurnLoop {
               ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
               ...(this.options.config.agentKind === 'codex' && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
               ...(agentEnv.HOME ? { packageHome: agentEnv.HOME } : {}),
+              privateAssetRoot,
+              isolatedCategories,
             } }
           : {}),
       },
@@ -1163,6 +1183,7 @@ export class MonolithCornerTurnLoop {
     );
     const fingerprint = sessionConfigFingerprint({
       devices: grantedDevices,
+      isolatedCategories,
       model: configuration.model ?? this.options.config.modelSelection?.model,
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
@@ -1206,7 +1227,8 @@ export class MonolithCornerTurnLoop {
                 { name: 'PNPM_CONFIG_STORE_DIR', value: pnpmStoreDir },
                 { name: 'CARGO_TARGET_DIR', value: cargoTargetDir },
                 { name: 'HF_HOME', value: hfHomeDir },
-                { name: 'HUGGINGFACE_HUB_CACHE', value: assets ? modelCacheDir : join(modelCacheDir, 'hub') },
+                { name: 'HUGGINGFACE_HUB_CACHE', value: assets || isolatedCategories.includes('package-cache')
+                  ? modelCacheDir : join(modelCacheDir, 'hub') },
               ],
             },
           ]

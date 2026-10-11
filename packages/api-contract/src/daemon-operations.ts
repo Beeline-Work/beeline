@@ -1415,7 +1415,7 @@ export type RequestAgentGrantResult = {
   /** Server-owned placement and decision authority for a pending card. */
   readonly approval?: {
     readonly destination: 'room' | 'system-dm' | 'trusty-squire-dm' | 'wallet-dm';
-    readonly authority: 'workspace-manager' | 'resource-owner';
+    readonly authority: 'workspace-manager' | 'workspace-manager-or-agent-owner' | 'resource-owner';
   };
   /** Why yolo did not cover this ask, when it did not (C94). */
   readonly escalations?: readonly AgentGrantEscalation[];

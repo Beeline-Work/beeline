@@ -68,3 +68,8 @@ describe('sessionConfigFingerprint', () => {
 it('invalidates a retained coding session when a brief becomes runtime-only', () => {
   expect(sessionConfigFingerprint({ repositoryWork: true })).not.toBe(sessionConfigFingerprint({ repositoryWork: false }));
 });
+
+it('replaces a retained session when private cache approval changes', () => {
+  expect(sessionConfigFingerprint({ isolatedCategories: ['package-cache'] }))
+    .not.toBe(sessionConfigFingerprint({ isolatedCategories: [] }));
+});

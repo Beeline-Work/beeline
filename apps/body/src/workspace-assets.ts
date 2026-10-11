@@ -4,6 +4,7 @@ import { cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeF
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentKind } from './agent-command.js';
+import { isSharedAssetCategory, type SharedAssetCategory } from '@beeline/api-contract/agent-grants';
 import { admitSharedAssets, releaseReserveOnEnospc, SharedAssetCapacityError } from './shared-asset-capacity.js';
 
 const execFileAsync = promisify(execFile);
@@ -24,9 +25,43 @@ export interface WorkspaceAssetPaths {
 }
 
 export const SHARED_LAYOUT_MARKER = 'layout-live-v1.json';
+export const PACKAGE_CACHE_DIRS = [
+  'npm', 'pnpm', 'uv', 'go-mod', 'go-build', 'turbo', 'huggingface',
+  'browser/playwright', 'browser/puppeteer', 'cargo/registry',
+] as const;
 
 export function sharedAssetsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.BEELINE_SHARED_ASSETS_ENABLED !== '0';
+}
+
+/** The grant list is the server's live authority, including revocations. */
+export function isolatedSharedAssetCategories(grants: {
+  grants: readonly { kind: string; target: string; status: string }[];
+}): SharedAssetCategory[] {
+  return [...new Set(grants.grants
+    .filter((grant) => grant.kind === 'shared_asset' && grant.status === 'approved' &&
+      isSharedAssetCategory(grant.target))
+    .map((grant) => grant.target as SharedAssetCategory))];
+}
+
+/** Private trees are stable across this agent's Rooms and are never seeded from shared bytes. */
+export async function preparePrivateAssets(root: string, categories: readonly SharedAssetCategory[]): Promise<void> {
+  const paths = [root];
+  if (categories.includes('package-cache'))
+    paths.push(...PACKAGE_CACHE_DIRS.map((suffix) => resolve(root, 'cache', suffix)));
+  if (categories.includes('codex-download-cache')) paths.push(resolve(root, 'cache/codex/download'));
+  if (categories.includes('codex-plugin-cache')) paths.push(resolve(root, 'cache/codex/plugins'));
+  for (const path of paths) {
+    await mkdir(path, { recursive: true, mode: 0o700 });
+    let cursor = path;
+    while (cursor.startsWith(resolve(root)) && cursor !== dirname(resolve(root))) {
+      const info = await lstat(cursor);
+      if (!info.isDirectory() || info.isSymbolicLink() || (await realpath(cursor)) !== cursor)
+        throw new Error(`private asset path is not an ordinary directory: ${cursor}`);
+      if (cursor === resolve(root)) break;
+      cursor = dirname(cursor);
+    }
+  }
 }
 
 export async function markWorkspaceLayoutLive(paths: WorkspaceAssetPaths): Promise<void> {
@@ -66,6 +101,7 @@ export async function prepareWorkspaceAssets(root: string): Promise<WorkspaceAss
     resolve(paths.cache, 'codex', 'plugins'),
     resolve(paths.cache, 'cargo'),
     resolve(paths.cache, 'cargo', 'registry'),
+    ...PACKAGE_CACHE_DIRS.map((suffix) => resolve(paths.cache, suffix)),
     paths.tools,
     paths.avdBase,
     paths.staging,
@@ -110,8 +146,8 @@ export async function preparePackageCacheTargets(userHome: string): Promise<void
  * Select only cache-specific variables. HOME/XDG and tool homes that contain
  * credentials or generated configuration remain inside the private Room home.
  */
-export function workspaceCacheEnv(paths: WorkspaceAssetPaths, cornerRoot?: string): Record<string, string> {
-  const cache = paths.cache;
+export function workspaceCacheEnv(paths: WorkspaceAssetPaths, cornerRoot?: string, privateRoot?: string): Record<string, string> {
+  const cache = privateRoot ? resolve(privateRoot, 'cache') : paths.cache;
   return {
     npm_config_cache: resolve(cache, 'npm'),
     PNPM_CONFIG_STORE_DIR: resolve(cache, 'pnpm'),

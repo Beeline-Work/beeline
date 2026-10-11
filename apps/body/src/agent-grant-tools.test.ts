@@ -8,6 +8,7 @@ import {
   agentToolsFor,
   listGrants,
   requestGrant,
+  requestSharedAssetIsolation,
   runGrantedCommand,
   storeSecret,
   type AgentGrantDeps,
@@ -31,6 +32,20 @@ function deps(
 }
 
 describe('beeline-agent request_grant', () => {
+  it('asks for one coarse shared asset category with a reason and a Room card', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const answer = await requestSharedAssetIsolation({
+      category: 'package-cache', reason: 'Shared npm tarball is corrupt',
+    }, deps({ grantId: 'g-7', status: 'pending', auto: false }, ops));
+    expect(ops).toEqual([{ name: 'requestAgentGrant', input: {
+      roomId: 'room-1', kind: 'shared_asset', target: 'package-cache',
+      reason: 'Shared npm tarball is corrupt',
+    } }]);
+    expect(answer).toContain('pending, card posted: isolate package-cache');
+    await expect(requestSharedAssetIsolation({ category: 'cache/file', reason: 'broken' },
+      deps({}, ops))).rejects.toThrow('category must be one of');
+    expect(ops).toHaveLength(1);
+  });
   it.each([
     { kind: 'budget', target: '$10', reason: 'more tokens' },
     { kind: 'repository', target: 'acme/widgets', reason: 'edit the repository' },

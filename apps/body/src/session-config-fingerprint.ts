@@ -50,6 +50,8 @@ export interface SessionConfigInput {
   reviewerHandle?: string | undefined;
   /** Device nodes approved `device` grants bind into the session sandbox. */
   devices?: readonly string[] | undefined;
+  /** Approved cache categories alter the environment and mount table. */
+  isolatedCategories?: readonly string[] | undefined;
 }
 
 export function sessionConfigFingerprint(input: SessionConfigInput): string {
@@ -68,6 +70,8 @@ export function sessionConfigFingerprint(input: SessionConfigInput): string {
     fingerprint.push({ cornerPrepareScript: input.cornerPrepareScript });
   if (input.reviewerHandle !== undefined) fingerprint.push(input.reviewerHandle);
   if (input.devices?.length) fingerprint.push({ devices: [...new Set(input.devices)].sort() });
+  if (input.isolatedCategories?.length)
+    fingerprint.push({ isolatedCategories: [...new Set(input.isolatedCategories)].sort() });
   return JSON.stringify(fingerprint);
 }
 

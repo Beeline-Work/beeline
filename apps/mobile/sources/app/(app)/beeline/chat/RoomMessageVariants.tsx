@@ -237,6 +237,7 @@ export interface GrantRequestCardProps {
   viewerIsAgent: boolean;
   viewerPubkey: string;
   viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
+  viewerCanManageWorkspace?: boolean;
   /** The grant whose decision is in flight. */
   actionId: string | null;
   onDecision(grantId: string, decision: GrantDecision): void;
@@ -259,6 +260,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   viewerIsAgent,
   viewerPubkey,
   viewerRole,
+  viewerCanManageWorkspace,
   actionId,
   onDecision,
   onOpenSource,
@@ -269,10 +271,14 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   // (soul name) wins once it exists, never a fallback placeholder.
   const agentName = agent ? display.name : request.agent.name;
   const repositoryRequest = request.grants.every((grant) => grant.kind === 'repository');
+  const sharedAssetRequest = request.grants.every((grant) => grant.kind === 'shared_asset');
   const canDecide =
     !viewerIsAgent &&
     (repositoryRequest
-      ? viewerRole === 'admin' || viewerRole === 'owner'
+      ? viewerCanManageWorkspace ?? (viewerRole === 'admin' || viewerRole === 'owner')
+      : sharedAssetRequest
+        ? Boolean(viewerCanManageWorkspace ?? (viewerRole === 'admin' || viewerRole === 'owner')) ||
+          viewerPubkey === request.owner.pubkey
       : viewerPubkey === request.owner.pubkey);
   const anyPending = request.grants.some((grant) => grant.status === 'pending');
   return (
@@ -289,12 +295,12 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
                   onPress: () => onDecision(grant.grantId, 'deny'),
                   testID: `grant-${grant.grantId}-deny`,
                 },
-                {
+                ...(!sharedAssetRequest ? [{
                   label: 'Once',
                   disabled: actionId !== null,
                   onPress: () => onDecision(grant.grantId, 'once'),
                   testID: `grant-${grant.grantId}-once`,
-                },
+                }] : []),
                 {
                   label: 'Always',
                   primary: true,
@@ -346,6 +352,8 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
                   ? undefined
                   : repositoryRequest
                     ? 'waiting for a Workspace admin'
+                    : sharedAssetRequest
+                      ? 'waiting for a Workspace manager or the agent owner'
                     : `waiting for @${request.owner.name.replace(/^@/, '')}`
                 : grant.status === 'once'
                   ? 'allowed once'

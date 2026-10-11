@@ -66,6 +66,7 @@ export default function Subscription() {
             agents={[creatorName]}
             runs={subscriptionRuns(subscription)}
             where={subscriptionWhere(subscription)}
+            whereCorner={subscription.corner}
           />
           <ScheduledWorkDoes roomId={subscription.roomId} prompt={subscription.prompt ?? 'React to this event.'}
             workflowSlug={subscription.workflowSlug} />

@@ -7,6 +7,7 @@ import { workflowDisplayName } from '@/buzz/workflow-graph';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { SettingsRow } from './SettingsRow';
 import { WorkflowRunLine } from './WorkflowRunLine';
+import { ScheduledWorkWhere } from './ScheduledWorkWhere';
 
 /**
  * The parts a schedule's or subscription's own page is built from, cut from the
@@ -48,11 +49,13 @@ export function ScheduledWorkFacts({
   runs,
   agents,
   where,
+  whereCorner,
   testID = 'scheduled-work-facts',
 }: {
   runs: string;
   agents: readonly string[];
   where: string;
+  whereCorner?: { id: string; name: string } | null;
   testID?: string;
 }) {
   return (
@@ -63,7 +66,9 @@ export function ScheduledWorkFacts({
         testID={`${testID}-agents`}
         title={agents.length > 1 ? 'Agents' : 'Agent'}
       />
-      <SettingsRow description={where} testID={`${testID}-where`} title="Where" />
+      <SettingsRow description={where}
+        descriptionContent={whereCorner ? <ScheduledWorkWhere corner={whereCorner} /> : undefined}
+        testID={`${testID}-where`} title="Where" />
     </View>
   );
 }

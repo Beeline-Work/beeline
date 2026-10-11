@@ -51,6 +51,8 @@ type SettingsRowProps = {
   description?: string;
   /** A short fact kept whole before a one-line, ellipsized description tail. */
   descriptionLead?: string;
+  /** Custom rendering for the description tail; `description` remains its spoken text. */
+  descriptionContent?: React.ReactNode;
   /** A second quiet line under `description`, for a row whose subject needs
    *  one provenance fact stated beneath it (the profile grant ledger's
    *  `grantProvenanceLine`). Same quiet tier as `description`; never used for
@@ -116,6 +118,7 @@ export function SettingsRow({
   chevron,
   description,
   descriptionLead,
+  descriptionContent,
   descriptionDetail,
   descriptionTone,
   descriptionAction,
@@ -218,13 +221,13 @@ export function SettingsRow({
                 {descriptionLead}
               </Text>
             ) : null}
-            <Text
+            {descriptionContent ?? <Text
               numberOfLines={descriptionLead || descriptionAction ? 1 : undefined}
               style={[descriptionLead ? styles.descriptionTail : styles.description,
                 descriptionTone === 'danger' && styles.descriptionDanger]}
             >
               {description}
-            </Text>
+            </Text>}
             {descriptionAction ? (
               <TouchableOpacity
                 accessibilityLabel={descriptionAction.accessibilityLabel ?? descriptionAction.label}

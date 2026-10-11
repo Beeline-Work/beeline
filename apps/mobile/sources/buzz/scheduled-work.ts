@@ -30,9 +30,9 @@ export function promptLead(message: string): string {
   return bare.length < text.replace(/[.!?]$/, '').length ? `${bare}…` : bare;
 }
 
-/** `#corner` for a schedule in a child corner, otherwise this Room. */
+/** Spoken scope: name a child corner as such, or this Room. */
 export function scheduleWhere(schedule: Pick<RoomScheduleView, 'corner'>): string {
-  return schedule.corner ? `#${schedule.corner.name}` : 'this Room';
+  return schedule.corner ? `corner ${schedule.corner.name}` : 'this Room';
 }
 
 /** Line 1 of a schedule row: what it runs, ellipsized by the row if needed. */
@@ -83,7 +83,7 @@ export function subscriptionWhen(subscription: RoomSubscriptionView): string {
 }
 
 export function subscriptionWhere(subscription: RoomSubscriptionView): string {
-  return subscription.corner ? `#${subscription.corner.name}` : 'this Room';
+  return subscription.corner ? `corner ${subscription.corner.name}` : 'this Room';
 }
 
 export function subscriptionRuns(subscription: RoomSubscriptionView): string {

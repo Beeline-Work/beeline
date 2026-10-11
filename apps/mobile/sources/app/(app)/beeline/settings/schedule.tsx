@@ -74,6 +74,7 @@ export default function PromptSchedule() {
             agents={[work?.agentNames.get(schedule.agentId) ?? 'Agent']}
             runs={scheduleRuns(schedule)}
             where={scheduleWhere(schedule)}
+            whereCorner={schedule.corner}
           />
           <ScheduledWorkDoes roomId={schedule.roomId} prompt={schedule.message} workflowSlug={schedule.workflowSlug} />
           <StopScheduledWork

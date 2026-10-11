@@ -18,6 +18,7 @@ import {
 } from '@/buzz/scheduled-work';
 import { CORNER_META_SIZE } from '@/components/buzz/CornerGlyph';
 import { PageHeader } from '@/components/buzz/PageHeader';
+import { ScheduledWorkWhere } from '@/components/buzz/ScheduledWorkWhere';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { WorkflowGlyph } from '@/components/buzz/WorkflowGlyph';
@@ -26,11 +27,46 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+type WorkEntry =
+  | { kind: 'schedule'; value: RoomScheduleView }
+  | { kind: 'subscription'; value: RoomSubscriptionView };
+
+/** This Room, then each child corner; timers by next run before event triggers. */
+export function orderScheduledWork(
+  schedules: readonly RoomScheduleView[],
+  subscriptions: readonly RoomSubscriptionView[],
+): WorkEntry[] {
+  return [
+    ...schedules.map((value): WorkEntry => ({ kind: 'schedule', value })),
+    ...subscriptions.map((value): WorkEntry => ({ kind: 'subscription', value })),
+  ].sort((a, b) => {
+    const aCorner = a.value.corner;
+    const bCorner = b.value.corner;
+    if (!aCorner || !bCorner) {
+      if (aCorner) return 1;
+      if (bCorner) return -1;
+    } else {
+      const cornerOrder = aCorner.name.localeCompare(bCorner.name) || aCorner.id.localeCompare(bCorner.id);
+      if (cornerOrder) return cornerOrder;
+    }
+    if (a.kind !== b.kind) return a.kind === 'schedule' ? -1 : 1;
+    if (a.kind === 'schedule' && b.kind === 'schedule') return a.value.nextRunAt - b.value.nextRunAt;
+    return 0;
+  });
+}
+
+function ListTail({ agent, corner }: { agent: string; corner?: { id: string; name: string } | null }) {
+  return <View style={styles.listTail}>
+    <Text numberOfLines={1} style={styles.listAgent}>· @{agent} ·</Text>
+    <ScheduledWorkWhere corner={corner} />
+  </View>;
+}
+
 /**
  * Everything that wakes the Room's agents without a human tag: timers and
- * subscriptions. Agents set both up. Each entry is one settings row in the same
- * grammar — what it runs, then when · who · where — and opens its own
- * detail page. Stopping happens on those pages.
+ * subscriptions. Agents set both up. A flat list orders this Room before its
+ * corners, schedules by next run before subscriptions. Each row says what,
+ * then when · who · where, and opens its own detail page.
  */
 export default function ScheduledWork() {
   useLatencyRouteFrame('/beeline/settings/schedules');
@@ -47,6 +83,7 @@ export default function ScheduledWork() {
   useLatencyRouteFrame('/beeline/settings/schedules', !loading, true);
   const schedules = work?.schedules ?? [];
   const subscriptions = work?.subscriptions ?? [];
+  const entries = orderScheduledWork(schedules, subscriptions);
 
   const openSchedule = (schedule: RoomScheduleView) =>
     router.push({ pathname: '/beeline/settings/schedule', params: { roomId: roomId!, scheduleId: schedule.id } });
@@ -55,11 +92,12 @@ export default function ScheduledWork() {
     <SettingsRow
       chevron="right"
       description={`· @${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule)}`}
+      descriptionContent={<ListTail agent={work?.agentNames.get(schedule.agentId) ?? 'Agent'} corner={schedule.corner} />}
       descriptionLead={scheduleCadenceLabel(schedule.cadence)}
       key={schedule.id}
       leading={<View style={styles.leadingSlot}>
         {schedule.workflowSlug ? (
-          <WorkflowGlyph live={false} size={CORNER_META_SIZE} testID={`scheduled-work-glyph-${schedule.id}`} />
+          <WorkflowGlyph color={styles.workflowGlyph.color} size={CORNER_META_SIZE} testID={`scheduled-work-glyph-${schedule.id}`} />
         ) : null}
       </View>}
       onPress={() => openSchedule(schedule)}
@@ -72,11 +110,12 @@ export default function ScheduledWork() {
     <SettingsRow
       chevron="right"
       description={`· @${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription)}`}
+      descriptionContent={<ListTail agent={work?.agentNames.get(subscription.agentId) ?? 'Agent'} corner={subscription.corner} />}
       descriptionLead={subscriptionWhen(subscription)}
       key={subscription.id}
       leading={<View style={styles.leadingSlot}>
         {subscription.workflowSlug ? (
-          <WorkflowGlyph live={false} size={CORNER_META_SIZE} testID={`subscription-glyph-${subscription.id}`} />
+          <WorkflowGlyph color={styles.workflowGlyph.color} size={CORNER_META_SIZE} testID={`subscription-glyph-${subscription.id}`} />
         ) : null}
       </View>}
       onPress={() =>
@@ -118,7 +157,7 @@ export default function ScheduledWork() {
           keyboardShouldPersistTaps="handled"
           testID="scheduled-work-list"
         >
-          {schedules.length === 0 && subscriptions.length === 0 ? (
+          {entries.length === 0 ? (
             <View style={styles.emptyBlock} testID="scheduled-work-empty">
               <Ionicons color={styles.emptyIcon.color} name="time-outline" size={22} />
               <Text style={styles.emptyTitle}>Nothing wakes agents here yet</Text>
@@ -126,14 +165,8 @@ export default function ScheduledWork() {
                 Agents set up schedules and subscriptions. Ask an agent in this Room to add one.
               </Text>
             </View>
-          ) : (
-            <>
-              {schedules.length > 0 && <Text style={styles.section}>SCHEDULES</Text>}
-              <View style={styles.rows}>{schedules.map(renderSchedule)}</View>
-              {subscriptions.length > 0 && <Text style={styles.section}>SUBSCRIPTIONS</Text>}
-              <View style={styles.rows}>{subscriptions.map(renderSubscription)}</View>
-            </>
-          )}
+          ) : <View style={styles.rows}>{entries.map((entry) => entry.kind === 'schedule'
+            ? renderSchedule(entry.value) : renderSubscription(entry.value))}</View>}
         </ScrollView>
       )}
     </View>
@@ -143,16 +176,12 @@ export default function ScheduledWork() {
 const styles = StyleSheet.create((theme) => ({
   screen: { flex: 1, backgroundColor: theme.buzz.bgBase },
   loading: { padding: theme.buzz.space.xl, alignItems: 'center', justifyContent: 'center' },
-  section: {
-    ...theme.buzz.type.sectionHead,
-    color: theme.buzz.ledgerQuiet,
-    paddingHorizontal: 16,
-    paddingTop: theme.buzz.space.lg,
-    paddingBottom: theme.buzz.space.xs,
-  },
-  // SettingsRow pads by `space.sm`; the section heads sit at 16.
+  // SettingsRow pads by `space.sm`; keep the flat list on the 16pt page axis.
   rows: { paddingHorizontal: theme.buzz.space.sm },
   leadingSlot: { width: CORNER_META_SIZE, alignItems: 'center', justifyContent: 'center' },
+  workflowGlyph: { color: theme.buzz.accent },
+  listTail: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.xs },
+  listAgent: { ...theme.buzz.type.meta, color: theme.buzz.textMuted, flexShrink: 1, minWidth: 0 },
   emptyBlock: { padding: theme.buzz.space.xl, alignItems: 'flex-start', justifyContent: 'center' },
   emptyIcon: { color: theme.buzz.accent },
   emptyTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary, marginTop: theme.buzz.space.sm },

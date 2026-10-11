@@ -103,6 +103,7 @@ export default function Workflow() {
               agents={[scheduled.work?.agentNames.get(schedule.agentId) ?? 'Agent']}
               runs={scheduleRuns(schedule)}
               where={scheduleWhere(schedule)}
+              whereCorner={schedule.corner}
             />
           ) : null}
           <DetailSection testID="workflow-steps-header" title="Steps" />

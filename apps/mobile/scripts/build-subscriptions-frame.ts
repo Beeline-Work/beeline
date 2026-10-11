@@ -26,23 +26,40 @@ const fontFaces = [
 const workflowContract = JSON.stringify(JSON.parse(readFileSync(path.resolve(mobile, '../../docs/workflows/feedback-triage.json'), 'utf8')));
 const shims: Record<string, string> = {
   ...webProofShims(mobile),
+  'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
+    const theme = { buzz: new URLSearchParams(location.search).get('theme') === 'light'
+      ? beelineThemes.bone : beelineThemes.obsidian };
+    export const StyleSheet = { create: factory => (typeof factory === 'function' ? factory(theme) : factory), hairlineWidth: 1,
+      absoluteFillObject: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 } };
+    export const useUnistyles = () => ({ theme });`,
   ...(baseline ? { '@/buzz/scheduled-work': mainSource('apps/mobile/sources/buzz/scheduled-work.ts') } : {}),
   'expo-router': `import React from 'react';
     export const useFocusEffect = effect => React.useEffect(effect, [effect]);
     export const useLocalSearchParams = () => {
-      const page = new URLSearchParams(location.search).get('page');
-      return {roomId:'room-1',workspaceId:'workspace-1',
-        scheduleId:page === 'schedule-workflow' ? 'schedule-workflow' : 'schedule-prompt',
-        subscriptionId:page === 'subscription-workflow' || page === 'stop-confirm' ? 'subscription-workflow' : 'subscription-prompt'};
+      const query = new URLSearchParams(location.search);
+      const page = query.get('page');
+      return {roomId:query.get('roomId') ?? 'room-1',workspaceId:'workspace-1',
+        name:query.get('name') ?? 'feedback-triage',
+        scheduleId:page === 'schedule-workflow' ? 'schedule-workflow'
+          : page === 'schedule-prompt' ? 'schedule-prompt' : undefined,
+        subscriptionId:page === 'subscription-workflow' || page === 'stop-confirm' ? 'subscription-workflow'
+          : page === 'subscription-prompt' ? 'subscription-prompt' : undefined};
     };
-    export const router = {push:()=>undefined,replace:()=>undefined,back:()=>undefined};`,
+    export const router = {push:href=>{
+      if (href.pathname !== '/beeline/workflow') return;
+      const next = new URL(location.href);
+      next.searchParams.set('page','workflow-from-subscription');
+      next.searchParams.set('roomId',href.params.roomId);
+      next.searchParams.set('name',href.params.name);
+      location.href = next.href;
+    },replace:()=>undefined,back:()=>undefined};`,
   '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async name => {
     if (name === 'listRoomSchedules') return {schedules: location.search.includes('empty') ? [] : [
       {id:'schedule-prompt',roomId:'room-1',agentId:'agent-1',cadence:{kind:'cron',expression:'0 9 * * 1-5',timeZone:'UTC'},
         message:'Post the morning standup summary for this Room.',nextRunAt:1790000000},
       {id:'schedule-workflow',roomId:'corner-1',agentId:'agent-1',cadence:{kind:'interval',everyMinutes:1440},
         message:'Start the feedback-triage workflow.',workflowSlug:'feedback-triage',
-        nextRunAt:1790000000,corner:{id:'corner-1',name:'triage'}}]};
+        nextRunAt:1780000000,corner:{id:'corner-1',name:'triage'}}]};
     if (name === 'listRoomSubscriptions') return {subscriptions: location.search.includes('empty') ? [] : [
       {id:'subscription-prompt',roomId:'room-1',agentId:'agent-1',source:'room',event:'joined',
         prompt:'Welcome the new member and share the Room guide.'},

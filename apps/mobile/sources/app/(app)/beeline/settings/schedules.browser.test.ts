@@ -9,6 +9,12 @@ function shims(mobile: string): Record<string, string> {
   const contract = readFileSync(path.join(mobile, '../../docs/workflows/feedback-triage.json'), 'utf8');
   return {
     ...webProofShims(mobile),
+    'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
+      const theme = { buzz: new URLSearchParams(location.search).get('theme') === 'light'
+        ? beelineThemes.bone : beelineThemes.obsidian };
+      export const StyleSheet = { create: factory => (typeof factory === 'function' ? factory(theme) : factory), hairlineWidth: 1,
+        absoluteFillObject: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 } };
+      export const useUnistyles = () => ({ theme });`,
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
     export const useLocalSearchParams = () => Object.fromEntries(new URLSearchParams(location.search));
@@ -82,8 +88,10 @@ type Page = {
   titleFont: string | null;
   eyebrowAboveTitle: boolean | null;
   glyphs: string[];
+  workflowFills: Array<string | null>;
   loadedFonts: string[];
   listAxes: number[][];
+  listPolygonCounts: number[];
   listLines: Array<{ height: number; leadVisible: boolean; sameLine: boolean; tailOneLine: boolean } | null>;
   detailAxis: number[];
   steps: string[];
@@ -131,24 +139,28 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       eyebrowAboveTitle: true,
     });
     expect(page.text.slice(2)).toEqual([
-      'SCHEDULES',
       "Summarize yesterday's merged PRs for the Room…",
       'Weekdays at 09:00 UTC',
-      '· @Hoots · this Room',
-      'Feedback triage',
-      'Daily at 14:00 America/New_York',
-      '· @Ruby · #issues-triage',
-      'SUBSCRIPTIONS',
+      '· @Hoots ·',
+      'this Room',
       'Triage incoming work',
       'On new pull request in owner/widgets',
-      '· @Ruby · this Room',
+      '· @Ruby ·',
+      'this Room',
+      'Feedback triage',
+      'Daily at 14:00 America/New_York',
+      '· @Ruby ·',
+      'issues-triage',
       'Feedback triage',
       'On someone joining this Room',
-      '· @Ruby · #issues-triage',
+      '· @Ruby ·',
+      'issues-triage',
     ]);
     expect(page.glyphs).toEqual(['scheduled-work-glyph-video', 'subscription-glyph-sub-2']);
-    expect(page.loadedFonts).toEqual(expect.arrayContaining(['SpaceGrotesk-Regular', 'SpaceGrotesk-Medium', 'SpaceGrotesk-SemiBold']));
+    expect(page.workflowFills).toEqual(['#b08a4a', '#b08a4a']);
+    expect(page.loadedFonts).toEqual(expect.arrayContaining(['SpaceGrotesk-Regular', 'SpaceGrotesk-SemiBold']));
     expect(page.listAxes).toEqual([[45, 45], [45, 45], [45, 45], [45, 45]]);
+    expect(page.listPolygonCounts).toEqual([0, 2, 0, 2]);
     expect(page.listLines).toEqual(Array(4).fill({ height: 64, leadVisible: true, sameLine: true, tailOneLine: true }));
     expect(page.text.join(' ')).not.toMatch(/LAST|NEVER FIRED|STOP|REVOKE/);
     expect(page.pushed).toEqual([
@@ -157,6 +169,12 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       { pathname: '/beeline/settings/subscription', params: { roomId: 'room-1', subscriptionId: 'sub-1' } },
       { pathname: '/beeline/settings/subscription', params: { roomId: 'room-1', subscriptionId: 'sub-2' } },
     ]);
+  }, 120_000);
+
+  it('uses dark brass workflow marks on the light list', async () => {
+    const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&theme=light');
+    expect(page.workflowFills).toEqual(['#8a6323', '#8a6323']);
+    expect(page.listLines).toEqual(Array(4).fill({ height: 64, leadVisible: true, sameLine: true, tailOneLine: true }));
   }, 120_000);
 
   it('opens a prompt schedule with When, Agent, Where, Does, then Stop', async () => {
@@ -191,6 +209,9 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       expect(page.pendingCircles).toBe(page.allCircles);
       expect(page.detailAxis).toEqual([16, 16, 16, 16, 16, 16, 16]);
       expect(page.inputs).toContainEqual(['readWorkflowDefinition', { roomId: 'corner-1', name: 'feedback-triage' }]);
+      if (pageName === 'subscription') expect(page.pushed).toContainEqual({
+        pathname: '/beeline/workflow', params: { roomId: 'corner-1', name: 'feedback-triage' },
+      });
       stopped(page, stop);
     }
   }, 120_000);
@@ -230,7 +251,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
         'Agent',
         '@Ruby',
         'Where',
-        '#issues-triage',
+        'issues-triage',
         'Steps',
         'History',
         'No runs yet.',
@@ -259,7 +280,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       ]),
     );
     expect(page.beforeRetry).not.toContain('Stop schedule');
-    expect(page.text).toEqual(expect.arrayContaining(['Agent', '@Ruby', '#issues-triage', 'Stop schedule']));
+    expect(page.text).toEqual(expect.arrayContaining(['Agent', '@Ruby', 'issues-triage', 'Stop schedule']));
     expect(page.text.some((line) => line.includes('Could not load'))).toBe(false);
     stopped(page, 'deleteRoomSchedule');
   }, 120_000);

@@ -32,7 +32,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', () => ({ SurfaceGlyphLoader: () 
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: 'viewer' }), getEffectiveRelayUrl: async () => 'http://local' }));
 vi.mock('@/sync/transport/room-view-client', () => ({ RoomViewClient: class { room = room; } }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: operation }));
-import ScheduledWork from './schedules';
+import ScheduledWork, { orderScheduledWork } from './schedules';
 import PromptSchedule from './schedule';
 import Subscription from './subscription';
 
@@ -53,13 +53,29 @@ async function render(element: React.ReactElement) {
   return tree;
 }
 
+it('orders this Room first, then each corner with schedules by next run before subscriptions', () => {
+  const cornerA = { id: 'a', name: 'A corner' };
+  const cornerB = { id: 'b', name: 'B corner' };
+  const schedule = (id: string, nextRunAt: number, corner?: typeof cornerA) =>
+    ({ id, nextRunAt, corner } as any);
+  const subscription = (id: string, corner?: typeof cornerA) => ({ id, corner } as any);
+  const ordered = orderScheduledWork(
+    [schedule('b-late', 30, cornerB), schedule('room-late', 20),
+      schedule('a', 10, cornerA), schedule('room-early', 5), schedule('b-early', 1, cornerB)],
+    [subscription('b-sub', cornerB), subscription('room-sub'), subscription('a-sub', cornerA)],
+  );
+  expect(ordered.map((entry) => entry.value.id)).toEqual([
+    'room-early', 'room-late', 'room-sub', 'a', 'a-sub', 'b-early', 'b-late', 'b-sub',
+  ]);
+});
+
 it('lists every entry as one row in the shared grammar, each opening its own page', async () => {
   params.value = { roomId: 'room', workspaceId: 'ws' };
   const tree = await render(<ScheduledWork />);
   try {
     const row = (testID: string) => tree.root.findByProps({ testID });
     expect(row('scheduled-work-daily').props).toMatchObject({ title: 'Morning summary', descriptionLead: 'Every hour', description: '· @Hoots · this Room', chevron: 'right' });
-    expect(row('scheduled-work-video').props).toMatchObject({ title: 'Post youtube video', descriptionLead: 'Every day', description: '· @Hoots · #video' });
+    expect(row('scheduled-work-video').props).toMatchObject({ title: 'Post youtube video', descriptionLead: 'Every day', description: '· @Hoots · corner video' });
     expect(row('scheduled-work-video').props.leading).toBeTruthy();
     expect(row('scheduled-work-daily').props.leading).toBeTruthy();
     expect(row('subscription-sub').props.leading).toBeTruthy();

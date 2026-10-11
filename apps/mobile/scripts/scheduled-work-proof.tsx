@@ -51,6 +51,8 @@ async function run() {
   const eyebrow = find('#beeline');
   const title = find('Schedules and subscriptions');
   const glyphs = ids(/^(scheduled-work-glyph-|subscription-glyph-)/);
+  const workflowFills = glyphs.map((id) =>
+    document.querySelector(`[data-testid="${id}"] polygon`)?.getAttribute('fill'));
   const steps = ids(/^(workflow-steps|scheduled-work-steps)-step-[^-]+$/);
   const pendingCircles = ids(/^(workflow-steps|scheduled-work-steps)-step-.*-circle-pending$/).length;
   const allCircles = ids(/^(workflow-steps|scheduled-work-steps)-step-.*-circle-/).length;
@@ -59,6 +61,8 @@ async function run() {
     .filter((row): row is Element => Boolean(row))
     .map((row) => [...row.querySelectorAll('[dir=auto]')].slice(0, 2)
       .map((label) => label.getBoundingClientRect().x));
+  const listPolygonCounts = ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1', 'subscription-sub-2']
+    .map((id) => document.querySelector(`[data-testid="${id}"]`)?.querySelectorAll('polygon').length ?? 0);
   const listLines = ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1', 'subscription-sub-2']
     .map((id) => {
       const row = document.querySelector(`[data-testid="${id}"]`);
@@ -80,6 +84,7 @@ async function run() {
     .filter((node): node is Element => Boolean(node))
     .map((node) => (node.querySelector('[dir=auto]') ?? node).getBoundingClientRect().x);
   for (const id of ['scheduled-work-daily', 'scheduled-work-video', 'subscription-sub-1', 'subscription-sub-2']) click(id);
+  if (page === 'subscription') click('scheduled-work-workflow');
   const stopId = page === 'subscription' ? 'stop-subscription' : page === 'workflow' ? 'stop-workflow-schedule' : 'stop-schedule';
   click(stopId);
   await pause();
@@ -98,8 +103,10 @@ async function run() {
           ? eyebrow.getBoundingClientRect().bottom <= title.getBoundingClientRect().top + 1
           : null,
       glyphs,
+      workflowFills,
       loadedFonts: [...document.fonts].filter((face) => face.status === 'loaded').map((face) => face.family),
       listAxes,
+      listPolygonCounts,
       listLines,
       detailAxis,
       steps,

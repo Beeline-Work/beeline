@@ -49,6 +49,7 @@ import {
   installRegistryMcp,
   type RegistryInstallResult,
 } from './registry-mcp.js';
+import { runProviderWebhookAssignment } from './provider-webhooks.js';
 export { CEREMONY_EXPIRED };
 
 type ConnectorApi = Pick<DaemonApiClient, 'execute'>;
@@ -73,6 +74,7 @@ export type ConnectorAssignmentLoopOptions = {
   readonly installRegistry?: (
     input: Parameters<typeof installRegistryMcp>[0],
   ) => Promise<RegistryInstallResult>;
+  readonly providerWebhook?: typeof runProviderWebhookAssignment;
   /** Override the vault reader. */
   readonly readVault?: (mcp: SquireMcpClient) => Promise<VaultConnectionMeta[]>;
   /** Override the grant revoker. */
@@ -98,6 +100,7 @@ export class ConnectorAssignmentLoop {
   private tailscaleWatch?: () => void;
   private readonly registryHomeDir: string;
   private readonly installRegistry: typeof installRegistryMcp;
+  private readonly providerWebhook: typeof runProviderWebhookAssignment;
   /** When each registry sign-in attempt's SERVER clock ends, so one can time
    * out. Keyed by connector AND pairing generation: a re-pair re-arms the row
    * to a new generation, and a ceremony latched to the old one must never
@@ -128,6 +131,7 @@ export class ConnectorAssignmentLoop {
     this.watchTailscaleSignIn = options.watchTailscaleSignIn ?? watchTailscaleSignIn;
     this.registryHomeDir = options.registryHome ?? process.env.HOME ?? process.cwd();
     this.installRegistry = options.installRegistry ?? installRegistryMcp;
+    this.providerWebhook = options.providerWebhook ?? runProviderWebhookAssignment;
     this.readVaultFn = options.readVault ?? readVault;
     this.revokeGrantsFn = options.revokeGrants ?? revokeGrants;
   }
@@ -201,7 +205,24 @@ export class ConnectorAssignmentLoop {
       assignment.kind === 'install' || assignment.kind === 'uninstall'
         ? assignment.pairingGeneration
         : undefined;
-    if (assignment.kind === 'install') {
+    if (assignment.kind === 'provider-webhook') {
+      try {
+        const registered = await this.providerWebhook(assignment, this.registryHomeDir);
+        await this.api.execute('completeProviderWebhookAssignment', {
+          agentId: this.agentId, id: assignment.id, operation: assignment.operation,
+          ...registered,
+        });
+        // A subscriber can stop during registration. The server then queues
+        // removal once it has the provider id; drain after this job leaves inFlight.
+        if (assignment.operation === 'register') setImmediate(() => this.wake());
+      } catch (error) {
+        this.log(`provider webhook ${assignment.service} ${assignment.operation} failed: ${describe(error)}`);
+        await this.api.execute('completeProviderWebhookAssignment', {
+          agentId: this.agentId, id: assignment.id, operation: assignment.operation,
+          error: describe(error),
+        });
+      }
+    } else if (assignment.kind === 'install') {
       if (assignment.connectorType?.startsWith('google-')) {
         await this.api.execute('postConnectorStatus', { agentId: this.agentId,
           connectorId: assignment.connectorId,

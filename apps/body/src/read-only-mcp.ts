@@ -4801,7 +4801,9 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
         ...(typeof args.channelName === 'string' ? { channelName: args.channelName } : {}),
         ...(typeof args.workflowName === 'string' ? { workflowName: args.workflowName } : {}),
       });
-      return `Subscription ${String(result.id)} created for ${source} ${event}. It runs your action when the event arrives.`;
+      return result.registrationStatus === 'registering'
+        ? `Subscription ${String(result.id)} created for ${source} ${event}. The connected helper is registering its webhook; it runs your action once registration completes.`
+        : `Subscription ${String(result.id)} created for ${source} ${event}. It runs your action when the event arrives.`;
     }
     case 'list_subscriptions':
       return JSON.stringify(await daemonExecute('listAgentSubscriptions', { roomId: agentScheduleRoomId() }));

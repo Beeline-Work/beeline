@@ -85,6 +85,36 @@ const connectedInstall =
   };
 
 describe('ConnectorAssignmentLoop', () => {
+  it('drains a provider webhook assignment through the helper and reports its signing secret', async () => {
+    const assignment: ConnectorAssignment = {
+      kind: 'provider-webhook', id: 'hook-1', connectorId: 'connector-1',
+      service: 'linear', event: 'issue.created', operation: 'register',
+      receiverUrl: 'https://beeline.test/v1/connectors/events/linear/hook-1',
+      signingSecret: 'linear-secret',
+    };
+    const calls: ExecuteCall[] = [];
+    let pending = true;
+    const api = { calls, async execute(op: string, input: Record<string, unknown>) {
+      calls.push({ op, input });
+      if (op === 'getConnectorAssignments') return { assignments: pending ? [assignment] : [] };
+      if (op === 'completeProviderWebhookAssignment') pending = false;
+      return {};
+    } };
+    const register = vi.fn(async () => ({ providerId: 'hook-1', signingSecret: 'linear-secret' }));
+    const loop = new ConnectorAssignmentLoop({
+      api: api as never, agentId: 'agent-1', providerWebhook: register,
+      registryHome: '/helper-home',
+    });
+    try {
+      await loop.runOnce();
+      await settle();
+      expect(register).toHaveBeenCalledWith(assignment, '/helper-home');
+      expect(api.calls.find((call) => call.op === 'completeProviderWebhookAssignment')?.input)
+        .toMatchObject({ agentId: 'agent-1', id: 'hook-1', operation: 'register',
+          providerId: 'hook-1', signingSecret: 'linear-secret' });
+    } finally { loop.stop(); }
+  });
+
   it('ends a Registry sign-in nobody completed instead of re-arming forever', async () => {
     const assignment: ConnectorAssignment = {
       kind: 'install',

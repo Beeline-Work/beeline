@@ -9,6 +9,7 @@ import { isTransientDatabaseConnectionError, type SqlDatabase } from './database
 import { isAppSignInLink } from './composio-apps.js';
 import type { ComposioApps } from './composio-apps.js';
 import { ingestComposioDelivery } from './composio-delivery.js';
+import { ingestProviderWebhook } from './provider-webhooks.js';
 import { acceptedJsonEncoding, encodeJsonBody, type JsonEncoding } from './json-response.js';
 import { PhoneViewing } from './phone-viewing.js';
 import {
@@ -1843,6 +1844,19 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const location = await options.github.completeInstallation(state, installationId);
     response.writeHead(302, { location, 'cache-control': 'no-store' });
     response.end();
+    return;
+  }
+
+  const providerWebhookPath = /^\/v1\/connectors\/events\/(linear|stripe)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(url.pathname);
+  if (method === 'POST' && providerWebhookPath) {
+    const raw = await bytes(request, MAX_JSON_BYTES);
+    const accepted = await ingestProviderWebhook(options.database,
+      providerWebhookPath[1] as 'linear' | 'stripe', providerWebhookPath[2]!, raw, request.headers);
+    if (!accepted) {
+      json(response, 401, { error: 'invalid_webhook_signature' });
+      return;
+    }
+    json(response, 200, { accepted: true });
     return;
   }
 

@@ -69,6 +69,10 @@ export function subscriptionTitle(subscription: RoomSubscriptionView): string {
 }
 
 export function subscriptionWhen(subscription: RoomSubscriptionView): string {
+  if (subscription.registrationStatus === 'error')
+    return `Setup failed · ${subscription.when ?? subscription.event}`;
+  if (subscription.registrationStatus === 'registering')
+    return `Setting up · ${subscription.when ?? subscription.event}`;
   if (subscription.when) return subscription.when;
   if (subscription.source === 'service' && subscription.service === 'Slack')
     return `On new message in ${subscription.channel ?? 'a Slack channel'}`;

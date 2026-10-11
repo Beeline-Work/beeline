@@ -10,10 +10,12 @@ export type RoomSubscriptionView = {
   readonly source: SubscriptionSource;
   readonly event: string;
   readonly repository?: string;
-  readonly service?: 'Slack';
+  readonly service?: 'Slack' | 'Linear' | 'Stripe';
   readonly channel?: string;
   /** Human-readable event grammar shared by the agent list and phone. */
   readonly when?: string;
+  /** Provider hooks are installed by the agent's connected helper after creation. */
+  readonly registrationStatus?: 'registering' | 'active' | 'retiring' | 'error';
   /** The action delivered on each event. Older Room subscriptions have no saved prompt. */
   readonly prompt?: string;
   readonly workflowSlug?: string;
@@ -34,6 +36,8 @@ export const REPOSITORY_SUBSCRIPTION_EVENTS = [
 /** Only events with a configured delivery path may appear in the agent catalog. */
 export const SERVICE_SUBSCRIPTION_EVENTS = [
   { service: 'Slack', event: 'new_message', label: 'new message in a Slack channel' },
+  { service: 'Linear', event: 'issue.created', label: 'new issue in Linear' },
+  { service: 'Stripe', event: 'payment_intent.succeeded', label: 'payment succeeded in Stripe' },
 ] as const;
 export type ServiceSubscriptionEvent = typeof SERVICE_SUBSCRIPTION_EVENTS[number];
 export type SubscriptionEventCatalog = { readonly events: readonly ServiceSubscriptionEvent[] };

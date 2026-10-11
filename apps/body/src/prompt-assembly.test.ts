@@ -153,8 +153,27 @@ describe('reply context in turn prompts', () => {
   });
 });
 
+describe('local machine identity', () => {
+  it.each(PROMPT_SURFACES)('tells an agent on %s to use its current host locally', (surface) => {
+    const session = assembleSessionPrompt({
+      surface, agentName: 'Bee', agentCommand: 'codex-acp',
+      machineHost: { hostname: 'chad', tailscaleName: 'chad.tailnet.ts.net' },
+    });
+    const line = 'Already running on machine "chad" (MagicDNS: "chad.tailnet.ts.net"). Run commands locally; do not SSH to this machine.';
+    expect(session.systemPrompt).toContain(line);
+    expect(assembleTurnPrompt({ surface, sessionPrefix: session.turnPrefix, task: { body: 'Inspect the host' } }).text).toContain(line);
+  });
+
+  it('still names the local host when Tailscale is unavailable', () => {
+    const session = assembleSessionPrompt({ surface: 'code-corner', agentName: 'Bee',
+      machineHost: { hostname: 'chad' } });
+    expect(session.systemPrompt).toContain('Already running on machine "chad". Run commands locally; do not SSH to this machine.');
+    expect(session.systemPrompt).not.toContain('MagicDNS:');
+  });
+});
+
 /** Every session variant a turn loop can build, named for its snapshot file. */
-const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
+const SESSION_VARIANTS_BASE: Record<string, SessionPromptContext> = {
   room: {
     surface: 'room',
     agentName: 'Bee',
@@ -236,6 +255,13 @@ const SESSION_VARIANTS: Record<string, SessionPromptContext> = {
     requesterHandle: 'lunchboxfortwo',
   },
 };
+
+const SESSION_VARIANTS: Record<string, SessionPromptContext> = Object.fromEntries(
+  Object.entries(SESSION_VARIANTS_BASE).map(([name, context]) => [name, {
+    ...context,
+    machineHost: { hostname: 'chad', tailscaleName: 'chad.tailnet.ts.net' },
+  }]),
+);
 
 const members = [
   'Members (exact tag spellings):',

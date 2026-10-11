@@ -7,6 +7,7 @@ import { resourceCallFacts } from './resource-mcp-facade.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
+import { machineHost } from './machine-host.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import {
@@ -1143,6 +1144,7 @@ export class MonolithRoomTurnLoop {
     const session = assembleSessionPrompt({
       surface: directMessage ? 'dm' : 'room',
       agentName: self?.name ?? this.agent.name,
+      machineHost: await machineHost(),
       ...(persona?.instructions
         ? { soul: { name: persona.name, instructions: persona.instructions } }
         : {}),

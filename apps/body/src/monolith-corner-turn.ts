@@ -11,6 +11,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { machineHost } from './machine-host.js';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
@@ -1172,6 +1173,7 @@ export class MonolithCornerTurnLoop {
     const persona = configuration.soul ?? self?.soul;
     const session = assembleSessionPrompt({
       ...this.sessionPromptContext!,
+      machineHost: await machineHost(),
       githubCli: this.cornerGitHubCli,
       ...(persona?.instructions
         ? { soul: { name: persona.name, instructions: persona.instructions } }

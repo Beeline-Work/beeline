@@ -10,12 +10,10 @@ const identity = vi.hoisted(() => ({
   unsubscribe: vi.fn(),
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzViewerPubkey: identity.load }));
-vi.mock('@/auth/monolith-session', () => ({
-  monolithSession: {
-    subscribeIdentityChange: (listener: () => void) => {
-      identity.changed = listener;
-      return identity.unsubscribe;
-    },
+vi.mock('@/sync/client-reset', () => ({
+  subscribeClientReset: (listener: () => void) => {
+    identity.changed = listener;
+    return identity.unsubscribe;
   },
 }));
 import { useDraftIdentity } from './draft-identity';

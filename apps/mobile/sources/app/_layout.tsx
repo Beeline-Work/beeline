@@ -55,7 +55,7 @@ import {
   clearWebPushSubscription,
   installWebPushForegroundResponder,
 } from '@/push/web-push-registration';
-import { monolithSession } from '@/auth/monolith-session';
+import { subscribeClientReset } from '@/sync/client-reset';
 import { startPushRegistrationLifecycle } from '@/push/push-registration-lifecycle';
 import { reportRunningUpdateReceipt } from '@/push/update-receipt';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
@@ -322,7 +322,7 @@ export default function RootLayout() {
     const cancelStart = afterFirstFrame(() => {
       stop = startPushRegistrationLifecycle({
         loadIdentity: loadBuzzIdentity,
-        subscribeIdentityChange: (listener) => monolithSession.subscribeIdentityChange(listener),
+        subscribeIdentityChange: subscribeClientReset,
         subscribeForeground: (listener) => {
           const subscription = AppState.addEventListener('change', (state) => {
             if (state === 'active') listener();

@@ -13,21 +13,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import type { MessageBookmarkListResult, MessageBookmarkView, NeedsYouItemView, NeedsYouListResult } from '@beeline/api-contract/phone';
+import type { MessageBookmarkListResult, MessageBookmarkView, NeedsYouItemView } from '@beeline/api-contract/phone';
 import { isWorkspaceListView, isWorkspaceView, type RoomView } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { clientResetGeneration } from '@/sync/client-reset';
+import { subscribeClientReset } from '@/sync/client-reset';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
+  forgetNeedsYouList,
   holdNeedsYou,
   loadNeedsYouList,
-  needsYouVersion,
+  NEEDS_YOU_GAP_REASONS,
   removeNeedsYou,
-  restoreNeedsYou,
   seedNeedsYouList,
-  setNeedsYouList,
   useNeedsYouList,
 } from '@/buzz/needs-you-store';
 import { compactRelativeTime } from '@/buzz/relative-time';
@@ -62,13 +61,6 @@ function first(value: string | string[] | undefined): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
-}
-
-function isNeedsYouList(value: unknown): value is NeedsYouListResult {
-  return isRecord(value) && Array.isArray(value.items) && value.items.every((item: unknown) =>
-    isRecord(item) && typeof item.messageId === 'string' && typeof item.workspaceId === 'string' &&
-    typeof item.roomId === 'string' && typeof item.roomName === 'string' && typeof item.text === 'string' &&
-    typeof item.createdAt === 'number');
 }
 
 function isBookmarkList(value: unknown): value is MessageBookmarkListResult {
@@ -157,7 +149,6 @@ export default function TrayScreen() {
   const noWorkspace = (!routeWorkspaceId && activeWorkspaceId === null) || workspaceLost;
   // The badge reads the same store, so its count is this list's length.
   const needsList = useNeedsYouList(workspaceId);
-  const needs = needsList.all ?? EMPTY_NEEDS;
   const [bookmarks, setBookmarks] = useState<readonly MessageBookmarkView[]>([]);
   const [savedNext, setSavedNext] = useState<string | undefined>();
   const loadingSaved = useRef(false);
@@ -182,7 +173,7 @@ export default function TrayScreen() {
   const [paneCornerId, setPaneCornerId] = useState<string | null>(null);
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const loadedSections = useRef({ workspaceId: '', needs: false, bookmarks: false });
+  const loadedSections = useRef({ workspaceId: '', bookmarks: false });
   const bookmarksVersionRef = useRef(0);
 
   const load = useCallback(async () => {
@@ -192,7 +183,7 @@ export default function TrayScreen() {
     bookmarksDuringLoadRef.current = [];
     savedScroll.current = false;
     if (loadedSections.current.workspaceId !== workspaceId)
-      loadedSections.current = { workspaceId, needs: false, bookmarks: false };
+      loadedSections.current = { workspaceId, bookmarks: false };
     setError(null);
     setNow(Date.now());
     // Each section reads on its own: a failed Saved read must not hide what
@@ -212,8 +203,8 @@ export default function TrayScreen() {
     ) {
       lostWorkspaceRef.current = workspaceId;
       setLostWorkspaceId(workspaceId);
-      loadedSections.current = { workspaceId, needs: true, bookmarks: true };
-      setNeedsYouList(workspaceId, []);
+      loadedSections.current = { workspaceId, bookmarks: true };
+      forgetNeedsYouList(workspaceId);
       setBookmarks([]);
       setSavedNext(undefined);
       setSelected(null);
@@ -221,7 +212,6 @@ export default function TrayScreen() {
       loadedWorkspaceRef.current = null;
       void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
         if (!identity) return;
-        void mobileSurfaceCache.remove(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/needs-you', { workspaceId }));
         void mobileSurfaceCache.remove(surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/bookmarks', { workspaceId }));
       });
       return;
@@ -230,7 +220,6 @@ export default function TrayScreen() {
     setLostWorkspaceId(null);
     const mergedBookmarks = savedResult.status === 'fulfilled'
       ? bookmarksDuringLoadRef.current.reduce(applyBookmarkChange, [...savedResult.value.bookmarks]) : null;
-    if (needsResult.status === 'fulfilled') loadedSections.current.needs = true;
     if (mergedBookmarks) {
       loadedSections.current.bookmarks = true;
       setBookmarks(mergedBookmarks);
@@ -244,18 +233,16 @@ export default function TrayScreen() {
     setLoading(false);
   }, [workspaceId]);
 
-  // Persist the reconciled projection, including later live changes, for a
-  // zero-request paint when this route mounts again.
-  useEffect(() => {
-    if (!workspaceId || loadedSections.current.workspaceId !== workspaceId ||
-        !loadedSections.current.needs || lostWorkspaceRef.current === workspaceId) return;
-    void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, relayUrl]) => {
-      if (identity && loadedSections.current.workspaceId === workspaceId &&
-          lostWorkspaceRef.current !== workspaceId) void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey,
-        '/workspace/:id/needs-you', { workspaceId }), { items: needs }, isNeedsYouList);
-    });
-  }, [workspaceId, needs]);
+  // The previous account's sections and lost Workspace do not carry over.
+  useEffect(() => subscribeClientReset(() => {
+    loadedSections.current = { workspaceId: '', bookmarks: false };
+    lostWorkspaceRef.current = null;
+    setLostWorkspaceId(null);
+  }), []);
 
+  // Persist the reconciled Saved list, including later live changes, for a
+  // zero-request paint when this route mounts again. The store keeps the
+  // Needs-you disk copy itself.
   useEffect(() => {
     if (!workspaceId || loadedSections.current.workspaceId !== workspaceId ||
         !loadedSections.current.bookmarks || lostWorkspaceRef.current === workspaceId) return;
@@ -280,9 +267,7 @@ export default function TrayScreen() {
           if (loadingSaved.current) bookmarksDuringPageRef.current.push(live);
           setBookmarks((current) => applyBookmarkChange(current, live));
         } else if (live.type === 'invalidate' &&
-            (live.reason === 'bookmark-gap' || live.reason === 'needs-you-gap' ||
-              live.reason === 'reconnect' ||
-              live.reason === 'postgres:memberships')) {
+            (live.reason === 'bookmark-gap' || NEEDS_YOU_GAP_REASONS.has(live.reason))) {
           void load();
         }
       });
@@ -321,22 +306,18 @@ export default function TrayScreen() {
   useEffect(() => {
     if (!workspaceId) return;
     if (loadedSections.current.workspaceId !== workspaceId)
-      loadedSections.current = { workspaceId, needs: false, bookmarks: false };
-    const needsVersion = needsYouVersion(workspaceId);
+      loadedSections.current = { workspaceId, bookmarks: false };
     const bookmarksVersion = bookmarksVersionRef.current;
     let cancelled = false;
     void (async () => {
       const [identity, relayUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
       if (!identity || cancelled) return;
       const [savedNeeds, savedBookmarks] = await Promise.all([
-        mobileSurfaceCache.read(surfaceAddress(relayUrl, identity.publicKey,
-          '/workspace/:id/needs-you', { workspaceId }), isNeedsYouList),
+        seedNeedsYouList(workspaceId),
         mobileSurfaceCache.read(surfaceAddress(relayUrl, identity.publicKey,
           '/workspace/:id/bookmarks', { workspaceId }), isBookmarkList),
       ]);
       if (cancelled) return;
-      if (savedNeeds && !loadedSections.current.needs && needsVersion === needsYouVersion(workspaceId))
-        seedNeedsYouList(workspaceId, savedNeeds.items);
       if (savedBookmarks && !loadedSections.current.bookmarks && bookmarksVersion === bookmarksVersionRef.current) {
         setBookmarks(savedBookmarks.bookmarks);
         setSavedNext(savedBookmarks.next);
@@ -478,20 +459,16 @@ export default function TrayScreen() {
 
   /** Tapped or dismissed: the cell leaves this tray, and every other device's. */
   const clear = useCallback(async (item: NeedsYouItemView) => {
-    const at = clientResetGeneration();
-    const settle = removeNeedsYou(item.workspaceId, [item.messageId]);
+    const removal = removeNeedsYou(item.workspaceId, [item.messageId]);
     try {
       await monolithPhoneOperation('clearNeedsYou', {
         workspaceId: item.workspaceId,
         messageId: item.messageId,
       });
-      settle();
+      removal.settle();
     } catch (cause) {
-      settle();
       // A failure that lands after an account switch belongs to the previous account.
-      if (at !== clientResetGeneration()) return;
-      restoreNeedsYou(item.workspaceId, [item]);
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (removal.restore()) setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, []);
 
@@ -517,16 +494,12 @@ export default function TrayScreen() {
   const commitClear = useCallback(async (clear: PendingClear) => {
     const ids = new Set(clear.items.map((item) => item.messageId));
     if (clear.kind === 'needs') {
-      const at = clientResetGeneration();
-      const settle = removeNeedsYou(clear.workspaceId, ids);
+      const removal = removeNeedsYou(clear.workspaceId, ids);
       try {
         await monolithPhoneOperation('clearNeedsYouSection', { workspaceId: clear.workspaceId });
-        settle();
+        removal.settle();
       } catch (cause) {
-        settle();
-        if (at !== clientResetGeneration()) return;
-        restoreNeedsYou(clear.workspaceId, clear.items);
-        setError(cause instanceof Error ? cause.message : String(cause));
+        if (removal.restore()) setError(cause instanceof Error ? cause.message : String(cause));
       }
       return;
     }

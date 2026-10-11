@@ -1,5 +1,7 @@
 import { MMKV } from 'react-native-mmkv';
 import type { UnmigratableRoom } from '@beeline/buzz-client';
+import { webStringStorage } from '@/sync/browser-string-storage';
+import { webRuntimeStorage } from '@/utils/web-storage';
 
 /**
  * Durable verdicts for rooms a successor key can provably never self-join:
@@ -18,23 +20,14 @@ const MAX_TRACKED_ROOMS = 200;
 
 type KeyValueStore = { getString(key: string): string | undefined; set(key: string, value: string): void };
 
-// Lazily instantiated: node-side unit tests (and any environment without the
-// native module) fall back to process memory instead of failing at import.
-const memoryFallback = new Map<string, string>();
+// Lazily instantiated. The web build keeps verdicts in the origin's storage,
+// or in memory where the browser denies it; native uses MMKV.
 let storage: KeyValueStore | null = null;
 
 function store(): KeyValueStore {
   if (!storage) {
-    try {
-      storage = new MMKV({ id: 'buzz-succession' });
-    } catch {
-      storage = {
-        getString: (key) => memoryFallback.get(key),
-        set: (key, value) => {
-          memoryFallback.set(key, value);
-        },
-      };
-    }
+    const web = webRuntimeStorage();
+    storage = web ? webStringStorage(web.storage, 'beeline.succession.') : new MMKV({ id: 'buzz-succession' });
   }
   return storage;
 }

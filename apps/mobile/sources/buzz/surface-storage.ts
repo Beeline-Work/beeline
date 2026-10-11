@@ -43,25 +43,35 @@ const durableSurfaceCache = new SurfaceResponseCache(
     remove: async (key) => {
       responses.delete(storageKey(key));
     },
-    keys: async () =>
-      responses.getAllKeys().flatMap((key) => {
-        const decoded = decodedStorageKey(key);
-        return decoded === null ? [] : [decoded];
-      }),
   },
   stripRetiredAgentNotices,
 );
 export const mobileSurfaceCache = new SurfaceRegistry(
   durableSurfaceCache, stripRetiredAgentNotices, selectIdentities);
 
-// Another tab's sign-out removes the shared responses; drop this tab's hot
-// copies so it neither shows nor writes them back.
+function storedValue(encoded: string | null): unknown {
+  if (encoded === null) return undefined;
+  try {
+    return JSON.parse(encoded) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+// Another tab's write or removal of one response reaches this tab's copy of
+// that response only. Clearing the whole storage drops every hot copy, so
+// this tab neither shows nor writes back what the other tab removed.
 if (web?.storage && typeof window.addEventListener === 'function') {
   const shared = web.storage;
   window.addEventListener('storage', (event) => {
     if (event.storageArea !== shared) return;
-    if (event.key === null || (event.newValue === null && event.key.startsWith(RESPONSE_NAMESPACE)))
+    if (event.key === null) {
       mobileSurfaceCache.clear();
+      return;
+    }
+    if (!event.key.startsWith(RESPONSE_NAMESPACE)) return;
+    const key = decodedStorageKey(event.key.slice(RESPONSE_NAMESPACE.length));
+    if (key !== null) mobileSurfaceCache.adoptStored(key, storedValue(event.newValue));
   });
 }
 
@@ -86,11 +96,6 @@ function outboxKey(relayOrigin: string, viewerPubkey: string, roomId: string): s
   return `${OUTBOX_PREFIX}${relayScope(relayOrigin)}.${viewerPubkey}.${encodeURIComponent(roomId)}`;
 }
 
-/** The key before outboxes were scoped to a relay. */
-function unscopedOutboxKey(viewerPubkey: string, roomId: string): string {
-  return `${OUTBOX_PREFIX}${viewerPubkey}.${encodeURIComponent(roomId)}`;
-}
-
 /** One mutation-lifetime owner per mounted composer. It stores exact prepared frames only. */
 export function createRoomOutbox(
   relayOrigin: string,
@@ -98,22 +103,10 @@ export function createRoomOutbox(
   roomId: string,
 ) {
   const key = outboxKey(relayOrigin, identity.publicKey, roomId);
-  const unscopedKey = unscopedOutboxKey(identity.publicKey, roomId);
   return new SignedEventOutbox(
     {
       load: async () => {
-        let encoded = mutations.getString(key);
-        if (!encoded) {
-          // Unsent messages from before the relay scope move to the relay that
-          // first opens their Room, as they did before.
-          encoded = mutations.getString(unscopedKey);
-          if (encoded) {
-            mutations.set(key, encoded);
-            // A full or denied storage drops the write; the legacy copy then
-            // stays the only durable one.
-            if (mutations.getString(key) === encoded) mutations.delete(unscopedKey);
-          }
-        }
+        const encoded = mutations.getString(key);
         if (!encoded) return [];
         try {
           return JSON.parse(encoded) as SignedOutboxRecord[];
@@ -126,8 +119,6 @@ export function createRoomOutbox(
         const encoded = records.length === 0 ? undefined : JSON.stringify(records);
         if (encoded === undefined) mutations.delete(key);
         else mutations.set(key, encoded);
-        // The records include any legacy ones, so a stored save replaces them.
-        if (mutations.getString(key) === encoded) mutations.delete(unscopedKey);
       },
     },
     {

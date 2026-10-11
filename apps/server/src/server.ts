@@ -681,7 +681,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   server.on('upgrade', (request, socket, head) => {
     void (async () => {
       const url = exactPath(request.url);
-      const computer = /^\/s\/([A-Za-z0-9_-]{43})\/ws$/.exec(url.pathname);
+      const computer = /^\/s\/([A-Za-z0-9_-]{43})\/(?:ws|stream)$/.exec(url.pathname);
       if (computer) {
         await upgradeComputerSession(request, socket, head, options.database, options.live, computer[1]!);
         return;

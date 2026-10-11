@@ -3888,7 +3888,7 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
   };
 }
 
-async function squireShareEndpoint(sessionId: string): Promise<string> {
+async function squireShareEndpoint(sessionId: string): Promise<{ url: string; expiresAt: number }> {
   const relayUrl = requiredEnv('BEELINE_SQUIRE_RELAY_URL');
   const relayToken = requiredEnv('BEELINE_SQUIRE_RELAY_TOKEN');
   const response = await fetch(new URL('/mcp', relayUrl), {
@@ -3903,9 +3903,13 @@ async function squireShareEndpoint(sessionId: string): Promise<string> {
   const text = body.result?.content?.find((entry) => entry.type === 'text')?.text;
   if (body.result?.isError || !text) throw new Error('Squire could not share this browser session');
   const result = JSON.parse(text) as Record<string, unknown>;
-  const endpoint = result.websocket_url ?? result.websocketUrl ?? result.live_view_ws_url ?? result.endpoint;
-  if (typeof endpoint !== 'string') throw new Error('Squire share returned no live endpoint');
-  return endpoint;
+  const endpoint = result.url;
+  if (typeof endpoint !== 'string' || !/^https?:\/\/[^/]+\/s\/[A-Za-z0-9_-]{43}\/$/.test(endpoint))
+    throw new Error('Squire share returned no valid live page URL');
+  const expiresAt = typeof result.expires_at === 'string' ? Date.parse(result.expires_at) : NaN;
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now())
+    throw new Error('Squire share returned no valid expiry');
+  return { url: endpoint, expiresAt };
 }
 
 async function shareBrowser(args: JsonObject): Promise<string> {
@@ -3914,7 +3918,7 @@ async function shareBrowser(args: JsonObject): Promise<string> {
   if (args.source === 'squire') {
     if (typeof args.sessionId !== 'string' || !args.sessionId.trim())
       throw new Error('An existing Squire operate session id is required');
-    const upstreamUrl = await squireShareEndpoint(args.sessionId);
+    const { url: upstreamUrl, expiresAt } = await squireShareEndpoint(args.sessionId);
     const result = await daemonExecute('postComputerSession', {
       roomId: context.roomId, sessionId: args.sessionId, upstreamUrl, title,
     });
@@ -3922,7 +3926,10 @@ async function shareBrowser(args: JsonObject): Promise<string> {
       serverBaseUrl: requiredEnv('BEELINE_DAEMON_BASE_URL'),
       shareId: String(result.id),
       daemonToken: requiredEnv('BEELINE_DAEMON_TOKEN'),
+      expiresAt,
     });
+    if (handback.note === 'Squire live share expired')
+      await daemonExecute('endComputerSession', { roomId: context.roomId, sessionId: args.sessionId });
     return JSON.stringify({ cardId: result.id, url: result.url,
       status: handback.type === 'handoff' ? 'human handed back' : 'session ended',
       ...(handback.note ? { note: handback.note } : {}),

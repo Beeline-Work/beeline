@@ -12,7 +12,7 @@ import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import {
-  createComputerSession, getComputerSession, serveComputerLastFrame, serveComputerSession, serveComputerStatus,
+  createComputerSession, endComputerSession, getComputerSession, serveComputerLastFrame, serveComputerSession, serveComputerStatus,
   upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter,
 } from './computer-session.js';
 
@@ -51,7 +51,7 @@ describe('computer session handoff', () => {
     if (last) { void serveComputerLastFrame(response, database, last); return; }
     const status = /^\/s\/([A-Za-z0-9_-]{43})\/status$/.exec(request.url ?? '')?.[1];
     if (status) { void serveComputerStatus(response, database, status); return; }
-    const id = /^\/s\/([A-Za-z0-9_-]{43})$/.exec(request.url ?? '')?.[1];
+    const id = /^\/s\/([A-Za-z0-9_-]{43})\/?$/.exec(request.url ?? '')?.[1];
     if (!id) { response.writeHead(404).end(); return; }
     void serveComputerSession(request, response, database, live, id);
   });
@@ -68,7 +68,7 @@ describe('computer session handoff', () => {
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [WORKSPACE, ROOM, HUMAN]);
     server.on('upgrade', (request, socket, head) => {
       const url = new URL(request.url ?? '/', 'http://beeline.local');
-      const match = /^\/s\/([A-Za-z0-9_-]{43})\/(source|ws|wait)$/.exec(url.pathname);
+      const match = /^\/s\/([A-Za-z0-9_-]{43})\/(source|ws|stream|wait)$/.exec(url.pathname);
       if (!match) { socket.destroy(); return; }
       void (match[2] === 'wait'
         ? upgradeComputerWaiter(request, socket, head, database, match[1]!, AGENT, Number(url.searchParams.get('since') ?? 0))
@@ -149,37 +149,51 @@ describe('computer session handoff', () => {
     expect(ended.status).toBe(410);
   }, 60_000);
 
-  it('proxies a Squire CDP share without exposing its host and ends on upstream expiry', async () => {
-    const upstreamSockets = new WebSocketServer({ port: 0, host: '127.0.0.1' });
-    await new Promise<void>((resolve) => upstreamSockets.once('listening', resolve));
-    const upstreamAddress = upstreamSockets.address() as AddressInfo;
-    const upstreamUrl = `ws://127.0.0.1:${upstreamAddress.port}/private-operate`;
+  it('proxies Squire page and stream without exposing its bearer URL, then hands back and expires', async () => {
+    const token = 's'.repeat(43);
+    let expired = false;
+    const squire = createServer((request, response) => {
+      if (request.url !== `/s/${token}/`) { response.writeHead(404).end(); return; }
+      if (expired) { response.writeHead(410).end(); return; }
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end('<!doctype html><div id="bar"></div><script>const socket = new WebSocket(new URL("stream", location.href));</script></body>');
+    });
+    const upstreamSockets = new WebSocketServer({ noServer: true });
+    squire.on('upgrade', (request, socket, head) => {
+      if (request.url !== `/s/${token}/stream`) { socket.destroy(); return; }
+      upstreamSockets.handleUpgrade(request, socket, head, (client) => upstreamSockets.emit('connection', client, request));
+    });
+    await new Promise<void>((resolve) => squire.listen(0, '127.0.0.1', resolve));
+    const upstreamUrl = `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/${token}/`;
     let upstream: WebSocket | undefined;
     upstreamSockets.on('connection', (socket) => { upstream = socket; });
     try {
       const share = await createComputerSession(database, live, {
         roomId: ROOM, agentId: AGENT, sessionId: 'squire-operate-1', upstreamUrl, title: 'Squire tab',
       });
-      const html = await (await fetch(`${origin}/s/${share.id}`)).text();
+      const html = await (await fetch(`${origin}/s/${share.id}/`)).text();
       expect(html).not.toContain(upstreamUrl);
-      expect(html).toContain(`/s/${share.id}/ws`);
-      const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws`);
+      expect(html).not.toContain(token);
+      expect(html).toContain('new URL("stream", location.href)');
+      const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream`);
       await opened(viewer);
       await until(async () => upstream);
-      const frame = JSON.stringify({ method: 'Page.screencastFrame', params: { data: 'abc', sessionId: 2 } });
+      const frame = JSON.stringify({ type: 'frame', data: Buffer.from('frame').toString('base64') });
       const received = next(viewer);
       upstream!.send(frame);
       expect(await received).toBe(frame);
       const waiter = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/wait?since=0`);
       await opened(waiter);
-      const takeover = next(upstream!);
-      viewer.send(JSON.stringify({ type: 'takeover' }));
-      expect(JSON.parse(await takeover)).toEqual({ type: 'takeover' });
       const input = next(upstream!);
-      viewer.send(JSON.stringify({ method: 'Input.insertText', params: { text: 'human' } }));
-      expect(JSON.parse(await input).method).toBe('Input.insertText');
-      const endedNotice = next(waiter);
-      upstream!.close(4004, 'session ended');
+      viewer.send(JSON.stringify({ type: 'text', text: 'human' }));
+      expect(JSON.parse(await input)).toEqual({ type: 'text', text: 'human' });
+      upstream!.send(JSON.stringify({ type: 'control', state: 'human' }));
+      const handback = next(waiter);
+      upstream!.send(JSON.stringify({ type: 'control', state: 'agent' }));
+      expect(JSON.parse(await handback)).toMatchObject({ type: 'handoff' });
+      const endedNotice = next(viewer);
+      expired = true;
+      upstream!.close(1000, 'session ended');
       expect(JSON.parse(await endedNotice)).toEqual({ type: 'ended' });
       await until(async () => (await getComputerSession(database, share.id))?.status === 'ended' ? true : undefined);
       expect((await fetch(`${origin}/s/${share.id}`)).status).toBe(410);
@@ -187,8 +201,20 @@ describe('computer session handoff', () => {
     } finally {
       for (const client of upstreamSockets.clients) client.close();
       await new Promise<void>((resolve) => upstreamSockets.close(() => resolve()));
+      await new Promise<void>((resolve) => squire.close(() => resolve()));
     }
   }, 60_000);
+
+  it('ends an unanswered Squire handoff wait at the upstream share expiry', async () => {
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'squire-expiry', upstreamUrl: 'body:',
+    });
+    const answer = await waitForComputerHandback({
+      serverBaseUrl: origin, shareId: share.id, daemonToken: 'test-token', expiresAt: Date.now() + 100,
+    });
+    expect(answer).toEqual({ type: 'ended', note: 'Squire live share expired' });
+    await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+  });
 
   const chromeBinary = process.env.CHROME_BIN || '/usr/bin/google-chrome';
   it.skipIf(!existsSync(chromeBinary))('hands an actual agent-owned Chromium tab to a viewer and waits for handback', async () => {

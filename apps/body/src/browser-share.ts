@@ -85,6 +85,7 @@ export async function waitForComputerHandback(input: {
   serverBaseUrl: string;
   shareId: string;
   daemonToken: string;
+  expiresAt?: number;
 }): Promise<{ type: 'handoff' | 'ended'; note?: string }> {
   const url = new URL(`/s/${input.shareId}/wait?since=0`, input.serverBaseUrl);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -92,17 +93,23 @@ export async function waitForComputerHandback(input: {
     const result = await new Promise<{ type: 'handoff' | 'ended'; note?: string } | undefined>((resolve, reject) => {
       const socket = new WebSocket(url, { headers: { authorization: `Bearer ${input.daemonToken}` } });
       let settled = false;
+      const timer = input.expiresAt === undefined ? undefined : setTimeout(() => {
+        settled = true;
+        resolve({ type: 'ended', note: 'Squire live share expired' });
+        socket.close();
+      }, Math.max(0, input.expiresAt - Date.now()));
       socket.once('message', (data) => {
         try {
           const value = JSON.parse(data.toString()) as { type?: string; note?: string };
           if (value.type !== 'handoff' && value.type !== 'ended') throw new Error('invalid handback event');
           settled = true;
+          if (timer) clearTimeout(timer);
           resolve({ type: value.type, ...(value.note ? { note: value.note } : {}) });
           socket.close();
-        } catch (error) { reject(error); socket.close(); }
+        } catch (error) { if (timer) clearTimeout(timer); reject(error); socket.close(); }
       });
-      socket.once('close', () => { if (!settled) resolve(undefined); });
-      socket.once('error', () => { if (!settled) resolve(undefined); });
+      socket.once('close', () => { if (timer) clearTimeout(timer); if (!settled) resolve(undefined); });
+      socket.once('error', () => { if (timer) clearTimeout(timer); if (!settled) resolve(undefined); });
     });
     if (result) return result;
   }

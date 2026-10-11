@@ -203,4 +203,11 @@ describe('the shared Button anatomy', () => {
     expect((await render()).frame().alignSelf).toBeUndefined();
     expect((await render({ fullWidth: true })).frame().alignSelf).toBe('stretch');
   });
+
+  it('gives a one-line label the remaining button width on Android', async () => {
+    const { label, text } = await render({ label: 'Continue with GitHub' });
+    expect(label.props.numberOfLines).toBe(1);
+    expect(text.flexGrow).toBe(1);
+    expect(text.textAlign).toBe('center');
+  });
 });

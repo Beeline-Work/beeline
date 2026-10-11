@@ -107,7 +107,8 @@ const styles = StyleSheet.create((theme) => {
     primaryDisabled: { backgroundColor: buzz.bgRaised, borderColor: buzz.bgRaised },
     outlinedDisabled: { borderColor: buzz.border },
     fullWidth: { alignSelf: 'stretch' },
-    label: { ...buzz.type.body, fontFamily: buzz.proseMedium },
+    // A measured-width Text can ellipsize bundled fonts before the frame runs out of space.
+    label: { ...buzz.type.body, fontFamily: buzz.proseMedium, flexGrow: 1, textAlign: 'center' },
     primaryLabel: { color: buzz.buttonPrimaryText },
     secondaryLabel: { color: buzz.buttonSecondaryText },
     brassLabel: { color: buzz.accent },

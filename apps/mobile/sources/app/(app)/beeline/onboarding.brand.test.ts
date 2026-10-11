@@ -92,8 +92,8 @@ vi.mock('react-native', async () => {
   return {
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Platform: {
-      OS: 'ios',
-      select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
+      OS: 'android',
+      select: (choices: Record<string, unknown>) => choices.android ?? choices.default,
     },
     StyleSheet: { create: (styles: Record<string, unknown>) => styles },
     Text: host('Text'),
@@ -152,6 +152,9 @@ describe('onboarding — canonical brand treatment', () => {
     const title = byTestID('onboarding-wordmark');
     expect(title).toHaveLength(1);
     expect(title[0].props.style.fontFamily).toBe(canonical);
+    // Android can paint bundled glyphs wider than its intrinsic Text measure.
+    // Both lines must reserve the brand surface's width, including on error renders.
+    expect(title[0].props.style.width).toBe('100%');
 
     const tagline = byTestID('onboarding-tagline');
     expect(tagline).toHaveLength(1);
@@ -159,6 +162,7 @@ describe('onboarding — canonical brand treatment', () => {
     expect(tagline[0].props.style.fontFamily).toBe(beelineThemes.obsidian.proseRegular);
     expect(tagline[0].props.style.fontSize).toBe(beelineThemes.obsidian.type.body.fontSize);
     expect(tagline[0].props.style.lineHeight).toBe(beelineThemes.obsidian.type.body.lineHeight);
+    expect(tagline[0].props.style.width).toBe('100%');
 
     // A rendered login action must keep its complete label and original button treatment.
     const signIn = tree.root.findAll(

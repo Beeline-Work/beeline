@@ -111,6 +111,28 @@ describe('share_browser Squire refusal', () => {
     expect((await share())?.message).toBe('Squire share timed out after 30 seconds');
   });
 
+  it('keeps the HTTP status when an error body has a malformed envelope', async () => {
+    vi.stubGlobal('fetch', async () => Response.json({ result: { content: {} } }, { status: 502 }));
+
+    expect((await share())?.message).toBe('Squire share failed (HTTP 502)');
+  });
+
+  it('reports a malformed success envelope', async () => {
+    vi.stubGlobal('fetch', async () => Response.json({ result: { content: {} } }));
+
+    expect((await share())?.message).toBe('Squire share returned a malformed response');
+  });
+
+  it('reports a timeout while reading the response body', async () => {
+    vi.stubGlobal('fetch', async () => ({
+      ok: true,
+      status: 200,
+      json: async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); },
+    }));
+
+    expect((await share())?.message).toBe('Squire share timed out after 30 seconds');
+  });
+
   it('sends the share expiry with the card', async () => {
     const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
     const posted: Array<Record<string, unknown>> = [];

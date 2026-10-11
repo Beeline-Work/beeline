@@ -3989,7 +3989,11 @@ async function squireShareEndpoint(sessionId: string): Promise<{ url: string; ex
         params: { name: 'operate_share', arguments: { session_id: sessionId } } }),
       signal: AbortSignal.timeout(30_000),
     });
-    body = await response.json().catch(() => undefined);
+    // Only an unparseable body is tolerated; a timeout while reading it is not.
+    body = await response.json().catch((error: unknown) => {
+      if (error instanceof SyntaxError) return undefined;
+      throw error;
+    });
   } catch (error) {
     if (error instanceof Error && error.name === 'TimeoutError')
       throw new Error('Squire share timed out after 30 seconds');
@@ -3997,11 +4001,14 @@ async function squireShareEndpoint(sessionId: string): Promise<{ url: string; ex
   }
   if (response.status === 403 && body === undefined)
     throw new Error('Squire relay refused authorization (HTTP 403); this turn may have ended');
-  const result = (body as { result?: { isError?: boolean; content?: Array<{ type: string; text?: string }> } } | undefined)?.result;
-  const text = result?.content?.find((entry) => entry.type === 'text')?.text;
-  if (!response.ok || result?.isError) throw squireShareFailure(response.status, body);
+  if (!response.ok) throw squireShareFailure(response.status, body);
+  const result = (body as { result?: { isError?: unknown; content?: unknown } } | undefined)?.result;
+  if (result?.isError) throw squireShareFailure(response.status, body);
+  const text = Array.isArray(result?.content)
+    ? (result.content as Array<{ type?: unknown; text?: unknown }>)
+      .find((entry) => entry?.type === 'text')?.text : undefined;
   let shared: Record<string, unknown> | undefined;
-  try { shared = text ? JSON.parse(text) as Record<string, unknown> : undefined; } catch { /* Reported below. */ }
+  try { shared = typeof text === 'string' ? JSON.parse(text) as Record<string, unknown> : undefined; } catch { /* Reported below. */ }
   if (!shared || typeof shared !== 'object') throw new Error('Squire share returned a malformed response');
   const endpoint = shared.url;
   if (typeof endpoint !== 'string' || !/^https?:\/\/[^/]+\/s\/[A-Za-z0-9_-]{43}\/$/.test(endpoint))

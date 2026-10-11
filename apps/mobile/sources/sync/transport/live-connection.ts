@@ -12,6 +12,13 @@ import {
   noteRoomCornersChanged,
 } from '@/buzz/room-corner-store';
 import { subscribeClientReset } from '@/sync/client-reset';
+import {
+  applyRoomMessage,
+  roomDeltaMessage,
+  roomRecordScope,
+  type RoomRecordScope,
+} from '@/buzz/room-message-records';
+import { applyRoomDraftFrame, clearRoomDrafts } from '@/buzz/room-live-drafts';
 
 type SurfaceFilters = readonly {
   readonly '#h'?: readonly string[];
@@ -46,6 +53,8 @@ type RoomCursor = { epoch: string; base: number; seen: Set<number> };
 type LiveConnectionDeps = {
   authorization: () => Promise<string>;
   liveUrl: () => string;
+  /** The relay and viewer this connection's committed rows belong to. */
+  recordScope: () => Promise<RoomRecordScope | undefined>;
   /** Fires on an identity or relay change. */
   subscribeIdentityChange: (listener: () => void) => () => void;
   /** Fires when the app returns to the foreground from the background. */
@@ -108,6 +117,8 @@ export class LiveConnection {
   private readonly connectedListeners = new Set<() => void>();
   private socket: WebSocket | undefined;
   private connectInFlight: Promise<void> | undefined;
+  /** The record scope of the current socket's identity. */
+  private recordScope: RoomRecordScope | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   /** Rooms on screen, counted per holder; the server holds their pushes. */
   private readonly viewing = new Map<string, number>();
@@ -339,6 +350,8 @@ export class LiveConnection {
         const acknowledged = this.seenSubscribed.delete(roomId);
         this.overlays.delete(roomId);
         this.roomCursors.delete(roomId);
+        // No view hears this Room now, so no frame can end its drafts.
+        clearRoomDrafts(roomId);
         noteCornerLaneReleased(roomId);
         if (acknowledged && this.socket && isSocketOpen(this.socket))
           this.socket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
@@ -360,6 +373,16 @@ export class LiveConnection {
   private async connect(): Promise<void> {
     const generation = this.generation;
     try {
+      // Frames that arrive before the record scope is known wait for it, in order.
+      let scopeReady: Promise<void> | undefined = this.deps.recordScope().then(
+        (scope) => {
+          if (generation === this.generation) this.recordScope = scope;
+          scopeReady = undefined;
+        },
+        () => {
+          scopeReady = undefined;
+        },
+      );
       const token = await this.deps.authorization();
       if (generation !== this.generation) return;
       const url = this.deps.liveUrl();
@@ -381,7 +404,7 @@ export class LiveConnection {
         this.coverRoomlessRegistrations();
         for (const listener of this.connectedListeners) listener();
       };
-      next.onmessage = (message) => {
+      const receive = (message: { data: unknown }) => {
         if (this.socket !== next) return;
         let live: LiveWireEvent;
         try {
@@ -396,6 +419,10 @@ export class LiveConnection {
         }
         noteLiveFrame();
         this.dispatch(live, next);
+      };
+      next.onmessage = (message) => {
+        if (scopeReady) scopeReady = scopeReady.then(() => receive(message));
+        else receive(message);
       };
       next.onclose = () => {
         clearTimeout(connectTimer);
@@ -541,10 +568,11 @@ export class LiveConnection {
         generation.send(JSON.stringify({ type: 'unsubscribe', roomId: live.roomId }));
       return;
     }
+    let resumed = false;
     if (live.type === 'subscribed') {
       this.pendingSubscribe.delete(live.roomId);
       this.seenSubscribed.add(live.roomId);
-      let resumed = Boolean(live.resumed);
+      resumed = Boolean(live.resumed);
       if (typeof live.epoch === 'string' && Number.isSafeInteger(live.cursor)) {
         const previous = this.roomCursors.get(live.roomId);
         resumed = Boolean(live.resumed) && previous?.epoch === live.epoch;
@@ -571,6 +599,12 @@ export class LiveConnection {
     if (live.type === 'invalidate' && !live.deliveryId && CORNER_LIST_REASONS.has(live.reason))
       noteRoomCornersChanged(live.roomId);
     this.rememberOverlay(live);
+    // The one place a committed row reaches the Room's message records; every
+    // view holding it shows the change before its own listener runs.
+    if (live.type === 'message-delta' && this.recordScope)
+      applyRoomMessage(this.recordScope, live.roomId, roomDeltaMessage(live));
+    // Likewise the one place a draft frame reaches the Room's live drafts.
+    applyRoomDraftFrame(live, resumed);
     for (const registration of this.registrations.values()) {
       if (registration.closed || !registration.roomIds.has(live.roomId)) continue;
       const trace = 'trace' in live ? live.trace : undefined;
@@ -652,6 +686,14 @@ export function sharedLiveConnection(): LiveConnection {
   shared ??= new LiveConnection({
     authorization: () => monolithSession.authorization(),
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
+    // The monolith's relay and viewer, as getEffectiveRelayUrl and
+    // loadBuzzViewerPubkey give them to the Room session.
+    recordScope: async () => {
+      const viewerPubkey = await monolithSession.identityId();
+      return viewerPubkey
+        ? roomRecordScope(getBuzzRuntimeConfig().monolithUrl, viewerPubkey)
+        : undefined;
+    },
     subscribeIdentityChange: subscribeClientReset,
     subscribeForeground: (listener) => {
       let backgrounded = AppState.currentState === 'background';

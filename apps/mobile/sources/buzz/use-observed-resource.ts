@@ -1,9 +1,8 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
-import { writeRoomMessage } from '@/buzz/room-message-records';
 import { subscribeClientReset } from '@/sync/client-reset';
-import type { RoomViewMessage } from '@beeline/buzz-client';
+import type { RoomViewAgentTurn, RoomViewMessage } from '@beeline/buzz-client';
 import type { ConnectorInstallState } from './workbench';
 
 type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null; installMissing?: boolean; successVersion: number };
@@ -176,11 +175,14 @@ export function isSystemOrCardMessage(message: RoomViewMessage): boolean {
  * Re-read a Room-derived resource when the Room changes in a way it reads:
  * a committed message `changes` accepts, a change no delta describes, or a
  * socket that reconnected and may have missed either. Prose, tool rows,
- * turn progress and an invalidation whose delta follows read nothing.
+ * turn progress and an invalidation whose delta follows read nothing; the
+ * live connection already wrote each committed row to the Room's message
+ * records, and `onTurn` hears turn progress without a read.
  */
 export function observeRoomResource(
   roomId: string,
   changes: (message: RoomViewMessage) => boolean = isSystemOrCardMessage,
+  onTurn?: (turn: RoomViewAgentTurn) => void,
 ) {
   return (invalidate: () => void, reconnect: () => void) => {
     let subscribed = false;
@@ -192,9 +194,9 @@ export function observeRoomResource(
         if (subscribed && !live.resumed) reconnect();
         subscribed = true;
       } else if (live.type === 'message-delta') {
-        // Every view holding this message shows the change before any re-read.
-        writeRoomMessage(roomId, live.message);
         if (changes(live.message)) invalidate();
+      } else if (live.type === 'turn-delta') {
+        onTurn?.(live.turn);
       } else if (live.type === 'invalidate' && !live.deliveryId) {
         invalidate();
       }

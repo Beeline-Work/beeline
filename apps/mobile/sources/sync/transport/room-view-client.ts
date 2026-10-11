@@ -37,6 +37,8 @@ import {
   MonolithRequestTimeoutError,
   MONOLITH_REQUEST_TIMEOUT_MS,
 } from '@/auth/monolith-session';
+import { roomReadStamp, stampRoomRead } from '@/buzz/room-message-records';
+import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import { recordRoomReadNetworkTiming } from '@/buzz/room-open-trace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { liveFrameEpoch } from './live-frame-epoch';
@@ -334,6 +336,12 @@ export function readPushedMonolithRoom(roomId: string): Promise<RoomView> {
   return new MonolithRoomViewClient().room(roomId);
 }
 
+/** A Room read or history page, its rows marked with when it started. */
+function stamped<T>(read: Promise<T>, stamp = roomReadStamp(),
+  surfaceStamp = currentSurfaceStamp()): Promise<T> {
+  return read.then((value) => stampRoomRead(value, stamp, surfaceStamp));
+}
+
 /** Stable read seam: OTA config chooses the monolith or untouched relay reader. */
 export class RoomViewClient {
   private readonly implementation: LegacyRoomViewClient | MonolithRoomViewClient;
@@ -358,23 +366,23 @@ export class RoomViewClient {
     return this.implementation.chats(id);
   }
   room(id: string) {
-    return this.implementation.room(id);
+    return stamped(this.implementation.room(id));
   }
   /** `before` is an archived page's `nextArchived` cursor. */
   corners(id: string, options?: { readonly archived?: boolean; readonly before?: string; readonly openBefore?: string }) {
     return this.implementation.corners(id, options);
   }
   history(id: string, before?: { createdAt: number; id: string }) {
-    return this.implementation.history(id, before);
+    return stamped(this.implementation.history(id, before));
   }
   historyAfter(id: string, messageId: string): Promise<RoomHistoryView> {
     return this.implementation instanceof MonolithRoomViewClient
-      ? this.implementation.historyAfter(id, messageId)
+      ? stamped(this.implementation.historyAfter(id, messageId))
       : Promise.reject(new Error('Forward history requires the monolith'));
   }
   historyAround(id: string, messageId: string): Promise<RoomHistoryView> {
     return this.implementation instanceof MonolithRoomViewClient
-      ? this.implementation.historyAround(id, messageId)
+      ? stamped(this.implementation.historyAround(id, messageId))
       : Promise.reject(new Error('Targeted history requires the monolith'));
   }
   /** The whole-history outline exists only on the monolith; null elsewhere. */

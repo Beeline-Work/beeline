@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { reconcileOptimisticMessage } from '@/buzz/reconcileOptimisticMessage';
 
-export type RoomSendFrame = {
+type RoomSendFrame = {
   /** Stable FlatList data. A Room send must never rebuild this collection. */
   transcript: ChatDisplayMessage[];
   /** Tiny in-memory overlay painted in the inverted list's newest slot. */
@@ -17,7 +17,7 @@ export type RoomSendFrame = {
  * transcript reference intact prevents a composer mutation from walking,
  * deduplicating, or sorting every loaded message before the next frame.
  */
-export function projectRoomSendFrame(
+function projectRoomSendFrame(
   transcript: ChatDisplayMessage[],
   optimisticMessages: readonly ChatDisplayMessage[],
   committedIds: ReadonlySet<string>,
@@ -29,7 +29,7 @@ export function projectRoomSendFrame(
 }
 
 /** Append the normally single in-flight row without invoking a transcript sorter. */
-export function appendOptimisticMessages(
+function appendOptimisticMessages(
   current: readonly ChatDisplayMessage[],
   incoming: readonly ChatDisplayMessage[],
 ): ChatDisplayMessage[] {

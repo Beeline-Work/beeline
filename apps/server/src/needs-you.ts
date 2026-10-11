@@ -31,18 +31,13 @@ import { tagsKnownIdentitySql } from './message-mentions.js';
 export const NEEDS_YOU_TRIGGER_WORDS = ['please', 'approve', 'feedback'] as const;
 /** A cell's life, counted from the first time the person saw it in the tray. */
 export const NEEDS_YOU_EXPIRY_HOURS = 24;
-/** A card's `expiresAt` in epoch milliseconds, or NULL; `messages_needs_you_expiry_idx` indexes it. */
+/** Card expiry in epoch milliseconds; indexed by `messages_needs_you_expiry_idx`. */
 export function cardExpiresAtSql(card = 'card'): string {
   return `(CASE WHEN ${card}->>'expiresAt' ~ '^[0-9]{1,15}$' THEN (${card}->>'expiresAt')::bigint END)`;
 }
 /** The approval cards whose only exit is their `expiresAt`. */
 export const EXPIRING_CARD_TYPES = `card_type IN ('squire-approval','agent-sign-in')`;
-/**
- * An expiring approval card `m` that waits on `identity`: any member of its
- * Room for a Squire approval, the card's owner for an agent sign-in. The
- * projection shows it until its `expiresAt`; the expiry sweep announces that
- * deadline to the same people.
- */
+/** Squire approvals reach Room members; sign-in cards reach their owner. */
 export function expiringCardForSql(m: string, identity: string): string {
   return `(${m}.${EXPIRING_CARD_TYPES} AND ${m}.deleted_at IS NULL
     AND (${m}.card_type='squire-approval' OR ${m}.card->>'ownerId'=${identity}))`;
@@ -58,12 +53,7 @@ const NOW_MS = `(extract(epoch FROM now())*1000)::bigint`;
  * on first sight.
  */
 export const NEEDS_YOU_LOOKBACK = `interval '7 days'`;
-/**
- * When question `m` leaves `mark`'s owner's tray by the clock alone: 24
- * hours after first sight, or at the lookback edge if that comes first. An
- * unseen question has no first sight, so `LEAST` gives the lookback edge.
- * The read keeps cells before it; the expiry sweep announces it.
- */
+/** A question leaves at the earlier of first-sight expiry and the lookback edge. */
 export function questionLeavesAtSql(m = 'm', mark = 'mark'): string {
   return `LEAST(${m}.created_at+${NEEDS_YOU_LOOKBACK},
     ${mark}.first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours')`;
@@ -246,11 +236,7 @@ const VIEWER_ROOMS = `
       AND ${VIEWER_MEMBER}
   )`;
 
-/**
- * Message `m` asks identity `viewer` (with `mark`, the viewer's mark on it)
- * and nothing has cleared it: no tap or dismiss, no later reply. Only the
- * clock is left out, so the expiry sweep can find who a question leaves.
- */
+/** A question still awaiting `viewer`, ignoring only its clock deadline. */
 export function questionForSql(viewerId: string): string {
   return `${askingMessageSql('m')} AND m.author_id<>${viewerId}
   AND mark.cleared_at IS NULL

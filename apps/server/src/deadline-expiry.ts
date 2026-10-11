@@ -15,8 +15,6 @@ import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 /** Clock-only changes to the Needs-you tray and corner rows share one database-clock sweep. */
 const TAKEOVER_LOOKBACK_MS = 10 * 60_000;
 
-type Due = { identity_id: string; workspace_id: string; room_id: string };
-
 export class DeadlineExpiry {
   #sweptThrough: number | undefined;
   constructor(private readonly database: Pick<SqlDatabase, 'query'>) {}
@@ -30,10 +28,8 @@ export class DeadlineExpiry {
     const since = Math.max(newLeader ? through - TAKEOVER_LOOKBACK_MS
       : this.#sweptThrough ?? through - TAKEOVER_LOOKBACK_MS, through - TAKEOVER_LOOKBACK_MS);
     const window = [new Date(since), new Date(through)];
-    // Candidates by first sight and by the lookback edge, then the tray's own
-    // question rule decides who each one still asked when it left.
-    const questions = await this.database.query<Due>(
-      `WITH due AS (
+    await this.database.query(
+      `WITH candidates AS (
          SELECT mark.message_id,mark.identity_id FROM needs_you_marks mark
          WHERE mark.cleared_at IS NULL
            AND mark.first_seen_at>$1::timestamptz-interval '${NEEDS_YOU_EXPIRY_HOURS} hours'
@@ -44,9 +40,9 @@ export class DeadlineExpiry {
          WHERE ${askingMessageSql('m')}
            AND m.created_at>$1::timestamptz-${NEEDS_YOU_LOOKBACK}
            AND m.created_at<=$2::timestamptz-${NEEDS_YOU_LOOKBACK}
-       )
+       ), questions AS (
        SELECT DISTINCT viewer.id identity_id,room.workspace_id::text workspace_id,room.id::text room_id
-       FROM due
+       FROM candidates due
        JOIN messages m ON m.id=due.message_id
        JOIN rooms room ON room.id=m.room_id AND room.archived_at IS NULL
        JOIN memberships room_member ON room_member.room_id=room.id
@@ -55,40 +51,29 @@ export class DeadlineExpiry {
        LEFT JOIN needs_you_marks mark ON mark.identity_id=viewer.id AND mark.message_id=m.id
        WHERE ${questionForSql('viewer.id')}
          AND ${viewerMemberSql('room.workspace_id', 'viewer.id')}
-         AND ${questionLeavesAtSql()}>$1::timestamptz AND ${questionLeavesAtSql()}<=$2::timestamptz`,
-      window,
-    );
-    const approvals = await this.database.query<Due>(
-      `SELECT DISTINCT viewer.identity_id,room.workspace_id::text workspace_id,room.id::text room_id
+         AND ${questionLeavesAtSql()}>$1::timestamptz AND ${questionLeavesAtSql()}<=$2::timestamptz
+       ), approvals AS (
+       SELECT DISTINCT viewer.identity_id,room.workspace_id::text workspace_id,room.id::text room_id
        FROM messages m
        JOIN rooms room ON room.id=m.room_id AND room.archived_at IS NULL
        JOIN memberships viewer ON viewer.room_id=room.id AND viewer.removed_at IS NULL
        JOIN identities person ON person.id=viewer.identity_id AND person.kind='human'
        WHERE ${expiringCardForSql('m', 'viewer.identity_id')}
-         AND ${cardExpiresAtSql('m.card')}>$1 AND ${cardExpiresAtSql('m.card')}<=$2`,
-      [since, through],
-    );
-    for (const row of [...questions.rows, ...approvals.rows])
-      await this.database.query(`SELECT pg_notify($1,$2)`, [
-        POSTGRES_LIVE_CHANNEL,
-        JSON.stringify({
-          table: 'needs_you_marks',
-          operation: 'UPDATE',
-          roomId: '',
-          identityId: row.identity_id,
-          workspaceId: row.workspace_id,
-          sourceRoomId: row.room_id,
-        }),
-      ]);
-    await this.database.query(
-      `SELECT count(pg_notify($3, jsonb_build_object(
+         AND ${cardExpiresAtSql('m.card')}>$3 AND ${cardExpiresAtSql('m.card')}<=$4
+       ), notices AS (
+       SELECT jsonb_build_object(
+         'table','needs_you_marks','operation','UPDATE','roomId','',
+         'identityId',due.identity_id,'workspaceId',due.workspace_id,
+         'sourceRoomId',due.room_id) payload
+       FROM (SELECT * FROM questions UNION SELECT * FROM approvals) due
+       UNION
+       SELECT jsonb_build_object(
          'table','corner_owed','operation','UPDATE',
-         'roomId',due.corner_id,'cornerParentId',due.parent_id)::text))
-       FROM (SELECT DISTINCT owed.corner_id::text corner_id,room.parent_id::text parent_id
-         FROM corner_owed owed JOIN rooms room ON room.id=owed.corner_id
-         WHERE owed.expires_at>$1 AND owed.expires_at<=$2
-           AND room.parent_id IS NOT NULL) due`,
-      [window[0], window[1], POSTGRES_LIVE_CHANNEL],
+         'roomId',owed.corner_id,'cornerParentId',room.parent_id)
+       FROM corner_owed owed JOIN rooms room ON room.id=owed.corner_id
+       WHERE owed.expires_at>$1 AND owed.expires_at<=$2 AND room.parent_id IS NOT NULL
+       ) SELECT count(pg_notify($5,payload::text)) FROM notices`,
+      [window[0], window[1], since, through, POSTGRES_LIVE_CHANNEL],
     );
     this.#sweptThrough = through;
     const next = await this.database.query<{ ms: number | null }>(

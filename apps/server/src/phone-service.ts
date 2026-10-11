@@ -145,7 +145,7 @@ import {
   type ChatCornerSummary,
   type OpenCornerFactsRow,
 } from './chat-corner-counts.js';
-import { cornerRoomColumnsSql } from './corner-row-projection.js';
+import { CORNER_ROW_ROOM_COLUMNS, cornerRoomColumnsSql } from './corner-row-projection.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
@@ -430,14 +430,8 @@ interface AgentGrantRow {
   created_at: Date; decided_at: Date | null; expires_at: Date | null;
   requester: IdentityRow; decider: IdentityRow | null; script: unknown;
 }
-type RoomHeaderRow = Pick<RoomRow, 'id' | 'workspace_id' | 'parent_id' | 'name' |
-  'about' | 'avatar' | 'visibility' | 'reviewer_agent_id' | 'reviewer_fallback_ids' |
-  'archived_at' | 'created_at' | 'updated_at'>;
-interface CornerRow extends RoomHeaderRow {
-  lifecycle: RoomView['cornerLifecycle'] | null;
-  /** The corner lifecycle's projected state and the outcome that reached it. */
-  workflow_state: string | null;
-  workflow_outcome: string | null;
+type RoomHeaderRow = Pick<RoomRow, 'id' | 'workspace_id' | (typeof CORNER_ROW_ROOM_COLUMNS)[number]>;
+type CornerRow = RoomHeaderRow & OpenCornerFactsRow & {
   objective: string | null;
   initiator_id: string | null;
   initiator_name: string | null;
@@ -446,15 +440,9 @@ interface CornerRow extends RoomHeaderRow {
   initiator_face: string | null;
   latest_id: string | null;
   latest_text: string | null;
-  latest_created_at: Date | null;
   latest_author_id: string | null;
   latest_author_kind: 'human' | 'agent' | null;
   latest_author_name: string | null;
-  /** `cornerOwedLookupSql`'s facts. */
-  owed: boolean | null;
-  owed_viewer: boolean | null;
-  attention: boolean | null;
-  follows_viewer: boolean | null;
   /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
   archived_us: string | null;
   created_us: string;
@@ -462,14 +450,13 @@ interface CornerRow extends RoomHeaderRow {
   agent_name: string | null;
   agent_handle: string | null;
   agent_avatar: string | null;
-  latest_turn_status: 'working' | 'complete' | 'failed' | null;
   latest_turn_created_at: Date | null;
   app_installation_id: string | null;
   app_instance_id: string | null;
   app_manifest: unknown | null;
   /** The corner's latest brief revision; null when it has no brief. */
   brief_revision: number | null;
-}
+};
 /** The parent Room row's corner facts, read with its corner list. */
 interface DeckCornerFacts {
   needs_you: boolean;

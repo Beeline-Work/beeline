@@ -35,21 +35,12 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
   });
 }
 
-/**
- * Mine: the viewer follows it (opened, commissioned, requested, posted,
- * steered or was tagged) or it owes them something.
- */
+/** Mine is followed or owed to this viewer. */
 export function cornerRowMine(row: Pick<CornerStateRow, 'follows_viewer' | 'owed_viewer'>): boolean {
   return Boolean(row.follows_viewer || row.owed_viewer);
 }
 
-/**
- * The one source of corner facts for corner `c` and `viewerExpr`, shared by
- * the Room list and the Corners page so one frame cannot disagree with
- * itself. `columns` are the `CornerStateRow` facts plus the latest message
- * (`lm`) and turn; `joins` follow `FROM rooms c`; `member` says the viewer
- * belongs to the corner.
- */
+/** Shared corner facts for `FROM rooms c`; `member` checks the viewer's membership. */
 export function cornerFactsSql(viewerExpr: string): {
   columns: string;
   joins: string;
@@ -73,11 +64,7 @@ export function cornerFactsSql(viewerExpr: string): {
   };
 }
 
-/**
- * The open corners under `parentPredicate` (a condition on `c.parent_id`)
- * that `viewerExpr` belongs to, newest first, with the facts
- * `chatCornerCounts` reads.
- */
+/** Open member corners under `c.parent_id`, newest first. */
 export function openCornerFactsSql(parentPredicate: string, viewerExpr: string): string {
   const facts = cornerFactsSql(viewerExpr);
   return `SELECT c.id,c.name,c.parent_id,c.created_at,c.archived_at,${facts.columns}
@@ -125,11 +112,7 @@ export type ChatCornerSummary = {
   openCorners: ChatListCorner[];
 };
 
-/**
- * Same state derivation as the Corners page, batched for a Workspace deck.
- * Rows arrive newest first. Counts are exact; the list keeps every Mine
- * corner and fills to `OPEN_CORNER_PREVIEW` with the newest others.
- */
+/** Count every corner; preview every Mine corner and the newest others. */
 export function chatCornerCounts(
   rows: readonly (CornerStateRow & {
     id: string;

@@ -6,8 +6,8 @@ import {
   type OutgoingHttpHeaders,
 } from 'node:http2';
 import { createHash, createPrivateKey, sign } from 'node:crypto';
-import type { PushSender, ReadClearCursor } from './background.js';
-import { readClearPushData } from '@beeline/api-contract/phone';
+import type { PushSender } from './background.js';
+import { readClearPushData, type ReadClear } from '@beeline/api-contract/phone';
 import { pushAlert, pushMessageData, readClearBatch, type PushDeliveryMessage } from './firebase-push.js';
 
 const APNS_PRODUCTION_AUTHORITY = 'https://api.push.apple.com';
@@ -70,6 +70,16 @@ export function buildApnsProviderToken(
   return `${input}.${base64Url(signature)}`;
 }
 
+function apnsHeaders(token: string, bundleId: string, providerToken: string): OutgoingHttpHeaders {
+  return {
+    [http2Constants.HTTP2_HEADER_METHOD]: 'POST',
+    [http2Constants.HTTP2_HEADER_PATH]: `/3/device/${encodeURIComponent(token)}`,
+    authorization: `bearer ${providerToken}`,
+    'apns-topic': bundleId,
+    'apns-expiration': '0',
+  };
+}
+
 export function apnsPushRequest(
   token: string,
   message: PushDeliveryMessage,
@@ -83,13 +93,9 @@ export function apnsPushRequest(
     ? slot : createHash('sha256').update(slot).digest('hex');
   return {
     headers: {
-      [http2Constants.HTTP2_HEADER_METHOD]: 'POST',
-      [http2Constants.HTTP2_HEADER_PATH]: `/3/device/${encodeURIComponent(token)}`,
-      authorization: `bearer ${providerToken}`,
-      'apns-topic': bundleId,
+      ...apnsHeaders(token, bundleId, providerToken),
       'apns-push-type': 'alert',
       'apns-priority': '10',
-      'apns-expiration': '0',
       'apns-collapse-id': collapseId,
     },
     payload: {
@@ -107,35 +113,28 @@ export function apnsPushRequest(
 /** Apple rejects a push whose JSON payload is larger than this. */
 export const APNS_MAX_PAYLOAD_BYTES = 4096;
 
-function readClearPayload(reads: readonly ReadClearCursor[]): Record<string, unknown> {
+function readClearPayload(reads: readonly ReadClear[]): Record<string, unknown> {
   return { aps: { 'content-available': 1 }, ...readClearPushData(reads) };
 }
 
 /** The longest prefix of these reads whose read-clear payload fits APNs's size limit. */
-export function apnsReadClearBatch(reads: readonly ReadClearCursor[]): ReadClearCursor[] {
+export function apnsReadClearBatch(reads: readonly ReadClear[]): ReadClear[] {
   return readClearBatch(reads, (batch) =>
     Buffer.byteLength(JSON.stringify(readClearPayload(batch))) <= APNS_MAX_PAYLOAD_BYTES);
 }
 
-/**
- * A background push that wakes the app to clear these conversations from the
- * shade. Low priority and no alert: Apple throttles it, so the caller batches.
- */
+/** A batched low-priority background push with no alert. */
 export function apnsReadClearRequest(
   token: string,
-  reads: readonly ReadClearCursor[],
+  reads: readonly ReadClear[],
   bundleId: string,
   providerToken: string,
 ): { headers: OutgoingHttpHeaders; payload: Record<string, unknown> } {
   return {
     headers: {
-      [http2Constants.HTTP2_HEADER_METHOD]: 'POST',
-      [http2Constants.HTTP2_HEADER_PATH]: `/3/device/${encodeURIComponent(token)}`,
-      authorization: `bearer ${providerToken}`,
-      'apns-topic': bundleId,
+      ...apnsHeaders(token, bundleId, providerToken),
       'apns-push-type': 'background',
       'apns-priority': '5',
-      'apns-expiration': '0',
     },
     payload: readClearPayload(reads),
   };
@@ -216,7 +215,7 @@ export class ApnsPushProvider implements PushSender {
 
   async clearRead(
     token: string,
-    reads: readonly ReadClearCursor[],
+    reads: readonly ReadClear[],
   ): Promise<void> {
     await this.#post(apnsReadClearRequest(token, reads, this.#bundleId, this.#token()));
   }

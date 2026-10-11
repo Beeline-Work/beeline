@@ -353,7 +353,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     result: Promise<ReadonlyMap<string, RoomLiveDelta>>;
   }>();
   const bookmarkReads = new WeakMap<LiveEvent, Promise<MessageBookmarkView | null>>();
-  // One read per Workspace or identity change, shared by every phone socket.
+  // Share one projection read across sockets for each change.
   const workspaceChangeReads = new WeakMap<LiveEvent,
     ReturnType<PhoneService['liveWorkspaceChange']>>();
   const personChangeReads = new WeakMap<LiveEvent,
@@ -940,12 +940,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       // growing draft carries only its new suffix. A new subscription starts
       // with a full snapshot below.
       const draftWire = new Map<string, { text: string; revision: number }>();
-      // One record per row this socket delivers. Reads run concurrently and
-      // finish out of order, and a writer also receives its own PostgreSQL
-      // NOTIFY. One rule covers both: drop a frame not newer than the last one
-      // sent for its row, else drop it when its projection is unchanged. A row
-      // with a read in flight is never evicted, so the bound cannot let a
-      // delayed older read through.
+      // Keep in-flight rows while ordering and deduplicating delivered projections.
       const sentRows = new Map<string, SentRow>();
       const beginRowRead = (key: string) => {
         const row = sentRows.get(key) ?? { reads: 0 };
@@ -1266,8 +1261,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       }
                       const publicDelta = { ...result.delta,
                         ...(workflowRuns ? { workflowRuns } : {}) };
-                      // A projection older than one this socket already sent
-                      // would roll the row back on the phone.
+                      // Never roll a row back after a newer projection.
                       if (!admitRow(rowKey,
                         publicDelta.type === 'message-delta' && publicDelta.version !== undefined
                           ? { version: publicDelta.version } : undefined,

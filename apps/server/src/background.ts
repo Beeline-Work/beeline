@@ -7,6 +7,7 @@ import {
   roomTitle,
   type ChatTitleIdentity,
   type PushActionPayload,
+  type ReadClear,
 } from '@beeline/api-contract/phone';
 import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
@@ -46,16 +47,6 @@ function isRetryableApnsFailure(error: unknown): boolean {
 /** What a person can do from the notification itself; see `push-actions.ts`. */
 export type PushAction = PushActionPayload;
 
-/**
- * One read Room or corner for a read-clear push: its read cursor and the
- * other read messages already pushed to the device, newest first.
- */
-export type ReadClearCursor = {
-  channelId: string;
-  messageId: string;
-  readMessageIds: string[];
-};
-
 export interface PushSender {
   send(
     token: string,
@@ -88,25 +79,20 @@ export interface PushSender {
     ),
   ): Promise<void>;
   /** iOS and Android: a silent push that clears these conversations from the shade. */
-  clearRead?(token: string, reads: readonly ReadClearCursor[]): Promise<void>;
+  clearRead?(token: string, reads: readonly ReadClear[]): Promise<void>;
 }
 
-/** At most one read-clear push per device in this window; reads inside it batch. */
+/** Minimum gap between read-clear pushes to one device. */
 export const READ_CLEAR_INTERVAL_SECONDS = 30;
-/** Channel ids one read-clear push names, oldest read mark first; the rest go in a later push. */
+/** Channels per push, oldest read mark first. */
 export const READ_CLEAR_MAX_CHANNELS = 50;
-/** Read message ids one channel names, newest first; older ones go in a later push. */
+/** Message ids per channel, newest first. */
 export const READ_CLEAR_MAX_MESSAGE_IDS = 20;
 
 const PUSH_TITLE_LENGTH = 40;
 const PUSH_TITLE_ROOM_LENGTH = 16;
 
-/**
- * Name the conversation a push came from with the in-app title — `#room`,
- * `#room/corner` or `@peer` from the contract's chat-title module — cut so
- * the title stays on one line. `cornerName` is non-null only for a corner,
- * whose id is `channelId`.
- */
+/** Use the in-app conversation title, cut to one push line. */
 export function pushTitleFor(
   roomName: string | null,
   cornerName: string | null,
@@ -208,14 +194,7 @@ export class PushDeliveryLoop {
     return delivered;
   }
 
-  /**
-   * A Room read on any device leaves its notifications in this phone's shade
-   * and in its badge until the phone opens the Room itself. Each iOS and
-   * Android device gets one silent push naming the Rooms and corners where it holds a
-   * delivered notification no read-clear push has named yet at or before the
-   * viewer's read mark, at most once per READ_CLEAR_INTERVAL_SECONDS, so a
-   * burst of reads costs one push.
-   */
+  /** Batch delivered claims at or before each read mark into one silent push per device. */
   private async sendReadClears(): Promise<void> {
     // One rule for both platforms; each sender keeps its own size limit.
     const platforms = {
@@ -232,16 +211,7 @@ export class PushDeliveryLoop {
       message_ids: string[];
       read_message_ids: string[];
     }>(
-      // A mark is due while this device holds a delivered, unnamed claim at
-      // or before it, so any advance clears: markRead, or the viewer's own
-      // message from another device (advanceAuthorReadMark). markUnread moves
-      // the mark back, so it names nothing. Only claims for messages since the
-      // device registered count, so a token handed to another person keeps
-      // the last one's notifications out of it. Each mark names the messages
-      // at or before it that this device was pushed, in server order, so the
-      // phone keeps notifications for messages after the read. A message is
-      // named until a sent push includes it: ids left out by the per-Room cap,
-      // the channel cap or the push size limit keep their Room due.
+      // Registered-device claims beyond any cap remain due for a later push.
       `SELECT device.token,device.platform,batch.channel_ids,batch.message_ids,batch.read_message_ids
        FROM push_devices device
        LEFT JOIN push_read_clears clear ON clear.device_token=device.token
@@ -307,7 +277,7 @@ export class PushDeliveryLoop {
           await this.database.query(`DELETE FROM push_devices WHERE token=$1`, [row.token]);
           continue;
         }
-        // The claims stay unnamed, so the same reads retry after the interval.
+        // Unnamed claims retry after the interval.
       }
       await this.database.query(
         `INSERT INTO push_read_clears(device_token,sent_at) VALUES($1,now())
@@ -325,9 +295,7 @@ export class PushDeliveryLoop {
     );
     // Candidate messages expire after an hour. A terminal claim outside that
     // window cannot suppress a future push, except an explicit release catchup.
-    // An iOS or Android delivered claim stays until a read-clear push names
-    // it or for a week, so a read days after delivery still clears that notification
-    // (sendReadClears) and a Room never read cannot grow claims forever.
+    // Retain mobile claims for read-clear for at most a week.
     await this.database.query(`DELETE FROM push_delivery_claims claim
       WHERE (claim.message_id,claim.device_token) IN (
         SELECT old.message_id,old.device_token FROM push_delivery_claims old
@@ -569,28 +537,7 @@ export class PushDeliveryLoop {
     let delivered = 0;
     type ClaimedDelivery = {
       candidate: (typeof candidates.rows)[number];
-      message:
-        | {
-            messageId: string;
-            workspaceId: string;
-            roomId?: string;
-            type: 'workspace-join';
-            text: string;
-          }
-        | {
-            messageId: string;
-            workspaceId: string;
-            roomId: string;
-            channelId: string;
-            cornerId?: string;
-            target: 'message' | 'corner';
-            type: 'message';
-            text: string;
-            action?: PushAction;
-            permission?: true;
-            collapseId?: string;
-            title?: string;
-          };
+      message: Parameters<PushSender['send']>[1];
     };
     const claimedDeliveries: ClaimedDelivery[] = [];
     let claimedRows = 0;

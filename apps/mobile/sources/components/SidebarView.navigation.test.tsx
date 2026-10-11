@@ -95,6 +95,8 @@ vi.mock('@/buzz/surface-storage', () => {
         surfaceRows.set(key, value);
         notify(key);
       },
+      persist: async () => undefined,
+      clear: () => { surfaceRows.clear(); },
       remove: async (key: string) => {
         surfaceRows.delete(key);
         notify(key);

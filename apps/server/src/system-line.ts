@@ -224,7 +224,7 @@ export function composeSystemLine(phrase: SystemPhrase): { text: string; event: 
     ...(consequence ? { consequence } : {}),
     ...(phrase.kind ? { kind: phrase.kind } : {}),
     ...(phrase.scheduleId ? { scheduleId: phrase.scheduleId } : {}),
-    ...(phrase.kind === 'subscription-fired' ? {
+    ...(phrase.kind === 'subscription-fired' || phrase.kind === 'check-failed' ? {
       payload: phrase.payload,
       ...(phrase.subscriptionPrompt ? { subscriptionPrompt: phrase.subscriptionPrompt } : {}),
       ...(phrase.subscriptionWorkflowSlug ? { subscriptionWorkflowSlug: phrase.subscriptionWorkflowSlug } : {}),
@@ -513,6 +513,8 @@ export async function systemLine(
         requestId: input.requestId,
         causeId: input.causeId,
         commandId: input.commandId,
+        followup: input.kind === 'check-failed' &&
+          Boolean((input.payload as { followup?: unknown } | undefined)?.followup),
       });
       if (input.kind && isSubscribableEventKind(input.kind)) {
         const subscriptions = await db.query<{

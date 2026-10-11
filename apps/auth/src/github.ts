@@ -786,6 +786,17 @@ export class GitHubAppClient {
     };
   }
 
+  /** A completed Actions job's log is available before its workflow run finishes. */
+  async readJobLog(accessToken: string, fullName: string, jobId: number): Promise<string> {
+    if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error('invalid GitHub job id');
+    const response = await fetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/actions/jobs/${jobId}/logs`,
+      { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
+    );
+    if (!response.ok) throw new GitHubHttpError('GitHub job log', response.status);
+    return response.text();
+  }
+
   private async readRepositoryJson(
     accessToken: string,
     fullName: string,

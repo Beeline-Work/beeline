@@ -177,6 +177,23 @@ function checksSettled(checks: readonly { status: string }[] | undefined): boole
   return !checks?.some((check) => check.status === 'pending');
 }
 
+function actionsJobId(url: string | undefined): number | undefined {
+  const match = url?.match(/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+\/job\/(\d+)(?:[/?#]|$)/);
+  const id = match ? Number(match[1]) : undefined;
+  return id && Number.isSafeInteger(id) ? id : undefined;
+}
+
+function jobErrorLines(log: string): string {
+  const lines = log.split(/\r?\n/);
+  const picked = new Set<number>();
+  for (let i = 0, errors = 0; i < lines.length && errors < 3; i++) {
+    if (!/##\[error\]/i.test(lines[i]!)) continue;
+    errors++;
+    for (let j = Math.max(0, i - 3); j <= i; j++) picked.add(j);
+  }
+  return [...picked].map(i => lines[i]!.slice(0, 300)).join('\n').slice(0, 1_500);
+}
+
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -1920,10 +1937,32 @@ export class GitHubOperations {
         const rollup = await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
         // A push can move GitHub's PR head before either its push or synchronize
         // webhook reaches us. The stored head alone cannot authorize a verdict.
-        const livePr = target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed')
+        const failedChecks = rollup.checks.filter(item => item.status === 'failed');
+        const livePr = target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed' || failedChecks.length > 0)
           ? await this.app.readPullRequest(token.token, repository, Number(target.pr_number))
           : undefined;
         if (livePr && livePr.headSha !== checkHeadSha) return;
+        const beforeFetch = await this.lifecycle(target.corner_id, database);
+        if (beforeFetch.pr?.headSha && beforeFetch.pr.headSha !== checkHeadSha) return;
+        const oldReport = beforeFetch.checksSummary as (typeof beforeFetch.checksSummary & {
+          reportedHeadSha?: string; reportedFailing?: readonly string[]; failureFollowupSent?: boolean;
+        }) | undefined;
+        const alreadyReported = oldReport?.reportedHeadSha === checkHeadSha
+          ? oldReport.reportedFailing ?? [] : [];
+        const candidateFailures = failedChecks.filter(item => !alreadyReported.includes(item.name));
+        const logCandidates = candidateFailures.length &&
+          (!alreadyReported.length || (checksSettled(rollup.checks) && !oldReport?.failureFollowupSent))
+          ? candidateFailures : [];
+        const jobLogs = await Promise.all(logCandidates.map(async item => {
+          const jobId = actionsJobId(item.url);
+          if (!jobId) return { name: item.name, ...(item.url ? { url: item.url } : {}) };
+          try {
+            const errorLines = jobErrorLines(await this.app.readJobLog(token.token, repository, jobId));
+            return { name: item.name, url: item.url, jobId, ...(errorLines ? { errorLines } : {}) };
+          } catch {
+            return { name: item.name, url: item.url, jobId };
+          }
+        }));
         await database.transaction(async (database) => {
           await lockCornerLifecycle(database, target.corner_id);
           // Webhooks signal a refresh. Revalidate its head and age only after
@@ -1948,22 +1987,38 @@ export class GitHubOperations {
           // rollup (state pending) is the race before workflows register.
           const summary = {
             status:
-              rollup.total === 0 && rollup.state !== 'pending' ? ('unknown' as const) : rollup.state === 'passed'
+              failedChecks.length ? ('failing' as const) : rollup.total === 0 && rollup.state !== 'pending' ? ('unknown' as const) : rollup.state === 'passed'
                 ? ('passing' as const)
                 : rollup.state === 'failed'
                   ? ('failing' as const)
                   : ('pending' as const),
             total: rollup.total,
-            failing: rollup.failing,
+            failing: failedChecks.length ? failedChecks.map(item => item.name) : rollup.failing,
             checks: rollup.checks,
             updatedAt: Math.floor(fetchStartedAt),
             fetchStartedAt,
+          };
+          const priorReport = current.checksSummary as (typeof current.checksSummary & {
+            reportedHeadSha?: string; reportedFailing?: readonly string[]; failureFollowupSent?: boolean;
+          }) | undefined;
+          const sameReportedHead = priorReport?.reportedHeadSha === checkHeadSha;
+          const reported = sameReportedHead ? priorReport.reportedFailing ?? [] : [];
+          const newFailures = summary.failing.filter(name => !reported.includes(name));
+          const firstFailure = summary.status === 'failing' && newFailures.length > 0 && !reported.length;
+          const followup = summary.status === 'failing' && newFailures.length > 0 && reported.length > 0 &&
+            checksSettled(summary.checks) && !(sameReportedHead && priorReport.failureFollowupSent);
+          const reportFailure = firstFailure || followup;
+          const storedSummary = {
+            ...summary,
+            reportedHeadSha: checkHeadSha,
+            reportedFailing: reportFailure ? [...reported, ...newFailures] : reported,
+            failureFollowupSent: Boolean((sameReportedHead && priorReport.failureFollowupSent) || followup),
           };
           await this.updateLifecycle(
             target.corner_id,
             {
               checks: summary.status,
-              checksSummary: summary,
+              checksSummary: storedSummary,
             },
             database,
           );
@@ -1976,18 +2031,14 @@ export class GitHubOperations {
             await advanceCorner(database, target.corner_id, { kind: 'checks-pending' });
           const label = check.status === 'pending' ? 'started' : check.status;
           const becamePassing = summary.status === 'passing' && current.checks !== 'passing';
-          // GitHub turns a head red as soon as one check fails, while the rest
-          // of its run still goes and its logs cannot be read yet. A red head
-          // is a verdict that wakes the implementer only once no check runs.
-          const becameFailing =
-            summary.status === 'failing' &&
-            checksSettled(summary.checks) &&
-            !(current.checks === 'failing' && checksSettled(current.checksSummary?.checks));
+          // The first failed job wakes immediately. Later failures share one
+          // follow-up when the rest of this head's checks have settled.
+          const becameFailing = reportFailure;
           // A green/red rollup is a property of the whole head, not of the one
           // check that happened to arrive last. Name the actual failing jobs
           // on a failure, so the implementer knows what to fix and a passing
           // check can never be described as the failure.
-          const failing = summary.failing?.length ? summary.failing : [check.name];
+          const failing = reportFailure ? newFailures : summary.failing?.length ? summary.failing : [check.name];
           await this.systemNote(
             target.corner_id,
             target.author_id,
@@ -2018,9 +2069,15 @@ export class GitHubOperations {
                 : check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'
                   ? { consequence: check.conclusion }
                   : {}),
+              ...(becameFailing ? { payload: {
+                failedJobs: jobLogs.filter(item => newFailures.includes(item.name)),
+                ...(followup ? { followup: true } : {}),
+              } } : {}),
             },
             becamePassing
               ? `github:checks:green:${check.headSha}`
+              : becameFailing
+                ? `github:checks:failed:${check.headSha}:${followup ? 'followup' : 'first'}`
               : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(check))}`,
             database,
           );
@@ -2092,6 +2149,8 @@ export class GitHubOperations {
         sourceMessageId: note.id,
         kind: phrase.kind,
         targets: [],
+        followup: phrase.kind === 'check-failed' &&
+          Boolean((phrase.payload as { followup?: unknown } | undefined)?.followup),
       });
   }
 

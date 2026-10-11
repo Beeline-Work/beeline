@@ -24,6 +24,7 @@ beforeAll(async () => {
   await build({
     entryPoints: [fileURLToPath(new URL('./read-only-mcp.ts', import.meta.url))],
     bundle: true, platform: 'node', format: 'esm', target: 'node20', outfile, logLevel: 'silent',
+    banner: { js: "import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);" },
   });
 });
 afterEach(async () => {

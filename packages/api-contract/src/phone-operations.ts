@@ -78,6 +78,8 @@ export type CornerMergeHold = {
 };
 
 export type PhoneOperationMap = {
+  /** A short-lived browser viewer token, issued only to people who may steer its agent. */
+  openComputerSession: { input: { id: string }; output: { access: string } };
   listRoomSubscriptions: { input: { roomId: string }; output: RoomSubscriptionListResult };
   deleteRoomSubscription: { input: { roomId: string; subscriptionId: string }; output: void };
   setCornerHold: { input: CornerHoldInput; output: { holdId: string; roomId: string } };
@@ -241,6 +243,7 @@ export type PhoneOperationMap = {
  * may also repeat one on a fresh connection when the first attempt stalls.
  */
 export const PHONE_READ_OPERATIONS = [
+  'openComputerSession',
   'listRoomSubscriptions',
   'readWelcomeCards',
   'readStarPrompt',

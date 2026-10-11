@@ -134,6 +134,8 @@ import { openAppSignIn } from '@/buzz/app-sign-in';
 import { AgentSignInCard } from '@/components/buzz/AgentSignInCard';
 import { openArtifactInBrowserOrExplain } from '@/buzz/artifact-link';
 import { subscribeDesktopArtifact } from '@/buzz/desktop-artifact-pane';
+import { subscribeDesktopComputer } from '@/buzz/desktop-computer-pane';
+import { ComputerSessionCard } from '@/components/buzz/ComputerSession';
 import { RoomRepositorySubtitle } from '@/components/buzz/RoomRepositorySubtitle';
 import { ROOM_SLUG_HINT, roomNameEntry, validRoomSlug } from '@/buzz/room-name';
 import {
@@ -1139,6 +1141,13 @@ export function BuzzChatSurface({
     };
   }, [desktopExperience, parentChannelId, roomClient]);
   const desktopWorkRoom = parentChannelId ? desktopParentRoom : roomSurface;
+  const currentComputerSession = desktopWorkPaneContent?.kind === 'computer'
+    ? (roomSurface?.messages.find((message) => message.computerSession?.id === desktopWorkPaneContent.session.id)?.computerSession
+      ?? desktopWorkRoom?.messages.find((message) => message.computerSession?.id === desktopWorkPaneContent.session.id)?.computerSession)
+    : undefined;
+  const displayedDesktopWorkPaneContent = desktopWorkPaneContent?.kind === 'computer' && currentComputerSession
+    ? { ...desktopWorkPaneContent, session: { ...currentComputerSession, access: desktopWorkPaneContent.session.access } }
+    : desktopWorkPaneContent;
   // A direct message has no second pane: artifacts open in the full-screen
   // viewer and the transcript keeps the width.
   const desktopWorkPaneMounted =
@@ -1311,6 +1320,13 @@ export function BuzzChatSurface({
       (artifact) =>
         commitDesktopWorkPane({ type: 'open-artifact', artifact, primary: desktopWorkPanePrimary })
           .placement === 'pane',
+    );
+  }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]);
+  useEffect(() => {
+    if (!desktopExperience || !isFocused) return;
+    return subscribeDesktopComputer((session) =>
+      commitDesktopWorkPane({ type: 'open-computer', session, primary: desktopWorkPanePrimary })
+        .placement === 'pane',
     );
   }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]);
   /** Navigate to exactly the referenced Room/Corner through the existing
@@ -5695,6 +5711,9 @@ export function BuzzChatSurface({
           />
         );
       }
+      if (item.computerSession) {
+        return <ComputerSessionCard session={item.computerSession} isDesktop={desktopExperience} />;
+      }
       if (item.choice) {
         return (
           <ChoiceCard
@@ -6987,7 +7006,7 @@ export function BuzzChatSurface({
             client={roomClient}
             channelIndex={channelReferenceIndex}
             onChannelReference={handleOpenChannelReference}
-            content={desktopWorkPaneContent}
+            content={displayedDesktopWorkPaneContent!}
             onOpenCorner={(cornerId) => openDesktopCorner(desktopWorkRoomId, cornerId)}
             onOpenInMain={expandDesktopCorner}
             onClose={closeDesktopWorkPane}

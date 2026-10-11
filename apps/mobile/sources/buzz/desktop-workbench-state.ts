@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { DesktopArtifactSelection } from '@/buzz/desktop-artifact-pane';
+import type { ComputerSessionView } from '@/components/buzz/ComputerSession';
 
 export const DESKTOP_NAV_MIN_WIDTH = 240;
 export const DESKTOP_NAV_MAX_WIDTH = 420;
@@ -24,7 +25,8 @@ export type DesktopWorkPaneWidthMode = 'wide' | 'narrow';
 /** The second pane holds one thing at a time, or nothing. */
 export type DesktopWorkPaneContent =
   | { kind: 'corner'; cornerId: string }
-  | { kind: 'artifact'; artifact: DesktopArtifactSelection };
+  | { kind: 'artifact'; artifact: DesktopArtifactSelection }
+  | { kind: 'computer'; session: ComputerSessionView };
 
 export type DesktopWorkPaneState = {
   widthMode: DesktopWorkPaneWidthMode;
@@ -38,6 +40,7 @@ export type DesktopWorkPaneEvent =
   | { type: 'close' }
   | { type: 'open-corner'; cornerId: string; primary: DesktopWorkPanePrimary }
   | { type: 'open-artifact'; artifact: DesktopArtifactSelection; primary: DesktopWorkPanePrimary }
+  | { type: 'open-computer'; session: ComputerSessionView; primary: DesktopWorkPanePrimary }
   | { type: 'expand' };
 
 /**
@@ -97,6 +100,10 @@ export function transitionDesktopWorkPane(
         state: { ...state, content: { kind: 'artifact', artifact: event.artifact } },
         placement: 'pane',
       };
+    case 'open-computer':
+      if (state.widthMode === 'narrow' || event.primary === 'direct-message')
+        return { state, placement: 'primary' };
+      return { state: { ...state, content: { kind: 'computer', session: event.session } }, placement: 'pane' };
     case 'expand':
       // The corner moves to the primary view, so the pane closes and nothing
       // shows twice.

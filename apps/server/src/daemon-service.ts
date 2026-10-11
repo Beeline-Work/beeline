@@ -19,6 +19,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createComputerSession, endComputerSession, getComputerSession } from './computer-session.js';
 import type {
   DaemonAttachment,
   DaemonOperationMap,
@@ -451,6 +452,7 @@ export class DaemonService {
       'postAgentTurnReceipt',
       'postAgentActivity',
       'postSquireApproval',
+      'postComputerSession',
       'postSquireLoginWall',
       'createLinkSpendRequest',
       'retrieveLinkSpendRequest',
@@ -1337,6 +1339,28 @@ export class DaemonService {
           input as Input<'postSquireApproval'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postComputerSession': {
+        const share = input as Input<'postComputerSession'>;
+        return (await createComputerSession(this.database, this.live, {
+          roomId: share.roomId,
+          agentId: authenticatedAgentId,
+          sessionId: share.sessionId,
+          upstreamUrl: share.upstreamUrl,
+          title: share.title,
+        })) as Output<Name>;
+      }
+      case 'endComputerSession': {
+        const ending = input as Input<'endComputerSession'>;
+        const session = (await this.database.query<{ id: string }>(
+          `SELECT id FROM computer_sessions WHERE room_id=$1 AND agent_id=$2 AND source_session_id=$3 AND status='live'`,
+          [ending.roomId, authenticatedAgentId, ending.sessionId],
+        )).rows;
+        for (const found of session) {
+          const row = await getComputerSession(this.database, found.id);
+          if (row) await endComputerSession(this.database, this.live, row);
+        }
+        return this.writeResult() as Output<Name>;
+      }
       case 'postSquireLoginWall':
         return (await this.squireLoginWall(
           input as Input<'postSquireLoginWall'>,
@@ -7985,6 +8009,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentTurnReceipt: true,
   postAgentActivity: true,
   postSquireApproval: true,
+  postComputerSession: true,
+  endComputerSession: true,
   postSquireLoginWall: true,
   postSquireApprovalDecision: true,
   postPermissionRequest: true,

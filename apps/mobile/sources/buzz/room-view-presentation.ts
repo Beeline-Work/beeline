@@ -307,6 +307,7 @@ export type ChatDisplayMessage = {
   grantRequest?: NonNullable<RoomViewMessage['grantRequest']>;
   /** Trusty Squire's own approval page, relayed into its owner DM. */
   squireApproval?: NonNullable<RoomViewMessage['squireApproval']>;
+  computerSession?: NonNullable<RoomViewMessage['computerSession']>;
   /** An agent offering to add a Workbench tool it needs (R5); rendered as the offer card. */
   connectorOffer?: NonNullable<RoomViewMessage['connectorOffer']>;
   appSignIn?: NonNullable<RoomViewMessage['appSignIn']>;
@@ -444,6 +445,7 @@ export function displayRoomMessage(
         }
       : {}),
     ...(message.squireApproval ? { squireApproval: { ...message.squireApproval } } : {}),
+    ...(message.computerSession ? { computerSession: { ...message.computerSession } } : {}),
     ...(message.connectorOffer ? { connectorOffer: { ...message.connectorOffer } } : {}),
     ...(message.appSignIn ? { appSignIn: { ...message.appSignIn } } : {}),
     ...(message.agentSignIn ? { agentSignIn: { ...message.agentSignIn } } : {}),

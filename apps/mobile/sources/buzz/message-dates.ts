@@ -80,6 +80,7 @@ function hasTranscriptByline(message: ChatDisplayMessage): boolean {
     message.writePermission ||
     message.grantRequest ||
     message.squireApproval ||
+    message.computerSession ||
     message.choice ||
     message.connectorOffer ||
     message.walletTx ||

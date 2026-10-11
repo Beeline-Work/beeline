@@ -15,13 +15,14 @@ describe('bundled beeline-readonly-mcp', () => {
   it('answers each request exactly once', async () => {
     directory = await mkdtemp(join(tmpdir(), 'readonly-mcp-bundle-'));
     const outfile = join(directory, 'beeline-readonly-mcp.mjs');
-    // Same shape as scripts/build-beeline-bundle.mjs: no import.meta.url define.
+    // Same banner as scripts/build-beeline-bundle.mjs: bundled ws needs Node require.
     await build({
       entryPoints: [fileURLToPath(new URL('./read-only-mcp.ts', import.meta.url))],
       bundle: true,
       platform: 'node',
       format: 'esm',
       target: 'node20',
+      banner: { js: "import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);" },
       outfile,
       logLevel: 'silent',
     });

@@ -92,6 +92,7 @@ vi.mock('@/app/(app)/beeline/chat/RoomMessageVariants', () => ({
   OrdinaryLedgerMessage: () => null,
 }));
 vi.mock('@/components/buzz/DesktopArtifactPane', () => ({ DesktopArtifactPane: () => null }));
+vi.mock('@/components/buzz/ComputerSession', () => ({ ComputerSessionViewer: () => null }));
 vi.mock('@/components/buzz/SurfaceGlyphLoader', () => ({ SurfaceGlyphLoader: () => null }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: vi.fn(async () => null),

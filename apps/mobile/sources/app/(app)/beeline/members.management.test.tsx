@@ -931,6 +931,7 @@ describe('Members workspace management', () => {
     vi.stubGlobal('WebSocket', TestSocket);
     const connection = new LiveConnection({
       authorization: async () => 'test-session', liveUrl: () => 'wss://test.invalid/live',
+      recordScope: async () => undefined,
       subscribeIdentityChange: () => () => {}, subscribeForeground: () => () => {},
     });
     (client.surfaceSubscribe as any).mockImplementation((filters: any, listener: any) => connection.register(filters, listener));

@@ -431,24 +431,6 @@ export function pruneRoomTail(
   notify(room);
 }
 
-/** Rewrite held records in place, for a change no message version covers (a renamed author). */
-export function patchRoomMessages(
-  scope: RoomRecordScope,
-  roomId: string,
-  patch: (message: RoomViewMessage) => RoomViewMessage,
-): void {
-  const room = rooms.get(roomKey(scope, roomId));
-  if (!room) return;
-  let changed = false;
-  for (const [id, message] of room.records) {
-    const next = patch(message);
-    if (next === message) continue;
-    room.records.set(id, next);
-    changed = true;
-  }
-  if (changed) notify(room);
-}
-
 export function roomTail(
   scope: RoomRecordScope | undefined,
   roomId: string,

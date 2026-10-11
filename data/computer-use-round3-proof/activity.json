@@ -1,0 +1,85 @@
+{
+  "workspace": "Beeline Review",
+  "room": "general",
+  "agent": "Lumen",
+  "sourceModel": "gpt-6.1-sol",
+  "shareStatusAfterCleanup": "ended",
+  "events": [
+    {
+      "id": "9ce5f4540cadcfc0a12d2641dea01bfba271df7b210a762896db554dd04b5fc7",
+      "text": "A person opened the shared browser",
+      "event": {
+        "activity": "viewer-opened",
+        "sessionId": "hv9RSyEs3qhjkZra1ape63cQWEvJCAG_7CsYTd2J-dQ"
+      }
+    },
+    {
+      "id": "0ea30938519fd5ab0855a3b5f8beb41bd634d4e64cb93c970b912a6c886a0cd4",
+      "text": "A person took control of the shared browser",
+      "event": {
+        "activity": "takeover",
+        "sessionId": "hv9RSyEs3qhjkZra1ape63cQWEvJCAG_7CsYTd2J-dQ"
+      }
+    },
+    {
+      "id": "ae58a8b7b9e56502ce6065825bff0a087b3307ba42410de759554b15f3499daf",
+      "text": "A person returned control of the shared browser",
+      "event": {
+        "activity": "handback",
+        "sessionId": "hv9RSyEs3qhjkZra1ape63cQWEvJCAG_7CsYTd2J-dQ"
+      }
+    },
+    {
+      "id": "d4cdf66b7b0847ac7a348ad965306644e60a06a09e5d734e36b6354e95177baa",
+      "text": "A person closed the shared browser view",
+      "event": {
+        "activity": "viewer-closed",
+        "sessionId": "hv9RSyEs3qhjkZra1ape63cQWEvJCAG_7CsYTd2J-dQ"
+      }
+    }
+  ],
+  "traces": [
+    {
+      "requestId": "9ce5f4540cadcfc0a12d2641dea01bfba271df7b210a762896db554dd04b5fc7",
+      "startedAt": "2026-10-11T23:18:34.693Z",
+      "outcome": "complete",
+      "totalMs": 3432.3,
+      "attempts": 1,
+      "toolCalls": 0
+    },
+    {
+      "requestId": "0ea30938519fd5ab0855a3b5f8beb41bd634d4e64cb93c970b912a6c886a0cd4",
+      "startedAt": "2026-10-11T23:20:32.140Z",
+      "outcome": "complete",
+      "totalMs": 2840,
+      "attempts": 1,
+      "toolCalls": 0
+    },
+    {
+      "requestId": "ae58a8b7b9e56502ce6065825bff0a087b3307ba42410de759554b15f3499daf",
+      "startedAt": "2026-10-11T23:20:36.169Z",
+      "outcome": "complete",
+      "totalMs": 2962,
+      "attempts": 1,
+      "toolCalls": 0
+    },
+    {
+      "requestId": "d4cdf66b7b0847ac7a348ad965306644e60a06a09e5d734e36b6354e95177baa",
+      "startedAt": "2026-10-11T23:20:39.283Z",
+      "outcome": "complete",
+      "totalMs": 2635,
+      "attempts": 1,
+      "toolCalls": 0
+    }
+  ],
+  "agentReplies": [
+    {
+      "id": "a0ae2caa1afc557f5740f3aa6a35048ef485b229470daa899796423c4c6438bc",
+      "text": "The browser is ready at Example Domain, with its share call still running—keeping the light on."
+    },
+    {
+      "id": "280b236cb7a5b5ffc8f9787f2cd70843c3e5251b3beea6d5fefb539d9ffc1389",
+      "text": "Fixture closed. `operate_finish` confirmed closure; `end_browser_share` was unavailable."
+    }
+  ]
+}

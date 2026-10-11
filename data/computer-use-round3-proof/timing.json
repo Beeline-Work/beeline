@@ -1,0 +1,69 @@
+{
+  "measurement": "real card click to decoded canvas paint",
+  "baselineCommit": "1b96b9ae2",
+  "source": "real Squire share at Example Domain, local Beeline proxy and production React/RNW bundle",
+  "before": [
+    {
+      "click": 1791759973762,
+      "paint": 1791759974747,
+      "ms": 985,
+      "decoded": true
+    },
+    {
+      "click": 1791759977526,
+      "paint": 1791759978657,
+      "ms": 1131,
+      "decoded": true
+    },
+    {
+      "click": 1791759981275,
+      "paint": 1791759982247,
+      "ms": 972,
+      "decoded": true
+    },
+    {
+      "click": 1791759985011,
+      "paint": 1791759985929,
+      "ms": 918,
+      "decoded": true
+    },
+    {
+      "click": 1791759988709,
+      "paint": 1791759989648,
+      "ms": 939,
+      "decoded": true
+    }
+  ],
+  "after": [
+    {
+      "click": 1791760152925,
+      "paint": 1791760152989,
+      "ms": 64,
+      "decoded": true
+    },
+    {
+      "click": 1791760155785,
+      "paint": 1791760155836,
+      "ms": 51,
+      "decoded": true
+    },
+    {
+      "click": 1791760158668,
+      "paint": 1791760158720,
+      "ms": 52,
+      "decoded": true
+    },
+    {
+      "click": 1791760161553,
+      "paint": 1791760161609,
+      "ms": 56,
+      "decoded": true
+    },
+    {
+      "click": 1791760164389,
+      "paint": 1791760164438,
+      "ms": 49,
+      "decoded": true
+    }
+  ]
+}

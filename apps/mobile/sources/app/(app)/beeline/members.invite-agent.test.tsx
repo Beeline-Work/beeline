@@ -303,17 +303,12 @@ beforeEach(() => {
 });
 
 describe('Members agent invitation flow', () => {
-  it('refreshes its subscription to server-authored agent presence filters after bootstrap', async () => {
+  it('subscribes to the server-authored agent presence filters, never the Workspace id as a Room', async () => {
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'workspace-members-surface' })).toBeDefined();
-    expect(client.surfaceSubscribe).toHaveBeenNthCalledWith(
-      1,
-      [{ kinds: [0, 9, 9000, 9001], '#h': [WORKSPACE] }],
-      expect.any(Function),
-    );
-    expect(client.surfaceSubscribe).toHaveBeenNthCalledWith(
-      2,
+    expect(client.surfaceSubscribe).toHaveBeenCalledTimes(1);
+    expect(client.surfaceSubscribe).toHaveBeenCalledWith(
       workspace.watchFilters,
       expect.any(Function),
     );

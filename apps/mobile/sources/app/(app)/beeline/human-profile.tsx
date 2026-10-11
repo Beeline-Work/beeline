@@ -90,29 +90,33 @@ export function HumanProfile({
       setRecordScope(workspaceRecordScope(baseUrl, identity.publicKey, workspaceId));
       const address = surfaceAddress(baseUrl, identity.publicKey, '/workspace/:id/members/:memberId',
         { workspaceId, memberId });
-      stopProfile = mobileSurfaceCache.subscribe(address, () => {
-        const next = mobileSurfaceCache.peek(address, isWorkspaceMemberListView);
-        if (!cancelled && next) setProfile(next);
-      });
-      const cached = await mobileSurfaceCache.read(address, isWorkspaceMemberListView);
-      if (cancelled) return;
-      if (cached) {
-        setProfile(cached);
-        setLoading(false);
-      }
       // One read names the person, their grants and the agents they own.
       const http = new RoomViewClient({ identity, baseUrl });
       const read = () => mobileSurfaceCache.fetch(address, isWorkspaceMemberListView,
         () => http.workspaceMembers(workspaceId, { memberId }));
-      // The same relay watch Members refreshes from.
+      // The same relay watch Members refreshes from, on the grants' Rooms.
       const watch = watchWorkspace(identity, baseUrl, workspaceId,
         () => void read().catch(() => undefined));
       stopWatch = watch.release;
+      const show = (next: WorkspaceMemberListView) => {
+        setProfile(next);
+        watch.rooms((next.grants ?? []).map((grant) => grant.roomId));
+      };
+      stopProfile = mobileSurfaceCache.subscribe(address, () => {
+        const next = mobileSurfaceCache.peek(address, isWorkspaceMemberListView);
+        if (!cancelled && next) show(next);
+      });
+      const cached = await mobileSurfaceCache.read(address, isWorkspaceMemberListView);
+      if (cancelled) return;
+      if (cached) {
+        show(cached);
+        setLoading(false);
+      }
       await watch.ready;
       const fresh = await read();
       if (cancelled) return;
       if (fresh) {
-        setProfile(fresh);
+        show(fresh);
         setAgentsHasMore(fresh.agentsTruncated);
       }
     })()

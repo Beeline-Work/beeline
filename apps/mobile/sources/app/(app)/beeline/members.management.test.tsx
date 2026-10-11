@@ -444,7 +444,10 @@ function baseWorkspace(viewerRole: 'owner' | 'admin' = 'owner') {
         presence: { status: 'online', observedAt: 1 },
       },
     ],
-    managerSettings: { visibility: 'invite-only' },
+    managerSettings: {
+      visibility: 'invite-only',
+      rooms: [{ id: '33333333-3333-4333-8333-333333333333', name: 'general', visibility: 'public', createdAt: 1 }],
+    },
     peopleTotal: 3,
     agentTotal: 1,
     membersTruncated: false,
@@ -913,11 +916,55 @@ describe('Members workspace management', () => {
     expect(phoneOperation).not.toHaveBeenCalled();
   });
 
+  it('Reproduction 2315-R4: live socket grant event refreshes the rendered profile', async () => {
+    const { LiveConnection } = await vi.importActual<any>('@/sync/transport/live-connection');
+    let socket: any;
+    class TestSocket {
+      readyState = 0;
+      sent: string[] = [];
+      onopen?: () => void;
+      onmessage?: (event: {data: string}) => void;
+      constructor() { socket = this; }
+      send(value: string) { this.sent.push(value); }
+      close() { this.readyState = 3; }
+    }
+    vi.stubGlobal('WebSocket', TestSocket);
+    const connection = new LiveConnection({
+      authorization: async () => 'test-session', liveUrl: () => 'wss://test.invalid/live',
+      subscribeIdentityChange: () => () => {}, subscribeForeground: () => () => {},
+    });
+    (client.surfaceSubscribe as any).mockImplementation((filters: any, listener: any) => connection.register(filters, listener));
+    try {
+      await render();
+      const renderer = await personProfile();
+      socket.readyState = 1;
+      socket.onopen();
+      const first = await roomView.workspaceMembers.mock.results[0]!.value as any;
+      roomView.workspaceMembers.mockImplementation(async () => ({
+        ...first, grants: [{...first.grants[0], grantId: 'updated-room-grant', target: 'new/target'}],
+      }));
+      await act(async () => {
+        socket.onmessage({data: JSON.stringify({type: 'invalidate', roomId: first.grants[0].roomId, reason: 'postgres:agent_grants'})});
+      });
+      console.log('Reproduction 2315-R4 subscribe frames:', socket.sent);
+      console.log('Reproduction 2315-R4 profile reads after socket grant event:', roomView.workspaceMembers.mock.calls.length);
+      expect(renderer.root.findAll((node: any) =>
+        typeof node.type === 'string' && node.props.testID === 'member-grant-updated-room-grant')).toHaveLength(1);
+    } finally {
+      connection.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('refreshes the profile grants live with one read per relay signal, on the watch Members shares (J27)', async () => {
     const list = await render();
     const renderer = await personProfile();
-    // Members and the profile hold one relay watch for this Workspace.
-    expect(client.surfaceSubscribe).toHaveBeenCalledTimes(1);
+    // Members and the profile hold one relay watch for this Workspace: the
+    // profile's grant Room joins the managed Room on the same subscription.
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
+    expect(subscribes.at(-1)![0]).toEqual([{ kinds: [0, 9, 9000, 9001],
+      '#h': ['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'] }]);
+    expect(subscribes).toHaveLength(2);
     expect(roomView.workspaceMembers).toHaveBeenCalledTimes(1);
     expect(roomView.workspaceMembers).toHaveBeenCalledWith(WORKSPACE, { memberId: MEMBER });
     const ownedAgent = state.workspace.agents[0];
@@ -927,7 +974,7 @@ describe('Members workspace management', () => {
       agents: [ownedAgent],
       grants: [{ ...first.grants[0], grantId: 'live-grant', target: 'beeline-work/live' }],
     }));
-    const signal = (client.surfaceSubscribe.mock.calls as unknown as [unknown, () => void][])[0]![1];
+    const signal = subscribes.at(-1)![1];
     await act(async () => signal());
     expect(roomView.workspaceMembers).toHaveBeenCalledTimes(2);
     expect(renderer.root.findByProps({ testID: 'member-grant-live-grant' }).props.title)

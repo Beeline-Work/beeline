@@ -95,7 +95,7 @@
     "coldDepthMax": 1
   },
   {
-    "path": "/beeline/settings/webhook",
+    "path": "/beeline/settings/subscription",
     "coldHttpMax": 1,
     "coldDepthMax": 1
   },

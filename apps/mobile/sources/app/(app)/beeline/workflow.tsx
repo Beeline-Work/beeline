@@ -8,7 +8,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { workflowDisplayName } from '@/buzz/workflow-graph';
 import { workflowStarterLine } from '@/buzz/workflow-run-copy';
-import { scheduleRuns, scheduleWhere, stopSchedule, useScheduledWork } from '@/buzz/scheduled-work';
+import { scheduleRuns, scheduleWhere, stopSchedule, stopSubscription,
+  subscriptionRuns, subscriptionWhere, useScheduledWork } from '@/buzz/scheduled-work';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { DetailSection, ScheduledWorkFacts, StopScheduledWork } from '@/components/buzz/ScheduledWorkDetail';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
@@ -18,9 +19,8 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 /**
  * One workflow: its steps on the run page's rail (every step pending, as no
  * run is open here) and its runs, reached from a run's "All runs" link or
- * from a schedule. Opened from a schedule (`scheduleId`, listed under
- * `parentRoomId`), it also shows that schedule's Runs, Agent and Where rows
- * and its Stop.
+ * from scheduled work. Opened from a schedule or subscription listed under
+ * `parentRoomId`, it shows that trigger's When, Agent and Where rows and Stop.
  */
 export default function Workflow() {
   useLatencyRouteFrame('/beeline/workflow');
@@ -28,11 +28,13 @@ export default function Workflow() {
     roomId: string;
     name: string;
     scheduleId?: string;
+    subscriptionId?: string;
     parentRoomId?: string;
   }>();
   const roomId = Array.isArray(params.roomId) ? params.roomId[0] : params.roomId;
   const name = Array.isArray(params.name) ? params.name[0] : params.name;
   const scheduleId = Array.isArray(params.scheduleId) ? params.scheduleId[0] : params.scheduleId;
+  const subscriptionId = Array.isArray(params.subscriptionId) ? params.subscriptionId[0] : params.subscriptionId;
   const parentRoomId = Array.isArray(params.parentRoomId)
     ? params.parentRoomId[0]
     : params.parentRoomId;
@@ -55,17 +57,19 @@ export default function Workflow() {
       void reload();
     }, [reload]),
   );
-  const scheduled = useScheduledWork(scheduleId ? parentRoomId : undefined);
+  const scheduled = useScheduledWork(scheduleId || subscriptionId ? parentRoomId : undefined);
   const schedule = scheduled.work?.schedules.find((candidate) => candidate.id === scheduleId);
+  const subscription = scheduled.work?.subscriptions.find((candidate) => candidate.id === subscriptionId);
   const [stopping, setStopping] = useState(false);
   const stop = async () => {
-    if (!parentRoomId || !schedule) return;
+    if (!parentRoomId || (!schedule && !subscription)) return;
     setStopping(true);
     try {
-      await stopSchedule(parentRoomId, schedule.id);
+      if (schedule) await stopSchedule(parentRoomId, schedule.id);
+      else if (subscription) await stopSubscription(parentRoomId, subscription.id);
       router.back();
     } catch (caught) {
-      setError(`Could not stop the schedule: ${String(caught)}`);
+      setError(`Could not stop the ${schedule ? 'schedule' : 'subscription'}: ${String(caught)}`);
     } finally {
       setStopping(false);
     }
@@ -85,8 +89,9 @@ export default function Workflow() {
           </Text>
         </Pressable>
       ) : null}
-      {scheduleId && scheduled.error ? (
-        <Pressable onPress={scheduled.retry} testID="workflow-schedule-error">
+      {(scheduleId || subscriptionId) && scheduled.error ? (
+        <Pressable onPress={scheduled.retry}
+          testID={scheduleId ? 'workflow-schedule-error' : 'workflow-subscription-error'}>
           <Text accessibilityRole="alert" style={styles.error}>
             {scheduled.error} · Retry
           </Text>
@@ -103,6 +108,14 @@ export default function Workflow() {
               agents={[scheduled.work?.agentNames.get(schedule.agentId) ?? 'Agent']}
               runs={scheduleRuns(schedule)}
               where={scheduleWhere(schedule)}
+              whereCorner={schedule.corner}
+            />
+          ) : subscription ? (
+            <ScheduledWorkFacts
+              agents={[scheduled.work?.agentNames.get(subscription.agentId) ?? 'Agent']}
+              runs={subscriptionRuns(subscription)}
+              where={subscriptionWhere(subscription)}
+              whereCorner={subscription.corner}
             />
           ) : null}
           <DetailSection testID="workflow-steps-header" title="Steps" />
@@ -132,11 +145,11 @@ export default function Workflow() {
             </Pressable>
           ))}
           {!detail.runs.length ? <Text style={styles.description}>No runs yet.</Text> : null}
-          {schedule ? (
+          {schedule || subscription ? (
             <StopScheduledWork
-              label="Stop schedule"
+              label={schedule ? 'Stop schedule' : 'Stop subscription'}
               onStop={() => void stop()}
-              testID="stop-workflow-schedule"
+              testID={schedule ? 'stop-workflow-schedule' : 'stop-workflow-subscription'}
               working={stopping}
             />
           ) : null}

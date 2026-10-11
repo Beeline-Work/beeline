@@ -5,7 +5,7 @@ const chat = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8
 const screen = readFileSync(new URL('../settings/schedules.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../../_layout.tsx', import.meta.url), 'utf8');
 const schedule = readFileSync(new URL('../settings/schedule.tsx', import.meta.url), 'utf8');
-const webhook = readFileSync(new URL('../settings/webhook.tsx', import.meta.url), 'utf8');
+const subscription = readFileSync(new URL('../settings/subscription.tsx', import.meta.url), 'utf8');
 const workflow = readFileSync(new URL('../workflow.tsx', import.meta.url), 'utf8');
 const work = readFileSync(new URL('../../../../buzz/scheduled-work.ts', import.meta.url), 'utf8');
 
@@ -14,7 +14,7 @@ describe('scheduled Agent work', () => {
     expect(chat).toContain('getBuzzRuntimeConfig().monolithEnabled');
     expect(chat).toContain('testID="room-schedules-action"');
     expect(chat).toContain("pathname: '/beeline/settings/schedules'");
-    expect(chat).toContain('label="Schedules and webhooks"');
+    expect(chat).toContain('label="Schedules and subscriptions"');
     expect(chat).not.toContain('View or stop Agent-managed recurring work.');
   });
 
@@ -26,13 +26,11 @@ describe('scheduled Agent work', () => {
     expect(screen).not.toContain('AGENT-MANAGED SCHEDULES');
     expect(screen).not.toContain('repository notifications');
     expect(screen).not.toContain('Alert.alert');
-    // Webhooks are read-only beside schedules: stopping (revoke) is the one action.
-    expect(work).toContain("monolithPhoneOperation('readRoomWebhooks'");
-    expect(work).toContain("action: 'revoke'");
-    expect(work).not.toMatch(/action: '(create|rotate|secret)'/);
+    expect(work).toContain("monolithPhoneOperation('listRoomSubscriptions'");
+    expect(work).toContain("monolithPhoneOperation('deleteRoomSubscription'");
     // Both Stop actions live on the entry's own page, behind one confirm step.
     expect(schedule).toContain('<StopScheduledWork');
-    expect(webhook).toContain('<StopScheduledWork');
+    expect(subscription).toContain('<StopScheduledWork');
     expect(workflow).toContain('<StopScheduledWork');
   });
 
@@ -41,14 +39,14 @@ describe('scheduled Agent work', () => {
     expect(screen).toContain('chevron="right"');
     expect(screen).toContain('<WorkflowGlyph');
     expect(screen).not.toMatch(/LAST |NEVER FIRED|deliveries/);
-    expect(webhook).not.toContain('deliveries');
+    expect(subscription).not.toContain('deliveries');
     expect(layout).toMatch(/name="beeline\/settings\/schedule"\s*options=\{\{\s*headerShown: false/);
-    expect(layout).toMatch(/name="beeline\/settings\/webhook"\s*options=\{\{\s*headerShown: false/);
+    expect(layout).toMatch(/name="beeline\/settings\/subscription"\s*options=\{\{\s*headerShown: false/);
   });
 
-  it('draws the shared PageHeader, Room over Schedules and Webhooks, and no stack header', () => {
+  it('draws the shared PageHeader, Room over Schedules and subscriptions, and no stack header', () => {
     expect(screen).toContain('<PageHeader');
-    expect(screen).toContain('title="Schedules and Webhooks"');
+    expect(screen).toContain('title="Schedules and subscriptions"');
     expect(screen).toContain("eyebrow={displayRoomIndexTitle(work?.roomName ?? undefined) ?? 'Room'}");
     expect(screen).toContain('onBack={() => router.back()}');
     expect(layout).toMatch(

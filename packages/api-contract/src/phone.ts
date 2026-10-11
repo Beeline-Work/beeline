@@ -13,7 +13,7 @@ export * from './agent-access.js';
 export * from './faces.js';
 export * from './system-events.js';
 export * from './outside-data.js';
-export * from './room-webhooks.js';
+export * from './subscriptions.js';
 export * from './default-workspace.js';
 export * from './corner-text.js';
 export * from './chat-title.js';

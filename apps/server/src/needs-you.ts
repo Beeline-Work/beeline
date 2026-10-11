@@ -363,17 +363,6 @@ const APPROVAL_BRANCHES: readonly string[] = [
    WHERE m.deleted_at IS NULL
      AND (offer.addressee_id=$2
        OR (offer.connector_type<>'wallet' AND ${VIEWER_MANAGES_WORKSPACE}))`,
-  // `RoomWebhooks.decide`: a human Room or Workspace owner/admin.
-  `${APPROVAL_FROM('webhook', 'webhook.expires_at')}
-   JOIN room_webhook_requests webhook ON webhook.room_id=room.id
-     AND webhook.status='pending' AND webhook.expires_at>now()
-   JOIN messages m ON m.id=webhook.message_id
-   JOIN identities viewer ON viewer.id=$2 AND viewer.kind='human'
-   JOIN memberships viewer_member ON viewer_member.room_id=room.id
-     AND viewer_member.identity_id=$2 AND viewer_member.removed_at IS NULL
-   ${APPROVAL_JOINS}
-   WHERE m.deleted_at IS NULL
-     AND (viewer_member.role IN ('owner','admin') OR ${VIEWER_MANAGES_WORKSPACE})`,
   // A sign-in only its owner can finish, while it still waits on them.
   `${APPROVAL_FROM(
      'sign-in',
@@ -464,7 +453,6 @@ const VISIBLE_CANDIDATE = `(approval_kind IS NULL OR cleared_at IS NULL) AND CAS
     THEN card->>'tool' ELSE card->>'repository' END),'') IS NOT NULL
   WHEN 'choice' THEN NULLIF(btrim(card->>'prompt'),'') IS NOT NULL
   WHEN 'connector' THEN NULLIF(btrim(card->>'connectorName'),'') IS NOT NULL
-  WHEN 'webhook' THEN NULLIF(btrim(card->>'source'),'') IS NOT NULL
   WHEN 'sign-in' THEN CASE WHEN card->>'harness' IS NOT NULL
     THEN card->>'harness' IN (${Object.keys(AGENT_SIGN_IN_SERVICE_LABELS)
       .map((value) => `'${value}'`)
@@ -679,8 +667,6 @@ function approvalView(
         false,
         text(card.reason),
       );
-    case 'webhook':
-      return view('webhook', 'asks for a webhook from', text(card.source), true, text(card.reason));
     case 'sign-in':
       return view(
         'sign-in',

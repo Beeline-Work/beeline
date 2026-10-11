@@ -6,7 +6,6 @@ import { LiveHub, type LiveEvent } from './live.js';
 import { NeedsYouExpiryLoop } from './needs-you-expiry.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
-import { RoomWebhooks } from './room-webhooks.js';
 import { PgliteDatabase } from './test-support.js';
 
 const VIEWER = 'a'.repeat(64);
@@ -260,26 +259,6 @@ describe('Needs-you expiry sweep', () => {
     expect(markWakes().map((event) => event.type === 'invalidate' && event.readerId).sort())
       .toEqual([VIEWER, PEER].sort());
     expect(await delta()).toEqual({ workspaceId: WORKSPACE, count: 0, items: [] });
-  });
-
-  it('leaves webhook expiry to its own job, whose write already wakes the tray', async () => {
-    const message = await card('webhook-request', {
-      agentName: 'Hoots', source: 'github', reason: 'Watch release tags.', status: 'pending',
-    });
-    await database.query(
-      `INSERT INTO room_webhook_requests(id,room_id,agent_id,source,reason,request_id,message_id,expires_at)
-       VALUES('88888888-8888-4888-8888-888888888888',$1,$2,'github','Watch release tags.','request',$3,
-         now()+interval '1 hour')`,
-      [ROOM, AGENT, message],
-    );
-    expect((await delta()).items.map((item) => item.messageId)).toEqual([message]);
-    await database.query(`UPDATE room_webhook_requests SET expires_at=now()-interval '1 second'`);
-    events.length = 0;
-    await new RoomWebhooks(database).expireRequests();
-    await eventually(() => events.some((event) => event.type === 'invalidate' &&
-      event.reason === 'postgres:messages' && event.messageId === message));
-    expect(await delta()).toEqual({ workspaceId: WORKSPACE, count: 0, items: [] });
-    expect(await new NeedsYouExpiryLoop(database).runOnce()).toBeNull();
   });
 
   it('sends each deadline once and nothing for a clock that has not run out', async () => {

@@ -108,7 +108,7 @@ export default function RootLayout() {
             headerShown: false,
           }}
         />
-        {/* Schedules and webhooks draws the shared PageHeader (Room over Schedules and Webhooks). */}
+        {/* Schedules and subscriptions draws the shared PageHeader. */}
         <Stack.Screen
           name="beeline/settings/schedules"
           options={{
@@ -116,7 +116,7 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen name="beeline/settings/schedule" options={{ headerShown: false }} />
-        <Stack.Screen name="beeline/settings/webhook" options={{ headerShown: false }} />
+        <Stack.Screen name="beeline/settings/subscription" options={{ headerShown: false }} />
         {/* A workflow run's state graph draws the shared PageHeader (corner over workflow). */}
         <Stack.Screen name="beeline/workflow-run" options={{ headerShown: false }} />
         <Stack.Screen name="beeline/workflow" options={{ headerShown: false }} />

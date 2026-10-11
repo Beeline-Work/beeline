@@ -468,6 +468,7 @@ export type {
   RoomViewer,
   RoomView,
   RoomViewAgentTurn,
+  RoomViewPendingAgentCommand,
   RoomViewActivity,
   RoomViewClientOptions,
   RoomViewHeader,

@@ -605,6 +605,13 @@ export type RoomViewAgentTurn = {
   readonly requestedBy?: string;
 };
 
+/** A human-addressed command accepted by the server and not yet claimed. */
+export type RoomViewPendingAgentCommand = {
+  readonly requestId: string;
+  readonly agentPubkey: string;
+  readonly createdAt: number;
+};
+
 /** A committed Room row small enough to paint directly from the live channel. */
 export type RoomLiveDelta =
   | {
@@ -638,6 +645,8 @@ export type RoomView = {
   readonly toolRows?: readonly RoomViewMessage[];
   readonly members: readonly RoomViewMember[];
   readonly latestAgentTurns: readonly RoomViewAgentTurn[];
+  /** Server-owned pre-claim commands, one oldest pending command per agent. */
+  readonly pendingAgentCommands?: readonly RoomViewPendingAgentCommand[];
   readonly viewer: RoomViewer;
   readonly directMessage?: RoomDirectMessageView;
   readonly parent?: RoomViewHeader;

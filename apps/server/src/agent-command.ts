@@ -77,6 +77,7 @@ ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS avatar_job boolean NOT NULL 
 CREATE UNIQUE INDEX IF NOT EXISTS agent_commands_one_avatar_job ON agent_commands(agent_id)
   WHERE avatar_job AND state IN ('pending','claimed');
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS hiccup_attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS renudged_at timestamptz;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS lifecycle_before text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS restart_confirmed_at timestamptz;
 ALTER TABLE agent_commands DROP CONSTRAINT IF EXISTS agent_commands_action_check;
@@ -820,6 +821,37 @@ export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
  * check to finish, so a check that never finishes would hold it forever.
  */
 export const CORNER_CHECK_STUCK_AFTER = '1 hour';
+
+/** One silent command push after 30 seconds for a connected, idle helper. */
+export async function renudgeStrandedPendingCommands(db: SqlDatabase): Promise<number> {
+  const result = await db.query<{ count: number }>(
+    `WITH due AS MATERIALIZED (
+       SELECT command.id
+       FROM agent_commands command
+       JOIN agent_connections connection ON connection.agent_id=command.agent_id
+         AND connection.released_at IS NULL
+       JOIN live_server_instances server ON server.instance_id=connection.instance_id
+         AND server.renewed_at>clock_timestamp()-interval '90 seconds'
+       WHERE command.state='pending' AND command.action='input'
+         AND command.reason IN ('human_tag','direct_message')
+         AND command.renudged_at IS NULL
+         AND command.created_at<=clock_timestamp()-interval '30 seconds'
+         AND NOT EXISTS (
+           SELECT 1 FROM agent_commands busy
+           WHERE busy.agent_id=command.agent_id AND busy.state='claimed'
+             AND busy.lease_expires_at>clock_timestamp()
+         )
+       ORDER BY command.created_at,command.id LIMIT 100
+       FOR UPDATE OF command SKIP LOCKED
+     ), renudged AS (
+       UPDATE agent_commands command SET renudged_at=clock_timestamp()
+       FROM due WHERE command.id=due.id AND command.state='pending'
+         AND command.renudged_at IS NULL
+       RETURNING command.id
+     ) SELECT count(*)::int count FROM renudged`,
+  );
+  return Number(result.rows[0]?.count ?? 0);
+}
 
 export async function claimAgentCommand(
   db: SqlDatabase,

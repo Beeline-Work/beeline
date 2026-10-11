@@ -7,6 +7,7 @@ import { tagsKnownIdentitySql } from './message-mentions.js';
 import { noteFirstSilence } from './turn-silence-notice.js';
 import { systemLine } from './system-line.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
+import { renudgeStrandedPendingCommands } from './agent-command.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
 export const PRESENCE_OBSERVE_DEBOUNCE_MS = 25;
@@ -87,6 +88,7 @@ export class ConnectionPresence {
   readonly #release: () => void;
   readonly #releaseResync: () => void;
   #leaseTimer: ReturnType<typeof setInterval> | undefined;
+  #renudgeTimer: ReturnType<typeof setInterval> | undefined;
   #stopped = false;
   /** This server process; it holds the connections it accepted. */
   readonly instanceId: string;
@@ -142,6 +144,9 @@ export class ConnectionPresence {
    * not a poll or a separately written delivery ledger. */
   async start(): Promise<void> {
     this.startLease();
+    const renudge = () => void renudgeStrandedPendingCommands(this.database).catch(this.report);
+    this.#renudgeTimer = setInterval(renudge, 5_000);
+    this.#renudgeTimer.unref?.();
     await this.recoverWorkingStalls();
     await this.observe();
   }
@@ -269,6 +274,7 @@ export class ConnectionPresence {
   async stop(): Promise<void> {
     this.#stopped = true;
     clearInterval(this.#leaseTimer);
+    clearInterval(this.#renudgeTimer);
     this.#leaseTimer = undefined;
     this.#release();
     this.#releaseResync();

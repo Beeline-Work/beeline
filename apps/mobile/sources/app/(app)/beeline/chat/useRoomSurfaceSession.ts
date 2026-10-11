@@ -71,7 +71,6 @@ const ROOM_READ_UNCHANGED_REASONS: ReadonlySet<string> = new Set([
   'corner-status',
   'read-mark',
   'postgres:live_outputs',
-  'postgres:agent_commands',
   'postgres:agent_schedules',
   'postgres:room_read_marks',
   'postgres:registry_mcp_oauth_attempts',
@@ -251,6 +250,7 @@ export interface UseRoomSurfaceSessionResult {
   clearRoomRepository(): void;
   /** A message mutation returned the same canonical row as the live lane. */
   applyRoomMessageResult(message: RoomViewMessage): void;
+  applyPendingAgentCommands(commands: NonNullable<RoomView['pendingAgentCommands']>): void;
   applyRoomName(name: string, expected?: string): void;
   applyRoomReviewers(reviewerAgentId: string | undefined, reviewerFallbackIds: readonly string[]): void;
   /** Exact server-owned unread boundary captured before this visit advances the read mark. */
@@ -351,6 +351,22 @@ export function useRoomSurfaceSession({
       reconciledViewRef.current = next;
       void outboxRef.current?.reconcile(new Set(next.messages.map((row) => row.id)));
       scheduleCacheWriteRef.current?.();
+      return next;
+    });
+  }, []);
+  const applyPendingAgentCommands = useCallback((commands: NonNullable<RoomView['pendingAgentCommands']>) => {
+    if (!commands.length) return;
+    setRoomSurface((current) => {
+      if (!current) return current;
+      const active = new Set(current.latestAgentTurns.map((turn) => turn.requestId));
+      const pending = [...(current.pendingAgentCommands ?? [])];
+      for (const command of commands) {
+        if (!active.has(command.requestId) && !pending.some((row) => row.requestId === command.requestId)) {
+          pending.push(command);
+        }
+      }
+      const next = { ...current, pendingAgentCommands: pending };
+      reconciledViewRef.current = next;
       return next;
     });
   }, []);
@@ -1347,6 +1363,7 @@ export function useRoomSurfaceSession({
     applyRoomRepositoryResult,
     clearRoomRepository,
     applyRoomMessageResult,
+    applyPendingAgentCommands,
     applyRoomName,
     applyRoomReviewers,
     firstUnreadMessageId,

@@ -232,10 +232,13 @@ export default function BuzzIdentitySettings() {
             getBuzzPushRegistrationState(identity.publicKey),
             getPushPermissionInfo(),
           ]);
-        if (!cancelled) setWorkspaceList({ workspaces: freshWorkspaces.workspaces, confirmed: true });
-        const communityId = freshWorkspaces.workspaces.some((item) => item.id === activeCommunityId)
+        // Null: an eviction overtook the read, so it confirms nothing.
+        if (!cancelled && freshWorkspaces)
+          setWorkspaceList({ workspaces: freshWorkspaces.workspaces, confirmed: true });
+        const workspaces = freshWorkspaces?.workspaces ?? [];
+        const communityId = workspaces.some((item) => item.id === activeCommunityId)
           ? (activeCommunityId ?? undefined)
-          : freshWorkspaces.workspaces[0]?.id;
+          : workspaces[0]?.id;
         const profile = communityId
           ? await ensurePersonNameForWorkspace(client, communityId, identity.publicKey)
           : await client.getGlobalPersonProfile(identity.publicKey);

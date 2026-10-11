@@ -23,7 +23,7 @@ import { roomListSections } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { refreshChatList, useChatList } from '@/buzz/chat-list-store';
+import { chatListSnapshot, refreshChatList, useChatList } from '@/buzz/chat-list-store';
 import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
@@ -44,7 +44,6 @@ import { isTauri } from '@/utils/isTauri';
 import {
   type RoomViewIdentity,
   type WorkspaceListView,
-  isChatListView,
   isWorkspaceListView,
 } from '@beeline/buzz-client';
 import { Ionicons } from '@expo/vector-icons';
@@ -256,7 +255,7 @@ export const SidebarView = React.memo(function SidebarView() {
     // consume the same projection without starting a second request.
     if (!pathname.startsWith('/beeline/channels'))
       void mobileSurfaceCache.fetch(address, isWorkspaceListView, () => client.workspaces()).then((list) => {
-      if (cancelled) return;
+      if (cancelled || !list) return;
       const selected = workspaceIdRef.current;
       if (selected && !list.workspaces.some((workspace) => workspace.id === selected)) {
         const nextId = list.workspaces[0]?.id ?? null;
@@ -284,11 +283,7 @@ export const SidebarView = React.memo(function SidebarView() {
       : null),
     [identityPubkey, relayUrl, workspaceId],
   );
-  const chatListSource = React.useMemo(
-    () => (client && workspaceId ? { chats: () => client.chats(workspaceId) } : null),
-    [client, workspaceId],
-  );
-  const surface = useChatList(chatListKey, chatListSource, {
+  const surface = useChatList(chatListKey, {
     onError: () => setNavigationError(`Could not load ${ROOMS_LABEL.toLowerCase()}.`),
   });
   // An identity-wide change (a Room joined or left) reads the list again; the
@@ -458,10 +453,9 @@ export const SidebarView = React.memo(function SidebarView() {
       if (nextId === workspaceIdRef.current) return;
       workspaceIdRef.current = nextId;
       setWorkspaceId(nextId);
-      const cached = relayUrl && identityPubkey ? mobileSurfaceCache.peek(
-        surfaceAddress(relayUrl, identityPubkey, '/workspace/:id/chats', { workspaceId: nextId }),
-        isChatListView,
-      ) : null;
+      const cached = relayUrl && identityPubkey
+        ? chatListSnapshot({ relayUrl, viewerPubkey: identityPubkey, workspaceId: nextId })
+        : null;
       if (identityPubkey) void saveActiveCommunityId(identityPubkey, nextId);
       router.push(desktopWorkspaceRoute(nextId, cached?.chats.map((chat) => chat.room.id) ?? [], null) as Href);
     },

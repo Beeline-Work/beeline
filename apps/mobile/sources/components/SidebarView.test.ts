@@ -9,7 +9,6 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).toContain('subscribeActiveCommunityId');
     expect(source).toContain('if (workspaceIdRef.current === nextWorkspaceId) return;');
     expect(source).toContain('setWorkspaceId(nextWorkspaceId);');
-    expect(source).toContain('useChatList(chatListKey, chatListSource');
   });
 
   it('follows the Workspace encoded by browser history and deep links', () => {
@@ -41,10 +40,5 @@ describe('desktop sidebar workspace synchronization', () => {
     expect(source).not.toContain('presenceCaption');
     expect(source).not.toContain('presenceDot');
     expect(source).not.toContain('desktop-room-presence-');
-  });
-  it('uses visible conversation counts for the desktop toolbar and initial pin filter', () => {
-    expect(source).toContain('roomListCounts(surface?.chats ?? [], pinned)');
-    expect(source).toContain('counts={counts}');
-    expect(source).toContain('!item.closed && !item.directMessage && pinned.includes(item.room.id)');
   });
 });

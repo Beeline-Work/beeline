@@ -190,6 +190,23 @@ vi.mock('@/sync/transport', () => ({
     }
   },
 }));
+// The app-level Room list store watches through the shared live connection.
+vi.mock('@/sync/transport/live-connection', () => ({
+  sharedLiveConnection: () => ({
+    register: async (
+      filters: readonly { readonly '#h'?: readonly string[] }[],
+      listener: (event: MonolithSurfaceEvent) => void,
+    ) => {
+      deck.subscriptions.push({ filters, emit: listener });
+      return () => undefined;
+    },
+    whenSubscribed: async () => undefined,
+    isViewing: () => false,
+    reconnect: () => {
+      deck.reconnects += 1;
+    },
+  }),
+}));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     async workspaces(): Promise<WorkspaceListView> {

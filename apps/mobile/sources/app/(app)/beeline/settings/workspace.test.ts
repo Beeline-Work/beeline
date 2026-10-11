@@ -77,6 +77,9 @@ vi.mock('@/buzz/surface-storage', () => ({
   mobileSurfaceCache: {
     read: vi.fn(async () => null),
     fetch: vi.fn(async (_address: unknown, _guard: unknown, request: () => Promise<unknown>) => request()),
+    publish: (_address: string, value: unknown) => value,
+    write: vi.fn(async () => undefined),
+    remove: vi.fn(async () => undefined),
     peek: (address: string) => hotSurfaces.values.get(address) ?? null,
     subscribe: (address: string, listener: () => void) => {
       const listeners = hotSurfaces.listeners.get(address) ?? new Set<() => void>();
@@ -85,6 +88,15 @@ vi.mock('@/buzz/surface-storage', () => ({
       return () => listeners.delete(listener);
     },
   },
+}));
+// The Room list store settings reads watches through the shared live connection.
+vi.mock('@/sync/transport/live-connection', () => ({
+  sharedLiveConnection: () => ({
+    register: async () => () => undefined,
+    whenSubscribed: async () => undefined,
+    isViewing: () => false,
+    reconnect: () => undefined,
+  }),
 }));
 vi.mock('@/buzz/avatar-upload', () => avatarUpload);
 vi.mock('@/buzz/runtime-config', () => ({
@@ -177,6 +189,7 @@ vi.mock('react-native', async () => {
 });
 
 import WorkspaceSettings from './workspace';
+import { resetChatListStoresForTest } from '@/buzz/chat-list-store';
 
 const originalConsoleError = console.error;
 
@@ -194,6 +207,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   vi.clearAllMocks();
+  resetChatListStoresForTest();
   hotSurfaces.values.clear();
   hotSurfaces.listeners.clear();
   roomViews.workspace.mockResolvedValue(workspaceView());

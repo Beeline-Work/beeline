@@ -313,6 +313,7 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
 
 import { SidebarView } from './SidebarView';
 import { resetChatListStoresForTest } from '@/buzz/chat-list-store';
+import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 let tree: ReactTestRenderer;
 function control(id: string) {
   const nodes = tree.root.findAll(
@@ -402,6 +403,11 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces).toEqual([]);
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', null);
     expect(routerReplace).toHaveBeenCalledWith('/beeline/community');
+  });
+
+  it('counts the Rooms of the shared Room list in the desktop toolbar', () => {
+    // workspace-a lists one Room and one DM; neither is unread or pinned.
+    expect(tree.root.findByType(RoomListToolbar).props.counts).toEqual({ all: 2, unread: 0, pinned: 0 });
   });
 
   it('keeps one shared projection across route hops without another GET', async () => {

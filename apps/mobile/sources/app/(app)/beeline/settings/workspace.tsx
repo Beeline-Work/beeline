@@ -8,16 +8,15 @@ import { router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-ro
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   SurfaceRefreshScheduler,
-  isChatListView,
   isWorkspaceView,
   type BuzzClient,
-  type ChatListView,
   type WorkspaceView,
 } from '@beeline/buzz-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { refreshChatList, useChatList, type ChatListKey } from '@/buzz/chat-list-store';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -147,7 +146,7 @@ export default function WorkspaceSettings() {
   const [client, setClient] = useState<BuzzClient | null>(null);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView | null>(null);
   const paintedWorkspaceId = useRef<string | null>(null);
-  const [chatList, setChatList] = useState<ChatListView | null>(null);
+  const [chatListKey, setChatListKey] = useState<ChatListKey | null>(null);
   const [workspaceName, setWorkspaceName, workspaceDraft] = useTextDraft(`workspace-name:${communityId}`,
     '',
   );
@@ -163,8 +162,9 @@ export default function WorkspaceSettings() {
   useLatencyRouteFrame('/beeline/settings/workspace', !loading, true);
   const [error, setError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
-  const workspaceSchedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView> | null>(null);
-  const chatsSchedulerRef = useRef<SurfaceRefreshScheduler<ChatListView> | null>(null);
+  const workspaceSchedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView | null> | null>(null);
+  // The Room names come from the app-level Room list, which owns its watch and reads.
+  const chatList = useChatList(chatListKey, { onError: (reason) => setError(String(reason)) });
 
   const workspace = workspaceView?.workspace;
   const canManageWorkspace = workspaceView?.viewer.permissions.manage === true;
@@ -205,14 +205,12 @@ export default function WorkspaceSettings() {
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      let unsubscribe: (() => void) | undefined;
       let stopWorkspaceEntry: (() => void) | undefined;
-      let workspaceScheduler: SurfaceRefreshScheduler<WorkspaceView> | undefined;
-      let chatsScheduler: SurfaceRefreshScheduler<ChatListView> | undefined;
+      let workspaceScheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
       if (paintedWorkspaceId.current !== communityId) {
         setLoading(true);
         setWorkspaceView(null);
-        setChatList(null);
+        setChatListKey(null);
         paintedWorkspaceId.current = communityId ?? null;
       }
       setError(null);
@@ -232,7 +230,6 @@ export default function WorkspaceSettings() {
             return;
           }
           const workspaceAddress = surfaceAddress(currentRelayUrl, currentIdentity.publicKey, '/workspace/:id', { workspaceId: communityId });
-          const chatsAddress = surfaceAddress(currentRelayUrl, currentIdentity.publicKey, '/workspace/:id/chats', { workspaceId: communityId });
           // Paint the shared entry, so a `workspace-changed` frame from another
           // session repaints the open page without another read.
           stopWorkspaceEntry = mobileSurfaceCache.subscribe(workspaceAddress, () => {
@@ -242,17 +239,16 @@ export default function WorkspaceSettings() {
             workspaceDraft.initialize(next.workspace.name);
             setLoading(false);
           });
-          const [cachedWorkspace, cachedChats] = await Promise.all([
-            mobileSurfaceCache.read(workspaceAddress, isWorkspaceView),
-            mobileSurfaceCache.read(chatsAddress, isChatListView),
-          ]);
+          setChatListKey({
+            relayUrl: currentRelayUrl, viewerPubkey: currentIdentity.publicKey, workspaceId: communityId,
+          });
+          const cachedWorkspace = await mobileSurfaceCache.read(workspaceAddress, isWorkspaceView);
           if (cancelled) return;
           if (cachedWorkspace) {
             setWorkspaceView(cachedWorkspace);
             workspaceDraft.initialize(cachedWorkspace.workspace.name);
             setLoading(false);
           }
-          if (cachedChats) setChatList(cachedChats);
           const transport = new BuzzRigTransport(currentIdentity);
           const currentClient = await transport.ensureClient();
           if (cancelled) return;
@@ -261,6 +257,8 @@ export default function WorkspaceSettings() {
           workspaceScheduler = new SurfaceRefreshScheduler({
             fetch: () => mobileSurfaceCache.fetch(workspaceAddress, isWorkspaceView, () => http.workspace(communityId)),
             apply: (value) => {
+              // Null: an eviction overtook the read; there is nothing to paint.
+              if (!value) return;
               setWorkspaceView(value);
               workspaceDraft.initialize(value.workspace.name);
               setLoading(false);
@@ -271,28 +269,8 @@ export default function WorkspaceSettings() {
               setError(String(reason));
             },
           });
-          chatsScheduler = new SurfaceRefreshScheduler({
-            fetch: () => mobileSurfaceCache.fetch(chatsAddress, isChatListView, () => http.chats(communityId)),
-            apply: (value) => {
-              setChatList(value);
-              setError(null);
-            },
-            onError: (reason) => setError(String(reason)),
-          });
           workspaceSchedulerRef.current = workspaceScheduler;
-          chatsSchedulerRef.current = chatsScheduler;
-          unsubscribe = await currentClient.surfaceSubscribe(
-            [{ kinds: [9, 9000, 9001, 9007, 9008, 30078], '#h': [communityId] }],
-            () => {
-              workspaceScheduler?.signal();
-              chatsScheduler?.signal();
-            },
-          );
-          if (cancelled) return unsubscribe();
-          await Promise.all([
-            workspaceScheduler.startAfter(Promise.resolve()),
-            chatsScheduler.startAfter(Promise.resolve()),
-          ]);
+          await workspaceScheduler.startAfter(Promise.resolve());
         } catch (caught) {
           if (!cancelled) setError(`Could not load ${WORKSPACE_LABEL} settings: ${String(caught)}`);
         } finally {
@@ -301,12 +279,9 @@ export default function WorkspaceSettings() {
       })();
       return () => {
         cancelled = true;
-        unsubscribe?.();
         stopWorkspaceEntry?.();
         workspaceScheduler?.dispose();
-        chatsScheduler?.dispose();
         workspaceSchedulerRef.current = null;
-        chatsSchedulerRef.current = null;
       };
     }, [communityId, retryGeneration]),
   );
@@ -389,14 +364,14 @@ export default function WorkspaceSettings() {
       try {
         await monolithPhoneOperation('updateRoom', { roomId: room.id, visibility });
         workspaceSchedulerRef.current?.force();
-        chatsSchedulerRef.current?.force();
+        if (chatListKey) refreshChatList(chatListKey);
       } catch (caught) {
         setError(`Could not change ${ROOM_LABEL} visibility: ${String(caught)}`);
       } finally {
         setWorkingKey(null);
       }
     },
-    [client],
+    [chatListKey, client],
   );
 
   const showRoomDetails = useCallback((room: WorkspaceRoomSetting) => {

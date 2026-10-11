@@ -218,7 +218,7 @@ export default function BuzzChannels() {
   const [retryGeneration, setRetryGeneration] = useState(0);
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatStore = useRef<ChatListHandle | null>(null);
-  const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView> | null>(null);
+  const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView | null> | null>(null);
   // A deck under a pushed Room, or in a backgrounded app, reads nothing; its
   // focus and the foreground socket's resubscribe are the covering reads.
   const deckFocusedRef = useRef(true);
@@ -392,7 +392,7 @@ export default function BuzzChannels() {
     let cancelled = false;
     let unsubscribeWorkspaces: (() => void) | undefined;
     let unsubscribeChats: (() => void) | undefined;
-    let workspaceRefresh: SurfaceRefreshScheduler<WorkspaceListView> | undefined;
+    let workspaceRefresh: SurfaceRefreshScheduler<WorkspaceListView | null> | undefined;
     let releaseChats: (() => void) | undefined;
     void (async () => {
       setError(null);
@@ -437,6 +437,8 @@ export default function BuzzChannels() {
       workspaceRefresh = new SurfaceRefreshScheduler({
         fetch: () => mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () => http.workspaces()),
         apply: (value) => {
+          // Null: an eviction overtook the read; there is nothing to paint.
+          if (!value) return;
           deckMissedRef.current.workspaces = false;
           setWorkspaceList(value);
           setWorkspacesConfirmed(true);
@@ -473,12 +475,6 @@ export default function BuzzChannels() {
       const chats = selectedId
         ? acquireChatList(
             { relayUrl: nextRelayUrl, viewerPubkey: nextIdentity.publicKey, workspaceId: selectedId },
-            {
-              chats: () => http.chats(selectedId),
-              subscribe: async (filters, listener) =>
-                (await relayPromise).surfaceSubscribe(filters, listener),
-              reconnect: () => nextTransport.reconnectLive(),
-            },
             {
               visible: deckVisible,
               onRead: () => {

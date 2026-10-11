@@ -1157,13 +1157,7 @@ export function BuzzChatSurface({
       : null),
     [activeCommunityId, chatListRelayUrl, userPubkey],
   );
-  const chatListSource = useMemo(
-    () => (roomClient && activeCommunityId
-      ? { chats: () => roomClient.chats(activeCommunityId) }
-      : null),
-    [activeCommunityId, roomClient],
-  );
-  const workspaceChatList = useChatList(chatListKey, chatListSource);
+  const workspaceChatList = useChatList(chatListKey);
   const workspaceChats = useMemo<readonly ChatListItem[]>(
     () => workspaceChatList?.chats ?? [],
     [workspaceChatList],

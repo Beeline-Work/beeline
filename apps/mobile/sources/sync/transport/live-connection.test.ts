@@ -68,6 +68,7 @@ function createConnection(authorization = vi.fn().mockResolvedValue('phone-sessi
   const connection = new LiveConnection({
     authorization,
     liveUrl: () => 'wss://server.example/v1/phone/live',
+    recordScope: async () => undefined,
     subscribeIdentityChange: (listener) => {
       identityListeners.add(listener);
       return () => identityListeners.delete(listener);

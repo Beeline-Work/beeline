@@ -49,7 +49,7 @@ function feedbackTriageDetail(
   };
 }
 
-/** `drafts` are live draft events the shared socket delivers to every registration. */
+/** `drafts` are live draft events the shared socket writes into the Room's draft store. */
 function workflowRunShims(
   mobile: string,
   detail: unknown,
@@ -59,9 +59,10 @@ function workflowRunShims(
   const view = detail as { contract: unknown; run: unknown };
   return {
     ...webProofShims(mobile),
-    '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
-      register: async (_filters, listener) => {
-        setTimeout(() => ${JSON.stringify(drafts)}.forEach((live) => listener({ monolithLive: live })), 0);
+    '@/sync/transport/live-connection': `import { applyRoomDraftFrame } from '@/buzz/room-live-drafts';
+    export const sharedLiveConnection = () => ({
+      register: async () => {
+        setTimeout(() => ${JSON.stringify(drafts)}.forEach((live) => applyRoomDraftFrame(live, true)), 0);
         return () => undefined;
       },
     });`,

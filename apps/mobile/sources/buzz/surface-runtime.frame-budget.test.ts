@@ -10,7 +10,8 @@ import {
   type RoomViewMessage,
 } from '@beeline/buzz-client';
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { createRoomMessageProjector, reconcileRoomView } from './room-view-presentation';
+import { createRoomMessageProjector } from './room-view-presentation';
+import { applyRoomTailRead, selectRoomMessages } from './room-message-records';
 import { useRoomSendFrame } from './room-send-frame';
 
 vi.mock('react-native-mmkv', () => ({
@@ -114,12 +115,17 @@ describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
     const fetch = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
     const projector = createRoomMessageProjector();
     const frames: ChatDisplayMessage[][] = [];
-    let current: RoomView | null = null;
+    // Each read lands in the Room's message records; the tail holds ids.
     const scheduler = new SurfaceRefreshScheduler({
       fetch,
-      apply: (fresh) => {
-        current = reconcileRoomView(current, fresh);
-        frames.push(projector.project(current.messages, current.viewer.identity.pubkey));
+      apply: (fresh: RoomView) => {
+        const tail = applyRoomTailRead('scope', 'room', 'tail', fresh, false);
+        frames.push(
+          projector.project(
+            selectRoomMessages('scope', 'room', tail.ids),
+            fresh.viewer.identity.pubkey,
+          ),
+        );
       },
     });
 
@@ -141,13 +147,12 @@ describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
       ['e', parentId, '', 'reply'],
     ]);
 
-    const changed = reconcileRoomView(
-      current,
-      view([{ ...structuredClone(firstMessage), text: 'Agent reply edited' }]),
-    );
+    const edited = view([{ ...structuredClone(firstMessage), text: 'Agent reply edited' }]);
+    const changedTail = applyRoomTailRead('scope', 'room', 'tail', edited, false);
+    const changed = { messages: selectRoomMessages('scope', 'room', changedTail.ids) };
     const changedProjection = projector.project(
       changed.messages,
-      changed.viewer.identity.pubkey,
+      edited.viewer.identity.pubkey,
     )[0]!;
     expect(changedProjection).not.toBe(refetchedParent);
     expect(changedProjection.text).toBe('Agent reply edited');

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   addRoomPage,
   RoomViewHttpError,
@@ -16,6 +16,13 @@ import {
   type RoomHistoryCursorState,
 } from '@/buzz/room-history-pagination';
 import { boundaryRowIndex, messageBoundaryIds } from '@/buzz/room-new-message-boundary';
+import {
+  holdRoomMessages,
+  selectRoomMessages,
+  useRoomMessages,
+  writeRoomMessages,
+  type RoomRecordScope,
+} from '@/buzz/room-message-records';
 import { foldSettledActivityRuns, type ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { anchorRelayReports } from '@/buzz/system-lines';
 import {
@@ -34,6 +41,10 @@ import { rendersTranscriptRow } from '@/buzz/transcript-presentation';
  * owns) or detached (a contiguous run of rows around a jump target that does
  * not reach the tail yet). `loadNewer` walks a detached window forward and
  * attaches it once it meets the tail.
+ *
+ * The window holds only message ids. Each page's rows go to the Room's
+ * message records, and the rows it returns are read back from them, so a
+ * live edit reaches a loaded page as it reaches the tail.
  */
 
 export type TranscriptHistoryStatus = 'idle' | 'loading' | 'error' | 'complete';
@@ -65,10 +76,10 @@ export type RoomHistoryClient = {
   historyAround?(roomId: string, messageId: string): Promise<RoomHistoryView>;
 };
 
-type DetachedWindow = {
-  readonly rows: readonly RoomViewMessage[];
+type DetachedWindow<Row = RoomViewMessage> = {
+  readonly rows: readonly Row[];
   /** Rows already read that are newer than `rows`, shown by `loadNewer` first. */
-  readonly buffered: readonly RoomViewMessage[];
+  readonly buffered: readonly Row[];
   /** Fetch after this id once `buffered` is empty; null when `buffered` reaches the tail. */
   readonly newerAfter: string | null;
   readonly olderBefore: RoomHistoryCursor | null;
@@ -82,23 +93,33 @@ function missingJump(error: unknown): boolean {
   return error instanceof RoomViewHttpError && (error.status === 404 || error.status === 400);
 }
 
+let nextHistoryHolder = 0;
+const ids = (rows: readonly RoomViewMessage[]) => rows.map((row) => row.id);
+
 export function useRoomMessageStore({
   roomId,
+  recordScope,
   tailMessages,
   roomClient,
   enabled,
   initialVisibleCount,
 }: {
   roomId: string;
+  /** The relay and viewer whose message records hold this window's rows. */
+  recordScope: RoomRecordScope | undefined;
   tailMessages: readonly RoomViewMessage[] | undefined;
   roomClient: RoomHistoryClient | null;
   enabled: boolean;
   initialVisibleCount: number;
 }) {
-  const [olderPages, setOlderPages] = useState<readonly (readonly RoomViewMessage[])[]>([]);
-  const olderPagesRef = useRef(olderPages);
-  const [detached, setDetachedState] = useState<DetachedWindow | null>(null);
-  const detachedRef = useRef<DetachedWindow | null>(null);
+  const [holder] = useState(() => `history:${(nextHistoryHolder += 1)}`);
+  const scopeRef = useRef(recordScope);
+  scopeRef.current = recordScope;
+  // Older history, attached under the tail: one ordered page of ids.
+  const [olderIds, setOlderIds] = useState<readonly string[]>([]);
+  const olderIdsRef = useRef(olderIds);
+  const [detached, setDetachedState] = useState<DetachedWindow<string> | null>(null);
+  const detachedIdsRef = useRef<DetachedWindow<string> | null>(null);
   // Advances when a jump or a return to the latest rows replaces the rows on
   // screen, rather than paging more rows onto them.
   const [windowId, setWindowId] = useState(0);
@@ -123,6 +144,31 @@ export function useRoomMessageStore({
   const statusRef = useRef<TranscriptHistoryStatus>('idle');
   const requestVersionRef = useRef(0);
   const previousRoomIdRef = useRef(roomId);
+  const rowsOf = useCallback(
+    (held: readonly string[]) => selectRoomMessages(scopeRef.current, previousRoomIdRef.current, held),
+    [],
+  );
+  /** Every id this window holds, so the Room's records keep their content. */
+  const hold = useCallback(() => {
+    const scope = scopeRef.current;
+    if (!scope) return;
+    const window = detachedIdsRef.current;
+    const held = [...olderIdsRef.current, ...(window?.rows ?? []), ...(window?.buffered ?? [])];
+    holdRoomMessages(scope, previousRoomIdRef.current, holder, held.length ? held : null);
+  }, [holder]);
+  const write = useCallback((rows: readonly RoomViewMessage[]) => {
+    const scope = scopeRef.current;
+    if (scope && rows.length) writeRoomMessages(scope, previousRoomIdRef.current, rows);
+  }, []);
+  const olderPagesNow = useCallback(
+    (): readonly (readonly RoomViewMessage[])[] =>
+      olderIdsRef.current.length ? [rowsOf(olderIdsRef.current)] : [],
+    [rowsOf],
+  );
+  const detachedNow = useCallback((): DetachedWindow | null => {
+    const window = detachedIdsRef.current;
+    return window ? { ...window, rows: rowsOf(window.rows), buffered: rowsOf(window.buffered) } : null;
+  }, [rowsOf]);
   const completedTailIdRef = useRef<string | null>(null);
   const previousTailRef = useRef<{ roomId: string; rows: readonly RoomViewMessage[] } | null>(null);
   const tailRef = useRef(tailMessages);
@@ -146,15 +192,25 @@ export function useRoomMessageStore({
             current: readonly (readonly RoomViewMessage[])[],
           ) => readonly (readonly RoomViewMessage[])[]),
     ) => {
-      olderPagesRef.current = typeof next === 'function' ? next(olderPagesRef.current) : next;
-      setOlderPages(olderPagesRef.current);
+      const rows = (typeof next === 'function' ? next(olderPagesNow()) : next).flat();
+      write(rows);
+      olderIdsRef.current = ids(rows);
+      setOlderIds(olderIdsRef.current);
+      hold();
     },
-    [],
+    [hold, olderPagesNow, write],
   );
-  const setDetached = useCallback((next: DetachedWindow | null) => {
-    detachedRef.current = next;
-    setDetachedState(next);
-  }, []);
+  const setDetached = useCallback(
+    (next: DetachedWindow | null) => {
+      if (next) write([...next.rows, ...next.buffered]);
+      detachedIdsRef.current = next
+        ? { ...next, rows: ids(next.rows), buffered: ids(next.buffered) }
+        : null;
+      setDetachedState(detachedIdsRef.current);
+      hold();
+    },
+    [hold, write],
+  );
   const setJump = useCallback((next: RoomJump | null) => {
     jumpRef.current = next;
     setJumpState(next);
@@ -248,7 +304,7 @@ export function useRoomMessageStore({
     ) => {
       const cut = index + 1 + JUMP_NEWER_ROWS;
       if (newerAfter === null && cut >= all.length) {
-        if (detachedRef.current) setWindowId((id) => id + 1);
+        if (detachedIdsRef.current) setWindowId((id) => id + 1);
         attachToTail(all, olderBefore, olderStatus === 'complete');
         return;
       }
@@ -268,14 +324,14 @@ export function useRoomMessageStore({
 
   /** Drop a detached window so the transcript shows the newest rows again. */
   const showLatest = useCallback(() => {
-    if (!detachedRef.current) return;
+    if (!detachedIdsRef.current) return;
     setWindowId((id) => id + 1);
     setDetached(null);
     setNewerStatus('idle');
     setWindowOlderStatus('idle');
     const tail = tailRef.current;
     const oldest =
-      (addRoomPage({ pages: olderPagesRef.current }, []).pages[0] ?? [])[0] ?? tail?.[0];
+      (addRoomPage({ pages: olderPagesNow() }, []).pages[0] ?? [])[0] ?? tail?.[0];
     cursorRef.current = { roomId: previousRoomIdRef.current, before: cursorOf(oldest) };
     completedTailIdRef.current = null;
     requestVersionRef.current += 1;
@@ -292,7 +348,7 @@ export function useRoomMessageStore({
       const requestedRoomId = previousRoomIdRef.current;
       setJump({ messageId, status: 'loading' });
       const tail = tailRef.current ?? [];
-      const current = detachedRef.current;
+      const current = detachedNow();
       // A target the phone already holds needs no read.
       if (current) {
         const rows = [...current.rows, ...current.buffered];
@@ -309,7 +365,7 @@ export function useRoomMessageStore({
           return;
         }
       } else {
-        const older = addRoomPage({ pages: olderPagesRef.current }, []).pages[0] ?? [];
+        const older = addRoomPage({ pages: olderPagesNow() }, []).pages[0] ?? [];
         const tailIds = new Set(tail.map((row) => row.id));
         const resident = [...older.filter((row) => !tailIds.has(row.id)), ...tail];
         const index = resident.findIndex((row) => row.id === messageId);
@@ -378,7 +434,7 @@ export function useRoomMessageStore({
     (keepJumpRead = false) => {
       requestVersionRef.current += 1;
       if (!keepJumpRead) windowRequestRef.current += 1;
-      if (detachedRef.current) setWindowId((id) => id + 1);
+      if (detachedIdsRef.current) setWindowId((id) => id + 1);
       setDetached(null);
       setNewerStatus('idle');
       setWindowOlderStatus('idle');
@@ -409,11 +465,20 @@ export function useRoomMessageStore({
 
   useEffect(() => {
     if (previousRoomIdRef.current === roomId) return;
+    const scope = scopeRef.current;
+    if (scope) holdRoomMessages(scope, previousRoomIdRef.current, holder, null);
     previousRoomIdRef.current = roomId;
     clear();
     setJump(null);
     positions.reset();
-  }, [roomId, clear, setJump, positions]);
+  }, [roomId, clear, setJump, positions, holder]);
+  useEffect(
+    () => () => {
+      const scope = scopeRef.current;
+      if (scope) holdRoomMessages(scope, previousRoomIdRef.current, holder, null);
+    },
+    [holder],
+  );
 
   useEffect(() => {
     visibleCountRef.current = Math.max(visibleCountRef.current, initialVisibleCount);
@@ -486,7 +551,7 @@ export function useRoomMessageStore({
 
   const requestOlderDetached = useCallback(
     (retry: boolean) => {
-      const current = detachedRef.current;
+      const current = detachedNow();
       const client = clientRef.current;
       if (
         !current ||
@@ -508,7 +573,7 @@ export function useRoomMessageStore({
       void client
         .history(requestedRoomId, before)
         .then((page) => {
-          const latest = detachedRef.current;
+          const latest = detachedNow();
           if (request !== windowRequestRef.current || !latest) return;
           const seen = new Set(latest.rows.map((row) => row.id));
           const rows = [...page.messages.filter((row) => !seen.has(row.id)), ...latest.rows];
@@ -529,7 +594,7 @@ export function useRoomMessageStore({
 
   const requestNewer = useCallback(
     (retry: boolean) => {
-      const current = detachedRef.current;
+      const current = detachedNow();
       if (
         !current ||
         newerStatusRef.current === 'loading' ||
@@ -564,7 +629,7 @@ export function useRoomMessageStore({
       void client
         .historyAfter(requestedRoomId, after)
         .then((page) => {
-          const latest = detachedRef.current;
+          const latest = detachedNow();
           if (request !== windowRequestRef.current || !latest) return;
           const tailIds = new Set((tailRef.current ?? []).map((row) => row.id));
           const seen = new Set(latest.rows.map((row) => row.id));
@@ -590,14 +655,14 @@ export function useRoomMessageStore({
 
   const loadOlder = useCallback(
     (residentRowCount: number) => {
-      if (detachedRef.current) requestOlderDetached(false);
+      if (detachedIdsRef.current) requestOlderDetached(false);
       else requestOlderAttached(residentRowCount, false);
     },
     [requestOlderAttached, requestOlderDetached],
   );
   const retryOlder = useCallback(
     (residentRowCount: number) => {
-      if (detachedRef.current) requestOlderDetached(true);
+      if (detachedIdsRef.current) requestOlderDetached(true);
       else requestOlderAttached(residentRowCount, true);
     },
     [requestOlderAttached, requestOlderDetached],
@@ -609,7 +674,7 @@ export function useRoomMessageStore({
    */
   const fill = useCallback(
     (residentRowCount: number) => {
-      if (detachedRef.current) requestNewer(false);
+      if (detachedIdsRef.current) requestNewer(false);
       else requestOlderAttached(residentRowCount, false, true);
     },
     [requestNewer, requestOlderAttached],
@@ -636,10 +701,7 @@ export function useRoomMessageStore({
     if (status === 'loading' || status === 'ready') setJump(null);
   }, [setJump]);
 
-  const rows = useMemo(
-    () => (detached ? detached.rows : (addRoomPage({ pages: olderPages }, []).pages[0] ?? [])),
-    [detached, olderPages],
-  );
+  const rows = useRoomMessages(recordScope, roomId, detached ? detached.rows : olderIds);
 
   const sameRoom = previousRoomIdRef.current === roomId;
   return {

@@ -59,6 +59,8 @@ export type LiveWireEvent = (
       type: 'message-delta';
       roomId: string;
       message: RoomViewMessage;
+      /** The row's write counter; a lower one is older than a copy already held. */
+      version?: number;
       deckPreview?: ChatListItem['latestMessage'] | null;
       workflowRuns?: readonly WorkflowRunSummaryView[];
       trace?: LiveWireTrace;

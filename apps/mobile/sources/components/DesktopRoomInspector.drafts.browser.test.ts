@@ -61,7 +61,7 @@ it('Demonstration draft-send-R1: browser composer retains and submits only appen
         'const theme = { buzz: beelineThemes.obsidian, colors: { groupped: { background: "#14091a" }, divider: "#333", text: "#fff", textSecondary: "#aaa", textLink: "#b08a4a", surface: "#190e21" } };',
       ),
       '@/auth/buzz-identity-storage':
-        'export const loadBuzzIdentity = async () => ({ publicKey: "browser-viewer" }); export const getEffectiveRelayUrl = async () => "https://relay.test";',
+        'export const loadBuzzIdentity = async () => ({ publicKey: "browser-viewer" }); export const getEffectiveRelayUrl = async () => "https://relay.test"; export const loadBuzzViewerPubkey = async () => "browser-viewer";',
       '@/sync/transport': `export class BuzzRigTransport {
         async composeMessage({ text }) { return { id: 'message', text }; }
         async publishPreparedMessage(event) { globalThis.sent.push(event.text);

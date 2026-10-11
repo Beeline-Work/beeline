@@ -62,6 +62,11 @@ describe('phone contract', () => {
     expect(
       readRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })?.messages,
     ).toEqual([{ ...message, presentation: 'card', relay }]);
+    // The row's write counter survives the read; a malformed one is dropped.
+    expect(readRoomView({ ...room, messages: [{ ...message, version: 3 }] })?.messages[0]?.version).toBe(3);
+    expect(
+      readRoomView({ ...room, messages: [{ ...message, version: '3' }] })?.messages[0]?.version,
+    ).toBeUndefined();
     expect(isRoomView({ ...room, messages: [{ ...message, bookmarked: true }] })).toBe(true);
     expect(
       readRoomView({ ...room, messages: [{ ...message, bookmarked: 'yes' }] })?.messages[0]

@@ -64,6 +64,7 @@ function Transcript({
 }) {
   const store = useRoomMessageStore({
     roomId: 'room',
+    recordScope: 'test-scope',
     tailMessages: tail,
     roomClient: client,
     enabled: true,

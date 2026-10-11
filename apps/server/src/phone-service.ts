@@ -759,6 +759,7 @@ function projectedMessage(
       : row.text,
     createdAt: unix(row.created_at),
     createdAtMs: row.created_at.getTime(),
+    ...(typeof row.version === 'number' ? { version: row.version } : {}),
     author,
     presentation: row.deleted_at ? 'system' : row.presentation,
     ...(row.deleted_at ? { deleted: true } : {}),

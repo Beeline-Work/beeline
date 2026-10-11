@@ -131,7 +131,7 @@ describe('Room→repo settings change', () => {
       'const confirmReplacement = useCallback(',
       'confirmReplacement',
     );
-    expect(chatSource).toContain('useRoomRepoReplacementGuard(workspaceChats,');
+    expect(chatSource).toContain('useRoomRepoReplacementGuard(parentChannelId ?? decodedId,');
     expect(confirm).toContain('openCornerCount');
     expect(confirm).toContain('Modal.confirm');
     expect(confirm).toContain('!roomRepository || !hasOpenCorners');

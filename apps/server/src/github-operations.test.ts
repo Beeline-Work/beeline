@@ -66,6 +66,71 @@ describe('GitHub phone operations', () => {
     return { corners, headSha, app, payload };
   }
 
+  it('does not wake on a superseded head when its completed suite arrives before push and synchronize', async () => {
+    const { corners, headSha: oldHead, app, payload } = await checksFixture();
+    const corner = corners[0]!;
+    const newHead = '2'.repeat(40);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`,
+      [corner, REVIEWER],
+    );
+    // GitHub has accepted the push, but its push/synchronize webhooks are still queued.
+    app.readPullRequest.mockResolvedValue({
+      number: 1, headSha: newHead, url: 'https://github.com/owner/widgets/pull/1',
+      mergeability: 'clean',
+    });
+    app.readCommitCheckRollup.mockImplementation(async (_token, _repository, sha) =>
+      sha === oldHead
+        ? { state: 'failed', total: 1, failing: ['typecheck'], checks: [{ name: 'typecheck', status: 'failed' }] }
+        : { state: 'passed', total: 1, failing: [], checks: [{ name: 'typecheck', status: 'passed' }] },
+    );
+    const operations = new GitHubOperations(
+      database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret',
+    );
+    const oldSuite = {
+      ...payload,
+      check_suite: {
+        head_branch: 'feature/checks-1', head_sha: oldHead,
+        status: 'completed', conclusion: 'failure',
+      },
+    };
+    await operations.processWebhook('check_suite', oldSuite);
+    expect((await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'kind'='check-failed'`,
+      [corner],
+    )).rowCount).toBe(0);
+    expect((await database.query(
+      `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`,
+      [corner],
+    )).rowCount).toBe(0);
+
+    await operations.processWebhook('push', {
+      installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      ref: 'refs/heads/feature/checks-1', after: newHead,
+    });
+    await operations.processWebhook('pull_request', {
+      action: 'synchronize', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      pull_request: {
+        number: 1, title: 'Fix checks', html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: 'feature/checks-1', sha: newHead }, base: { ref: 'main' },
+        mergeable_state: 'clean', merged: false,
+      },
+    });
+    await operations.processWebhook('check_suite', oldSuite);
+    expect((await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'kind'='check-failed'`,
+      [corner],
+    )).rowCount).toBe(0);
+    expect((await database.query<{ lifecycle: { pr: { headSha: string }; checks: string } }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
+    )).rows[0]?.lifecycle).toMatchObject({ pr: { headSha: newHead }, checks: 'passing' });
+    expect((await database.query(
+      `SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'kind'='check-passed'`,
+      [corner],
+    )).rowCount).toBe(1);
+  });
+
   it('gives a check suite a browser card URL even when GitHub sends only its API URL', async () => {
     const { corners, headSha, app, payload } = await checksFixture();
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
@@ -838,6 +903,7 @@ describe('GitHub phone operations', () => {
         failing: [],
         checks: [{ name: 'build', status: 'passed' }],
       })),
+      readPullRequest: vi.fn(async () => ({ number: 9, headSha })),
       openPullRequestsForBranch: vi.fn(async () => []),
     } as unknown as GitHubAppClient;
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
@@ -1738,7 +1804,9 @@ describe('GitHub phone operations', () => {
         )
       ).rows[0]?.lifecycle.pr.mergeability,
     ).toBe('other');
-    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement);
+    // The synchronize webhook verifies its check verdict against the live PR
+    // even though the mergeability verdict was already settled.
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement + 1);
     const newBaseSha = '4'.repeat(40);
     readPullRequest.mockResolvedValueOnce({
       number: 1,

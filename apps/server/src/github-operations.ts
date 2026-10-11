@@ -33,6 +33,7 @@ import {
 } from './agent-command.js';
 import { recordInstitutionalCornerOutcome } from './institutional-memory-shadow.js';
 import { reviewerList, roomAgentHealth } from './agent-health.js';
+import { fireRepositorySubscriptions } from './agent-subscriptions.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -1057,7 +1058,7 @@ export class GitHubOperations {
     };
   }
 
-  async processWebhook(event: string, payload: unknown) {
+  async processWebhook(event: string, payload: unknown, deliveryId?: string) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
     const body = payload as Record<string, unknown>;
     // The authenticated phone route uses this internal signal after a human message commits.
@@ -1069,6 +1070,10 @@ export class GitHubOperations {
     if (!installation || typeof installation !== 'object' || Array.isArray(installation)) return;
     const install = installation as Record<string, unknown>;
     if (typeof install.id !== 'number') return;
+    if (deliveryId) {
+      const changed = await fireRepositorySubscriptions(this.database, install.id, event, body, deliveryId);
+      for (const roomId of new Set(changed)) this.onRoomChanged?.(roomId);
+    }
     if (
       event === 'push' ||
       event === 'issues' ||
@@ -1900,7 +1905,7 @@ export class GitHubOperations {
   }
 
   private async refreshCheckRollup(
-    target: CornerWebhookTarget & { has_pr?: boolean }, repository: string,
+    target: CornerWebhookTarget & { has_pr?: boolean; pr_number?: string | null }, repository: string,
     check: NonNullable<ReturnType<typeof checkFact>>, database: SqlDatabase,
   ) {
     const checkHeadSha = check.headSha!;
@@ -1913,6 +1918,12 @@ export class GitHubOperations {
           repositoryIds: [Number(target.repository_id)],
         });
         const rollup = await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
+        // A push can move GitHub's PR head before either its push or synchronize
+        // webhook reaches us. The stored head alone cannot authorize a verdict.
+        const livePr = target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed')
+          ? await this.app.readPullRequest(token.token, repository, Number(target.pr_number))
+          : undefined;
+        if (livePr && livePr.headSha !== checkHeadSha) return;
         await database.transaction(async (database) => {
           await lockCornerLifecycle(database, target.corner_id);
           // Webhooks signal a refresh. Revalidate its head and age only after
@@ -1926,6 +1937,7 @@ export class GitHubOperations {
             )
           ).rows[0]?.lifecycle;
           if (!current) return;
+          if (livePr && current.pr?.number !== livePr.number) return;
           // GitHub may deliver a completed run for the previous branch head after a push.
           if (current.pr?.headSha && checkHeadSha !== current.pr.headSha) return;
           // A PR removed during the fetch invalidates it; a pre-PR corner can record checks.

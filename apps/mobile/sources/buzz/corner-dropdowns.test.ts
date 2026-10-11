@@ -1,15 +1,23 @@
 import { describe, expect, it } from 'vitest';
+import type { ChatListCorner } from '@beeline/api-contract/phone';
 import type { ChatListItem } from '@beeline/buzz-client';
 import { mineWaitingRooms, nextExpandedRooms } from './corner-dropdowns';
+import type { RoomCornerSummary } from './room-corner-store';
 
-const room = (id: string, corners: ChatListItem['openCorners'] = []): ChatListItem =>
-  ({
-    room: { id, name: id, workspaceId: 'w' },
-    unread: false,
-    openCorners: corners,
-  }) as ChatListItem;
-const step = (expanded: Set<string>, before: ChatListItem[], after: ChatListItem[]) =>
-  nextExpandedRooms(expanded, mineWaitingRooms(before), mineWaitingRooms(after), after);
+/** A Room row and the corner store's summary for it. */
+type Room = { readonly item: ChatListItem; readonly summary: RoomCornerSummary };
+
+const room = (id: string, corners: readonly ChatListCorner[] = []): Room => ({
+  item: { room: { id, name: id, workspaceId: 'w' }, unread: false } as ChatListItem,
+  summary: { cornerCount: corners.length, openCorners: corners },
+});
+const waitingRooms = (rooms: Room[]) => mineWaitingRooms(
+  rooms.map((entry) => entry.item),
+  new Map(rooms.map((entry) => [entry.item.room.id, entry.summary])),
+);
+const step = (expanded: Set<string>, before: Room[], after: Room[]) =>
+  nextExpandedRooms(expanded, waitingRooms(before), waitingRooms(after),
+    after.map((entry) => entry.item));
 
 describe('corner dropdowns', () => {
   const idle = room('a', [{ id: 'c', name: 'c', state: 'working', mine: true }]);

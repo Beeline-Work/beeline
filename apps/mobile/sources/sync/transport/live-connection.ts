@@ -10,7 +10,6 @@ import {
   noteCornerLaneSubscribed,
   noteCornerSocketDropped,
   noteRoomCornersChanged,
-  resetRoomCornerStore,
 } from '@/buzz/room-corner-store';
 import { subscribeClientReset } from '@/sync/client-reset';
 import {
@@ -31,7 +30,6 @@ type SurfaceListener = (event: NostrEvent | MonolithSurfaceEvent) => void;
 type DraftEvent = Extract<LiveWireEvent, { type: 'draft' | 'thought' }>;
 type ThoughtEvent = DraftEvent;
 type PresenceEvent = Extract<LiveWireEvent, { type: 'presence' }>;
-type CornerStatusEvent = Extract<LiveWireEvent, { type: 'corner-status' }>;
 
 type CachedOverlay<Event> = { readonly event: Event; readonly receivedAt: number };
 
@@ -39,8 +37,6 @@ type RoomOverlayCache = {
   drafts: Map<string, CachedOverlay<DraftEvent>>;
   thoughts: Map<string, CachedOverlay<ThoughtEvent>>;
   presence: Map<string, PresenceEvent>;
-  /** The newest corner status this socket heard, for a Room list that joins later. */
-  cornerStatus?: CornerStatusEvent;
 };
 
 type Registration = {
@@ -336,7 +332,6 @@ export class LiveConnection {
     this.traceOwners.clear();
     this.heardMessages.clear();
     this.reconnectDelayMs = 1_000;
-    resetRoomCornerStore();
   }
 
   private stop(registration: Registration): void {
@@ -521,7 +516,6 @@ export class LiveConnection {
     for (const entry of cache.thoughts.values())
       registration.listener({ monolithLive: entry.event });
     for (const event of cache.presence.values()) registration.listener({ monolithLive: event });
-    if (cache.cornerStatus) registration.listener({ monolithLive: cache.cornerStatus });
   }
 
   private dispatch(live: LiveWireEvent | { type: 'pong' }, generation: WebSocket): void {
@@ -650,11 +644,6 @@ export class LiveConnection {
     if (live.type === 'presence') {
       const cache = this.overlayCache(live.roomId);
       cache.presence.set(live.agentId, live);
-      return;
-    }
-    if (live.type === 'corner-status') {
-      // The corner store already refused an older sequence.
-      this.overlayCache(live.roomId).cornerStatus = live;
       return;
     }
     if (live.type === 'retract') {

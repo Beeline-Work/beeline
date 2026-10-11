@@ -260,6 +260,7 @@ async function claim(c: AgentCommand, generationId = 'g1') {
 /** Drives the real push webhook so the run's own bookkeeping reaches `checks` first. */
 async function pushToCorner(cornerId: string, headSha: string) {
   const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
+  githubHead = headSha;
   await db.query(
     `UPDATE corner_facts SET feature_branch=COALESCE(feature_branch,$2) WHERE corner_id=$1`,
     [cornerId, branch],

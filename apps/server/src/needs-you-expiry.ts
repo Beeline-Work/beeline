@@ -1,6 +1,9 @@
 import type { SqlDatabase } from './database.js';
 import {
   askingMessageSql,
+  cardExpiresAtSql,
+  EXPIRING_CARD_TYPES,
+  expiringCardForSql,
   NEEDS_YOU_EXPIRY_HOURS,
   NEEDS_YOU_LOOKBACK,
   questionForSql,
@@ -28,13 +31,6 @@ import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 const NEEDS_YOU_EXPIRY_SWEEP_INTERVAL_MS = 5_000;
 /** How far back a new leader looks for deadlines that passed during the handover. */
 export const NEEDS_YOU_EXPIRY_LOOKBACK_MS = 10 * 60_000;
-
-/** A card's `expiresAt` in epoch milliseconds, or NULL; `messages_needs_you_expiry_idx` indexes it. */
-export function cardExpiresAtSql(card = 'card'): string {
-  return `(CASE WHEN ${card}->>'expiresAt' ~ '^[0-9]{1,15}$' THEN (${card}->>'expiresAt')::bigint END)`;
-}
-/** The approval cards whose only exit is their `expiresAt`. */
-export const EXPIRING_CARD_TYPES = `card_type IN ('squire-approval','agent-sign-in')`;
 
 type Due = { identity_id: string; workspace_id: string; room_id: string };
 
@@ -93,9 +89,8 @@ export class NeedsYouExpiryLoop {
        FROM messages m
        JOIN rooms room ON room.id=m.room_id AND room.archived_at IS NULL
        JOIN memberships viewer ON viewer.room_id=room.id AND viewer.removed_at IS NULL
-         AND (m.card_type='squire-approval' OR viewer.identity_id=m.card->>'ownerId')
        JOIN identities person ON person.id=viewer.identity_id AND person.kind='human'
-       WHERE m.${EXPIRING_CARD_TYPES} AND m.deleted_at IS NULL
+       WHERE ${expiringCardForSql('m', 'viewer.identity_id')}
          AND ${cardExpiresAtSql('m.card')}>$1 AND ${cardExpiresAtSql('m.card')}<=$2`,
       [since, through],
     );

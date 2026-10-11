@@ -8,6 +8,7 @@ import {
     loadSettings,
     saveLocalSettings,
     saveSettings,
+    subscribeSettingsWrites,
 } from './persistence';
 
 interface StorageState {
@@ -33,6 +34,12 @@ export const storage = create<StorageState>()((set) => ({
         return { localSettings };
     }),
 }));
+
+// Another tab's settings change reaches this tab without a reload.
+subscribeSettingsWrites((key) => {
+    if (key === 'settings') storage.setState({ settings: loadSettings().settings });
+    else storage.setState({ localSettings: loadLocalSettings() });
+});
 
 export function useSettings(): Settings {
     return storage(useShallow((state) => state.settings));

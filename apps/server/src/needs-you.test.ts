@@ -513,7 +513,7 @@ describe('PhoneService Needs-you tray', () => {
     expect(await approvals()).toEqual([]);
   });
 
-  it('shows a pending connector offer, webhook request and sign-in to the person who decides each', async () => {
+  it('shows a pending connector offer and sign-in to the person who decides each', async () => {
     const offerMessage = await card(
       ROOM,
       'connector-offer',
@@ -530,22 +530,6 @@ describe('PhoneService Needs-you tray', () => {
        VALUES('77777777-7777-4777-8777-777777777777',$1,$2,$3,$4,'gmail','Read the release thread.','machine',$5)`,
       [AGENT, WORKSPACE, ROOM, VIEWER, offerMessage],
     );
-    const webhookMessage = await card(
-      ROOM,
-      'webhook-request',
-      {
-        agentName: 'Hoots',
-        source: 'github',
-        reason: 'Watch release tags.',
-        status: 'pending',
-      },
-      20,
-    );
-    await database.query(
-      `INSERT INTO room_webhook_requests(id,room_id,agent_id,source,reason,request_id,message_id)
-       VALUES('88888888-8888-4888-8888-888888888888',$1,$2,'github','Watch release tags.','request',$3)`,
-      [ROOM, AGENT, webhookMessage],
-    );
     await card(
       ROOM,
       'agent-sign-in',
@@ -561,17 +545,8 @@ describe('PhoneService Needs-you tray', () => {
 
     const items = (await read()).items;
     expect(await count()).toBe(items.length);
-    // The webhook request expires, so it leads; then the oldest.
-    expect(items.map((item) => item.approval?.kind)).toEqual(['webhook', 'connector', 'sign-in']);
+    expect(items.map((item) => item.approval?.kind)).toEqual(['connector', 'sign-in']);
     expect(items.map((item) => item.approval)).toEqual([
-      {
-        kind: 'webhook',
-        actor: 'Hoots',
-        ask: 'asks for a webhook from',
-        subject: 'github',
-        literal: true,
-        detail: 'Watch release tags.',
-      },
       {
         kind: 'connector',
         actor: 'Hoots',
@@ -588,7 +563,6 @@ describe('PhoneService Needs-you tray', () => {
         literal: false,
       },
     ]);
-    expect(items[0]!.expiresAt).toBeGreaterThan(Date.now() / 1000 + 6 * 24 * 3600);
     // A plain member decides none of them.
     expect(await approvals(PEER)).toEqual([]);
   });

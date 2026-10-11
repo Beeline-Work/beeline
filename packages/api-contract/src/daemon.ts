@@ -6,7 +6,7 @@ export * from './upload-object.js';
 export * from './agent-access.js';
 export * from './system-events.js';
 export * from './outside-data.js';
-export * from './room-webhooks.js';
+export * from './subscriptions.js';
 export * from './corner-text.js';
 export * from './turn-silence.js';
 export * from './institutional-memory.js';

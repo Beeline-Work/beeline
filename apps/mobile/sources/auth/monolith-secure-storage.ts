@@ -1,4 +1,5 @@
 import { isDesktopShell } from '@/utils/isDesktopShell';
+import { webStringStorage } from '@/sync/browser-string-storage';
 import { webRuntimeStorage } from '@/utils/web-storage';
 
 export interface MonolithSecureStorage {
@@ -17,11 +18,13 @@ async function desktopInvoke<T>(
 
 type DesktopInvoke = typeof desktopInvoke;
 
-export function browserMonolithStorage(storage: Storage): MonolithSecureStorage {
+/** The origin's storage, or memory for this page where the browser denies it. */
+export function browserMonolithStorage(storage: Storage | undefined): MonolithSecureStorage {
+  const web = webStringStorage(storage);
   return {
-    getItemAsync: async (key) => storage.getItem(key),
-    setItemAsync: async (key, value) => storage.setItem(key, value),
-    deleteItemAsync: async (key) => storage.removeItem(key),
+    getItemAsync: async (key) => web.getString(key) ?? null,
+    setItemAsync: async (key, value) => web.set(key, value),
+    deleteItemAsync: async (key) => web.delete(key),
   };
 }
 
@@ -42,7 +45,7 @@ export async function monolithSecureStorage(
   // exist in an ordinary branch-preview browser. localStorage, like the legacy
   // identity path, keeps one sign-in for the origin across reloads and tabs;
   // sign-out removes it for every tab.
-  const browserStorage = webRuntimeStorage()?.storage;
-  if (browserStorage) return browserMonolithStorage(browserStorage);
+  const web = webRuntimeStorage();
+  if (web) return browserMonolithStorage(web.storage);
   return import('expo-secure-store');
 }

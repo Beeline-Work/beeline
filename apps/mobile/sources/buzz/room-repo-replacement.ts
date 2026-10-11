@@ -1,20 +1,20 @@
 import { useCallback } from 'react';
-import type { ChatListItem, RoomRepository } from '@beeline/buzz-client';
+import type { RoomRepository } from '@beeline/buzz-client';
+import { useRoomCornerSummary } from './room-corner-store';
 import { Modal } from '@/modal';
 import type { RepoCandidate } from './room-repo-picker';
 import { CORNER_LABEL, ROOM_LABEL } from './vocabulary';
 
 /**
  * The Room screen's repository-change actions. They read the open-corner
- * count from the live Room list, so a corner that opens while the screen is
- * up is counted. Changing the repo under a Room with open corners strands
+ * count from the Room's corner summary, so a corner that opens while the
+ * screen is up is counted. Changing the repo under a Room with open corners strands
  * those corners on the old repo, so re-binding is confirmed like the other
  * destructive Room actions (delete/leave), and skipped when there is nothing
  * to strand. Link + Save and Create + Save both replace the repo, so both ask
  * first; a declined confirm never reaches the write.
  */
 export function useRoomRepoReplacementGuard(
-  chats: readonly ChatListItem[],
   roomId: string,
   roomRepository: RoomRepository | null,
   write: {
@@ -26,7 +26,7 @@ export function useRoomRepoReplacementGuard(
   readonly selectCandidate: (candidate: RepoCandidate) => void;
   readonly createRepository: (installationId: number, name: string) => Promise<void>;
 } {
-  const openCornerCount = chats.find((item) => item.room.id === roomId)?.cornerCount ?? 0;
+  const openCornerCount = useRoomCornerSummary(roomId)?.cornerCount ?? 0;
   const confirmReplacement = useCallback(async () => {
     const hasOpenCorners = openCornerCount > 0;
     if (!roomRepository || !hasOpenCorners) return true;

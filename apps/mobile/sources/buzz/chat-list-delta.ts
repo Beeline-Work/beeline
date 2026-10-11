@@ -1,7 +1,6 @@
 import {
   chatActivityAt,
   type ChatListCorner,
-  type ChatListUnavailable,
 } from '@beeline/api-contract/phone';
 import type {
   ChatListItem,
@@ -32,7 +31,49 @@ const PREVIEW_PRESENTATIONS: ReadonlySet<RoomViewMessage['presentation']> = new 
 export type ChatListDeltaContext = {
   /** Whether the reader has this Room on screen, so its read mark follows at once. */
   readonly viewing?: (roomId: string) => boolean;
+  /** The Room's open corners from the corner store, whose waiting times order the list. */
+  readonly openCorners?: (roomId: string) => readonly ChatListCorner[] | undefined;
 };
+
+function activityAt(item: ChatListItem, context: ChatListDeltaContext): number {
+  return chatActivityAt({ ...item, openCorners: context.openCorners?.(item.room.id) });
+}
+
+/** `view` with `item` moved to its place in activity order. */
+function placed(
+  chats: readonly ChatListItem[],
+  item: ChatListItem,
+  context: ChatListDeltaContext,
+): ChatListItem[] {
+  const rest = [...chats];
+  const at = rest.findIndex((candidate) => activityAt(candidate, context) <= activityAt(item, context));
+  rest.splice(at < 0 ? rest.length : at, 0, item);
+  return rest;
+}
+
+/** The corner facts a Room list row carries on the wire; the corner store owns them. */
+type CornerFacts = Pick<ChatListItem, 'cornerCount' | 'waitingCornerCount' | 'mineCornerCount' | 'openCorners'>;
+
+/** The view without corner facts, once the corner store holds them. */
+export function withoutCornerFacts(view: ChatListView): ChatListView {
+  if (!view.chats.some((item) => 'cornerCount' in item || 'openCorners' in item)) return view;
+  return {
+    ...view,
+    chats: view.chats.map((item) => {
+      const { cornerCount: _count, waitingCornerCount: _waiting, mineCornerCount: _mine,
+        openCorners: _corners, ...rest } = item;
+      return rest;
+    }),
+  };
+}
+
+/** The view with each Room's corner facts put back, for the saved copy. */
+export function withCornerFacts(
+  view: ChatListView,
+  facts: (roomId: string) => CornerFacts | undefined,
+): ChatListView {
+  return { ...view, chats: view.chats.map((item) => ({ ...item, ...facts(item.room.id) })) };
+}
 
 function applyMessage(
   view: ChatListView,
@@ -71,9 +112,7 @@ function applyMessage(
       : { ...open, latestMessage: preview, unread: true }
     : { ...item, latestMessage: preview };
   const rest = view.chats.filter((_, position) => position !== index);
-  const at = rest.findIndex((candidate) => chatActivityAt(candidate) <= chatActivityAt(next));
-  rest.splice(at < 0 ? rest.length : at, 0, next);
-  return { ...view, chats: rest };
+  return { ...view, chats: placed(rest, next, context) };
 }
 
 /**
@@ -95,28 +134,21 @@ export function applyChatListDelta(
       const { latestMessage: _old, ...rest } = item;
       const next = { ...rest, ...(delta.deckPreview ? { latestMessage: delta.deckPreview } : {}) };
       const chats = view.chats.filter((_, position) => position !== index);
-      const at = chats.findIndex((candidate) => chatActivityAt(candidate) <= chatActivityAt(next));
-      chats.splice(at < 0 ? chats.length : at, 0, next);
-      return { ...view, chats };
+      return { ...view, chats: placed(chats, next, context) };
     }
     return applyMessage(view, index, delta.message, context);
   }
   if (delta.type === 'corner-status') {
-    const { agentState: _oldState, attentionReason: _oldReason, mineCornerCount: _oldMine,
-      ...rest } = item;
+    // The corner store already holds the frame's summary; the row takes its
+    // state and moves to its corners' activity.
+    const { agentState: _oldState, attentionReason: _oldReason, ...rest } = item;
     const next: ChatListItem = { ...rest,
-      cornerCount: delta.cornerCount,
-      waitingCornerCount: delta.waitingCornerCount,
-      ...(delta.mineCornerCount !== undefined ? { mineCornerCount: delta.mineCornerCount } : {}),
-      openCorners: delta.openCorners,
       ...(delta.agentState ? { agentState: delta.agentState } : {}),
       ...(delta.agentState === 'needs-you'
         ? { attentionReason: delta.attentionReason ?? { kind: 'approval' } } : {}),
     };
     const chats = view.chats.filter((_, position) => position !== index);
-    const at = chats.findIndex((candidate) => chatActivityAt(candidate) <= chatActivityAt(next));
-    chats.splice(at < 0 ? chats.length : at, 0, next);
-    return { ...view, chats };
+    return { ...view, chats: placed(chats, next, context) };
   }
   if ('agentState' in delta) {
     const { agentState: _oldState, attentionReason: _oldReason, ...rest } = item;
@@ -171,12 +203,12 @@ export function roomsMissedByLive(
 }
 
 /**
- * A read whose unread or corner lookup timed out on the server says nothing
- * about those facts. Carry each row's last known values instead of painting
- * every dot and corner count away until the next read. A row whose unread is
- * unknown and has no last known value keeps `unread` absent, so neither
- * memory nor disk holds it as known and a later incomplete read still sees
- * it as unknown. The result lists each fact that some row still lacks.
+ * A read whose unread lookup timed out on the server says nothing about it.
+ * Carry each row's last known value instead of painting every dot away until
+ * the next read. A row whose unread is unknown and has no last known value
+ * keeps `unread` absent, so neither memory nor disk holds it as known and a
+ * later incomplete read still sees it as unknown. Corner facts are the corner
+ * store's, which a read without them leaves alone.
  */
 export function keepUnavailableChatFacts(
   held: ChatListView | null,
@@ -185,10 +217,7 @@ export function keepUnavailableChatFacts(
   const { unavailable, ...view } = read;
   if (!unavailable?.length && read.chats.every((item) => typeof item.unread === 'boolean')) return read;
   const keepUnread = unavailable?.includes('unread') ?? false;
-  const keepCorners = unavailable?.includes('corners') ?? false;
   const heldById = new Map(held?.chats.map((item) => [item.room.id, item]) ?? []);
-  // Rows a previous incomplete read left without corner facts stay unknown.
-  let cornersUnknown = keepCorners && (held?.unavailable?.includes('corners') ?? false);
   const chats = read.chats.map((item) => {
     const before = heldById.get(item.room.id);
     const { unread, ...rest } = item;
@@ -198,29 +227,11 @@ export function keepUnavailableChatFacts(
         : typeof before?.unread === 'boolean'
           ? before.unread
           : undefined;
-    if (keepCorners && !before) cornersUnknown = true;
-    return {
-      ...rest,
-      ...(knownUnread !== undefined ? { unread: knownUnread } : {}),
-      ...(keepCorners && before
-        ? {
-            ...(before.cornerCount !== undefined ? { cornerCount: before.cornerCount } : {}),
-            ...(before.waitingCornerCount !== undefined
-              ? { waitingCornerCount: before.waitingCornerCount }
-              : {}),
-            ...(before.mineCornerCount !== undefined
-              ? { mineCornerCount: before.mineCornerCount }
-              : {}),
-            ...(before.openCorners ? { openCorners: before.openCorners } : {}),
-          }
-        : {}),
-    };
+    return { ...rest, ...(knownUnread !== undefined ? { unread: knownUnread } : {}) };
   });
-  const unknown: ChatListUnavailable[] = [
-    ...(chats.some((item) => item.unread === undefined) ? ['unread' as const] : []),
-    ...(cornersUnknown ? ['corners' as const] : []),
-  ];
-  return { ...view, chats, ...(unknown.length ? { unavailable: unknown } : {}) };
+  return chats.some((item) => item.unread === undefined)
+    ? { ...view, chats, unavailable: ['unread'] }
+    : { ...view, chats };
 }
 
 /**

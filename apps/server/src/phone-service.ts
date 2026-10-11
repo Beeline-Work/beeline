@@ -1,4 +1,4 @@
-import { RoomWebhooks } from './room-webhooks.js';
+import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
 import {
   beginAgentSignInCards,
   AGENT_SIGN_IN_NO_ANSWER_MESSAGE,
@@ -141,6 +141,7 @@ import {
   roomAttentionActorSql,
   roomNeedsYouSql,
   roomWorkingSql,
+  type ChatCornerSummary,
   type OpenCornerFactsRow,
 } from './chat-corner-counts.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
@@ -466,6 +467,14 @@ interface DeckCornerFacts {
   working: boolean;
   attention_actor: string | null;
   corner_rows: OpenCornerFactsRow[];
+}
+
+/** The parent Room row's corner summary from its corner facts. */
+function deckCornerSummary(roomId: string, deck: DeckCornerFacts): ChatCornerSummary {
+  return chatCornerCounts(deck.corner_rows.map((corner) =>
+    reviveDates(corner, ['archived_at', 'latest_created_at']))).get(roomId) ?? {
+    cornerCount: 0, waitingCornerCount: 0, mineCornerCount: 0, openCorners: [],
+  };
 }
 interface RoomReadRow {
   room: RoomRow & {
@@ -830,11 +839,6 @@ function projectedMessage(
       return { ...base, relay: row.card as NonNullable<RoomViewMessage['relay']> };
     case 'permission':
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
-    case 'webhook-request':
-      return {
-        ...base,
-        webhookRequest: row.card as NonNullable<RoomViewMessage['webhookRequest']>,
-      };
     case 'grant-request':
       return { ...base, grantRequest: row.card as NonNullable<RoomViewMessage['grantRequest']> };
     case 'squire-approval':
@@ -1691,11 +1695,7 @@ export class PhoneService {
       undefined, undefined, true);
     if (!loaded?.deck) return null;
     const { view, deck } = loaded;
-    const counts = chatCornerCounts(deck.corner_rows.map((corner) =>
-      reviveDates(corner, ['archived_at', 'latest_created_at']))).get(parentRoomId) ?? {
-      cornerCount: 0, waitingCornerCount: 0, mineCornerCount: 0, openCorners: [],
-    };
-    return { ...counts,
+    return { ...deckCornerSummary(parentRoomId, deck),
       agentState: deck.needs_you ? 'needs-you' : deck.working ? 'working' : null,
       ...(deck.needs_you ? { attentionReason: { kind: 'approval' as const,
         ...(deck.attention_actor ? { actor: deck.attention_actor } : {}) } } : {}),
@@ -2636,8 +2636,15 @@ export class PhoneService {
     archivedBefore?: ArchivedCornerCursor,
     openBefore?: ArchivedCornerCursor,
   ): Promise<CornerListView | null> {
-    return (await this.loadCorners(roomId, viewerId, roomViewFamilyOrder, archived,
-      archivedBefore, openBefore))?.view ?? null;
+    // The first open page carries the Room list row's summary from the same
+    // snapshot, so a reader replaces its summary whole.
+    const firstPage = !archived && !archivedBefore && !openBefore;
+    const loaded = await this.loadCorners(roomId, viewerId, roomViewFamilyOrder, archived,
+      archivedBefore, openBefore, firstPage);
+    if (!loaded) return null;
+    return loaded.deck
+      ? { ...loaded.view, summary: deckCornerSummary(roomId, loaded.deck) }
+      : loaded.view;
   }
 
   /**
@@ -4053,37 +4060,18 @@ export class PhoneService {
       if (spectator.rowCount) throw new Error('spectator access is read-only (access denied)');
     }
     switch (name) {
-      case 'readRoomWebhooks':
-        return (await new RoomWebhooks(this.database, this.publicOrigin).list(
-          (input as Input<'readRoomWebhooks'>).roomId,
-          viewerId,
-        )) as Output<Name>;
-      case 'manageRoomWebhook': {
-        const i = input as Input<'manageRoomWebhook'>;
-        return (await new RoomWebhooks(this.database, this.publicOrigin).manage(
-          i.roomId,
-          viewerId,
-          i,
-        )) as Output<Name>;
+      case 'listRoomSubscriptions': {
+        const roomId = (input as Input<'listRoomSubscriptions'>).roomId;
+        await this.requireTopLevelRoom(roomId);
+        if (!(await humanRoomAdmin(this.database, roomId, viewerId))) throw new Error('room manager required');
+        return await listRoomSubscriptions(this.database, roomId) as Output<Name>;
       }
-      case 'decideWebhookRequest': {
-        const i = input as Input<'decideWebhookRequest'>;
-        const decided = await new RoomWebhooks(this.database, this.publicOrigin).decide(
-          i.roomId,
-          viewerId,
-          i.webhookRequestId,
-          i.approve,
-          i.signingSecret,
-          i.revealSecret,
-        );
-        // The card's own row, so the phone applies the server's status.
-        const delta = await this.readLiveDelta(i.roomId, viewerId, {
-          type: 'message', messageId: decided.messageId,
-        });
-        return {
-          status: decided.status,
-          ...(delta?.type === 'message-delta' ? { message: delta.message } : {}),
-        } as Output<Name>;
+      case 'deleteRoomSubscription': {
+        const i = input as Input<'deleteRoomSubscription'>;
+        await this.requireTopLevelRoom(i.roomId);
+        if (!(await humanRoomAdmin(this.database, i.roomId, viewerId))) throw new Error('room manager required');
+        await deleteRoomSubscription(this.database, i.roomId, i.subscriptionId);
+        return undefined as Output<Name>;
       }
       case 'readWelcomeCards':
         return (await this.readWelcomeCards(viewerId)) as Output<Name>;
@@ -10017,9 +10005,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'setCornerHold',
   'decideWritePermission',
   'decideAgentGrant',
-  'readRoomWebhooks',
-  'manageRoomWebhook',
-  'decideWebhookRequest',
+  'listRoomSubscriptions',
+  'deleteRoomSubscription',
   'revokeAgentGrant',
   'acceptConnectorOffer',
   'createRoomPoll',

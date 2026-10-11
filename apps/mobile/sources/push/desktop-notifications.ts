@@ -1,7 +1,7 @@
 import type { ChatListItem, RoomViewMessage } from '@beeline/buzz-client';
 import { cornerTitle, directMessageTitle, roomTitle } from '@beeline/api-contract/phone';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
-import { monolithSession } from '@/auth/monolith-session';
+import { subscribeClientReset } from '@/sync/client-reset';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import { getBuzzPushEnabled } from './buzz-push-registration';
 import { loadStoredPushLevel } from './push-level-storage';
@@ -11,6 +11,7 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { chatWatchFiltersKey } from '@/buzz/chat-list-delta';
 import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
+import { getRoomCornerSummary, subscribeRoomCornerSummaries } from '@/buzz/room-corner-store';
 import { isTauri } from '@/utils/isTauri';
 
 /**
@@ -70,7 +71,10 @@ export function startDesktopNotifications(): () => void {
     let pendingRefresh = false;
     let following = false;
     let pendingFollow = false;
+    // A Room's corner count lives in the corner store, so its changes follow too.
+    const stopSummaries = subscribeRoomCornerSummaries(() => void follow());
     stopLists = () => {
+      stopSummaries();
       for (const list of lists.values()) {
         list.stop();
         list.handle.release();
@@ -211,11 +215,10 @@ export function startDesktopNotifications(): () => void {
         // A corner is its own Room and its messages do not ride the parent's
         // socket filter. Read each active parent with corners so the same
         // signed-in member can receive an exact tag there too.
-        const cornerParents = parents.filter(
-          (room) => (room.cornerCount ?? room.openCorners?.length ?? 0) > 0,
-        );
+        const cornerCount = (room: ChatListItem) => getRoomCornerSummary(room.room.id)?.cornerCount ?? 0;
+        const cornerParents = parents.filter((room) => cornerCount(room) > 0);
         const nextCornerKey = JSON.stringify(cornerParents.map((room) =>
-          [room.room.id, room.cornerCount ?? room.openCorners?.length ?? 0]));
+          [room.room.id, cornerCount(room)]));
         if (nextCornerKey !== cornerKey) {
           const cornerReads = await Promise.allSettled(
             cornerParents.map((room) => reader.corners(room.room.id)),
@@ -296,7 +299,7 @@ export function startDesktopNotifications(): () => void {
   function report(error: unknown) {
     console.warn('[desktop-notifications]', error);
   }
-  stopSession = monolithSession.subscribeIdentityChange(
+  stopSession = subscribeClientReset(
     () => void startForIdentity().catch(report),
   );
   void startForIdentity().catch(report);

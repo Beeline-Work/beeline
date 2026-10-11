@@ -7,9 +7,25 @@ import { type LocalSettings, localSettingsDefaults, localSettingsParse } from '.
 /** The web build (browser and Tauri) has no MMKV host object. Keep the same
  * synchronous settings contract through browser storage; native keeps MMKV. */
 const web = webRuntimeStorage();
+const SETTINGS_NAMESPACE = 'beeline.settings.';
 const mmkv: BrowserStringStorage = web
-  ? webStringStorage(web.storage, 'beeline.settings.')
+  ? webStringStorage(web.storage, SETTINGS_NAMESPACE)
   : new MMKV();
+
+export type SettingsKey = 'settings' | 'local-settings';
+
+/** Another tab wrote these settings. Only the web build shares storage between tabs. */
+export function subscribeSettingsWrites(listener: (key: SettingsKey) => void): () => void {
+  const shared = web?.storage;
+  if (!shared || typeof window.addEventListener !== 'function') return () => undefined;
+  const onStorage = (event: StorageEvent) => {
+    if (event.storageArea !== shared) return;
+    for (const key of ['settings', 'local-settings'] as const)
+      if (event.key === null || event.key === `${SETTINGS_NAMESPACE}${key}`) listener(key);
+  };
+  window.addEventListener('storage', onStorage);
+  return () => window.removeEventListener('storage', onStorage);
+}
 
 export function loadSettings(): { settings: Settings; version: number | null } {
   const raw = mmkv.getString('settings');

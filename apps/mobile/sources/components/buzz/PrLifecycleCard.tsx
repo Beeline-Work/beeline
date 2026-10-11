@@ -3,11 +3,14 @@ import { Animated, Pressable, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useReducedMotion } from 'react-native-reanimated';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
-import type { NotificationLifecycleState } from '@/buzz/pr-lifecycle';
+import type { CornerLifecycleView } from '@beeline/api-contract/phone';
+import { withCornerChecks, type NotificationLifecycleState } from '@/buzz/pr-lifecycle';
 import { TRANSCRIPT_SETTLE_MS, transcriptSteadyColors } from '@/buzz/transcript-motion';
 import { ledgerStamp } from '@/buzz/relative-time';
 interface NotificationLifecycleCardProps {
   message: ChatDisplayMessage;
+  /** In a corner: the corner row the header reads, the source of current check state. */
+  cornerLifecycle?: CornerLifecycleView;
   onOpenCorner(cornerId: string): void;
   onOpenUrl(url: string): void;
 }
@@ -30,6 +33,7 @@ function cellTone(state: NotificationLifecycleState): 'waiting' | 'settled' | 'f
  */
 export const NotificationLifecycleCard = React.memo(function NotificationLifecycleCard({
   message,
+  cornerLifecycle,
   onOpenCorner,
   onOpenUrl,
 }: NotificationLifecycleCardProps) {
@@ -50,7 +54,10 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   );
 
   // Items are already deduplicated by foldPrLifecycleRuns — one cell per identity.
-  const items = useMemo(() => run.items, [run.items]);
+  const items = useMemo(
+    () => withCornerChecks(run.items, cornerLifecycle),
+    [run.items, cornerLifecycle],
+  );
 
   // Presented cell state: the most recently updated item is the face (index 0).
   const [presentedId, setPresentedId] = useState<string | undefined>();

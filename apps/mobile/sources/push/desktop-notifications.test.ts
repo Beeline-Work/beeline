@@ -17,14 +17,12 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: async () => ({ publicKey: 'test-viewer', secretKey: new Uint8Array(32) }),
   getEffectiveRelayUrl: async () => 'https://test.invalid',
 }));
-vi.mock('@/auth/monolith-session', () => ({
-  monolithSession: {
-    subscribeIdentityChange: (listener: () => void) => {
-      fixture.identityChange = listener;
-      return () => {
-        fixture.identityChange = null;
-      };
-    },
+vi.mock('@/sync/client-reset', () => ({
+  subscribeClientReset: (listener: () => void) => {
+    fixture.identityChange = listener;
+    return () => {
+      fixture.identityChange = null;
+    };
   },
 }));
 vi.mock('@/buzz/open-room-tracker', () => ({ getOpenBuzzChannelId: () => null }));
@@ -62,34 +60,38 @@ vi.mock('@/sync/transport', () => ({
     }
   },
 }));
-// The app-level Room list store hands the notifier each Workspace's Rooms.
-vi.mock('@/buzz/chat-list-store', () => ({
-  acquireChatList: (key: { workspaceId: string }) => {
-    fixture.acquired.push(key.workspaceId);
-    return {
-      current: () => ({
-        chats: [
-          {
-            room: { id: 'room-1', name: fixture.roomName },
-            directMessage: {
-              peer: { pubkey: 'other', name: 'Test sender', handle: 'tester@example.com' },
+// The app-level Room list store hands the notifier each Workspace's Rooms,
+// and the corner store their corner counts, as the real list store fills it.
+vi.mock('@/buzz/chat-list-store', async () => {
+  const { applyChatListCorners } = await import('@/buzz/room-corner-store');
+  return {
+    acquireChatList: (key: { workspaceId: string }) => {
+      fixture.acquired.push(key.workspaceId);
+      applyChatListCorners([{ room: { id: 'room-1' } as never, cornerCount: 1 }], -1);
+      return {
+        current: () => ({
+          chats: [
+            {
+              room: { id: 'room-1', name: fixture.roomName },
+              directMessage: {
+                peer: { pubkey: 'other', name: 'Test sender', handle: 'tester@example.com' },
+              },
+              unread: true,
             },
-            cornerCount: 1,
-            unread: true,
-          },
-        ],
-        watchFilters: [{ '#h': ['room-1'] }],
-      }),
-      subscribe: () => () => undefined,
-      force: () => {
-        fixture.forced += 1;
-      },
-      release: () => {
-        fixture.released += 1;
-      },
-    };
-  },
-}));
+          ],
+          watchFilters: [{ '#h': ['room-1'] }],
+        }),
+        subscribe: () => () => undefined,
+        force: () => {
+          fixture.forced += 1;
+        },
+        release: () => {
+          fixture.released += 1;
+        },
+      };
+    },
+  };
+});
 vi.mock('@tauri-apps/plugin-notification', () => ({
   isPermissionGranted: fixture.permission,
   requestPermission: vi.fn(async () => 'granted'),

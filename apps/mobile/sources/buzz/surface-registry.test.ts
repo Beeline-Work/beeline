@@ -18,7 +18,6 @@ function registry() {
     get: async (key) => { reads += 1; return rows.get(key) ?? null; },
     set: async (key, value) => { rows.set(key, value); },
     remove: async (key) => { rows.delete(key); },
-    keys: async () => [...rows.keys()],
   });
   return { rows, cache: new SurfaceRegistry(durable), reads: () => reads };
 }
@@ -51,22 +50,22 @@ describe('shared mobile surface registry', () => {
     expect(cache.peek(address, isCount)).toEqual({ count: 3 });
     expect(rows.size).toBe(0);
     expect(notices).toBe(1);
-    stop();
-    await cache.evictViewer(address.relayOrigin, address.viewerPubkey);
+    cache.clear();
     expect(cache.peek(address, isCount)).toBeNull();
+    expect(notices).toBe(2);
+    stop();
   });
 
-  it('does not restore a stale storage read after viewer eviction', async () => {
+  it('does not restore a stale storage read after a clear', async () => {
     let release!: (value: string) => void;
     const durable = new SurfaceResponseCache({
       get: () => new Promise<string>((resolve) => { release = resolve; }),
       set: async () => undefined,
       remove: async () => undefined,
-      keys: async () => [surfaceCacheKey(address)],
     });
     const cache = new SurfaceRegistry(durable);
     const pending = cache.read(address, isCount);
-    await cache.evictViewer(address.relayOrigin, address.viewerPubkey);
+    cache.clear();
     release(JSON.stringify({ count: 9 }));
     expect(await pending).toBeNull();
     expect(cache.peek(address, isCount)).toBeNull();
@@ -94,5 +93,28 @@ describe('shared mobile surface registry', () => {
     expect(await pending).toBeNull();
     expect(cache.peek(address, isCount)).toBeNull();
     expect(rows.size).toBe(0);
+  });
+
+  it('takes another tab\'s write or removal of a projection it holds', () => {
+    const { cache } = registry();
+    const other = { ...address, endpoint: '/workspace/:id', params: { workspaceId: 'ws' } };
+    cache.publish(address, { count: 1 }, isCount);
+    cache.publish(other, { count: 7 }, isCount);
+    let notices = 0;
+    const stop = cache.subscribe(address, () => { notices += 1; });
+    cache.adoptStored(surfaceCacheKey(address), { count: 2 });
+    expect(cache.peek(address, isCount)).toEqual({ count: 2 });
+    expect(cache.peek(other, isCount)).toEqual({ count: 7 });
+    cache.adoptStored(surfaceCacheKey(address), undefined);
+    expect(cache.peek(address, isCount)).toBeNull();
+    expect(cache.peek(other, isCount)).toEqual({ count: 7 });
+    expect(notices).toBe(2);
+    stop();
+  });
+
+  it('keeps another tab\'s write out of a projection this tab never held', () => {
+    const { cache } = registry();
+    cache.adoptStored(surfaceCacheKey(address), { count: 2 });
+    expect(cache.peek(address, isCount)).toBeNull();
   });
 });

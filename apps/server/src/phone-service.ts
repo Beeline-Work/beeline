@@ -16,7 +16,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { computerViewToken } from './computer-session.js';
+import { computerViewToken, endComputerSessionByViewer, handBackComputerSession } from './computer-session.js';
 import { composioToolkitForApp, type ComposioApps } from './composio-apps.js';
 import { appIdentity } from '@beeline/api-contract/workbench';
 import { beginComposioAppSignIn, completeComposioSignIn } from './app-connections.js';
@@ -4066,6 +4066,14 @@ export class PhoneService {
       const access = await computerViewToken(this.database, (input as Input<'openComputerSession'>).id, viewerId);
       if (!access) throw new Error('computer session access denied');
       return { access } as Output<Name>;
+    }
+    if (name === 'handbackComputerSession') {
+      await handBackComputerSession(this.database, (input as Input<'handbackComputerSession'>).id, viewerId);
+      return undefined as Output<Name>;
+    }
+    if (name === 'endComputerSession') {
+      await endComputerSessionByViewer(this.database, this.live, (input as Input<'endComputerSession'>).id, viewerId);
+      return undefined as Output<Name>;
     }
     const scope = input as { workspaceId?: string; roomId?: string };
     // The spectator guard below casts nonempty scope ids to uuid. Wallet
@@ -10120,6 +10128,8 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'openComputerSession',
+  'handbackComputerSession',
+  'endComputerSession',
   'readWelcomeCards',
   'completeWelcomeCards',
   'readStarPrompt',

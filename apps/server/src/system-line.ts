@@ -224,7 +224,8 @@ export function composeSystemLine(phrase: SystemPhrase): { text: string; event: 
     ...(consequence ? { consequence } : {}),
     ...(phrase.kind ? { kind: phrase.kind } : {}),
     ...(phrase.scheduleId ? { scheduleId: phrase.scheduleId } : {}),
-    ...(phrase.kind === 'subscription-fired' || phrase.kind === 'check-failed' ? {
+    ...(phrase.kind === 'subscription-fired' || phrase.kind === 'check-failed' ||
+      phrase.kind === 'computer-session-activity' ? {
       payload: phrase.payload,
       ...(phrase.subscriptionPrompt ? { subscriptionPrompt: phrase.subscriptionPrompt } : {}),
       ...(phrase.subscriptionWorkflowSlug ? { subscriptionWorkflowSlug: phrase.subscriptionWorkflowSlug } : {}),

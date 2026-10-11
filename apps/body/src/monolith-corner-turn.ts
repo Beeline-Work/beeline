@@ -1115,6 +1115,7 @@ export class MonolithCornerTurnLoop {
         harnessHomeStateDirs: homeStateDirs,
         ...(tmpDir ? { tmpDir } : {}),
         additionalWritablePaths: [
+          ...(this.options.config.browserShareHostSocket ? [dirname(this.options.config.browserShareHostSocket)] : []),
           ...(attachScratchRoot ? [attachScratchRoot] : []),
           ...(assets ? [] : [npmCacheDir, pnpmStoreDir, turboCacheDir, modelCacheDir]),
           cargoTargetDir,

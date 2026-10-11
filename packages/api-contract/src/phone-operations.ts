@@ -83,6 +83,9 @@ export type CornerMergeHold = {
 export type PhoneOperationMap = {
   /** A short-lived browser viewer token, issued only to people who may steer its agent. */
   openComputerSession: { input: { id: string }; output: { access: string } };
+  /** Explicitly return a live browser to its agent; closing a viewer is not a handback. */
+  handbackComputerSession: { input: { id: string }; output: void };
+  endComputerSession: { input: { id: string }; output: void };
   listRoomSubscriptions: { input: { roomId: string }; output: RoomSubscriptionListResult };
   readScheduledWork: { input: RoomInput; output: ScheduledWorkResult };
   deleteRoomSubscription: { input: { roomId: string; subscriptionId: string }; output: void };

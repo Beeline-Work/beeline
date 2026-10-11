@@ -916,6 +916,16 @@ CREATE INDEX IF NOT EXISTS computer_sessions_room_idx ON computer_sessions(room_
 CREATE INDEX IF NOT EXISTS computer_sessions_agent_idx ON computer_sessions(agent_id);
 ALTER TABLE computer_sessions ADD COLUMN IF NOT EXISTS view_secret bytea;
 ALTER TABLE computer_sessions DROP COLUMN IF EXISTS last_frame;
+-- A bounded, metadata-only activity trail lets a waiting agent receive live
+-- control updates and replay events after its WebSocket reconnects.
+CREATE TABLE IF NOT EXISTS computer_session_events (
+  id bigserial PRIMARY KEY,
+  session_id text NOT NULL REFERENCES computer_sessions(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  detail text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS computer_session_events_session_idx ON computer_session_events(session_id, id);
 -- Private message bookmarks deliberately keep their pointer after a source is
 -- deleted or becomes inaccessible. Reads never cache or reveal source text;
 -- they return an unavailable row that the viewer can remove.

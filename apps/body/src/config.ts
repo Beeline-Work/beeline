@@ -117,6 +117,8 @@ export interface BodyConfig {
   runtimeConfigPath?: string;
   /** This agent's Registry MCP broker socket; each hosted agent has its own. */
   registryMcpBrokerSocket?: string;
+  /** The persistent helper's local browser stream socket. */
+  browserShareHostSocket?: string;
   /** Host-enforced Room delegation hop limit (always clamped to 1..8 by Body). */
   agentDelegationMaxHops?: number;
   /**

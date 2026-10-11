@@ -153,6 +153,77 @@ describe('Needs-you expiry sweep', () => {
     expect(await delta()).toEqual({ workspaceId: WORKSPACE, count: 0, items: [] });
   });
 
+  it('wakes the viewer when a question nobody saw passes the 7-day lookback', async () => {
+    const question = await post('@ada can you look?');
+    // Asked just under 7 days ago; only the badge count has held it, so no clock started.
+    await database.query(
+      `UPDATE messages SET created_at=now()-interval '7 days'+interval '300 milliseconds'
+       WHERE id=$1`, [question],
+    );
+    const badge = await phone.execute('countNeedsYou', { workspaceId: WORKSPACE }, VIEWER);
+    expect(badge).toEqual(expect.objectContaining({ count: 1 }));
+    expect((await database.query(`SELECT 1 FROM needs_you_marks`)).rows).toEqual([]);
+    const loop = new NeedsYouExpiryLoop(database);
+    await loop.runOnce();
+    expect(markWakes()).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    events.length = 0;
+    await loop.runOnce();
+    await eventually(() => markWakes().length > 0);
+    expect(markWakes()).toEqual([
+      expect.objectContaining({ roomId: '', readerId: VIEWER, sourceRoomId: ROOM }),
+    ]);
+    // The held tray list and badge both take this delta; neither waits for a reconnect.
+    expect(await delta()).toEqual({ workspaceId: WORKSPACE, count: 0, items: [] });
+  });
+
+  it('wakes the viewer at the lookback when it comes before 24 hours from first sight', async () => {
+    const question = await post('@ada can you look?');
+    await database.query(
+      `UPDATE messages SET created_at=now()-interval '7 days 1 second' WHERE id=$1`, [question],
+    );
+    await database.query(
+      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,first_seen_at)
+       VALUES($1,$2,$3,now()-interval '1 hour')`, [VIEWER, question, WORKSPACE],
+    );
+    events.length = 0;
+    await new NeedsYouExpiryLoop(database).runOnce();
+    await eventually(() => markWakes().length > 0);
+    expect(markWakes()).toEqual([
+      expect.objectContaining({ readerId: VIEWER, sourceRoomId: ROOM }),
+    ]);
+  });
+
+  it('wakes nobody when an unseen question at the lookback was already answered', async () => {
+    const question = await post('@ada can you look?');
+    await database.query(
+      `UPDATE messages SET created_at=now()-interval '7 days 1 second' WHERE id=$1`, [question],
+    );
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at)
+       VALUES($1,$2,$3,'Done.',now()-interval '6 days')`, ['f'.repeat(64), ROOM, VIEWER],
+    );
+    client.payloads.length = 0;
+    await new NeedsYouExpiryLoop(database).runOnce();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(expiryWakes()).toEqual([]);
+  });
+
+  it('reads deadlines on the database clock, not an app clock that runs ahead', async () => {
+    const question = await post('@ada can you look?');
+    await read();
+    // Its 24 hours end 5 minutes from now on the database clock.
+    await database.query(
+      `UPDATE needs_you_marks SET first_seen_at=now()-interval '24 hours'+interval '5 minutes'
+       WHERE message_id=$1`, [question],
+    );
+    client.payloads.length = 0;
+    await new NeedsYouExpiryLoop(database).runOnce(Date.now() + 10 * 60_000);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(expiryWakes()).toEqual([]);
+    expect((await delta()).items.map((item) => item.messageId)).toEqual([question]);
+  });
+
   it('wakes the owner when an agent sign-in passes its expiresAt', async () => {
     const expiresAt = Date.now() + 200;
     const signIn = await card('agent-sign-in', {

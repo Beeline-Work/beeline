@@ -86,8 +86,10 @@ export function applyRoomDraft(roomId: string, update: DraftLane, latestChunk?: 
   const lanes = applyLiveOverlayStructure(room.lanes, update) as readonly DraftLane[];
   const structure = lanes !== room.lanes;
   room.lanes = lanes;
+  const chunkChanged = latestChunk !== undefined && room.latestChunks.get(key) !== latestChunk;
   if (latestChunk !== undefined) room.latestChunks.set(key, latestChunk);
-  if (structure || liveDraftDrainStore.getReceived(key) !== before) notify(room, structure);
+  if (structure || chunkChanged || liveDraftDrainStore.getReceived(key) !== before)
+    notify(room, structure);
 }
 
 /**

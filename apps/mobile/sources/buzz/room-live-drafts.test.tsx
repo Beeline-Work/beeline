@@ -76,6 +76,16 @@ describe('Room live drafts', () => {
     await unmount();
   });
 
+  // Review R5: a frame that changed only the newest chunk did not reach the run view.
+  it('shows a new chunk when the cumulative text is unchanged', async () => {
+    const { seen, unmount } = await mount();
+    await frame(draft('Working', 'Working'));
+    await frame(draft('Working', 'ing'));
+    expect([...seen.current.chunks.values()]).toEqual(['ing']);
+    await frame({ type: 'subscribed' });
+    await unmount();
+  });
+
   it('drops a draft whose end was lost in a socket gap', async () => {
     const { seen, unmount } = await mount();
     await frame(draft('Working', 'Working'));

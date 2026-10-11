@@ -260,6 +260,39 @@ describe('room message records', () => {
     transcript.unmount();
   });
 
+  // Review R3: the inspector's read returned a new message before its delta
+  // arrived, and the delta then never joined the transcript's tail.
+  it('a new message the inspector already holds still joins the tail', () => {
+    const transcript = mount('room-h', 'tail', [row('m1', 'one', 1, 1)], 'tail');
+    const inspector = mount('room-h', 'inspector', [row('m1', 'one', 1, 1), row('m2', 'two', 1, 2)]);
+    deliver(frame('room-h', row('m2', 'two', undefined, 2), 1));
+    expect(transcript.texts()).toEqual(['one', 'two']);
+    expect(inspector.texts()).toEqual(['one', 'two']);
+    transcript.unmount();
+    inspector.unmount();
+  });
+
+  // Review R4: a corner tail's read replaced its tool ids, so a tool row
+  // that arrived as a delta after the read started was dropped.
+  it('a stale read keeps a tool row it had not caught yet', () => {
+    const tool = (id: string, at: number, version: number) =>
+      ({
+        ...row(id, '', version, at),
+        presentation: 'activity',
+        activity: [{ kind: 'tool', title: 'Read' }],
+      }) as RoomViewMessage;
+    const read = { messages: [row('m1', 'one', 1, 1)], toolRows: [tool('t1', 1, 1)] };
+    act(() => {
+      applyRoomTailRead(scope, 'room-t', 'corner', read, true);
+    });
+    deliver(frame('room-t', tool('t2', 3, 1), 1));
+    let tail = applyRoomTailRead(scope, 'room-t', 'corner', read, true);
+    expect(tail.toolIds).toEqual(['t1', 't2']);
+    tail = applyRoomTailRead(scope, 'room-t', 'corner', read, true);
+    expect(tail.toolIds).toEqual(['t1', 't2']);
+    act(() => holdRoomMessages(scope, 'room-t', 'corner', null));
+  });
+
   it('keys records by relay and viewer and clears them on a client reset', () => {
     const transcript = mount('room-z', 'tail', [row('m1', 'mine', 1)]);
     const other = roomRecordScope('https://other.test', 'viewer');

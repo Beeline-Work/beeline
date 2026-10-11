@@ -268,8 +268,9 @@ export function roomDeltaMessage(delta: {
 /**
  * The one write for a server row of a Room: a live delta (from the live
  * connection) or a mutation result, for the relay and viewer it came from. A
- * held record takes it under the version rule; a new id joins every tail of
- * the Room. A row no window can take is not kept.
+ * held record takes it under the version rule; the row joins every tail of
+ * the Room that does not hold it yet, even when another window (the
+ * inspector) already holds it. A row no window can take is not kept.
  */
 export function applyRoomMessage(
   scope: RoomRecordScope,
@@ -280,21 +281,19 @@ export function applyRoomMessage(
   if (!room) return;
   const known = room.records.has(message.id);
   let changed = put(room, message, 'shared');
-  if (!heldIds(room).has(message.id)) {
-    const record = room.records.get(message.id)!;
-    let joined = false;
-    for (const [holder, window] of room.windows) {
-      if (!window.tail) continue;
-      const next = joinTail(room, window, record);
-      if (next === window) continue;
-      room.windows.set(holder, next);
-      joined = true;
-    }
-    if (joined) changed = true;
-    else if (!known) {
-      room.records.delete(message.id);
-      changed = false;
-    }
+  const record = room.records.get(message.id)!;
+  let joined = false;
+  for (const [holder, window] of room.windows) {
+    if (!window.tail) continue;
+    const next = joinTail(room, window, record);
+    if (next === window) continue;
+    room.windows.set(holder, next);
+    joined = true;
+  }
+  if (joined) changed = true;
+  else if (!known && !heldIds(room).has(message.id)) {
+    room.records.delete(message.id);
+    changed = false;
   }
   if (changed) notify(room);
 }
@@ -352,7 +351,7 @@ export function holdRoomMessages(
  * A full Room read for one tail. The tail becomes the read's rows plus any
  * row it already holds that is newer than everything the read returned: a
  * delta the read had not caught yet. A corner tail also holds the read's
- * tool rows.
+ * tool rows, plus any held tool row newer than every tool row the read returned.
  */
 export function applyRoomTailRead(
   scope: RoomRecordScope,
@@ -378,9 +377,20 @@ export function applyRoomTailRead(
   const ids = newer.length
     ? sortedIds(room, [...readIds, ...newer], ROOM_VIEW_MESSAGE_LIMIT)
     : read.messages.map((message) => message.id);
-  const toolIds = collectsToolRows
-    ? (read.toolRows ?? []).map((message) => message.id)
-    : undefined;
+  const readToolIds = new Set((read.toolRows ?? []).map((message) => message.id));
+  const readToolNewest = (read.toolRows ?? []).reduce(
+    (newest, message) => Math.max(newest, messageTimeMs(message)),
+    0,
+  );
+  const newerToolIds = (previous?.toolIds ?? []).filter((id) => {
+    const message = room.records.get(id);
+    return !readToolIds.has(id) && message !== undefined && messageTimeMs(message) >= readToolNewest;
+  });
+  const toolIds = !collectsToolRows
+    ? undefined
+    : newerToolIds.length
+      ? sortedIds(room, [...readToolIds, ...newerToolIds], ROOM_VIEW_TOOL_ROW_LIMIT)
+      : [...readToolIds];
   if (setWindow(room, holder, { ids, toolIds, tail: true })) changed = true;
   sweep(scope, roomId, room);
   if (changed) notify(room);

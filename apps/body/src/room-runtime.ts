@@ -543,7 +543,12 @@ export async function removeCornerScratchWorkspace(input: {
   if (resolve(input.scratchPath) !== expected) {
     throw new Error(`refusing to remove scratch outside corner ${input.cornerId}`);
   }
-  await rm(expected, { recursive: true, force: true });
+  // Repository-free corners put their durable harness history inside scratch.
+  // Reap only work files; an archived session must remain resumable.
+  for (const entry of await readdir(expected, { withFileTypes: true }).catch(() => [])) {
+    if (entry.name === 'agent-home' || entry.name === 'agent-private') continue;
+    await rm(resolve(expected, entry.name), { recursive: true, force: true });
+  }
 }
 
 /** Monolith-only Room supervisor. Relay-backed discovery and turn serving are retired. */
@@ -1072,7 +1077,9 @@ export class RoomRuntimeCoordinator {
     return {
       ...this.baseConfig,
       workspaceRoot,
-      agentSharedAssetRoot: workspaceAssetRoot(this.runtime.supervisorRoot, this.runtime.communityId),
+      ...(process.env.BEELINE_SHARED_ASSETS_ENABLED === '0'
+        ? { agentSharedAssetRoot: undefined }
+        : { agentSharedAssetRoot: workspaceAssetRoot(this.runtime.supervisorRoot, this.runtime.communityId) }),
       agentPrivateRoot: resolve(workspaceRoot, 'agent-private'),
       agentMemoryRoot: resolve(dirname(this.configPath), 'memory'),
       openRouterRoutingCacheDir: openRouterRoutingCacheDir(dirname(this.configPath)),
@@ -1859,7 +1866,11 @@ export class RoomRuntimeCoordinator {
     }
     if (!archived) return false;
     await this.scheduler.suspend(cornerId);
-    await rm(resolve(root, 'scratch'), { recursive: true, force: true });
+    await removeCornerScratchWorkspace({
+      cornerId,
+      roomRoot: root,
+      scratchPath: resolve(root, 'scratch'),
+    });
     // Retain harness conversations and auth while shared assets migrate.
     await rm(resolve(root, '.beeline-corner.json'), { force: true });
     return true;

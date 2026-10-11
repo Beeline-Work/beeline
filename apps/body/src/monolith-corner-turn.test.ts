@@ -1,5 +1,5 @@
 import { commandFixtureApi } from './command-fixture.test-support.js';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,7 +25,9 @@ import {
   cornerReviewerInstruction,
   CORNER_REVIEWER_AUTHOR_MERGE,
 } from './prompt-assembly.js';
-import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
+import { identityFromKey, runtimeDirectory, type AgentRuntimeRecord } from './runtime.js';
+import * as workspaceAssets from './workspace-assets.js';
+import { SharedAssetCapacityError } from './shared-asset-capacity.js';
 import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
 import {
@@ -1569,11 +1571,13 @@ describe('corner close-request delivery', () => {
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
     const abort = new AbortController();
     const onPoll = vi.fn();
+    let clientOptions: ConstructorParameters<typeof AcpClient>[0] | undefined;
     return {
       acp,
       abort,
       onPoll,
       root,
+      clientOptions: () => clientOptions,
       loop: (loop = new MonolithCornerTurnLoop({
         cornerId: 'corner-id',
         parentRoomId: 'room-id',
@@ -1596,12 +1600,82 @@ describe('corner close-request delivery', () => {
         onPoll,
         onFailure: vi.fn(),
         onCloseRequested: async () => undefined,
-        createAcpClient: () => acp,
+        createAcpClient: (value) => { clientOptions = value; return acp; },
         ...(fetchImpl ? { fetchImpl } : {}),
       })),
       scheduler,
     };
   }
+
+  it.each(['repository', 'scratch', 'capacity-fallback'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
+    vi.stubEnv('ANDROID_HOME', '');
+    vi.stubEnv('ANDROID_SDK_ROOT', '');
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getCornerRestoreState') return {
+        cornerId: 'corner-id', closeRequested: false,
+        brief: { id: 'corner-id', revision: 1,
+          spec: '## Intent\nBuild\n## User stories\n- user\n## Acceptance criteria\n- done\n## Non-goals\n- none\n## Risks\n- none\n## References\n- none',
+          authorId: TEST_AGENT_PUBLIC_KEY, sourceRoomId: 'room-id', attachments: [] },
+      };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      return { id: 'write', createdAt: 1 };
+    });
+    const fixture = await cornerHarness(execute, 5);
+    const internal = fixture.loop as unknown as {
+      options: { config: BodyConfig; runtime: AgentRuntimeRecord; worktreePath: string; repository?: { gitCommonDir: string } };
+      activate(): Promise<string>;
+    };
+    const runtimeDir = runtimeDirectory(fixture.root, internal.options.runtime.agent.publicKey);
+    const cornerRoot = join(runtimeDir, 'rooms/corner-id');
+    const worktree = shape === 'scratch' ? join(cornerRoot, 'scratch') : join(fixture.root, 'checkout');
+    await mkdir(worktree, { recursive: true });
+    if (shape !== 'scratch') {
+      await execFileAsync('git', ['init', worktree]);
+      internal.options.repository!.gitCommonDir = join(worktree, '.git');
+    } else internal.options.repository = undefined;
+    internal.options.worktreePath = worktree;
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(join(runtimeDir, 'runtime.json'), '{}');
+    Object.assign(internal.options.config, {
+      agentBinary: 'codex-acp', agentCommand: 'codex-acp', agentKind: 'codex',
+      agentEnv: { PATH: process.env.PATH ?? '' },
+      operatorHome: join(fixture.root, 'operator-home'),
+      bwrapPath: '/usr/bin/bwrap',
+      agentSharedAssetRoot: workspaceAssets.workspaceAssetRoot(fixture.root, 'workspace'),
+      agentHomeRoot: join(shape === 'scratch' ? worktree : cornerRoot, 'agent-home'),
+      agentPrivateRoot: join(shape === 'scratch' ? worktree : cornerRoot, 'agent-private'),
+    });
+    const lateCapacity = shape === 'capacity-fallback'
+      ? vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter').mockRejectedValueOnce(new SharedAssetCapacityError())
+      : undefined;
+    try {
+      await internal.activate();
+      expect(fixture.clientOptions()).toBeDefined();
+      const selected = fixture.clientOptions()!;
+      expect(selected.agentCommand).toBe('/usr/bin/bwrap');
+      if (lateCapacity) {
+        expect(lateCapacity).toHaveBeenCalledOnce();
+        expect(selected.agentEnv?.npm_config_cache ?? '').not.toContain('/workspaces/');
+        expect(selected.agentArgs).not.toContain(expect.stringContaining('/shared-home/tools/'));
+        return;
+      }
+      const args = selected.agentArgs!;
+      const separator = args.lastIndexOf('--');
+      const child = spawnSync('/usr/bin/bwrap', [...args.slice(0, separator + 1), '/bin/sh', '-c',
+        'test -d "$1" && test -d "$2" && touch "$3" && ! touch "$4" 2>/dev/null', 'probe',
+        internal.options.config.agentHomeRoot!, internal.options.config.agentPrivateRoot!,
+        selected.agentEnv!.npm_config_cache + '/corner-proof',
+        join(selected.agentEnv!.npm_config_cache!, '../../tools/should-fail'),
+      ], { env: selected.agentEnv, encoding: 'utf8' });
+      expect(child.status, child.stderr).toBe(0);
+    } finally {
+      lateCapacity?.mockRestore();
+      fixture.abort.abort();
+      await fixture.scheduler.dispose();
+    }
+  }, 30_000);
 
   it.each(['context', 'retry', 'first brief'])(
     'Reproduction BP-01: refreshes the next prompt after a revision during %s', async (timing) => {

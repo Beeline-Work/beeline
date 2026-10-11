@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { wrapAgentCommand } from './bwrap-sandbox.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
 import {
-  prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAssets, prepareWorkspaceAvdBase, prepareWorkspaceSdk,
-  workspaceAssetRoot, workspaceCacheEnv,
+  prepareCodexCacheTargets, preparePackageCacheTargets, prepareWorkspaceAdapter, prepareWorkspaceAssets, prepareWorkspaceAvdBase, prepareWorkspaceSdk,
+  sharedAssetsEnabled, workspaceAssetRoot, workspaceCacheEnv, workspaceToolEnv,
 } from './workspace-assets.js';
 
 const roots: string[] = [];
@@ -25,6 +25,82 @@ describe('coarse Workspace assets', () => {
     expect(workspaceCacheEnv(a, resolve(root, 'corner')).npm_config_cache).toBe(resolve(a.cache, 'npm'));
     expect(workspaceCacheEnv(a).PLAYWRIGHT_BROWSERS_PATH).toBe(resolve(a.cache, 'browser/playwright'));
     expect(workspaceCacheEnv(a, resolve(root, 'corner')).CARGO_TARGET_DIR).toBe(resolve(root, 'corner/.beeline-cargo-target'));
+    expect(workspaceCacheEnv(a)).not.toHaveProperty('PIP_CACHE_DIR');
+    expect(sharedAssetsEnabled({ BEELINE_SHARED_ASSETS_ENABLED: '0' })).toBe(false);
+    expect(sharedAssetsEnabled({})).toBe(true);
+  });
+
+  it('scrubs inherited tool homes in the effective sandbox environment', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-tool-env-'));
+    roots.push(root);
+    const assets = await prepareWorkspaceAssets(workspaceAssetRoot(root, 'A'));
+    const runtime = resolve(root, 'beeline/agents/a');
+    const home = resolve(runtime, 'rooms/one/agent-home');
+    await mkdir(home, { recursive: true });
+    await writeFile(resolve(runtime, 'runtime.json'), '{}');
+    const env = workspaceToolEnv({
+      ...process.env as Record<string, string>, HOME: resolve(home, 'user'),
+      RUSTUP_HOME: '/tmp/host-rustup', GOPATH: '/tmp/host-go', NVM_BIN: '/tmp/host-nvm',
+      JAVA_HOME: '/tmp/host-jdk', PIP_CACHE_DIR: '/tmp/host-pip',
+    }, resolve(home, 'user'), assets);
+    expect(env.RUSTUP_HOME).toBe(resolve(home, 'user/.rustup'));
+    expect(env.GOPATH).toBe(resolve(home, 'user/go'));
+    expect(env.PIP_CACHE_DIR).toBe(resolve(home, 'user/.cache/pip'));
+    expect(env.NVM_BIN).toBeUndefined();
+    expect(env.JAVA_HOME).toBeUndefined();
+    const wrapped = wrapAgentCommand({
+      bwrapPath: '/usr/bin/bwrap',
+      spec: { mode: 'readonly', cwd: resolve(runtime, 'rooms/one'),
+        sharedLayout: { assetRoot: assets.root, agentRuntimeDir: runtime, privateHomeRoot: home } },
+      command: '/usr/bin/env',
+    });
+    const child = spawnSync(wrapped.command, wrapped.args, { env, encoding: 'utf8' });
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout).toContain(`RUSTUP_HOME=${resolve(home, 'user/.rustup')}`);
+    expect(child.stdout).toContain(`PIP_CACHE_DIR=${resolve(home, 'user/.cache/pip')}`);
+    expect(child.stdout).not.toContain('JAVA_HOME=');
+  });
+
+  it('pins both adapter and nested CLI in versioned, immutable Workspace generations', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-toolchain-'));
+    roots.push(root);
+    const assets = await prepareWorkspaceAssets(workspaceAssetRoot(root, 'A'));
+    const bin = resolve(root, 'bin');
+    await mkdir(bin);
+    for (const [binary, name] of [
+      ['codex-acp', '@agentclientprotocol/codex-acp'], ['codex', '@openai/codex'],
+    ]) {
+      const pkg = resolve(root, binary);
+      await mkdir(resolve(pkg, 'bin'), { recursive: true });
+      await writeFile(resolve(pkg, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
+      await writeFile(resolve(pkg, 'bin/run.js'), '#!/usr/bin/env node\n');
+      await chmod(resolve(pkg, 'bin/run.js'), 0o755);
+      await symlink(resolve(pkg, 'bin/run.js'), resolve(bin, binary));
+    }
+    const npm = resolve(bin, 'npm');
+    await writeFile(npm, '#!/bin/sh\nwhile [ "$1" != "--prefix" ]; do shift; done\nshift\nprefix="$1"\nmkdir -p "$prefix/node_modules/.bin"\nprintf "#!/bin/sh\\nexit 0\\n" > "$prefix/node_modules/.bin/codex-acp"\nprintf "#!/bin/sh\\nexit 0\\n" > "$prefix/node_modules/.bin/codex"\n');
+    await chmod(npm, 0o755);
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+    const first = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env);
+    expect(first?.command).toContain(assets.tools);
+    expect(first?.cliCommand).toContain(assets.tools);
+    expect(await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env)).toEqual(first);
+    await writeFile(resolve(root, 'codex/package.json'), JSON.stringify({ name: '@openai/codex', version: '2.0.0' }));
+    const second = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env);
+    expect(second?.command).not.toBe(first?.command);
+    const runtime = resolve(root, 'beeline/agents/agent-a');
+    const home = resolve(runtime, 'rooms/room-a/agent-home');
+    await mkdir(home, { recursive: true });
+    await writeFile(resolve(runtime, 'runtime.json'), '{}');
+    const update = wrapAgentCommand({
+      bwrapPath: '/usr/bin/bwrap',
+      spec: { mode: 'readonly', cwd: resolve(runtime, 'rooms/room-a'),
+        sharedLayout: { assetRoot: assets.root, agentRuntimeDir: runtime, privateHomeRoot: home } },
+      command: '/bin/sh', args: ['-c', 'printf changed > "$1"', 'probe', first!.command],
+    });
+    expect(spawnSync(update.command, update.args, { encoding: 'utf8' }).status).not.toBe(0);
+    expect(await readFile(first!.command, 'utf8')).toContain('exit 0');
+    expect(await prepareWorkspaceAdapter(assets, 'goose', '/usr/bin/goose', env)).toBeUndefined();
   });
 
   it('publishes one fixed SDK and AVD metadata generation for concurrent agents', async () => {
@@ -44,6 +120,13 @@ describe('coarse Workspace assets', () => {
     ]);
     expect(sdkA).toBe(sdkB);
     expect(await readFile(resolve(sdkA, 'emulator/emulator'), 'utf8')).toBe('binary');
+    await writeFile(resolve(sdk, 'emulator/emulator'), 'binary-new');
+    const sdkNew = await prepareWorkspaceSdk(assets, sdk);
+    expect(sdkNew).not.toBe(sdkA);
+    expect(await readFile(resolve(sdkNew, 'emulator/emulator'), 'utf8')).toBe('binary-new');
+    await writeFile(resolve(sdkNew, 'emulator/emulator'), 'corrupt');
+    expect(await prepareWorkspaceSdk(assets, sdk)).toBe(sdkNew);
+    expect(await readFile(resolve(sdkNew, 'emulator/emulator'), 'utf8')).toBe('binary-new');
     const base = await prepareWorkspaceAvdBase(assets, avd);
     expect(await readFile(resolve(base, 'test.avd/config.ini'), 'utf8')).toContain('image.sysdir');
   });
@@ -112,6 +195,7 @@ describe('coarse Workspace assets', () => {
       await mkdir(resolve(home, 'codex/sessions'), { recursive: true });
       await writeFile(resolve(home, 'codex/sessions/history'), home);
       await writeFile(resolve(home, 'codex/plugins/data-private'), home);
+      await mkdir(resolve(home, 'user/.gradle/caches'), { recursive: true });
       await writeFile(resolve(home, 'user/.gradle/gradle.properties'), home);
       await writeFile(resolve(home, '../../..', 'runtime.json'), '{}');
     }));
@@ -129,7 +213,7 @@ describe('coarse Workspace assets', () => {
           },
         },
         command: '/bin/sh',
-        args: ['-c', 'printf "%s" "$1" > codex/cache/download; printf "%s" "$1" > codex/plugins/cache/package; printf "%s" "$1" > user/.gradle/caches/download; printf "%s" "$1" > user/.cargo/registry/crate; test "$(cat codex/sessions/history)" = "$2"; test "$(cat codex/config.toml)" = "room=\\\"$2\\\""; test "$(cat codex/plugins/data-private)" = "$2"; test "$(cat user/.gradle/gradle.properties)" = "$2"', 'probe', marker, home],
+        args: ['-c', 'printf "%s" "$1" > codex/cache/download; printf "%s" "$1" > codex/plugins/cache/package; printf "%s" "$1" > user/.gradle/caches/build-output; printf "%s" "$1" > user/.cargo/registry/crate; test "$(cat codex/sessions/history)" = "$2"; test "$(cat codex/config.toml)" = "room=\\\"$2\\\""; test "$(cat codex/plugins/data-private)" = "$2"; test "$(cat user/.gradle/gradle.properties)" = "$2"', 'probe', marker, home],
       });
       return spawnSync(command.command, command.args, { encoding: 'utf8' });
     };
@@ -137,7 +221,8 @@ describe('coarse Workspace assets', () => {
     expect(run(homes[1]!, 'two').status).toBe(0);
     expect(await readFile(resolve(assets.cache, 'codex/download/download'), 'utf8')).toBe('two');
     expect(await readFile(resolve(assets.cache, 'codex/plugins/package'), 'utf8')).toBe('two');
-    expect(await readFile(resolve(assets.cache, 'gradle/caches/download'), 'utf8')).toBe('two');
+    expect(await readFile(resolve(homes[0]!, 'user/.gradle/caches/build-output'), 'utf8')).toBe('one');
+    expect(await readFile(resolve(homes[1]!, 'user/.gradle/caches/build-output'), 'utf8')).toBe('two');
     expect(await readFile(resolve(assets.cache, 'cargo/registry/crate'), 'utf8')).toBe('two');
     for (const home of homes)
       expect(await readFile(resolve(home, 'codex/sessions/history'), 'utf8')).toBe(home);

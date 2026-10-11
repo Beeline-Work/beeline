@@ -1,4 +1,5 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -10,6 +11,39 @@ afterEach(async () => {
 });
 
 describe('Android emulator instance leases', () => {
+  it('skips an occupied console port pair', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-emulator-port-'));
+    roots.push(root);
+    const server = createServer();
+    let listening = false;
+    try {
+      await new Promise<void>((done, reject) => {
+        server.once('error', reject);
+        server.listen(5554, '127.0.0.1', () => done());
+      });
+      listening = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error;
+    }
+    try {
+      const lease = await leaseEmulator(join(root, 'shared'), join(root, 'private'));
+      expect(lease.port).not.toBe(5554);
+      await lease.release();
+    } finally { if (listening) await new Promise<void>((done) => server.close(() => done())); }
+  });
+
+  it('reclaims every stale marker on the first attempt, including a reused PID', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-emulator-stale-'));
+    roots.push(root);
+    const shared = join(root, 'shared');
+    await mkdir(shared);
+    for (let port = 5554; port <= 5584; port += 4)
+      await writeFile(join(shared, `port-${port}.lease`), `${process.pid}:wrong-start:old`);
+    const lease = await leaseEmulator(shared, join(root, 'private'));
+    expect(lease.port).toBe(5554);
+    await lease.release();
+  });
+
   it('gives two agents distinct ports and writable instance directories', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-emulator-'));
     roots.push(root);

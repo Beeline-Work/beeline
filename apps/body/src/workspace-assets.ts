@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { cp, lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentKind } from './agent-command.js';
@@ -25,6 +26,10 @@ export interface WorkspaceAssetPaths {
 }
 
 export const SHARED_LAYOUT_MARKER = 'layout-live-v1.json';
+
+export function sharedAssetsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.BEELINE_SHARED_ASSETS_ENABLED !== '0';
+}
 
 export async function markWorkspaceLayoutLive(paths: WorkspaceAssetPaths): Promise<void> {
   try {
@@ -62,8 +67,6 @@ export async function prepareWorkspaceAssets(root: string): Promise<WorkspaceAss
     resolve(paths.cache, 'codex'),
     resolve(paths.cache, 'codex', 'download'),
     resolve(paths.cache, 'codex', 'plugins'),
-    resolve(paths.cache, 'gradle'),
-    resolve(paths.cache, 'gradle', 'caches'),
     resolve(paths.cache, 'cargo'),
     resolve(paths.cache, 'cargo', 'registry'),
     paths.tools,
@@ -97,8 +100,6 @@ export async function prepareCodexCacheTargets(codexHome: string): Promise<void>
 /** Tool settings/credentials stay in private HOME; only download trees are rebound. */
 export async function preparePackageCacheTargets(userHome: string): Promise<void> {
   for (const path of [
-    resolve(userHome, '.gradle'),
-    resolve(userHome, '.gradle/caches'),
     resolve(userHome, '.cargo'),
     resolve(userHome, '.cargo/registry'),
   ]) {
@@ -123,7 +124,6 @@ export function workspaceCacheEnv(paths: WorkspaceAssetPaths, cornerRoot?: strin
   return {
     npm_config_cache: resolve(cache, 'npm'),
     PNPM_CONFIG_STORE_DIR: resolve(cache, 'pnpm'),
-    PIP_CACHE_DIR: resolve(cache, 'pip'),
     UV_CACHE_DIR: resolve(cache, 'uv'),
     GOMODCACHE: resolve(cache, 'go-mod'),
     GOCACHE: resolve(cache, 'go-build'),
@@ -136,22 +136,70 @@ export function workspaceCacheEnv(paths: WorkspaceAssetPaths, cornerRoot?: strin
   };
 }
 
-async function sdkManifestDigest(root: string): Promise<string> {
-  const files: string[] = [];
+/** Final tool-home selection: inherited machine homes must not cross Workspaces. */
+export function workspaceToolEnv(
+  env: Record<string, string>,
+  home: string,
+  paths: WorkspaceAssetPaths,
+  cornerRoot?: string,
+): Record<string, string> {
+  const result = { ...env };
+  for (const name of [
+    'MAVEN_OPTS', 'MAVEN_ARGS', 'MAVEN_CONFIG', 'MAVEN_USER_HOME', 'MAVEN_REPO_LOCAL',
+    'GRADLE_OPTS', 'GRADLE_RO_DEP_CACHE', 'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS', 'JAVA_HOME',
+    'NODE_PATH', 'PIP_CONFIG_FILE', 'PIP_TARGET', 'PIP_PREFIX', 'PIP_USER',
+    'ANDROID_NDK_HOME', 'ANDROID_NDK_ROOT', 'ANDROID_SDK_HOME',
+    'NVM_BIN', 'NVM_INC', 'FNM_MULTISHELL_PATH', 'RUSTUP_TOOLCHAIN', 'ASDF_DIR',
+    'PYENV_VERSION', 'RBENV_VERSION', 'SDKMAN_DIR',
+  ]) delete result[name];
+  Object.assign(result, workspaceCacheEnv(paths, cornerRoot), {
+    PIP_CACHE_DIR: resolve(home, '.cache/pip'),
+    GRADLE_USER_HOME: resolve(home, '.gradle'),
+    CARGO_HOME: resolve(home, '.cargo'),
+    CARGO_INSTALL_ROOT: resolve(home, '.cargo'),
+    RUSTUP_HOME: resolve(home, '.rustup'),
+    GOPATH: resolve(home, 'go'),
+    GOBIN: resolve(home, 'go/bin'),
+    GOENV: resolve(home, '.config/go/env'),
+    NVM_DIR: resolve(home, '.nvm'),
+    FNM_DIR: resolve(home, '.fnm'),
+    VOLTA_HOME: resolve(home, '.volta'),
+    ASDF_DATA_DIR: resolve(home, '.asdf'),
+    MISE_DATA_DIR: resolve(home, '.local/share/mise'),
+    PYENV_ROOT: resolve(home, '.pyenv'),
+    RBENV_ROOT: resolve(home, '.rbenv'),
+    PNPM_HOME: resolve(home, '.local/share/pnpm'),
+    COREPACK_HOME: resolve(home, '.cache/node/corepack'),
+    npm_config_prefix: resolve(home, '.local'),
+    NPM_CONFIG_PREFIX: resolve(home, '.local'),
+  });
+  return result;
+}
+
+async function sdkTreeDigest(root: string): Promise<string> {
+  const hash = createHash('sha256');
   const visit = async (dir: string): Promise<void> => {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
+    for (const entry of (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
       const path = resolve(dir, entry.name);
-      if (entry.isDirectory()) await visit(path);
-      else if (entry.name === 'source.properties' || entry.name === 'package.xml') files.push(path);
+      const info = await lstat(path);
+      hash.update(`${relative(root, path)}\0${info.mode & 0o777}\0`);
+      if (info.isDirectory()) {
+        hash.update('dir\0');
+        await visit(path);
+      } else if (info.isFile()) {
+        hash.update(`file\0${info.size}\0`);
+        for await (const chunk of createReadStream(path)) hash.update(chunk);
+        hash.update('\0');
+      } else if (info.isSymbolicLink()) {
+        const target = await readlink(path);
+        if (isAbsolute(target) || !containedAssetPath(root, resolve(dirname(path), target)) ||
+            !containedAssetPath(root, await realpath(path)))
+          throw new Error(`Android SDK symlink escapes its source: ${path}`);
+        hash.update(`symlink\0${target.length}\0${target}\0`);
+      } else throw new Error(`unsupported Android SDK entry: ${path}`);
     }
   };
   await visit(root);
-  files.sort();
-  const hash = createHash('sha256');
-  for (const file of files) {
-    hash.update(relative(root, file));
-    hash.update(await readFile(file));
-  }
   return hash.digest('hex').slice(0, 24);
 }
 
@@ -186,17 +234,25 @@ async function withGenerationLock<T>(lock: string, work: () => Promise<T>): Prom
 /** Publish an SDK snapshot, never modifying a generation selected by a child. */
 export async function prepareWorkspaceSdk(paths: WorkspaceAssetPaths, sourceSdk: string): Promise<string> {
   const source = await realpath(sourceSdk);
-  const digest = await sdkManifestDigest(source);
+  const digest = await sdkTreeDigest(source);
   const published = resolve(paths.sdk, digest);
-  if ((await stat(published).catch(() => undefined))?.isDirectory()) return published;
+  const publishedValid = async (): Promise<boolean> => {
+    const info = await lstat(published).catch(() => undefined);
+    if (!info?.isDirectory() || info.isSymbolicLink()) return false;
+    return sdkTreeDigest(published).then((actual) => actual === digest, () => false);
+  };
+  if (await publishedValid()) return published;
   if (!(await admitSharedAssets(supervisorRoot(paths), (await apparentTreeBytes(source)) + 1024 ** 3)))
     throw new SharedAssetCapacityError();
   return withGenerationLock(resolve(paths.staging, `sdk-${digest}.lock`), async () => {
-    if ((await stat(published).catch(() => undefined))?.isDirectory()) return published;
+    if (await publishedValid()) return published;
+    if (await lstat(published).catch(() => undefined)) {
+      await rename(published, resolve(paths.staging, `corrupt-sdk-${digest}-${randomUUID()}`));
+    }
     const staged = resolve(paths.staging, `sdk-${digest}-${randomUUID()}`);
     try {
       await cp(source, staged, { recursive: true, dereference: false });
-      if ((await sdkManifestDigest(source)) !== digest)
+      if ((await sdkTreeDigest(staged)) !== digest || (await sdkTreeDigest(source)) !== digest)
         throw new Error('Android SDK changed while publishing a Workspace generation');
       await rename(staged, published);
       return published;
@@ -250,49 +306,76 @@ const ADAPTER_PACKAGES: Partial<Record<AgentKind, { name: string; binary: string
   pi: { name: 'pi-acp', binary: 'pi-acp' },
 };
 
+const CLI_PACKAGES: Partial<Record<AgentKind, readonly string[]>> = {
+  codex: ['@openai/codex'],
+  claude: ['@anthropic-ai/claude-code'],
+  pi: ['@earendil-works/pi-coding-agent', '@mariozechner/pi-coding-agent'],
+};
+
+async function installedPackage(binary: string, env: NodeJS.ProcessEnv): Promise<{ name: string; version: string } | undefined> {
+  const executable = isAbsolute(binary) ? binary : (await execFileAsync('which', [binary], { env })).stdout.trim();
+  let parent = dirname(await realpath(executable));
+  for (let i = 0; i < 7; i++) {
+    const manifest = await readFile(resolve(parent, 'package.json'), 'utf8').catch(() => undefined);
+    if (manifest) {
+      const parsed = JSON.parse(manifest) as { name?: string; version?: string };
+      if (parsed.name && parsed.version && /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(parsed.version))
+        return { name: parsed.name, version: parsed.version };
+    }
+    parent = dirname(parent);
+  }
+  return undefined;
+}
+
+export interface WorkspaceToolchain { command: string; binDir: string; cliCommand: string }
+
 /** Pin the selected adapter under this Workspace; published generations are never changed. */
 export async function prepareWorkspaceAdapter(
   paths: WorkspaceAssetPaths,
   kind: AgentKind | undefined,
   command: string,
   env: NodeJS.ProcessEnv,
-): Promise<string> {
+): Promise<WorkspaceToolchain | undefined> {
   const adapter = kind && ADAPTER_PACKAGES[kind];
-  if (!adapter || basename(command) !== adapter.binary) return command;
-  const sourceBinary = isAbsolute(command)
-    ? command
-    : (await execFileAsync('which', [command], { env })).stdout.trim();
-  let parent = dirname(await realpath(sourceBinary));
-  let version: string | undefined;
-  for (let i = 0; i < 6; i++) {
-    const manifest = await readFile(resolve(parent, 'package.json'), 'utf8').catch(() => undefined);
-    if (manifest) {
-      const parsed = JSON.parse(manifest) as { name?: string; version?: string };
-      if (parsed.name === adapter.name) { version = parsed.version; break; }
-    }
-    parent = dirname(parent);
-  }
-  if (!version || !/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version))
-    throw new Error(`cannot pin installed ${adapter.binary} adapter version`);
-  const key = createHash('sha256').update(`${adapter.name}@${version}:${process.versions.modules}`).digest('hex').slice(0, 16);
-  const published = resolve(paths.tools, `${adapter.binary}-${version}-${key}`);
+  // An unknown or native harness remains on its legacy private layout. No
+  // selected shared generation may invoke a mutable machine-global child CLI.
+  if (!adapter || !kind || basename(command) !== adapter.binary) return undefined;
+  const selectedAdapter = await installedPackage(command, env).catch(() => undefined);
+  const selectedCli = await installedPackage(kind, env).catch(() => undefined);
+  if (selectedAdapter?.name !== adapter.name || !selectedCli ||
+      !CLI_PACKAGES[kind]?.includes(selectedCli.name)) return undefined;
+  const key = createHash('sha256').update(
+    `${adapter.name}@${selectedAdapter.version}:${selectedCli.name}@${selectedCli.version}:${process.version}`,
+  ).digest('hex').slice(0, 16);
+  const published = resolve(paths.tools, `${adapter.binary}-${selectedAdapter.version}-${key}`);
   const publishedBinary = resolve(published, 'node_modules/.bin', adapter.binary);
-  if ((await stat(publishedBinary).catch(() => undefined))?.isFile()) return publishedBinary;
+  const publishedCli = resolve(published, 'node_modules/.bin', kind);
+  const publishedNode = resolve(published, 'bin/node');
+  const selection = { command: publishedBinary, binDir: resolve(published, 'node_modules/.bin'), cliCommand: publishedCli };
+  if ((await stat(publishedBinary).catch(() => undefined))?.isFile() &&
+      (await stat(publishedCli).catch(() => undefined))?.isFile() &&
+      (await stat(publishedNode).catch(() => undefined))?.isFile()) return selection;
   if (!(await admitSharedAssets(supervisorRoot(paths), 512 * 1024 ** 2)))
     throw new SharedAssetCapacityError();
   return withGenerationLock(resolve(paths.staging, `adapter-${key}.lock`), async () => {
-    if ((await stat(publishedBinary).catch(() => undefined))?.isFile()) return publishedBinary;
+    if ((await stat(publishedBinary).catch(() => undefined))?.isFile() &&
+        (await stat(publishedCli).catch(() => undefined))?.isFile() &&
+        (await stat(publishedNode).catch(() => undefined))?.isFile()) return selection;
     const staged = resolve(paths.staging, `adapter-${key}-${randomUUID()}`);
     try {
       await mkdir(staged, { recursive: true, mode: 0o700 });
       await execFileAsync('npm', [
-        'install', '--prefix', staged, '--no-save', '--no-audit', '--no-fund', `${adapter.name}@${version}`,
+        'install', '--prefix', staged, '--no-save', '--no-audit', '--no-fund',
+        `${adapter.name}@${selectedAdapter.version}`, `${selectedCli.name}@${selectedCli.version}`,
       ], { env, timeout: 180_000, maxBuffer: 128 * 1024 });
       const stagedBinary = resolve(staged, 'node_modules/.bin', adapter.binary);
-      if (!(await stat(stagedBinary).catch(() => undefined))?.isFile())
-        throw new Error(`Workspace adapter install did not produce ${adapter.binary}`);
+      if (!(await stat(stagedBinary).catch(() => undefined))?.isFile() ||
+          !(await stat(resolve(staged, 'node_modules/.bin', kind)).catch(() => undefined))?.isFile())
+        throw new Error(`Workspace toolchain install did not produce ${adapter.binary} and ${kind}`);
+      await mkdir(resolve(staged, 'bin'));
+      await cp(process.execPath, resolve(staged, 'bin/node'));
       await rename(staged, published);
-      return publishedBinary;
+      return selection;
     } catch (error) {
       await releaseReserveOnEnospc(supervisorRoot(paths), error);
       throw error;

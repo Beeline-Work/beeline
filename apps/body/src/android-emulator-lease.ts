@@ -25,6 +25,14 @@ function processAlive(pid: number): boolean {
   }
 }
 
+/** Linux process start ticks distinguish a live PID from a reused lease owner. */
+async function processStart(pid: number): Promise<string | undefined> {
+  const raw = await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => undefined);
+  if (raw) return raw.slice(raw.lastIndexOf(')') + 2).split(' ')[19];
+  try { return execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' }).trim() || undefined; }
+  catch { return undefined; }
+}
+
 async function portFree(port: number): Promise<boolean> {
   return new Promise((done) => {
     const server = createServer();
@@ -43,27 +51,41 @@ export async function leaseEmulator(root: string, privateRoot: string): Promise<
   for (let port = FIRST_PORT; port <= LAST_PORT; port += PORT_STEP) {
     const marker = resolve(absolute, `port-${port}.lease`);
     let handle;
-    try {
-      handle = await open(marker, 'wx', 0o600);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const old = await readFile(marker, 'utf8').catch(() => '');
-      const pid = Number(old.split(':')[0]);
-      if (!Number.isSafeInteger(pid) || !processAlive(pid)) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        handle = await open(marker, 'wx', 0o600);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const old = await readFile(marker, 'utf8').catch(() => '');
+        const [pidText, start] = old.split(':');
+        const pid = Number(pidText);
+        if (Number.isSafeInteger(pid) && pid > 0 && processAlive(pid)) {
+          const currentStart = await processStart(pid);
+          if (!currentStart || start === currentStart) break;
+        }
         const before = await stat(marker).catch(() => undefined);
+        // A newly created empty marker may still be awaiting its owner record.
+        if (before && !old && Date.now() - before.mtimeMs < 10_000) break;
+        if (!before || !(await portFree(port)) || !(await portFree(port + 1)) ||
+            !(await portFree(port + 2))) break;
         const after = await stat(marker).catch(() => undefined);
-        if (before && after && before.ino === after.ino) await rm(marker, { force: true });
+        if (after && before.ino === after.ino && (await readFile(marker, 'utf8').catch(() => '')) === old)
+          await rm(marker, { force: true });
       }
-      continue;
     }
+    if (!handle) continue;
     const instance = resolve(privateRoot, `instance-${randomUUID()}`);
+    const ownership = `${process.pid}:${await processStart(process.pid)}:${randomUUID()}:${instance}`;
     try {
+      await handle.writeFile(ownership);
+      await handle.sync();
       if (!(await portFree(port)) || !(await portFree(port + 1)) || !(await portFree(port + 2))) {
         await handle.close();
-        await rm(marker, { force: true });
+        if ((await readFile(marker, 'utf8').catch(() => '')) === ownership)
+          await rm(marker, { force: true });
         continue;
       }
-      await handle.writeFile(`${process.pid}:${Date.now()}:${instance}`);
       await handle.close();
       await mkdir(instance, { recursive: true, mode: 0o700 });
       return {
@@ -71,13 +93,15 @@ export async function leaseEmulator(root: string, privateRoot: string): Promise<
         serial: `emulator-${port}`,
         root: instance,
         release: async () => {
-          await rm(marker, { force: true });
+          if ((await readFile(marker, 'utf8').catch(() => '')) === ownership)
+            await rm(marker, { force: true });
           await rm(instance, { recursive: true, force: true });
         },
       };
     } catch (error) {
       await handle.close().catch(() => undefined);
-      await rm(marker, { force: true });
+      if ((await readFile(marker, 'utf8').catch(() => '')) === ownership)
+        await rm(marker, { force: true });
       throw error;
     }
   }

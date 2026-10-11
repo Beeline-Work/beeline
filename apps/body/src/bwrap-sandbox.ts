@@ -559,7 +559,6 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
       add(resolve(assetRoot, 'cache/codex/plugins'), 'bind', resolve(shared.codexHome, 'plugins/cache'));
     }
     if (shared.packageHome) {
-      add(resolve(assetRoot, 'cache/gradle/caches'), 'bind', resolve(shared.packageHome, '.gradle/caches'));
       add(resolve(assetRoot, 'cache/cargo/registry'), 'bind', resolve(shared.packageHome, '.cargo/registry'));
     }
     for (const name of ['tools', 'sdk', 'avd-base']) add(resolve(assetRoot, name), 'ro-bind');

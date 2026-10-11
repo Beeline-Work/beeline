@@ -75,11 +75,17 @@ describe('monolith-only thin daemon', () => {
     await mkdir(scratchPath, { recursive: true });
     await mkdir(otherScratch, { recursive: true });
     await writeFile(join(scratchPath, 'clip.mp4'), 'clip-a');
+    await mkdir(join(scratchPath, 'agent-home/codex/sessions'), { recursive: true });
+    await mkdir(join(scratchPath, 'agent-private'), { recursive: true });
+    await writeFile(join(scratchPath, 'agent-home/codex/sessions/history.json'), 'room-a');
+    await writeFile(join(scratchPath, 'agent-private/approval.json'), 'pending');
     await writeFile(join(otherScratch, 'clip.mp4'), 'clip-b');
 
     await removeCornerScratchWorkspace({ cornerId: 'corner-a', roomRoot, scratchPath });
 
     await expect(readFile(join(scratchPath, 'clip.mp4'), 'utf8')).rejects.toThrow();
+    await expect(readFile(join(scratchPath, 'agent-home/codex/sessions/history.json'), 'utf8')).resolves.toBe('room-a');
+    await expect(readFile(join(scratchPath, 'agent-private/approval.json'), 'utf8')).resolves.toBe('pending');
     await expect(readFile(join(otherScratch, 'clip.mp4'), 'utf8')).resolves.toBe('clip-b');
     await expect(
       removeCornerScratchWorkspace({

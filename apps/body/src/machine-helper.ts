@@ -60,6 +60,7 @@ import { squireBrokerMeetsComputerUseMinimum } from './squire-host.js';
 import { pruneDeletedRuntimes, pruneRepositoryCaches } from './host-disk-retention.js';
 import { applyRequestedStartupCleanup } from './startup-cleanup.js';
 import { pruneSharedModelCache } from './scratch-lifecycle.js';
+import { monitorPrivateRecoveryReserve } from './shared-asset-capacity.js';
 
 /** A failed agent restarts inside the helper after this, doubling to the cap. */
 const AGENT_RESTART_BASE_MS = 5_000;
@@ -112,6 +113,7 @@ export async function runMachineHelper(
   });
   const signals = options.signals ?? process;
   const disposeSignals = lifecycle.installSignals(signals);
+  const stopReserveMonitor = monitorPrivateRecoveryReserve(supervisorRoot);
   const notifier = new SystemdNotifier();
   const slots = new Map<string, AgentSlot>();
   const hosted = new Map<string, HostedAgent>();
@@ -177,6 +179,7 @@ export async function runMachineHelper(
 
   const finish = async (reason: HelperExitReason) => {
     disposeSignals();
+    stopReserveMonitor();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
     if (!options.configPaths) await clearHelperPidRecordIfPid(supervisorRoot, process.pid);
     return { reason, lifecycle };

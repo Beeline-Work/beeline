@@ -20,7 +20,9 @@ import {
   prepareWorkspaceAssets,
   prepareWorkspaceAvdBase,
   prepareWorkspaceSdk,
+  sharedAssetsEnabled,
   workspaceCacheEnv,
+  workspaceToolEnv,
 } from './workspace-assets.js';
 import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capacity.js';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
@@ -969,10 +971,22 @@ export class MonolithCornerTurnLoop {
       githubEnv = launchers.env;
       this.cornerGitHubCli = launchers.githubCli;
     }
-    let assets = this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath &&
+    let assets = sharedAssetsEnabled() && this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath && homeOverlay.HOME &&
       await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
       ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
       : undefined;
+    let toolchain;
+    if (assets) {
+      try {
+        toolchain = await prepareWorkspaceAdapter(assets, this.options.config.agentKind, command, {
+          ...this.options.config.agentEnv, ...homeOverlay, ...workspaceCacheEnv(assets),
+        });
+        if (!toolchain) assets = undefined;
+      } catch (error) {
+        if (!(error instanceof SharedAssetCapacityError)) throw error;
+        assets = undefined;
+      }
+    }
     let androidAssets: { sdk: string; avdBase: string } | undefined;
     if (assets && homeOverlay.ANDROID_HOME && homeOverlay.ANDROID_AVD_HOME &&
       existsSync(homeOverlay.ANDROID_AVD_HOME)) {
@@ -1008,7 +1022,7 @@ export class MonolithCornerTurnLoop {
         mkdir(path, { recursive: true, mode: 0o700 }),
       ),
     );
-    const agentEnv: Record<string, string> = {
+    const inheritedEnv: Record<string, string> = {
       ...this.options.config.agentEnv,
       ...homeOverlay,
       ...githubEnv,
@@ -1047,6 +1061,13 @@ export class MonolithCornerTurnLoop {
           }
         : {}),
     };
+    const agentEnv = assets && homeOverlay.HOME
+      ? workspaceToolEnv(inheritedEnv, homeOverlay.HOME, assets, this.options.worktreePath)
+      : inheritedEnv;
+    if (toolchain && assets) {
+      agentEnv.PATH = `${resolve(toolchain.binDir, '../../bin')}:${toolchain.binDir}:${agentEnv.PATH ?? ''}`;
+      if (this.options.config.agentKind === 'pi') agentEnv.PI_ACP_PI_COMMAND = toolchain.cliCommand;
+    }
     if (agentEnv.BEELINE_ANDROID_LEASE_ROOT && agentEnv.BEELINE_ANDROID_INSTANCE_ROOT)
       await Promise.all([
         mkdir(agentEnv.BEELINE_ANDROID_LEASE_ROOT, { recursive: true, mode: 0o700 }),
@@ -1055,9 +1076,9 @@ export class MonolithCornerTurnLoop {
       ]);
     await mkdir(hfHomeDir, { recursive: true, mode: 0o700 });
     this.agentEnv = agentEnv;
-    const selectedCommand = assets
-      ? await prepareWorkspaceAdapter(assets, this.options.config.agentKind, command, agentEnv)
-      : command;
+    const selectedCommand = assets && toolchain ? toolchain.command : command;
+    if (assets && this.options.config.agentPrivateRoot)
+      await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
     this.modelContextTokens = await modelContextWindowTokens(
       selection.model, agentEnv.PI_CODING_AGENT_DIR,
     );

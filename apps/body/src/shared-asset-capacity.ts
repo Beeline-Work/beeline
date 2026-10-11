@@ -68,6 +68,26 @@ export async function releasePrivateRecoveryReserve(supervisorRoot: string): Pro
   return true;
 }
 
+/** Release capacity before an external harness's next private transcript write. */
+export async function checkPrivateRecoveryReserve(
+  supervisorRoot: string,
+  freeBytes: () => Promise<bigint> = () => availableBytes(supervisorRoot),
+): Promise<boolean> {
+  const reserve = await stat(privateRecoveryReservePath(supervisorRoot)).catch(() => undefined);
+  if (!reserve) return false;
+  if ((await freeBytes()) >= BigInt(reserve.size + 256 * 1024 ** 2)) return false;
+  return releasePrivateRecoveryReserve(supervisorRoot);
+}
+
+export function monitorPrivateRecoveryReserve(supervisorRoot: string): () => void {
+  const timer = setInterval(() => {
+    void checkPrivateRecoveryReserve(supervisorRoot).catch((error) =>
+      console.warn('[helper] private recovery reserve check failed:', error));
+  }, 500);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 /** A floor blocks new shared writers and releases the reserve for private state. */
 export async function admitSharedAssets(
   supervisorRoot: string,

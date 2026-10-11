@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -17,7 +17,7 @@ import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
 afterEach(async () =>
-  Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))),
+  { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); },
 );
 
 const FEATURE = 'feature/corner-abandoned';
@@ -66,6 +66,52 @@ function runtimeAt(root: string): AgentRuntimeRecord {
 }
 
 describe('archived corner branch cleanup', () => {
+  it('switches new shared activations off for two Rooms in the same Workspace', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-shared-toggle-'));
+    roots.push(root);
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(root), resolve(root, 'agent.json'),
+      { workspaceRoot: root } as never,
+      { daemonApi: { execute: vi.fn() } as unknown as DaemonApiClient },
+    );
+    const internal = coordinator as unknown as { roomConfig(roomId: string, workspaceRoot: string): { agentSharedAssetRoot?: string } };
+    try {
+      const first = internal.roomConfig('room-a', resolve(root, 'rooms/room-a'));
+      const second = internal.roomConfig('room-b', resolve(root, 'rooms/room-b'));
+      expect(first.agentSharedAssetRoot).toBe(second.agentSharedAssetRoot);
+      vi.stubEnv('BEELINE_SHARED_ASSETS_ENABLED', '0');
+      expect(internal.roomConfig('room-a', resolve(root, 'rooms/room-a')).agentSharedAssetRoot).toBeUndefined();
+      expect(internal.roomConfig('room-b', resolve(root, 'rooms/room-b')).agentSharedAssetRoot).toBeUndefined();
+    } finally { await coordinator.shutdown(); }
+  });
+
+  it('retains repository-free conversation and approvals during archived cleanup', async () => {
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-private-retention-'));
+    roots.push(supervisorRoot);
+    const cornerId = 'chat-corner';
+    const scratch = resolve(supervisorRoot, 'rooms', cornerId, 'scratch');
+    await mkdir(resolve(scratch, 'agent-home/codex/sessions'), { recursive: true });
+    await mkdir(resolve(scratch, 'agent-private'), { recursive: true });
+    await writeFile(resolve(scratch, 'agent-home/codex/sessions/history.json'), 'conversation');
+    await writeFile(resolve(scratch, 'agent-private/pending.json'), 'approval');
+    await writeFile(resolve(scratch, 'work.txt'), 'scratch');
+    const coordinator = new RoomRuntimeCoordinator(
+      runtimeAt(supervisorRoot), resolve(supervisorRoot, 'agent.json'),
+      { workspaceRoot: supervisorRoot } as never,
+      { daemonApi: { execute: vi.fn() } as unknown as DaemonApiClient },
+    );
+    try {
+      const internal = coordinator as unknown as {
+        cleanupArchivedCornerLocalState(id: string, known: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>): Promise<boolean>;
+      };
+      expect(await internal.cleanupArchivedCornerLocalState(cornerId,
+        new Map([[cornerId, { cornerId, parentRoomId: 'room' }]]))).toBe(true);
+      expect(await readFile(resolve(scratch, 'agent-home/codex/sessions/history.json'), 'utf8')).toBe('conversation');
+      expect(await readFile(resolve(scratch, 'agent-private/pending.json'), 'utf8')).toBe('approval');
+      await expect(readFile(resolve(scratch, 'work.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await coordinator.shutdown(); }
+  });
+
   it('reports commits no origin ref contains once, then stops retrying and keeps them', async () => {
     const { remote } = await remoteWithCornerBranch();
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-abandon-'));

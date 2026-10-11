@@ -2,8 +2,9 @@
 
 The helper now gives every agent in a Workspace on this machine one asset tree at
 `$XDG_STATE_HOME/beeline/workspaces/<Workspace digest>/shared-home`. New turns use
-its package caches, pinned ACP adapter installs, Android SDK generation, and AVD
-metadata. Every agent and Room keeps its existing `agent-home` path for harness
+its supported package caches, pinned harness and ACP adapter generations,
+Android SDK generation, and AVD metadata. A harness without a pinnable CLI and
+adapter uses its legacy private layout. Every agent and Room keeps its existing `agent-home` path for harness
 sign-in, configuration, sessions, plugin data, and unknown files; resume needs no
 transcript migration. Pending approvals remain server scoped. Repository corners
 keep their own checkout and build output. Emulator launches through `beeline
@@ -13,7 +14,7 @@ emulator -avd <name>` lease unique ports and private writable instance data.
 selected Workspace cache is writable; published adapter/SDK/AVD generations are
 read-only in sessions. Codex has no separate cache environment variable, so
 only its downloaded `cache` and `plugins/cache` paths are rebound to the shared
-tree. Gradle `caches` and Cargo `registry` are rebound the same way; Cargo Git
+tree. Cargo `registry` is rebound the same way; Cargo Git
 remotes and settings stay private because remote URLs may carry credentials. Browser binary
 download locations use explicit Playwright and Puppeteer cache variables. The
 rest of `CODEX_HOME` stays private. The stable parent masks hide other
@@ -21,12 +22,22 @@ Workspaces and agent homes even if a new sibling appears after a turn starts.
 This is an ordinary path visibility boundary on the same Unix account, not a
 multi-user security perimeter.
 
+Pip's wheel cache and Gradle's derived caches stay private to each Room.
+The final child environment replaces inherited Rust, Go, Node manager and
+package tool homes with paths under its private HOME; unsupported host-level
+version selectors are cleared. `BEELINE_SHARED_ASSETS_ENABLED=0` selects the
+legacy layout for new cold activations; an already running session continues
+on its selected generation.
+
 ## Capacity and migration
 
 Before optional shared writes, the helper checks for 2 GiB free and creates a
 real, fsynced 128 MiB private recovery reserve. A turn falls back to its
-existing private paths when admission fails; ENOSPC releases the reserve. This
-is best effort and cannot enforce a hard quota on a concurrent process.
+existing private paths when admission or later tool installation lacks space.
+The helper checks free capacity every 500 ms and releases the reserve before
+the next private write when free space approaches it; observed ENOSPC also
+releases it. This is best effort and cannot enforce a hard quota against
+concurrent writers.
 
 Old homes are never removed automatically. The operator command
 `beeline cleanup-shared-home` reports only byte-identical files at recognized

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { admitSharedAssets, privateRecoveryReservePath, releaseReserveOnEnospc } from './shared-asset-capacity.js';
+import { admitSharedAssets, checkPrivateRecoveryReserve, privateRecoveryReservePath, releaseReserveOnEnospc } from './shared-asset-capacity.js';
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -28,4 +28,14 @@ it('releases reserve on a real ENOSPC-shaped asset failure', async () => {
   await admitSharedAssets(root, 0, { floorBytes: 0, reserveBytes: 64 });
   await releaseReserveOnEnospc(root, Object.assign(new Error('disk full'), { code: 'ENOSPC' }));
   await expect(stat(privateRecoveryReservePath(root))).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('frees the reserve before a private conversation write without another asset admission', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-private-write-'));
+  roots.push(root);
+  await admitSharedAssets(root, 0, { floorBytes: 0, reserveBytes: 64 });
+  expect(await checkPrivateRecoveryReserve(root, async () => 0n)).toBe(true);
+  await expect(stat(privateRecoveryReservePath(root))).rejects.toMatchObject({ code: 'ENOENT' });
+  await writeFile(resolve(root, 'private-conversation'), 'persisted');
+  expect(await readFile(resolve(root, 'private-conversation'), 'utf8')).toBe('persisted');
 });

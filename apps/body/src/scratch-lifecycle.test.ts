@@ -15,7 +15,9 @@ it('reports usage, refuses an over-budget write, and expires only old scratch fi
   roots.push(root);
   const home = join(root, 'agent-home');
   await mkdir(home);
+  await mkdir(join(root, 'agent-private'));
   await writeFile(join(home, 'session'), 'must survive');
+  await writeFile(join(root, 'agent-private/approval'), 'must survive');
   await writeFile(join(root, 'old.txt'), 'expire');
   await writeFile(join(root, 'new.txt'), 'keep');
   const now = Date.now();
@@ -29,6 +31,7 @@ it('reports usage, refuses an over-budget write, and expires only old scratch fi
   await expect(access(join(root, 'old.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect(await readFile(join(root, 'new.txt'), 'utf8')).toBe('keep');
   expect(await readFile(join(home, 'session'), 'utf8')).toBe('must survive');
+  expect(await readFile(join(root, 'agent-private/approval'), 'utf8')).toBe('must survive');
 });
 
 it('prunes old complete model entries after the shared cache exceeds its budget', async () => {

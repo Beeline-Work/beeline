@@ -1,4 +1,5 @@
 import { commandFixtureApi } from './command-fixture.test-support.js';
+import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,12 +8,15 @@ import { AcpClient } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
-import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
+import { identityFromKey, runtimeDirectory, type AgentRuntimeRecord } from './runtime.js';
+import * as workspaceAssets from './workspace-assets.js';
+import { SharedAssetCapacityError } from './shared-asset-capacity.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { turnTraceDirectory, type TurnTraceRecord } from './turn-trace.js';
 
 const roots: string[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -34,6 +38,7 @@ async function runTurns(options: {
   agentKind?: string;
   advertisedModel?: string;
   statsDelayMs?: number;
+  sharedAssets?: boolean;
   configOverrides?: Partial<BodyConfig>;
   prompt: (input: {
     attempt: number;
@@ -49,16 +54,23 @@ async function runTurns(options: {
   activations: number;
   receiptTimes: number[];
   receipts: Array<Record<string, unknown>>;
+  acpOptions?: ConstructorParameters<typeof AcpClient>[0];
 }> {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-trace-'));
   roots.push(root);
-  const agentHomeRoot = join(root, 'agent-home');
   const identity = identityFromKey(AGENT_HEX, 'Bee');
   const agent = {
     name: 'Bee',
     publicKey: identity.publicKey,
     secretKeyHex: Buffer.from(identity.secretKey).toString('hex'),
   };
+  const agentRuntimeDir = runtimeDirectory(root, agent.publicKey);
+  const roomRoot = options.sharedAssets ? join(agentRuntimeDir, 'rooms/room-id') : join(root, 'room');
+  const agentHomeRoot = options.sharedAssets ? join(roomRoot, 'agent-home') : join(root, 'agent-home');
+  if (options.sharedAssets) {
+    await mkdir(roomRoot, { recursive: true });
+    await writeFile(join(agentRuntimeDir, 'runtime.json'), '{}');
+  }
   const runtime = {
     agent,
     rooms: [],
@@ -74,10 +86,18 @@ async function runTurns(options: {
     mcpBinary: '/fake-dev-mcp',
     readonlyMcpCommand: '/fake-beeline-mcp',
     agentEnv: {},
-    workspaceRoot: join(root, 'room'),
+    workspaceRoot: roomRoot,
     autoApprovePermissions: true,
     accessPolicy: 'everyone',
     agentHomeRoot,
+    ...(options.sharedAssets ? {
+      agentSharedAssetRoot: workspaceAssets.workspaceAssetRoot(root, 'workspace'),
+      agentPrivateRoot: join(roomRoot, 'agent-private'),
+      bwrapPath: '/usr/bin/bwrap',
+      agentCommand: 'codex-acp',
+      agentBinary: 'codex-acp',
+      agentEnv: { PATH: process.env.PATH ?? '' },
+    } : {}),
     operatorHome: join(root, 'operator-home'),
     turnTraceDir: traceDir,
     ...options.configOverrides,
@@ -194,6 +214,7 @@ async function runTurns(options: {
 
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const abort = new AbortController();
+  let acpOptions: ConstructorParameters<typeof AcpClient>[0] | undefined;
   const loop = new MonolithRoomTurnLoop({
     roomId: 'room-id',
     workspaceId: 'workspace',
@@ -205,7 +226,7 @@ async function runTurns(options: {
     health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
     signal: abort.signal,
     pollMs: 5,
-    createAcpClient: () => acp,
+    createAcpClient: (value) => { acpOptions = value; return acp; },
   });
   const running = loop.run();
   await vi.waitFor(() => expect(settled()).toBe(options.asks.length), { timeout: 10_000 });
@@ -224,7 +245,7 @@ async function runTurns(options: {
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as TurnTraceRecord);
-  return { traces, operations, posted, activations, receiptTimes, receipts };
+  return { traces, operations, posted, activations, receiptTimes, receipts, ...(acpOptions ? { acpOptions } : {}) };
 }
 
 const answer = (text: string) => ({
@@ -235,6 +256,57 @@ const answer = (text: string) => ({
 });
 
 describe('Room turn phase trace', () => {
+  it('uses the legacy private layout on the next cold activation after rollback', async () => {
+    vi.stubEnv('BEELINE_SHARED_ASSETS_ENABLED', '0');
+    const prepare = vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter');
+    try {
+      const { acpOptions, receipts } = await runTurns({
+        sharedAssets: true,
+        asks: [{ id: 'rollback-room', body: 'work' }],
+        prompt: async () => answer('Done'),
+      });
+      expect(receipts.at(-1)?.status).toBe('complete');
+      expect(prepare).not.toHaveBeenCalled();
+      expect(acpOptions?.agentEnv?.npm_config_cache ?? '').not.toContain('/workspaces/');
+    } finally { prepare.mockRestore(); }
+  });
+
+  it('falls back to the private layout when adapter capacity drops after initial admission', async () => {
+    const prepare = vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter')
+      .mockRejectedValueOnce(new SharedAssetCapacityError());
+    try {
+      const { acpOptions, receipts } = await runTurns({
+        sharedAssets: true,
+        asks: [{ id: 'low-space-room', body: 'work' }],
+        prompt: async () => answer('Done'),
+      });
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(receipts.at(-1)?.status).toBe('complete');
+      expect(acpOptions?.agentEnv?.npm_config_cache ?? '').not.toContain('/workspaces/');
+      expect(acpOptions?.agentArgs).not.toContain(expect.stringContaining('/shared-home/tools/'));
+    } finally { prepare.mockRestore(); }
+  }, 20_000);
+
+  it('activates a real shared-layout Room mount from the turn loop', async () => {
+    const { acpOptions } = await runTurns({
+      sharedAssets: true,
+      asks: [{ id: 'shared-room', body: 'work' }],
+      prompt: async () => answer('Done'),
+    });
+    expect(acpOptions?.agentCommand).toBe('/usr/bin/bwrap');
+    const args = acpOptions!.agentArgs!;
+    const separator = args.lastIndexOf('--');
+    const child = spawnSync('/usr/bin/bwrap', [
+      ...args.slice(0, separator + 1), '/bin/sh', '-c',
+      'test -d "$HOME" && test -f "$1" && touch "$2" && ! touch "$3" 2>/dev/null',
+      'probe',
+      join(acpOptions!.agentCwd!, '../../runtime.json'),
+      acpOptions!.agentEnv!.npm_config_cache + '/room-proof',
+      join(acpOptions!.agentEnv!.npm_config_cache!, '../../tools/should-fail'),
+    ], { env: acpOptions!.agentEnv, encoding: 'utf8' });
+    expect(child.status, child.stderr).toBe(0);
+  }, 20_000);
+
   it('records the assembled Room bytes with its selected model window', async () => {
     const piHome = await mkdtemp(join(tmpdir(), 'room-window-'));
     roots.push(piHome);

@@ -237,7 +237,6 @@ async function seed(workspaceId: string, kind: 'needs-you' | 'bookmarks'): Promi
   return true;
 }
 export const seedNeedsYouList = (workspaceId: string) => seed(workspaceId, 'needs-you');
-export const seedSavedList = (workspaceId: string) => seed(workspaceId, 'bookmarks');
 export function forgetTray(workspaceId: string): void {
   const slot = current(workspaceId);
   if (!slot) return;

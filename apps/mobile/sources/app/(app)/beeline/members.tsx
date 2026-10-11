@@ -61,7 +61,7 @@ import {
   useWorkspaceRecords,
   workspaceRecordScope,
   workspaceRows,
-  workspaceTotals,
+  workspacePage,
 } from '@/buzz/workspace-records';
 import { watchWorkspace } from '@/buzz/workspace-watch';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
@@ -97,15 +97,6 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-
-function rosterIds(rows: readonly { identity: { pubkey: string } }[]): string[] {
-  return rows.map((row) => row.identity.pubkey);
-}
-
-function appendUniqueIds(current: readonly string[], incoming: readonly string[]): string[] {
-  const seen = new Set(current);
-  return [...current, ...incoming.filter((id) => !seen.has(id))];
-}
 
 function countedKindLabel(
   kind: 'People' | 'Agents',
@@ -277,12 +268,8 @@ export default function BuzzMembers({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pairCommand, setPairCommand] = useState<string | null>(null);
   const [memberQuery, setMemberQuery] = useTextDraft(`member-search:${workspaceId}`, '');
-  // A search or load-more page lists ids only; rows and totals come from the records.
-  const [rosterPeople, setRosterPeople] = useState<string[] | null>(null);
-  const [rosterAgents, setRosterAgents] = useState<string[] | null>(null);
+  // Search selection is local; its ordered pages and rows live in the records.
   const [rosterQuery, setRosterQuery] = useState('');
-  const [peopleHasMore, setPeopleHasMore] = useState(false);
-  const [agentsHasMore, setAgentsHasMore] = useState(false);
   const [rosterLoading, setRosterLoading] = useState(false);
   const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView | null> | null>(null);
   const agentRequestGenerationRef = useRef(0);
@@ -395,19 +382,11 @@ export default function BuzzMembers({
   const applyMemberPage = (
     page: Awaited<ReturnType<typeof readMemberPage>>,
     kind: 'human' | 'agent' | undefined,
-    append: { people: readonly string[]; agents: readonly string[] } | false,
+    append: boolean,
   ) => {
     if (recordScope)
-      recordWorkspacePage(recordScope, page, { query: page.query, kind, append: Boolean(append), stamp: page.stamp });
+      recordWorkspacePage(recordScope, page, { query: page.query, kind, append, stamp: page.stamp });
     setRosterQuery(page.query);
-    if (kind !== 'agent') {
-      setRosterPeople(append ? appendUniqueIds(append.people, rosterIds(page.members)) : rosterIds(page.members));
-      setPeopleHasMore(page.membersTruncated);
-    }
-    if (kind !== 'human') {
-      setRosterAgents(append ? appendUniqueIds(append.agents, rosterIds(page.agents)) : rosterIds(page.agents));
-      setAgentsHasMore(page.agentsTruncated);
-    }
   };
 
   const readMemberPage = async (input: {
@@ -480,8 +459,6 @@ export default function BuzzMembers({
       stopSurface?.();
       scheduler?.dispose();
       schedulerRef.current = null;
-      setRosterPeople(null);
-      setRosterAgents(null);
       setRosterQuery('');
     };
   }, [retryGeneration, workspaceId]);
@@ -597,8 +574,6 @@ export default function BuzzMembers({
     if (!identity || !relayUrl || !workspaceId) return;
     const q = memberQuery.trim();
     if (!q) {
-      setRosterPeople(null);
-      setRosterAgents(null);
       setRosterQuery('');
       return;
     }
@@ -623,18 +598,17 @@ export default function BuzzMembers({
 
   const loadMoreMembers = async (kind: 'human' | 'agent') => {
     if (!surface || rosterLoading) return;
-    const people = rosterPeople ?? rosterIds(surface.members);
-    const agents = rosterAgents ?? rosterIds(surface.agents);
     const q = memberQuery.trim();
+    const page = workspacePage(recordScope, q);
     setRosterLoading(true);
     setError(null);
     try {
-      const page = await readMemberPage({
+      const next = await readMemberPage({
         kind,
-        offset: kind === 'human' ? people.length : agents.length,
+        offset: kind === 'human' ? page.people?.ids.length ?? 0 : page.agents?.ids.length ?? 0,
         ...(q ? { q } : {}),
       });
-      applyMemberPage(page, kind, { people, agents });
+      applyMemberPage(next, kind, true);
     } catch (reason) {
       setError(`Could not load more members: ${String(reason)}`);
     } finally {
@@ -1272,15 +1246,13 @@ export default function BuzzMembers({
   }
 
   const canManage = surface.viewer.permissions.manage;
-  const people = workspaceRows<WorkspaceView['members'][number]>(recordScope,
-    rosterPeople ?? rosterIds(surface.members));
-  const agents = workspaceRows<WorkspaceView['agents'][number]>(recordScope,
-    rosterAgents ?? rosterIds(surface.agents));
-  const { people: peopleTotal, agents: agentTotal } = workspaceTotals(recordScope, rosterQuery);
-  const canLoadMorePeople =
-    (rosterPeople !== null ? peopleHasMore : surface.membersTruncated) && !rosterLoading;
-  const canLoadMoreAgents =
-    (rosterAgents !== null ? agentsHasMore : surface.agentsTruncated) && !rosterLoading;
+  const page = workspacePage(recordScope, rosterQuery);
+  const people = workspaceRows<WorkspaceView['members'][number]>(recordScope, page.people?.ids ?? []);
+  const agents = workspaceRows<WorkspaceView['agents'][number]>(recordScope, page.agents?.ids ?? []);
+  const peopleTotal = page.people?.total;
+  const agentTotal = page.agents?.total;
+  const canLoadMorePeople = Boolean(page.people?.truncated) && !rosterLoading;
+  const canLoadMoreAgents = Boolean(page.agents?.truncated) && !rosterLoading;
 
   const personRow = (member: (typeof people)[number]) => {
     return (

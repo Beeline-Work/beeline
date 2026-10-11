@@ -78,7 +78,8 @@ describe('Workspace roster records', () => {
   it('learns rows and totals from any writer of the shared Workspace entry', async () => {
     await mobileSurfaceCache.write(entry, workspaceView(), isWorkspaceView);
     expect(records.workspaceRows(scope, ids).map((row) => row.identity.name)).toEqual(['Viewer', 'Mate']);
-    expect(records.workspaceTotals(scope, '')).toEqual({ people: 2, agents: 1 });
+    expect(records.workspacePage(scope, '').people?.total).toBe(2);
+    expect(records.workspacePage(scope, '').agents?.total).toBe(1);
   });
 
   it('applies one agent receipt write to the roster row every page selects', async () => {
@@ -99,8 +100,9 @@ describe('Workspace roster records', () => {
     records.recordWorkspaceRemoval(scope, mate);
     expect(records.workspaceRows(scope, ids).map((row) => row.identity.pubkey)).toEqual([viewer]);
     expect(records.workspaceRecord(scope, mate)).toBeNull();
-    expect(records.workspaceTotals(scope, '')).toEqual({ people: 1, agents: 1 });
-    expect(records.workspaceTotals(scope, 'ma')).toEqual({ people: 0, agents: undefined });
+    expect(records.workspacePage(scope, '').people?.total).toBe(1);
+    expect(records.workspacePage(scope, '').agents?.total).toBe(1);
+    expect(records.workspacePage(scope, 'ma').people?.total).toBe(0);
   });
 
   it('keeps a removal over a Workspace read that was in flight when it landed', async () => {
@@ -132,7 +134,8 @@ describe('Workspace roster records', () => {
     records.recordWorkspacePage(scope, { members: workspaceView().members, agents: [], peopleTotal: 2 },
       { query: '', kind: 'human', append: false, stamp });
     expect(records.workspaceRows(scope, ids).map((row) => row.identity.pubkey)).toEqual([viewer]);
-    expect(records.workspaceTotals(scope, '')).toEqual({ people: 1, agents: 1 });
+    expect(records.workspacePage(scope, '').people?.total).toBe(1);
+    expect(records.workspacePage(scope, '').agents?.total).toBe(1);
   });
 
   it('never lets an older page replace a newer row', () => {

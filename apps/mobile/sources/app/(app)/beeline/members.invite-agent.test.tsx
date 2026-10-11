@@ -307,7 +307,8 @@ describe('Members agent invitation flow', () => {
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'workspace-members-surface' })).toBeDefined();
-    expect(client.surfaceSubscribe).toHaveBeenCalledTimes(1);
+    expect(client.surfaceSubscribe).toHaveBeenCalledTimes(2);
+    expect(client.surfaceSubscribe).toHaveBeenCalledWith([], expect.any(Function));
     expect(client.surfaceSubscribe).toHaveBeenCalledWith(
       workspace.watchFilters,
       expect.any(Function),

@@ -6,7 +6,7 @@ import type {
   WorkspaceView,
 } from '@beeline/buzz-client';
 import { subscribeClientReset } from '@/sync/client-reset';
-import { IdentitySelection, identityScope } from './identity-records';
+import { IdentitySelection, identityScope, useIdentityRecords } from './identity-records';
 import { mobileSurfaceCache } from './surface-storage';
 import { workspaceAgentFromDetail } from './workspace-surface';
 
@@ -14,22 +14,18 @@ type MemberRecord = WorkspaceView['members'][number];
 type AgentRecord = WorkspaceView['agents'][number];
 export type WorkspaceRecord = MemberRecord | AgentRecord;
 
-/**
- * A roster count, the ids a search counted it over (so a removal lowers it)
- * and the stamp of its last change: an older page never replaces it.
- */
-type Total = { value: number; listed: Set<string>; stamp: number };
+type Page = { ids: string[]; total?: number; truncated: boolean; stamp: number };
 
 type Scope = {
   /** `null` records a removal. `stamp` orders server answers: an older one never replaces a newer one. */
   readonly rows: Map<string, { record: WorkspaceRecord | null; stamp: number }>;
-  /** Per search query (`''` is the whole roster): people and agent totals. */
-  readonly totals: Map<string, { people?: Total; agents?: Total }>;
+  /** Ordered roster pages and counts per search (`''` is the whole roster). */
+  readonly pages: Map<string, { people?: Page; agents?: Page }>;
 };
 
 /**
- * The one store of Workspace roster rows and totals, per relay, viewer and
- * Workspace. Pages keep only the ids they list and select rows and totals
+ * The one store of Workspace roster rows and pages, per relay, viewer and
+ * Workspace. Pages keep only the ids they list and select rows and counts
  * here, so a server read, a write receipt, a removal or a live identity
  * change reaches every roster page at once. The store hears every value of
  * `/workspace/:id`, agent details and member profiles that the surface
@@ -56,40 +52,41 @@ subscribeClientReset(() => {
 function records(scope: string): Scope {
   let scoped = scopes.get(scope);
   if (!scoped) {
-    scoped = { rows: new Map(), totals: new Map() };
+    scoped = { rows: new Map(), pages: new Map() };
     scopes.set(scope, scoped);
   }
   return scoped;
 }
 
-function storeRows(scoped: Scope, rows: readonly WorkspaceRecord[], stamp: number): boolean {
-  let changed = false;
+function storeRows(scoped: Scope, rows: readonly WorkspaceRecord[], stamp: number): void {
   for (const row of rows) {
     const current = scoped.rows.get(row.identity.pubkey);
     if (current && (current.stamp > stamp || current.record === row)) continue;
     scoped.rows.set(row.identity.pubkey, { record: row, stamp });
-    changed = true;
   }
-  return changed;
 }
 
-function storeTotal(
+function storePage(
   scoped: Scope,
   query: string,
   kind: 'people' | 'agents',
   value: number | undefined,
   rows: readonly WorkspaceRecord[],
+  truncated: boolean,
   append: boolean,
   stamp: number,
+  retainTail = false,
 ): void {
-  const totals = scoped.totals.get(query) ?? {};
-  const current = totals[kind];
+  const pages = scoped.pages.get(query) ?? {};
+  const current = pages[kind];
   if (current && current.stamp > stamp) return;
-  const listed = new Set(append ? current?.listed : undefined);
-  for (const row of rows) listed.add(row.identity.pubkey);
-  if (value === undefined) delete totals[kind];
-  else totals[kind] = { value, listed, stamp };
-  scoped.totals.set(query, totals);
+  const ids = [...new Set([
+    ...(append ? current?.ids ?? [] : []),
+    ...rows.map((row) => row.identity.pubkey),
+    ...(retainTail ? current?.ids ?? [] : []),
+  ])];
+  pages[kind] = { ids, total: value, truncated, stamp };
+  scoped.pages.set(query, pages);
 }
 
 /**
@@ -100,7 +97,8 @@ function storeTotal(
  */
 export function recordWorkspacePage(
   scope: string,
-  page: Pick<WorkspaceMemberListView, 'members' | 'agents' | 'peopleTotal' | 'agentTotal'>,
+  page: Pick<WorkspaceMemberListView, 'members' | 'agents'> &
+    Partial<Pick<WorkspaceMemberListView, 'peopleTotal' | 'agentTotal' | 'membersTruncated' | 'agentsTruncated'>>,
   options: { query?: string; kind?: 'human' | 'agent'; append: boolean; stamp: number },
 ): void {
   const scoped = records(scope);
@@ -110,9 +108,11 @@ export function recordWorkspacePage(
     return;
   }
   if (options.kind !== 'agent')
-    storeTotal(scoped, options.query, 'people', page.peopleTotal, page.members, options.append, options.stamp);
+    storePage(scoped, options.query, 'people', page.peopleTotal, page.members,
+      Boolean(page.membersTruncated), options.append, options.stamp);
   if (options.kind !== 'human')
-    storeTotal(scoped, options.query, 'agents', page.agentTotal, page.agents, options.append, options.stamp);
+    storePage(scoped, options.query, 'agents', page.agentTotal, page.agents,
+      Boolean(page.agentsTruncated), options.append, options.stamp);
   notify(scope);
 }
 
@@ -129,8 +129,10 @@ function recordWorkspaceView(scope: string, view: WorkspaceView, stamp: number):
     const complete = current.record.identity.kind === 'agent' ? !view.agentsTruncated : !view.membersTruncated;
     if (complete) scoped.rows.set(pubkey, { record: null, stamp });
   }
-  storeTotal(scoped, '', 'people', view.peopleTotal, view.members, false, stamp);
-  storeTotal(scoped, '', 'agents', view.agentTotal, view.agents, false, stamp);
+  storePage(scoped, '', 'people', view.peopleTotal, view.members, view.membersTruncated, false, stamp,
+    view.membersTruncated);
+  storePage(scoped, '', 'agents', view.agentTotal, view.agents, view.agentsTruncated, false, stamp,
+    view.agentsTruncated);
   notify(scope);
 }
 
@@ -174,11 +176,14 @@ function removeRow(scoped: Scope, pubkey: string, stamp: number): void {
   if (!removed) return;
   const kind = removed.identity.kind === 'agent' ? 'agents' : 'people';
   // The whole roster's total counts every member; a search counts only those it listed.
-  for (const [query, totals] of scoped.totals) {
-    const total = totals[kind];
-    if (!total) continue;
-    if (!total.listed.delete(pubkey) && query !== '') continue;
-    totals[kind] = { value: Math.max(0, total.value - 1), listed: total.listed, stamp: Math.max(total.stamp, stamp) };
+  for (const [query, pages] of scoped.pages) {
+    const page = pages[kind];
+    if (!page) continue;
+    const listed = page.ids.includes(pubkey);
+    if (!listed && query !== '') continue;
+    pages[kind] = { ...page, ids: page.ids.filter((id) => id !== pubkey),
+      total: page.total === undefined ? undefined : Math.max(0, page.total - 1),
+      stamp: Math.max(page.stamp, stamp) };
   }
 }
 
@@ -201,12 +206,6 @@ export function recordWorkspaceRole(scope: string, pubkey: string, role: MemberR
   // Keep the identity this row shows now; the raw one may predate a live rename.
   scoped.rows.set(pubkey, { record: { ...selected, role }, stamp: writeStamp(scope) });
   notify(scope);
-}
-
-/** A live identity change: every roster page of this viewer repaints with the new identity. */
-export function notifyWorkspaceIdentity(relayUrl: string, viewerPubkey: string): void {
-  const prefix = JSON.stringify([new URL(relayUrl).origin, viewerPubkey]).slice(0, -1);
-  for (const scope of scopes.keys()) if (scope.startsWith(`${prefix},`)) notify(scope);
 }
 
 function selection(scope: string, stamp: number): IdentitySelection {
@@ -254,14 +253,14 @@ export function workspaceOwnedAgents(scope: string | null, ownerPubkey: string):
   });
 }
 
-/** The people and agent totals of a search (`''` is the whole roster); absent when unknown. */
-export function workspaceTotals(scope: string | null, query: string): { people?: number; agents?: number } {
-  const totals = scope ? scopes.get(scope)?.totals.get(query) : undefined;
-  return { people: totals?.people?.value, agents: totals?.agents?.value };
+/** The ordered pages of a search (`''` is the whole roster); absent when unknown. */
+export function workspacePage(scope: string | null, query: string): { people?: Page; agents?: Page } {
+  return scope ? scopes.get(scope)?.pages.get(query) ?? {} : {};
 }
 
 /** Re-render whenever any record in this Workspace changes. */
 export function useWorkspaceRecords(scope: string | null): number {
+  const identityVersion = useIdentityRecords();
   const [version, setVersion] = useState(() => (scope ? versions.get(scope) ?? 0 : 0));
   useEffect(() => {
     if (!scope) return;
@@ -275,7 +274,7 @@ export function useWorkspaceRecords(scope: string | null): number {
       if (scoped.size === 0) listeners.delete(scope);
     };
   }, [scope]);
-  return version;
+  return version + identityVersion;
 }
 
 function addressScope(address: SurfaceCacheAddress): string | null {

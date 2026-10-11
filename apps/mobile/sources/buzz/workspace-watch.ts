@@ -13,6 +13,7 @@ type Watch = {
   subscribed: string;
   change: Promise<void>;
   release?: () => void;
+  globalRelease?: () => void;
   stopEntry: () => void;
   closed: boolean;
 };
@@ -20,12 +21,10 @@ type Watch = {
 const watches = new Map<string, Watch>();
 
 /**
- * One relay watch per Workspace for every mounted roster reader (Members and
- * the human profile). Each relay signal reaches every listener, which reads
- * what it shows. The live socket only serves Room ids, so the filters are the
- * shared `/workspace/:id` entry's watch filters and managed Rooms, plus the
- * Rooms each reader names with `rooms` (the profile names its grants' Rooms). A Workspace id is
- * not a Room id; the server drops it, so it never joins the filters.
+ * One watch per Workspace for mounted roster readers (Members and profiles).
+ * Room filters cover grants and other Room activity; an empty filter hears
+ * identity-wide membership invalidations and socket reconnects. Every signal
+ * makes each reader refresh what it shows. A Workspace id is not a Room id.
  */
 export function watchWorkspace(
   identity: Identity,
@@ -55,6 +54,7 @@ export function watchWorkspace(
       watches.delete(key);
       opened.stopEntry();
       opened.release?.();
+      opened.globalRelease?.();
     },
   };
 }
@@ -71,6 +71,17 @@ function openWatch(key: string, identity: Identity, relayUrl: string, workspaceI
     stopEntry: () => undefined,
     closed: false,
   };
+  watch.change = relay.then(async (client) => {
+    const release = await client.surfaceSubscribe([], (event) => {
+      const live = event && typeof event === 'object' && 'monolithLive' in event
+        ? event.monolithLive as { type?: string; reason?: string }
+        : undefined;
+      if (live?.type !== 'invalidate' || (live.reason !== 'postgres:memberships' && live.reason !== 'reconnect')) return;
+      for (const listener of watch.listeners) listener.signal();
+    });
+    if (watch.closed) release();
+    else watch.globalRelease = release;
+  });
   const listen = () => {
     const view = mobileSurfaceCache.peek(address, isWorkspaceView);
     // A manager's Rooms carry the membership changes Members shows.

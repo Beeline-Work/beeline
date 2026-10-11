@@ -32,6 +32,12 @@ export function splitViewerContext(text: string): { body: string; context?: stri
     : { body: text };
 }
 
+/** Keep the saved context envelope stable; only shorten its visible label. */
+export function viewerContextLabel(context: string): string {
+  return context.startsWith('Viewing browser:') ? 'Viewing shared browser'
+    : context.replace(/^Viewing artifact: /, 'Viewing ');
+}
+
 export function viewerAgentHandle(
   kind: 'artifact' | 'computer',
   preferred: string | undefined,

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
 export { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
 import { Swipeable } from 'react-native-gesture-handler';
@@ -50,14 +50,16 @@ import {
 } from '@/buzz/draft-settle';
 import { liveDraftDrainStore } from '@/buzz/live-draft-drain';
 import { splitLedgerText } from '@/buzz/ledger-text';
-import { splitViewerContext } from '@/buzz/viewer-conversation';
+import { currentViewerConversation, subscribeViewerConversation, viewerContextLabel, splitViewerContext } from '@/buzz/viewer-conversation';
 import { parseConnectorReceipt, type ConnectorReceipt } from '@/buzz/connector-receipt';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { isLedgerDayOpener } from '@/buzz/message-dates';
 import { useTranscriptStamp } from '@/buzz/use-transcript-stamp';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
 import { artifactFormat } from '@/buzz/artifact';
-import { ArtifactCard } from '@/components/buzz/ArtifactCard';
+import { TranscriptReference } from '@/components/buzz/TranscriptReference';
+import { openComputerSessionViewer } from '@/components/buzz/ComputerSession';
+import { ArtifactCard, openArtifactViewer } from '@/components/buzz/ArtifactCard';
 import { ArtifactViewerScreen } from '@/components/buzz/ArtifactViewer';
 import { showPictureActions } from '@/buzz/picture-actions';
 import { ROOM_LABEL, CORNER_LABEL } from '@/buzz/vocabulary';
@@ -1557,6 +1559,27 @@ export const ConnectorReceiptCard = React.memo(function ConnectorReceiptCard({
   );
 });
 
+/** The Room publishes its transcript after paint; subscribe so a browser reference
+ * becomes actionable as soon as that authoritative snapshot is available. */
+function ViewerContextReference({ context, attachment, roomId, timestamp, isDesktop, testID }: {
+  context: string; attachment?: AttachmentReference; roomId?: string; timestamp: number;
+  isDesktop: boolean; testID: string;
+}) {
+  const conversation = useSyncExternalStore(subscribeViewerConversation,
+    () => currentViewerConversation(roomId), () => currentViewerConversation(roomId));
+  const browserTitle = context.startsWith('Viewing browser: ')
+    ? context.slice('Viewing browser: '.length) : undefined;
+  const browserSession = browserTitle ? [...(conversation?.messages ?? [])].reverse()
+    .find((entry) => entry.createdAt <= timestamp && entry.computerSession?.title === browserTitle)
+    ?.computerSession : undefined;
+  return <TranscriptReference viewer testID={testID}
+    accessibilityLabel={browserTitle ? 'Open shared browser' : 'Open viewed artifact'}
+    onPress={browserSession ? () => void openComputerSessionViewer(browserSession, isDesktop, roomId)
+      : !browserTitle && attachment && !attachment.expired
+        ? () => openArtifactViewer(attachment, isDesktop, roomId) : undefined}
+  >{viewerContextLabel(context)}</TranscriptReference>;
+}
+
 export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   message,
   agent,
@@ -1810,28 +1833,16 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   });
   const replySourceRoomId = message.reference?.channelId ?? codeRoomId;
   const replySourceMessageId = message.replyToId;
-  const replyReferenceContents = (
-    <Text numberOfLines={2} style={styles.replyReferenceText}>
+  const replyReference = showReplyReference ? (
+    <TranscriptReference
+      accessibilityLabel="Open original message"
+      onPress={onOpenSource && replySourceRoomId && replySourceMessageId
+        ? () => onOpenSource(replySourceRoomId, replySourceMessageId) : undefined}
+      testID={`reply-reference-${message.id}`}
+    >
       ↳ {referencedTarget?.authorName ?? 'ORIGINAL MESSAGE'} ·{' '}
       {referencedTarget?.preview ?? 'Message not loaded'}
-    </Text>
-  );
-  const replyReference = showReplyReference ? (
-    onOpenSource && replySourceRoomId && replySourceMessageId ? (
-      <Pressable
-        accessibilityLabel="Open original message"
-        accessibilityRole="button"
-        onPress={() => onOpenSource(replySourceRoomId, replySourceMessageId)}
-        style={styles.replyReference}
-        testID={`reply-reference-${message.id}`}
-      >
-        {replyReferenceContents}
-      </Pressable>
-    ) : (
-      <View style={styles.replyReference} testID={`reply-reference-${message.id}`}>
-        {replyReferenceContents}
-      </View>
-    )
+    </TranscriptReference>
   ) : null;
   const forwarded = forwardedMessageParts(message.text);
   const forwardSource = forwarded.source;
@@ -1900,11 +1911,12 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     );
   });
 
-  const viewerAttachments = viewerMessage.context ? [
-    <Text key="viewer-context" style={styles.viewerContextChip} testID={`viewer-context-${message.id}`}>
-      ◉ {viewerMessage.context}
-    </Text>, ...(attachments ?? []),
-  ] : attachments;
+  const viewerReference = viewerMessage.context ? (
+    <ViewerContextReference context={viewerMessage.context} attachment={message.attachments?.[0]}
+      roomId={codeRoomId} timestamp={message.timestamp} isDesktop={desktopLayout}
+      testID={`viewer-context-${message.id}`} />
+  ) : null;
+  const messageReference = viewerReference ? <>{replyReference}{viewerReference}</> : replyReference;
 
   const content = (
     <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>
@@ -1925,8 +1937,8 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             onOpenCode={onOpenCode}
             bodyTestID={`chat-message-text-${message.id}`}
             bodyAction={forwardBodyAction}
-            replyReference={replyReference}
-            attachments={viewerAttachments}
+            replyReference={messageReference}
+            attachments={attachments}
           />
         ) : cornerProposal ? (
           <TranscriptCard
@@ -1995,9 +2007,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             onOpenCode={onOpenCode}
             bodyTestID={`chat-message-text-${message.id}`}
             bodyAction={forwardBodyAction}
-            replyReference={replyReference}
+            replyReference={messageReference}
             machineNoise={machineNoise}
-            attachments={viewerAttachments}
+            attachments={attachments}
           />
         )}
         {receiptCard}
@@ -2081,13 +2093,6 @@ const styles = StyleSheet.create((theme) => ({
   relayToggle: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   relayMeasure: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
   activityGroup: { width: '100%', minWidth: 0 },
-  replyReference: { minWidth: 0, marginBottom: theme.buzz.space.xs },
-  replyReferenceText: {
-    ...theme.buzz.type.machine,
-    // The quoted reply excerpt is provenance a reader actually reads, so it
-    // takes the lifted quiet tier, not the gutter's ghost tier.
-    color: theme.buzz.ledgerQuiet,
-  },
   connectorReceipt: {
     marginTop: 4,
     marginHorizontal: 8,
@@ -2166,17 +2171,6 @@ const styles = StyleSheet.create((theme) => ({
     marginLeft: 8,
   },
   reactionEmoji: emojiTextStyle(theme.buzz.type.body),
-  viewerContextChip: {
-    ...theme.buzz.type.machine,
-    alignSelf: 'flex-start',
-    color: theme.buzz.accent,
-    borderWidth: 1,
-    borderColor: theme.buzz.borderStrong,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginTop: theme.buzz.space.xs,
-  },
   forwardCaption: {
     ...theme.buzz.type.sectionHead,
     marginTop: theme.buzz.space.xs,

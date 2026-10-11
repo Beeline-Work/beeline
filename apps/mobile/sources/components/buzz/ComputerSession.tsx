@@ -94,18 +94,8 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
   }, [session.id, session.status, session.access]);
   const open = async () => {
     if (!access || session.status !== 'live') return;
-    let freshAccess: string;
-    try {
-      freshAccess = (await monolithPhoneOperation('openComputerSession', { id: session.id })).access;
-    } catch {
-      setAccess(null);
-      return;
-    }
+    const freshAccess = await openComputerSessionViewer(session, isDesktop, currentViewerConversation()?.roomId, agentHandle);
     setAccess(freshAccess);
-    const permitted = { ...session, access: freshAccess, agentHandle };
-    if (isDesktop && openComputerInDesktopWorkPane(permitted)) return;
-    Modal.show({ component: ComputerSessionViewer,
-      props: { session: permitted, agentHandle, roomId: currentViewerConversation()?.roomId }, placement: 'fill' });
   };
   return <View style={styles.card} testID={`computer-session-card-${session.status}`}>
     {session.status === 'live' && access ? <Pressable onPress={() => void open()} accessibilityRole="button" accessibilityLabel={`Open ${session.title} browser`}>
@@ -118,6 +108,23 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
       <Pressable onPress={() => void open()} accessibilityRole="button" accessibilityLabel="Open live browser" testID="computer-session-open"><Text style={styles.link}>Open live browser</Text></Pressable>
     </View> : null}
   </View>;
+}
+
+/** A transcript reference gets fresh access through the same authority as a card. */
+export async function openComputerSessionViewer(session: ComputerSessionView, isDesktop = false,
+  roomId = currentViewerConversation()?.roomId, agentHandle = session.agentHandle) {
+  try {
+    const access = session.status === 'live'
+      ? (await monolithPhoneOperation('openComputerSession', { id: session.id })).access : undefined;
+    const permitted = { ...session, access, agentHandle };
+    if (isDesktop && openComputerInDesktopWorkPane(permitted)) return access ?? null;
+    Modal.show({ component: ComputerSessionViewer,
+      props: { session: permitted, agentHandle, roomId }, placement: 'fill' });
+    return access ?? null;
+  } catch {
+    Modal.alert('Could not open browser', 'The live browser is unavailable. Try again.');
+    return null;
+  }
 }
 
 /** Full area of the artifact viewer, with only the two rounded controls. */

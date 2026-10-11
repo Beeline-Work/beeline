@@ -4,10 +4,11 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
-import { currentViewerConversation, subscribeViewerConversation, viewerAgentHandle, viewerContext } from '@/buzz/viewer-conversation';
+import { currentViewerConversation, subscribeViewerConversation, viewerAgentHandle, viewerContext, viewerContextLabel } from '@/buzz/viewer-conversation';
 import { withAlpha } from '@/buzz/groknight';
 import { MAX_MESSAGE_ATTACHMENTS, pickedPhotoAttachments, type PickedChatAttachment } from '@/buzz/chat-attachment-pick';
 import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT, ConversationComposer, type DictatedSend } from '@/components/buzz/ConversationComposer';
+import { TranscriptReference, ViewerConversationRing } from './TranscriptReference';
 import { AttachmentPickerSheet } from './AttachmentPickerSheet';
 
 type Entry = { id: string; speaker: string; text: string; context?: string };
@@ -156,7 +157,7 @@ export function ViewerConversationDock({
       {recent.map((entry) => <View key={entry.id} style={styles.transcriptEntry}>
         <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
         <Text numberOfLines={expanded ? undefined : 2} style={styles.transcriptText}>{entry.text}</Text>
-        {entry.context ? <Text style={styles.contextChip}>◉ {entry.context}</Text> : null}
+        {entry.context ? <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference> : null}
       </View>)}
       {draft.trim() ? <View style={styles.transcriptEntry}><Text style={styles.transcriptSpeaker}>You · draft</Text><Text numberOfLines={2} style={styles.transcriptText}>{draft}</Text></View> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -168,7 +169,7 @@ export function ViewerConversationDock({
         onPress={() => { setOpen((value) => !value); setExpanded(false); }}
         style={[styles.control, open && styles.controlOpen]}
         testID="viewer-conversation-toggle"
-      ><View style={styles.attentionRing}><View style={styles.attentionDot} /></View></Pressable>
+      ><ViewerConversationRing /></Pressable>
       {open ? <View style={styles.composerWrap}><ConversationComposer
         viewerPill value={draft} height={height} focused={focused} disabled={sending || !conversation}
         inputRevision={revision} testIDPrefix="viewer" speechEnabled
@@ -205,9 +206,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center', justifyContent: 'center' },
   controlOpen: { borderRightWidth: 1, borderRightColor: theme.buzz.border, borderRadius: 0,
     backgroundColor: 'transparent' },
-  attentionRing: { width: 14, height: 14, borderWidth: 1, borderColor: theme.buzz.accent,
-    borderRadius: 14 / 2, alignItems: 'center', justifyContent: 'center' },
-  attentionDot: { width: 8, height: 8, borderRadius: 8 / 2, backgroundColor: theme.buzz.accent },
   composerWrap: { flex: 1, minWidth: 0 },
   transcript: { position: 'absolute', left: 16, right: 16, padding: theme.buzz.space.md, borderRadius: 10,
     borderWidth: 1, borderColor: theme.buzz.borderStrong,
@@ -216,6 +214,5 @@ const styles = StyleSheet.create((theme) => ({
   transcriptEntry: { marginTop: 4 },
   transcriptSpeaker: { ...theme.buzz.type.machine, color: theme.buzz.accent },
   transcriptText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
-  contextChip: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet, marginTop: theme.buzz.space.xs },
   error: { ...theme.buzz.type.body, color: theme.buzz.dialogDanger, marginTop: 4 },
 }));

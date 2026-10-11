@@ -540,6 +540,8 @@ describe('desktop Workspace navigation', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    await vi.waitFor(() => expect(chats).toHaveBeenCalledWith('workspace-empty'));
+    await settle();
 
     expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe(
       'Empty Workspace',

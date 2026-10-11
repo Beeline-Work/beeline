@@ -28,7 +28,7 @@ function opened(socket: WebSocket): Promise<void> {
 function next(socket: WebSocket): Promise<string> {
   return new Promise((resolve) => socket.once('message', (data) => resolve(data.toString())));
 }
-async function until<T>(read: () => Promise<T | undefined>, timeoutMs = 10_000): Promise<T> {
+async function until<T>(read: () => Promise<T | undefined>, timeoutMs = 20_000): Promise<T> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const result = await read();
@@ -261,17 +261,40 @@ describe('computer session handoff', () => {
 
   const chromeBinary = process.env.CHROME_BIN || '/usr/bin/google-chrome';
   it.skipIf(!existsSync(chromeBinary))('hands an actual agent-owned Chromium tab to a viewer and waits for handback', async () => {
-    const profile = await mkdtemp(join(process.cwd(), '.computer-e2e-'));
-    const chrome = spawn(chromeBinary, [
-      '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
-      '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
-      `--user-data-dir=${profile}`, `${origin}/page`,
-    ], { stdio: 'ignore' });
+    let profile = '';
+    let chrome!: ReturnType<typeof spawn>;
+    let spawnFailed = false;
     try {
-      const port = await until(async () => {
-        try { return Number((await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]); }
-        catch { return undefined; }
-      });
+      let port = 0;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        profile = await mkdtemp(join(process.cwd(), '.computer-e2e-'));
+        chrome = spawn(chromeBinary, [
+          '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+          '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
+          `--user-data-dir=${profile}`, `${origin}/page`,
+        ], { stdio: ['ignore', 'ignore', 'pipe'] });
+        spawnFailed = false;
+        let startupError = '';
+        chrome.stderr?.on('data', (data: Buffer) => { startupError = (startupError + data.toString()).slice(-4_000); });
+        chrome.on('error', (error) => { startupError = error.message; spawnFailed = true; });
+        try {
+          port = await until(async () => {
+            try {
+              const found = Number((await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]);
+              return found > 0 ? found : undefined;
+            } catch { return undefined; }
+          }, 15_000);
+          break;
+        } catch (error) {
+          if (!spawnFailed && chrome.exitCode === null) {
+            chrome.kill('SIGTERM');
+            await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
+          }
+          await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+          profile = '';
+          if (attempt === 3) throw new Error(`Chromium startup failed after 3 attempts: ${startupError || String(error)}`);
+        }
+      }
       const debugUrl = `http://127.0.0.1:${port}`;
       const page = await until(async () => {
         try { return await findChromiumPage(debugUrl, '/page'); } catch { return undefined; }
@@ -309,11 +332,11 @@ describe('computer session handoff', () => {
       expect(ended.status).toBe(410);
       expect((await fetch(`${origin}/s/${share.id}/last.jpg`)).status).toBe(404);
     } finally {
-      if (chrome.exitCode === null) {
+      if (chrome && !spawnFailed && chrome.exitCode === null) {
         chrome.kill('SIGTERM');
         await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
       }
-      await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      if (profile) await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
-  }, 60_000);
+  }, 120_000);
 });

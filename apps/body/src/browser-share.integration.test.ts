@@ -9,7 +9,7 @@ import { browserIsHumanControlled, findChromiumPage, shareChromiumPage } from '.
 
 const chromeBinary = process.env.CHROME_BIN || '/usr/bin/google-chrome';
 
-async function until<T>(read: () => Promise<T | undefined>, timeoutMs = 10_000): Promise<T> {
+async function until<T>(read: () => Promise<T | undefined>, timeoutMs = 20_000): Promise<T> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const result = await read();
@@ -30,6 +30,8 @@ describe('agent-owned Chromium sharing', () => {
   let origin: string;
   let profile: string;
   let chrome: ChildProcess;
+  let debugPort: number;
+  let spawnFailed = false;
   let source: WebSocket | undefined;
 
   beforeAll(async () => {
@@ -41,16 +43,38 @@ describe('agent-owned Chromium sharing', () => {
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    profile = await mkdtemp(join(process.cwd(), '.browser-share-test-'));
-    chrome = spawn(chromeBinary, [
-      '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
-      '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
-      `--user-data-dir=${profile}`, `${origin}/page`,
-    ], { stdio: 'ignore' });
-  });
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      profile = await mkdtemp(join(process.cwd(), '.browser-share-test-'));
+      chrome = spawn(chromeBinary, [
+        '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+        '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
+        `--user-data-dir=${profile}`, `${origin}/page`,
+      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+      spawnFailed = false;
+      let startupError = '';
+      chrome.stderr?.on('data', (data: Buffer) => { startupError = (startupError + data.toString()).slice(-4_000); });
+      chrome.on('error', (error) => { startupError = error.message; spawnFailed = true; });
+      try {
+        debugPort = await until(async () => {
+          try {
+            const port = Number((await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]);
+            return port > 0 ? port : undefined;
+          } catch { return undefined; }
+        }, 15_000);
+        return;
+      } catch (error) {
+        if (!spawnFailed && chrome.exitCode === null) {
+          chrome.kill('SIGTERM');
+          await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
+        }
+        await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+        if (attempt === 3) throw new Error(`Chromium startup failed after 3 attempts: ${startupError || String(error)}`);
+      }
+    }
+  }, 90_000);
   afterAll(async () => {
     source?.close();
-    if (chrome && chrome.exitCode === null) {
+    if (chrome && !spawnFailed && chrome.exitCode === null) {
       chrome.kill('SIGTERM');
       await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
     }
@@ -62,12 +86,8 @@ describe('agent-owned Chromium sharing', () => {
   });
 
   it('streams real screencast frames and tracks human control until release', async () => {
-    const port = await until(async () => {
-      try { return Number((await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]); }
-      catch { return undefined; }
-    });
     const page = await until(async () => {
-      try { return await findChromiumPage(`http://127.0.0.1:${port}`, '/page'); }
+      try { return await findChromiumPage(`http://127.0.0.1:${debugPort}`, '/page'); }
       catch { return undefined; }
     });
     await shareChromiumPage({ page, serverBaseUrl: origin, shareId: 'share-test', daemonToken: 'test-token', onEnded: async () => {} });

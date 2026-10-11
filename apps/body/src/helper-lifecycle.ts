@@ -28,8 +28,8 @@ export type HelperExitReason =
  * One code per reason. 0 and 75 are restarted by the service manager; 77, 78
  * and 79 are in RestartPreventExitStatus and wait for an operator (77), mean
  * the agent was removed (78), or name an agent with no runtime (79). The
- * machine helper exits 79 when it has no agent to host, or handed its agents
- * back to per-agent units after a rollback.
+ * machine helper exits 79 only when it has no agent to host. A rollback exits
+ * 75 so its existing supervisor restarts the restored release.
  */
 export const HELPER_EXIT_CODES: Readonly<Record<HelperExitReason, 0 | 75 | 77 | 78 | 79>> = {
   stopped: 0,

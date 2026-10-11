@@ -6,7 +6,11 @@ import { WebSocketServer } from 'ws';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
-import { activeReleaseId, writeUpdateState } from './self-update.js';
+import { activeReleaseId, writeUpdateAttemptFixture, writeUpdateState } from './self-update.js';
+import { rollbackFailedSuccessor } from './managed-update.js';
+import * as helperService from './helper-service.js';
+import * as systemd from './systemd.js';
+import * as launchd from './launchd.js';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRuntimeHost, HostedAgent } from './agent-runtime.js';
@@ -25,6 +29,7 @@ import { ThinDaemonCore } from './thin-core.js';
 const roots: string[] = [];
 afterEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -75,6 +80,69 @@ function fakeRuntimes(script: (agentId: string, run: number) => Promise<HelperEx
 }
 
 describe('one helper process hosts every agent on the machine', () => {
+  it.each([
+    ['systemd', 'probe'], ['systemd', 'deadline'],
+    ['launchd', 'probe'], ['launchd', 'deadline'],
+  ] as const)('restarts the restored helper despite an incomplete legacy restore (%s, %s)', async (kind, failure) => {
+    const { root, configPaths, env, signals } = await machine(2);
+    vi.spyOn(helperService, 'supervisor').mockReturnValue(kind);
+    // The old handoff can partly start legacy services whose own migration
+    // then stops the helper. It must never be attempted during rollback.
+    const restoreError = new AggregateError([new Error('agent unit start failed')],
+      'per-agent unit restore incomplete');
+    const restoreSystemd = vi.spyOn(systemd, 'restoreLegacyAgentUnits').mockRejectedValue(restoreError);
+    const restoreLaunchd = vi.spyOn(launchd, 'restoreLegacyLaunchdAgents').mockRejectedValue(restoreError);
+    vi.spyOn(systemd, 'retireLegacyAgentUnits').mockResolvedValue([]);
+    vi.spyOn(launchd, 'retireLegacyLaunchdAgents').mockResolvedValue([]);
+    vi.spyOn(systemd, 'installTrustySquireBrokerService').mockResolvedValue();
+    vi.spyOn(launchd, 'installLaunchdTrustySquireBrokerService').mockResolvedValue();
+    const layout = { libDir: resolve(root, 'lib/beeline'),
+      releasesRoot: resolve(root, 'lib/beeline-releases'), binDir: resolve(root, 'bin') };
+    for (const id of ['old', 'new']) {
+      const bundle = resolve(layout.releasesRoot, id, 'lib/beeline');
+      await mkdir(bundle, { recursive: true });
+      await writeFile(resolve(bundle, 'bundle.json'), JSON.stringify({ version: id }));
+      await writeFile(resolve(bundle, 'beeline-cli.mjs'), '');
+    }
+    await symlink('beeline-releases/new', layout.libDir);
+    const helperEnv = { ...env, HOME: root, BEELINE_LIB_DIR: layout.libDir, BEELINE_UPDATE_DISABLE: '1' };
+    await writeUpdateAttemptFixture(layout, {
+      from: { version: 'v0.1.27' }, to: { version: 'v0.1.28' },
+      releaseId: 'new', previousReleaseId: 'old', appliedAt: Date.now(),
+      startedAt: Date.now(), confirmBy: failure === 'deadline' ? 0 : Date.now() + 300_000,
+    });
+    const failingId = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
+    const successor = fakeRuntimes((id) => id === failingId
+      ? rollbackFailedSuccessor(layout).then(() => 'rolled-back' as const) : undefined);
+    const rolledBack = await runMachineHelper({ env: helperEnv, signals,
+      runAgent: successor.runAgent, exitProcess: () => undefined });
+    expect(rolledBack.reason).toBe('rolled-back');
+    expect(await activeReleaseId(layout)).toBe('old');
+    expect(restoreSystemd.mock.calls.length).toBe(0);
+    expect(restoreLaunchd.mock.calls.length).toBe(0);
+    const exit = vi.fn();
+    const lifecycle = new HelperLifecycle({ controller: new AbortController(), exitProcess: exit });
+    lifecycle.exit(rolledBack.reason);
+    expect(exit).toHaveBeenCalledWith(75); // Both service managers restart it.
+
+    // Model the supervisor's next start through the restored install anchor.
+    const restored = fakeRuntimes();
+    const running = runMachineHelper({ env: helperEnv, signals,
+      runAgent: restored.runAgent, exitProcess: () => undefined });
+    try {
+      await vi.waitFor(async () => {
+        const status = JSON.parse(await readFile(helperStatusPath(root), 'utf8'));
+        expect(status.loadedRelease).toBe('old');
+        expect(Object.values(status.agents).map((agent) => (agent as { state: string }).state))
+          .toEqual(['serving', 'serving']);
+      });
+      expect(restored.signals.size).toBe(2);
+    } finally {
+      signals.emit('SIGTERM');
+      await running;
+    }
+  });
+
   it('expires old deleted runtimes on helper start without a recurring timer', async () => {
     const { root, env, signals } = await machine(1);
     const old = resolve(root, 'beeline', 'deleted-runtimes',

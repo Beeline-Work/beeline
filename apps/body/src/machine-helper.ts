@@ -15,7 +15,6 @@ import { HelperLifecycle, type HelperExitReason } from './helper-lifecycle.js';
 import { supervisor } from './helper-service.js';
 import {
   installLaunchdTrustySquireBrokerService,
-  restoreLegacyLaunchdAgents,
   retireLegacyLaunchdAgents,
 } from './launchd.js';
 import { MachineLink } from './machine-link.js';
@@ -49,7 +48,6 @@ import type { InstalledBundleIdentity } from './self-update-manifest.js';
 import {
   extendSystemdStartTimeout,
   installTrustySquireBrokerService,
-  restoreLegacyAgentUnits,
   retireLegacyAgentUnits,
   startLocalWatchdog,
   SystemdNotifier,
@@ -168,13 +166,9 @@ export async function runMachineHelper(
     return live;
   };
 
-  /**
-   * A rollback restored an older release, which may not know the machine
-   * helper at all: hand every agent back to its per-agent unit and stand this
-   * helper down. A restored release that does know it migrates straight back.
-   */
-  const standDownForRollback = (): Promise<HelperExitReason> =>
-    managedBy === 'process' ? Promise.resolve('rolled-back') : standDownAfterRollback(env);
+  // The anchor is restored already. Restart this same supervised helper;
+  // handing agents to legacy services can disable it during their migration.
+  const standDownForRollback = standDownAfterRollback;
 
   const finish = async (reason: HelperExitReason) => {
     disposeSignals();
@@ -550,31 +544,13 @@ export function quiesceHostedAgents(agents: readonly HostedAgent[]): boolean {
 }
 
 /**
- * A rollback restored an older release, which may not know the machine helper
- * at all: hand every paired agent back to its per-agent unit and stand the
- * helper down (exit 79, not restarted). A restored release that does know the
- * machine helper migrates straight back on its first start.
+ * End the current process after restoring the install anchor, leaving the
+ * machine service intact. Exit 75 restarts it on the previous release under
+ * systemd and launchd. Never restore legacy per-agent services here: a partial
+ * handoff can race their migration back to the helper and leave it stopped.
  */
-export async function standDownAfterRollback(
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<HelperExitReason> {
-  const managedBy = supervisor(env);
-  if (managedBy === 'process') return 'rolled-back';
-  const keys: string[] = [];
-  for (const path of await findAgentRuntimeConfigPaths(env)) {
-    if (await isAgentStopped(path)) continue;
-    const runtime = await readRuntimeRecord(path).catch(() => undefined);
-    if (runtime) keys.push(runtime.agent.publicKey);
-  }
-  try {
-    if (managedBy === 'systemd') await restoreLegacyAgentUnits(keys, { env });
-    else await restoreLegacyLaunchdAgents(keys, { env });
-    console.error(`[helper] rollback: ${keys.length} agent(s) handed back to per-agent units`);
-    return 'no-agents';
-  } catch (error) {
-    console.error('[helper] per-agent units not restored after rollback:', error);
-    return 'rolled-back';
-  }
+export async function standDownAfterRollback(): Promise<HelperExitReason> {
+  return 'rolled-back';
 }
 
 /**

@@ -308,8 +308,8 @@ async function main(): Promise<void> {
 
 main().catch(async (err) => {
   // Cover failures before the machine helper reaches its own handling. A
-  // pending release that cannot reach READY rolls back once, and every agent
-  // is handed back to a unit that can run the restored release.
+  // pending release that cannot reach READY rolls back once; the same helper
+  // service restarts through the install anchor on the restored release.
   let reason: HelperExitReason = err instanceof DaemonExitError ? err.reason : 'failed';
   if (process.argv[2] === 'daemon') {
     const layout = beelineInstallLayout(process.env);

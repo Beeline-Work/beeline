@@ -6296,7 +6296,6 @@ export class PhoneService {
       if (access.archived_at) throw new Error('room is archived');
       await writeCornerTitle(database, roomId, access.parent_id, title);
     });
-    this.live?.publish({ type: 'invalidate', roomId, reason: 'corner' });
   }
   private async updateRoom(input: Input<'updateRoom'>, viewerId: string) {
     const existing = (

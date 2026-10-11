@@ -5858,7 +5858,6 @@ export class DaemonService {
       }
       await writeCornerTitle(db, input.cornerId, corner.parent_id, name);
     });
-    this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'corner', agentId });
     return { cornerId: input.cornerId, name };
   }
   private async targetProposal(input: Input<'postTargetBranchProposal'>, agentId: string) {
@@ -7585,7 +7584,6 @@ export class DaemonService {
     await this.database.transaction(async (database) => {
       await closeCornerState(database, cornerId);
     });
-    this.live.publish({ type: 'invalidate', roomId: cornerId, reason: 'corner', agentId });
     return this.writeResult();
   }
   private async ensureMembership(input: Input<'ensureAgentMembership'>, agentId: string) {

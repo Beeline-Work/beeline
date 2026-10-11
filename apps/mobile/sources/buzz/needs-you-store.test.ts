@@ -42,8 +42,7 @@ import { resetClientState } from '@/sync/client-reset';
 import {
   applyNeedsYouLiveDelta,
   applyBookmarkDelta,
-  forgetSavedList,
-  forgetNeedsYouList,
+  forgetTray,
   loadSavedList,
   loadNeedsYouList,
   removeNeedsYou,
@@ -114,7 +113,7 @@ describe('Needs-you disk copy', () => {
     await read;
     await settle();
     expect(fixture.disk.has(diskA)).toBe(true);
-    forgetNeedsYouList('ws');
+    forgetTray('ws');
     applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-2', count: 1, items: [need('ask-2', 'room-2')] as never });
     await settle();
     expect(fixture.disk.has(diskA)).toBe(false);
@@ -176,8 +175,7 @@ describe('one tray clock and registration', () => {
     const needs = loadNeedsYouList('ws');
     const saved = loadSavedList('ws');
     await settle();
-    forgetNeedsYouList('ws');
-    forgetSavedList('ws');
+    forgetTray('ws');
     fixture.reads[0]!([need('ask-old')]);
     fixture.savedReads[0]!([{ messageId: 'saved-old' }]);
     await Promise.all([needs, saved]);

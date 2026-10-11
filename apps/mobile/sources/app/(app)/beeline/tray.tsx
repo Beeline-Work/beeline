@@ -21,18 +21,16 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
-  forgetNeedsYouList,
-  forgetSavedList,
+  forgetTray,
   holdNeedsYou,
   loadNeedsYouList,
   loadSavedList,
-  NEEDS_YOU_GAP_REASONS,
   removeNeedsYou,
   seedNeedsYouList,
   seedSavedList,
+  subscribeTrayGap,
   updateSavedList,
-  useNeedsYouList,
-  useSavedList,
+  useTrayList,
 } from '@/buzz/needs-you-store';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
@@ -42,8 +40,6 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import { sharedLiveConnection } from '@/sync/transport/live-connection';
-import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import brand from '@/buzz/brand.json';
 
@@ -68,10 +64,6 @@ function sourceTitle(bookmark: MessageBookmarkView): string {
   return bookmark.roomName.replace(/^#/, '');
 }
 
-function sourceLabel(bookmark: MessageBookmarkView): string {
-  return `${bookmark.roomKind === 'corner' ? 'corner ' : '#'}${sourceTitle(bookmark)}`;
-}
-
 function clearedLabel(clear: PendingClear): string {
   if (clear.kind === 'saved' && clear.more) return 'Cleared saved bookmarks';
   const count = clear.items.length;
@@ -87,24 +79,27 @@ type Target = {
 };
 
 /** A section clear held back until its own Undo window closes. */
-type PendingClear = { readonly id: number; readonly expiresAt: number; readonly workspaceId: string } & (
+type PendingClear = { readonly expiresAt: number; readonly workspaceId: string } & (
   | { readonly kind: 'needs'; readonly items: readonly NeedsYouItemView[] }
   | { readonly kind: 'saved'; readonly items: readonly MessageBookmarkView[]; readonly more: boolean }
 );
 
 type Row =
-  | {
-      readonly key: string;
-      readonly type: 'head';
-      readonly title: string;
-      readonly count: number;
-      readonly clear?: PendingClear['kind'];
-    }
+  | { readonly key: string; readonly type: 'head'; readonly title: string;
+      readonly count: number; readonly clear?: PendingClear['kind'] }
   | { readonly key: string; readonly type: 'needs'; readonly item: NeedsYouItemView }
   | { readonly key: string; readonly type: 'needs-empty' }
   | { readonly key: string; readonly type: 'saved'; readonly bookmark: MessageBookmarkView }
   | { readonly key: string; readonly type: 'saved-empty' }
   | { readonly key: string; readonly type: 'saved-more' };
+
+function emptySection(title: string, detail: string, icon: 'checkmark-circle-outline' | 'bookmark-outline', testID: string) {
+  return <View style={styles.emptyBlock} testID={testID}>
+    <Ionicons color={styles.emptyIcon.color} name={icon} size={22} />
+    <Text style={styles.emptyTitle}>{title}</Text>
+    <Text style={styles.empty}>{detail}</Text>
+  </View>;
+}
 
 /**
  * The tray: exactly two sections, Needs you then Saved. Needs you is the
@@ -129,9 +124,8 @@ export default function TrayScreen() {
   const lostWorkspaceRef = useRef<string | null>(null);
   const workspaceLost = Boolean(workspaceId) && lostWorkspaceId === workspaceId;
   const noWorkspace = (!routeWorkspaceId && activeWorkspaceId === null) || workspaceLost;
-  // The badge reads the same store, so its count is this list's length.
-  const needsList = useNeedsYouList(workspaceId);
-  const { bookmarks, next: savedNext } = useSavedList(workspaceId);
+  // The badge reads this same slot, so its count follows the visible list.
+  const { needs, bookmarks, next: savedNext } = useTrayList(workspaceId);
   const loadingSaved = useRef(false);
   const savedScroll = useRef(false);
   const [selected, setSelected] = useState<Target | null>(null);
@@ -144,7 +138,6 @@ export default function TrayScreen() {
   // Oldest first; the Undo bar offers the newest.
   const [pending, setPending] = useState<readonly PendingClear[]>([]);
   const pendingRef = useRef<readonly PendingClear[]>([]);
-  const nextClearId = useRef(0);
   const [client, setClient] = useState<RoomViewClient | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string | null>(first(params.workspaceName) || null);
   const [inspectRoom, setInspectRoom] = useState<RoomView | null>(null);
@@ -174,8 +167,7 @@ export default function TrayScreen() {
     ) {
       lostWorkspaceRef.current = workspaceId;
       setLostWorkspaceId(workspaceId);
-      forgetNeedsYouList(workspaceId);
-      forgetSavedList(workspaceId);
+      forgetTray(workspaceId);
       pendingRef.current = pendingRef.current.filter((clear) => clear.workspaceId !== workspaceId);
       setPending(pendingRef.current);
       setSelected(null);
@@ -206,23 +198,8 @@ export default function TrayScreen() {
     void load();
   }), [load]);
 
-  useEffect(() => {
-    if (!workspaceId) return;
-    let cancelled = false;
-    let unsubscribe: (() => void) | undefined;
-    void (async () => {
-      unsubscribe = await sharedLiveConnection().register([], (event) => {
-        if (!('monolithLive' in event)) return;
-        const live = (event as MonolithSurfaceEvent).monolithLive;
-        if (live.type === 'invalidate' &&
-            (live.reason === 'bookmark-gap' || NEEDS_YOU_GAP_REASONS.has(live.reason))) {
-          void load();
-        }
-      });
-      if (cancelled) unsubscribe();
-    })().catch(() => undefined);
-    return () => { cancelled = true; unsubscribe?.(); };
-  }, [workspaceId, load]);
+  useEffect(() => workspaceId ? subscribeTrayGap(workspaceId, () => { void load(); }) : undefined,
+    [workspaceId, load]);
 
   const loadMoreSaved = useCallback(async () => {
     if (!workspaceId || !savedNext || loadingSaved.current) return;
@@ -230,7 +207,6 @@ export default function TrayScreen() {
     loadingSaved.current = true;
     try {
       await loadSavedList(workspaceId, savedNext);
-      if (generation !== loadGenerationRef.current) return;
     } catch (cause) {
       if (generation === loadGenerationRef.current)
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -464,7 +440,7 @@ export default function TrayScreen() {
   useEffect(() => {
     const timers = pending.map((clear) =>
       setTimeout(
-        () => flushClears((held) => held.id === clear.id),
+        () => flushClears((held) => held === clear),
         Math.max(0, clear.expiresAt - Date.now()),
       ),
     );
@@ -488,7 +464,7 @@ export default function TrayScreen() {
       for (const id of held.keys()) holdNeedsYou(id, []);
     };
   }, [pending]);
-  const visibleNeeds = needsList.items ?? EMPTY_NEEDS;
+  const visibleNeeds = needs ?? EMPTY_NEEDS;
   const visibleBookmarks = useMemo(() => {
     const held = new Set(
       pending.flatMap((clear) =>
@@ -503,7 +479,7 @@ export default function TrayScreen() {
   const clearSection = useCallback(
     (kind: PendingClear['kind']) => {
       setRemoved(null);
-      const held = { id: nextClearId.current++, expiresAt: Date.now() + UNDO_MS, workspaceId };
+      const held = { expiresAt: Date.now() + UNDO_MS, workspaceId };
       const clear: PendingClear =
         kind === 'needs'
           ? { ...held, kind, items: visibleNeeds }
@@ -604,85 +580,57 @@ export default function TrayScreen() {
     ];
   }, [loading, visibleBookmarks, visibleNeeds, workspaceLost, savedNext]);
 
-  const renderSaved = (bookmark: MessageBookmarkView) => (
-    <Pressable
-      accessibilityLabel={`${sourceLabel(bookmark)}, ${bookmark.author?.name ?? 'Unavailable message'}`}
-      accessibilityRole={bookmark.available || desktop ? 'button' : undefined}
-      accessibilityState={
-        desktop ? { selected: selected?.messageId === bookmark.messageId } : undefined
-      }
-      // A desktop pane explains an unavailable source; a phone has nowhere to go.
-      onPress={
-        desktop
-          ? () => setSelected(bookmark)
-          : bookmark.available
-            ? () => open(bookmark, 'bookmark')
-            : undefined
-      }
-      style={({ pressed }) => [
-        styles.row,
-        desktop && selected?.messageId === bookmark.messageId && styles.rowSelected,
-        pressed && styles.rowSelected,
-        !bookmark.available && styles.rowUnavailable,
-      ]}
-      testID={`bookmark-${bookmark.messageId}`}
-    >
-      <View style={styles.originLine} testID={`bookmark-save-line-${bookmark.messageId}`}>
-        <View style={styles.originSource}>
-          {bookmark.roomKind === 'corner' ? (
-            <CornerGlyph
-              size={CORNER_META_SIZE}
-              testID={`bookmark-corner-mark-${bookmark.messageId}`}
-            />
-          ) : (
-            <Text style={styles.originSigil}>#</Text>
-          )}
-          <Text numberOfLines={1} style={styles.origin}>
-            {sourceTitle(bookmark)}
-          </Text>
+  const renderSaved = (bookmark: MessageBookmarkView) => {
+    const source = `${bookmark.roomKind === 'corner' ? 'corner ' : '#'}${sourceTitle(bookmark)}`;
+    return (
+      <Pressable
+        accessibilityLabel={`${source}, ${bookmark.author?.name ?? 'Unavailable message'}`}
+        accessibilityRole={bookmark.available || desktop ? 'button' : undefined}
+        accessibilityState={desktop ? { selected: selected?.messageId === bookmark.messageId } : undefined}
+        // A desktop pane explains an unavailable source; a phone has nowhere to go.
+        onPress={desktop ? () => setSelected(bookmark)
+          : bookmark.available ? () => open(bookmark, 'bookmark') : undefined}
+        style={({ pressed }) => [
+          styles.row,
+          desktop && selected?.messageId === bookmark.messageId && styles.rowSelected,
+          pressed && styles.rowSelected,
+          !bookmark.available && styles.rowUnavailable,
+        ]}
+        testID={`bookmark-${bookmark.messageId}`}
+      >
+        <View style={styles.originLine} testID={`bookmark-save-line-${bookmark.messageId}`}>
+          <View style={styles.originSource}>
+            {bookmark.roomKind === 'corner'
+              ? <CornerGlyph size={CORNER_META_SIZE} testID={`bookmark-corner-mark-${bookmark.messageId}`} />
+              : <Text style={styles.originSigil}>#</Text>}
+            <Text numberOfLines={1} style={styles.origin}>{sourceTitle(bookmark)}</Text>
+          </View>
+          <Text numberOfLines={1} style={styles.time}>SAVED {compactRelativeTime(bookmark.bookmarkedAt, now)}</Text>
         </View>
-        <Text numberOfLines={1} style={styles.time}>
-          SAVED {compactRelativeTime(bookmark.bookmarkedAt, now)}
-        </Text>
-      </View>
-      <Text numberOfLines={1} style={styles.author}>
-        {bookmark.available ? bookmark.author?.name : 'Source unavailable'}
-      </Text>
-      {bookmark.available ? (
-        <Text numberOfLines={desktop ? 2 : 3} style={styles.excerpt}>
-          {bookmark.text}
-        </Text>
-      ) : (
-        <Text style={styles.unavailable}>Deleted or no longer accessible</Text>
-      )}
-      <View style={styles.rowFooter}>
-        {!desktop ? <Text style={styles.open}>OPEN →</Text> : null}
-        {desktop && bookmark.available ? (
-          <Pressable
-            accessibilityLabel="Remove bookmark"
-            accessibilityRole="button"
-            onPress={(event) => {
-              event.stopPropagation();
-              void remove(bookmark);
-            }}
-            style={styles.remove}
-          >
+        <Text numberOfLines={1} style={styles.author}>{bookmark.available ? bookmark.author?.name : 'Source unavailable'}</Text>
+        {bookmark.available ? (
+          <Text numberOfLines={desktop ? 2 : 3} style={styles.excerpt}>{bookmark.text}</Text>
+        ) : (
+          <Text style={styles.unavailable}>Deleted or no longer accessible</Text>
+        )}
+        <View style={styles.rowFooter}>
+          {!desktop ? <Text style={styles.open}>OPEN →</Text> : null}
+          {desktop && bookmark.available ? (
+            <Pressable accessibilityLabel="Remove bookmark" accessibilityRole="button"
+              onPress={(event) => { event.stopPropagation(); void remove(bookmark); }} style={styles.remove}>
+              <Text style={styles.removeText}>REMOVE</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {!bookmark.available ? (
+          <Pressable accessibilityLabel="Remove unavailable bookmark" accessibilityRole="button"
+            onPress={() => void remove(bookmark)} style={styles.remove}>
             <Text style={styles.removeText}>REMOVE</Text>
           </Pressable>
         ) : null}
-      </View>
-      {!bookmark.available ? (
-        <Pressable
-          accessibilityLabel="Remove unavailable bookmark"
-          accessibilityRole="button"
-          onPress={() => void remove(bookmark)}
-          style={styles.remove}
-        >
-          <Text style={styles.removeText}>REMOVE</Text>
-        </Pressable>
-      ) : null}
-    </Pressable>
-  );
+      </Pressable>
+    );
+  };
 
   const list = (
     <FlatList
@@ -701,11 +649,8 @@ export default function TrayScreen() {
                 ? 'You are no longer a member of this Workspace.'
                 : 'This link did not name a Workspace, and none is open.'}
             </Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.replace('/beeline/channels')}
-              style={styles.remove}
-            >
+            <Pressable accessibilityRole="button" onPress={() => router.replace('/beeline/channels')}
+              style={styles.remove}>
               <Text style={styles.removeText}>BACK TO ROOMS</Text>
             </Pressable>
           </View>
@@ -724,14 +669,10 @@ export default function TrayScreen() {
                 <View style={styles.sectionEnd}>
                   <Text style={styles.sectionCount}>{row.count}</Text>
                   {row.clear ? (
-                    <Pressable
-                      accessibilityLabel={`Clear ${row.title}`}
-                      accessibilityRole="button"
-                      hitSlop={8}
-                      onPress={() => clearSection(row.clear!)}
+                    <Pressable accessibilityLabel={`Clear ${row.title}`} accessibilityRole="button"
+                      hitSlop={8} onPress={() => clearSection(row.clear!)}
                       style={({ pressed }) => [styles.sectionClear, pressed && { opacity: 0.7 }]}
-                      testID={`tray-clear-${row.clear}`}
-                    >
+                      testID={`tray-clear-${row.clear}`}>
                       <Text style={styles.removeText}>CLEAR</Text>
                     </Pressable>
                   ) : null}
@@ -741,29 +682,13 @@ export default function TrayScreen() {
           case 'needs':
             return (
               <View style={styles.cellDivider}>
-                <NeedsYouCell
-                  desktop={desktop}
-                  item={row.item}
-                  now={now}
-                  onDismiss={dismissNeed}
-                  onOpen={openNeed}
-                />
+                <NeedsYouCell desktop={desktop} item={row.item} now={now}
+                  onDismiss={dismissNeed} onOpen={openNeed} />
               </View>
             );
           case 'needs-empty':
-            return (
-              <View style={styles.emptyBlock} testID="needs-you-empty">
-                <Ionicons
-                  color={styles.emptyIcon.color}
-                  name="checkmark-circle-outline"
-                  size={22}
-                />
-                <Text style={styles.emptyTitle}>Nothing needs you</Text>
-                <Text style={styles.empty}>
-                  Nobody has tagged you with a question or a request.
-                </Text>
-              </View>
-            );
+            return emptySection('Nothing needs you',
+              'Nobody has tagged you with a question or a request.', 'checkmark-circle-outline', 'needs-you-empty');
           case 'saved':
             return renderSaved(row.bookmark);
           case 'saved-more':
@@ -772,20 +697,9 @@ export default function TrayScreen() {
               <Text style={styles.removeText}>LOAD MORE SAVED</Text>
             </Pressable>;
           case 'saved-empty':
-            return (
-              <View style={styles.emptyBlock} testID="bookmarks-empty">
-                <Ionicons color={styles.emptyIcon.color} name="bookmark-outline" size={22} />
-                <Text style={styles.emptyTitle}>No bookmarks yet</Text>
-                {/* One instruction, for the surface doing the reading: the desktop
-                    strip needs a pointer over the row, and there is no long press
-                    to offer there. */}
-                <Text style={styles.empty}>
-                  {desktop
-                    ? 'Hover a message and press its bookmark mark.'
-                    : 'Long press a message and pick Bookmark.'}
-                </Text>
-              </View>
-            );
+            return emptySection('No bookmarks yet', desktop
+              ? 'Hover a message and press its bookmark mark.'
+              : 'Long press a message and pick Bookmark.', 'bookmark-outline', 'bookmarks-empty');
         }
       }}
       style={[styles.list, desktop && styles.desktopList]}
@@ -813,12 +727,8 @@ export default function TrayScreen() {
           <View style={styles.emptyBlock}>
             <Text style={styles.emptyTitle}>Source unavailable</Text>
             <Text style={styles.empty}>This bookmark no longer exposes message content.</Text>
-            <Pressable
-              accessibilityLabel="Remove unavailable bookmark"
-              accessibilityRole="button"
-              onPress={() => void remove(selectedBookmark)}
-              style={styles.remove}
-            >
+            <Pressable accessibilityLabel="Remove unavailable bookmark" accessibilityRole="button"
+              onPress={() => void remove(selectedBookmark)} style={styles.remove}>
               <Text style={styles.removeText}>REMOVE</Text>
             </Pressable>
           </View>
@@ -837,14 +747,8 @@ export default function TrayScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: desktop ? 0 : insets.top }]}>
-      <PageHeader
-        backAccessibilityLabel="Back to Rooms"
-        eyebrow={workspaceName ?? 'Workspace'}
-        onBack={desktop ? undefined : () => router.back()}
-        prominent
-        testID="tray-header"
-        title="Tray"
-      />
+      <PageHeader backAccessibilityLabel="Back to Rooms" eyebrow={workspaceName ?? 'Workspace'}
+        onBack={desktop ? undefined : () => router.back()} prominent testID="tray-header" title="Tray" />
       {error ? (
         <Pressable accessibilityRole="button" onPress={() => void load()} style={styles.error}>
           <Text style={styles.errorText}>{error} · Retry</Text>
@@ -855,18 +759,11 @@ export default function TrayScreen() {
         {pane}
       </View>
       {removed ? (
-        <View
-          accessibilityLiveRegion="polite"
-          style={[styles.undo, { bottom: 16 + insets.bottom }]}
-          testID="bookmark-undo"
-        >
+        <View accessibilityLiveRegion="polite" style={[styles.undo, { bottom: 16 + insets.bottom }]}
+          testID="bookmark-undo">
           <Text style={styles.undoText}>Bookmark removed</Text>
           {removed.available ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void undo()}
-              style={styles.undoAction}
-            >
+            <Pressable accessibilityRole="button" onPress={() => void undo()} style={styles.undoAction}>
               <Text style={styles.undoActionText}>UNDO</Text>
             </Pressable>
           ) : null}
@@ -874,15 +771,9 @@ export default function TrayScreen() {
       ) : null}
       {/* A held clear keeps its UNDO in reach above a bookmark removal's bar. */}
       {newestClear ? (
-        <View
-          accessibilityLiveRegion="polite"
-          style={[
-            styles.undo,
-            desktop && styles.desktopUndo,
-            { bottom: 16 + insets.bottom + (removed ? UNDO_STACK : 0) },
-          ]}
-          testID="tray-clear-undo"
-        >
+        <View accessibilityLiveRegion="polite" testID="tray-clear-undo"
+          style={[styles.undo, desktop && styles.desktopUndo,
+            { bottom: 16 + insets.bottom + (removed ? UNDO_STACK : 0) }]}>
           <Text style={styles.undoText}>{clearedLabel(newestClear)}</Text>
           <Pressable accessibilityRole="button" onPress={undoClear} style={styles.undoAction}>
             <Text style={styles.undoActionText}>UNDO</Text>
@@ -898,61 +789,41 @@ const styles = StyleSheet.create((theme) => ({
   body: { flex: 1, flexDirection: 'row' },
   list: { flex: 1 },
   desktopList: {
-    maxWidth: 390,
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: theme.buzz.border,
+    maxWidth: 390, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: theme.buzz.border,
   },
   sectionHead: {
-    minHeight: 44,
-    marginTop: theme.buzz.space.lg,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
+    minHeight: 44, marginTop: theme.buzz.space.lg, paddingHorizontal: 16,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.buzz.border,
   },
   sectionTitle: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
   sectionCount: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   sectionEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.md },
   sectionClear: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   cellDivider: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.buzz.border,
   },
   row: {
-    minHeight: 128,
-    padding: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
+    minHeight: 128, padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.buzz.border,
   },
   rowSelected: { backgroundColor: theme.buzz.bgHighlight },
   rowUnavailable: { opacity: 0.68 },
   originLine: { flexDirection: 'row', alignItems: 'baseline', gap: theme.buzz.space.sm },
   originSource: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8,
   },
   originSigil: { ...theme.buzz.type.meta, color: brand.mark },
   origin: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
   time: { ...theme.buzz.type.meta, flexShrink: 0, color: theme.buzz.ledgerQuiet },
   author: {
-    ...theme.buzz.type.meta,
-    color: theme.buzz.accent,
-    marginTop: theme.buzz.space.sm,
+    ...theme.buzz.type.meta, color: theme.buzz.accent, marginTop: theme.buzz.space.sm,
   },
   excerpt: {
-    ...theme.buzz.type.body,
-    color: theme.buzz.textSecondary,
-    marginTop: theme.buzz.space.xs,
+    ...theme.buzz.type.body, color: theme.buzz.textSecondary, marginTop: theme.buzz.space.xs,
   },
   unavailable: {
-    ...theme.buzz.type.meta,
-    color: theme.buzz.ledgerQuiet,
-    marginTop: theme.buzz.space.xs,
+    ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginTop: theme.buzz.space.xs,
   },
   rowFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: theme.buzz.space.sm },
   open: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
@@ -963,42 +834,25 @@ const styles = StyleSheet.create((theme) => ({
   emptyBlock: { padding: theme.buzz.space.xl, alignItems: 'flex-start', justifyContent: 'center' },
   emptyIcon: { color: theme.buzz.accent },
   emptyTitle: {
-    ...theme.buzz.type.bodyStrong,
-    color: theme.buzz.textPrimary,
-    marginTop: theme.buzz.space.sm,
+    ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary, marginTop: theme.buzz.space.sm,
   },
   empty: {
-    ...theme.buzz.type.meta,
-    color: theme.buzz.textSecondary,
-    marginTop: theme.buzz.space.sm,
+    ...theme.buzz.type.meta, color: theme.buzz.textSecondary, marginTop: theme.buzz.space.sm,
   },
   error: {
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    backgroundColor: theme.buzz.bgHighlight,
+    minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, backgroundColor: theme.buzz.bgHighlight,
   },
   errorText: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary },
   undo: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: 16,
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: theme.buzz.space.md,
-    backgroundColor: theme.buzz.bgTerminal,
-    borderWidth: 1,
-    borderColor: theme.buzz.borderStrong,
-    borderRadius: theme.buzz.radius,
+    position: 'absolute', left: 16, right: 16, bottom: 16, minHeight: 48,
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: theme.buzz.space.md,
+    backgroundColor: theme.buzz.bgTerminal, borderWidth: 1,
+    borderColor: theme.buzz.borderStrong, borderRadius: theme.buzz.radius,
   },
   // The bulk Undo bar sits at the foot of the desktop list column.
   desktopUndo: { maxWidth: 390 - 32 },
   undoText: {
-    ...theme.buzz.type.meta,
-    flex: 1,
-    color: theme.buzz.textPrimary,
+    ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary,
   },
   undoAction: { minWidth: 64, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   undoActionText: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },

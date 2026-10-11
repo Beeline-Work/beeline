@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
@@ -10,25 +10,22 @@ import type { MessageBookmarkListResult, MessageBookmarkView, NeedsYouItemView, 
 export type NeedsYouLiveDelta = { readonly workspaceId: string; readonly sourceRoomId: string;
   readonly count: number; readonly items: readonly NeedsYouItemView[] };
 export type BookmarkDelta = { readonly messageId: string; readonly bookmark: MessageBookmarkView | null };
-export const NEEDS_YOU_GAP_REASONS: ReadonlySet<string> =
-  new Set(['needs-you-gap', 'reconnect', 'postgres:memberships']);
+const GAP_REASONS = new Set(['needs-you-gap', 'bookmark-gap', 'reconnect', 'postgres:memberships']);
 
 type Entry = { needs: readonly NeedsYouItemView[] | null; count: number | null;
   saved: readonly MessageBookmarkView[] | null; next?: string; held: ReadonlySet<string> };
-/** A read replays changes after its start; unsettled edits remain until the server answers. */
-type Change = { at: number; needs?: NeedsYouLiveDelta; bookmark?: BookmarkDelta;
-  clear?: ReadonlySet<string>;
-  savedEdit?: { apply: (items: readonly MessageBookmarkView[]) => readonly MessageBookmarkView[];
-    next?: string | null }; settled?: number };
+/** A read replays later live changes, then edits still pending at its start. */
+type Change = { at: number; kind: 'needs' | 'saved'; apply: (entry: Entry) => Entry;
+  pending?: boolean; settled?: number };
 type Slot = { key: string; relay: string; pubkey: string; workspaceId: string;
   /** One order for both sections, count reads, and local edits. */
   entry: Entry; clock: number; needsRead: number; savedRead: number;
-  reads: Set<number>; changes: Change[]; forgotten: Set<string> };
+  reads: Set<number>; changes: Change[]; countRead?: Promise<{ count: number; at: number }>;
+  forgotten?: boolean };
 const EMPTY: Entry = { needs: null, count: null, saved: null, held: new Set() };
 const slots = new Map<string, Slot>();
 const listeners = new Set<() => void>();
-const holders = new Map<string, number>();
-const counts = new Map<string, Promise<number>>();
+const trayReaders = new Map<string, Set<() => void>>();
 let viewer: { key: string; relay: string; pubkey: string } | undefined;
 let resolving: Promise<NonNullable<typeof viewer>> | undefined;
 let liveStop: (() => void) | undefined;
@@ -53,20 +50,19 @@ function slotFor(owner: NonNullable<typeof viewer>, workspaceId: string): Slot {
   const known = slots.get(key);
   if (known && owner === viewer) return known;
   const slot: Slot = { key, relay: owner.relay, pubkey: owner.pubkey, workspaceId,
-    entry: EMPTY, clock: 0, needsRead: 0, savedRead: 0, reads: new Set(), changes: [], forgotten: new Set() };
+    entry: EMPTY, clock: 0, needsRead: 0, savedRead: 0, reads: new Set(), changes: [] };
   if (owner === viewer) slots.set(key, slot);
   return slot;
 }
-const current = (workspaceId: string) => viewer && slotFor(viewer, workspaceId);
+const current = (workspaceId: string) => viewer && slots.get(`${viewer.key}\u0000${workspaceId}`);
 function write(slot: Slot, entry: Entry, persist = true): void {
   if (!active(slot) || entry === slot.entry) return;
   const before = slot.entry;
   slot.entry = entry;
   if (persist && slot.pubkey) {
-    if (entry.needs && entry.needs !== before.needs && !slot.forgotten.has('needs-you'))
+    if (entry.needs && entry.needs !== before.needs)
       void mobileSurfaceCache.write(address(slot, 'needs-you'), { items: [...entry.needs] }, needsList).catch(() => undefined);
-    if (entry.saved && !slot.forgotten.has('bookmarks') &&
-        (entry.saved !== before.saved || entry.next !== before.next))
+    if (entry.saved && (entry.saved !== before.saved || entry.next !== before.next))
       void mobileSurfaceCache.write(address(slot, 'bookmarks'),
         { bookmarks: [...entry.saved], next: entry.next }, savedList).catch(() => undefined);
   }
@@ -75,8 +71,16 @@ function write(slot: Slot, entry: Entry, persist = true): void {
 function trim(slot: Slot): void {
   const oldest = Math.min(...slot.reads);
   slot.changes = slot.changes.filter((change) =>
-    change.clear || change.savedEdit
-      ? change.settled === undefined || change.settled > oldest : change.at > oldest);
+    change.pending ? change.settled === undefined || change.settled > oldest : change.at > oldest);
+}
+function replay(slot: Slot, kind: Change['kind'], at: number, entry: Entry): Entry {
+  let next = entry;
+  for (const change of slot.changes)
+    if (change.kind === kind && !change.pending && change.at > at) next = change.apply(next);
+  for (const change of slot.changes)
+    if (change.kind === kind && change.pending && (change.settled ?? Infinity) > at)
+      next = change.apply(next);
+  return next;
 }
 const orderedNeeds = (items: NeedsYouItemView[]) => items.sort((a, b) =>
   Number(!a.approval) - Number(!b.approval) || (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity) ||
@@ -88,7 +92,7 @@ const savedSlice = (items: readonly MessageBookmarkView[], delta: BookmarkDelta)
     .sort((a, b) => b.bookmarkedAt - a.bookmarkedAt || a.messageId.localeCompare(b.messageId));
 
 subscribeClientReset(() => {
-  slots.clear(); counts.clear(); viewer = undefined; resolving = undefined;
+  slots.clear(); viewer = undefined; resolving = undefined;
   liveStop?.(); liveStop = undefined; liveStarting = false; notify();
   if (listeners.size) void resolveViewer();
 });
@@ -102,11 +106,12 @@ function startLive(): void {
     const signal = (event as MonolithSurfaceEvent).monolithLive;
     if (signal.type === 'needs-you-delta') applyNeedsYouLiveDelta(signal);
     else if (signal.type === 'bookmark-delta') applyBookmarkDelta(signal);
-    else if (signal.type === 'invalidate' && NEEDS_YOU_GAP_REASONS.has(signal.reason)) {
-      for (const slot of slots.values()) if (!holders.get(slot.workspaceId)) {
+    else if (signal.type === 'invalidate' && GAP_REASONS.has(signal.reason)) {
+      for (const slot of slots.values()) if (signal.reason !== 'bookmark-gap' && !trayReaders.has(slot.workspaceId)) {
         slot.clock += 1;
         write(slot, { ...slot.entry, needs: null, count: null }, false);
       }
+      for (const readers of trayReaders.values()) for (const read of readers) read();
     }
   }).then((stop) => {
     if (generation !== clientResetGeneration()) { stop(); return; }
@@ -129,21 +134,23 @@ function resolveViewer(): Promise<NonNullable<typeof viewer>> {
 function changed(slot: Slot, change: Change): void {
   slot.clock += 1;
   change.at = slot.clock;
-  if (slot.reads.size || change.clear || change.savedEdit) slot.changes.push(change);
+  if (slot.reads.size || change.pending) slot.changes.push(change);
 }
 export function applyNeedsYouLiveDelta(delta: NeedsYouLiveDelta): void {
   const slot = current(delta.workspaceId);
-  if (!slot || slot.forgotten.has('needs-you')) return;
-  changed(slot, { at: 0, needs: delta });
-  write(slot, slot.entry.needs
-    ? { ...slot.entry, needs: needsSlice(slot.entry.needs, delta) }
-    : { ...slot.entry, count: delta.count });
+  if (!slot || slot.forgotten) return;
+  const apply = (entry: Entry): Entry => entry.needs
+    ? { ...entry, needs: needsSlice(entry.needs, delta) } : { ...entry, count: delta.count };
+  changed(slot, { at: 0, kind: 'needs', apply });
+  write(slot, apply(slot.entry));
 }
 export function applyBookmarkDelta(delta: BookmarkDelta & { readonly workspaceId: string }): void {
   const slot = current(delta.workspaceId);
-  if (!slot || slot.forgotten.has('bookmarks')) return;
-  changed(slot, { at: 0, bookmark: delta });
-  if (slot.entry.saved) write(slot, { ...slot.entry, saved: savedSlice(slot.entry.saved, delta) });
+  if (!slot || slot.forgotten) return;
+  const apply = (entry: Entry): Entry => entry.saved
+    ? { ...entry, saved: savedSlice(entry.saved, delta) } : entry;
+  changed(slot, { at: 0, kind: 'saved', apply });
+  write(slot, apply(slot.entry));
 }
 export async function loadNeedsYouList(workspaceId: string): Promise<readonly NeedsYouItemView[]> {
   const slot = slotFor(await resolveViewer(), workspaceId);
@@ -151,18 +158,14 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
   slot.reads.add(at);
   try {
     const result = await monolithPhoneOperation('readNeedsYou', { workspaceId });
-    let items = orderedNeeds([...result.items]);
-    for (const change of slot.changes)
-      if (change.needs && change.at > at) items = needsSlice(items, change.needs);
-    for (const change of slot.changes)
-      if (change.clear && (change.settled ?? Infinity) > at)
-        items = items.filter((item) => !change.clear!.has(item.messageId));
+    const entry = replay(slot, 'needs', at,
+      { ...slot.entry, needs: orderedNeeds([...result.items]), count: null });
     if (active(slot) && at > slot.needsRead) {
       slot.needsRead = at;
-      slot.forgotten.delete('needs-you');
-      write(slot, { ...slot.entry, needs: items, count: null });
+      slot.forgotten = false;
+      write(slot, entry);
     }
-    return items;
+    return entry.needs ?? [];
   } finally { slot.reads.delete(at); trim(slot); }
 }
 export async function loadSavedList(workspaceId: string, before?: string): Promise<void> {
@@ -172,20 +175,14 @@ export async function loadSavedList(workspaceId: string, before?: string): Promi
   try {
     const result = await monolithPhoneOperation('listMessageBookmarks', { workspaceId, ...(before ? { before } : {}) });
     if (!active(slot) || at <= slot.savedRead) return;
-    let items: readonly MessageBookmarkView[] = before
+    const items: readonly MessageBookmarkView[] = before
       ? [...slot.entry.saved ?? [], ...result.bookmarks.filter((item) =>
         !slot.entry.saved?.some((known) => known.messageId === item.messageId))]
       : [...result.bookmarks];
-    for (const change of slot.changes)
-      if (change.bookmark && change.at > at) items = savedSlice(items, change.bookmark);
-    let next = result.next;
-    for (const change of slot.changes) if (change.savedEdit && (change.settled ?? Infinity) > at) {
-      items = change.savedEdit.apply(items);
-      if (change.savedEdit.next !== undefined) next = change.savedEdit.next ?? undefined;
-    }
+    const entry = replay(slot, 'saved', at, { ...slot.entry, saved: items, next: result.next });
     slot.savedRead = at;
-    slot.forgotten.delete('bookmarks');
-    write(slot, { ...slot.entry, saved: items, next });
+    slot.forgotten = false;
+    write(slot, entry);
   } finally { slot.reads.delete(at); trim(slot); }
 }
 async function seed(workspaceId: string, kind: 'needs-you' | 'bookmarks'): Promise<boolean> {
@@ -206,30 +203,26 @@ async function seed(workspaceId: string, kind: 'needs-you' | 'bookmarks'): Promi
 }
 export const seedNeedsYouList = (workspaceId: string) => seed(workspaceId, 'needs-you');
 export const seedSavedList = (workspaceId: string) => seed(workspaceId, 'bookmarks');
-function forget(workspaceId: string, kind: 'needs-you' | 'bookmarks'): void {
+export function forgetTray(workspaceId: string): void {
   const slot = current(workspaceId);
   if (!slot) return;
-  slot.clock += 1;
-  slot.forgotten.add(kind);
-  slot.changes = slot.changes.filter((change) => kind === 'needs-you'
-    ? !change.needs && !change.clear : !change.bookmark && !change.savedEdit);
-  if (kind === 'needs-you') slot.needsRead = slot.clock;
-  else slot.savedRead = slot.clock;
-  write(slot, kind === 'needs-you' ? { ...slot.entry, needs: [], count: null }
-    : { ...slot.entry, saved: [], next: undefined }, false);
-  if (slot.pubkey) void mobileSurfaceCache.remove(address(slot, kind)).catch(() => undefined);
+  slot.forgotten = true;
+  slot.needsRead = slot.savedRead = ++slot.clock;
+  slot.changes = [];
+  write(slot, { ...slot.entry, needs: [], saved: [], count: null, next: undefined }, false);
+  if (slot.pubkey) for (const kind of ['needs-you', 'bookmarks'] as const)
+    void mobileSurfaceCache.remove(address(slot, kind)).catch(() => undefined);
 }
-export const forgetNeedsYouList = (workspaceId: string) => forget(workspaceId, 'needs-you');
-export const forgetSavedList = (workspaceId: string) => forget(workspaceId, 'bookmarks');
 export function updateSavedList(workspaceId: string,
   change: (items: readonly MessageBookmarkView[]) => readonly MessageBookmarkView[], next?: string | null) {
   const slot = current(workspaceId);
-  if (!slot || slot.forgotten.has('bookmarks'))
+  if (!slot || slot.forgotten)
     return { settle: () => undefined, cancel: () => undefined };
-  const edit: Change = { at: 0, savedEdit: { apply: change, next } };
+  const apply = (entry: Entry): Entry => ({ ...entry, saved: change(entry.saved ?? []),
+    next: next === undefined ? entry.next : next ?? undefined });
+  const edit: Change = { at: 0, kind: 'saved', apply, pending: true };
   changed(slot, edit);
-  write(slot, { ...slot.entry, saved: change(slot.entry.saved ?? []),
-    next: next === undefined ? slot.entry.next : next ?? undefined });
+  write(slot, apply(slot.entry));
   return {
     settle: () => { if (active(slot)) { edit.settled = ++slot.clock; trim(slot); } },
     cancel: () => { if (active(slot)) { slot.clock += 1;
@@ -238,14 +231,15 @@ export function updateSavedList(workspaceId: string,
 }
 export function removeNeedsYou(workspaceId: string, messageIds: Iterable<string>) {
   const slot = current(workspaceId);
-  if (!slot || slot.forgotten.has('needs-you'))
+  if (!slot || slot.forgotten)
     return { settle: () => undefined, restore: () => false };
   const ids = new Set(messageIds);
   const original = slot.entry.needs?.filter((item) => ids.has(item.messageId)) ?? [];
-  const change: Change = { at: 0, clear: ids };
+  const apply = (entry: Entry): Entry => entry.needs
+    ? { ...entry, needs: entry.needs.filter((item) => !ids.has(item.messageId)) } : entry;
+  const change: Change = { at: 0, kind: 'needs', apply, pending: true };
   changed(slot, change);
-  if (slot.entry.needs)
-    write(slot, { ...slot.entry, needs: slot.entry.needs.filter((item) => !ids.has(item.messageId)) });
+  write(slot, apply(slot.entry));
   let done = false;
   return {
     settle: () => {
@@ -253,7 +247,7 @@ export function removeNeedsYou(workspaceId: string, messageIds: Iterable<string>
       done = true; change.settled = ++slot.clock; trim(slot);
     },
     restore: () => {
-      if (done || !active(slot) || slot.forgotten.has('needs-you')) return false;
+      if (done || !active(slot) || slot.forgotten) return false;
       done = true; slot.clock += 1;
       slot.changes = slot.changes.filter((item) => item !== change);
       if (slot.entry.needs) write(slot, { ...slot.entry,
@@ -267,37 +261,24 @@ export function holdNeedsYou(workspaceId: string, messageIds: readonly string[])
   const slot = current(workspaceId);
   if (slot) write(slot, { ...slot.entry, held: new Set(messageIds) }, false);
 }
+export function subscribeTrayGap(workspaceId: string, read: () => void): () => void {
+  const readers = trayReaders.get(workspaceId) ?? new Set<() => void>();
+  readers.add(read);
+  trayReaders.set(workspaceId, readers);
+  return () => { readers.delete(read); if (!readers.size) trayReaders.delete(workspaceId); };
+}
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 function useEntry(workspaceId: string | null | undefined): Entry {
   useEffect(() => { void resolveViewer(); }, []);
   return useSyncExternalStore(subscribe, () =>
     workspaceId && viewer ? slots.get(`${viewer.key}\u0000${workspaceId}`)?.entry ?? EMPTY : EMPTY);
 }
-export function useNeedsYouList(workspaceId: string | null | undefined) {
-  const entry = useEntry(workspaceId);
-  useEffect(() => {
-    if (!workspaceId) return;
-    holders.set(workspaceId, (holders.get(workspaceId) ?? 0) + 1);
-    return () => { const left = (holders.get(workspaceId) ?? 1) - 1;
-      if (left) holders.set(workspaceId, left); else holders.delete(workspaceId); };
-  }, [workspaceId]);
-  return useMemo(() => ({ all: entry.needs,
-    items: entry.needs && entry.held.size
-      ? entry.needs.filter((item) => !entry.held.has(item.messageId)) : entry.needs }), [entry]);
-}
 const EMPTY_SAVED: readonly MessageBookmarkView[] = [];
-export function useSavedList(workspaceId: string | null | undefined) {
+export function useTrayList(workspaceId: string | null | undefined) {
   const entry = useEntry(workspaceId);
-  return useMemo(() => ({ bookmarks: entry.saved ?? EMPTY_SAVED, next: entry.next }), [entry]);
-}
-function countNeedsYou(key: string, workspaceId: string): Promise<number> {
-  const pending = counts.get(key);
-  if (pending) return pending;
-  const request = monolithPhoneOperation('countNeedsYou', { workspaceId })
-    .then((result) => result.count)
-    .finally(() => { if (counts.get(key) === request) counts.delete(key); });
-  counts.set(key, request);
-  return request;
+  return { needs: entry.needs && entry.held.size
+    ? entry.needs.filter((item) => !entry.held.has(item.messageId)) : entry.needs,
+    bookmarks: entry.saved ?? EMPTY_SAVED, next: entry.next };
 }
 export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown) {
   const entry = useEntry(workspaceId);
@@ -312,9 +293,11 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
       const slot = slotFor(await resolveViewer(), workspaceId);
       const at = slot.clock;
       try {
-        const count = await countNeedsYou(slot.key, workspaceId);
-        if (!cancelled && slot.clock === at && !slot.entry.needs)
-          write(slot, { ...slot.entry, count });
+        const request = slot.countRead ??= monolithPhoneOperation('countNeedsYou', { workspaceId })
+          .then(({ count }) => ({ count, at })).finally(() => { slot.countRead = undefined; });
+        const answer = await request;
+        if (!cancelled && !slot.forgotten && slot.clock === answer.at && !slot.entry.needs)
+          write(slot, { ...slot.entry, count: answer.count });
       } catch { /* Keep the previous count. */ }
     })();
     return () => { cancelled = true; };

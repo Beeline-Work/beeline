@@ -58,6 +58,7 @@ import {
 import { queueUpdateRollbackAlert } from './update-rollback-alert.js';
 import { squireBrokerMeetsComputerUseMinimum } from './squire-host.js';
 import { pruneDeletedRuntimes, pruneRepositoryCaches } from './host-disk-retention.js';
+import { applyRequestedStartupCleanup } from './startup-cleanup.js';
 import { pruneSharedModelCache } from './scratch-lifecycle.js';
 
 /** A failed agent restarts inside the helper after this, doubling to the cap. */
@@ -146,6 +147,7 @@ export async function runMachineHelper(
       diskSweepRunning = false;
     }
   };
+  await applyRequestedStartupCleanup(supervisorRoot);
   if (!options.configPaths) await writeHelperPidRecord(supervisorRoot, process.pid);
 
   const layout = beelineInstallLayout(env);

@@ -37,6 +37,7 @@ import {
   seedWarmNodeModules,
   warmNodeModulesStoreDir,
 } from './warm-node-modules.js';
+import { workspaceAssetRoot } from './workspace-assets.js';
 import {
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
   resolveMaxWarmSessions,
@@ -122,6 +123,8 @@ export async function materializeCornerWorktree(input: {
   featureBranch: string;
   token: string;
   supervisorRoot: string;
+  /** New Workspace layout skips the ABI-unsafe legacy host-wide warm store. */
+  workspaceId?: string;
   committer: { name: string; publicKey: string };
 }): Promise<{ path: string; gitCommonDir: string }> {
   // Same normalization the Room checkout uses: every real remote is held to
@@ -186,7 +189,7 @@ export async function materializeCornerWorktree(input: {
     // A worktree cut from a bare clone has no `node_modules`, so this is the
     // one moment a warm tree can be hardlinked in before anything reads it.
     // Never fatal: a cold store just means the corner installs as before.
-    const seed = await seedWarmNodeModules({
+    const seed = input.workspaceId ? { reason: 'no-lockfile' as const } : await seedWarmNodeModules({
       worktreePath: path,
       storeRoot: warmNodeModulesStoreDir(input.supervisorRoot),
     });
@@ -202,7 +205,7 @@ export async function materializeCornerWorktree(input: {
     // fresh corner cannot run the mobile vitest suite at all.
     const mobilePath = resolve(path, 'apps/mobile');
     if (existsSync(resolve(mobilePath, 'package-lock.json'))) {
-      const mobileSeed = await seedWarmNodeModules({
+      const mobileSeed = input.workspaceId ? { reason: 'no-lockfile' as const } : await seedWarmNodeModules({
         worktreePath: mobilePath,
         storeRoot: mobileNodeModulesStoreDir(input.supervisorRoot),
       });
@@ -1069,6 +1072,7 @@ export class RoomRuntimeCoordinator {
     return {
       ...this.baseConfig,
       workspaceRoot,
+      agentSharedAssetRoot: workspaceAssetRoot(this.runtime.supervisorRoot, this.runtime.communityId),
       agentPrivateRoot: resolve(workspaceRoot, 'agent-private'),
       agentMemoryRoot: resolve(dirname(this.configPath), 'memory'),
       openRouterRoutingCacheDir: openRouterRoutingCacheDir(dirname(this.configPath)),
@@ -1622,6 +1626,7 @@ export class RoomRuntimeCoordinator {
     const worktree = await materializeCornerWorktree({
       ...input,
       supervisorRoot: this.runtime.supervisorRoot,
+      workspaceId: this.runtime.communityId,
       committer: { name: this.agent.name, publicKey: this.agent.publicKey },
     });
     (await this.getLocalWorktreeIds()).add(input.cornerId);
@@ -1855,7 +1860,7 @@ export class RoomRuntimeCoordinator {
     if (!archived) return false;
     await this.scheduler.suspend(cornerId);
     await rm(resolve(root, 'scratch'), { recursive: true, force: true });
-    await rm(resolve(root, 'agent-home'), { recursive: true, force: true });
+    // Retain harness conversations and auth while shared assets migrate.
     await rm(resolve(root, '.beeline-corner.json'), { force: true });
     return true;
   }

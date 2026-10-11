@@ -63,7 +63,7 @@ import {
 } from '@beeline/api-contract/agent-grants';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { surfaceAllows, type AgentSurface } from '@beeline/api-contract/surface-capabilities';
-import { wrapAgentCommand, type MaskedPath } from './bwrap-sandbox.js';
+import { wrapAgentCommand, type MaskedPath, type SandboxSessionSpec } from './bwrap-sandbox.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   PROVIDER_KEY_ENV_VARS,
@@ -96,6 +96,9 @@ export interface GrantWritePolicy {
   harnessStateDirs?: string[];
   /** Credential stores hidden from the run, exactly as a Room session hides them. */
   maskPaths?: MaskedPath[];
+  sharedLayout?: SandboxSessionSpec['sharedLayout'];
+  /** Exact Room tool/cache environment, never agent provider credentials. */
+  toolEnv?: Record<string, string>;
 }
 
 /** What a serving Room registers so the runner knows where and for whom it runs. */
@@ -473,6 +476,7 @@ export class GrantCommandRunner {
     const env: Record<string, string> = {
       ...(source.PATH ? { PATH: source.PATH } : {}),
       ...(source.HOME ? { HOME: source.HOME } : {}),
+      ...(policy.toolEnv ?? {}),
       ...Object.fromEntries(secrets),
     };
     const cap = this.options.outputCapBytes ?? GRANT_COMMAND_OUTPUT_CAP_BYTES;
@@ -656,6 +660,7 @@ function roomSandboxCommand(
       ...(policy.harnessStateDirs ? { harnessStateDirs: policy.harnessStateDirs } : {}),
       ...(policy.scratch ? { tmpDir: policy.scratch } : {}),
       ...(policy.maskPaths ? { maskPaths: policy.maskPaths } : {}),
+      ...(policy.sharedLayout ? { sharedLayout: policy.sharedLayout } : {}),
     },
     command: '/bin/sh',
     args: ['-c', SANDBOX_STARTED_SCRIPT, 'beeline-grant-sandbox', sandboxMarker, ...argv],

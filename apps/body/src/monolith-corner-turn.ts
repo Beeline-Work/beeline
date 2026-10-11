@@ -12,6 +12,17 @@ import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { machineHost } from './machine-host.js';
+import {
+  prepareCodexCacheTargets,
+  preparePackageCacheTargets,
+  prepareWorkspaceAdapter,
+  markWorkspaceLayoutLive,
+  prepareWorkspaceAssets,
+  prepareWorkspaceAvdBase,
+  prepareWorkspaceSdk,
+  workspaceCacheEnv,
+} from './workspace-assets.js';
+import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capacity.js';
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
@@ -126,7 +137,6 @@ import { agentGitIdentityEnv } from './agent-git-identity.js';
 import {
   harvestWarmNodeModules,
   mobileNodeModulesStoreDir,
-  sharedCargoTargetDir,
   sharedNpmCacheDir,
   sharedPnpmStoreDir,
   sharedTurboCacheDir,
@@ -959,19 +969,40 @@ export class MonolithCornerTurnLoop {
       githubEnv = launchers.env;
       this.cornerGitHubCli = launchers.githubCli;
     }
-    // One npm cache for every corner on this host. `agent-home.ts` gives each
-    // corner its own `$HOME`, so npm's default `$HOME/.npm` is per-corner and
-    // every corner re-downloads the same tarballs; this points them all at the
-    // shared cache instead. It lives under the supervisor root the sandbox
-    // protects, so it also needs the explicit writable re-bind below.
-    const npmCacheDir = sharedNpmCacheDir(this.options.runtime.supervisorRoot);
-    const pnpmStoreDir = sharedPnpmStoreDir(this.options.runtime.supervisorRoot);
-    const cargoTargetDir = sharedCargoTargetDir(this.options.runtime.supervisorRoot);
+    let assets = this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath &&
+      await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
+      ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
+      : undefined;
+    let androidAssets: { sdk: string; avdBase: string } | undefined;
+    if (assets && homeOverlay.ANDROID_HOME && homeOverlay.ANDROID_AVD_HOME &&
+      existsSync(homeOverlay.ANDROID_AVD_HOME)) {
+      try {
+        androidAssets = {
+          sdk: await prepareWorkspaceSdk(assets, homeOverlay.ANDROID_HOME),
+          avdBase: await prepareWorkspaceAvdBase(assets, homeOverlay.ANDROID_AVD_HOME),
+        };
+      } catch (error) {
+        if (!(error instanceof SharedAssetCapacityError)) throw error;
+        assets = undefined; // private legacy paths remain available this turn
+      }
+    }
+    const cacheEnv = assets ? workspaceCacheEnv(assets, this.options.worktreePath) : {};
+    if (assets && this.options.config.agentKind === 'codex' && homeOverlay.CODEX_HOME)
+      await prepareCodexCacheTargets(homeOverlay.CODEX_HOME);
+    if (assets && homeOverlay.HOME) await preparePackageCacheTargets(homeOverlay.HOME);
+    // A build output belongs to this corner, even when its package downloads
+    // come from the Workspace cache.
+    const cargoTargetDir = resolve(this.options.worktreePath, '.beeline-cargo-target');
+    const npmCacheDir = assets ? cacheEnv.npm_config_cache! : sharedNpmCacheDir(this.options.runtime.supervisorRoot);
+    const pnpmStoreDir = assets ? cacheEnv.PNPM_CONFIG_STORE_DIR! : sharedPnpmStoreDir(this.options.runtime.supervisorRoot);
     // Turbo derives its cache directory from the repository's GIT COMMON
     // directory; in a linked corner worktree that is the read-only
     // `repositories/.turbo/cache`, so every `turbo run` fails before it starts.
-    const turboCacheDir = sharedTurboCacheDir(this.options.runtime.supervisorRoot);
-    const modelCacheDir = resolve(this.options.runtime.supervisorRoot, 'beeline', 'model-cache');
+    const turboCacheDir = assets ? cacheEnv.TURBO_CACHE_DIR! : sharedTurboCacheDir(this.options.runtime.supervisorRoot);
+    const modelCacheDir = assets ? cacheEnv.HF_HUB_CACHE! : resolve(this.options.runtime.supervisorRoot, 'beeline', 'model-cache');
+    const hfHomeDir = assets && this.options.config.agentHomeRoot
+      ? resolve(this.options.config.agentHomeRoot, 'cache/huggingface-private')
+      : modelCacheDir;
     await Promise.all(
       [npmCacheDir, pnpmStoreDir, cargoTargetDir, turboCacheDir, modelCacheDir].map((path) =>
         mkdir(path, { recursive: true, mode: 0o700 }),
@@ -984,16 +1015,49 @@ export class MonolithCornerTurnLoop {
       // Git reads these before any config, so this session commits as itself
       // no matter which session last prepared the shared corner worktree.
       ...agentGitIdentityEnv(this.agent),
+      ...cacheEnv,
+      ...(assets && homeOverlay.HOME ? {
+        GRADLE_USER_HOME: resolve(homeOverlay.HOME, '.gradle'),
+        CARGO_HOME: resolve(homeOverlay.HOME, '.cargo'),
+      } : {}),
+      ...(androidAssets && this.options.config.agentHomeRoot
+        ? {
+            ANDROID_HOME: androidAssets.sdk,
+            ANDROID_SDK_ROOT: androidAssets.sdk,
+            ANDROID_AVD_HOME: androidAssets.avdBase,
+            ANDROID_EMULATOR_HOME: resolve(this.options.config.agentHomeRoot, 'android-emulator'),
+            PATH: (homeOverlay.PATH ?? this.options.config.agentEnv.PATH ?? '')
+              .replaceAll(homeOverlay.ANDROID_HOME!, androidAssets.sdk),
+          }
+        : {}),
       npm_config_cache: npmCacheDir,
       // pnpm reads its settings from PNPM_CONFIG_* environment variables and
       // hardlinks packages out of this content-addressable store.
       PNPM_CONFIG_STORE_DIR: pnpmStoreDir,
       CARGO_TARGET_DIR: cargoTargetDir,
       TURBO_CACHE_DIR: turboCacheDir,
-      HF_HOME: modelCacheDir,
-      HUGGINGFACE_HUB_CACHE: join(modelCacheDir, 'hub'),
+      HF_HOME: hfHomeDir,
+      HUGGINGFACE_HUB_CACHE: assets ? modelCacheDir : join(modelCacheDir, 'hub'),
+      ...(assets && androidAssets && this.options.config.agentHomeRoot
+        ? {
+            BEELINE_ANDROID_LEASE_ROOT: resolve(assets.cache, 'android-leases'),
+            BEELINE_ANDROID_INSTANCE_ROOT: resolve(this.options.config.agentHomeRoot, 'android-instances'),
+            BEELINE_ANDROID_BASE_AVD_HOME: androidAssets.avdBase,
+            BEELINE_ANDROID_EMULATOR_BINARY: resolve(androidAssets.sdk, 'emulator/emulator'),
+          }
+        : {}),
     };
+    if (agentEnv.BEELINE_ANDROID_LEASE_ROOT && agentEnv.BEELINE_ANDROID_INSTANCE_ROOT)
+      await Promise.all([
+        mkdir(agentEnv.BEELINE_ANDROID_LEASE_ROOT, { recursive: true, mode: 0o700 }),
+        mkdir(agentEnv.BEELINE_ANDROID_INSTANCE_ROOT, { recursive: true, mode: 0o700 }),
+        mkdir(agentEnv.ANDROID_EMULATOR_HOME!, { recursive: true, mode: 0o700 }),
+      ]);
+    await mkdir(hfHomeDir, { recursive: true, mode: 0o700 });
     this.agentEnv = agentEnv;
+    const selectedCommand = assets
+      ? await prepareWorkspaceAdapter(assets, this.options.config.agentKind, command, agentEnv)
+      : command;
     this.modelContextTokens = await modelContextWindowTokens(
       selection.model, agentEnv.PI_CODING_AGENT_DIR,
     );
@@ -1029,14 +1093,8 @@ export class MonolithCornerTurnLoop {
         ...(tmpDir ? { tmpDir } : {}),
         additionalWritablePaths: [
           ...(attachScratchRoot ? [attachScratchRoot] : []),
-          // The shared npm cache. npm writes to its cache on every install,
-          // and this one is deliberately outside the per-corner home so the
-          // download is paid once per host rather than once per corner.
-          npmCacheDir,
-          pnpmStoreDir,
+          ...(assets ? [] : [npmCacheDir, pnpmStoreDir, turboCacheDir, modelCacheDir]),
           cargoTargetDir,
-          turboCacheDir,
-          modelCacheDir,
           ...registryMcpHostBindPaths(
             configuration.registryMcpRoutes,
             this.options.config.registryMcpBrokerSocket,
@@ -1050,12 +1108,22 @@ export class MonolithCornerTurnLoop {
         devices: grantedDevices,
         maskPaths: [
           ...credentialMaskPaths(this.options.config.sandboxMaskPaths, operatorHome),
-          ...siblingAgentMaskPaths(
+          ...(assets ? [] : siblingAgentMaskPaths(
             runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
-          ),
+          )),
         ],
+        ...(assets && this.options.config.agentHomeRoot
+          ? { sharedLayout: {
+              assetRoot: assets.root,
+              agentRuntimeDir: runtimeDirectory(this.options.runtime.supervisorRoot, this.options.runtime.agent.publicKey),
+              privateHomeRoot: this.options.config.agentHomeRoot,
+              ...(this.options.config.agentPrivateRoot ? { privateRoot: this.options.config.agentPrivateRoot } : {}),
+              ...(this.options.config.agentKind === 'codex' && agentEnv.CODEX_HOME ? { codexHome: agentEnv.CODEX_HOME } : {}),
+              ...(agentEnv.HOME ? { packageHome: agentEnv.HOME } : {}),
+            } }
+          : {}),
       },
-      command,
+      command: selectedCommand,
       args: agentArgs,
     });
     const hostDeclarations = hostImportedMcpDeclarations({
@@ -1082,6 +1150,7 @@ export class MonolithCornerTurnLoop {
       clientOptions,
     );
     await this.client.start();
+    if (assets) await markWorkspaceLayoutLive(assets);
     this.watchClaudeLogin();
     const codegraphReady = await prepareCodegraphIndex(
       this.options.config,
@@ -1131,8 +1200,8 @@ export class MonolithCornerTurnLoop {
                 { name: 'npm_config_cache', value: npmCacheDir },
                 { name: 'PNPM_CONFIG_STORE_DIR', value: pnpmStoreDir },
                 { name: 'CARGO_TARGET_DIR', value: cargoTargetDir },
-                { name: 'HF_HOME', value: modelCacheDir },
-                { name: 'HUGGINGFACE_HUB_CACHE', value: join(modelCacheDir, 'hub') },
+                { name: 'HF_HOME', value: hfHomeDir },
+                { name: 'HUGGINGFACE_HUB_CACHE', value: assets ? modelCacheDir : join(modelCacheDir, 'hub') },
               ],
             },
           ]
@@ -1196,7 +1265,8 @@ export class MonolithCornerTurnLoop {
         : {}),
       ...(this.options.requesterHandle ? { requesterHandle: this.options.requesterHandle } : {}),
       ...(agentEnv.BEELINE_ANDROID_EMULATOR_PORT
-        ? { android: { emulatorPort: agentEnv.BEELINE_ANDROID_EMULATOR_PORT } }
+        ? { android: { emulatorPort: agentEnv.BEELINE_ANDROID_EMULATOR_PORT,
+            leased: Boolean(agentEnv.BEELINE_ANDROID_LEASE_ROOT) } }
         : {}),
     });
     this.turnSessionPrefix = session.turnPrefix;
@@ -2230,7 +2300,7 @@ export class MonolithCornerTurnLoop {
    * where a later corner could read it as complete.
    */
   private harvestWarmNodeModules(): void {
-    if (this.harvest || !this.options.repository) return;
+    if (this.harvest || !this.options.repository || this.options.config.agentSharedAssetRoot) return;
     const { cornerId, worktreePath, runtime } = this.options;
     // `apps/mobile` has its own lockfile and store; harvesting it is what lets
     // the next fresh corner skip the whole mobile install.

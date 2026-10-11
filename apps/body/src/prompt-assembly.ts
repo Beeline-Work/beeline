@@ -100,7 +100,7 @@ export interface SessionPromptContext {
   /** Whether this corner's gh launcher uses a host binary or the REST fallback. */
   readonly githubCli?: CornerGitHubCli;
   /** This agent's emulator console port, when the host has an Android SDK (`android-agent-env.ts`). */
-  readonly android?: { readonly emulatorPort: string };
+  readonly android?: { readonly emulatorPort: string; readonly leased?: boolean };
   readonly reviewerHandle?: string;
   /**
    * This agent holds the parent Room's reviewer post
@@ -552,7 +552,9 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: ['code-corner'],
     when: ({ android }) => Boolean(android),
     render: ({ android }) =>
-      `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME, AVDs are in $ANDROID_AVD_HOME, and /dev/kvm works. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android?.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`,
+      android?.leased
+        ? 'Android: the SDK is $ANDROID_HOME and AVDs are in $ANDROID_AVD_HOME. Boot with `beeline emulator -avd <name> -no-window -gpu swiftshader_indirect`; Beeline leases a port and private writable data for each instance. Use `adb devices` and `adb -s emulator-<port>` to select one. The guest reaches host services at 10.0.2.2.'
+        : `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME, AVDs are in $ANDROID_AVD_HOME, and /dev/kvm works. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android?.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`,
   },
   {
     id: 'corner.implementer',

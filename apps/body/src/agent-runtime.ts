@@ -2,10 +2,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { loadBodyConfig } from './config.js';
 import {
-  formatAdapterInstallCommand,
   formatAgentCommand,
-  installLatestAgentAdapter,
-  latestAdapterInstallCommand,
 } from './agent-command.js';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
 import {
@@ -126,21 +123,8 @@ export async function runAgentRuntime(
   runtime = activated.runtime;
   const agentId = runtime.agent.publicKey;
   const daemonApi = activated.client;
-  const refreshRuntimeAdapter = async (): Promise<void> => {
-    const kind = runtime.agentKind;
-    if (!kind) return;
-    const install = latestAdapterInstallCommand(kind);
-    if (!install) return;
-    console.log(`[body] refreshing ${kind} adapter: ${formatAdapterInstallCommand(install)}`);
-    await installLatestAgentAdapter(kind);
-  };
-  try {
-    await refreshRuntimeAdapter();
-  } catch (error) {
-    console.error(
-      `[body] adapter refresh failed; validating the installed copy (${error instanceof Error ? error.message : String(error)})`,
-    );
-  }
+  // A Room pins its adapter into its Workspace before launch. Refreshing the
+  // machine-global @latest install here could replace a sibling's live binary.
   const agent = runtimeAgentCommand(runtime);
   await writeDaemonPidRecord(configPath, process.pid);
   const env: NodeJS.ProcessEnv = {
@@ -190,7 +174,6 @@ export async function runAgentRuntime(
       agent,
       preflightModelSelection,
       undefined,
-      refreshRuntimeAdapter,
     );
     if (!config.modelUnavailable) {
       console.log('[body] persisted model/effort selection passed live startup validation');

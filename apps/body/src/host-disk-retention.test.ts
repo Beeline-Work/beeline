@@ -16,12 +16,16 @@ it('expires only correctly named old removed-agent homes', async () => {
   const deleted = join(root, 'beeline', 'deleted-runtimes');
   const now = Date.now();
   const old = join(deleted, `${'a'.repeat(64)}-${now - 31 * 86400_000}`);
+  const oldWithHome = join(deleted, `${'d'.repeat(64)}-${now - 31 * 86400_000}`);
   const fresh = join(deleted, `${'b'.repeat(64)}-${now}`);
   const unknown = join(deleted, 'operator-notes');
   await Promise.all([old, fresh, unknown].map((path) => mkdir(path, { recursive: true })));
+  await mkdir(join(oldWithHome, 'rooms', 'one', 'agent-home', 'codex', 'sessions'), { recursive: true });
+  await writeFile(join(oldWithHome, 'rooms', 'one', 'agent-home', 'codex', 'sessions', 'thread.json'), 'history');
   expect(await pruneDeletedRuntimes(root, now)).toEqual([old]);
   await expect(access(old)).rejects.toMatchObject({ code: 'ENOENT' });
   await expect(access(fresh)).resolves.toBeUndefined();
+  await expect(access(join(oldWithHome, 'rooms', 'one', 'agent-home', 'codex', 'sessions', 'thread.json'))).resolves.toBeUndefined();
   await expect(access(unknown)).resolves.toBeUndefined();
 });
 

@@ -131,12 +131,11 @@
  * corners a GitHub App token scoped to the linked repository. Ambient secrets
  * beyond the mask list remain the operator's own exposure on their account.
  *
- * Every OTHER Beeline agent's own runtime directory is masked too
- * ({@link siblingAgentMaskPaths}): agents on this host share the same Unix
- * account, so without this a session could `cat` a sibling's `runtime.json`
- * (its signing `secretKeyHex`, `daemonToken`) or its Rooms' harness logins
- * straight through the whole-home ro-bind — the mechanism a Room agent used
- * to print another agent's keys in production.
+ * For the shared Workspace layout, stable `workspaces/` and `agents/` parents
+ * are masked, then the selected Workspace's assets and Room's private harness
+ * home are rebound. This keeps transcripts, harness state and daemon control
+ * records private while allowing the same Workspace assets in every session.
+ * {@link siblingAgentMaskPaths} remains only for legacy private-layout turns.
  *
  * Capabilities that pierce the namespace entirely (a reachable
  * `/var/run/docker.sock`, the systemd user bus) override ALL of the above by
@@ -158,7 +157,7 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { executableOnPath } from './agent-command.js';
 import type { SessionMode } from './config.js';
 import { CURSOR_HARNESS_COMMAND } from './cursor-acp-bridge.js';
@@ -387,6 +386,8 @@ export interface SandboxMountPlan {
    * so a deliberate harness-state bind always wins over a mask.
    */
   masks: MaskedPath[];
+  /** Ordered mounts which must exist and may never silently degrade. */
+  requiredMounts?: Array<{ source: string; target: string; mode: 'bind' | 'ro-bind' }>;
   /** Host device nodes bound into the private `/dev` beyond {@link DEFAULT_SANDBOX_DEVICES}. */
   devices?: string[];
 }
@@ -424,6 +425,15 @@ export interface SandboxSessionSpec {
   maskPaths?: MaskedPath[];
   /** Approved `device` grants ({@link grantedSandboxDevices}). */
   devices?: string[];
+  /** Coarse Workspace asset and private Room boundary, shared by every bwrap caller. */
+  sharedLayout?: {
+    assetRoot: string;
+    agentRuntimeDir: string;
+    privateHomeRoot: string;
+    privateRoot?: string;
+    codexHome?: string;
+    packageHome?: string;
+  };
 }
 
 /** Host device nodes every session reaches through its private `/dev`. */
@@ -514,6 +524,46 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
     ...(spec.mode === 'edit' ? (spec.protectedPaths ?? []) : []),
     ...tmpRestores,
   ]).filter((path) => !writable.includes(path));
+  const shared = spec.sharedLayout;
+  const requiredMounts: NonNullable<SandboxMountPlan['requiredMounts']> = [];
+  const boundaryMasks: MaskedPath[] = [];
+  if (shared) {
+    const assetRoot = resolve(shared.assetRoot);
+    const agentsRoot = dirname(resolve(shared.agentRuntimeDir));
+    const workspacesRoot = dirname(dirname(assetRoot));
+    boundaryMasks.push(
+      { path: workspacesRoot, kind: 'dir' },
+      { path: agentsRoot, kind: 'dir' },
+    );
+    const add = (path: string, mode: 'bind' | 'ro-bind', target = path): void => {
+      requiredMounts.push({ source: resolve(path), target: resolve(target), mode });
+    };
+    // Rebind the selected work directory before its nested private HOME.
+    const cwd = resolve(spec.cwd);
+    const relativeCwd = relative(agentsRoot, cwd);
+    if (relativeCwd === '' || (relativeCwd !== '..' && !relativeCwd.startsWith(`..${sep}`) && !isAbsolute(relativeCwd)))
+      add(cwd, spec.mode === 'edit' ? 'bind' : 'ro-bind');
+    add(shared.privateHomeRoot, 'bind');
+    if (shared.privateRoot) add(shared.privateRoot, 'bind');
+    add(resolve(shared.agentRuntimeDir, 'runtime.json'), 'ro-bind');
+    // The selected repository-free Room is read-only, but its generated
+    // CodeGraph index remains writable after rebinding that Room cwd.
+    for (const path of spec.additionalWritablePaths ?? []) {
+      const rel = relative(cwd, resolve(path));
+      if (rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+        add(path, 'bind');
+    }
+    add(resolve(assetRoot, 'cache'), 'bind');
+    if (shared.codexHome) {
+      add(resolve(assetRoot, 'cache/codex/download'), 'bind', resolve(shared.codexHome, 'cache'));
+      add(resolve(assetRoot, 'cache/codex/plugins'), 'bind', resolve(shared.codexHome, 'plugins/cache'));
+    }
+    if (shared.packageHome) {
+      add(resolve(assetRoot, 'cache/gradle/caches'), 'bind', resolve(shared.packageHome, '.gradle/caches'));
+      add(resolve(assetRoot, 'cache/cargo/registry'), 'bind', resolve(shared.packageHome, '.cargo/registry'));
+    }
+    for (const name of ['tools', 'sdk', 'avd-base']) add(resolve(assetRoot, name), 'ro-bind');
+  }
   return {
     ...(spec.mode === 'edit' ? { rootWritable: true } : {}),
     readOnly,
@@ -528,7 +578,8 @@ export function sandboxMountPlan(spec: SandboxSessionSpec): SandboxMountPlan {
           },
         ]
       : [],
-    masks: [...(spec.maskPaths ?? [])],
+    masks: [...(spec.maskPaths ?? []), ...boundaryMasks],
+    ...(requiredMounts.length ? { requiredMounts } : {}),
     ...(spec.devices?.length ? { devices: normalize(spec.devices) } : {}),
   };
 }
@@ -597,9 +648,16 @@ export function buildBwrapArgv(input: {
       args.push('--tmpfs', mask.path);
     } else args.push('--ro-bind', '/dev/null', mask.path);
   }
-  // `--bind-try`, not `--bind`: a harness state root that has never been created
-  // must not make the whole session fail to spawn.
+  // Legacy optional harness roots may be absent. Coarse private/asset boundary
+  // mounts below are required and fail closed.
   for (const path of input.plan.writable) args.push('--bind-try', path, path);
+  for (const mount of input.plan.requiredMounts ?? []) {
+    const source = lstatSync(mount.source, { throwIfNoEntry: false });
+    const target = lstatSync(mount.target, { throwIfNoEntry: false });
+    if (!source || !target || source.isSymbolicLink() || target.isSymbolicLink())
+      throw new Error(`required sandbox mount is missing or a symlink: ${mount.source} -> ${mount.target}`);
+    args.push(`--${mount.mode}`, mount.source, mount.target);
+  }
   for (const binding of quotaTmpfs) {
     args.push(
       '--dir',

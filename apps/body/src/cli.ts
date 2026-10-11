@@ -39,6 +39,7 @@ import {
 } from './helper-lifecycle.js';
 import { activateDaemonTransport } from './daemon-api-client.js';
 import { findAgentRuntimeConfigPaths, readRuntimeRecord, setAgentStopped } from './runtime.js';
+import { runCleanupSharedHomeCommand } from './startup-cleanup.js';
 import { runStartCommand } from './start-command.js';
 import {
   parseConnectSubscriptions,
@@ -58,6 +59,7 @@ import { rollbackFailedSuccessor, runManagedUpdateWorker } from './managed-updat
 import { runUpdateProbeCommand, UPDATE_PROBE_COMMAND } from './current-release-probe.js';
 import { ensureMachineHelper, reloadMachineHelper } from './helper-service.js';
 import { runMachineHelper, standDownAfterRollback } from './machine-helper.js';
+import { runLeasedEmulator } from './android-emulator-lease.js';
 
 function usage(exitCode = 1): void {
   console.error(`
@@ -80,6 +82,8 @@ ${pc.dim('Usage:')}
                                             agent on this machine keeps serving
   beeline update [--check|--status|--rollback|--force]
                                             Self-update the installed bundle
+  beeline cleanup-shared-home [--apply]      Report byte-identical obsolete cache copies;
+                                            --apply requires a quiescent helper
 
 ${pc.dim('Options:')}
   --workspace-root <path>   Agent workspace (default: ./body-workspace)
@@ -131,6 +135,10 @@ async function main(): Promise<void> {
   if (args.length === 0) usage();
 
   const command = args[0];
+  if (command === 'emulator') {
+    process.exitCode = await runLeasedEmulator(args.slice(1));
+    return;
+  }
   if (command === CURSOR_ACP_BRIDGE_FLAG) {
     await runCursorAcpStdioServer();
     return;
@@ -255,6 +263,13 @@ async function main(): Promise<void> {
 
   if (command === 'update') {
     await runUpdateCommand(args);
+    return;
+  }
+
+  if (command === 'cleanup-shared-home') {
+    if (args.slice(1).some((arg) => arg !== '--apply'))
+      throw new Error('cleanup-shared-home accepts only --apply');
+    console.log(await runCleanupSharedHomeCommand(process.env, args.includes('--apply')));
     return;
   }
 

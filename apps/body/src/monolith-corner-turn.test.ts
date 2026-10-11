@@ -29,7 +29,6 @@ import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
 import {
-  sharedCargoTargetDir,
   sharedNpmCacheDir,
   sharedPnpmStoreDir,
 } from './warm-node-modules.js';
@@ -3302,14 +3301,14 @@ describe('thin monolith corner turn', () => {
           expect.objectContaining({
             name: 'buzz-dev-mcp',
             // Exact, not a superset: this server's env carries this corner's
-            // own repository token and the shared package cache, and nothing
+            // own repository token, shared download cache and private build
             // else of the host's.
             env: [
               { name: 'GH_TOKEN', value: 'room-installation-token' },
               { name: 'GITHUB_TOKEN', value: 'room-installation-token' },
               { name: 'npm_config_cache', value: sharedNpmCacheDir(root) },
               { name: 'PNPM_CONFIG_STORE_DIR', value: sharedPnpmStoreDir(root) },
-              { name: 'CARGO_TARGET_DIR', value: sharedCargoTargetDir(root) },
+              { name: 'CARGO_TARGET_DIR', value: join(worktree, '.beeline-cargo-target') },
               { name: 'HF_HOME', value: join(root, 'beeline', 'model-cache') },
               { name: 'HUGGINGFACE_HUB_CACHE', value: join(root, 'beeline', 'model-cache', 'hub') },
             ],

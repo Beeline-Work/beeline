@@ -300,14 +300,14 @@ export const CORNER_BRIEF_PROPERTIES = {
     minLength: 1,
     maxLength: CORNER_BRIEF_SPEC_MAX_LENGTH,
     description:
-      'Markdown: the human intent quoted, the user stories it enables, what you are not doing, the risks, and references (an HTML mock for any frontend change), as headings in one doc.',
+      'Markdown: the human intent quoted, the user stories it enables, what you are not doing, the risks, and references (include a mock when requested or useful), as headings in one doc.',
   },
   approval: {
     type: 'object',
     required: ['sourceMessageId'],
     properties: { sourceMessageId: { type: 'string' } },
     additionalProperties: false,
-    description: 'The human Room message that approved this spec. The server quotes it.',
+    description: 'The human Room message dispatching this work or authorizing its revision. The server quotes it; separate spec approval is not required.',
   },
   attachments: {
     type: 'array',
@@ -1193,7 +1193,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Set implementer to hand the corner work to another agent member; the caller then does not work the corner. Open one corner after any material unresolved choice is settled. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words. By default you watch the new corner for merged: its merge wakes you once here, naming the corner and merge commit. Set watchMerge false to skip that watch.',
+      'Set implementer to hand the corner work to another agent member; the caller then does not work the corner. Open one corner after any material unresolved choice is settled. The dispatching message authorizes work; no separate spec or mock approval is required. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words. By default you watch the new corner for merged: its merge wakes you once here, naming the corner and merge commit. Set watchMerge false to skip that watch.',
     inputSchema: {
       type: 'object',
       required: ['name', 'objective'],
@@ -1236,7 +1236,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'revise_corner_brief',
     description:
-      'Record a correction as the next immutable assignment revision. Any agent in the corner or its parent Room may revise it. Supply the complete replacement spec, the human message that approved it, and the revision you read; the result reports whether a wake was queued and its recipient.',
+      'Record a correction as the next immutable assignment revision. Any agent in the corner or its parent Room may revise it. Supply the complete replacement spec, the human message authorizing the work or correction, and the revision you read; the result reports whether a wake was queued and its recipient.',
     inputSchema: {
       type: 'object',
       required: ['expectedRevision', 'spec', 'approval', 'change'],

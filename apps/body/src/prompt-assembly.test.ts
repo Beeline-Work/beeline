@@ -525,12 +525,16 @@ describe('prompt assembly guards', () => {
     expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain('opening and prompting inside it is not that outline');
   });
 
-  it('tells a corner author to wait for a human to approve the posted outline and mock', () => {
+  it('authorizes building from dispatch and leaves spec or mock questions to judgment', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
-    const nudge = "Then post the brief's outline, with an HTML mock for any frontend change, and wait for a human reply that approves it. The request that opened the work is not approval.";
+    const nudge = "The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Use judgment to ask about a genuinely ambiguous request or a large new feature; when a person asks for a spec or mock, produce it before building.";
     expect(author).toContain(nudge);
+    expect(author).not.toContain('wait for a human reply that approves it');
+    expect(author).not.toContain('The request that opened the work is not approval');
     expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain(nudge);
     expect(promptRules.CORNER_RUNTIME_AUTHOR_CONTRACT).toContain(nudge);
+    const room = assembleSessionPrompt(SESSION_VARIANTS.room!).systemPrompt;
+    expect(room).toContain('Use the dispatching message as approval; no separate spec or mock approval is required.');
   });
 
   it('R8a makes publication conditional on the brief, including dirty-work nudges', () => {

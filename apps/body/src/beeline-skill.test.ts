@@ -256,11 +256,12 @@ describe('using-beeline Room guidance', () => {
 describe('beeline-triage request skill', () => {
   const markdown = beelineTriageSkillMarkdown('test-release');
 
-  it('clarifies first and warns without blocking on warranted work or desirability', () => {
+  it('leaves clarification to judgment and warns without blocking on warranted work or desirability', () => {
     expect(markdown).toContain('beeline-release: test-release');
     expect(markdown).toContain('## 1. Is it clear?');
-    expect(markdown).toContain('resolve it with the human before doing anything else');
-    expect(markdown).toContain('never resolve it by adopting a teammate\'s plan, a prior document, or your own assumption');
+    expect(markdown).toContain('Use judgment to ask about a genuinely ambiguous request or a large new feature');
+    expect(markdown).toContain('When a person asks for a spec or mock, produce it before building');
+    expect(markdown).not.toContain('before doing anything else');
     expect(markdown).toContain('you are expected to disagree, not just permitted to');
     expect(markdown).toContain('tag a Room colleague for an adversarial second opinion');
     expect(markdown).toContain('skip this only when you are the only agent in the Room');
@@ -274,8 +275,9 @@ describe('beeline-triage request skill', () => {
 
   it('dispatches under existing authorization and adds only evidence-backed warnings', () => {
     expect(markdown).toContain(
-      'pass the complete brief to open_corner under existing authorization',
+      'pass the complete brief to open_corner with the dispatching message as approval',
     );
+    expect(markdown).toContain('no separate outline post or human approval is required');
     expect(markdown).toContain('Triage warning — warranted:');
     expect(markdown).toContain('Triage warning — desirable:');
     expect(markdown).toContain('Do not emit a warning merely because evidence is incomplete');
@@ -449,6 +451,15 @@ describe('beeline-review reviewer skill', () => {
   });
 });
 
+describe('optional frontend mocks', () => {
+  it('reviews rendered screens without requiring a mock to pass', () => {
+    const markdown = beelineReviewSkillMarkdown('test-release');
+    expect(markdown).toContain('when the brief includes a mock, compare them against it');
+    expect(markdown).toContain('A mock is optional; its absence does not block PASS.');
+    expect(markdown).not.toContain('compare them against the attached mock');
+  });
+});
+
 describe('beeline-spec planning skill', () => {
   const markdown = beelineSpecSkillMarkdown('test-release');
 
@@ -484,8 +495,10 @@ describe('beeline-spec planning skill', () => {
     );
     expect(markdown).toContain('Do not infer approval from silence');
     expect(markdown).not.toContain('Dispatch without a proposal/go ceremony');
-    expect(markdown).toContain('Always compose the full outline and post it to the Room before calling open_corner');
-    expect(markdown).toContain("ask the corner's opener to approve it");
+    expect(markdown).toContain('Keep the outline in the brief; no separate post or approval is required.');
+    expect(markdown).toContain('The dispatching message authorizes the work');
+    expect(markdown).toContain('when a person asks for a spec or mock, produce it before building');
+    expect(markdown).not.toContain("ask the corner's opener to approve it");
     expect(markdown).toContain('added automatically to the brief attachment manifest');
   });
 });

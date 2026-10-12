@@ -21,7 +21,7 @@ import {
  * A live stand-in for the connect process: it prints one `--json` report and
  * stays alive, exactly as Squire does while a human signs in.
  */
-function spawnReportedConnect() {
+function spawnReportedConnect(exitDelayMs = 0) {
   const line = JSON.stringify({
     state: 'needs-sign-in',
     terminal: false,
@@ -33,7 +33,7 @@ function spawnReportedConnect() {
   });
   return defaultStreamedRunner(process.execPath, [
     '-e',
-    `process.stdout.write(${JSON.stringify(`${line}\n`)}); setInterval(() => {}, 30_000);`,
+    `if (${exitDelayMs} > 0) process.on('SIGTERM', () => setTimeout(() => process.exit(0), ${exitDelayMs})); process.stdout.write(${JSON.stringify(`${line}\n`)}); setInterval(() => {}, 30_000);`,
   ], undefined, 'agent-1');
 }
 
@@ -665,7 +665,8 @@ describe('ConnectorAssignmentLoop', () => {
     // `installing`. A published ceremony nobody used must end the row, or the
     // helper brings up a fresh Xvfb/x11vnc/websockify/cloudflared rig every
     // five minutes for the daemon's lifetime.
-    const connect = await spawnReportedConnect();
+    // Signal delivery does not mean the child has finished exiting.
+    const connect = await spawnReportedConnect(200);
     const claimed = squireConnectSession('agent-1');
     const api = apiMock([{ kind: 'install', connectorId: 'conn-1' }], {
       connectorId: 'conn-1',
@@ -691,7 +692,8 @@ describe('ConnectorAssignmentLoop', () => {
       const post = api.calls.find((call) => call.op === 'postConnectorStatus');
       expect(post?.input.errorMessage).toBe(CEREMONY_EXPIRED);
       expect(post?.input.signIn).toBeNull();
-      expect(isProcessAlive(claimed?.pid)).toBe(false);
+      clock.mockRestore();
+      await vi.waitFor(() => expect(isProcessAlive(claimed?.pid)).toBe(false), { timeout: 5_000 });
     } finally {
       clock.mockRestore();
       loop.stop();

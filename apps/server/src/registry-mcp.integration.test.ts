@@ -1,10 +1,10 @@
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { McpRegistryClient } from './mcp-registry.js';
-import { connectorIdentityId } from './workbench.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -152,7 +152,7 @@ describe('Registry MCP connection orchestration', () => {
     });
     expect(
       await database.query(`SELECT 1 FROM messages WHERE author_id=$1`, [
-        connectorIdentityId('registry-mcp'),
+        SYSTEM_IDENTITY_ID,
       ]),
     ).toHaveProperty('rowCount', 0);
 
@@ -160,8 +160,8 @@ describe('Registry MCP connection orchestration', () => {
     await daemon.execute('connectMcpServer', connectInput(true), HELPER);
     expect(
       (
-        await database.query(`SELECT text FROM messages WHERE author_id=$1`, [
-          connectorIdentityId('registry-mcp'),
+        await database.query(`SELECT text FROM messages WHERE author_id=$1 AND card_type IS DISTINCT FROM 'squire-approval'`, [
+          SYSTEM_IDENTITY_ID,
         ])
       ).rows,
     ).toHaveLength(1);
@@ -198,15 +198,15 @@ describe('Registry MCP connection orchestration', () => {
     await daemon.execute('connectMcpServer', connectInput(true), HELPER);
     expect(
       (
-        await database.query(`SELECT text FROM messages WHERE author_id=$1`, [
-          connectorIdentityId('registry-mcp'),
+        await database.query(`SELECT text FROM messages WHERE author_id=$1 AND card_type IS DISTINCT FROM 'squire-approval'`, [
+          SYSTEM_IDENTITY_ID,
         ])
       ).rows,
     ).toHaveLength(1);
     expect(
       (
-        await database.query(`SELECT text FROM messages WHERE author_id=$1`, [
-          connectorIdentityId('trusty-squire'),
+        await database.query(`SELECT text FROM messages WHERE author_id=$1 AND card_type='squire-approval'`, [
+          SYSTEM_IDENTITY_ID,
         ])
       ).rows,
     ).toHaveLength(1);
@@ -245,8 +245,8 @@ describe('Registry MCP connection orchestration', () => {
     await daemon.execute('connectMcpServer', connectInput(true), HELPER);
     expect(
       (
-        await database.query(`SELECT text FROM messages WHERE author_id=$1`, [
-          connectorIdentityId('registry-mcp'),
+        await database.query(`SELECT text FROM messages WHERE author_id=$1 AND card_type IS DISTINCT FROM 'squire-approval'`, [
+          SYSTEM_IDENTITY_ID,
         ])
       ).rows,
     ).toHaveLength(2);
@@ -256,8 +256,8 @@ describe('Registry MCP connection orchestration', () => {
     expect(
       (
         await database.query<{ text: string }>(
-          `SELECT text FROM messages WHERE author_id=$1 AND room_id=$2`,
-          [connectorIdentityId('registry-mcp'), ROOM],
+          `SELECT text FROM messages WHERE author_id=$1 AND card_type IS DISTINCT FROM 'squire-approval' AND room_id=$2`,
+          [SYSTEM_IDENTITY_ID, ROOM],
         )
       ).rows,
       // The subject is the PINNED registry coordinate, never the publisher's
@@ -350,7 +350,7 @@ describe('Registry MCP connection orchestration', () => {
     );
     expect(
       await database.query(`SELECT 1 FROM messages WHERE author_id=$1`, [
-        connectorIdentityId('registry-mcp'),
+        SYSTEM_IDENTITY_ID,
       ]),
     ).toHaveProperty('rowCount', 0);
 
@@ -376,7 +376,7 @@ describe('Registry MCP connection orchestration', () => {
     }>(
       `SELECT text,room_id,system_event->'object'->>'url' event_url
        FROM messages WHERE author_id=$1`,
-      [connectorIdentityId('registry-mcp')],
+      [SYSTEM_IDENTITY_ID],
     );
     expect(lines.rows).toHaveLength(1);
     expect(lines.rows[0]).toMatchObject({ room_id: ROOM });
@@ -426,7 +426,7 @@ describe('Registry MCP connection orchestration', () => {
     expect(
       (
         await database.query(`SELECT 1 FROM messages WHERE author_id=$1 AND room_id=$2`, [
-          connectorIdentityId('registry-mcp'),
+          SYSTEM_IDENTITY_ID,
           ROOM,
         ])
       ).rowCount,

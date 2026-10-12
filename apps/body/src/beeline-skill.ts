@@ -140,7 +140,7 @@ Check every story and criterion, confirm non-goals stayed out, and resolve or ex
 
 For a bug, reproduce the reported behavior on the target branch and repeat the recorded reproduction on the PR head. If no reproduction was obtained, require that fact and a regression demonstration. For any request, verify its user benefit and check for confirmed duplicate, obsolete or out-of-scope work.
 
-Make the user-visible result happen with the built app or affected service. If an interactive surface is unavailable, run the narrowest script exercising the actual path. Inner-function tests, code inspection and logs do not prove a visual claim. Obtain the required screenshot or live proof yourself in the review Workspace. Do not send test-setup questions to a person; order the worker to obtain proof or report blocked: to your commander with the missing capability.
+Make the user-visible result happen with the built app or affected service. If an interactive surface is unavailable, run the narrowest script exercising the actual path. Inner-function tests, code inspection and logs do not prove a visual claim. Demand only proof the worker can produce with its own tools. Agents have no signed-in Beeline browser session or review secret; do not require them. Obtain available proof in the review Workspace. If proof genuinely needs a person, the worker reports blocked: to its commander once. Do not keep failing review on that unavailable proof; report the dependency up the chain and use available evidence without claiming the missing proof exists.
 
 For UI changes, compare rendered screens with any supplied mock and DESIGN.md. Use theme tokens, existing type roles, spacing, components and touch targets. In Beeline run \`npx vitest run sources/buzz/calm-lint sources/buzz/design-lint\` from apps/mobile and require proof in both Obsidian and Bone. A baseline increase or unexplained allowlist entry blocks PASS.
 
@@ -153,8 +153,8 @@ Lead with the verdict and the one blocking reason, then the concrete next step f
 PASS: ready to land
 Next: call merge_corner when the live gate allows it
 
-FAIL: no live screenshot of Connectors showing this machine's Squire status
-Next: obtain that screenshot in the review Workspace and return for review
+FAIL: a removed Room member can still read its transcript
+Next: fix the membership guard and repeat the authenticated read proof
 
 On FAIL, use \`order(address, text)\` at the corner's address with that concise verdict and next step. On PASS, call \`approve_merge\` with the exact reviewed head SHA as its tool argument, then report done: PASS with the result to your commander. Use \`merge_corner\` for landing when the live gate permits it. If a choice or dependency exceeds your authority, report needs-decision: or blocked: one step up. Orders go down; reports go up. Do not start a nested validation pipeline or push the worker's branch.
 `;

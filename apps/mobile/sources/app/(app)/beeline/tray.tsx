@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import type { MessageBookmarkView, NeedsYouItemView } from '@beeline/api-contract/phone';
+import type { MessageBookmarkView, NeedsYouItemView, NeedsYouActionView } from '@beeline/api-contract/phone';
 import { isWorkspaceListView, isWorkspaceView, type RoomView } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
@@ -41,6 +41,7 @@ import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import brand from '@/buzz/brand.json';
+import { openExternalUrl } from '@/utils/open-external-url';
 
 const EMPTY_NEEDS: readonly NeedsYouItemView[] = [];
 
@@ -366,6 +367,40 @@ export default function TrayScreen() {
     [clear, desktop, open],
   );
 
+  const decideNeed = useCallback(async (item: NeedsYouItemView, action: NeedsYouActionView) => {
+    const generation = clientResetGeneration();
+    setError(null);
+    try {
+      switch (action.kind) {
+        case 'grant':
+          await monolithPhoneOperation('decideAgentGrant', { grantId: action.grantId, decision: action.decision });
+          break;
+        case 'write-access':
+          await monolithPhoneOperation('decideWritePermission', { roomId: item.roomId,
+            permissionId: action.permissionId, requestId: action.requestId, agentId: action.agentId,
+            repository: action.repository, decision: action.decision });
+          break;
+        case 'choice':
+          await monolithPhoneOperation('answerChoice', { choiceId: action.choiceId, optionId: action.optionId });
+          break;
+        case 'skip-choice':
+          await monolithPhoneOperation('skipChoice', { choiceId: action.choiceId });
+          break;
+        case 'external':
+          // Squire owns its mandate and sign-in ceremony. No thread navigation.
+          await openExternalUrl(action.url);
+          return;
+      }
+      if (generation !== clientResetGeneration()) return;
+      // Re-read on completion only: a multi-grant card may still need another decision.
+      await loadNeedsYouList(item.workspaceId);
+      AccessibilityInfo.announceForAccessibility('Decision sent');
+    } catch (cause) {
+      if (generation === clientResetGeneration())
+        setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+
   const dismissNeed = useCallback(
     (item: NeedsYouItemView) => {
       AccessibilityInfo.announceForAccessibility('Dismissed from Needs you');
@@ -665,7 +700,7 @@ export default function TrayScreen() {
             return (
               <View style={styles.cellDivider}>
                 <NeedsYouCell desktop={desktop} item={row.item} now={now}
-                  onDismiss={dismissNeed} onOpen={openNeed} />
+                  onDismiss={dismissNeed} onOpen={openNeed} onAction={decideNeed} />
               </View>
             );
           case 'needs-empty':

@@ -1,15 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_WORKSPACE_ID } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
-import {
-  SYSTEM_IDENTITY_ID,
-  composeReleaseNotice,
-  notifyReleaseDelivered,
-  ReleaseNotifier,
-} from './release-notify.js';
+import { ReleaseNotifier } from './release-notify.js';
+import { PhoneService } from './phone-service.js';
+import { PushDeliveryLoop } from './background.js';
+import { ensureSystemDirectMessageRoom } from './system-line.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 const OWNER = 'a'.repeat(64);
 const OTHER_PERSON = 'b'.repeat(64);
@@ -40,152 +37,23 @@ async function fixture() {
   return database;
 }
 
-describe('composeReleaseNotice', () => {
-  it('is the announcement line alone when the person is fully current', () => {
-    expect(
-      composeReleaseNotice({
-        version: 'v0.0.42',
-        changelogUrl: 'https://github.com/lunchboxfortwo/beeline/releases/tag/v0.0.42',
-        platforms: new Set(),
-      }),
-    ).toBe(
-      'Beeline release v0.0.42 is out! New functionalities are in the changelog (https://github.com/lunchboxfortwo/beeline/releases/tag/v0.0.42).',
-    );
-  });
-
-  it('gives app-store instructions without asking a helper owner to update manually', () => {
-    const text = composeReleaseNotice({
-      version: 'v0.0.42',
-      changelogUrl: 'https://example.test/releases/v0.0.42',
-      platforms: new Set(['android', 'ios']),
-    });
-    expect(text).not.toContain('npx usebeeline update');
-    // Regression: `beeline` is an UNRELATED package on npm (a router
-    // library), so the DM must never name an `npx beeline ...` spelling —
-    // that would fetch a stranger's code. The published name is the safe
-    // npx form, and #949 made it delegate to the installed bundle.
-    expect(text).not.toContain('npx beeline');
-    expect(text).toContain('Google Play');
-    expect(text).toContain('App Store');
-  });
-});
-
-describe('notifyReleaseDelivered', () => {
+describe('helper release delivery', () => {
   let database: PgliteDatabase;
-  beforeEach(async () => {
-    database = await fixture();
-  });
+  beforeEach(async () => { database = await fixture(); });
   afterEach(() => database.close());
 
-  it('repairs the fixed @system identity name and keeps announcement DMs private', async () => {
-    await database.query(
-      `INSERT INTO identities(id,kind,name,handle,hidden_from_roster)
-       VALUES($1,'human','Cato',NULL,true)`,
-      [SYSTEM_IDENTITY_ID],
-    );
-
-    await notifyReleaseDelivered(database, {
-      version: 'v0.0.42',
-      sha: 'a'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.42',
-    });
-
-    expect(
-      (await database.query(`SELECT name,handle FROM identities WHERE id=$1`, [SYSTEM_IDENTITY_ID]))
-        .rows,
-    ).toEqual([{ name: 'System', handle: 'system' }]);
-    expect(
-      (
-        await database.query(
-          `SELECT DISTINCT visibility FROM rooms WHERE direct_participants::jsonb ? $1`,
-          [SYSTEM_IDENTITY_ID],
-        )
-      ).rows,
-    ).toEqual([{ visibility: 'invite-only' }]);
-  });
-
-  it('DMs every non-hidden human once, never touching a shared Room', async () => {
-    const result = await notifyReleaseDelivered(database, {
-      version: 'v0.0.42',
-      sha: 'a'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.42',
-    });
-    expect(result).toEqual({ notified: 2, skipped: 0 });
-
-    const messages = await database.query<{ room_id: string; author_id: string; text: string }>(
-      `SELECT room_id,author_id,text FROM messages ORDER BY room_id`,
-    );
-    expect(messages.rows).toHaveLength(2);
-    for (const message of messages.rows) {
-      expect(message.author_id).toBe(SYSTEM_IDENTITY_ID);
-      expect(message.room_id).not.toBe(ROOM);
-      expect(message.text).toContain('Beeline release v0.0.42 is out!');
-    }
-
-    // @system is never swept into the shared Room's roster.
-    const inSharedRoom = await database.query(
-      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2`,
-      [ROOM, SYSTEM_IDENTITY_ID],
-    );
-    expect(inSharedRoom.rowCount).toBe(0);
-  });
-
-  it('re-running the same version does not double-post (idempotent dedup on version+identity)', async () => {
-    await notifyReleaseDelivered(database, {
-      version: 'v0.0.42',
-      sha: 'a'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.42',
-    });
-    const rerun = await notifyReleaseDelivered(database, {
-      version: 'v0.0.42',
-      sha: 'a'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.42',
-    });
-    expect(rerun).toEqual({ notified: 0, skipped: 2 });
-    const count = await database.query(`SELECT count(*)::int c FROM messages WHERE author_id=$1`, [
-      SYSTEM_IDENTITY_ID,
-    ]);
-    expect((count.rows[0] as { c: number }).c).toBe(2);
-
-    // A later version DOES post again for the same person.
-    const nextVersion = await notifyReleaseDelivered(database, {
-      version: 'v0.0.43',
-      sha: 'b'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.43',
-    });
-    expect(nextVersion).toEqual({ notified: 2, skipped: 0 });
-  });
-
-  it('keeps a behind helper out of the release DM because installation is automatic', async () => {
-    await database.query(
-      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'t','presence',$3::jsonb)`,
-      [
-        ROOM,
-        AGENT,
-        JSON.stringify({
-          status: 'online',
-          observedAt: Date.now() / 1000,
-          releaseVersion: 'v0.0.41',
-        }),
-      ],
-    );
-    await notifyReleaseDelivered(database, {
-      version: 'v0.0.42',
-      sha: 'a'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.42',
-    });
-    const ownerMessage = await database.query<{ text: string }>(
-      `SELECT m.text FROM messages m JOIN rooms r ON r.id=m.room_id
-       WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2`,
-      [SYSTEM_IDENTITY_ID, OWNER],
-    );
-    const otherMessage = await database.query<{ text: string }>(
-      `SELECT m.text FROM messages m JOIN rooms r ON r.id=m.room_id
-       WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2`,
-      [SYSTEM_IDENTITY_ID, OTHER_PERSON],
-    );
-    expect(ownerMessage.rows[0]?.text).not.toContain('npx usebeeline update');
-    expect(otherMessage.rows[0]?.text).not.toContain('npx usebeeline update');
+  it('wakes helpers without posting any message or creating any bot DM', async () => {
+    const notifier = new ReleaseNotifier(database);
+    const push = vi.fn();
+    const stop = notifier.subscribeHelperRelease(push);
+    const input = { version: 'v0.0.128', sha: 'a'.repeat(40), changelogUrl: 'https://example.test/128' };
+    expect(await notifier.notifyReleaseDelivered(input)).toEqual({ notified: 0, skipped: 0 });
+    await notifier.notifyReleaseDelivered(input);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith({ version: input.version, sha: input.sha });
+    expect((await database.query('SELECT 1 FROM messages')).rowCount).toBe(0);
+    expect((await database.query('SELECT 1 FROM rooms WHERE direct_participants IS NOT NULL')).rowCount).toBe(0);
+    stop();
   });
 
   it('stores the delivered helper release and pushes it to connected and later subscribers', async () => {
@@ -202,6 +70,23 @@ describe('notifyReleaseDelivered', () => {
     const stop = reconnect.subscribeHelperRelease(({ sha }) => offline.push(sha));
     await vi.waitFor(() => expect(offline).toContain('a'.repeat(40)));
     stop();
+  });
+
+  it('does not replay old release announcements when a phone registers for push', async () => {
+    const room = await ensureSystemDirectMessageRoom(database, WORKSPACE, OWNER);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+      VALUES('old-release',$1,$2,'Beeline release v0.0.128 is out! New functionalities are in the changelog',
+        'system',now()-interval '2 hours')`, [room, SYSTEM_IDENTITY_ID]);
+    const phone = new PhoneService(database, 'https://server.test');
+    const send = vi.fn(async () => undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
+    await phone.execute('registerPushDevice', {
+      token: 'new-phone', platform: 'android', environment: 'physical',
+    }, OWNER);
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect((await database.query('SELECT 1 FROM push_delivery_claims')).rowCount).toBe(0);
   });
 
   it('does not query again during five idle minutes and reconciles once on reconnect', async () => {
@@ -231,133 +116,4 @@ describe('notifyReleaseDelivered', () => {
     stop();
   });
 
-  it('omits the helper section once the owned daemon reports the matching version', async () => {
-    await database.query(
-      `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'t','presence',$3::jsonb)`,
-      [
-        ROOM,
-        AGENT,
-        JSON.stringify({
-          status: 'online',
-          observedAt: Date.now() / 1000,
-          releaseVersion: 'v0.0.42',
-        }),
-      ],
-    );
-    await notifyReleaseDelivered(database, {
-      version: 'v0.0.42',
-      sha: 'a'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.42',
-    });
-    const ownerMessage = await database.query<{ text: string }>(
-      `SELECT m.text FROM messages m JOIN rooms r ON r.id=m.room_id
-       WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2`,
-      [SYSTEM_IDENTITY_ID, OWNER],
-    );
-    expect(ownerMessage.rows[0]?.text).not.toContain('npx usebeeline update');
-  });
-
-  it('does not invent a helper section for an owned daemon that has never reported a version', async () => {
-    // The agent exists and is owned, but has NEVER posted presence at all —
-    // never-observed is not the same as behind, so nothing is asserted.
-    await notifyReleaseDelivered(database, {
-      version: 'v0.0.42',
-      sha: 'a'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.42',
-    });
-    const ownerMessage = await database.query<{ text: string }>(
-      `SELECT m.text FROM messages m JOIN rooms r ON r.id=m.room_id
-       WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2`,
-      [SYSTEM_IDENTITY_ID, OWNER],
-    );
-    expect(ownerMessage.rows[0]?.text).not.toContain('npx usebeeline update');
-  });
-
-  it("includes only the platform section matching the person's registered devices", async () => {
-    await database.query(
-      `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,'android','physical')`,
-      ['owner-device-token-12345678901234567890', OWNER],
-    );
-    await notifyReleaseDelivered(database, {
-      version: 'v0.0.42',
-      sha: 'a'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.42',
-    });
-    const ownerMessage = await database.query<{ text: string }>(
-      `SELECT m.text FROM messages m JOIN rooms r ON r.id=m.room_id
-       WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2`,
-      [SYSTEM_IDENTITY_ID, OWNER],
-    );
-    expect(ownerMessage.rows[0]?.text).toContain('Google Play');
-    expect(ownerMessage.rows[0]?.text).not.toContain('App Store');
-  });
-
-  it('refuses a post from anyone but @system into the read-only announcement DM', async () => {
-    await notifyReleaseDelivered(database, {
-      version: 'v0.0.42',
-      sha: 'a'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.42',
-    });
-    const room = await database.query<{ id: string }>(
-      `SELECT r.id FROM rooms r WHERE r.direct_participants::jsonb ? $1 AND r.direct_participants::jsonb ? $2`,
-      [SYSTEM_IDENTITY_ID, OWNER],
-    );
-    const roomId = room.rows[0]!.id;
-    const phone = new PhoneService(database, 'http://local.test');
-    await expect(
-      phone.execute('sendRoomMessage', { roomId, text: 'let me reply' }, OWNER),
-    ).rejects.toThrow('access denied');
-    // The read view agrees: send permission is false for the recipient.
-    const view = await phone.readRoom(roomId, OWNER);
-    expect(view?.viewer.permissions.send).toBe(false);
-    // @system itself may still post through the ordinary send path.
-    await expect(
-      phone.execute('sendRoomMessage', { roomId, text: 'another notice' }, SYSTEM_IDENTITY_ID),
-    ).resolves.toBeTruthy();
-  });
-
-  it('leaves an ordinary direct message between two people writable by both', async () => {
-    const resolved = await new PhoneService(database, 'http://local.test').execute(
-      'resolveDirectMessage',
-      { workspaceId: WORKSPACE, participantId: OTHER_PERSON },
-      OWNER,
-    );
-    const phone = new PhoneService(database, 'http://local.test');
-    await expect(
-      phone.execute('sendRoomMessage', { roomId: resolved.id, text: 'hi' }, OWNER),
-    ).resolves.toBeTruthy();
-    await expect(
-      phone.execute('sendRoomMessage', { roomId: resolved.id, text: 'hey back' }, OTHER_PERSON),
-    ).resolves.toBeTruthy();
-  });
-
-  it('lands in a real Workspace rather than the retired Welcome, and skips a person with none', async () => {
-    const LONER = 'e'.repeat(64);
-    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Loner')`, [LONER]);
-    // Welcome still exists and OWNER joined it first: the notice must still
-    // prefer the Workspace the retirement will not delete.
-    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline Welcome')`, [
-      DEFAULT_WORKSPACE_ID,
-    ]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,identity_id,role,joined_at)
-       VALUES($1,$2,'member',now()-interval '1 day')`,
-      [DEFAULT_WORKSPACE_ID, OWNER],
-    );
-    const result = await notifyReleaseDelivered(database, {
-      version: 'v0.0.43',
-      sha: 'b'.repeat(40),
-      changelogUrl: 'https://example.test/releases/v0.0.43',
-    });
-    expect(result).toEqual({ notified: 2, skipped: 1 });
-    const rooms = await database.query<{ workspace_id: string }>(
-      `SELECT DISTINCT r.workspace_id FROM messages m JOIN rooms r ON r.id=m.room_id`,
-    );
-    expect(rooms.rows).toEqual([{ workspace_id: WORKSPACE }]);
-    expect(
-      (
-        await database.query(`SELECT 1 FROM rooms WHERE direct_participants::jsonb ? $1`, [LONER])
-      ).rowCount,
-    ).toBe(0);
-  });
 });

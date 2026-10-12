@@ -1371,6 +1371,79 @@ describe('re-runs and pushes out of review (AC-1)', () => {
 });
 
 describe('each transition wakes the next role exactly once (AC-2)', () => {
+  it('Reproduction REVIEW-SILENT-1: a completed review and worker reply without PASS return the unresolved review to the implementer', async () => {
+    const cornerId = await inReview();
+    const [opening] = await commands(A, cornerId);
+    await claim(opening!);
+    await result(opening!, 'The implementation is ready for review.');
+    const [review] = await commands(B, cornerId);
+    await claim(review!);
+    await daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId, generationId: 'g1',
+      address: cornerId, text: 'Attach the available proof before review' }, B);
+    await result(review!, '@hoots attach the production proof before I can PASS.');
+    const [reply] = (await commands(A, cornerId)).slice(-1);
+    await claim(reply!);
+    await result(reply!, 'The proof is attached; a required entry point is still unavailable.');
+    const before = await cards(cornerId);
+    for (let replay = 0; replay < 2; replay++)
+      await advanceCorner(db, cornerId, { kind: 'checks', result: 'passing', sourceMessageId: review!.sourceMessageId });
+    expect(await reasons(cornerId, A)).toContain('corner_review_needed');
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_review_needed')).toHaveLength(1);
+    expect(await reasons(cornerId, B)).toEqual(['subscribed_event']);
+    expect(await cards(cornerId)).toEqual(before);
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: false, open: false });
+    expect((await commands(A, cornerId)).find(command => command.reason === 'corner_review_needed')?.source.body)
+      .toContain('report the blocker');
+  });
+
+  it.each(['checks', 'review'])('Reproduction REVIEW-SILENT-2: an unreachable reviewer in %s wakes the implementer', async state => {
+    const cornerId = state === 'review' ? await inReview() : await open('owner/widgets');
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, B]);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
+    if (state === 'checks') await greenHead(cornerId, 7, SHA);
+    else {
+      await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [cornerId, B]);
+      await advanceCorner(db, cornerId, { kind: 'checks', result: 'passing', sourceMessageId: cornerId });
+    }
+    expect(await reasons(cornerId, A)).toContain('corner_review_needed');
+    expect(await currentState(cornerId)).toBe(state);
+    expect(await commands(B, cornerId)).toEqual([]);
+  });
+
+  it('does not return unresolved review while the tagged implementer is still answering it', async () => {
+    const cornerId = await inReview();
+    const [review] = await commands(B, cornerId);
+    await claim(review!);
+    await result(review!, '@hoots attach the production proof.');
+    await advanceCorner(db, cornerId, { kind: 'checks', result: 'passing', sourceMessageId: review!.sourceMessageId });
+    expect(await reasons(cornerId, A)).not.toContain('corner_review_needed');
+  });
+
+  it.each(['checks', 'review'])('a rejected reviewer insert in %s commits an implementer handback', async state => {
+    const cornerId = state === 'review' ? await inReview() : await open('owner/widgets');
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, B]);
+    if (state === 'review') await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [cornerId, B]);
+    else {
+      await pushToCorner(cornerId, SHA);
+      await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [cornerId,
+        JSON.stringify({ checks: 'passing', lifecycle: 'in-review', pr: { number: 7, headSha: SHA } })]);
+    }
+    const source = await systemLine(db, { roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' }, verb: 'finished checks' });
+    // A real SQL constraint failure aborts the transaction until the dispatch
+    // savepoint rolls it back; the worker's command must still commit.
+    await db.query(`ALTER TABLE agent_commands ADD CONSTRAINT reject_test_reviewer CHECK (agent_id<>'${B}')`);
+    try {
+      await advanceCorner(db, cornerId, { kind: 'checks', result: 'passing', sourceMessageId: source.id });
+      expect(await reasons(cornerId, A)).toContain('corner_review_needed');
+      expect(await currentState(cornerId)).toBe(state);
+      expect((await commands(A, cornerId)).filter(command => command.reason === 'corner_review_needed' && command.source.body.includes('reviewer command could not be queued')))
+        .toHaveLength(1);
+      expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%reviewer command could not be queued%'`, [cornerId])).rowCount).toBe(0);
+    } finally {
+      await db.query('ALTER TABLE agent_commands DROP CONSTRAINT reject_test_reviewer');
+    }
+  });
+
   it('a redelivered green check wakes the reviewer once', async () => {
     const cornerId = await inReview();
     await systemLine(db, { roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' }, verb: 'passed a check', kind: 'check-passed' });

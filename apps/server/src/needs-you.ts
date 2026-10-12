@@ -4,10 +4,11 @@ import {
   type AgentSignInHarness,
   type NeedsYouApprovalKind,
   type NeedsYouApprovalView,
+  type NeedsYouActionView,
   type NeedsYouItemView,
   type RoomViewIdentity,
 } from '@beeline/api-contract/phone';
-import { AGENT_GRANT_VERBS, type AgentGrantKind } from '@beeline/api-contract/agent-grants';
+import { AGENT_GRANT_VERBS, isCommandGrantScript, type AgentGrantKind, type CommandGrantScript } from '@beeline/api-contract/agent-grants';
 import type { SqlDatabase } from './database.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 
@@ -159,7 +160,7 @@ export function needsYouRowText(message: string, readerHandle: string | null): s
   return keepEnd(withoutReaderTags(needsYouSentence(message), readerHandle));
 }
 
-type GrantCardEntry = { grantId?: string; kind?: AgentGrantKind; target?: string; reason?: string };
+type GrantCardEntry = { grantId?: string; kind?: AgentGrantKind; target?: string; reason?: string; script?: CommandGrantScript };
 
 /** The raw card fields the approval rows read; every kind's card is a subset. */
 type ApprovalCard = {
@@ -173,7 +174,11 @@ type ApprovalCard = {
   detail?: string;
   linkKind?: 'approval' | 'passkey' | 'vouch';
   prompt?: string;
-  options?: { label?: string }[];
+  options?: { optionId?: string; label?: string; consequence?: string }[];
+  choiceId?: string;
+  permissionId?: string;
+  requestId?: string;
+  approvalUrl?: string;
   connectorName?: string;
   reason?: string;
   agentName?: string;
@@ -365,7 +370,7 @@ const APPROVAL_BRANCHES: readonly string[] = [
          AND (${cardExpiresAtSql('m.card')} IS NULL OR ${cardExpiresAtSql('m.card')}>${NOW_MS})
        ELSE m.card->>'status'='pending'
      END`,
-  // A Trusty Squire approval in the owner's connector DM. Squire decides it;
+  // A Trusty Squire approval in the owner's @System DM. Squire decides it;
   // the decision (or Squire's expiry) lands in the Room the paused turn ran in.
   `${APPROVAL_FROM('squire', `to_timestamp(${cardExpiresAtSql('m.card')}/1000.0)`)}
    JOIN messages m ON m.room_id=room.id AND m.card_type='squire-approval'
@@ -615,7 +620,7 @@ function approvalView(
       const first = pending[0];
       if (!first?.kind || !first.target) return undefined;
       const more = pending.length > 1 ? ` (and ${pending.length - 1} more)` : '';
-      return view(
+      const result = view(
         'grant',
         `asks to ${AGENT_GRANT_VERBS[first.kind] ?? 'use'}`,
         first.target,
@@ -623,9 +628,18 @@ function approvalView(
         text(`${first.reason ?? ''}${more}`),
         forName,
       );
+      if (!result || !first.grantId) return result;
+      return { ...result,
+        ...(isCommandGrantScript(first.script) ? { script: first.script } : {}),
+        actions: [
+          ...((first.kind === 'shared_asset') ? [] : [{ kind: 'grant' as const, label: 'Approve once', grantId: first.grantId, decision: 'once' as const }]),
+          { kind: 'grant', label: 'Always allow', grantId: first.grantId, decision: 'always' },
+          { kind: 'grant', label: 'Deny', grantId: first.grantId, decision: 'deny' },
+        ],
+      };
     }
-    case 'write-access':
-      return card.purpose === 'squire-spending'
+    case 'write-access': {
+      const result = card.purpose === 'squire-spending'
         ? view('write-access', 'asks to spend with', text(card.tool), false, undefined, forName)
         : view(
             'write-access',
@@ -635,8 +649,16 @@ function approvalView(
             undefined,
             forName,
           );
-    case 'choice':
-      return view(
+      if (!result || !card.permissionId || !card.requestId || !card.agent?.pubkey || typeof card.repository !== 'string') return result;
+      const action = { kind: 'write-access' as const, permissionId: card.permissionId,
+        requestId: card.requestId, agentId: card.agent.pubkey, repository: card.repository };
+      return { ...result, actions: [
+        { ...action, label: 'Approve', decision: 'allow' },
+        { ...action, label: 'Deny', decision: 'deny' },
+      ] };
+    }
+    case 'choice': {
+      const result = view(
         'choice',
         'asks you to choose',
         text(card.prompt),
@@ -648,6 +670,13 @@ function approvalView(
             .join(' · '),
         ),
       );
+      if (!result || !card.choiceId) return result;
+      const actions: NeedsYouActionView[] = (card.options ?? []).flatMap(option =>
+        option.optionId && option.label ? [{ kind: 'choice' as const, choiceId: card.choiceId!,
+          optionId: option.optionId, label: option.label, detail: option.consequence }] : []);
+      actions.push({ kind: 'skip-choice', choiceId: card.choiceId, label: 'Skip' });
+      return { ...result, actions };
+    }
     case 'connector':
       return view(
         'connector',
@@ -663,8 +692,8 @@ function approvalView(
         card.harness ? AGENT_SIGN_IN_SERVICE_LABELS[card.harness] : text(card.name),
         false,
       );
-    case 'squire':
-      return view(
+    case 'squire': {
+      const result = view(
         'squire',
         SQUIRE_ASKS[card.linkKind ?? 'approval'] ?? SQUIRE_ASKS.approval,
         text(card.title),
@@ -672,6 +701,13 @@ function approvalView(
         card.linkKind === 'passkey',
         text(card.detail),
       );
+      if (!result || !card.approvalUrl) return result;
+      let url: URL;
+      try { url = new URL(card.approvalUrl); } catch { return result; }
+      if (url.protocol !== 'https:') return result;
+      return { ...result, actions: [{ kind: 'external', url: url.toString(),
+        label: card.linkKind === 'passkey' ? 'Use passkey' : card.linkKind === 'vouch' ? 'Vouch' : 'Review approval' }] };
+    }
     default:
       return undefined;
   }

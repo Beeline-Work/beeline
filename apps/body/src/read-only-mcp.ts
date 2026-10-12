@@ -1438,7 +1438,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'approve_merge',
-    description: 'Record the configured reviewer’s PASS for the exact current green head after verifying the brief and live proof. Pass the reviewed head SHA only as the tool argument. Lead the posted review with verdict, one blocking reason and the worker’s next step; list only blockers, with evidence behind a link. Do not post an outline ledger, message IDs or commit hashes. Obtain test setup yourself in the review Workspace; report blocked: to your commander for missing capability. On FAIL use order to send the worker its next step. Use merge_corner when the live gate permits landing.',
+    description: 'Record the configured reviewer’s PASS for the exact current green head after verifying the brief and live proof. Pass the reviewed head SHA only as the tool argument. Lead the posted review with verdict, one blocking reason and the worker’s next step; list only blockers, with evidence behind a link. Do not post an outline ledger, message IDs or commit hashes. Demand only proof the worker can produce with its tools. Human-only proof gets one blocked report to the commander, never repeated FAILs. Obtain test setup yourself in the review Workspace; report blocked: to your commander for missing capability. On FAIL use order to send the worker its next step. Use merge_corner when the live gate permits landing.',
     inputSchema: {
       type: 'object',
       required: ['headSha'],

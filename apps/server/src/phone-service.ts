@@ -23,7 +23,6 @@ import { beginComposioAppSignIn, completeComposioSignIn } from './app-connection
 import { projectCornerBrief, type CornerBriefRow } from './corner-brief.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
-import { queueLatestReleasePush } from './release-push-catchup.js';
 import { validateWebPushSubscription, webPushPublicKey } from './web-push.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
 import {
@@ -182,10 +181,7 @@ import { unreadMessageSql, visibleChatMessageSql, VIEWER_READ_CURSOR_SQL } from 
 import {
   connectorCatalog,
   connectorDisplayName,
-  connectorIdentityIds,
   defaultConnectorSteps,
-  dmParticipantsIncludeConnectorIdentity,
-  ensureConnectorDirectMessageRoom,
   grantSquireToOwnerMachineAgents,
   isConnectableConnector,
   isMetadataStale,
@@ -1513,18 +1509,7 @@ export class PhoneService {
            WHERE message.room_id=r.id AND ${unreadMessageSql('message')}
            ORDER BY message.created_at DESC,message.id DESC LIMIT 1
          ) latest ON true
-         LEFT JOIN LATERAL (
-           SELECT message.id FROM messages message
-           WHERE message.room_id=r.id AND ${visibleChatMessageSql('message')}
-           ORDER BY message.created_at DESC,message.id DESC LIMIT 1
-         ) visible ON true
-         LEFT JOIN identities peer ON jsonb_typeof(r.direct_participants)='array'
-           AND peer.id=(SELECT p FROM jsonb_array_elements_text(
-             CASE WHEN jsonb_typeof(r.direct_participants)='array' THEN r.direct_participants ELSE '[]'::jsonb END
-           ) p WHERE p<>$2 LIMIT 1)
          WHERE r.workspace_id=w.id AND r.parent_id IS NULL AND r.archived_at IS NULL
-           AND (r.direct_participants IS NULL OR peer.id IS NULL
-             OR NOT (peer.id=ANY($3::text[])) OR visible.id IS NOT NULL)
        ) summary ON true
        WHERE m.identity_id = $1 AND m.room_id IS NULL AND m.removed_at IS NULL
        ORDER BY w.updated_at DESC, w.id LIMIT 51
@@ -1537,7 +1522,7 @@ export class PhoneService {
        FROM identities viewer LEFT JOIN visible ON true
        WHERE viewer.id=$1
        ORDER BY visible.updated_at DESC NULLS LAST,visible.id`,
-      [viewerId, viewerId, connectorIdentityIds()],
+      [viewerId, viewerId],
     );
     const viewer = rows.rows[0];
     if (!viewer) throw new Error('identity not found');
@@ -1817,17 +1802,13 @@ export class PhoneService {
         ) p WHERE p<>$2 LIMIT 1)
       WHERE r.workspace_id=$1 AND r.parent_id IS NULL AND r.archived_at IS NULL
         AND EXISTS (SELECT 1 FROM visible_workspace)
-        AND (
-          r.direct_participants IS NULL OR peer.id IS NULL
-          OR NOT (peer.id = ANY($3::text[])) OR lm.id IS NOT NULL
-        )
       ORDER BY COALESCE(lm.created_at,r.updated_at) DESC,r.id LIMIT 201
       )
       SELECT to_jsonb(visible_workspace) workspace,
         (SELECT to_jsonb(viewer) FROM identities viewer WHERE viewer.id=$2) viewer_row,
         COALESCE((SELECT jsonb_agg(to_jsonb(visible_rooms)) FROM visible_rooms),'[]'::jsonb) room_rows
       FROM visible_workspace`,
-      [workspaceId, viewerId, connectorIdentityIds()],
+      [workspaceId, viewerId],
     );
     const current = result.rows[0]?.workspace;
     if (!current) return null;
@@ -4830,7 +4811,6 @@ export class PhoneService {
         retry: boolean;
         writable: boolean;
         system_dm: boolean;
-        connector_dm: boolean;
         direct: boolean;
         corner: boolean;
         author_kind: 'human' | 'agent';
@@ -4838,7 +4818,6 @@ export class PhoneService {
         `WITH access AS (
            SELECT room.id,room.parent_id,room.direct_participants,identity.kind author_kind,
              COALESCE(room.direct_participants ? $6,false) system_dm,
-             COALESCE(room.direct_participants ?| $7::text[],false) connector_dm,
              COALESCE(workspace_member.role<>'spectator',$3=$6) writable
            FROM rooms room
            JOIN memberships room_member ON room_member.room_id=room.id
@@ -4851,7 +4830,7 @@ export class PhoneService {
          ), inserted AS (
            INSERT INTO messages(id,room_id,author_id,text,attachments)
            SELECT $1,$2,$3,$4,$5::jsonb FROM access
-           WHERE writable AND ($3=$6 OR NOT (system_dm OR connector_dm))
+           WHERE writable AND ($3=$6 OR NOT system_dm)
            ON CONFLICT(id) DO NOTHING
            RETURNING id,room_id,created_at
          ), read_mark AS (
@@ -4868,18 +4847,16 @@ export class PhoneService {
              WHERE message.id=$1 AND message.room_id=$2 AND message.author_id=$3
                AND message.text=$4 AND message.attachments=$5::jsonb
                AND message.reply_to_message_id IS NULL) retry,
-           access.writable,access.system_dm,access.connector_dm,
+           access.writable,access.system_dm,
            access.direct_participants IS NOT NULL direct,
            access.parent_id IS NOT NULL corner,access.author_kind
          FROM access`,
-        [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID, connectorIdentityIds()],
+        [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID],
       )).rows[0];
       if (!write) throw new Error('room access denied');
       if (!write.writable) throw new Error('spectator access is read-only (access denied)');
       if (author !== SYSTEM_IDENTITY_ID && write.system_dm)
-        throw new Error('this is a read-only system announcements channel; only @system may post here (access denied)');
-      if (author !== SYSTEM_IDENTITY_ID && write.connector_dm)
-        throw new Error('this is a read-only connector receipts channel; only the connector identity may post there (access denied)');
+        throw new Error('this is a read-only system thread; only @system may post here (access denied)');
       const mayRoute = write.direct || write.corner || input.text.includes('@');
       if (!write.inserted) {
         if (!write.retry) throw new Error('messageId is invalid');
@@ -8409,7 +8386,6 @@ export class PhoneService {
           input.platform === 'web' ? JSON.stringify(input.keys) : null,
         ],
       );
-      await queueLatestReleasePush(database, viewerId, input.token);
     });
     return { accepted: true };
   }
@@ -8502,7 +8478,7 @@ export class PhoneService {
     );
   }
   /**
-   * An `@system` notification DM (release or Workspace lifecycle) is
+   * An `@system` notification DM (Workspace lifecycle) is
    * read-only: only `@system` may post into a direct-message Room it is a
    * participant of. A person who IS a member of that Room (they must be, to
    * read it) still cannot send or reply, so this is distinct from
@@ -9316,12 +9292,7 @@ export class PhoneService {
     };
     // Push the install to this helper now; the poll is only recovery.
     await notifyConnectorAssignment(database, matched.agent_id);
-    await ensureConnectorDirectMessageRoom(
-      database,
-      ws.workspace_id,
-      input.connectorType,
-      viewerId,
-    );
+    await ensureSystemDirectMessageRoom(database, ws.workspace_id, viewerId);
     if (input.connectorType === 'trusty-squire') {
       await grantSquireToOwnerMachineAgents(database, {
         workspaceId: ws.workspace_id,
@@ -9550,12 +9521,7 @@ export class PhoneService {
     const participants = room.rows[0]?.direct_participants ?? null;
     if (participants?.includes(SYSTEM_IDENTITY_ID)) {
       throw new Error(
-        'this is a read-only system announcements channel; only @system may post here (access denied)',
-      );
-    }
-    if (dmParticipantsIncludeConnectorIdentity(participants)) {
-      throw new Error(
-        'this is a read-only connector receipts channel; only the connector identity may post here (access denied)',
+        'this is a read-only system thread; only @system may post here (access denied)',
       );
     }
   }

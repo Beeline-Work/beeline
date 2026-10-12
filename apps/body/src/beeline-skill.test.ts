@@ -346,8 +346,8 @@ describe('beeline-review reviewer skill', () => {
   it('leads with the verdict, one blocker and a concrete worker next step', () => {
     expect(markdown).toContain('Lead with the verdict and the one blocking reason');
     expect(markdown).toContain('List only blocking items');
-    expect(markdown).toContain('FAIL: no live screenshot of Connectors showing this machine');
-    expect(markdown).toContain('Next: obtain that screenshot in the review Workspace');
+    expect(markdown).toContain('FAIL: a removed Room member can still read its transcript');
+    expect(markdown).toContain('Next: fix the membership guard and repeat the authenticated read proof');
     expect(markdown).toContain('No full outline ledger, message IDs, commit hashes');
     expect(markdown).not.toContain('decision: PASS|FAIL');
   });
@@ -358,9 +358,10 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('Only a commander-authorized brief revision removes a requirement');
   });
   it('obtains proof autonomously and reports missing capability to the commander', () => {
-    expect(markdown).toContain('Obtain the required screenshot or live proof yourself in the review Workspace');
-    expect(markdown).toContain('Do not send test-setup questions to a person');
-    expect(markdown).toContain('report blocked: to your commander');
+    expect(markdown).toContain('Obtain available proof in the review Workspace');
+    expect(markdown).toContain('Agents have no signed-in Beeline browser session or review secret');
+    expect(markdown).toContain('the worker reports blocked: to its commander once');
+    expect(markdown).toContain('Do not keep failing review on that unavailable proof');
     expect(markdown).toContain('Inner-function tests, code inspection and logs do not prove a visual claim');
   });
   it('reviews one exact green head and permits landing through the live gate', () => {

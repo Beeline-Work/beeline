@@ -11,7 +11,7 @@ Mute lives on Room membership and applies to every sensitivity. Foreground views
 Verification:
 
 - `npm test -w @beeline/server -- --run src/push-sensitivity.test.ts` exercises persisted levels, human messages and explicit replies through PhoneService, and agent completion through the real database and delivery worker; it prints the observed delivery results.
-- Background, provider, migration, corner-owed and release-catchup suites cover existing delivery paths and the new keys.
+- Background, provider, migration, corner-owed suites cover existing delivery paths and the new keys.
 - `PUSH_PROOF_OUT=../../docs/evidence/push-sensitivity npm test --prefix apps/mobile -- --run sources/test/push-sensitivity.browser.test.ts` builds the real picker for headless Chrome at phone and desktop widths in Obsidian and Bone. The screenshots here use real fonts and theme tokens; device services are shimmed.
 - Notification response/action regressions exercise taps and replies after reusing a collapse tag; the mobile design lints and root typecheck cover the changed UI and contract.
 

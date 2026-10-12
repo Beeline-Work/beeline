@@ -1,5 +1,6 @@
 import { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
+import { HELPER_UPDATE_CLOSE_CODE } from '@beeline/api-contract/daemon';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TokenAuth } from './auth.js';
 import type { DaemonService } from './daemon-service.js';
@@ -126,7 +127,7 @@ describe('helper minimum version', () => {
     expect(update.status).toBe(200);
     expect(await update.json()).toEqual({ minVersion: 'v0.0.10' });
     await expect(forced).resolves.toEqual({ type: 'force-update', minVersion: 'v0.0.10' });
-    await expect(closed).resolves.toBe(1008);
+    await expect(closed).resolves.toBe(HELPER_UPDATE_CLOSE_CODE);
     expect(canReadRooms).not.toHaveBeenCalled();
     expect(gate.minimum).toBe('v0.0.10');
     const version = await fetch(`http://127.0.0.1:${port}/version`);

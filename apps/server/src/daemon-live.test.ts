@@ -282,6 +282,28 @@ describe('held presence for a live connection', () => {
     ).rows[0]?.body;
   }
 
+  it.each(['update', 'crash', 'ordinary-close'] as const)('releases a %s socket and notices only unexpected loss', async (kind) => {
+    const database = await seeded();
+    const live = new LiveHub();
+    const presence = new ConnectionPresence(database, live);
+    try {
+      await database.query(`UPDATE agents SET machine_id='test-machine',machine_name='Test' WHERE agent_id=$1`, [AGENT_A]);
+      await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, HUMAN]);
+      const { port } = await start({ database, live, connectionPresence: presence });
+      const client = await machine(port);
+      await register(client, AGENT_A, 'bdt_a');
+      if (kind === 'update') client.socket.close(4002, 'helper-update');
+      else if (kind === 'crash') client.socket.terminate();
+      else client.socket.close();
+      await vi.waitFor(async () => expect(await presenceBody(database)).toMatchObject({ status: 'offline', held: false }));
+      expect((await database.query(`SELECT 1 FROM messages WHERE card_type='machine-offline'`)).rowCount)
+        .toBe(kind === 'update' ? 0 : 1);
+    } finally {
+      await presence.stop();
+      await database.close();
+    }
+  });
+
   it('stays online past the 90-second horizon while held, and goes offline when the socket dies', async () => {
     const database = await seeded();
     const live = new LiveHub();

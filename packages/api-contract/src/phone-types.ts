@@ -268,7 +268,7 @@ export type RoomViewMessage = {
   };
   /** One grant card: the agent asks its owner; several asks in one turn share a card. */
   readonly grantRequest?: GrantRequestCardView;
-  /** One Squire-owned approval page relayed into the owner's connector DM.
+  /** One Squire-owned approval page relayed into the owner's @System DM.
    * Beeline presents the link but never decides the request. */
   readonly squireApproval?: SquireApprovalCardView;
   /** A Beeline-hosted interactive view of an existing Squire operate browser. */
@@ -319,7 +319,7 @@ export type RoomViewMessage = {
     readonly targetBranch?: string;
   };
   /** A daemon-authored repository lifecycle fact, rendered as an actionable card. */
-  /** The @wallet ledger line: every transaction, in and out. */
+  /** The @System ledger line: every transaction, in and out. */
   readonly walletTx?: {
     readonly direction: 'in' | 'out';
     readonly amountText: string;
@@ -329,7 +329,7 @@ export type RoomViewMessage = {
     readonly txUrl?: string;
     readonly agentName?: string | null;
   };
-  /** The one non-transaction @wallet message: a refused payment. */
+  /** The one non-transaction @System message: a refused payment. */
   readonly walletInsufficient?: {
     readonly agentName?: string | null;
     readonly needed: string;
@@ -338,7 +338,7 @@ export type RoomViewMessage = {
     readonly chain: string;
     readonly reason?: string;
   };
-  /** The delegation grant/renewal fact in the @wallet thread. */
+  /** The delegation grant/renewal fact in the @System thread. */
   readonly walletDelegation?:
     | { readonly standing: true }
     | {
@@ -428,10 +428,20 @@ export type NeedsYouApprovalKind =
   | 'connector'
   | 'sign-in';
 
+/** An existing decision operation, projected only after its server authority check. */
+export type NeedsYouActionView = { readonly label: string; readonly detail?: string } & (
+  | { readonly kind: 'grant'; readonly grantId: string; readonly decision: 'once' | 'always' | 'deny' }
+  | { readonly kind: 'write-access'; readonly permissionId: string; readonly requestId: string;
+      readonly agentId: string; readonly repository: string; readonly decision: 'allow' | 'deny' }
+  | { readonly kind: 'choice'; readonly choiceId: string; readonly optionId: string }
+  | { readonly kind: 'skip-choice'; readonly choiceId: string }
+  | { readonly kind: 'external'; readonly url: string }
+);
+
 /**
  * An approval card as text: `<actor> <ask>` over the whole `subject`, then the
  * request's own `detail`. The ask's verb names the kind, so the row needs no
- * type label. Decisions stay on the card in its Room.
+ * type label. The tray uses the same decision operations as the transcript card.
  */
 export type NeedsYouApprovalView = {
   readonly kind: NeedsYouApprovalKind;
@@ -447,6 +457,9 @@ export type NeedsYouApprovalView = {
   readonly detail?: string;
   /** The person the request is for, when that is not the viewer. */
   readonly forName?: string;
+  readonly actions?: readonly NeedsYouActionView[];
+  /** Full script bytes bound to the first grant; never approve a hidden script. */
+  readonly script?: { readonly path: string; readonly contents: string };
 };
 
 export const MESSAGE_REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '👀', '✅'] as const;
@@ -489,7 +502,7 @@ export type WorkspaceMemberGrantView = AgentGrantView & {
   readonly agent: RoomViewIdentity;
 };
 
-/** One @wallet ledger card (the mobile twin of the server card payload). */
+/** One @System ledger card (the mobile twin of the server card payload). */
 export type WalletTxCardView = NonNullable<RoomViewMessage['walletTx']>;
 export type WalletInsufficientCardView = NonNullable<RoomViewMessage['walletInsufficient']>;
 export type WalletDelegationCardView = NonNullable<RoomViewMessage['walletDelegation']>;
@@ -499,7 +512,7 @@ export type GrantRequestCardView = {
   readonly owner: RoomViewIdentity;
   readonly requester: RoomViewIdentity;
   readonly grants: readonly AgentGrantView[];
-  /** The message that caused a Squire route ask, when this card is in the owner's connector DM. */
+  /** The message that caused a Squire route ask, when this card is in the owner's @System DM. */
   readonly sourceRoomId?: string;
   readonly sourceMessageId?: string;
 };

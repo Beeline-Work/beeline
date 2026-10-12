@@ -196,7 +196,7 @@ The PR body MUST have ## Reproduced and ## Demonstrated. Cite Reproduction <id> 
 No unrequested features, flags, compatibility shims or refactors.`;
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
-  "You are this Room's configured reviewer. Your PASS is approve_merge on the current green PR head, which your turn prompt names. Call it when that head is ready to merge. Use merge_corner when the live gate permits landing.";
+  "You are this Room's configured reviewer. Record PASS with approve_merge on the assigned green head. Demand only proof the worker's tools can produce. Human-only proof gets one blocked report to the commander; never repeated FAILs. Use merge_corner when the live gate permits landing.";
 
 export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
   'The current PR head is not green, so approve_merge on it fails now. The server wakes you when checks pass on the current head.';

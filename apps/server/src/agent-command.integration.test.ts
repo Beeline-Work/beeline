@@ -1121,7 +1121,7 @@ it('holds the green review wake while the corner worker still holds a live turn'
   );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
 });
-it('does not wake the author or consume a green transition when the configured reviewer is not a parent member', async () => {
+it('wakes the implementer without consuming a green transition when the configured reviewer is not a parent member', async () => {
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
     R,
@@ -1138,7 +1138,10 @@ it('does not wake the author or consume a green transition when the configured r
     kind: 'check-passed',
   });
   expect(await commands(A, C)).toHaveLength(0);
-  expect(await commands(B, C)).toHaveLength(0);
+  const handback = await commands(B, C);
+  expect(handback.map(command => command.reason)).toEqual(['corner_review_needed']);
+  expect(handback[0]?.source.body).toContain('the configured reviewer is unreachable');
+  expect(handback[0]?.source.body).toContain('report the blocker to its commander');
   expect(
     (
       await db.query<{ command_check_state: string | null }>(

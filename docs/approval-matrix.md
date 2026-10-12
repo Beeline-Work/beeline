@@ -12,7 +12,7 @@ Shared cache isolation uses `request_shared_asset_isolation` and the existing Ag
 
 The agent’s own-owner access creates a quiet grant receipt when `request_grant` is used; the per-call imported-tool gate allows the call without creating a card. New budget and repository grant requests remain retired. The root requester remains recorded for provenance and for the wallet’s separate consent rule.
 
-The isolated checkout and shell of a corner belong to that corner. Host paths outside it, devices, secrets, host commands and MCP routes are personal resources owned by the helper's owner. Any remaining personal-resource cards and automatic access receipts live in the owner's private system/connector DM; Workspace administrators cannot decide them or read their grant details through an agent profile.
+The isolated checkout and shell of a corner belong to that corner. Host paths outside it, devices, secrets, host commands and MCP routes are personal resources owned by the helper's owner. Any remaining personal-resource cards and automatic access receipts live in the owner's private @System DM; Workspace administrators cannot decide them or read their grant details through an agent profile.
 
 `DaemonService` resolves the requester from the authenticated active command’s `root_source_message_id`. Delegations, corner objectives and approval resumes retain that root. It is provenance, not a second owner for the agent’s tools. Live command grants remain tied to their Room and requester. Automatic owner-machine grants remain live when yolo is disabled or the Workspace becomes public; wallet auto grants keep the old yolo condition.
 

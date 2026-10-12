@@ -42,7 +42,8 @@ import {
   type WalletTypedData,
   type WalletSignTypedDataResult,
 } from '@beeline/api-contract/wallet';
-import { ensureConnectorDirectMessageRoom, ensureConnectorIdentity } from './workbench.js';
+import { ensureSystemDirectMessageRoom } from './system-line.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { systemLine } from './system-line.js';
 import { postWalletNotice, type WalletNotice } from './wallet-notices.js';
 import { fakeCdpWalletSource } from './cdp-fake.js';
@@ -130,8 +131,8 @@ export async function createWallet(
        VALUES ($1,$2,$3,$4) ON CONFLICT(identity_id) DO NOTHING`,
       [identityId, workspaceId, name, account.address],
     );
-    // The @wallet thread exists from the moment the wallet does.
-    await ensureConnectorDirectMessageRoom(database, workspaceId, 'wallet', identityId);
+    // Wallet notices share the owner's System thread.
+    await ensureSystemDirectMessageRoom(database, workspaceId, identityId);
   }
   return readWalletView(database, identityId, workspaceId, source);
 }
@@ -234,17 +235,11 @@ export async function grantWalletDelegation(
     `UPDATE wallet_bindings SET delegation_expires_at=NULL,delegation_standing=true,updated_at=now() WHERE identity_id=$1`,
     [identityId],
   );
-  const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(
-    database,
-    workspaceId,
-    'wallet',
-    identityId,
-  );
+  const roomId = await ensureSystemDirectMessageRoom(database, workspaceId, identityId);
   await systemLine(database, {
     roomId,
-    authorId: connectorId,
-    subject: { id: connectorId, kind: 'person', name: 'Wallet' },
+    authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', name: 'Wallet' },
     verb: 'granted',
     object: { text: 'agents permission to sign' },
     consequence: 'until revoked',
@@ -1255,19 +1250,13 @@ export async function agentSignTypedData(
       reason: error instanceof Error ? error.message : 'typed-data signing failed',
     };
   }
-  const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(
-    database,
-    ctx.workspaceId,
-    'wallet',
-    ctx.ownerIdentityId,
-  );
+  const roomId = await ensureSystemDirectMessageRoom(database, ctx.workspaceId, ctx.ownerIdentityId);
   // This is an authorization audit, not an on-chain transaction. Never store
   // the reusable signature in a ledger card or manufacture a transfer amount.
   await systemLine(database, {
     roomId,
-    authorId: connectorId,
-    subject: { id: connectorId, kind: 'person', name: 'Wallet' },
+    authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', name: 'Wallet' },
     verb: 'signed',
     object: { text: 'EIP-712 typed data' },
     consequence: (await agentName(database, agentId)) ?? 'An agent',

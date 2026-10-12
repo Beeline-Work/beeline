@@ -123,6 +123,10 @@ a:focus-visible{outline:3px solid var(--focus);outline-offset:3px}
 .web-option{margin-top:13px;color:var(--functional);font-size:13px}
 .web-option a{color:var(--brass);font-weight:600}
 .web-option a:hover{color:var(--bone)}
+.hero-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:8px}
+.hero-action{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 16px;border:1px solid rgba(176,138,74,.55);border-radius:3px;color:var(--brass);font-size:14px;font-weight:500}
+.hero-action:hover{border-color:var(--brass);color:var(--bone)}
+.hero-action.video{background:rgba(176,138,74,.14);color:var(--bone)}
 
 section.props{padding:72px 0;border-top:1px solid var(--ghost)}
 .props-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:40px 48px}
@@ -233,6 +237,10 @@ footer .sep{margin:0 8px;opacity:.35}
       </nav>
       <p class="web-option">or <a href="https://web.usebeeline.app">open Beeline in the browser</a></p>
     </div>
+    <div class="hero-actions">
+      <a class="hero-action video" href="https://youtu.be/i2sHELZVlWM" target="_blank" rel="noopener">▶ Watch the launch video</a>
+      <a class="hero-action community" href="https://usebeeline.app/join/inv_8765f41a655c33815ea86cecf199ab60983b9326bb02b869f6436af1286dd0f2">Join the Beeline Community</a>
+    </div>
   </div>
 </section>
 
@@ -261,8 +269,7 @@ footer .sep{margin:0 8px;opacity:.35}
   <a href="https://usebeeline.app/join/inv_8765f41a655c33815ea86cecf199ab60983b9326bb02b869f6436af1286dd0f2">Join Beeline Community</a><span class="sep">·</span>
   <a href="/privacy/">Privacy</a><span class="sep">·</span>
   <a href="/terms/">Terms</a><span class="sep">·</span>
-  <a href="/security/">Security</a><span class="sep">·</span>
-  <a href="https://github.com/Beeline-Work/beeline" rel="noopener">GitHub</a>
+  <a href="/security/">Security</a>
 </footer>
 </div>
 <script type="module" src="/desktop-download.mjs?v=platform-row"></script>
@@ -338,8 +345,10 @@ footer .sep{margin:0 8px;opacity:.35}
         const pitch = Math.min(64, (pw - 80) / Math.max(1, k-1));
         ex = px + pw/2 + (i - (k-1)/2) * pitch;
         ey = above ? py : py + ph;
-        const sy = above ? y + half + 18 : y - half - 18;
-        const chan = above ? py - 34 - (k-1-i)*12 : py + ph + 34 + i*12;
+        const sy = above ? y + half + 18 : y - n.offsetHeight/2;
+        // Keep lower channels between the screen and the profile's upper pad:
+        // a channel below sy makes the wire leave the profile downward first.
+        const chan = above ? py - 34 - (k-1-i)*12 : ey + (sy-ey)*(i+1)/(k+1);
         d = velbow(x, sy, chan, ex, ey, R);
       }
       const p=document.createElementNS('http://www.w3.org/2000/svg','path');

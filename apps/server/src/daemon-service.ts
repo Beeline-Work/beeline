@@ -1021,11 +1021,18 @@ export class DaemonService {
         )) as Output<Name>;
       case 'claimAgentCommand': {
         const claimed = await this.database.transaction(async (db) => {
-          return claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
+          const row = await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
             String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '');
+          const activity = row.reason === 'computer_activity' ? (await db.query<{
+            text: string; system_event: NonNullable<import('@beeline/api-contract/daemon').AgentCommand['source']['systemEvent']>;
+          }>(`SELECT text,system_event FROM messages WHERE id=$1`, [row.source_message_id])).rows[0] : undefined;
+          return { row, activity };
         });
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
-        return { ...this.writeResult(), ...(claimed.recovery_context ? { recoveryContext: claimed.recovery_context } : {}) } as Output<Name>;
+        return { ...this.writeResult(),
+          ...(claimed.row.recovery_context ? { recoveryContext: claimed.row.recovery_context } : {}),
+          ...(claimed.activity ? { activitySource: { body: claimed.activity.text, systemEvent: claimed.activity.system_event } } : {}),
+        } as Output<Name>;
       }
       case 'acknowledgeAgentCommand': {
         const acknowledged = await this.database.query(

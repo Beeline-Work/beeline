@@ -173,7 +173,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
   ), return_queue AS MATERIALIZED (
     SELECT command.*,row_number() OVER (ORDER BY command.created_at DESC,command.id DESC) position
     FROM recovery_scope command
-    WHERE command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now())
+    WHERE command.reason<>'computer_activity' AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
   ), return_head AS MATERIALIZED (
     SELECT newest.id FROM return_queue newest WHERE newest.position=1
       AND EXISTS(SELECT 1 FROM return_queue old WHERE old.created_offline IS TRUE
@@ -975,6 +975,11 @@ export async function claimAgentCommand(
            WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND
              (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
              AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
+             AND (reason<>'computer_activity' OR (state='claimed' AND generation_id=$4) OR NOT EXISTS (
+               SELECT 1 FROM agent_commands human WHERE human.room_id=$2 AND human.agent_id=$3
+                 AND human.reason<>'computer_activity' AND human.action IN ('input','resume')
+                 AND (human.state='pending' OR (human.state='claimed' AND human.lease_expires_at>now()))
+             ))
            FOR UPDATE
          ), working AS (
            INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
@@ -1223,6 +1228,12 @@ export async function readAgentCommands(
    AND workflow_version.version=(workflow_latest.card->>'workflowVersion')::int
  WHERE c.room_id=$1 AND c.agent_id=$2 AND (c.state='pending' OR (c.state='claimed' AND c.lease_expires_at<=now()))
    AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=c.id)
+   AND (c.reason<>'computer_activity' OR NOT EXISTS (
+     SELECT 1 FROM agent_commands requested WHERE requested.room_id=c.room_id
+       AND requested.agent_id=c.agent_id AND requested.reason<>'computer_activity'
+       AND requested.action IN ('input','resume')
+       AND (requested.state='pending' OR (requested.state='claimed' AND requested.lease_expires_at>now()))
+   ))
    AND workflow_latest.card->'cancellation' IS NULL
    AND NOT (
      -- A review wake waits for the corner to go quiet. The checks-passed
@@ -1251,7 +1262,7 @@ export async function readAgentCommands(
          AND busy.state='claimed' AND busy.lease_expires_at>now()
      )
    )
- ORDER BY CASE c.action WHEN 'stop' THEN 0 WHEN 'restart' THEN 1 WHEN 'resume' THEN 2 ELSE 3 END,c.created_at,c.id LIMIT 100`,
+ ORDER BY CASE c.action WHEN 'stop' THEN 0 WHEN 'restart' THEN 1 WHEN 'resume' THEN 2 ELSE 3 END,CASE WHEN c.reason='computer_activity' THEN 1 ELSE 0 END,c.created_at,c.id LIMIT 100`,
     [roomId, agentId],
   );
   return {
@@ -1342,6 +1353,41 @@ export async function routeSystemCommand(
       });
       return;
     }
+  }
+  if (input.kind === 'computer-session-activity') {
+    // Serialize producers per share. A claimed update stays immutable; all
+    // further actions accumulate in a single pending update for that share.
+    const activity = (await db.query<{ session_id: string; text: string }>(
+      `SELECT session.id session_id,message.text FROM messages message
+       JOIN computer_sessions session ON session.id=message.system_event->'payload'->>'sessionId'
+       WHERE message.id=$1 AND session.room_id=$2 AND session.status='live'
+       FOR UPDATE OF session`, [input.sourceMessageId, input.roomId],
+    )).rows[0];
+    if (!activity) return;
+    for (const agentId of new Set(input.targets)) {
+      const pending = (await db.query<CommandRow>(
+        `SELECT command.* FROM agent_commands command
+         JOIN messages source ON source.id=command.source_message_id
+         WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'
+           AND command.reason='computer_activity'
+           AND source.system_event->'payload'->>'sessionId'=$3
+         FOR UPDATE OF command`, [input.roomId, agentId, activity.session_id],
+      )).rows[0];
+      if (pending) {
+        await db.query(
+          `UPDATE agent_commands SET source_message_id=$2,
+             recovery_context=right(COALESCE(recovery_context || E'\\n','') || $3,16000)
+           WHERE id=$1 AND state='pending'`, [pending.id, input.sourceMessageId, activity.text],
+        );
+      } else {
+        const command = await createAgentCommand(db, {
+          roomId: input.roomId, agentId, sourceMessageId: input.sourceMessageId, reason: 'computer_activity',
+        });
+        if (command) await db.query(`UPDATE agent_commands SET recovery_context=$2 WHERE id=$1`,
+          [command.id, activity.text]);
+      }
+    }
+    return;
   }
   for (const agentId of new Set(input.targets)) {
     const action =

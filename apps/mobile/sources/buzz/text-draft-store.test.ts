@@ -21,6 +21,38 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 describe('durable controlled drafts', () => {
+  it('accepts a controlled-input echo without recursively notifying the composer', () => {
+    const draft = new TextDraft('mention-echo', storage, '@lumen old draft');
+    let notifications = 0;
+    draft.subscribe(() => {
+      if (++notifications > 50) throw new Error('maximum update depth');
+      // A controlled field can echo the text committed from a replacement.
+      draft.set(draft.value);
+    });
+    expect(() => draft.set('@lumen replacement')).not.toThrow();
+    expect(notifications).toBe(1);
+    expect(draft.value).toBe('@lumen replacement');
+    const accept = draft.captureMessage();
+    draft.set('@lumen replacement'); // identical replacement is still a new edit
+    expect(accept()).toBe(false);
+    expect(notifications).toBe(1);
+    draft.dispose();
+  });
+  it('delivers once when a synchronous render replaces its subscription during notification', () => {
+    const draft = new TextDraft('mention-remount', storage, '@lumen old draft');
+    let notifications = 0;
+    let unsubscribe = () => {};
+    const subscribeAgain = () => {
+      if (++notifications > 50) throw new Error('maximum update depth');
+      unsubscribe();
+      unsubscribe = draft.subscribe(subscribeAgain);
+    };
+    unsubscribe = draft.subscribe(subscribeAgain);
+    expect(() => draft.set('@lumen replacement')).not.toThrow();
+    expect(notifications).toBe(1);
+    draft.dispose();
+  });
+
   it('restores without erasing on the initial empty render; server defaults do not overwrite it', async () => {
     values.set('restore', JSON.stringify('saved'));
     const draft = new TextDraft('restore', storage, '');

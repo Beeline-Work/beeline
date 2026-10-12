@@ -1439,6 +1439,9 @@ export class MonolithCornerTurnLoop {
   /** Why a turn carried no answer text, or undefined when it did. */
   private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
     if (durableReplyText(result.agentText)) return undefined;
+    // Passive browser updates owe no answer and must not start provider
+    // retries. Their receipt acknowledges delivery, even for a textless turn.
+    if (this.commandContext.current?.source.systemEvent?.kind === 'computer-session-activity') return undefined;
     return explainEmptyAgentTurn({
       agentLabel: harnessIdentityLabel({
         kind: this.options.config.agentKind,
@@ -1495,6 +1498,7 @@ export class MonolithCornerTurnLoop {
     sourceMessageId?: string,
   ): Promise<void> {
     const { api, cornerId } = this.options;
+    const activityTurn = this.commandContext.current?.source.systemEvent?.kind === 'computer-session-activity';
     // Work the requester has already withdrawn is never started. A stop can
     // land between the message being read and the session becoming free.
     if (this.stoppedTurns.has(requestId)) return;
@@ -1577,7 +1581,7 @@ export class MonolithCornerTurnLoop {
               this.turnMetrics = {};
               this.turnUsage = new TurnUsageAccumulator();
               await this.syncBranch();
-              const reviewTurn = isCornerReviewTurn(Boolean(this.reviewerInstructionInput), trigger);
+              const reviewTurn = !activityTurn && isCornerReviewTurn(Boolean(this.reviewerInstructionInput), trigger);
               const [
                 conversation,
                 roster,
@@ -2124,7 +2128,7 @@ export class MonolithCornerTurnLoop {
               const checksTurn = isCornerChecksTurn(trigger, restates);
               const mayPublish = repositoryWork && !repositoryHeld;
               const deliveryState =
-                !checksTurn && mayPublish && this.options.repository
+                !activityTurn && !checksTurn && mayPublish && this.options.repository
                   ? await cornerUndeliveredRepositoryState(
                       this.options.worktreePath,
                       this.options.repository.featureBranch,
@@ -2254,7 +2258,7 @@ export class MonolithCornerTurnLoop {
                   (saved) => spoken(durableReplyText(saved)) === durableReply,
                 ),
               );
-              deliberateNoReply = repeatedNarration || isDeliberateCornerNoReply(reply, restates);
+              deliberateNoReply = !activityTurn && (repeatedNarration || isDeliberateCornerNoReply(reply, restates));
               await trace.measure('publish', () =>
                 stream.settle(
                   repeatedNarration ? '' : durableReply,

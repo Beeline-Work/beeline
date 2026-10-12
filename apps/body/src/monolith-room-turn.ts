@@ -1352,6 +1352,9 @@ export class MonolithRoomTurnLoop {
   /** Why a turn carried no answer text, or undefined when it did. */
   private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
     if (durableReplyText(result.agentText)) return undefined;
+    // Passive browser updates owe no answer and must not start provider
+    // retries. Their receipt acknowledges delivery, even for a textless turn.
+    if (this.commandContext.current?.source.systemEvent?.kind === 'computer-session-activity') return undefined;
     return explainEmptyAgentTurn({
       agentLabel: harnessIdentityLabel({
         kind: this.options.config.agentKind,

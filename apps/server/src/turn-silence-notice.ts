@@ -140,6 +140,15 @@ export async function noteFirstSilence(
     readonly stalled?: boolean;
   },
 ): Promise<TurnSilenceOutcome> {
+  // Activity is an observation, not a request that owes an answer. Even a
+  // harness failure or an old helper's empty-turn receipt stays silent.
+  const activity = await database.query(
+    `SELECT 1 FROM agent_commands command JOIN messages source ON source.id=command.source_message_id
+     WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
+       AND source.system_event->>'kind'='computer-session-activity' LIMIT 1`,
+    [input.roomId, input.agentId, input.requestId],
+  );
+  if (activity.rowCount) return NO_RESTART;
   // Independent of the human-trigger notice below: a workflow dispatch's
   // triggering message is normally agent-authored (the previous role
   // holder's handoff card, or the run's own start card), and a review

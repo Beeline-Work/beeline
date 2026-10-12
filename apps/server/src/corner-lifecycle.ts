@@ -5,9 +5,8 @@ import { cornerRunFromLifecycle, type CornerLifecycleView } from '@beeline/api-c
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import {
-  CORNER_CHECKS_BLOCKED_CARD_TYPE,
-  CORNER_MERGE_YES_CARD_TYPE,
   createAgentCommand,
+  noteCornerAgentUnreachable,
   repairReviewerCornerMembership,
   type CommandRow,
 } from './agent-command.js';
@@ -41,10 +40,10 @@ import { workflowRunLockKey } from './workflow-runs.js';
  * `closeCornerState`, and the merge in
  * `GitHubOperations.landCorner`) only REPORT their event. Under the run lock,
  * `advanceCorner` reads the run's current state, validates the edge against
- * `CORNER_LIFECYCLE_CONTRACT`, applies the contract's loop caps, writes the
+ * `CORNER_LIFECYCLE_CONTRACT`, writes the
  * handoff card, and performs the edge's side effect — the one wake of the
- * next role, or the line naming the commissioning human. An event the current
- * state does not allow changes nothing and is logged. No other code path
+ * next role. People are asked only for an explicit agent decision or a failed
+ * agent wake. An event the current state does not allow changes nothing and is logged. No other code path
  * issues a corner lifecycle wake.
  *
  * The merge rule is one sentence: a pull request merges when its checks are
@@ -57,8 +56,8 @@ import { workflowRunLockKey } from './workflow-runs.js';
  * brief edit does not. The server does not referee who a reviewer is allowed
  * to be — a reviewer that wrote the code it is PASSing is a prompt
  * discipline, not a server gate. With no reviewer configured, green checks go
- * straight to waiting for a person's yes. A refused merge returns the corner
- * to `implement` with GitHub's reason; the merge webhook moves it to
+ * to review and wake the implementer to arrange review or explicitly ask for a
+ * decision. A refused merge returns the corner to `implement` with GitHub's reason; the merge webhook moves it to
  * `landed`.
  *
  * The contract is plain TypeScript. It is not a Workspace workflow: it is
@@ -100,13 +99,12 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
     },
     // Green wakes the reviewer (live from the parent Room's
     // `reviewer_agent_id`/`reviewer_fallback_ids`); with no reviewer
-    // configured, green waits for a person's yes and says so. Red wakes the
-    // implementer. At the loop cap the corner names the commissioning human.
+    // configured, green returns the missing review decision to the implementer. Red wakes the
+    // implementer, for every failing run, without a human escalation cap.
     checks: { does: 'Check the proposed change.',
       kind: 'server',
       requires: [],
       on: { passing: 'review', no_reviewer: 'review', failing: 'implement' },
-      loop: { onEdge: 'failing', cap: 100, onExceeded: 'ask_human' },
     },
     // Waiting for a yes on the current head. A reviewer's PASS
     // (`approve_merge`) takes `approved` and wakes the implementer to call
@@ -124,12 +122,9 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
         pushed: 'checks',
         rechecked: 'checks',
         merge_refused: 'implement',
-        merge_unconfirmed: 'ask_human',
+        merge_unconfirmed: 'review',
       },
     },
-    // A loop cap was reached. The corner names the commissioning human and
-    // waits; a new push starts the next round.
-    ask_human: { does: 'Wait for a person to decide the next step.', kind: 'server', requires: [], on: { pushed: 'checks', revision_work: 'implement', merge_refused: 'implement' } },
     landed: { does: 'The change has landed.', kind: 'terminal', status: 'done' },
     closed: { does: 'The corner has closed.', kind: 'terminal', status: 'abandoned' },
   },
@@ -140,16 +135,6 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
   // handback, or GitHub refusing the merge.
   externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused'],
 };
-
-/** The failing-checks cap, read from the contract. */
-export const CHECKS_FAILING_LIMIT = loopCap('checks');
-
-function loopCap(state: string): number {
-  const handoff = CORNER_LIFECYCLE_CONTRACT.handoffs[state];
-  const loop = handoff && 'loop' in handoff ? handoff.loop : undefined;
-  if (!loop) throw new Error(`corner contract state ${state} declares no loop`);
-  return loop.cap;
-}
 
 /** Everything that can move a corner. Each adapter reports exactly one of these. */
 export type CornerEvent =
@@ -298,6 +283,10 @@ function terminalStatus(toState: string): WorkflowTerminalState['status'] | unde
 
 /** The declared `on` edges of a state; empty for waiting and terminal states. */
 function edgesOf(stateName: string): Readonly<Record<string, string>> {
+  // Historical cards can still name the removed automatic escalation state.
+  if (stateName === 'ask_human') return {
+    pushed: 'checks', rechecked: 'checks', revision_work: 'implement', merge_refused: 'implement',
+  };
   const state = CORNER_LIFECYCLE_CONTRACT.handoffs[stateName];
   return state && 'on' in state ? state.on : {};
 }
@@ -608,9 +597,11 @@ async function applyEvent(
       return { ok: true, wake: { queued: true, agentId } };
     }
     case 'checks-pending': {
-      if (corner.lifecycle.checks !== 'pending') return no(`checks are ${corner.lifecycle.checks}`);
+      if (corner.lifecycle.checks !== 'pending' &&
+          !corner.lifecycle.checksSummary?.checks?.some(check => check.status === 'pending'))
+        return no(`checks are ${corner.lifecycle.checks}`);
       const verdictHolds =
-        transition.state === 'review' ||
+        transition.state === 'review' || transition.state === 'ask_human' ||
         (transition.state === 'implement' &&
           (transition.run.outcome === 'failing' || transition.run.outcome === 'no_reviewer'));
       if (!verdictHolds) return no('no checks verdict to re-run');
@@ -623,10 +614,12 @@ async function applyEvent(
       if (!transition.allows('merge_unconfirmed')) return no('merge recovery already escalated');
       await transition.take('merge_unconfirmed');
       await ensureSystemIdentity(db);
-      await systemLine(db, {
+      const unconfirmed = await systemLine(db, {
         roomId: cornerId, authorId: SYSTEM_IDENTITY_ID, subject: GITHUB_SUBJECT, verb: 'could not confirm the merge of',
         object: `pull request #${event.number}`, consequence: `${event.error} · merge outcome is unconfirmed`,
       });
+      if (corner.worker_agent_id)
+        await wake(db, cornerId, corner.worker_agent_id, unconfirmed.id, 'corner_merge_unconfirmed');
       return OK;
     case 'merge-refused':
       return mergeRefused(db, cornerId, corner, transition, event);
@@ -658,7 +651,7 @@ async function checksReported(
   // A fact replayed after the checks moved on is stale.
   if (corner.lifecycle.checks !== event.result) return no(`checks are ${corner.lifecycle.checks}`);
   const from = transition.state;
-  if (!['checks', 'implement', 'review'].includes(from)) return no('no checks edge');
+  if (!['checks', 'implement', 'review', 'ask_human'].includes(from)) return no('no checks edge');
   const headSha = corner.lifecycle.pr?.headSha ?? null;
   const sameHead = transition.run.headSha === (headSha ?? undefined);
   // A repeat of the green verdict that already holds changes nothing, and
@@ -690,7 +683,7 @@ async function checksReported(
     plan = { outcome: 'passing', approved: false, reviewerAgentId };
   }
   if (from === 'review' && sameHead && plan.outcome === 'no_reviewer')
-    return no('already waiting for a yes on this head');
+    return ensureReviewDispatch(db, cornerId, corner, transition);
   if (from === 'implement' && sameHead) {
     const repeat =
       transition.run.outcome === plan.outcome ||
@@ -705,17 +698,15 @@ async function checksReported(
         roomId: cornerId, agentId: corner.worker_agent_id,
         sourceMessageId: event.sourceMessageId, reason: 'corner_check',
       });
+      if (!command) await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId);
       return command ? OK : no('the implementer cannot be woken');
     }
     if (repeat) return no(`${plan.outcome} already holds on this head`);
   }
-  const failingRound =
-    plan.outcome === 'failing' ? (await countEdges(db, cornerId, 'checks', 'failing')) + 1 : undefined;
-  const capped = failingRound !== undefined && failingRound > CHECKS_FAILING_LIMIT;
   // The wake goes out first: a verdict whose wake cannot be delivered (the
   // implementer is no longer a member) leaves the run in place, so the next
   // report of the same verdict retries it.
-  if (plan.outcome === 'failing' && !capped) {
+  if (plan.outcome === 'failing') {
     if (!corner.worker_agent_id) return no('the corner has no implementer');
     const command = await createAgentCommand(db, {
       roomId: cornerId,
@@ -723,7 +714,10 @@ async function checksReported(
       sourceMessageId: event.sourceMessageId,
       reason: 'corner_check',
     });
-    if (!command) return no('the implementer cannot be woken');
+    if (!command) {
+      await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId);
+      return no('the implementer cannot be woken');
+    }
   } else if (plan.outcome === 'passing' && !plan.approved) {
     const queued = await queueReviewerCommand(db, {
       roomId: cornerId,
@@ -739,20 +733,10 @@ async function checksReported(
     }
   }
   if (from !== 'checks') await transition.take('rechecked');
-  const toState = await transition.take(plan.outcome, headSha ? { headSha } : {}, failingRound);
-  if (toState === 'ask_human') {
-    console.error(`[corner-lifecycle] ${cornerId}: failing checks exceeded ${CHECKS_FAILING_LIMIT} attempts; the commissioning human must step in`);
-    await askHuman(db, cornerId, corner, {
-      key: `checks-failing-limit:${headSha ?? event.sourceMessageId}`,
-      consequence: `checks have failed ${CHECKS_FAILING_LIMIT} times in this corner`,
-      cardType: CORNER_CHECKS_BLOCKED_CARD_TYPE,
-      afterMessageId: event.sourceMessageId,
-    });
-    return OK;
-  }
+  await transition.take(plan.outcome, headSha ? { headSha } : {});
   if (plan.outcome === 'no_reviewer') {
-    console.error(`[corner-lifecycle] ${cornerId}: green review has no configured reviewer; a Workspace owner or admin must approve`);
-    await noteNoReviewer(db, cornerId, headSha ?? event.sourceMessageId, event.sourceMessageId);
+    console.error(`[corner-lifecycle] ${cornerId}: green review has no configured reviewer; the implementer must arrange review`);
+    await noteNoReviewer(db, cornerId, corner, headSha ?? event.sourceMessageId, event.sourceMessageId);
     return OK;
   }
   if (plan.outcome === 'passing' && plan.approved) {
@@ -765,26 +749,22 @@ async function checksReported(
 async function noteNoReviewer(
   db: SqlDatabase,
   cornerId: string,
+  corner: CornerRow,
   headKey: string,
   afterMessageId?: string,
 ): Promise<void> {
-  await ensureSystemIdentity(db);
-  const approverIds = await mergeYesApprovers(db, cornerId);
-  await systemLine(db, {
-    id: createHash('sha256').update(`beeline:${cornerId}:waiting-for-yes:${headKey}`).digest('hex'),
+  const source = await systemLine(db, {
+    id: createHash('sha256').update(`beeline:${cornerId}:review-needed:${headKey}`).digest('hex'),
     roomId: cornerId,
-    authorId: SYSTEM_IDENTITY_ID,
-    subject:
-      approverIds.length === 1
-        ? { kind: 'person', id: approverIds[0]!, name: 'A Workspace owner or admin' }
-        : { kind: 'system', name: 'A Workspace owner or admin' },
-    verb: 'needs to approve',
+    authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,
+    subject: GITHUB_SUBJECT,
+    verb: 'finished checks on',
     object: 'this pull request',
-    consequence: 'checks passed and no other agent can review it',
+    consequence: 'checks passed; no reviewer is configured; the implementer must arrange review or explicitly ask for a merge decision',
     ...(afterMessageId ? { afterMessageId } : {}),
-    cardType: CORNER_MERGE_YES_CARD_TYPE,
-    card: { cornerId, approverIds },
   });
+  if (corner.worker_agent_id)
+    await wake(db, cornerId, corner.worker_agent_id, source.id, 'corner_review_needed');
 }
 
 async function noteReviewDispatchFailure(
@@ -824,9 +804,9 @@ async function ensureReviewDispatch(
   if (transition.run.headSha !== pr.headSha || await approvedCurrentHead(db, cornerId, corner))
     return OK;
   if (!corner.configured_reviewer_id) {
-    console.error(`[corner-lifecycle] ${cornerId}: green review has no configured reviewer; a Workspace owner or admin must approve`);
-    await noteNoReviewer(db, cornerId, pr.headSha);
-    return { ok: true, wake: { queued: false, reason: 'No configured reviewer; a Workspace owner or admin must approve' } };
+    console.error(`[corner-lifecycle] ${cornerId}: green review has no configured reviewer; the implementer must arrange review`);
+    await noteNoReviewer(db, cornerId, corner, pr.headSha);
+    return { ok: true, wake: { queued: false, reason: 'No configured reviewer; returned to the implementer' } };
   }
   const outstanding = await db.query(
     `SELECT 1 FROM agent_commands command
@@ -1105,79 +1085,8 @@ async function wake(
   sourceMessageId: string,
   reason: string,
 ): Promise<void> {
-  await createAgentCommand(db, { roomId: cornerId, agentId, sourceMessageId, reason });
-}
-
-async function countEdges(
-  db: SqlDatabase,
-  cornerId: string,
-  fromState: string,
-  outcome: string,
-): Promise<number> {
-  const row = (
-    await db.query<{ count: string }>(
-      `SELECT count(*)::text count FROM messages
-       WHERE room_id=$1 AND card_type=$2 AND card->>'runId'=$1::text
-         AND card->>'fromState'=$3 AND card->>'outcome'=$4`,
-      [cornerId, CORNER_LIFECYCLE_CARD_TYPE, fromState, outcome],
-    )
-  ).rows[0];
-  return Number(row?.count ?? 0);
-}
-
-/**
- * A loop cap was reached. A corner an agent opened off its own root message
- * records no requester, and is just as stuck, so the line is addressed to the
- * corner itself rather than dropped. The server authors it either way,
- * because push delivery never sends a person their own line.
- */
-async function askHuman(
-  db: SqlDatabase,
-  cornerId: string,
-  corner: CornerRow,
-  input: { key: string; consequence: string; cardType: string; afterMessageId: string },
-): Promise<void> {
-  await ensureSystemIdentity(db);
-  await systemLine(db, {
-    id: createHash('sha256').update(`beeline:${cornerId}:${input.key}`).digest('hex'),
-    roomId: cornerId,
-    authorId: SYSTEM_IDENTITY_ID,
-    subject: corner.commissioned_by
-      ? { kind: 'person', id: corner.commissioned_by, name: 'the requester' }
-      : { kind: 'system', name: 'Somebody' },
-    verb: 'may need to step in',
-    consequence: input.consequence,
-    afterMessageId: input.afterMessageId,
-    cardType: input.cardType,
-    card: { cornerId },
-  });
-}
-
-/**
- * Who a no-reviewer green head is sent to: the person who approved the current
- * brief when their yes can merge it (`recordPersonMergeYes`: a human corner
- * member who is a Workspace owner or admin), otherwise every such person.
- */
-async function mergeYesApprovers(db: SqlDatabase, cornerId: string): Promise<string[]> {
-  const rows = (
-    await db.query<{ id: string; approved_brief: boolean }>(
-      `SELECT person.id,
-              person.id=(SELECT brief.approval_basis->>'approvedBy' FROM corner_brief_revisions brief
-                         WHERE brief.corner_id=corner.id ORDER BY brief.revision DESC LIMIT 1)
-                AS approved_brief
-       FROM rooms corner
-       JOIN memberships room_member ON room_member.room_id=corner.id AND room_member.removed_at IS NULL
-       JOIN memberships workspace_member ON workspace_member.workspace_id=corner.workspace_id
-         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=room_member.identity_id
-         AND workspace_member.removed_at IS NULL AND workspace_member.role IN ('owner','admin')
-       JOIN identities person ON person.id=room_member.identity_id AND person.kind='human'
-       WHERE corner.id=$1
-       ORDER BY person.id`,
-      [cornerId],
-    )
-  ).rows;
-  const approver = rows.find((row) => row.approved_brief);
-  return approver ? [approver.id] : rows.map((row) => row.id);
+  const command = await createAgentCommand(db, { roomId: cornerId, agentId, sourceMessageId, reason });
+  if (!command) await noteCornerAgentUnreachable(db, cornerId, agentId, sourceMessageId);
 }
 
 const REVIEWER_NOT_PARENT_MEMBER = 'not a current member of the parent Room';
@@ -1403,7 +1312,8 @@ export async function clearUnfinishedCornerMergeClaim(
     const claim = (await unfinishedCornerMergeClaims(db, cornerId))[0];
     if (!corner || claim?.head_sha !== headSha || claim.number !== number) return;
     const gate = await cornerMergeGate(db, cornerId, { number: claim.number, headSha });
-    const refused = (await loadCornerLifecycleState(db, cornerId))?.toState === 'ask_human';
+    const run = await loadCornerLifecycleState(db, cornerId);
+    const refused = run?.toState === 'ask_human' || run?.outcome === 'merge_unconfirmed';
     if (refused)
       await advanceCorner(db, cornerId, { kind: 'merge-refused', headSha, reason: 'GitHub confirmed the pull request has not merged' });
     await db.query(`UPDATE corner_facts SET merge_attempt_head=NULL,lifecycle=lifecycle-'mergeRecovery',updated_at=now() WHERE corner_id=$1`, [cornerId]);

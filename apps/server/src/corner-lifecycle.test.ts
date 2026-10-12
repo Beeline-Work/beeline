@@ -15,7 +15,6 @@ import type { AgentCommand } from '@beeline/api-contract/daemon';
 import {
   advanceCorner,
   backfillCornerLifecycleRuns,
-  CHECKS_FAILING_LIMIT,
   CORNER_LIFECYCLE_CONTRACT,
   CORNER_LIFECYCLE_SLUG,
   cornerMergeGate,
@@ -627,7 +626,7 @@ describe('checks dispatch (rows 6-8)', () => {
     expect(await currentState(cornerId)).toBe('review');
   });
 
-  it('a passing check with no configured reviewer waits in review for a person, saying so and waking nobody', async () => {
+  it('a passing check with no configured reviewer wakes the implementer to arrange review', async () => {
     const cornerId = await open('owner/widgets');
     const before = await reasons(cornerId, A);
     await greenHead(cornerId, 1, '1'.repeat(40));
@@ -635,75 +634,24 @@ describe('checks dispatch (rows 6-8)', () => {
     expect(await cards(cornerId)).toContainEqual(
       expect.objectContaining({ fromState: 'checks', outcome: 'no_reviewer', toState: 'review' }),
     );
-    expect(await reasons(cornerId, A)).toEqual(before);
+    expect(await reasons(cornerId, A)).toEqual([...before, 'corner_review_needed']);
     expect(await reasons(cornerId, B)).toEqual([]);
     const waiting = (await db.query<{ text: string; card: unknown }>(
       `SELECT text,card FROM messages WHERE room_id=$1 AND text LIKE '%needs to approve%'`, [cornerId],
     )).rows;
-    // The one Workspace owner in the corner is tagged: their yes is the only way it merges.
-    expect(waiting).toEqual([{ text: expect.stringContaining('@human needs to approve this pull request'), card: { cornerId, approverIds: [H] } }]);
-    expect(waiting[0]!.text).toContain('checks passed and no other agent can review it');
+    expect(waiting).toEqual([]);
   });
 
-  describe('a green head no agent can review reaches the people whose yes merges it', () => {
-    const P = 'f1'.repeat(32), M = 'f2'.repeat(32);
-    const waitingFor = async (cornerId: string) => (await db.query<{ text: string; card: { approverIds: string[] } }>(
-      `SELECT text,card FROM messages WHERE room_id=$1 AND text LIKE '%needs to approve%'`, [cornerId],
-    )).rows;
-    const approvedBy = (cornerId: string, who: string) => db.query(
-      `UPDATE corner_brief_revisions SET approval_basis=jsonb_set(COALESCE(approval_basis,'{}'::jsonb),'{approvedBy}',to_jsonb($2::text))
-       WHERE corner_id=$1`, [cornerId, who],
-    );
-    beforeAll(async () => {
-      await db.query(
-        `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Pat','pat'),($2,'human','Mo','mo') ON CONFLICT DO NOTHING`,
-        [P, M],
-      );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'admin'),($1,NULL,$3,'member')`,
-        [W, P, M],
-      );
-    });
-    const withPeople = async () => {
-      const cornerId = await open(undefined, 'owner/widgets');
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
-        [W, cornerId, P, M],
-      );
-      return cornerId;
-    };
-
-    it('tags the brief approver alone when they are an owner or admin', async () => {
-      const cornerId = await withPeople();
-      await approvedBy(cornerId, P);
-      await greenHead(cornerId, 1, '1'.repeat(40));
-      const [line] = await waitingFor(cornerId);
-      expect(line!.text).toContain('@pat needs to approve this pull request');
-      expect(line!.card.approverIds).toEqual([P]);
-      const reached = await db.query<{ id: string }>(
-        `SELECT person.id FROM messages m JOIN identities person ON person.kind='human'
-         WHERE m.room_id=$1 AND m.text LIKE '%needs to approve%'
-           AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind', false)}
-         ORDER BY person.id`, [cornerId],
-      );
-      expect(reached.rows.map((row) => row.id)).toEqual([P]);
-    });
-
-    it('reaches every owner and admin in the corner when the approver cannot merge', async () => {
-      const cornerId = await withPeople();
-      await approvedBy(cornerId, M);
-      await greenHead(cornerId, 1, '1'.repeat(40));
-      const [line] = await waitingFor(cornerId);
-      expect(line!.text).toContain('A Workspace owner or admin needs to approve this pull request');
-      expect([...line!.card.approverIds].sort()).toEqual([H, P].sort());
-      const reached = await db.query<{ id: string }>(
-        `SELECT person.id FROM messages m JOIN identities person ON person.kind='human'
-         WHERE m.room_id=$1 AND m.text LIKE '%needs to approve%'
-           AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind', false)}
-         ORDER BY person.id`, [cornerId],
-      );
-      expect(reached.rows.map((row) => row.id)).toEqual([H, P].sort());
-    });
+  it('an agent explicitly asking for a decision still reaches the human', async () => {
+    const cornerId = await open('owner/widgets');
+    const [work] = await commands(A, cornerId);
+    await claim(work!);
+    await result(work!, '@human please decide whether to continue?');
+    const reached = await db.query(`SELECT 1 FROM messages m JOIN identities person ON person.id=$2
+      WHERE m.room_id=$1 AND m.author_id=$3
+        AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind', false)}`,
+      [cornerId, H, A]);
+    expect(reached.rowCount).toBe(1);
   });
 
   it('the reviewer role is never pinned to a real agent id, so a mid-corner reassignment is recorded correctly next time (finding 1)', async () => {
@@ -1496,15 +1444,15 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(1);
   });
 
-  it('does not wake again when the last check passes, or on a replay', async () => {
+  it('wakes again when the run finishes and deduplicates a replay', async () => {
     const cornerId = await redWhileRunning();
     githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
     await checkRun(cornerId, 'Server suite', 'success');
-    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(2);
     githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
     await checkRun(cornerId, 'Server suite', 'success');
     await reconcileCornerMergeBlockers(db, cornerId);
-    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(2);
     expect(await currentState(cornerId)).toBe('implement');
   });
 
@@ -1534,7 +1482,7 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     expect(people.rowCount).toBe(0);
   });
 
-  it('tells the requester once when a check stays pending for an hour', async () => {
+  it('wakes the implementer when a check stays pending for an hour', async () => {
     const cornerId = await redWhileRunning();
     const blocked = () => db.query<{ text: string }>(
       `SELECT text FROM messages WHERE room_id=$1 AND card_type=$2`, [cornerId, CORNER_CHECKS_BLOCKED_CARD_TYPE]);
@@ -1548,10 +1496,106 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     );
     expect(await noteBlockedCornerChecks(db)).toBe(1);
     expect(await noteBlockedCornerChecks(db)).toBe(0);
-    expect((await blocked()).rows.map((row) => row.text)).toEqual([
-      expect.stringContaining('a check has not finished for 1 hour'),
-    ]);
-    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(1);
+    expect((await blocked()).rows).toEqual([]);
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(2);
+
+  });
+
+  it('returns a completed fix with no push to the agent, repeatedly, without pulling in a person', async () => {
+    const cornerId = await redWhileRunning();
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
+    await checkRun(cornerId, 'Server suite', 'success');
+    for (let round = 0; round < 2; round++) {
+      await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '3 minutes'
+        WHERE room_id=$1`, [cornerId]);
+      expect(await noteBlockedCornerChecks(db)).toBe(1);
+      expect(await noteBlockedCornerChecks(db)).toBe(0);
+    }
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(4);
+    const people = await db.query(`SELECT 1 FROM messages m JOIN identities person ON person.id=$2
+      WHERE m.room_id=$1 AND m.presentation='system'
+        AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind')}`, [cornerId, H]);
+    expect(people.rowCount).toBe(0);
+  });
+
+  it('keeps a promised rerun pending, then wakes for repeated same-job failures on the same head', async () => {
+    const cornerId = await redWhileRunning();
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
+    await checkRun(cornerId, 'Server suite', 'success');
+    let wakes = 2;
+    for (let round = 0; round < 3; round++) {
+      await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '3 minutes'
+        WHERE room_id=$1`, [cornerId]);
+      githubApp.readCommitCheckRollup.mockResolvedValueOnce({
+        state: 'pending', total: 2, failing: [],
+        checks: [{ name: 'Body suite', status: 'pending' }, { name: 'Server suite', status: 'passed' }],
+      });
+      await checkRun(cornerId, 'Body suite', 'pending');
+      expect(await noteBlockedCornerChecks(db)).toBe(0);
+      githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
+      await checkRun(cornerId, 'Body suite', 'failure');
+      wakes++;
+      expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(wakes);
+      githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
+      await checkRun(cornerId, 'Body suite', 'failure');
+      expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(wakes);
+      expect(await currentState(cornerId)).toBe('implement');
+    }
+  });
+
+  it('recognizes a completed rerun by its new job URL when the start webhook was missed', async () => {
+    const cornerId = await redWhileRunning();
+    const withJob = (job: number) => ({ ...finished, checks: [
+      { name: 'Body suite', status: 'failed', url: `https://github.com/owner/widgets/actions/runs/10/job/${job}` },
+      { name: 'Server suite', status: 'passed' },
+    ] });
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(withJob(101));
+    await checkRun(cornerId, 'Server suite', 'success');
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(withJob(102));
+    await checkRun(cornerId, 'Body suite', 'failure');
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(3);
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(withJob(102));
+    await checkRun(cornerId, 'Body suite', 'failure');
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(3);
+  });
+
+  it('addresses the requester when the implementing agent cannot receive the checks wake', async () => {
+    const cornerId = await open('owner/widgets');
+    await redHead(cornerId, 3, SHA);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [cornerId, A]);
+    await systemLine(db, {
+      roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' },
+      verb: 'finished checks on', kind: 'check-failed', payload: { followup: true },
+    });
+    const people = await db.query<{ text: string }>(`SELECT m.text FROM messages m JOIN identities person ON person.id=$2
+      WHERE m.room_id=$1 AND m.text LIKE '%needs to restore agent access%'
+        AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind')}`, [cornerId, H]);
+    expect(people.rows).toEqual([{ text: expect.stringContaining('@human needs to restore agent access') }]);
+  });
+
+  it('addresses the requester only after an agent wake remains unclaimed through normal delivery retries', async () => {
+    const cornerId = await redWhileRunning();
+    expect(await noteBlockedCornerChecks(db)).toBe(0);
+    await db.query(`UPDATE agent_commands SET created_at=now()-interval '3 minutes' WHERE room_id=$1`, [cornerId]);
+    await noteBlockedCornerChecks(db);
+    const people = await db.query(`SELECT 1 FROM messages m JOIN identities person ON person.id=$2
+      WHERE m.room_id=$1 AND m.text LIKE '%needs to restore agent access%'
+        AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind')}`, [cornerId, H]);
+    expect(people.rowCount).toBeGreaterThan(0);
+    const [recovered] = await commands(A, cornerId);
+    await claim(recovered!);
+    expect((await db.query(`SELECT 1 FROM corner_owed WHERE corner_id=$1 AND person_id=$2`,
+      [cornerId, H])).rowCount).toBe(0);
+  });
+
+  it('resumes a historical CI escalation with the next failed check', async () => {
+    const cornerId = await redWhileRunning();
+    await db.query(`UPDATE messages SET card=jsonb_set(card,'{toState}','"ask_human"')
+      WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type=$2 ORDER BY (card->>'seq')::int DESC LIMIT 1)`,
+      [cornerId, CORNER_LIFECYCLE_CARD_TYPE]);
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
+    await checkRun(cornerId, 'Server suite', 'success');
+    expect(await currentState(cornerId)).toBe('implement');
   });
 });
 
@@ -1747,11 +1791,11 @@ describe('a person hands the corner to another agent (the implementer follows th
   });
 });
 
-describe('loop caps (AC-3)', () => {
-  it(`the ${CHECKS_FAILING_LIMIT + 1}th failing round moves to ask_human naming the requester, and a push resumes`, async () => {
+describe('CI never escalates to a human', () => {
+  it('keeps waking the implementer after more than 100 failing rounds', async () => {
     const cornerId = await open('owner/widgets');
     await pushToCorner(cornerId, '0'.repeat(40));
-    for (let round = 1; round <= CHECKS_FAILING_LIMIT + 1; round += 1) {
+    for (let round = 1; round <= 101; round += 1) {
       const headSha = round.toString(16).padStart(40, '0');
       if (round > 1) await advanceCorner(db, cornerId, { kind: 'push', headSha, contents: { headSha } });
       await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
@@ -1759,20 +1803,19 @@ describe('loop caps (AC-3)', () => {
         JSON.stringify({ checks: 'failing', lifecycle: 'in-review', pr: { number: 4, url: 'https://github.com/owner/widgets/pull/4', headSha } }),
       ]);
       await systemLine(db, { roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' }, verb: 'found failing checks on', kind: 'check-failed' });
-      expect(await currentState(cornerId)).toBe(round > CHECKS_FAILING_LIMIT ? 'ask_human' : 'implement');
+      expect(await currentState(cornerId)).toBe('implement');
     }
-    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(CHECKS_FAILING_LIMIT);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(101);
     const line = (
       await db.query<{ system_event: { subject: { id?: string } } }>(
         `SELECT system_event FROM messages WHERE room_id=$1 AND card_type='corner-checks-blocked'`,
         [cornerId],
       )
     ).rows;
-    expect(line).toHaveLength(1);
-    expect(line[0]!.system_event.subject.id).toBe(H);
+    expect(line).toHaveLength(0);
     await pushToCorner(cornerId, 'f'.repeat(40));
     expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'ask_human', outcome: 'pushed', toState: 'checks' }),
+      expect.objectContaining({ fromState: 'implement', outcome: 'pushed', toState: 'checks' }),
     );
   }, 60_000);
 });
@@ -2232,9 +2275,10 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
       expect(timing).toBeCloseTo(Math.min(3600, 300 * 2 ** (attempt - 2)), 1);
       await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeRecovery,nextAttemptAt}','0') WHERE corner_id=$1`, [cornerId]);
       await recover();
-      expect(await currentState(cornerId)).toBe(attempt >= 5 ? 'ask_human' : 'review');
+      expect(await currentState(cornerId)).toBe('review');
     }
-    expect(await currentState(cornerId)).toBe('ask_human');
+    expect(await currentState(cornerId)).toBe('review');
+    expect(await reasons(cornerId, A)).toContain('corner_merge_unconfirmed');
     const notes = await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%merge outcome is unconfirmed%'`, [cornerId]);
     expect(notes.rows).toHaveLength(1);
     expect(notes.rows[0]!.text).toContain('#7');

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { backfillCornerOwed, migrate, type SqlDatabase } from './database.js';
-import { addressedToPersonSql, cornerOwedBackfillSql } from './corner-owed.js';
+import { addressedToPersonSql, cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { PhoneService } from './phone-service.js';
 import { PgliteDatabase } from './test-support.js';
 
@@ -304,19 +304,35 @@ describe('corner_owed', () => {
     expect(rows.rows.every((row) => !row.direct)).toBe(true);
   });
 
-  it.each(['corner-checks-blocked', 'corner-review-deadlock'])(
-    'keeps a %s line owed past a day, until the person posts',
+  it.each(['corner-checks-blocked', 'corner-review-deadlock', 'corner-merge-yes'])(
+    'keeps a historical %s line readable without asking a person to act',
     async (cardType) => {
       await post('line', AGENT, 'Checks still fail.', {
         presentation: 'system',
         cardType,
+        card: { approverIds: [OWNER] },
         at: `now()-interval '3 days'`,
       });
-      await step(owedToViewer);
+      await step(idle);
       await post('answer', OWNER, 'On it.');
       await step(idle);
     },
   );
+
+  it('release migration clears historical automatic attention and preserves a real failed wake', async () => {
+    await post('legacy-attention', AGENT, 'Checks still fail.', {
+      presentation: 'system', cardType: 'corner-checks-blocked',
+    });
+    await database.query(`INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable)
+      SELECT room_id,$1,id,created_at,NULL,true FROM messages WHERE id='legacy-attention'`, [OWNER]);
+    await post('failed-wake', AGENT, 'Agent could not be reached.', {
+      presentation: 'system', cardType: 'corner-agent-unreachable',
+      card: { agentId: AGENT, recipientIds: [OWNER], status: 'open' },
+    });
+    await database.query(cornerOwedSchemaSql());
+    expect((await database.query<{ message_id: string }>(`SELECT message_id FROM corner_owed`)).rows)
+      .toEqual([{ message_id: 'failed-wake' }]);
+  });
 
   it('expires a tag after a day, including one moved back in time', async () => {
     await post('old-tag', AGENT, '@owner big or small?', { at: `now()-interval '25 hours'` });

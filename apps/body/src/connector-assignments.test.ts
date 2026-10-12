@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -61,6 +61,9 @@ function apiMock(
 }
 
 const mcp = {} as SquireMcpClient;
+
+// A failed assertion must not leave this fixture's owner claim for the next test.
+afterEach(() => releaseSquireConnectSession(undefined, 'agent-1'));
 
 /** The loop fires assignments without awaiting them; drain their microtasks. */
 async function settle(): Promise<void> {
@@ -635,7 +638,7 @@ describe('ConnectorAssignmentLoop', () => {
     // The human finished (or closed the page) and connect exited: the next
     // assignment is an ordinary fresh install again.
     connect.abort();
-    releaseSquireConnectSession();
+    releaseSquireConnectSession(undefined, 'agent-1');
     await vi.waitFor(() => expect(started).toBe(1));
     expect(started).toBe(1);
     loop.stop();
@@ -675,9 +678,9 @@ describe('ConnectorAssignmentLoop', () => {
       expect(isProcessAlive(claimed?.pid)).toBe(false);
     } finally {
       clock.mockRestore();
-      connect.abort();
-      releaseSquireConnectSession();
       loop.stop();
+      connect.abort();
+      releaseSquireConnectSession(undefined, 'agent-1');
     }
   });
 
@@ -727,9 +730,9 @@ describe('ConnectorAssignmentLoop', () => {
         ),
       ).toBe(true);
     } finally {
-      connect.abort();
-      releaseSquireConnectSession();
       loop.stop();
+      connect.abort();
+      releaseSquireConnectSession(undefined, 'agent-1');
     }
   });
 
@@ -770,9 +773,9 @@ describe('ConnectorAssignmentLoop', () => {
       await settle();
       expect(started).toBe(1);
     } finally {
-      connect.abort();
-      releaseSquireConnectSession();
       loop.stop();
+      connect.abort();
+      releaseSquireConnectSession(undefined, 'agent-1');
     }
   });
 
@@ -807,9 +810,10 @@ describe('ConnectorAssignmentLoop', () => {
       expect(started).toBe(1);
     } finally {
       clock.mockRestore();
-      connect.abort();
-      releaseSquireConnectSession();
       loop.stop();
+      connect.abort();
+      releaseSquireConnectSession(undefined, 'agent-1');
+      expect(squireConnectSession('agent-1')).toBeUndefined();
     }
   });
 

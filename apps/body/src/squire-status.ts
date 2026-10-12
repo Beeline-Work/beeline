@@ -18,4 +18,3 @@ export function squireReachCause(error: unknown): string {
   if (http) return `Squire relay HTTP ${http[1]}`;
   return error instanceof TypeError ? 'Squire relay request failed (TypeError)' : 'Squire MCP tool error';
 }
-

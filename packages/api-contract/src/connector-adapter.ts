@@ -72,7 +72,6 @@ function ownerOnly(
 const SQUIRE_ACTIONS = [
   'connect',
   'reconnect',
-  'disconnect',
   'revoke-grants',
 ] as const satisfies readonly ConnectorAdapterAction[];
 
@@ -83,20 +82,17 @@ export const SQUIRE_CONNECTOR_ADAPTER: ConnectorAdapter = {
   workbenchActions: (status) => {
     switch (status) {
       case 'installing':
-        return ['disconnect'];
+        return [];
       case 'connected':
-        return ['reconnect', 'disconnect', 'revoke-grants'];
+        return ['reconnect', 'revoke-grants'];
       case 'error':
-        return ['connect', 'reconnect', 'disconnect'];
+        return ['connect', 'reconnect'];
       default:
         return ['connect'];
     }
   },
-  assignmentKinds: (status) => {
-    if (status === 'installing') return ['install'];
-    if (status === 'disconnected') return ['uninstall'];
-    return [];
-  },
+  // Squire work is queued on the machine, never derived from a connector row.
+  assignmentKinds: () => [],
 };
 
 const YOUTUBE_ACTIONS = [

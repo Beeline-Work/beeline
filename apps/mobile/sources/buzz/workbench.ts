@@ -132,6 +132,7 @@ export type WorkbenchHelper = {
   id: string;
   name: string;
   online: boolean;
+  squire?: { status: 'connected' | 'error' | 'not-added'; errorMessage?: string; reportedAt: number };
 };
 
 /** The Wallet row's error line once an earlier grant to sign has ended. */

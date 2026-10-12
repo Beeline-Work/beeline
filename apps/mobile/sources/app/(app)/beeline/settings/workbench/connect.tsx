@@ -73,6 +73,7 @@ function ConnectToolFlow() {
     pairedConnectorId?: string | string[];
     offerId?: string | string[];
     roomId?: string | string[];
+    helperId?: string | string[];
   }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const viewerId = firstParam(params.viewerId) ?? '';
@@ -80,6 +81,7 @@ function ConnectToolFlow() {
   const pairedConnectorId = firstParam(params.pairedConnectorId);
   const offerId = firstParam(params.offerId);
   const roomId = firstParam(params.roomId);
+  const requestedHelperId = firstParam(params.helperId);
   const offerCeremony = Boolean(offerId && pairedConnectorId && roomId);
   const { value: workbench, error: helperLoadError } = useSharedWorkbench(
     offerCeremony ? null : { workspaceId, viewerId });
@@ -143,10 +145,16 @@ function ConnectToolFlow() {
   useEffect(() => {
     if (offerCeremony || autoPairRef.current || helpers === null || pairedHelperRef.current) return;
     const online = helpers.filter((helper) => helper.online);
+    const requested = online.find((helper) => helper.id === requestedHelperId);
+    if (requested) {
+      autoPairRef.current = true;
+      void pair(requested.id);
+      return;
+    }
     if (online.length !== 1) return;
     autoPairRef.current = true;
     void pair(online[0]!.id);
-  }, [helpers, offerCeremony, pair]);
+  }, [helpers, offerCeremony, pair, requestedHelperId]);
 
   const retry = useCallback(() => {
     setError(null);

@@ -52,7 +52,7 @@ function apiMock(
     calls,
     status,
     async execute(op: string, input: Record<string, unknown>) {
-      calls.push({ op, input });
+      if (!(op === 'postConnectorVault' && input.notAdded)) calls.push({ op, input });
       if (op === 'getConnectorAssignments') return { assignments };
       if (op === 'getConnectorStatus') return status;
       return {};
@@ -88,6 +88,22 @@ const connectedInstall =
   };
 
 describe('ConnectorAssignmentLoop', () => {
+  it.each(['connected', 'error', 'not-added'])('reports the local broker on startup with no server assignment (%s)', async (status) => {
+    const execute = vi.fn(async (op: string) => op === 'getConnectorAssignments' ? { assignments: [] } : {});
+    const loop = new ConnectorAssignmentLoop({ api: { execute } as never, agentId: 'agent-1', mcp,
+      brokerInstalled: () => status !== 'not-added',
+      readVault: async () => {
+        if (status === 'error') throw new Error('broker unavailable');
+        return [];
+      } });
+    await loop.runOnce();
+    expect(execute).toHaveBeenCalledWith('postConnectorVault', {
+      agentId: 'agent-1', connections: [],
+      ...(status === 'error' ? { errorMessage: 'Squire broker unavailable' } : {}),
+      ...(status === 'not-added' ? { notAdded: true } : {}),
+    });
+    loop.stop();
+  });
   it('drains a provider webhook assignment through the helper and reports its signing secret', async () => {
     const assignment: ConnectorAssignment = {
       kind: 'provider-webhook', id: 'hook-1', connectorId: 'connector-1',
@@ -98,7 +114,7 @@ describe('ConnectorAssignmentLoop', () => {
     const calls: ExecuteCall[] = [];
     let pending = true;
     const api = { calls, async execute(op: string, input: Record<string, unknown>) {
-      calls.push({ op, input });
+      if (!(op === 'postConnectorVault' && input.notAdded)) calls.push({ op, input });
       if (op === 'getConnectorAssignments') return { assignments: pending ? [assignment] : [] };
       if (op === 'completeProviderWebhookAssignment') pending = false;
       return {};
@@ -318,7 +334,7 @@ describe('ConnectorAssignmentLoop', () => {
     const api = {
       calls,
       async execute(op: string, input: Record<string, unknown>) {
-        calls.push({ op, input });
+        if (!(op === 'postConnectorVault' && input.notAdded)) calls.push({ op, input });
         if (op === 'getConnectorAssignments') return { assignments: [assignmentValue] };
         return {};
       },
@@ -908,7 +924,7 @@ describe('ConnectorAssignmentLoop', () => {
     let fail = true;
     const api = {
       async execute(op: string, input: Record<string, unknown>) {
-        calls.push({ op, input });
+        if (!(op === 'postConnectorVault' && input.notAdded)) calls.push({ op, input });
         if (fail) throw new Error('server unreachable');
         return { assignments: [] };
       },

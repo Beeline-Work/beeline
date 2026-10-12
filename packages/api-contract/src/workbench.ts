@@ -170,6 +170,14 @@ export type WorkbenchHelperView = {
   readonly name: string;
   /** Live durable presence evidence (the same 90-second window readers use). */
   readonly online: boolean;
+  /** This machine's report from its own broker, never a connector row. */
+  readonly squire?: SquireMachineReport;
+};
+
+export type SquireMachineReport = {
+  readonly status: 'connected' | 'error' | 'not-added';
+  readonly errorMessage?: string;
+  readonly reportedAt: number;
 };
 
 export type WorkbenchView = {

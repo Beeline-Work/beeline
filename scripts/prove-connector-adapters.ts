@@ -39,7 +39,7 @@ const squireWorkbench = SQUIRE_CONNECTOR_ADAPTER.workbenchActions('connected');
 if (!squireConnect.allowed) fail('Squire owner was refused connect');
 if (squireOther.allowed || squireOther.reason !== CONNECTOR_ADAPTER_DENIED)
   fail('Squire other requester was not refused disconnect');
-if (squireWorkbench.join(',') !== 'reconnect,disconnect,revoke-grants')
+if (squireWorkbench.join(',') !== 'reconnect,revoke-grants')
   fail(`Squire connected Workbench was ${squireWorkbench.join(',')}`);
 
 const youtubeConnect = YOUTUBE_CONNECTOR_ADAPTER.authorize('connect', owner);

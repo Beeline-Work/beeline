@@ -9,15 +9,14 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
-import { getWorkbenchSource } from '@/buzz/workbench-source';
-import { readSharedWorkbench, useSharedWorkbench } from '@/buzz/workbench-surface';
+import { useSharedWorkbench } from '@/buzz/workbench-surface';
 import { keyServiceGroups, squireConnectionState, type KeyServiceGroup } from '@/buzz/connectors-model';
 
 function param(value: string | string[] | undefined) { return Array.isArray(value) ? value[0] : value; }
 const SQUIRE_VAULT_URL = 'https://trustysquire.ai/vault';
 
 export default function ConnectorServiceScreen() {
-  const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[]; service?: string | string[] }>();
+  const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[]; helperId?: string | string[]; service?: string | string[] }>();
   const workspaceId = param(params.workspaceId) ?? '';
   const viewerId = param(params.viewerId) ?? '';
   const service = param(params.service) ?? '';
@@ -25,16 +24,15 @@ export default function ConnectorServiceScreen() {
   const { value: view, error: loadError } = useSharedWorkbench({ workspaceId, viewerId });
   const [error, setError] = useState<string | null>(null);
   const [statusOpen, setStatusOpen] = useState(false);
-  const load = async () => {
-    try { await readSharedWorkbench({ workspaceId, viewerId }, { refresh: true }); setError(null); }
-    catch { setError('Connections are unavailable right now'); }
-  };
 
   const groups = view ? keyServiceGroups(view, viewerId) : [];
   const group: KeyServiceGroup | undefined = groups.find(item => item.key === service);
   const isSquire = service === 'trusty-squire';
-  const title = isSquire ? 'Trusty Squire' : group?.name ?? 'Keys';
-  const offline = view ? squireConnectionState(view) !== 'connected' : false;
+  const helperId = param(params.helperId);
+  const helper = view?.helpers.find(item => item.id === helperId);
+  const title = isSquire ? `Trusty Squire${helper ? ` · ${helper.name}` : ''}` : group?.name ?? 'Keys';
+  const offline = isSquire && helper ? helper.squire?.status !== 'connected'
+    : view ? squireConnectionState(view) !== 'connected' : true;
   const openVault = () => { void WebBrowser.openBrowserAsync(SQUIRE_VAULT_URL).catch(() => setError('Could not open Trusty Squire vault')); };
 
   return <View style={[styles.screen, { paddingTop: insets.top }]} testID="connector-service-screen">
@@ -43,8 +41,9 @@ export default function ConnectorServiceScreen() {
       {error || loadError ? <Text accessibilityRole="alert" style={styles.error}>{error ?? 'Connections are unavailable right now'}</Text> : null}
       {isSquire ? <>
         <Text style={styles.explainer}>Trusty Squire signs up and signs in to websites for your agents, so you never do the manual login. It keeps keys it obtains in its vault.</Text>
-        <SettingsRow title="Status" value={offline ? 'Offline' : 'Connected'} valueTone={offline ? 'danger' : undefined}
+        <SettingsRow title="Status" value={helper?.squire?.status === 'error' ? 'Error' : offline ? 'Not added' : 'Connected'} valueTone={offline ? 'danger' : undefined}
           trailingPress={{ accessibilityLabel: 'Change Trusty Squire connection', onPress: () => setStatusOpen(true) }} />
+        {helper?.squire?.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{helper.squire.errorMessage}</Text> : null}
         <View style={styles.section}><Text style={styles.sectionLabel}>WHAT YOUR AGENTS CAN DO</Text>
           <Text style={styles.explainer}>Ask your agent to use a site and Squire handles the login steps.</Text>
           <Text style={styles.example}>“Sign me up for this service”</Text><Text style={styles.example}>“Sign in and finish this task”</Text>
@@ -65,8 +64,8 @@ export default function ConnectorServiceScreen() {
       </> : null}
     </ScrollView>
     <HullActionSheetModal visible={statusOpen} title="Trusty Squire" onClose={() => setStatusOpen(false)}>
-      {offline ? <HullActionSheetRow label="Reconnect" onPress={() => { setStatusOpen(false); router.push({ pathname: '/beeline/settings/workbench/connect', params: { workspaceId, viewerId, connectorId: 'trusty-squire' } }); }} /> :
-        <HullActionSheetRow label="Disconnect" destructive onPress={() => { setStatusOpen(false); void getWorkbenchSource().disconnectConnector({ workspaceId, connectorId: 'trusty-squire' }).then(load).catch(() => setError('Could not disconnect Trusty Squire')); }} />}
+      {offline ? <HullActionSheetRow label="Reconnect" onPress={() => { setStatusOpen(false); router.push({ pathname: '/beeline/settings/workbench/connect', params: { workspaceId, viewerId, connectorId: 'trusty-squire', ...(helperId ? { helperId } : {}) } }); }} /> :
+        <HullActionSheetRow label="Manage in Trusty Squire" onPress={() => { setStatusOpen(false); openVault(); }} />}
       <HullActionSheetCancel onPress={() => setStatusOpen(false)} />
     </HullActionSheetModal>
   </View>;

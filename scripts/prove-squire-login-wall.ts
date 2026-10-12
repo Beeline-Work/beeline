@@ -14,9 +14,9 @@
  * Shows: the reconnect card lands in the SAME Room, carries no "Add" ask
  * (it starts `connecting` with its connectorId already set — what already
  * drives the phone's in-app "Continue sign-in" ceremony screen), the
- * connector is re-armed with `force_relogin_provider` for Squire's own
+ * machine's sign-in request carries `forceReloginProvider` for Squire's own
  * `--force-relogin`, and once the helper's connected report lands
- * (`installConnector` — standing in for a real reconnect ceremony finishing)
+ * (`installConnector` followed by `postConnectorVault`)
  * the card settles and the SAME paused agent turn gets a `resume` command —
  * the existing connector-offer settle-in-place and hidden resume path,
  * unchanged.
@@ -67,6 +67,8 @@ async function main(): Promise<void> {
   );
   await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
   await ensureReviewWorkspace(database, OWNER);
+  await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,NULL,$2,'member') ON CONFLICT DO NOTHING`, [REVIEW_WORKSPACE_ID, AGENT]);
   await database.query(
     `INSERT INTO rooms(id,workspace_id,created_by,name,visibility) VALUES($1,$2,$3,'stuck task','public')`,
     [ROOM, REVIEW_WORKSPACE_ID, OWNER],
@@ -78,15 +80,10 @@ async function main(): Promise<void> {
     );
   // Squire is ALREADY connected for this owner/agent — the scenario is a live
   // task hitting a stale session in the shared browser, not a missing tool.
-  const connector = (
-    await database.query<{ id: string }>(
-      `INSERT INTO workspace_connectors(
-         id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status
-       ) VALUES(gen_random_uuid(),$1,$2,'trusty-squire',$3,'proof-machine','connected')
-       RETURNING id`,
-      [REVIEW_WORKSPACE_ID, OWNER, AGENT],
-    )
-  ).rows[0]!;
+  await database.query(`UPDATE agents SET machine_id='proof-machine',machine_name='Proof machine',
+    squire_report=$2::jsonb WHERE agent_id=$1`,
+    [AGENT, JSON.stringify({ status: 'connected', reportedAt: Date.now() / 1000 })]);
+  const connector = { id: 'squire:proof-machine' };
 
   const auth = new TokenAuth(database, async () => ({
     subject: 'proof-owner',
@@ -181,7 +178,7 @@ async function main(): Promise<void> {
   );
 
   const armed = await database.query<{ status: string; force_relogin_provider: string | null }>(
-    `SELECT status,force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+    `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
     [connector.id],
   );
   if (armed.rows[0]?.status !== 'installing' || armed.rows[0]?.force_relogin_provider !== 'google')
@@ -206,6 +203,7 @@ async function main(): Promise<void> {
   // Google/Squire sign-in): the same daemon operation installSquire's success
   // path already calls.
   await daemonOperation('installConnector', { connectorId: connector.id });
+  await daemonOperation('postConnectorVault', { connections: [] });
 
   const settled = await readRoom();
   const settledCard = settled.messages.find((message) => message.connectorOffer);
@@ -214,7 +212,7 @@ async function main(): Promise<void> {
   line('card settled', `status=${settledCard.connectorOffer.status}`);
 
   const clearedFlag = await database.query<{ force_relogin_provider: string | null }>(
-    `SELECT force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+    `SELECT squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
     [connector.id],
   );
   if (clearedFlag.rows[0]?.force_relogin_provider !== null)

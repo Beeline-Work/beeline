@@ -140,10 +140,10 @@ describe('workbench connectors', () => {
     ).rows;
   }
 
-  async function pairOwnerConnector() {
+  async function pairOwnerConnector(connectorType = 'trusty-squire') {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType,
       helperAgentId: HELPER,
     })) as { connectorId: string; status: { status: string } };
     expect(paired.status.status).toBe('installing');
@@ -152,7 +152,13 @@ describe('workbench connectors', () => {
     // future sync report; grants ride the helper's detail surface, so one
     // live grant is seeded here in the shape the helper reports.
     await daemonOperation('installConnector', { connectorId: paired.connectorId });
-    await applyVaultList(database, { id: paired.connectorId, owner_identity_id: HUMAN }, [
+    const machine = (await database.query<{ machine_id: string }>(
+      'SELECT COALESCE(machine_id,agent_id) machine_id FROM agents WHERE agent_id=$1', [HELPER])).rows[0]!;
+    const vaultTarget = connectorType === 'trusty-squire'
+      ? { machine_id: machine.machine_id, workspace_id: WORKSPACE, owner_identity_id: HUMAN }
+      : { id: paired.connectorId, owner_identity_id: HUMAN };
+    if (connectorType === 'trusty-squire') await daemonOperation('postConnectorVault', { connections: [] });
+    await applyVaultList(database, vaultTarget, [
       {
         reference: 'github.com/acme/tooling',
         service: 'github',
@@ -165,7 +171,7 @@ describe('workbench connectors', () => {
       },
     ]);
     await database.query(
-      `UPDATE workspace_connections SET grants=$2::jsonb WHERE connector_id=$1::uuid`,
+      `UPDATE workspace_connections SET grants=$2::jsonb WHERE COALESCE(connector_id::text,'squire:' || machine_id)=$1`,
       [
         paired.connectorId,
         JSON.stringify([
@@ -211,9 +217,9 @@ describe('workbench connectors', () => {
       ).rows,
     ).toEqual([{ reference: 'github.com/acme/tooling' }]);
     expect(
-      (await database.query(`SELECT status FROM workspace_connectors WHERE id=$1`, [squireId]))
-        .rows,
-    ).toEqual([{ status: 'connected' }]);
+      (await database.query(`SELECT squire_report FROM agents WHERE agent_id=$1`, [HELPER]))
+        .rows[0],
+    ).toMatchObject({ squire_report: { status: 'connected' } });
     const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
       catalog: { connectorType: string }[];
     };
@@ -292,9 +298,8 @@ describe('workbench connectors', () => {
       connectors: { connectorId: string; status: { status: string } }[];
       connections: { reference: string; lastSyncedAt?: number; stale?: boolean }[];
     };
-    expect(view.connectors).toHaveLength(1);
-    expect(view.connectors[0]!.connectorId).toBe(connectorId);
-    expect(view.connectors[0]!.status.status).toBe('connected');
+    expect(view.connectors).toEqual([]);
+    expect((view as any).helpers[0].squire.status).toBe('connected');
     expect(view.connections[0]).toMatchObject({
       reference: 'github.com/acme/tooling',
       // The brand domain the row's mark fetches, derived server-side from the
@@ -311,6 +316,76 @@ describe('workbench connectors', () => {
     )) as { connectors: unknown[]; connections: unknown[] };
     expect(otherView.connectors).toEqual([]);
     expect(otherView.connections).toEqual([]);
+  });
+
+  it('Reproduction squire-machine-status-2: reads broker reports with no Squire connection row', async () => {
+    expect((await database.query("SELECT 1 FROM workspace_connectors WHERE connector_type='trusty-squire'")).rows).toEqual([]);
+    for (const input of [{ connections: [] }, { connections: [], errorMessage: 'Squire broker unavailable' },
+      { connections: [], notAdded: true }]) {
+      expect((await daemonOperation('postConnectorVault', input)).status).toBe(200);
+      const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+      expect(view.connectors).toEqual([]);
+      expect(view.helpers[0].squire.status).toBe('notAdded' in input ? 'not-added'
+        : 'errorMessage' in input ? 'error' : 'connected');
+      expect(view.helpers[0].squire.errorMessage).toBe('errorMessage' in input ? input.errorMessage : undefined);
+      console.log('Reproduction squire-machine-status-2: phone readWorkbench →', view.helpers[0].squire.status);
+    }
+  });
+
+  it('keeps one generation of Squire sign-in work across sibling agents on a machine', async () => {
+    const sibling = 'd'.repeat(64);
+    await database.query("UPDATE agents SET machine_id='shared-machine' WHERE agent_id=$1", [HELPER]);
+    await database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Sibling')", [sibling]);
+    await database.query("INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,'shared-machine')",
+      [sibling, HUMAN]);
+    await database.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')",
+      [WORKSPACE, sibling]);
+    const siblingToken = (await auth.exchangeDaemonToken(
+      (await auth.createDaemonExchange(sibling)).exchangeToken))!.daemonToken;
+    const first = await phoneOperation('pairConnector', { connectorType: 'trusty-squire', helperAgentId: HELPER }) as any;
+    await phoneOperation('pairConnector', { connectorType: 'trusty-squire', helperAgentId: sibling });
+    expect((await daemonOperation('getConnectorAssignments', {})).body.assignments).toEqual([]);
+    expect((await daemonOperation('getConnectorAssignments', {}, siblingToken)).body.assignments)
+      .toContainEqual({ kind: 'install', connectorType: 'trusty-squire', connectorId: first.connectorId, pairingGeneration: 2 });
+    expect((await daemonOperation('postConnectorStatus', { connectorId: first.connectorId,
+      pairingGeneration: 1, steps: [], errorMessage: 'Old attempt failed' })).status).not.toBe(200);
+    expect((await daemonOperation('postConnectorStatus', { connectorId: first.connectorId,
+      pairingGeneration: 2, steps: [], signIn: { method: 'streamed-page', url: 'https://sign-in.test' } },
+      siblingToken)).status).toBe(200);
+    const install = await phoneOperation('readConnectorInstall', { connectorId: first.connectorId }) as any;
+    expect(install.status.signIn.url).toBe('https://sign-in.test');
+  });
+
+  it('migrates duplicate Squire rows without losing vault grants or receipts', async () => {
+    await database.query('ALTER TABLE workspace_connectors DROP CONSTRAINT workspace_connectors_no_squire');
+    await database.query('DROP INDEX workspace_connections_machine_reference_unique');
+    const connectors = [randomUUID(), randomUUID(), randomUUID()];
+    const keys = [randomUUID(), randomUUID(), randomUUID()];
+    for (let index = 0; index < connectors.length; index++) {
+      // NULL machine ids reproduce legacy duplicate rows; the helper supplies the machine identity.
+      await database.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,
+        connector_type,helper_agent_id,status) VALUES($1,$2,$3,'trusty-squire',$4,'connected')`,
+        [connectors[index], WORKSPACE, HUMAN, HELPER]);
+      await database.query(`INSERT INTO workspace_connections(id,connector_id,owner_identity_id,
+        reference,service,grants) VALUES($1,$2,$3,'shared-key','github',$4::jsonb)`,
+        [keys[index], connectors[index], HUMAN, JSON.stringify([{ grantId: `grant-${index}` }])]);
+      await database.query(`INSERT INTO connection_receipts(id,connection_id,workspace_id,
+        owner_identity_id,agent_id,operation) VALUES($1,$2,$3,$4,$5,'read')`,
+        [randomUUID(), keys[index], WORKSPACE, HUMAN, HELPER]);
+    }
+    await migrate(database);
+    expect((await database.query("SELECT 1 FROM workspace_connectors WHERE connector_type='trusty-squire'")).rows).toEqual([]);
+    const keysAfter = (await database.query<{ id: string; connector_id: string | null;
+      machine_id: string; grants: unknown[] }>('SELECT id,connector_id,machine_id,grants FROM workspace_connections')).rows;
+    expect(keysAfter).toHaveLength(1);
+    expect(keysAfter[0]).toMatchObject({ connector_id: null, machine_id: HELPER });
+    expect(keysAfter[0]!.grants).toHaveLength(3);
+    expect((await database.query('SELECT connection_id FROM connection_receipts')).rows)
+      .toEqual(Array.from({ length: 3 }, () => ({ connection_id: keysAfter[0]!.id })));
+    await migrate(database);
+    expect((await database.query('SELECT id FROM workspace_connections')).rows).toHaveLength(1);
+    expect((await database.query('SELECT squire_report FROM agents WHERE agent_id=$1', [HELPER])).rows[0])
+      .toEqual({ squire_report: null });
   });
 
   it('refreshes edited and deleted keys from Squire before the phone re-reads the list', async () => {
@@ -383,16 +458,16 @@ describe('workbench connectors', () => {
       (await auth.createDaemonExchange(sibling)).exchangeToken,
     ))!.daemonToken;
     const connectorId = await pairOwnerConnector();
-    await database.query(`UPDATE workspace_connectors
-      SET status='error',status_error='Earlier install failed' WHERE id=$1::uuid`,
-      [connectorId]);
+    await daemonOperation('postConnectorVault', { connections: [], errorMessage: 'Earlier install failed' });
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$2,'member')`, [WORKSPACE, sibling]);
     await daemonOperation('postConnectorVault', { connections: [] }, siblingToken);
     const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
       connectors: { connectorId: string; status: { status: string; errorMessage?: string } }[];
     };
-    expect(view.connectors.find((row) => row.connectorId === connectorId)?.status)
+    expect((view as any).helpers[0].squire)
       .toMatchObject({ status: 'connected' });
-    expect(view.connectors.find((row) => row.connectorId === connectorId)?.status)
+    expect((view as any).helpers[0].squire)
       .not.toHaveProperty('errorMessage');
     console.log('Workbench: Trusty Squire connected after a successful vault read');
   });
@@ -407,13 +482,8 @@ describe('workbench connectors', () => {
     // A foreign owner on this machine must not inherit this account's verdict.
     await database.query(`UPDATE agents SET machine_id='shared-machine' WHERE agent_id=ANY($1::text[])`,
       [[HELPER, OTHER_HELPER]]);
-    await database.query(`UPDATE workspace_connectors SET machine_id='shared-machine' WHERE id=$1`,
-      [connectorId]);
-    const foreignId = randomUUID();
-    await database.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,
-      connector_type,helper_agent_id,machine_id,status)
-      VALUES($1,$2,$3,'trusty-squire',$4,'shared-machine','connected')`,
-      [foreignId, WORKSPACE, RECIPIENT, OTHER_HELPER]);
+    await database.query(`UPDATE workspace_connections SET machine_id='shared-machine' WHERE owner_identity_id=$1`, [HUMAN]);
+    await daemonOperation('postConnectorVault', { connections: [] }, otherHelperToken);
 
     const failed = await daemonOperation('postConnectorVault', {
       connections: [], errorMessage: 'Squire broker unavailable',
@@ -423,28 +493,32 @@ describe('workbench connectors', () => {
       connectors: { connectorId: string; status: { status: string; errorMessage?: string } }[];
       connections: { reference: string }[];
     };
-    expect(phoneFailed.connectors.find((row) => row.connectorId === connectorId)?.status)
+    expect((phoneFailed as any).helpers[0].squire)
       .toMatchObject({ status: 'error', errorMessage: 'Squire broker unavailable' });
     expect(phoneFailed.connections.map((row) => row.reference)).toContain('github.com/acme/tooling');
     const agentFailed = await daemonOperation('readAgentWorkbench', { roomId });
     expect(agentFailed.status).toBe(200);
     expect(agentFailed.body.catalog).toContainEqual(expect.objectContaining({
       connectorType: 'trusty-squire',
-      paired: expect.objectContaining({ status: 'error', errorMessage: 'Squire broker unavailable', onThisMachine: true }),
+      available: true,
     }));
-    expect((await database.query(`SELECT status FROM workspace_connectors WHERE id=$1`, [foreignId])).rows)
-      .toEqual([{ status: 'connected' }]);
+    expect(agentFailed.body.machine.squire).toMatchObject({
+      status: 'error', errorMessage: 'Squire broker unavailable',
+    });
+    expect((await database.query(`SELECT squire_report FROM agents WHERE agent_id=$1`, [OTHER_HELPER])).rows[0])
+      .toMatchObject({ squire_report: { status: 'connected' } });
 
     await daemonOperation('postConnectorVault', { connections: [{
       reference: 'github.com/acme/tooling', service: 'github', label: 'Acme tooling',
       fieldNames: ['token'], allowedHosts: ['github.com'], createdAt: 0, stale: false, state: 'active',
     }] });
     const agentRecovered = await daemonOperation('readAgentWorkbench', { roomId });
+    expect(agentRecovered.body.machine.squire).toMatchObject({ status: 'connected' });
     expect(agentRecovered.body.catalog).toContainEqual(expect.objectContaining({
-      connectorType: 'trusty-squire', paired: expect.objectContaining({ status: 'connected', onThisMachine: true }),
+      connectorType: 'trusty-squire', available: true,
     }));
     const phoneRecovered = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as typeof phoneFailed;
-    expect(phoneRecovered.connectors.find((row) => row.connectorId === connectorId)?.status)
+    expect((phoneRecovered as any).helpers[0].squire)
       .toMatchObject({ status: 'connected' });
     console.log('Reproduction squire-status-1: phone and agent Workbench agree on failure and recovery; keys preserved');
   });
@@ -454,7 +528,7 @@ describe('workbench connectors', () => {
     // The helper reports what `vaultConnectionMeta` produced from Squire's
     // ISO-8601 `created_at`: epoch seconds, newest first in the vault.
     const vaultTime = (iso: string) => Math.floor(Date.parse(iso) / 1000);
-    await applyVaultList(database, { id: connectorId, owner_identity_id: HUMAN }, [
+    await applyVaultList(database, { machine_id: HELPER, workspace_id: WORKSPACE, owner_identity_id: HUMAN }, [
       {
         reference: 'alpha',
         service: 'alpha',
@@ -530,7 +604,8 @@ describe('workbench connectors', () => {
       connectors: { connectorId: string }[];
       catalog: unknown[];
     };
-    expect(view.connectors.map((c) => c.connectorId)).toContain(connectorId);
+    expect(view.connectors).toEqual([]);
+    expect((view as any).helpers[0].squire.status).toBe('connected');
     expect(view.catalog.length).toBeGreaterThan(0);
   });
 
@@ -550,7 +625,8 @@ describe('workbench connectors', () => {
     const view = (await phoneOperation('readWorkbench', { workspaceId: '' })) as {
       connectors: { connectorId: string }[];
     };
-    expect(view.connectors.map((c) => c.connectorId)).toContain(paired.connectorId);
+    expect(view.connectors).toEqual([]);
+    expect(paired.connectorId).toBe(`squire:${HELPER}`);
   });
 
   it('rejects pairing a connector that is not connectable and a helper outside the Workspace', async () => {
@@ -601,7 +677,7 @@ describe('workbench connectors', () => {
     const rows = await database.query<{ operation: string; event_class: string | null }>(
       `SELECT r.operation,r.event_class FROM connection_receipts r
        JOIN workspace_connections c ON c.id=r.connection_id
-       WHERE c.connector_id=$1::uuid AND r.turn_key=$2`,
+       WHERE COALESCE(c.connector_id::text,'squire:' || c.machine_id)=$1 AND r.turn_key=$2`,
       [connectorId, requestId],
     );
     expect(rows.rows).toHaveLength(2);
@@ -812,7 +888,7 @@ describe('workbench connectors', () => {
   });
 
   it('revokes grants and unpairing clears connections, receipts, and eventually the row', async () => {
-    const connectorId = await pairOwnerConnector();
+    const connectorId = await pairOwnerConnector('tailscale');
     const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
       connections: { connectionId: string }[];
     };
@@ -850,7 +926,7 @@ describe('workbench connectors', () => {
 
     await phoneOperation('unpairConnector', { workspaceId: WORKSPACE, connectorId });
     const cleared = await database.query<{ count: string }>(
-      `SELECT count(*)::text count FROM workspace_connections WHERE connector_id=$1::uuid`,
+      `SELECT count(*)::text count FROM workspace_connections WHERE COALESCE(connector_id::text,'squire:' || machine_id)=$1`,
       [connectorId],
     );
     expect(cleared.rows[0]!.count).toBe('0');
@@ -884,13 +960,13 @@ describe('workbench connectors', () => {
       `INSERT INTO workspace_connectors(
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
          status,status_steps,status_error,pending_ops,connected_at
-       ) VALUES ($1,$2,$3,'trusty-squire',$4,$5,'disconnected','[]'::jsonb,
+       ) VALUES ($1,$2,$3,'tailscale',$4,$5,'disconnected','[]'::jsonb,
                  'last install failed','["sync"]'::jsonb,now())`,
       [staleId, WORKSPACE, HUMAN, HELPER, HELPER],
     );
     const repaired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as {
       connectorId: string;
@@ -927,7 +1003,7 @@ describe('workbench connectors', () => {
     ).toContainEqual({
       kind: 'install',
       connectorId: staleId,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       pairingGeneration: 2,
     });
   });
@@ -935,7 +1011,7 @@ describe('workbench connectors', () => {
   it('re-pairing a connected connector starts a fresh install again', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     await daemonOperation('installConnector', { connectorId: paired.connectorId });
@@ -947,7 +1023,7 @@ describe('workbench connectors', () => {
 
     const again = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string; status: { status: string; steps: unknown[] } };
     expect(again.connectorId).toBe(paired.connectorId);
@@ -958,7 +1034,7 @@ describe('workbench connectors', () => {
   it('drops the previous attempt\u2019s sign-in surface when connect needed no ceremony', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     await daemonOperation('installConnector', {
@@ -978,7 +1054,7 @@ describe('workbench connectors', () => {
     // the phone must not keep offering the dead page.
     await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     });
     await daemonOperation('installConnector', { connectorId: paired.connectorId });
@@ -993,7 +1069,7 @@ describe('workbench connectors', () => {
   it('a steps-only progress report keeps the live ceremony; the run\u2019s verdict clears it', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     const signInUrl = async () => {
@@ -1029,7 +1105,7 @@ describe('workbench connectors', () => {
   it('an explicit re-pair drops the previous ceremony instead of re-offering it', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     await daemonOperation('installConnector', {
@@ -1038,7 +1114,7 @@ describe('workbench connectors', () => {
     });
     await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     });
     const view = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
@@ -1145,7 +1221,7 @@ describe('workbench connectors', () => {
   });
 
   it('keeps the connector receipt DM read-only for everyone but the connector identity', async () => {
-    const connectorId = await pairOwnerConnector();
+    const connectorId = await pairOwnerConnector('tailscale');
     await daemonOperation('postConnectionUsage', {
       requestId: createHash('sha256').update('turn-3').digest('hex'),
       agentId: HELPER,
@@ -1171,46 +1247,19 @@ describe('workbench connectors', () => {
     expect(response.status).toBe(403);
   });
 
-  it('does not copy a helper vault onto a Workbench row the helper owner does not own', async () => {
+  it('does not copy an owner machine vault to another owner', async () => {
     await pairOwnerConnector();
-    const foreignId = randomUUID();
-    await database.query(
-      `INSERT INTO workspace_connectors(
-         id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,
-         status,status_steps
-       ) VALUES ($1,$2,$3,'trusty-squire',$4,$4,'connected','[]'::jsonb)`,
-      [foreignId, WORKSPACE, RECIPIENT, HELPER],
-    );
-    await daemonOperation('postConnectorVault', {
-      connections: [
-        {
-          reference: 'leaked.example/key',
-          service: 'github',
-          label: 'leaked',
-          fieldNames: ['token'],
-          allowedHosts: ['github.com'],
-          createdAt: Math.floor(Date.now() / 1000),
-          stale: false,
-          state: 'active',
-        },
-      ],
-    });
-    const ownerView = (await phoneOperation('readWorkbench', { workspaceId: WORKSPACE })) as {
-      connections: { reference: string }[];
-    };
-    expect(ownerView.connections.map((row) => row.reference)).toEqual(['leaked.example/key']);
-    const otherView = (await phoneOperation(
-      'readWorkbench',
-      { workspaceId: WORKSPACE },
-      recipientToken,
-    )) as { connections: { reference: string }[] };
-    expect(otherView.connections).toEqual([]);
+    await daemonOperation('postConnectorVault', { connections: [{ reference: 'owner-key',
+      service: 'github', label: 'Owner key', fieldNames: [], allowedHosts: [], createdAt: 0, stale: false, state: 'active' }] });
+    const other = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }, recipientToken) as any;
+    expect(other.connections).toEqual([]);
+    expect(other.helpers[0].squire).toBeUndefined();
   });
 
   it('ignores a late install report after unpair', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     await phoneOperation('unpairConnector', {
@@ -1232,7 +1281,7 @@ describe('workbench connectors', () => {
   it('a stale status report cannot overwrite a disconnect', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     await daemonOperation('postConnectorStatus', {
@@ -1262,12 +1311,12 @@ describe('workbench connectors', () => {
   it('a stale status report cannot overwrite a re-pair', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     });
     const late = await daemonOperation('postConnectorStatus', {
@@ -1293,12 +1342,12 @@ describe('workbench connectors', () => {
   it('a generation-less status report cannot overwrite a re-pair', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     });
     const late = await daemonOperation('postConnectorStatus', {
@@ -1323,7 +1372,7 @@ describe('workbench connectors', () => {
   it('a generation-less status report still updates an eligible generation-1 row', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     const report = await daemonOperation('postConnectorStatus', {
@@ -1349,7 +1398,7 @@ describe('workbench connectors', () => {
   it('an explicit current-generation status report succeeds; stale generations and disconnected rows remain rejected', async () => {
     const paired = (await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     })) as { connectorId: string };
     const first = await daemonOperation('postConnectorStatus', {
@@ -1361,7 +1410,7 @@ describe('workbench connectors', () => {
 
     await phoneOperation('pairConnector', {
       workspaceId: WORKSPACE,
-      connectorType: 'trusty-squire',
+      connectorType: 'tailscale',
       helperAgentId: HELPER,
     });
     const current = await daemonOperation('postConnectorStatus', {

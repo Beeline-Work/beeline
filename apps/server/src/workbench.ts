@@ -251,12 +251,17 @@ async function resolveUsageConnection(
   const candidates = (
     await database.query<ConnectionRow & { connector: ConnectorRow }>(
       `SELECT c.id,c.reference,c.label,c.service,c.owner_identity_id,
-              to_jsonb(w) connector
+              CASE WHEN c.machine_id IS NOT NULL THEN jsonb_build_object(
+                'workspace_id',COALESCE((SELECT workspace_id FROM rooms WHERE id=$3::uuid),c.workspace_id),
+                'owner_identity_id',c.owner_identity_id,'connector_type','trusty-squire')
+                ELSE to_jsonb(w) END connector
        FROM workspace_connections c
-       JOIN workspace_connectors w ON w.id=c.connector_id
-       WHERE w.helper_agent_id=$1 AND c.reference=$2
-       ORDER BY w.created_at`,
-      [helperAgentId, record.ref],
+       JOIN agents a ON a.agent_id=$1
+       LEFT JOIN workspace_connectors w ON w.id=c.connector_id
+       WHERE (w.helper_agent_id=$1 OR (c.owner_identity_id=a.owner_id
+         AND c.machine_id=COALESCE(a.machine_id,a.agent_id))) AND c.reference=$2
+       ORDER BY c.created_at`,
+      [helperAgentId, record.ref, input.cornerId ?? input.roomId ?? null],
     )
   ).rows;
   let picked = candidates[0];
@@ -399,7 +404,7 @@ export function isMetadataStale(lastSyncedAt: Date | null): boolean {
 /** Upserts one helper vault report into the sovereign connection rows. */
 export async function applyVaultList(
   database: SqlDatabase,
-  connector: { id: string; owner_identity_id: string },
+  connector: { id?: string; owner_identity_id: string; machine_id?: string; workspace_id?: string },
   connections: readonly VaultConnectionMeta[],
 ): Promise<void> {
   const seen = new Set<string>();
@@ -408,9 +413,11 @@ export async function applyVaultList(
     await database.query(
       `INSERT INTO workspace_connections(
          id,connector_id,owner_identity_id,reference,service,label,hosts,state,
-         connection_metadata,last_synced_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,now())
-       ON CONFLICT (connector_id,reference) DO UPDATE SET
+         connection_metadata,last_synced_at,machine_id,workspace_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,now(),$10,$11)
+       ON CONFLICT ${connector.machine_id
+         ? '(owner_identity_id,machine_id,reference) WHERE machine_id IS NOT NULL'
+         : '(connector_id,reference)'} DO UPDATE SET
          service=EXCLUDED.service,
          label=EXCLUDED.label,
          hosts=EXCLUDED.hosts,
@@ -420,7 +427,7 @@ export async function applyVaultList(
          updated_at=now()`,
       [
         randomUUID(),
-        connector.id,
+        connector.id ?? null,
         connector.owner_identity_id,
         entry.reference,
         entry.service,
@@ -428,20 +435,24 @@ export async function applyVaultList(
         JSON.stringify(entry.allowedHosts ?? []),
         entry.state,
         JSON.stringify({ fieldNames: entry.fieldNames, vaultCreatedAt: entry.createdAt }),
+        connector.machine_id ?? null,
+        connector.workspace_id ?? null,
       ],
     );
   }
   // A reference the vault no longer holds is gone; its ledger history goes
   // with it (the vault is the record of what exists, not what existed).
   const existing = await database.query<{ id: string; reference: string }>(
-    `SELECT id,reference FROM workspace_connections WHERE connector_id=$1`,
-    [connector.id],
+    connector.machine_id
+      ? `SELECT id,reference FROM workspace_connections WHERE owner_identity_id=$1 AND machine_id=$2`
+      : `SELECT id,reference FROM workspace_connections WHERE connector_id=$1`,
+    connector.machine_id ? [connector.owner_identity_id, connector.machine_id] : [connector.id],
   );
   for (const row of existing.rows) {
     if (!seen.has(row.reference))
       await database.query(`DELETE FROM workspace_connections WHERE id=$1`, [row.id]);
   }
-  await database.query(`UPDATE workspace_connectors SET updated_at=now() WHERE id=$1`, [
+  if (connector.id) await database.query(`UPDATE workspace_connectors SET updated_at=now() WHERE id=$1`, [
     connector.id,
   ]);
 }

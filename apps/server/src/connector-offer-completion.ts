@@ -46,6 +46,23 @@ export async function completeWalletConnectorOffer(
   return settleConnectingOffers(database, 'offer.id', offerId);
 }
 
+/** Broker-backed sign-in completes offers on that owner's machine. */
+export async function completeSquireMachineOffers(
+  database: SqlDatabase, ownerId: string, machineId: string,
+): Promise<CompletedConnectorOffer[]> {
+  const offers = (await database.query<{ id: string }>(
+    `SELECT id FROM connector_offers WHERE connector_type='trusty-squire'
+       AND accepted_by=$1 AND machine_id=$2 AND status='connecting'
+       AND NOT EXISTS (SELECT 1 FROM agents pending WHERE pending.owner_id=$1
+         AND COALESCE(pending.machine_id,pending.agent_id)=$2
+         AND pending.squire_work->>'install'='true')`, [ownerId, machineId],
+  )).rows;
+  const completed: CompletedConnectorOffer[] = [];
+  for (const offer of offers)
+    completed.push(...await settleConnectingOffers(database, 'offer.id', offer.id, `squire:${machineId}`));
+  return completed;
+}
+
 async function settleConnectingOffers(
   database: SqlDatabase,
   key: 'offer.connector_id' | 'offer.id',

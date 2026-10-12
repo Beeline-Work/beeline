@@ -274,14 +274,14 @@ export default function WorkbenchScreen() {
         </TouchableOpacity>
         <View testID="connectors-your-connections">
           <Text style={styles.sectionLabel}>YOUR CONNECTIONS</Text>
-          {squireState !== 'never' ? <SettingsRow appBoard chevron="right" title="Trusty Squire"
-            description={`Hands-off sign-in · ${keyGroups.reduce((count, group) => count + group.keys.length, 0)} keys`}
+          {(view?.helpers ?? []).map(helper => <SettingsRow appBoard chevron="right" key={`squire:${helper.id}`}
+            title={`Trusty Squire · ${helper.name}`}
+            description={helper.squire?.errorMessage ?? 'Hands-off sign-in'}
             leading={<ServiceMark company="Trusty Squire" />}
-            value={squireState === 'connected' ? 'Connected' : 'Offline'}
-            statusGlyph={squireState === 'connected' ? 'live' : 'failed'}
-            valueTone={squireState === 'offline' ? 'danger' : undefined}
-            trailingPress={{ accessibilityLabel: 'Change Trusty Squire connection', onPress: () => setStatusAction({ title: 'Trusty Squire', disconnect: () => void disconnectConnector('trusty-squire') }) }}
-            onPress={() => router.push({ pathname: '/beeline/settings/workbench/service', params: { workspaceId, viewerId, service: 'trusty-squire' } } as unknown as Href)} /> : null}
+            value={helper.squire?.status === 'connected' ? 'Connected' : helper.squire?.status === 'error' ? 'Error' : 'Not added'}
+            statusGlyph={helper.squire?.status === 'connected' ? 'live' : helper.squire?.status === 'error' ? 'failed' : undefined}
+            valueTone={helper.squire?.status === 'error' ? 'danger' : undefined}
+            onPress={() => router.push({ pathname: '/beeline/settings/workbench/service', params: { workspaceId, viewerId, service: 'trusty-squire', helperId: helper.id } } as unknown as Href)} />)}
           {keyGroups.map(group => <SettingsRow appBoard chevron="right" key={group.key} title={group.name}
             description={`${group.keys.length === 1 ? 'Key' : `${group.keys.length} keys`} · Trusty Squire`}
             leading={<ServiceMark company={group.name} domain={group.domain} />}

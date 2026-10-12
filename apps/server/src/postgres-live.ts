@@ -193,6 +193,11 @@ BEGIN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.owner_id,OLD.owner_id),
         'resourceId', COALESCE(NEW.agent_id,OLD.agent_id),
+        'squireReportChanged', CASE WHEN TG_OP='UPDATE' THEN
+          NEW.squire_report IS DISTINCT FROM OLD.squire_report ELSE false END,
+        'squireWorkChanged', CASE WHEN TG_OP='UPDATE' THEN
+          NEW.squire_work IS DISTINCT FROM OLD.squire_work ELSE false END,
+        'squireAddress', 'squire:' || COALESCE(NEW.machine_id,OLD.machine_id,NEW.agent_id,OLD.agent_id),
         'version', CASE WHEN TG_OP='DELETE' THEN NULL ELSE
           floor(extract(epoch FROM NEW.updated_at)*1000000)::bigint::text END);
     WHEN 'agent_avatars' THEN
@@ -390,6 +395,9 @@ interface LiveNotificationPayload {
   ownerId?: string;
   resourceId?: string;
   version?: string;
+  squireReportChanged?: boolean;
+  squireWorkChanged?: boolean;
+  squireAddress?: string;
   messageId?: string;
   requestId?: string;
   turnStatus?: string;
@@ -447,6 +455,9 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       roomId: parsed.roomId,
       ...(typeof parsed.ownerId === 'string' ? { ownerId: parsed.ownerId } : {}),
       ...(typeof parsed.resourceId === 'string' ? { resourceId: parsed.resourceId } : {}),
+      ...(parsed.squireReportChanged === true ? { squireReportChanged: true } : {}),
+      ...(parsed.squireWorkChanged === true ? { squireWorkChanged: true } : {}),
+      ...(typeof parsed.squireAddress === 'string' ? { squireAddress: parsed.squireAddress } : {}),
       ...(typeof parsed.version === 'string' ? { version: parsed.version } : {}),
       ...(typeof parsed.agentId === 'string' ? { agentId: parsed.agentId } : {}),
       ...(typeof parsed.identityId === 'string' ? { identityId: parsed.identityId } : {}),
@@ -743,6 +754,12 @@ export class PostgresLiveListener {
           : payload.table === 'workspace_connections' ? 'workbench' : 'agent',
         ...(payload.resourceId ? { resourceId: payload.resourceId } : {}),
         ...(payload.version ? { version: payload.version } : {}) });
+      if (payload.squireReportChanged)
+        this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,
+          resource: 'workbench' });
+      if (payload.squireWorkChanged && payload.squireAddress)
+        this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,
+          resource: 'install', resourceId: payload.squireAddress });
       return;
     }
     if (payload.table === 'live_outputs' && payload.agentId && payload.turnId) {

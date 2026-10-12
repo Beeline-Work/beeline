@@ -1579,7 +1579,7 @@ export type AgentWorkbenchView = {
     readonly available: boolean;
     /** You may offer it from this Room with offer_connector. */
     readonly offerable: boolean;
-    /** The owner's own row for this kind, when they have one on any machine. */
+    /** Row-backed connectors only. Squire's broker report lives on machine.squire. */
     readonly paired?: {
       readonly status: 'installing' | 'connected' | 'error' | 'disconnected';
       readonly helperName: string;
@@ -1614,7 +1614,8 @@ export type AgentWorkbenchView = {
     readonly errorMessage?: string;
   }[];
   /** This agent's own machine, where an accepted offer would install. */
-  readonly machine: { readonly machineId: string; readonly name: string };
+  readonly machine: { readonly machineId: string; readonly name: string;
+    readonly squire?: import('./workbench.js').SquireMachineReport };
 };
 
 /** offer_connector: the agent offers ONE connector in ONE Room, with its reason. */
@@ -1827,6 +1828,8 @@ export type PostConnectorVaultInput = AgentInput & {
   readonly connections: readonly VaultConnectionMeta[];
   /** A failed live vault read updates status without replacing stored metadata. */
   readonly errorMessage?: string;
+  /** No local broker is installed. Existing cached keys remain intact. */
+  readonly notAdded?: boolean;
 };
 
 export type ConnectionRefInput = { readonly ref: string };

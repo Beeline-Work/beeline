@@ -36,6 +36,7 @@ const notificationApi = vi.hoisted(() => ({
   setBadgeCountAsync: vi.fn(async () => true),
 }));
 const account = vi.hoisted(() => ({
+  signOut: vi.fn(async () => undefined),
   clearSession: vi.fn(async () => undefined),
   clearIdentity: vi.fn(async () => undefined),
   clearGitHub: vi.fn(async () => undefined),
@@ -78,7 +79,9 @@ vi.mock('expo-updates', () => ({
   fetchUpdateAsync: vi.fn(),
   reloadAsync: vi.fn(),
 }));
-vi.mock('@/auth/monolith-session', () => ({ monolithSession: { clear: account.clearSession } }));
+vi.mock('@/auth/monolith-session', () => ({
+  monolithSession: { clear: account.clearSession, signOut: account.signOut },
+}));
 vi.mock('@/auth/github-auth-session', () => ({
   clearPendingGitHubSignInState: account.clearGitHub,
 }));
@@ -434,7 +437,8 @@ describe('Settings account actions', () => {
     await act(async () =>
       renderer.root.findByProps({ testID: 'sign-out-setting' }).props.onPress(),
     );
-    expect(account.clearSession).toHaveBeenCalledOnce();
+    expect(account.signOut).toHaveBeenCalledOnce();
+    expect(account.clearSession).not.toHaveBeenCalled();
     expect(account.clearIdentity).toHaveBeenCalledOnce();
     expect(account.clearGitHub).toHaveBeenCalledOnce();
     expect(account.clearSurface).toHaveBeenCalledOnce();

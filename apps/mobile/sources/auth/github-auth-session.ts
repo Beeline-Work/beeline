@@ -632,11 +632,16 @@ export async function loadPendingGitHubBindChallenge(
 export async function resumeInitialGitHubSignIn(
   getInitialUrl: () => Promise<string | null>,
   nowSeconds = Math.floor(Date.now() / 1_000),
+  options: { signedIn?: boolean } = {},
 ): Promise<OidcBindChallenge | null> {
   const callbackUrl = await getInitialUrl();
   if (!callbackUrl || !isCallbackFor(callbackUrl, githubSignInRedirectUri())) return null;
 
   const expectedState = (await readPendingSession())?.state;
+  // Android keeps the launching Intent across an OTA JavaScript reload. Once
+  // sign-in finished and cleared its pending state, that URL is history, not
+  // a new callback. A currently pending flow still gets every state check.
+  if (!expectedState && options.signedIn) return null;
   if (expectedState && recoverySignal(callbackUrl, expectedState)) {
     return awaitCompletedGitHubBindChallenge(expectedState);
   }

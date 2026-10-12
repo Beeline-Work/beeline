@@ -11,6 +11,8 @@ import { clearMobileSurfaceStorage } from '@/buzz/surface-storage';
  * FIRST, cache included, and only then signs in as the review identity. A
  * failed redemption leaves the device signed out rather than half-way between
  * two identities; the caller sends it to the ordinary sign-in screen.
+ * An already accepted link for this session is idempotent: Android may replay
+ * its original launch Intent when an OTA reloads JavaScript.
  *
  * Nothing here is reachable from a control: only the verified `/review/…` app
  * link routes into it, so no screen changes for anyone else.
@@ -19,7 +21,9 @@ export async function signInWithReviewSecret(
   secret: string,
   session: MonolithSession = monolithSession,
 ): Promise<string> {
-  await session.clear();
+  const alreadyAccepted = await session.reviewIdentityForSecret(secret);
+  if (alreadyAccepted) return alreadyAccepted;
+  await session.signOut();
   await Promise.all([clearBuzzIdentity(), clearPendingGitHubSignInState()]);
   clearMobileSurfaceStorage();
   return session.exchangeReviewSecret(secret);

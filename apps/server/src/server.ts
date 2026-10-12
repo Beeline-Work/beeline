@@ -1842,6 +1842,13 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     else json(response, 404, { error: 'not_found' });
     return;
   }
+  if (method === 'POST' && url.pathname === '/v1/auth/logout') {
+    const input = await body(request);
+    if (typeof input.refreshToken !== 'string') throw new Error('refreshToken is required');
+    await options.auth.revokePhoneSession(input.refreshToken);
+    json(response, 200, { signedOut: true });
+    return;
+  }
   if (method === 'POST' && url.pathname === '/v1/auth/refresh') {
     const input = await body(request);
     if (typeof input.refreshToken !== 'string') throw new Error('refreshToken is required');

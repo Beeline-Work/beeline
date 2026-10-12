@@ -3050,6 +3050,10 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     });
     return result;
   };
+  await dataStep('durable phone sessions', () =>
+    workflowBackfillOnce(database, 'durable-phone-sessions-v1', async db => {
+      await db.query("UPDATE phone_sessions SET expires_at='9999-12-31T23:59:59Z'");
+    }));
   await dataStep('one system thread', () =>
     workflowBackfillOnce(database, 'one-system-thread-v1', retireBotDirectMessages));
   await dataStep('browser observations', () =>

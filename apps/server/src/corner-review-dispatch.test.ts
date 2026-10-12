@@ -354,14 +354,20 @@ describe('corner message attribution', () => {
     )).rows[0]).toEqual({ workflow_state: 'review', review_handback_count: 0 });
   });
 
-  it('never re-wakes a reviewer that already ended a turn on the green head', async () => {
+  it('returns a completed review without PASS to the implementer without re-waking the reviewer on that head', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(28, 'c'.repeat(40));
     const [review] = await commands(B, C);
     await claim(review!);
     await result(review!, 'FAIL: demonstration is missing.');
-    for (let sweep = 1; sweep <= 3; sweep += 1)
+    expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(1);
+    const handback = await commands(A, C);
+    expect(handback.map(command => command.reason)).toEqual(['corner_review_needed']);
+    expect(handback[0]?.source.body).toContain('the review ended without a PASS on the current head');
+    expect(handback[0]?.source.body).toContain('report the blocker to its commander');
+    for (let sweep = 2; sweep <= 3; sweep += 1)
       expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
+    expect((await commands(A, C)).map(command => command.id)).toEqual(handback.map(command => command.id));
     expect(await commands(B, C)).toEqual([]);
     // A new head is a new review.
     await greenHead(28, 'd'.repeat(40));
@@ -390,7 +396,7 @@ describe('corner message attribution', () => {
     ]);
   });
 
-  it('posts a visible failure when reviewer command insertion cannot queue', async () => {
+  it('posts the failure and wakes the implementer when reviewer command insertion cannot queue', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(26, 'a'.repeat(40));
     await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, B]);
@@ -409,13 +415,16 @@ describe('corner message attribution', () => {
       await reconcileConfiguredCornerReviewers(db, R);
       expect(await commands(B, C)).toHaveLength(0);
       expect((await db.query<{ text: string }>(
-        `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%restore review dispatch%'`, [C],
+        `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%reviewer command could not be queued%'`, [C],
       )).rows.map((row) => row.text)).toEqual([
         expect.stringContaining('the reviewer command could not be queued on ' + 'a'.repeat(40)),
       ]);
       expect((await db.query<{ text: string }>(
         `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%review queue denied by trigger%'`, [C],
       )).rows).toHaveLength(1);
+      const handback = await commands(A, C);
+      expect(handback.map(command => command.reason)).toEqual(['corner_review_needed']);
+      expect(handback[0]?.source.body).toContain('review queue denied by trigger');
     } finally {
       await db.query(`DROP TRIGGER IF EXISTS refuse_review_command ON agent_commands; DROP FUNCTION IF EXISTS refuse_review_command();`);
     }
@@ -642,7 +651,7 @@ describe('corner message attribution', () => {
     expect(routed[0]!.agent_id).toBe(B);
   });
 
-  it('does not wake the author or consume green when the reviewer is not a parent member', async () => {
+  it('wakes the implementer without consuming green when the reviewer is not a parent member', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
       R,
@@ -672,7 +681,8 @@ describe('corner message attribution', () => {
         [C],
       )
     ).rows;
-    expect(routed).toEqual([]);
+    expect(routed).toEqual([{ agent_id: A, reason: 'corner_review_needed' }]);
+    expect((await commands(A, C))[0]?.source.body).toContain('the configured reviewer is unreachable');
     expect(
       (
         await db.query<{ command_check_state: string | null }>(
@@ -733,12 +743,12 @@ describe('corner message attribution', () => {
       });
       expect(
         (
-          await db.query<{ agent_id: string }>(
-            `SELECT agent_id FROM agent_commands WHERE room_id=$1`,
+          await db.query<{ agent_id: string; reason: string }>(
+            `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1`,
             [C],
           )
         ).rows,
-      ).toEqual([]);
+      ).toEqual([{ agent_id: A, reason: 'corner_review_needed' }]);
       expect(
         (
           await db.query<{ command_check_state: string | null }>(
@@ -761,6 +771,8 @@ describe('corner message attribution', () => {
         DROP FUNCTION IF EXISTS keep_reviewer_off_corner();
       `);
     }
+    await greenHead(10, '4'.repeat(40));
+    expect((await commands(B, C)).map(command => command.reason)).toEqual(['subscribed_event']);
   });
 });
 

@@ -122,7 +122,8 @@ async function recordComputerActivity(
     kind: 'computer-session-activity',
     payload: { sessionId: row.id, activity: name, ...(detail ? { detail } : {}) },
     presentation: 'activity',
-    wakes: name === 'input' || name === 'navigation' || name === 'handback' ? [row.agent_id] : [],
+    // Browser use supplies context for the next turn; only a sent message requests one.
+    wakes: [],
   }).catch((error: unknown) => console.warn('[computer-share] activity Room event failed', error));
   if (event.seq % 20 === 0) void database.query(
     `DELETE FROM computer_session_events WHERE session_id=$1 AND id <

@@ -142,7 +142,7 @@ Follow these steps in order. Do not skip or reorder them.
 
 Read the server-assigned brief and its current revision, including every required file. Quote the approval with its message ID and approver before considering the short objective. The spec's outline (user stories, acceptance criteria, non-goals, risks) is the scope, and the approval quote is the human's own words: it wins any conflict with the spec. The short objective is navigation-only text and the PR description cannot add, remove, or narrow scope. A revision with no recorded approval is reviewed against its spec alone. If a required file is unavailable, or the revision changes during review, refuse approval and describe what is missing. A requirement may become out of scope only through a new human-authorized brief revision; reviewer discretion, implementation difficulty, and silence never remove it. A passing narrow test does not prove a broader requirement. Review a deliberate human choice as written, even if it is unusual.
 
-Before general correctness, produce an outline ledger in spec order: list every \`## User stories\` and \`## Acceptance criteria\` line exactly once as met, unmet, unverified, or out of scope, followed by concrete evidence (for a criterion, the named test run against the PR head) - no stories to list is a FAIL, sent back to the author to write the outline; confirm nothing under \`## Non-goals\` was done; confirm every \`## Risks\` line was addressed or explicitly accepted with a stated reason. For a frontend change, open the rendered screens and compare them against the attached mock, noting every visible deviation. Any missing, unmet, unverified story or acceptance criterion, done non-goal, unaddressed risk, or unreviewed mock mismatch blocks PASS. Out of scope is valid only when the current revision itself records the human-authorized removal.
+Before general correctness, produce an outline ledger in spec order: list every \`## User stories\` and \`## Acceptance criteria\` line exactly once as met, unmet, unverified, or out of scope, followed by concrete evidence (for a criterion, the named test run against the PR head) - no stories to list is a FAIL, sent back to the author to write the outline; confirm nothing under \`## Non-goals\` was done; confirm every \`## Risks\` line was addressed or explicitly accepted with a stated reason. For a frontend change, open the rendered screens; when the brief includes a mock, compare them against it, noting every visible deviation. A mock is optional; its absence does not block PASS. Any missing, unmet, unverified story or acceptance criterion, done non-goal, unaddressed risk, or unreviewed mock mismatch blocks PASS. Out of scope is valid only when the current revision itself records the human-authorized removal.
 
 Before judging the implementation, independently repeat the two judgment legs from request triage:
 
@@ -246,7 +246,7 @@ Create an assignment a fresh session can execute without the parent transcript. 
   - \`## Acceptance criteria\`: the requester's own rules from \`## Intent\`, quoted verbatim and numbered, each naming the test (existing or to be written) that fails if the rule is broken anywhere. Criteria are the invariant; stories are examples of it. Write "None beyond the stories." when the request states no rule.
   - \`## Non-goals\`: explicit exclusions.
   - \`## Risks\`: what could go wrong, and for whom.
-  - \`## References\`: each reference or mock with what it is and whose call it is; the mock posted here (DESIGN.md, else existing app styles) is the reviewer's acceptance reference, not any other optional or agent-generated mock.
+  - \`## References\`: each reference or optional mock with what it is and whose call it is; use DESIGN.md or existing app styles when there is no mock.
   Add implementation guidance under further headings when it helps.
 - files (\`attachments\`): the Room files the worker needs, each with its purpose and whether it is required.
 - \`approval\`: one human Room message ID. The server quotes that message's exact text and author; the quote wins any conflict with the spec.
@@ -255,11 +255,11 @@ Do not infer approval from silence, assent to different prose, or the mere exist
 
 ## Compact path for a settled small fix
 
-Use this when the requested behavior, touched surface, exclusions, and proof are already obvious. Inspect the narrow current behavior, write a short spec (quoted intent, observable user stories, non-goals, risks, references), and use the initiating command as the approval. Always compose the full outline and post it to the Room before calling open_corner, even when the initiating command already settles scope and stands as the approval: posting is not optional merely because approval is inferred, since the human must be able to see what you are about to build. “Change the message action label from Remove to Delete; leave confirmation and accessibility wording unchanged” needs the visible-label user story and both exclusions, not another confirmation question.
+Use this when the requested behavior, touched surface, exclusions, and proof are already obvious. Inspect the narrow current behavior, write a short spec (quoted intent, observable user stories, non-goals, risks, references), and use the initiating command as the approval. Keep the outline in the brief; no separate post or approval is required. “Change the message action label from Remove to Delete; leave confirmation and accessibility wording unchanged” needs the visible-label user story and both exclusions, not another confirmation question.
 
 ## Complex-work planning loop
 
-Use this default-on loop when work crosses components, changes architecture or authorization, needs a visual choice, has multiple user stories, or still contains a material unknown.
+Use your judgment about how much planning work needs. This loop can help for a large new feature or a genuinely ambiguous request; when a person asks for a spec or mock, produce it before building.
 
 ### 1. Scope and current state
 
@@ -302,7 +302,7 @@ Use this default-on loop when work crosses components, changes architecture or a
 
 ## Dispatch and revision
 
-Existing authorization permits dispatch when the initiating command already settles the exact material scope; that command is the approval, but the outline is still posted to the Room first so the human can see it before open_corner runs. Drafting a brief does not create approval. When the scope was not already explicit, post the spec and ask the corner's opener to approve it, then use their reply as the \`approval\`. Honor an explicit request to review first.
+The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Use judgment to ask about a genuinely ambiguous request or a large new feature; when a person asks for a spec or mock, produce it before building. Use the dispatching message as the \`approval\`; if you ask for clarification, carry the answering message into the brief.
 
 Pass the brief as \`open_corner.brief\`. Read the current revision before revising and use \`revise_corner_brief\` with the complete replacement spec, the approving message, and a concise change description. Preserve unaffected intent quotes, user stories, and references. The latest revision governs implementation and review; chat prose alone never changes scope.
 `;
@@ -325,7 +325,7 @@ Run these checks before opening a corner.
 - Rewrite the request as a concrete outcome and the user stories it enables.
 - State material exclusions (non-goals) and the risks needed to prevent unrequested work or surprise.
 - Keep the corner objective complete and within 24 words.
-- First ask whether the request has any material ambiguity - one that would change scope, behavior, or risk - and resolve it with the human before doing anything else; never resolve it by adopting a teammate's plan, a prior document, or your own assumption.
+- Use judgment to ask about a genuinely ambiguous request or a large new feature. When a person asks for a spec or mock, produce it before building.
 - Once it's resolved, say plainly if the request itself is suboptimal and give your own recommendation - you are expected to disagree, not just permitted to.
 - On a judgment call you're still not sure of, tag a Room colleague for an adversarial second opinion and ask them to reply tagging you back; skip this only when you are the only agent in the Room.
 
@@ -345,7 +345,7 @@ Run these checks before opening a corner.
 
 ## Output
 
-When dispatching work, pass the complete brief to open_corner under existing authorization, after posting the outline as beeline-spec requires. Add applicable warnings to the brief:
+When dispatching work, pass the complete brief to open_corner with the dispatching message as approval; no separate outline post or human approval is required. Add applicable warnings to the brief:
 
 \`Triage warning — warranted: <evidence-backed reason>\`
 \`Triage warning — desirable: <evidence-backed reason>\`

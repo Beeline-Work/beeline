@@ -132,7 +132,7 @@ import {
   type ComposerAckPresentation,
 } from '@/buzz/room-indicators';
 import { formatTerminalTurnOverlay, type TurnVerb } from '@/buzz/turn-clock';
-import { TurnBandSlot, TurnSettledLine, WaitingForAgentLine } from '@/components/buzz/TurnProgressLine';
+import { TurnBandSlot, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { useCornerHeaderItem, useRoomCorners } from '@/buzz/use-room-corners';
 import { roomOpenCornerRows } from '@/buzz/room-corner-store';
 import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
@@ -3459,7 +3459,7 @@ export function BuzzChatSurface({
    * channel-local reply that is visibly streaming now.
    *
    * `pendingAck` bridges only the send round trip. After acceptance, the
-   * server's pending command projects a separate Waiting line until claim.
+   * unclaimed commands stay silent until the helper claims them.
    * Only a genuine server-indexed WORKING receipt says the agent is thinking.
    */
   const composerAck = useMemo((): ComposerAckPresentation | null => {
@@ -3494,20 +3494,6 @@ export function BuzzChatSurface({
     receivedSteer,
     viewerPubkey,
   ]);
-  const waitingAgents = useMemo(() => {
-    const currentTurns = new Set(roomSurface?.latestAgentTurns.map((turn) => turn.requestId) ?? []);
-    const byAgent = new Map<string, string>();
-    for (const command of roomSurface?.pendingAgentCommands ?? []) {
-      if (currentTurns.has(command.requestId) || byAgent.has(command.agentPubkey)) continue;
-      const handle = agentByPubkey.get(command.agentPubkey)?.handle ??
-        roomSurface?.members.find((member) => member.identity.pubkey === command.agentPubkey)?.identity.handle;
-      if (handle) byAgent.set(command.agentPubkey, handle);
-    }
-    return [...byAgent].map(([agentPubkey, handle]) => ({ agentPubkey, handle }));
-  }, [roomSurface?.pendingAgentCommands, roomSurface?.latestAgentTurns, roomSurface?.members, agentByPubkey]);
-  const shownComposerAck = composerAck && !waitingAgents.some(
-    (agent) => agent.agentPubkey === activeAgentTurn?.agentPubkey,
-  ) ? composerAck : null;
 
   // C97: the fixed chrome below the inverted list changes independently of
   // transcript rows. A send resets the composer's height while retaining the
@@ -6494,7 +6480,7 @@ export function BuzzChatSurface({
                     !isArchived && {
                       paddingTop: phoneTranscriptTailPadding({
                         turnChromeVisible: Boolean(composerAck || settledTurn),
-                      }) + Math.max(0, waitingAgents.length + (shownComposerAck ? 1 : 0) - 1) * TURN_LINE_BOX_HEIGHT,
+                      }),
                     },
                   ]}
                   maintainVisibleContentPosition={{
@@ -6671,18 +6657,15 @@ export function BuzzChatSurface({
                 Desktop keeps the slot inside inputBar. */}
                 {!desktopExperience && (
                   <TurnBandSlot testID="hanging-turn-chrome">
-                    {waitingAgents.map((agent) => (
-                      <WaitingForAgentLine key={agent.agentPubkey} handle={agent.handle} testID={`waiting-for-${agent.agentPubkey}`} />
-                    ))}
-                    {shownComposerAck ? (
+                    {composerAck ? (
                       <TurnProgressLine
-                        label={shownComposerAck.label}
-                        startedAt={shownComposerAck.startedAt}
-                        received={shownComposerAck.received}
+                        label={composerAck.label}
+                        startedAt={composerAck.startedAt}
+                        received={composerAck.received}
                         stopping={stoppingThisTurn}
                         onStop={
-                          shownComposerAck.stop
-                            ? () => void handleStopTurn(shownComposerAck.stop!)
+                          composerAck.stop
+                            ? () => void handleStopTurn(composerAck.stop!)
                             : undefined
                         }
                         testID="turn-progress-line"
@@ -6838,23 +6821,20 @@ export function BuzzChatSurface({
                         {desktopDeliveryState === 'sending' ? (
                           <Text style={styles.desktopStatusText}>SENDING…</Text>
                         ) : null}
-                        {waitingAgents.map((agent) => (
-                          <WaitingForAgentLine key={agent.agentPubkey} handle={agent.handle} testID={`waiting-for-${agent.agentPubkey}`} />
-                        ))}
-                        {shownComposerAck ? (
+                        {composerAck ? (
                           <TurnProgressLine
-                            label={shownComposerAck.label}
-                            startedAt={shownComposerAck.startedAt}
-                            received={shownComposerAck.received}
+                            label={composerAck.label}
+                            startedAt={composerAck.startedAt}
+                            received={composerAck.received}
                             stopping={stoppingThisTurn}
                             onStop={
-                              shownComposerAck.stop
-                                ? () => void handleStopTurn(shownComposerAck.stop!)
+                              composerAck.stop
+                                ? () => void handleStopTurn(composerAck.stop!)
                                 : undefined
                             }
                             testID="turn-progress-line"
                           />
-                        ) : desktopDeliveryState && desktopDeliveryState !== 'sending' && waitingAgents.length === 0 ? (
+                        ) : desktopDeliveryState && desktopDeliveryState !== 'sending' ? (
                           <Text
                             style={[
                               styles.desktopStatusText,

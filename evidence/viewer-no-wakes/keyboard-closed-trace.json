@@ -1,0 +1,31 @@
+{
+  "activity": [
+    {
+      "activity": {
+        "activity": "viewer-opened",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "activity": "takeover",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "pointer",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "pointer",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    }
+  ],
+  "commands": []
+}

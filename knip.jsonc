@@ -49,6 +49,8 @@
         "scripts/{ota-delivery-index,ota-release}.mjs",
         "scripts/{identity-axis-proof,identity-axis-proof-shims}.tsx",
         "scripts/emoji-clip-proof.tsx",
+        // The native status fixture is bundled through Gradle's entryFile override.
+        "scripts/status-band-native-entry.js",
         "scripts/workspace-picture-clip-proof.tsx",
         "scripts/workspace-picture-seat-proof.tsx",
         "scripts/workbench-keys-proof.tsx",

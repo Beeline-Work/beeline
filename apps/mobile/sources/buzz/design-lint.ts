@@ -36,7 +36,10 @@ export const DESIGN_ALLOWLIST: Readonly<Record<DesignRule, Readonly<Record<strin
     'app/_layout.tsx': 'Native splash and root background before the theme has loaded.',
     'components/AnimatedOverlay.tsx': 'The modal scrim is black at an opacity in both themes.',
   },
-  spacing: {},
+  spacing: {
+    'buzz/room-bottom-chrome.ts':
+      'The status canvas covers the remaining 9px of the existing 42px ink-and-air budget; this paint extent preserves the label position and seals scrolled text out of the band.',
+  },
   radius: {},
   shadow: {
     'components/buzz/HullDialog.tsx':

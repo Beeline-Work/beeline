@@ -58,7 +58,12 @@ export const TURN_LINE_BAR_MARGIN_BOTTOM =
 /** Complete thinking-line box, including the fixed air before the composer. */
 export const TURN_LINE_BOX_HEIGHT = TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM;
 
+/** Paint into the composer's existing top padding so separately rounded native
+ * surfaces overlap. This is paint coverage, not extra layout or label spacing. */
+export const TURN_CHROME_COMPOSER_OVERLAP = 8;
+
 export function roomBottomChromeStyles(hull: { bgTerminal: string; border: string }) {
+  const overlapTransform = [{ translateY: TURN_CHROME_COMPOSER_OVERLAP }];
   return {
     stack: {
       position: 'relative',
@@ -79,6 +84,16 @@ export function roomBottomChromeStyles(hull: { bgTerminal: string; border: strin
       right: 0,
       bottom: '100%',
       backgroundColor: hull.bgTerminal,
+    },
+    // The original 33px slot left 9px of the intended 42px band unpainted
+    // above the row. Scrolling text could occupy that air. Extend the canvas
+    // upward to own it, and downward into the composer to eliminate an
+    // independently rounded join. Padding + translation cancel below the
+    // row, preserving the ink's original position and the list's viewport.
+    turnChromeCoverage: {
+      paddingTop: TURN_LINE_BAR_MARGIN_BOTTOM,
+      paddingBottom: TURN_CHROME_COMPOSER_OVERLAP,
+      transform: overlapTransform,
     },
     composerRow: {
       paddingHorizontal: 16,

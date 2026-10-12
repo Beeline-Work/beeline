@@ -285,6 +285,7 @@ describe('open_corner arguments', () => {
       'Supply a compact brief for a precise small fix or a complete brief and Room files for complex work.',
     );
     expect(openCorner().description).toContain('after any material unresolved choice is settled');
+    expect(openCorner().description).toContain('The dispatching message authorizes work; no separate spec or mock approval is required.');
     expect(schema.properties.name?.description).toBe(
       "The corner's title: at most 3 words joined by hyphens, no whitespace.",
     );
@@ -310,6 +311,9 @@ describe('open_corner arguments', () => {
     ).toEqual(['cornerId', 'expectedRevision', 'change']);
     expect(revise.required).toEqual(['expectedRevision', 'spec', 'approval', 'change']);
     expect(CORNER_BRIEF_PROPERTIES.spec).toMatchObject({ minLength: 1, maxLength: 16_000 });
+    expect(CORNER_BRIEF_PROPERTIES.spec.description).toContain('include a mock when requested or useful');
+    expect(CORNER_BRIEF_PROPERTIES.approval.description).toContain('dispatching this work or authorizing its revision');
+    expect(CORNER_BRIEF_PROPERTIES.approval.description).toContain('separate spec approval is not required');
     expect(CORNER_BRIEF_PROPERTIES.approval).toMatchObject({
       required: ['sourceMessageId'],
       additionalProperties: false,

@@ -451,6 +451,7 @@ describe('Room turn phase trace', () => {
     await writeFile(
       join(cacheRoot, 'z-ai_glm-5.3-flash.json'),
       JSON.stringify({
+        policy: 'cache-sticky-v1',
         model: 'z-ai/glm-5.3-flash',
         fetchedAt: Date.now(),
         providers: ['venice', 'phala'],

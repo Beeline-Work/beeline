@@ -13,6 +13,7 @@ import {
   openRouterModelId,
   openRouterModelLimits,
   openRouterRoutingInput,
+  openRouterRoutingFor,
   parseOpenRouterEndpoints,
   piInputModalities,
   probeOpenRouterProviders,
@@ -154,7 +155,6 @@ describe('resolveOpenRouterRouting', () => {
     expect(decision.source).toBe('live');
     expect(decision.routing).toEqual({
       only: EXPECTED_PROVIDERS,
-      order: EXPECTED_PROVIDERS,
       allow_fallbacks: true,
       require_parameters: false,
     });
@@ -166,6 +166,7 @@ describe('resolveOpenRouterRouting', () => {
     expect(decision.limits).toEqual({ contextWindow: 1_048_576, maxTokens: 32_768 });
     const cached = JSON.parse(readFileSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.json'), 'utf8'));
     expect(cached).toEqual({
+      policy: 'cache-sticky-v1',
       model: MODEL,
       fetchedAt: 1_000_000,
       providers: EXPECTED_PROVIDERS,
@@ -270,7 +271,7 @@ describe('resolveOpenRouterRouting', () => {
     });
     expect(decision.providers).toEqual(['a', 'b']);
     expect(decision.line).toBe(
-      `[body] openrouter routing for ${MODEL}: a, b (uptime ≥95%, tools; bar lowered: fewer than 2 providers at 98%)`,
+      `[body] openrouter routing for ${MODEL}: a, b (uptime ≥95%, tools; bar lowered: reliability fallback or cache continuity)`,
     );
   });
 
@@ -610,6 +611,7 @@ async function seedUptimeCache(cacheDir: string, providers: string[]): Promise<v
   await writeFile(
     resolve(cacheDir, 'z-ai_glm-5.3-flash.json'),
     JSON.stringify({
+      policy: 'cache-sticky-v1',
       model: MODEL,
       fetchedAt: Date.now(),
       providers,
@@ -623,8 +625,8 @@ async function seedUptimeCache(cacheDir: string, providers: string[]): Promise<v
 /**
  * One chat completion per provider, recorded live on 2026-09-04: `text: ''` is
  * the C92 failure — a 200 OK carrying nothing, which OpenRouter counts as
- * uptime. `delayMs` is real elapsed time, so the latency ordering the pin
- * derives is measured here exactly as it is in production.
+ * uptime. `delayMs` is real elapsed time, proving that latency cannot
+ * reorder the next activation's candidates.
  */
 function probeFetchStub(
   providers: Record<string, { text: string; delayMs?: number; status?: number }>,
@@ -645,7 +647,7 @@ function probeFetchStub(
 }
 
 describe('the OpenRouter answer probe', () => {
-  it('drops a provider that returns an empty completion and orders the rest by latency', async () => {
+  it('drops an empty provider without promoting a faster provider over the candidate set', async () => {
     const cacheDir = await scratch();
     await seedUptimeCache(cacheDir, ['morph', 'venice', 'phala']);
     const { fetchImpl, asked } = probeFetchStub({
@@ -663,19 +665,18 @@ describe('the OpenRouter answer probe', () => {
     const probed = await decision.refresh;
 
     expect(asked.sort()).toEqual(['morph', 'phala', 'venice']);
-    expect(probed?.providers).toEqual(['phala', 'venice']);
+    expect(probed?.providers).toEqual(['venice', 'phala']);
     expect(probed?.routing).toEqual({
-      only: ['phala', 'venice'],
-      order: ['phala', 'venice'],
+      only: ['venice', 'phala'],
       allow_fallbacks: true,
       require_parameters: false,
     });
-    expect(probed?.line).toContain('answer-probed, fastest first');
+    expect(probed?.line).toContain('answer-probed, cache-sticky');
     expect(probed?.line).toContain('dropped morph (empty completion)');
     const cached = JSON.parse(
       readFileSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'), 'utf8'),
     ) as { answered: { provider: string }[] };
-    expect(cached.answered.map((entry) => entry.provider)).toEqual(['phala', 'venice']);
+    expect(cached.answered.map((entry) => entry.provider)).toEqual(['venice', 'phala']);
   });
 
   it('never blocks a turn on a cold probe cache: the uptime order is served now', async () => {
@@ -730,7 +731,7 @@ describe('the OpenRouter answer probe', () => {
 
     expect(asked).toEqual([]);
     expect(decision.refresh).toBeUndefined();
-    expect(decision.providers).toEqual(['phala', 'venice']);
+    expect(decision.providers).toEqual(['venice', 'phala']);
     expect(decision.line).toContain('answer-probed, cached');
   });
 
@@ -832,5 +833,91 @@ describe('the OpenRouter answer probe', () => {
       require_parameters: false,
     });
     expect(decision.line).toContain('pinned to one provider after an empty completion');
+  });
+});
+
+describe('OpenRouter cache continuity', () => {
+  const endpoint = (provider: string, uptime: number, pricing?: Record<string, unknown>) => ({
+    tag: provider,
+    uptime_last_30m: uptime,
+    context_length: 1000,
+    supported_parameters: ['tools'],
+    pricing,
+  });
+
+  it('leaves normal provider order unset so pi session IDs enable native stickiness', () => {
+    const routing = openRouterRoutingFor(['relace', 'wafer']);
+    expect(routing).toEqual({
+      only: ['relace', 'wafer'],
+      allow_fallbacks: true,
+      require_parameters: false,
+    });
+    // The empty-completion recovery override remains a strict named pin.
+    expect(openRouterRoutingFor(['relace'], false)).toEqual({
+      only: ['relace'], order: ['relace'], allow_fallbacks: false, require_parameters: false,
+    });
+  });
+
+  it('prefers a discounted cache provider at 96% over cache-cold providers at 100%', () => {
+    const parsed = parseOpenRouterEndpoints({ data: { endpoints: [
+      endpoint('cold', 100),
+      endpoint('equal-price', 100, { prompt: '0.1', input_cache_read: '0.1' }),
+      endpoint('warm', 96, { prompt: '0.1', input_cache_read: '0.01' }),
+      endpoint('down', 94, { prompt: '0.1', input_cache_read: '0.01' }),
+    ] } });
+    expect(selectReliableOpenRouterProviders(parsed.endpoints, 1000).providers).toEqual(['warm']);
+  });
+
+  it('accepts free cache reads but rejects absent, invalid, and undiscounted prices', () => {
+    const parsed = parseOpenRouterEndpoints({ data: { endpoints: [
+      endpoint('warm', 100, { prompt: '0.1', input_cache_read: '0' }),
+      ...[undefined, null, '', 'bad', '-1', 'Infinity', '0.2'].map((price, i) =>
+        endpoint(`invalid-${i}`, 100, { prompt: '0.1', input_cache_read: price })),
+    ] } });
+    expect(selectReliableOpenRouterProviders(parsed.endpoints, 1000).providers).toEqual(['warm']);
+  });
+
+  it('retains the reliability fallback for models with no published cache discounts', () => {
+    const parsed = parseOpenRouterEndpoints({ data: { endpoints: [
+      endpoint('a', 100), endpoint('b', 99),
+      endpoint('invalid', 90, { prompt: '0.1', input_cache_read: '0.01' }),
+    ] } });
+    expect(selectReliableOpenRouterProviders(parsed.endpoints, 1000).providers).toEqual(['a', 'b']);
+  });
+
+  it('keeps the probe candidate pool stable when uptime rankings change at refresh', async () => {
+    const cacheDir = await scratch();
+    const pricing = { prompt: '0.1', input_cache_read: '0.01' };
+    let clock = 0;
+    const now = () => clock;
+    await resolveOpenRouterRouting({ model: MODEL, cacheDir, now, fetchImpl: fetchStub({
+      data: { endpoints: [endpoint('warm', 100, pricing), endpoint('other', 99, pricing)] },
+    }) });
+    clock += OPENROUTER_ROUTING_CACHE_TTL_MS;
+    const refreshed = await resolveOpenRouterRouting({ model: MODEL, cacheDir, now,
+      fetchImpl: fetchStub({ data: { endpoints: [
+        endpoint('other', 100, pricing), endpoint('warm', 97, pricing),
+        endpoint('new', 100, pricing),
+      ] } }),
+    });
+    expect(refreshed.providers).toEqual(['warm', 'other', 'new']);
+    expect(refreshed.bar).toBe(95);
+    expect(refreshed.routing).not.toHaveProperty('order');
+  });
+
+  it('re-fetches a fresh pre-stickiness cache so cache-cold providers are not kept for 24h', async () => {
+    const cacheDir = await scratch();
+    await seedUptimeCache(cacheDir, ['cold', 'warm']);
+    const cachedPath = resolve(cacheDir, 'z-ai_glm-5.3-flash.json');
+    const old = JSON.parse(readFileSync(cachedPath, 'utf8'));
+    delete old.policy;
+    writeFileSync(cachedPath, JSON.stringify(old));
+    const fetchImpl = fetchStub({ data: { endpoints: [
+      endpoint('cold', 100), endpoint('warm', 100, { prompt: '0.1', input_cache_read: '0.01' }),
+    ] } });
+    const decision = await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl });
+    expect(decision.source).toBe('live');
+    expect(decision.providers).toEqual(['warm']);
+    expect(decision.routing).not.toHaveProperty('order');
   });
 });

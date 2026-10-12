@@ -770,13 +770,14 @@ describe('Room turn failure receipt', () => {
     await writeFile(
       join(cacheRoot, 'z-ai_glm-5.3-flash.json'),
       JSON.stringify({
+        policy: 'cache-sticky-v1',
         model: 'z-ai/glm-5.3-flash',
         fetchedAt: Date.now(),
         providers: ['venice', 'phala'],
         bar: 98,
         // A post-C87 cache entry always carries `input` (an array, or `null`
         // when the listing named none), and `limits` the same way; omitting
-        // either marks an older entry and forces one live re-ask
+        // either (or the cache policy) marks an older entry and forces one live re-ask
         // (`resolveUptimeRouting`), which this fully-cached, network-free
         // test must never trigger.
         input: null,
@@ -855,6 +856,7 @@ describe('Room turn failure receipt', () => {
       await writeFile(
         join(cacheRoot, `${file}.json`),
         JSON.stringify({
+          policy: 'cache-sticky-v1',
           model: MODEL,
           fetchedAt: Date.now(),
           providers: PROVIDERS,

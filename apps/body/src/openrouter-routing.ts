@@ -10,9 +10,13 @@
  *
  *   keep   uptime_last_30m >= 98 AND `tools` in supported_parameters AND
  *          context_length >= the model's advertised context
- *   order  uptime desc
+ *   prefer providers publishing discounted `pricing.input_cache_read`, even
+ *          at the relaxed uptime bar, over providers with no cache discount
  *   only   that set; when fewer than 2 qualify the bar drops to 95 (logged);
  *          when none qualify at all, #840's pair remains the last resort
+ *   order  OMITTED: pi sends its session id, and OpenRouter's native sticky
+ *          routing keeps its cache provider until failure. A manual order
+ *          disables that stickiness and retries the old head on every call.
  *   allow_fallbacks: true WITHIN the set, require_parameters: false (a
  *          provider may ignore a sampling knob it does not know; with `true`
  *          OpenRouter answers pi's full parameter set — stop, top_p, reasoning,
@@ -31,12 +35,12 @@
  * reaches the Room as a turn that says nothing. So the uptime/tools filter is
  * only the first pass: the survivors are then ASKED, one small tool-enabled
  * request each with `allow_fallbacks: false`, and only the ones that answer
- * with text are pinned, ordered by measured latency. That probe costs money
- * and time, so it is bounded (`OPENROUTER_PROBE_MAX_CANDIDATES`, run in
- * parallel with a short timeout), cached beside the uptime set
+ * with text are pinned. Latency is recorded but never reorders the pin. That
+ * probe costs money and time, so it is bounded
+ * (`OPENROUTER_PROBE_MAX_CANDIDATES`, run in parallel with a short timeout), cached beside the uptime set
  * (`<cacheDir>/<model>.probe.json`, its own TTL), and NEVER blocks a turn: a
- * cold probe cache returns the uptime order immediately and refreshes in the
- * background for the next activation.
+ * cold probe cache returns the cache-preferred set immediately and refreshes
+ * in the background for the next activation.
  *
  * The SAME listing also names the model's real input modalities
  * (`architecture.input_modalities`), and that fact has to be pinned beside the
@@ -76,6 +80,8 @@ export const OPENROUTER_PROBE_TIMEOUT_MS = 20_000;
 export const OPENROUTER_UPTIME_BAR = 98;
 export const OPENROUTER_UPTIME_BAR_RELAXED = 95;
 export const OPENROUTER_MIN_PROVIDERS = 2;
+/** Re-read old uptime-only selections once to learn their cache pricing. */
+const ROUTING_POLICY = 'cache-sticky-v1';
 /** Output ceiling pinned on an OpenRouter model; leaves the window to the input. */
 export const OPENROUTER_MAX_OUTPUT_TOKENS = 32_768;
 
@@ -84,7 +90,8 @@ export const OPENROUTER_FALLBACK_PROVIDERS = ['deepinfra', 'novita'] as const;
 
 export interface OpenRouterRouting {
   only: string[];
-  order: string[];
+  /** Only a failure recovery pin supplies an order; normal routing stays sticky. */
+  order?: string[];
   allow_fallbacks: boolean;
   require_parameters: boolean;
 }
@@ -97,6 +104,8 @@ export interface OpenRouterEndpoint {
   /** The endpoint's own output ceiling; 0 when the listing names none. */
   maxCompletionTokens: number;
   tools: boolean;
+  /** Published cache reads cost less than ordinary prompt tokens. */
+  discountedCacheRead?: boolean;
 }
 
 /** The window and output ceiling pinned on the model (`modelOverrides`). */
@@ -140,6 +149,7 @@ export interface OpenRouterRoutingDecision {
 }
 
 interface CachedRouting {
+  policy?: string;
   model: string;
   fetchedAt: number;
   providers: string[];
@@ -172,7 +182,7 @@ export interface OpenRouterProbeResult {
 interface CachedProbe {
   model: string;
   fetchedAt: number;
-  /** Only the providers that answered, ordered by measured latency. */
+  /** Only the providers that answered; latency is diagnostic, never routing priority. */
   answered: { provider: string; latencyMs: number }[];
 }
 
@@ -197,9 +207,8 @@ export function openRouterModelId(
 }
 
 /**
- * Reduce the public endpoints payload to the facts the pin needs: the four
- * per-endpoint reliability facts, plus the model's advertised input
- * modalities (`undefined` when the listing does not name them).
+ * Reduce the public endpoints payload to the per-endpoint reliability and
+ * cache-pricing facts, plus the model's advertised input modalities (`undefined` when the listing does not name them).
  */
 export function parseOpenRouterEndpoints(payload: unknown): {
   endpoints: OpenRouterEndpoint[];
@@ -223,12 +232,19 @@ export function parseOpenRouterEndpoints(payload: unknown): {
     const supported = Array.isArray(endpoint.supported_parameters)
       ? endpoint.supported_parameters
       : [];
+    const pricing = endpoint.pricing && typeof endpoint.pricing === 'object'
+      ? endpoint.pricing as Record<string, unknown>
+      : {};
+    const promptPrice = tokenPrice(pricing.prompt);
+    const cacheReadPrice = tokenPrice(pricing.input_cache_read);
     endpoints.push({
       provider,
       uptime,
       contextLength,
       maxCompletionTokens,
       tools: supported.includes('tools'),
+      discountedCacheRead:
+        promptPrice !== undefined && cacheReadPrice !== undefined && cacheReadPrice < promptPrice,
     });
   }
   const architecture =
@@ -248,6 +264,13 @@ export function parseOpenRouterEndpoints(payload: unknown): {
         : advertisedContextLength(endpoints),
     inputModalities: modalities?.length ? modalities : undefined,
   };
+}
+
+/** Missing/blank prices must not become zero through Number(null) or Number(''). */
+function tokenPrice(value: unknown): number | undefined {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return undefined;
+  const price = Number(value);
+  return Number.isFinite(price) && price >= 0 ? price : undefined;
 }
 
 /**
@@ -296,16 +319,29 @@ export function selectReliableOpenRouterProviders(
     (endpoint) =>
       endpoint.tools && (contextLength === undefined || endpoint.contextLength >= contextLength),
   );
+  // A cache-capable provider at the relaxed bar is preferable to a cold one
+  // at 100%. When none publish a usable discount, retain the uptime ladder
+  // so models without caching remain usable.
+  const caching = eligible.filter(
+    (endpoint) => endpoint.discountedCacheRead && endpoint.uptime >= OPENROUTER_UPTIME_BAR_RELAXED,
+  );
+  const candidates = caching.length ? caching : eligible;
   const atBar = (bar: number): string[] => {
     const seen = new Set<string>();
-    return eligible
+    return candidates
       .filter((endpoint) => endpoint.uptime >= bar)
       .sort((left, right) => right.uptime - left.uptime)
       .map((endpoint) => endpoint.provider)
       .filter((provider) => (seen.has(provider) ? false : (seen.add(provider), true)));
   };
   const strict = atBar(OPENROUTER_UPTIME_BAR);
-  if (strict.length >= OPENROUTER_MIN_PROVIDERS) {
+  // Keep a cache-capable endpoint through a small uptime dip even if two
+  // alternatives clear the strict bar. Dropping it would evict a warm sticky
+  // session; OpenRouter can handle its actual request failures itself.
+  if (
+    strict.length >= OPENROUTER_MIN_PROVIDERS &&
+    (caching.length === 0 || caching.every((endpoint) => endpoint.uptime >= OPENROUTER_UPTIME_BAR))
+  ) {
     return { providers: strict, bar: OPENROUTER_UPTIME_BAR, contextLength };
   }
   const relaxed = atBar(OPENROUTER_UPTIME_BAR_RELAXED);
@@ -347,7 +383,11 @@ export function openRouterRoutingFor(
 ): OpenRouterRouting {
   return {
     only: [...providers],
-    order: [...providers],
+    // provider.order disables OpenRouter's session stickiness. Pi already
+    // sends its session id; OpenRouter keeps the successful cache provider
+    // and falls back on failure, within `only`, without bouncing to the old
+    // first choice on every request. A recovery override remains explicit.
+    ...(allowFallbacks ? {} : { order: [...providers] }),
     allow_fallbacks: allowFallbacks,
     require_parameters: false,
   };
@@ -384,6 +424,7 @@ async function readCache(cacheDir: string, model: string): Promise<CachedRouting
         : undefined;
     const limits = cached.limits === null ? null : cachedLimits(cached.limits);
     return {
+      policy: typeof cached.policy === 'string' ? cached.policy : undefined,
       model,
       fetchedAt: cached.fetchedAt,
       providers: cached.providers,
@@ -536,8 +577,8 @@ export async function probeOpenRouterProvider(input: {
 
 /**
  * Ask the uptime survivors, in parallel and bounded, and keep only the ones
- * that answered — fastest first. Order is the measured latency, so the pin's
- * head is the provider that actually replies soonest.
+ * that answered. Measured latency is diagnostic only: it must not replace a
+ * warm provider on the next activation.
  */
 export async function probeOpenRouterProviders(input: {
   model: string;
@@ -578,7 +619,7 @@ function decision(
 ): OpenRouterRoutingDecision {
   const criteria = bar === null ? 'fallback pair' : `uptime ≥${bar}%, tools`;
   const suffix = [
-    bar === OPENROUTER_UPTIME_BAR_RELAXED ? 'bar lowered: fewer than 2 providers at 98%' : '',
+    bar === OPENROUTER_UPTIME_BAR_RELAXED ? 'bar lowered: reliability fallback or cache continuity' : '',
     source === 'cache' ? 'cached' : '',
     source === 'stale-cache' ? 'stale cache' : '',
     note ?? '',
@@ -637,8 +678,9 @@ async function resolveUptimeRouting(
   const cached = await readCache(input.cacheDir, input.model);
   // A pre-C87 cache entry has no modality field at all; re-ask once rather
   // than pin a model whose vision capability we never established. An entry
-  // without limits is re-asked the same way.
+  // without limits or the cache-selection policy is re-asked the same way.
   if (
+    cached?.policy === ROUTING_POLICY &&
     cached?.input !== undefined &&
     cached.limits !== undefined &&
     now() - cached.fetchedAt < OPENROUTER_ROUTING_CACHE_TTL_MS
@@ -680,8 +722,19 @@ async function resolveUptimeRouting(
         modelInput,
       );
     }
+    // Keep the probe's bounded candidate pool stable across harmless uptime
+    // fluctuations. A still-eligible provider should not lose its warm cache
+    // merely because another provider now reports 100% rather than 99%.
+    if (cached?.policy === ROUTING_POLICY) {
+      const retained = cached.providers.filter((provider) => selected.providers.includes(provider));
+      selected.providers = [
+        ...retained,
+        ...selected.providers.filter((provider) => !retained.includes(provider)),
+      ];
+    }
     const limits = openRouterModelLimits(endpoints, selected.providers);
     await writeCache(input.cacheDir, {
+      policy: ROUTING_POLICY,
       model: input.model,
       fetchedAt: now(),
       providers: selected.providers,
@@ -732,9 +785,7 @@ const inFlightProbes = new Map<string, Promise<OpenRouterRoutingDecision | undef
 
 /** The probed set, restricted to providers the current uptime pass still keeps. */
 function answeringProviders(probe: CachedProbe, candidates: readonly string[]): string[] {
-  return probe.answered
-    .map((entry) => entry.provider)
-    .filter((provider) => candidates.includes(provider));
+  return candidates.filter((provider) => probe.answered.some((entry) => entry.provider === provider));
 }
 
 async function refreshAnswerProbe(
@@ -754,12 +805,11 @@ async function refreshAnswerProbe(
   });
   const answered = results
     .filter((result) => result.answered)
-    .sort((left, right) => left.latencyMs - right.latencyMs)
     .map((result) => ({ provider: result.provider, latencyMs: result.latencyMs }));
   const silent = results.filter((result) => !result.answered);
   if (answered.length === 0) {
     // Nobody answered: that is a fact about this moment, not about the set.
-    // Do not cache it — the uptime order stays in force and the next
+    // Do not cache it — the candidate set stays in force and the next
     // activation asks again.
     return undefined;
   }
@@ -776,7 +826,7 @@ async function refreshAnswerProbe(
     answered.map((entry) => entry.provider),
     base.bar,
     base.source,
-    `answer-probed, fastest first; ${dropped}`,
+    `answer-probed, cache-sticky; ${dropped}`,
     true,
     base.input,
     base.limits,
@@ -827,7 +877,7 @@ export async function resolveOpenRouterRouting(
       );
     }
   }
-  // Cold or unusable probe cache: the turn starts NOW on the uptime order and
+  // Cold or unusable probe cache: the turn starts NOW on the cache-preferred set and
   // the probe lands for the next activation.
   const key = `${input.cacheDir}\u0000${input.model}`;
   let refresh = inFlightProbes.get(key);

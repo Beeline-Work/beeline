@@ -426,6 +426,40 @@ describe('PhoneService Needs-you tray', () => {
     await phone.execute('decideAgentGrant', { grantId: GRANT, decision: 'once' }, VIEWER);
     expect(await count()).toBe(0);
   });
+  it.each(['once', 'deny'] as const)('the projected grant action %s decides the exact first grant', async decision => {
+    const grantId = '99999999-9999-4999-8999-999999999999';
+    await database.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+      VALUES($1,$2,$3,'command','npm test','Run checks',$4,$5,'pending')`, [grantId, AGENT, WORKSPACE, VIEWER, ROOM]);
+    await card(ROOM, 'grant-request', { agent: hoots, grants: [{ grantId, kind: 'command', target: 'npm test', reason: 'Run checks' }] });
+    const [item] = (await read()).items;
+    const action = item!.approval!.actions!.find(action => action.kind === 'grant' && action.decision === decision)!;
+    expect(action.kind).toBe('grant');
+    if (action.kind !== 'grant') throw new Error('missing action');
+    await expect(phone.execute('decideAgentGrant', { grantId: action.grantId, decision: action.decision }, PEER)).rejects.toThrow("Only the agent's owner can change this");
+    await phone.execute('decideAgentGrant', { grantId: action.grantId, decision: action.decision }, VIEWER);
+    expect((await read()).items).toHaveLength(0);
+    expect((await database.query('SELECT status FROM agent_grants WHERE id=$1', [grantId])).rows)
+      .toEqual([{ status: decision === 'once' ? 'once' : 'denied' }]);
+  });
+
+  it('keeps a complete bound script visible and omits Once for standing-only grants', async () => {
+    const commandId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const sharedId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const script = { path: 'checks.py', sha256: 'a'.repeat(64), bytes: 14, contents: 'print("check")' };
+    for (const [id, kind, target] of [[commandId, 'command', 'python3 checks.py'], [sharedId, 'shared_asset', 'codex-plugin-cache']]) {
+      await database.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+        VALUES($1,$2,$3,$4,$5,'Run safely',$6,$7,'pending')`, [id, AGENT, WORKSPACE, kind, target, VIEWER, ROOM]);
+      await card(ROOM, 'grant-request', { agent: hoots, grants: [{ grantId: id, kind, target, ...(kind === 'command' ? { script } : {}) }] });
+    }
+    const items = (await read()).items;
+    expect(items.find(item => item.approval?.subject === 'python3 checks.py')?.approval?.script).toEqual(script);
+    expect(items.find(item => item.approval?.subject === 'codex-plugin-cache')?.approval?.actions)
+      .toEqual([
+        { kind: 'grant', label: 'Always allow', grantId: sharedId, decision: 'always' },
+        { kind: 'grant', label: 'Deny', grantId: sharedId, decision: 'deny' },
+      ]);
+  });
+
   async function card(
     roomId: string,
     cardType: string,
@@ -471,6 +505,10 @@ describe('PhoneService Needs-you tray', () => {
         ask: 'asks for write access to',
         subject: 'owner/beeline',
         literal: true,
+        actions: [
+          { kind: 'write-access', label: 'Approve', permissionId: 'write-1', requestId: 'request-1', agentId: AGENT, repository: 'owner/beeline', decision: 'allow' },
+          { kind: 'write-access', label: 'Deny', permissionId: 'write-1', requestId: 'request-1', agentId: AGENT, repository: 'owner/beeline', decision: 'deny' },
+        ],
       },
     ]);
     expect(await approvals(PEER)).toEqual([]);
@@ -486,7 +524,7 @@ describe('PhoneService Needs-you tray', () => {
       status: 'open',
       agent: hoots,
       prompt: 'Ship the OTA tonight?',
-      options: [{ label: 'Ship now' }, { label: 'Wait for the voice fix' }],
+      options: [{ optionId: 'A', label: 'Ship now', consequence: 'Release tonight' }, { optionId: 'B', label: 'Wait for the voice fix', consequence: 'Release after the fix' }],
       mentionIds: [VIEWER],
     });
     await database.query(
@@ -505,6 +543,11 @@ describe('PhoneService Needs-you tray', () => {
         ask: 'asks you to choose',
         subject: 'Ship the OTA tonight?',
         detail: 'Ship now · Wait for the voice fix',
+        actions: [
+          { kind: 'choice', choiceId: '66666666-6666-4666-8666-666666666666', optionId: 'A', label: 'Ship now', detail: 'Release tonight' },
+          { kind: 'choice', choiceId: '66666666-6666-4666-8666-666666666666', optionId: 'B', label: 'Wait for the voice fix', detail: 'Release after the fix' },
+          { kind: 'skip-choice', choiceId: '66666666-6666-4666-8666-666666666666', label: 'Skip' },
+        ],
       },
     });
     // Addressed to the reader only.
@@ -587,6 +630,7 @@ describe('PhoneService Needs-you tray', () => {
         subject: 'Reveal GROQ_API_KEY',
         literal: true,
         detail: 'Write it into the push gateway secret.',
+        actions: [{ kind: 'external', label: 'Use passkey', url: 'https://squire.example/approve/1' }],
       },
     ]);
     await card(CORNER, 'squire-approval-decision', {

@@ -17,6 +17,7 @@ const workspaceSet = vi.hoisted(() => ({
   active: null as string | null,
   workspaces: [] as { id: string }[],
 }));
+const openExternal = vi.hoisted(() => vi.fn(async () => undefined));
 const phoneOperation = vi.hoisted(() => vi.fn());
 const liveRegistrations = vi.hoisted(() => new Set<(event: unknown) => void>());
 const roomRead = vi.hoisted(() => vi.fn());
@@ -113,6 +114,12 @@ vi.mock('@/buzz/surface-storage', () => ({
     remove: vi.fn(async () => undefined),
   },
 }));
+vi.mock('@/utils/open-external-url', () => ({ openExternalUrl: openExternal }));
+vi.mock('@/components/buzz/MonoHull', async () => {
+  const ReactModule = await import('react');
+  return { PixelLoader: (props: any) => ReactModule.createElement('PixelLoader', props) };
+});
+vi.mock('expo-haptics', () => ({ impactAsync: vi.fn(), ImpactFeedbackStyle: { Light: 'light' } }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/sync/transport/live-connection', () => ({
   sharedLiveConnection: () => ({
@@ -303,6 +310,7 @@ beforeEach(() => {
   workspaceSet.active = null;
   workspaceSet.workspaces = [];
   phoneOperation.mockReset();
+  openExternal.mockClear();
   roomRead.mockReset();
   prefetchRoom.mockReset();
   serve({ bookmarks: [bookmark()] });
@@ -1636,3 +1644,56 @@ it.skipIf(!existsSync(CHROME) || process.env.BEELINE_TRAY_FRAMES !== '1')(
   },
   90_000,
 );
+
+
+describe('inline approval decisions in the tray', () => {
+  const approvalItem = (actions: unknown[], extra = {}) => need({ messageId: 'inline-1', roomId: 'system-dm', roomKind: 'direct', roomName: 'System',
+    approval: { kind: 'grant', actor: 'Hoots', ask: 'asks to run', subject: 'npm test', literal: true, actions, ...extra } });
+  const clickAction = async (tree: ReactTestRenderer, index = 0) => {
+    await act(async () => { await tree.root.findByProps({ testID: `needs-you-action-inline-1-${index}` }).props.onPress({ stopPropagation() {} }); });
+  };
+
+  it.each([
+    { action: { kind: 'grant', label: 'Approve once', grantId: 'grant-1', decision: 'once' }, operation: 'decideAgentGrant', input: { grantId: 'grant-1', decision: 'once' } },
+    { action: { kind: 'grant', label: 'Deny', grantId: 'grant-1', decision: 'deny' }, operation: 'decideAgentGrant', input: { grantId: 'grant-1', decision: 'deny' } },
+    { action: { kind: 'write-access', label: 'Approve', permissionId: 'p1', requestId: 'r1', agentId: 'a1', repository: 'owner/repo', decision: 'allow' }, operation: 'decideWritePermission', input: { roomId: 'system-dm', permissionId: 'p1', requestId: 'r1', agentId: 'a1', repository: 'owner/repo', decision: 'allow' } },
+    { action: { kind: 'write-access', label: 'Deny', permissionId: 'p1', requestId: 'r1', agentId: 'a1', repository: 'owner/repo', decision: 'deny' }, operation: 'decideWritePermission', input: { roomId: 'system-dm', permissionId: 'p1', requestId: 'r1', agentId: 'a1', repository: 'owner/repo', decision: 'deny' } },
+    { action: { kind: 'choice', label: 'Ship', choiceId: 'c1', optionId: 'A' }, operation: 'answerChoice', input: { choiceId: 'c1', optionId: 'A' } },
+    { action: { kind: 'skip-choice', label: 'Skip', choiceId: 'c1' }, operation: 'skipChoice', input: { choiceId: 'c1' } },
+  ])('sends $operation directly without navigation or dismissal', async ({ action, operation, input }) => {
+    layout.os = 'ios'; layout.width = 390;
+    let needs = [approvalItem([action])];
+    phoneOperation.mockImplementation(async (name: string) => {
+      if (name === 'readTray') return { needs: { items: needs }, saved: { bookmarks: [] } };
+      if (name === 'readNeedsYou') return { items: needs };
+      if (name === operation) needs = [];
+    });
+    const tree = await renderTray();
+    await clickAction(tree);
+    expect(phoneOperation).toHaveBeenCalledWith(operation, input);
+    expect(phoneOperation).not.toHaveBeenCalledWith('clearNeedsYou', expect.anything());
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(tree.root.findAllByProps({ testID: 'needs-you-inline-1' })).toHaveLength(0);
+  });
+
+  it('opens the Squire ceremony directly and leaves the item pending', async () => {
+    const url = 'https://trustysquire.ai/vault/pay/pending';
+    serve({ needs: [approvalItem([{ kind: 'external', label: 'Review approval', url }], { kind: 'squire' })] });
+    const tree = await renderTray();
+    phoneOperation.mockClear();
+    await clickAction(tree);
+    expect(openExternal).toHaveBeenCalledWith(url);
+    expect(phoneOperation).not.toHaveBeenCalled();
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(tree.root.findAllByProps({ testID: 'needs-you-inline-1' }).length).toBeGreaterThan(0);
+  });
+
+  it('keeps a refused decision in the tray and explains the refusal', async () => {
+    serve({ needs: [approvalItem([{ kind: 'grant', label: 'Deny', grantId: 'grant-1', decision: 'deny' }])] });
+    const tree = await renderTray();
+    phoneOperation.mockImplementation(async () => { throw new Error('grant decision conflict: already decided'); });
+    await clickAction(tree);
+    expect(textOf(tree)).toContain('grant decision conflict: already decided');
+    expect(tree.root.findAllByProps({ testID: 'needs-you-inline-1' }).length).toBeGreaterThan(0);
+  });
+});

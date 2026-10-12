@@ -1941,6 +1941,7 @@ export class MonolithRoomTurnLoop {
         void finishTrace('cancelled').catch(() => undefined);
         return;
       }
+      if (error instanceof AcpTurnBackstopError) await this.discardSession();
       // A backstop after opening a corner settles the Room reply through
       // the existing corner card. Runtime and provider errors still fail.
       if (liveCornerOpened && error instanceof AcpTurnBackstopError) {

@@ -21,7 +21,7 @@ describe('distillTurnFailureReason', () => {
     expect(reason.text).toContain(cause);
     const card = phraseTurnSilence('Bee', classifyTurnSilence(reason.text, reason.kind));
     expect(card.consequence).toContain(cause);
-    if (cause === 'turn_backstop') expect(card.consequence).toContain('30 minutes; last activity: plan');
+    if (cause === 'turn_backstop') expect(card.consequence).toContain('45 minutes; last activity: plan');
   });
   it('keeps one line of the harness error and drops the stack', () => {
     const error = new Error('ACP error -32000: provider error 429 concurrency_limit');

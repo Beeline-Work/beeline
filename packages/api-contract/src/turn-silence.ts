@@ -222,8 +222,13 @@ function repoFromReason(text: string): string {
   return firstMatch(text, REPO_FROM_URL) ?? firstMatch(text, REPO_FROM_SLUG) ?? 'the repository';
 }
 
-export function shouldRestartHiccup(kind: TurnSilenceKind, nextAttempt: number): boolean {
-  return kind === 'hiccup' && nextAttempt > 0 && nextAttempt < HICCUP_ATTEMPT_LIMIT;
+/** A hung harness gets one fresh attempt; ordinary transient faults keep their budget. */
+export function hiccupAttemptLimit(fault?: string): number {
+  return fault?.startsWith('turn_backstop:') ? 2 : HICCUP_ATTEMPT_LIMIT;
+}
+
+export function shouldRestartHiccup(kind: TurnSilenceKind, nextAttempt: number, fault?: string): boolean {
+  return kind === 'hiccup' && nextAttempt > 0 && nextAttempt < hiccupAttemptLimit(fault);
 }
 
 /**
@@ -361,7 +366,9 @@ export function phraseTurnSilence(
     case 'hiccup': {
       const fault = (classified.fault ?? 'the turn stalled').replace(/\s+/g, ' ').trim();
       const remedy = options.givingUp
-        ? 'Stopped retrying after three tries.'
+        ? (hiccupAttemptLimit(classified.fault) === 2
+          ? 'Stopped retrying after two tries.'
+          : 'Stopped retrying after three tries.')
         : options.restarting === false
           ? undefined
           : 'Resending your message.';

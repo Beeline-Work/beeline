@@ -6,7 +6,7 @@ import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient, AcpTurnBackstopError, type ToolCallEntry } from './acp.js';
 import type { BodyConfig } from './config.js';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import type { DaemonApiClient, InboxItem } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop, ROOM_PROMPT_BACKSTOP_MS } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
@@ -22,6 +22,7 @@ const HUMAN = '22'.repeat(32);
 async function runTurn(options: {
   agentCommand: string;
   agentKind: string;
+  conversationItems?: InboxItem[];
   turnCount?: number;
   activity?: boolean;
   /** Applied over the default config: an OpenRouter pin needs a key and a cache. */
@@ -35,6 +36,7 @@ async function runTurn(options: {
   beforeRun?: (paths: { agentHomeRoot: string; operatorHome: string }) => Promise<void>;
   prompt: (input: {
     agentHomeRoot: string;
+    text: string;
     attempt: number;
     /** The ACP delta hook, so a test can stream a draft before it fails. */
     onChunk: (delta: string, full: string, currentRun?: string) => void;
@@ -128,7 +130,7 @@ async function runTurn(options: {
       }
       return { items: [], cursor: 'latest' };
     }
-    if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+    if (name === 'getRoomConversation') return { items: options.conversationItems ?? [], cursor: 'latest' };
     if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
     return { id: 'write-id', createdAt: 1 };
   };
@@ -173,6 +175,7 @@ async function runTurn(options: {
       promptTimeouts.push(timeoutMs);
       return options.prompt({
         agentHomeRoot,
+        text: typeof _prompt === 'string' ? _prompt : JSON.stringify(_prompt),
         attempt: attempts,
         onChunk: (delta, full, currentRun) => onChunk?.(delta, full, currentRun),
         onToolCalls: (calls) => onToolCalls?.(calls),
@@ -1158,4 +1161,21 @@ describe('Room turn failure receipt', () => {
   expect(outcome.receipts.filter((receipt) => receipt.status !== 'working')).toEqual([
     expect.objectContaining({ status: 'complete' }),
   ]);
+});
+
+it('passes quiet browser open/close context on the next requested turn', async () => {
+  await runTurn({
+    agentCommand: 'codex-acp', agentKind: 'codex',
+    conversationItems: ['viewer-opened','viewer-closed'].map((activity,index) => ({
+      id: `view-${index}`,authorId: 'system-id',createdAt: 1,type: 'activity',attachments: [],
+      body: `@dani ${index ? 'closed' : 'opened'} the shared browser view`,
+      systemEvent: { kind: 'computer-session-activity',subject: {kind:'person',name:'@dani'},
+        verb:index ? 'closed' : 'opened',payload: {sessionId:'share',activity}},
+    })),
+    prompt: async ({text}) => {
+      expect(text).toContain('@dani opened the shared browser view');
+      expect(text).toContain('@dani closed the shared browser view');
+      return {stopReason:'end_turn',updates:[],agentText:'Ready.',toolCalls:[]};
+    },
+  });
 });

@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import WebSocket from 'ws';
+import { HELPER_UPDATE_CLOSE_CODE, HELPER_UPDATE_CLOSE_REASON } from '@beeline/api-contract/daemon';
 import { isNetworkFailure } from './network-failure.js';
 
 export { isNetworkFailure };
@@ -124,13 +125,14 @@ export class LiveLink {
     if (!this.#socket && !this.#reconnect) this.#connect();
   }
 
-  stop(): void {
+  stop(forUpdate = false): void {
     this.#wanted = false;
     this.#clearTimers();
     const socket = this.#socket;
     this.#socket = undefined;
     if (this.#state !== 'update-required') this.#state = 'disconnected';
-    socket?.close();
+    socket?.close(forUpdate ? HELPER_UPDATE_CLOSE_CODE : undefined,
+      forUpdate ? HELPER_UPDATE_CLOSE_REASON : undefined);
   }
 
   send(data: string): boolean {
@@ -174,7 +176,7 @@ export class LiveLink {
     this.#clearTimers();
     const socket = this.#socket;
     this.#socket = undefined;
-    socket?.close();
+    socket?.close(HELPER_UPDATE_CLOSE_CODE, HELPER_UPDATE_CLOSE_REASON);
   }
 
   #clearTimers(): void {

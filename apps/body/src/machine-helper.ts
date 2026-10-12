@@ -241,6 +241,8 @@ export async function runMachineHelper(
   const restartHelper = (reason: HelperExitReason) => {
     if (restarting) return;
     restarting = reason;
+    // Close the machine socket before agent teardown can unregister the last agent.
+    if (reason === 'update') for (const link of links.values()) link.stop(true);
     lifecycle.stop(reason);
   };
 

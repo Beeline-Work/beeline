@@ -105,7 +105,7 @@ async function recordComputerActivity(
     'viewer-closed': { verb: 'closed', object: 'the shared browser view' },
     takeover: { verb: 'took', object: 'control of the shared browser' },
     input: { verb: 'used', object: `the shared browser ${detail ?? 'input'}` },
-    navigation: { verb: 'navigated', object: 'the shared browser' },
+    navigation: { verb: 'navigated', object: `the shared browser${detail ? ` to ${detail}` : ''}` },
     handback: { verb: 'returned', object: 'control of the shared browser' },
   };
   const viewer = viewerId ? (await database.query<{ name: string; handle: string | null }>(
@@ -389,7 +389,13 @@ export async function serveComputerSession(
       const beelineScreen=document.getElementById('screen'),beelineCanvas=document.getElementById('canvas');
       const beelineQuery=new URLSearchParams(location.search),beelinePreview=beelineQuery.has('preview');
       if(beelineQuery.has('embedded'))document.body.classList.add('beeline-embedded');
-      if(beelinePreview)document.getElementById('bar').style.display='none';
+      if(beelinePreview||beelineQuery.has('warm'))document.getElementById('bar').style.display='none';
+      let beelineInteractive=!beelineQuery.has('warm');
+      function beelineMode(){if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:'viewer-mode',interactive:beelineInteractive}));
+        if(!beelinePreview)document.getElementById('bar').style.display=beelineInteractive?'':'none';}
+      addEventListener('message',event=>{if(event.data?.type!=='viewer-mode'||event.data.id!=='${id}'||!beelineQuery.has('warm'))return;
+        beelineInteractive=Boolean(event.data.interactive);beelineMode();});
+      if(beelineQuery.has('warm'))socket.addEventListener('open',beelineMode);
       let beelineZoom=1,beelineLeft=0,beelineTop=0,beelineFitted=false;
       addEventListener('message',event=>{if(event.data?.type!=='viewer-snapshot-request'||event.data.id!=='${id}')return;
         let image=null;try{if(beelineCanvas.width>1&&beelineCanvas.height>1)
@@ -437,8 +443,8 @@ export async function serveComputerSession(
       const beelineContext=beelineCanvas?.getContext('2d');
       if(beelineContext){const draw=beelineContext.drawImage.bind(beelineContext);
         beelineContext.drawImage=(...args)=>{draw(...args);if(beelineFirstFrame)return;beelineFirstFrame=true;
-          requestAnimationFrame(()=>{const value={type:'computer-first-frame',id:'${id}',at:Date.now()};
-            parent.postMessage(value,'*');window.ReactNativeWebView?.postMessage(JSON.stringify(value));});};}
+          requestAnimationFrame(()=>requestAnimationFrame(()=>{const value={type:'computer-first-frame',id:'${id}',at:Date.now()};
+            parent.postMessage(value,'*');window.ReactNativeWebView?.postMessage(JSON.stringify(value));}));};}
       ${channel.lastFrame ? `if(!beelinePreview)socket.dispatchEvent(new MessageEvent('message',{data:atob('${channel.lastFrame.data.toString('base64')}')}));` : ''}
       socket.addEventListener('close',async()=>{
         try{const reply=await fetch('status'+location.search,{cache:'no-store'});const state=await reply.json();
@@ -485,7 +491,7 @@ export function computerViewerHtml(id: string): string {
   body.embedded #controls{display:none}
   #keys{position:absolute;opacity:0;width:1px;height:1px;left:0;bottom:0}
   </style></head><body><div id="stage"><img id="screen" alt="Live browser"></div><div id="ended">Browser session ended</div><input id="keys" autocomplete="off" autocapitalize="off"><div id="controls"><button id="back" aria-label="Close browser">✕</button></div><script>
-  const query=new URLSearchParams(location.search), preview=query.has('preview');
+  const query=new URLSearchParams(location.search);let preview=query.has('preview')||query.has('warm');
   if(query.has('embedded')) document.body.classList.add('embedded');
   const image=document.getElementById('screen'), stage=document.getElementById('stage'), ended=document.getElementById('ended'), keys=document.getElementById('keys');
   addEventListener('message',event=>{if(event.data?.type!=='viewer-snapshot-request'||event.data.id!=='${id}')return;
@@ -504,6 +510,8 @@ export function computerViewerHtml(id: string): string {
     image.style.width=Math.ceil(w)+'px';image.style.height=Math.ceil(h)+'px';
     image.style.left=Math.round(offsetX)+'px';image.style.top=Math.round(offsetY)+'px';}
   addEventListener('resize',fit);
+  addEventListener('message',event=>{if(event.data?.type!=='viewer-mode'||event.data.id!=='${id}'||!query.has('warm'))return;
+    preview=!event.data.interactive;if(preview)controlling=false;send({type:'viewer-mode',interactive:!preview});});
   function send(value){if(wire.readyState===WebSocket.OPEN) wire.send(JSON.stringify(value));}
   function cdp(method,params={}){send({id:serial++,method,params});}
   function takeover(){if(!controlling){controlling=true;send({type:'takeover'});}}
@@ -512,7 +520,7 @@ export function computerViewerHtml(id: string): string {
     const notice=JSON.stringify({type:'computer-ended',id:'${id}'});parent.postMessage({type:'computer-ended',id:'${id}'},'*');window.ReactNativeWebView?.postMessage(notice);}
   function showLost(){ended.textContent='Connection lost · reopen to retry';ended.style.display='grid';}
   function connect(){wire=new WebSocket(socketUrl);
-    wire.onopen=()=>{if(document.hidden)send({type:'pause-view'});};
+    wire.onopen=()=>{if(query.has('warm'))send({type:'viewer-mode',interactive:!preview});if(document.hidden)send({type:'pause-view'});};
     wire.onmessage=event=>{try{const message=JSON.parse(event.data);
       if(message.type==='ended'){showEnded();return;}
       if(message.method==='Page.screencastFrame'){const p=message.params;image.src='data:image/jpeg;base64,'+p.data;width=p.metadata?.deviceWidth||width;height=p.metadata?.deviceHeight||height;fit();}
@@ -528,8 +536,9 @@ export function computerViewerHtml(id: string): string {
   connect();
   let firstFrame=false;
   image.onload=()=>{if(width<=1||height<=1){width=image.naturalWidth;height=image.naturalHeight;}fit();
-    if(!firstFrame){firstFrame=true;const value={type:'computer-first-frame',id:'${id}',at:Date.now()};
-      parent.postMessage(value,'*');window.ReactNativeWebView?.postMessage(JSON.stringify(value));}};
+    if(!firstFrame){firstFrame=true;requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      const value={type:'computer-first-frame',id:'${id}',at:Date.now()};
+      parent.postMessage(value,'*');window.ReactNativeWebView?.postMessage(JSON.stringify(value));}));}};
   document.addEventListener('visibilitychange',()=>send({type:document.hidden?'pause-view':'resume-view'}));
   function point(event){const r=image.getBoundingClientRect(),scale=r.width/width;return {x:Math.max(0,Math.min(width,(event.clientX-r.left)/scale)),y:Math.max(0,Math.min(height,(event.clientY-r.top)/scale))};}
   let touch,pinch;
@@ -690,7 +699,7 @@ export async function upgradeBodyComputerSource(
         const event = JSON.parse(data.toString()) as { type?: string; name?: string; detail?: string };
         if (event.type === 'share-event' && event.name === 'navigation') {
           if (!channel.controller) return;
-          void recordComputerActivity(database, row, 'navigation', event.detail?.slice(0, 200)).catch(() => {});
+          void recordComputerActivity(database, row, 'navigation', event.detail).catch(() => {});
           return;
         }
       } catch { /* An unrelated source frame is still forwarded below. */ }
@@ -727,7 +736,9 @@ export async function upgradeBodyComputerSource(
 
 function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffer, database: SqlDatabase, live: LiveHub, row: ComputerSessionRow): void {
   const query = new URL(request.url ?? '/', 'http://beeline.local').searchParams;
-  const preview = query.has('preview');
+  const fixedPreview = query.has('preview');
+  const warm = query.has('warm');
+  let preview = fixedPreview || warm;
   const viewerId = query.get('access')!.split('.')[0]!;
   computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
     const channel = bodyChannel(row.id);
@@ -747,6 +758,21 @@ function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffe
     viewer.on('message', (data) => {
       let message: { type?: string; method?: string; params?: { type?: string } };
       try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
+      if (warm && message.type === 'viewer-mode') {
+        preview = fixedPreview || !(message as { interactive?: boolean }).interactive;
+        if (preview) {
+          channel.interactiveViewers.delete(viewer);
+          if (channel.controller === viewer) {
+            channel.controller = undefined;
+            channel.source?.send(JSON.stringify({ type: 'release' }));
+          }
+        } else {
+          channel.interactiveViewers.add(viewer);
+          if (channel.lastFrame) viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
+        }
+        return;
+      }
+      if (preview && message.type !== 'pause-view' && message.type !== 'resume-view') return;
       if (message.type === 'pause-view') channel.pausedViewers.add(viewer);
       else if (message.type === 'resume-view') {
         channel.pausedViewers.delete(viewer);
@@ -816,7 +842,9 @@ export async function upgradeComputerSession(
   if (target.protocol === 'http:') target.protocol = 'ws:';
   if (!['ws:', 'wss:'].includes(target.protocol)) { socket.destroy(); return; }
   const query = new URL(request.url ?? '/', 'http://beeline.local').searchParams;
-  const preview = query.has('preview');
+  const fixedPreview = query.has('preview');
+  const warm = query.has('warm');
+  let preview = fixedPreview || warm;
   const viewerId = query.get('access')!.split('.')[0]!;
   computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
     const channel = squireChannel(id);
@@ -843,9 +871,24 @@ export async function upgradeComputerSession(
     if (source.readyState === WebSocket.CONNECTING) source.once('open', flushPending);
     const lastInputAt = new Map<string, number>();
     viewer.on('message', (data, binary) => {
-      if (preview || Buffer.byteLength(data.toString()) > 4_096) return;
+      if (Buffer.byteLength(data.toString()) > 4_096) return;
       let message: { type?: string };
       try { message = JSON.parse(data.toString()) as typeof message; } catch { return; }
+      if (warm && message.type === 'viewer-mode') {
+        preview = fixedPreview || !(message as { interactive?: boolean }).interactive;
+        if (preview) {
+          channel.interactiveViewers.delete(viewer);
+          if (!channel.interactiveViewers.size && channel.humanControl) {
+            channel.humanControl = false;
+            if (source.readyState === WebSocket.OPEN) source.send(JSON.stringify({ type: 'release' }));
+          }
+        } else {
+          channel.interactiveViewers.add(viewer);
+          if (channel.lastFrame) viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
+        }
+        return;
+      }
+      if (preview) return;
       if (message.type === 'handback') {
         channel.humanControl = false;
         pendingInput.length = 0;
@@ -902,12 +945,15 @@ export async function upgradeComputerSession(
         if (message.state === 'agent') channel.humanControl = false;
       }
       if (message?.type === 'navigation' && channel.humanControl) {
-        let origin: string | undefined;
+        let destination: string | undefined;
         try {
           const url = new URL(message.url ?? message.origin ?? '');
-          if (url.protocol === 'http:' || url.protocol === 'https:') origin = url.origin;
-        } catch { /* No page content. */ }
-        if (origin) void recordComputerActivity(database, row, 'navigation', origin, channel.humanViewerId).catch(() => {});
+          if (url.protocol === 'http:' || url.protocol === 'https:') {
+            url.username = ''; url.password = '';
+            destination = url.href;
+          }
+        } catch { /* Internal browser URLs are not shared. */ }
+        if (destination) void recordComputerActivity(database, row, 'navigation', destination, channel.humanViewerId).catch(() => {});
       }
       const frame = isFrameMessage(data);
       if (message?.type === 'blank') channel.lastFrame = undefined;

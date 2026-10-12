@@ -92,8 +92,10 @@ export async function shareChromiumPage(input: {
     if (message.method === 'Page.frameNavigated' && message.params?.frame?.url) {
       try {
         const url = new URL(message.params.frame.url);
-        if (url.origin !== 'null' && relay.readyState === WebSocket.OPEN)
-          relay.send(JSON.stringify({ type: 'share-event', name: 'navigation', detail: url.origin }));
+        if (['http:', 'https:'].includes(url.protocol) && relay.readyState === WebSocket.OPEN) {
+          url.username = ''; url.password = '';
+          relay.send(JSON.stringify({ type: 'share-event', name: 'navigation', detail: url.href }));
+        }
       } catch { /* Internal browser URLs are not shared. */ }
       return;
     }

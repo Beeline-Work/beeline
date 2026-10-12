@@ -10,7 +10,7 @@ const injectJavaScript = vi.hoisted(() => vi.fn());
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
-  return { Platform: { OS: 'android' }, Image: host('Image'), Pressable: host('Pressable'), Text: host('Text'), View: host('View') };
+  return { BackHandler: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) }, Platform: { OS: 'android' }, Image: host('Image'), Pressable: host('Pressable'), Text: host('Text'), View: host('View') };
 });
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 24 }) }));
 vi.mock('expo-image', async () => {
@@ -39,7 +39,7 @@ vi.mock('@/modal', () => ({ Modal: { show: vi.fn(), alert: vi.fn() } }));
 vi.mock('@/components/buzz/ViewerConversationDock', () => ({ ViewerConversationDock: () => null }));
 
 import { Modal } from '@/modal';
-import { ComputerSessionCard, ComputerSessionViewer, openComputerSessionViewer, type ComputerSessionView } from './ComputerSession';
+import { ComputerSessionCard, ComputerSessionViewer, WarmComputerSessionHost, openComputerSessionViewer, type ComputerSessionView } from './ComputerSession';
 
 const session = {
   id: 'session-1', title: 'Browser', url: 'https://computer.usebeeline.app/s/session-1/',
@@ -213,5 +213,41 @@ it('clears the opening frame when the session ends before the viewer document lo
   await act(async () => tree!.root.findByType('WebView').props.onHttpError({ nativeEvent: { statusCode: 410 } }));
   expect(tree!.root.findAllByType('Image')).toHaveLength(0);
   expect(tree!.root.findAllByType('Text').some((node: any) => node.props.children === 'Browser session ended')).toBe(true);
+  await act(async () => tree!.unmount());
+});
+
+
+it('reveals and closes the preloaded native WebView without a mount or URL change', async () => {
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<><ComputerSessionCard session={session} /><WarmComputerSessionHost /></>); });
+  const host = () => tree!.root.findByProps({ testID: 'computer-session-warm-host' });
+  const stream = () => host().findByType('WebView');
+  const initial = stream();
+  const uri = initial.props.source.uri;
+  expect(host().props.pointerEvents).toBe('none');
+  expect(host().props.importantForAccessibility).toBe('no-hide-descendants');
+  await act(async () => { await openComputerSessionViewer(session); });
+  expect(Modal.show).not.toHaveBeenCalled();
+  expect(host().props.pointerEvents).toBe('auto');
+  expect(stream()).toBe(initial);
+  expect(stream().props.source.uri).toBe(uri);
+  await act(async () => host().findByProps({ testID: 'computer-session-close' }).props.onPress());
+  expect(host().props.pointerEvents).toBe('none');
+  expect(stream()).toBe(initial);
+  await act(async () => { await openComputerSessionViewer(session); });
+  expect(stream()).toBe(initial);
+  expect(stream().props.source.uri).toBe(uri);
+  await act(async () => tree!.unmount());
+});
+
+it('keeps only one preloaded full viewer and releases it when its last card unmounts', async () => {
+  let tree: ReturnType<typeof create>;
+  const newer = { ...session, id: 'session-2', url: 'https://computer.usebeeline.app/s/session-2/' };
+  await act(async () => { tree = create(<><ComputerSessionCard session={session} /><ComputerSessionCard session={newer} /><WarmComputerSessionHost /></>); });
+  const host = () => tree!.root.findByProps({ testID: 'computer-session-warm-host' });
+  expect(host().findAllByType('WebView')).toHaveLength(1);
+  expect(host().findByType('WebView').props.source.uri).toContain('/session-2/');
+  await act(async () => { tree!.update(<WarmComputerSessionHost />); });
+  expect(tree!.root.findAllByType('WebView')).toHaveLength(0);
   await act(async () => tree!.unmount());
 });

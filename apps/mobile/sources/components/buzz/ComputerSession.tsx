@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, Pressable, Text, View } from 'react-native';
+import { BackHandler, Platform, Pressable, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,6 +11,10 @@ import { openComputerInDesktopWorkPane } from '@/buzz/desktop-computer-pane';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { ViewerConversationDock } from '@/components/buzz/ViewerConversationDock';
 import { currentViewerConversation } from '@/buzz/viewer-conversation';
+import {
+  attachWarmComputerHost, closeWarmComputerSession, openWarmComputerSession,
+  readWarmComputerSession, subscribeWarmComputerSession, warmComputerSession,
+} from '@/buzz/warm-computer-session';
 
 export type ComputerSessionView = NonNullable<RoomViewMessage['computerSession']> & {
   access?: string; agentHandle?: string;
@@ -18,9 +22,9 @@ export type ComputerSessionView = NonNullable<RoomViewMessage['computerSession']
   previewFrame?: Promise<string | null>;
 };
 
-function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAccessRejected, captureRef }: {
+function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAccessRejected, captureRef, warm = false, interactive = true }: {
   session: ComputerSessionView; preview?: boolean; onEnded?: () => void; onFirstFrame?: () => void;
-  onAccessRejected?: () => void;
+  onAccessRejected?: () => void; warm?: boolean; interactive?: boolean;
   captureRef?: React.MutableRefObject<(() => Promise<string | null>) | null>;
 }) {
   const WebView = useSandboxWebView();
@@ -32,6 +36,7 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
   if (session.access) streamUrl.searchParams.set('access', session.access);
   streamUrl.searchParams.set('embedded', '1');
   if (preview) streamUrl.searchParams.set('preview', '1');
+  if (warm) streamUrl.searchParams.set('warm', '1');
   const url = streamUrl.toString();
   React.useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -62,6 +67,12 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
     return () => { captureRef.current = null; for (const resolve of pendingCaptures.current.values()) resolve(null);
       pendingCaptures.current.clear(); };
   }, [captureRef, preview, session.id, session.url]);
+  const setViewerMode = React.useCallback(() => {
+    if (!warm) return;
+    const mode = { type: 'viewer-mode', id: session.id, interactive };
+    webViewRef.current?.injectJavaScript(`window.postMessage(${JSON.stringify(mode)}, '*'); true;`);
+  }, [warm, session.id, interactive]);
+  React.useEffect(setViewerMode, [setViewerMode]);
   const onStreamMessage = (event: { nativeEvent: { data: string } }) => {
     try {
       const message = JSON.parse(event.nativeEvent.data) as { type?: string; id?: string; requestId?: number; image?: string };
@@ -84,7 +95,7 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
     'data-testid': preview ? 'computer-session-preview-frame' : 'computer-session-view-frame',
   });
   if (WebView) return <WebView ref={webViewRef} source={{ uri: url }} javaScriptEnabled domStorageEnabled
-    onMessage={onStreamMessage}
+    onMessage={onStreamMessage} onLoadEnd={setViewerMode}
     onHttpError={(event: { nativeEvent: { statusCode: number } }) => {
       if (event.nativeEvent.statusCode === 401 || event.nativeEvent.statusCode === 403) onAccessRejected?.();
       if (event.nativeEvent.statusCode === 410) onEnded?.();
@@ -105,6 +116,10 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
       .catch(() => { if (mounted) setAccess(null); });
     return () => { mounted = false; };
   }, [session.id, session.status, session.access]);
+  React.useEffect(() => {
+    if (Platform.OS === 'web' || !access || session.status !== 'live') return;
+    return warmComputerSession({ ...session, access }, currentViewerConversation()?.roomId, agentHandle);
+  }, [session.id, session.url, session.title, session.status, access, agentHandle]);
   const open = async () => {
     if (!access || session.status !== 'live') return;
     // Keep the preview on its existing authorized stream. Replacing its URL
@@ -133,6 +148,7 @@ export async function openComputerSessionViewer(session: ComputerSessionView, is
       ?? (await monolithPhoneOperation('openComputerSession', { id: session.id })).access : undefined;
     const permitted = { ...session, access, agentHandle };
     if (isDesktop && openComputerInDesktopWorkPane(permitted)) return access ?? null;
+    if (Platform.OS !== 'web' && openWarmComputerSession(permitted, roomId, agentHandle)) return access ?? null;
     Modal.show({ component: ComputerSessionViewer,
       props: { session: permitted, agentHandle, roomId }, placement: 'fill' });
     return access ?? null;
@@ -142,9 +158,31 @@ export async function openComputerSessionViewer(session: ComputerSessionView, is
   }
 }
 
+/** One native viewer stays mounted while its card is visible and across closes. */
+export function WarmComputerSessionHost() {
+  const warm = React.useSyncExternalStore(subscribeWarmComputerSession, readWarmComputerSession, () => null);
+  React.useEffect(() => Platform.OS === 'web' ? undefined : attachWarmComputerHost(), []);
+  React.useEffect(() => {
+    if (!warm?.visible || Platform.OS === 'web') return;
+    const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeWarmComputerSession(); return true;
+    });
+    return () => back.remove();
+  }, [warm?.visible]);
+  if (Platform.OS === 'web' || !warm) return null;
+  return <View style={[styles.warmHost, { opacity: warm.visible ? 1 : 0 }]}
+    pointerEvents={warm.visible ? 'auto' : 'none'}
+    accessibilityViewIsModal={warm.visible} accessibilityElementsHidden={!warm.visible}
+    importantForAccessibility={warm.visible ? 'auto' : 'no-hide-descendants'}
+    testID="computer-session-warm-host">
+    <ComputerSessionViewer key={warm.session.id} session={warm.session} active={warm.visible} warm
+      roomId={warm.roomId} agentHandle={warm.agentHandle} onClose={closeWarmComputerSession} />
+  </View>;
+}
+
 /** Browser controls occupy their own row above the live page. */
-export function ComputerSessionViewer({ session, onClose, roomId, agentHandle }: {
-  session: ComputerSessionView; onClose: () => void; roomId?: string; agentHandle?: string;
+export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, active = true, warm = false }: {
+  session: ComputerSessionView; onClose: () => void; roomId?: string; agentHandle?: string; active?: boolean; warm?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const captureRef = React.useRef<(() => Promise<string | null>) | null>(null);
@@ -167,7 +205,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle }:
           && (error.status === 401 || error.status === 403 || error.status === 404)) setUnavailable(true);
       });
     return () => { mounted = false; };
-  }, [session.id, session.status, session.access]);
+  }, [session.id, session.status, session.access, active]);
   React.useEffect(() => {
     let mounted = true;
     void session.previewFrame?.then(image => {
@@ -196,7 +234,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle }:
     </View>
     <View style={styles.viewerStream}>
       {unavailable ? <View style={styles.ended}><Text style={styles.endedText}>Browser is unavailable</Text></View>
-        : <ComputerStream session={shownSession} onEnded={() => setEnded(true)}
+        : <ComputerStream session={shownSession} warm={warm} interactive={active} onEnded={() => setEnded(true)}
           onFirstFrame={() => { firstFrame.current = true; setPreviewFrame(null); }}
           onAccessRejected={() => {
             if (accessRejected && refreshedAccess) setUnavailable(true);
@@ -207,12 +245,13 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle }:
           style={styles.stream} testID="computer-session-opening-frame" />
       </View> : null}
     </View>
-    <ViewerConversationDock kind="computer" title={session.title} roomId={roomId}
-      agentHandle={agentHandle} captureScreen={() => captureRef.current?.() ?? Promise.resolve(null)} />
+    {active ? <ViewerConversationDock kind="computer" title={session.title} roomId={roomId}
+      agentHandle={agentHandle} captureScreen={() => captureRef.current?.() ?? Promise.resolve(null)} /> : null}
   </View>;
 }
 
 const styles = StyleSheet.create((theme) => ({
+  warmHost: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100 },
   card: { width: '100%', marginTop: theme.buzz.transcriptCard.marginTop, borderWidth: 1, borderColor: theme.buzz.borderStrong, borderRadius: theme.buzz.transcriptCard.cornerRadius, overflow: 'hidden' },
   preview: { height: 218, backgroundColor: theme.buzz.bgBase },
   stream: { width: '100%', height: '100%', backgroundColor: theme.buzz.bgBase },

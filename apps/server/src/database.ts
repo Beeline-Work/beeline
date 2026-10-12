@@ -1979,6 +1979,22 @@ CREATE TABLE IF NOT EXISTS invites (
   consumed_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS invites_workspace_idx ON invites(workspace_id);
+-- A public token is recoverable for managers, reusable, and has no expiry.
+ALTER TABLE invites ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS public_token text;
+CREATE UNIQUE INDEX IF NOT EXISTS invites_public_workspace_idx ON invites(workspace_id)
+  WHERE public_token IS NOT NULL;
+-- Publish the existing support Workspace's first link with the website release.
+-- Existing/rotated links win on all later migrations; never recreate an old token.
+INSERT INTO invites(token_hash,workspace_id,created_by,expires_at,public_token)
+SELECT '71365e5a8aac2ea96a29263d9c08e60157f01439ff5eaa68aecbc9807992962b',w.id,m.identity_id,NULL,
+  'inv_8765f41a655c33815ea86cecf199ab60983b9326bb02b869f6436af1286dd0f2'
+FROM workspaces w JOIN memberships m ON m.workspace_id=w.id AND m.room_id IS NULL
+  AND m.removed_at IS NULL AND m.role IN ('owner','admin')
+WHERE w.id='8556a9be-d929-41e7-a0ef-d70af452a494' AND w.visibility='public'
+  AND NOT EXISTS(SELECT 1 FROM invites i WHERE i.workspace_id=w.id AND i.public_token IS NOT NULL)
+ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END,m.identity_id LIMIT 1
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS agent_pairing_codes (
   code_hash text PRIMARY KEY,

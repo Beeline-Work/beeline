@@ -11,7 +11,7 @@ export type PublicInvitePreview = {
   readonly valid: true;
   readonly workspaceName: string;
   readonly inviterName: string;
-  /** Absolute Unix timestamp in seconds. */
+  /** Absolute Unix timestamp in seconds; zero for a permanent public link. */
   readonly expiresAt: number;
 };
 
@@ -32,7 +32,8 @@ export interface InvitePreviewAccessOptions {
  *
  * A valid token reveals only the two names the invitee sees on the landing
  * page and the token's own expiry. Unknown, expired, consumed, malformed, and
- * creator-retired tokens deliberately collapse to one result.
+ * creator-retired private tokens deliberately collapse to one result.
+ * Public links belong to the Workspace and remain valid after their creator leaves.
  */
 export class InvitePreviewAccess {
   private readonly attempts = new Map<string, { count: number; resetAt: number }>();
@@ -61,15 +62,17 @@ export class InvitePreviewAccess {
     const result = await this.database.query<{
       workspace_name: string;
       inviter_name: string;
-      expires_at: Date;
+      expires_at: Date | null;
     }>(
       `SELECT w.name workspace_name,inviter.name inviter_name,i.expires_at
        FROM invites i
        JOIN workspaces w ON w.id=i.workspace_id
        JOIN identities inviter ON inviter.id=i.created_by
-       JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
+       LEFT JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
-       WHERE i.token_hash=$1 AND i.expires_at>now() AND i.consumed_at IS NULL`,
+       WHERE i.token_hash=$1 AND (i.expires_at IS NULL OR i.expires_at>now()) AND i.consumed_at IS NULL
+         AND ((i.public_token IS NOT NULL AND w.visibility='public')
+           OR (i.public_token IS NULL AND creator.identity_id IS NOT NULL))`,
       [createHash('sha256').update(rawToken).digest('hex')],
     );
     const row = result.rows[0];
@@ -80,7 +83,7 @@ export class InvitePreviewAccess {
         valid: true,
         workspaceName: row.workspace_name,
         inviterName: row.inviter_name,
-        expiresAt: Math.floor(row.expires_at.getTime() / 1000),
+        expiresAt: row.expires_at ? Math.floor(row.expires_at.getTime() / 1000) : 0,
       },
     };
   }

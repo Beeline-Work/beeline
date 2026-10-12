@@ -188,6 +188,22 @@ describe('CommunityInviteJoin', () => {
     }
   });
 
+  it('carries a public link through sign-in and joins directly into the first Room', async () => {
+    controls.identity.mockResolvedValue(null);
+    const signedOut = await render();
+    expect(controls.savePendingInvite).toHaveBeenCalledWith(TOKEN);
+    expect(controls.replace).toHaveBeenCalledWith('/beeline/onboarding');
+    expect(controls.redeemInvite).not.toHaveBeenCalled();
+    await act(async () => signedOut.unmount());
+    controls.identity.mockResolvedValue(IDENTITY);
+    controls.invite.mockResolvedValue({ name: 'Beeline Community', expiresAt: 0 });
+    const signedIn = await render();
+    expect(controls.redeemInvite).toHaveBeenCalledWith('redeemInvite', { token: TOKEN });
+    expect(controls.enterWorkspaceRoom).toHaveBeenCalledWith('workspace-1', 'general-1');
+    expect(signedIn.root.findAllByProps({ testID: 'confirm-community-join' })).toHaveLength(0);
+    await act(async () => signedIn.unmount());
+  });
+
   it('names the Workspace and who invited you, then joins into its first Room', async () => {
     const renderer = await render();
     expect(text(renderer)).toContain('Join Builders');

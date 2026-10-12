@@ -3524,13 +3524,13 @@ export class PhoneService {
     const result = await this.database.query<{
       name: string;
       avatar: string | null;
-      expires_at: Date;
+      expires_at: Date | null;
       workspace_id: string;
       already_joined: boolean;
       inviter_name: string;
       inviter_handle: string | null;
       inviter_face: string | null;
-      inviter_role: 'owner' | 'admin' | 'member' | 'spectator';
+      inviter_role: 'owner' | 'admin' | 'member' | 'spectator' | null;
       people: number;
       agents: number;
     }>(
@@ -3548,10 +3548,12 @@ export class PhoneService {
             AND member.kind='agent' AND member.hidden_from_roster=false) agents
        FROM invites i
        JOIN workspaces w ON w.id=i.workspace_id
-       JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
+       LEFT JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
        JOIN identities inviter ON inviter.id=i.created_by
-       WHERE i.token_hash=$1 AND i.expires_at>now() AND i.consumed_at IS NULL`,
+       WHERE i.token_hash=$1 AND (i.expires_at IS NULL OR i.expires_at>now()) AND i.consumed_at IS NULL
+         AND ((i.public_token IS NOT NULL AND w.visibility='public')
+           OR (i.public_token IS NULL AND creator.identity_id IS NOT NULL))`,
       [hash(rawToken), viewerId],
     );
     const row = result.rows[0];
@@ -3559,13 +3561,13 @@ export class PhoneService {
       ? {
           name: row.name,
           ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
-          expiresAt: unix(row.expires_at),
+          expiresAt: row.expires_at ? unix(row.expires_at) : 0,
           ...(row.already_joined ? { joinedWorkspaceId: row.workspace_id } : {}),
           inviter: {
             name: row.inviter_name,
             ...(row.inviter_handle ? { handle: row.inviter_handle } : {}),
             ...(row.inviter_face ? { face: row.inviter_face } : {}),
-            role: row.inviter_role,
+            role: row.inviter_role ?? 'member',
           },
           memberCount: row.people,
           agentCount: row.agents,
@@ -6916,47 +6918,91 @@ export class PhoneService {
     return { id, created };
   }
   private async createInvite(input: Input<'createInvite'>, viewerId: string) {
-    await this.requireWorkspaceManager(input.workspaceId, viewerId);
-    const value = createCommunityInviteToken(randomBytes(32));
-    const expiresAt = Date.now() + 7 * 86400_000;
-    await this.database.query(
-      `INSERT INTO invites(token_hash,workspace_id,created_by,expires_at) VALUES($1,$2,$3,$4)`,
-      [hash(value), input.workspaceId, viewerId, new Date(expiresAt)],
-    );
-    return { token: value, expiresAt: Math.floor(expiresAt / 1000) };
+    return this.database.transaction(async (database) => {
+      await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [
+        input.workspaceId,
+      ]);
+      await this.requireWorkspaceManager(input.workspaceId, viewerId, database);
+      const workspace = await database.query<{ visibility: string }>(
+        `SELECT visibility FROM workspaces WHERE id=$1`,
+        [input.workspaceId],
+      );
+      const isPublic = workspace.rows[0]?.visibility === 'public';
+      if (input.rotate && !isPublic) throw new Error('only public Workspace links can rotate');
+      if (isPublic) {
+        const existing = await database.query<{ public_token: string }>(
+          `SELECT public_token FROM invites WHERE workspace_id=$1 AND public_token IS NOT NULL`,
+          [input.workspaceId],
+        );
+        if (existing.rows[0] && !input.rotate)
+          return { token: existing.rows[0].public_token, expiresAt: 0 };
+        await database.query(
+          `DELETE FROM invites WHERE workspace_id=$1 AND public_token IS NOT NULL`,
+          [input.workspaceId],
+        );
+      }
+      const value = createCommunityInviteToken(randomBytes(32));
+      const expiresAt = isPublic ? null : new Date(Date.now() + 7 * 86400_000);
+      await database.query(
+        `INSERT INTO invites(token_hash,workspace_id,created_by,expires_at,public_token) VALUES($1,$2,$3,$4,$5)`,
+        [hash(value), input.workspaceId, viewerId, expiresAt, isPublic ? value : null],
+      );
+      return {
+        token: value,
+        expiresAt: expiresAt ? Math.floor(expiresAt.getTime() / 1000) : 0,
+      };
+    });
   }
   private async redeemInvite(input: Input<'redeemInvite'>, viewerId: string) {
     if (!isCommunityInviteToken(input.token)) throw new Error('invalid invite token');
     const result = await this.database.query<{
       workspace_id: string;
       created_by: string;
-      already_joined: boolean;
+      public_token: string | null;
     }>(
-      `SELECT i.workspace_id,i.created_by,
-         EXISTS(SELECT 1 FROM memberships joined
-           WHERE joined.workspace_id=i.workspace_id AND joined.room_id IS NULL
-             AND joined.identity_id=$2 AND joined.removed_at IS NULL) already_joined
+      `SELECT i.workspace_id,i.created_by,i.public_token
        FROM invites i
-       JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
+       JOIN workspaces w ON w.id=i.workspace_id
+       LEFT JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
          AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
-       WHERE i.token_hash=$1 AND i.expires_at>now()`,
-      [hash(input.token), viewerId],
+       WHERE i.token_hash=$1 AND (i.expires_at IS NULL OR i.expires_at>now())
+         AND ((i.public_token IS NOT NULL AND w.visibility='public')
+           OR (i.public_token IS NULL AND creator.identity_id IS NOT NULL))`,
+      [hash(input.token)],
     );
     const row = result.rows[0];
     if (!row) throw new Error('invite not found');
-    if (row.already_joined) {
-      const roomId = await firstAccessibleRoomId(this.database, row.workspace_id, viewerId);
-      return { joined: false, workspaceId: row.workspace_id, ...(roomId ? { roomId } : {}) };
-    }
     return this.database.transaction(async (database) => {
-      const consumed = await database.query(
-        `UPDATE invites SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL`,
-        [hash(input.token)],
-      );
-      if (!consumed.rowCount) throw new Error('invite not found');
+      // Use the handle allocator's Workspace lock before locking the invite:
+      // creation/rotation and membership writes then share the same lock order.
       const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
         row.workspace_id,
       ]);
+      const current = await database.query<{
+        consumed_at: Date | null;
+        already_joined: boolean;
+      }>(
+        `SELECT i.consumed_at,
+           EXISTS(SELECT 1 FROM memberships joined WHERE joined.workspace_id=i.workspace_id
+             AND joined.room_id IS NULL AND joined.identity_id=$2 AND joined.removed_at IS NULL) already_joined
+         FROM invites i JOIN workspaces w ON w.id=i.workspace_id
+         LEFT JOIN memberships creator ON creator.workspace_id=i.workspace_id AND creator.room_id IS NULL
+           AND creator.identity_id=i.created_by AND creator.removed_at IS NULL
+         WHERE i.token_hash=$1 AND (i.expires_at IS NULL OR i.expires_at>now())
+           AND ((i.public_token IS NOT NULL AND w.visibility='public')
+             OR (i.public_token IS NULL AND creator.identity_id IS NOT NULL)) FOR UPDATE OF i`,
+        [hash(input.token), viewerId],
+      );
+      if (!current.rows[0]) throw new Error('invite not found');
+      if (current.rows[0].already_joined) {
+        const roomId = await firstAccessibleRoomId(database, row.workspace_id, viewerId);
+        return { joined: false, workspaceId: row.workspace_id, ...(roomId ? { roomId } : {}) };
+      }
+      if (current.rows[0].consumed_at) throw new Error('invite not found');
+      if (!row.public_token)
+        await database.query(`UPDATE invites SET consumed_at=now() WHERE token_hash=$1`, [
+          hash(input.token),
+        ]);
       const identity = (
         await database.query<{ handle: string | null }>(
           `SELECT handle FROM identities WHERE id=$1 FOR UPDATE`,

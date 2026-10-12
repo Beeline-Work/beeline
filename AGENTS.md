@@ -120,6 +120,7 @@ Read [Body agent invariants](docs/agent-body.md) for this area’s authoritative
 - **Type roles only.** `calm-lint.design.test.ts` ratchets raw and computed `fontSize`/`lineHeight`/`letterSpacing` values in `.ts`/`.tsx` against `apps/mobile/design/calm-baseline.json`; counts only shrink.
 - **Tokens, scale, one component each.** `design-lint.design.test.ts` ratchets colour literals, off-scale spacing and radii, shadows, retired fonts and retired components against `apps/mobile/design/design-baseline.json` (DESIGN.md → Enforcement); counts only shrink.
 - **Rooms and corners render one ledger** (`Ledger.tsx`); ownership reads from the byline (`ledger-attribution.ts`). A live draft renders as plain `Text` in `StreamingProse.tsx`, never Markdown. A tool step is one line (`buzz/tool-ledger.ts`, `ActivityTimeline.tsx`); output opens in `ToolOutputSheet`.
+- Composer centering means the cap-to-baseline body, excluding descenders (`ConversationComposer.tsx`); native span line heights stay unset. Device/font-scale proof: `apps/mobile/evidence/composer-hint-center/README.md`.
 - **Identity marks are one component** (`IdentityMark.tsx`); an agent's face is server-assigned, never re-derived from a seed. The live ring paints outside the tile box, so a clipping ancestor must outset by it. Generated portraits (`postAgentAvatar`, `/v1/agent-avatars/`) are separate from photo overrides.
 - Drawn glyphs spread the platform-split props from `components/buzz/decorative-glyph.ts`/`.web.ts`; react-native-svg forwards unknown props to the element.
 

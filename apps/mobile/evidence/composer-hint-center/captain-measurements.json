@@ -1,0 +1,33 @@
+{
+  "source": "captain-phone-1157.jpg",
+  "size": [
+    1080,
+    2340
+  ],
+  "coordinates": "physical pixels; y grows downward; thresholded occupied pixel centers",
+  "field": {
+    "top": 1260,
+    "bottom": 1381,
+    "center": 1320.5
+  },
+  "measurements": {
+    "whole_Message_ink": {
+      "top": 1300,
+      "bottom": 1340,
+      "center": 1320.0,
+      "offset_from_field_center": -0.5
+    },
+    "capital_M_cap_to_baseline_ink": {
+      "top": 1300,
+      "bottom": 1331,
+      "center": 1315.5,
+      "offset_from_field_center": -5.0
+    },
+    "cursor": {
+      "top": 1288,
+      "bottom": 1344,
+      "center": 1316.0,
+      "offset_from_field_center": -4.5
+    }
+  }
+}

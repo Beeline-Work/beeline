@@ -1,0 +1,2738 @@
+[
+  {
+    "fieldTop": 2117,
+    "fieldBottom": 2231,
+    "fieldCenter": 2174.0,
+    "capTop": 2163,
+    "baselineInkBottom": 2187,
+    "bodyCenter": 2175.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-room-empty-closed.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1234,
+    "fieldBottom": 1348,
+    "fieldCenter": 1291.0,
+    "capTop": 1280,
+    "baselineInkBottom": 1304,
+    "bodyCenter": 1292.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-room-empty-open.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1855,
+    "fieldBottom": 1969,
+    "fieldCenter": 1912.0,
+    "capTop": 1901,
+    "baselineInkBottom": 1925,
+    "bodyCenter": 1913.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-room-typed-closed.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1234,
+    "fieldBottom": 1348,
+    "fieldCenter": 1291.0,
+    "capTop": 1280,
+    "baselineInkBottom": 1304,
+    "bodyCenter": 1292.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-room-typed-open.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1855,
+    "fieldBottom": 1969,
+    "fieldCenter": 1912.0,
+    "capTop": 1901,
+    "baselineInkBottom": 1925,
+    "bodyCenter": 1913.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-room-tagged-closed.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1234,
+    "fieldBottom": 1348,
+    "fieldCenter": 1291.0,
+    "capTop": 1280,
+    "baselineInkBottom": 1304,
+    "bodyCenter": 1292.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-room-tagged-open.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1898,
+    "baselineInkBottom": 1922,
+    "bodyCenter": 1910.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-viewer-empty-closed.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1277,
+    "baselineInkBottom": 1301,
+    "bodyCenter": 1289.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-viewer-empty-open.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1898,
+    "baselineInkBottom": 1922,
+    "bodyCenter": 1910.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-viewer-typed-closed.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1277,
+    "baselineInkBottom": 1301,
+    "bodyCenter": 1289.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-viewer-typed-open.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1898,
+    "baselineInkBottom": 1922,
+    "bodyCenter": 1910.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-viewer-tagged-closed.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1277,
+    "baselineInkBottom": 1301,
+    "bodyCenter": 1289.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-0.85-viewer-tagged-open.png",
+    "dpi": 420,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2117,
+    "fieldBottom": 2231,
+    "fieldCenter": 2174.0,
+    "capTop": 2161,
+    "baselineInkBottom": 2189,
+    "bodyCenter": 2175.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-room-empty-closed.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1234,
+    "fieldBottom": 1348,
+    "fieldCenter": 1291.0,
+    "capTop": 1278,
+    "baselineInkBottom": 1306,
+    "bodyCenter": 1292.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-room-empty-open.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1855,
+    "fieldBottom": 1969,
+    "fieldCenter": 1912.0,
+    "capTop": 1899,
+    "baselineInkBottom": 1927,
+    "bodyCenter": 1913.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-room-typed-closed.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1234,
+    "fieldBottom": 1348,
+    "fieldCenter": 1291.0,
+    "capTop": 1278,
+    "baselineInkBottom": 1306,
+    "bodyCenter": 1292.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-room-typed-open.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1855,
+    "fieldBottom": 1969,
+    "fieldCenter": 1912.0,
+    "capTop": 1899,
+    "baselineInkBottom": 1927,
+    "bodyCenter": 1913.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-room-tagged-closed.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1234,
+    "fieldBottom": 1348,
+    "fieldCenter": 1291.0,
+    "capTop": 1278,
+    "baselineInkBottom": 1306,
+    "bodyCenter": 1292.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-room-tagged-open.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1896,
+    "baselineInkBottom": 1924,
+    "bodyCenter": 1910.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-viewer-empty-closed.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1275,
+    "baselineInkBottom": 1303,
+    "bodyCenter": 1289.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-viewer-empty-open.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1896,
+    "baselineInkBottom": 1924,
+    "bodyCenter": 1910.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-viewer-typed-closed.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1275,
+    "baselineInkBottom": 1303,
+    "bodyCenter": 1289.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-viewer-typed-open.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1896,
+    "baselineInkBottom": 1924,
+    "bodyCenter": 1910.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-viewer-tagged-closed.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1275,
+    "baselineInkBottom": 1303,
+    "bodyCenter": 1289.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1-viewer-tagged-open.png",
+    "dpi": 420,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2117,
+    "fieldBottom": 2231,
+    "fieldCenter": 2174.0,
+    "capTop": 2159,
+    "baselineInkBottom": 2191,
+    "bodyCenter": 2175.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-room-empty-closed.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1234,
+    "fieldBottom": 1348,
+    "fieldCenter": 1291.0,
+    "capTop": 1276,
+    "baselineInkBottom": 1308,
+    "bodyCenter": 1292.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-room-empty-open.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1855,
+    "fieldBottom": 1969,
+    "fieldCenter": 1912.0,
+    "capTop": 1897,
+    "baselineInkBottom": 1929,
+    "bodyCenter": 1913.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-room-typed-closed.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1234,
+    "fieldBottom": 1348,
+    "fieldCenter": 1291.0,
+    "capTop": 1276,
+    "baselineInkBottom": 1308,
+    "bodyCenter": 1292.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-room-typed-open.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1855,
+    "fieldBottom": 1969,
+    "fieldCenter": 1912.0,
+    "capTop": 1897,
+    "baselineInkBottom": 1929,
+    "bodyCenter": 1913.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-room-tagged-closed.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1234,
+    "fieldBottom": 1348,
+    "fieldCenter": 1291.0,
+    "capTop": 1276,
+    "baselineInkBottom": 1308,
+    "bodyCenter": 1292.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-room-tagged-open.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1894,
+    "baselineInkBottom": 1926,
+    "bodyCenter": 1910.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-viewer-empty-closed.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1273,
+    "baselineInkBottom": 1305,
+    "bodyCenter": 1289.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-viewer-empty-open.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1894,
+    "baselineInkBottom": 1926,
+    "bodyCenter": 1910.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-viewer-typed-closed.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1273,
+    "baselineInkBottom": 1305,
+    "bodyCenter": 1289.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-viewer-typed-open.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1894,
+    "baselineInkBottom": 1926,
+    "bodyCenter": 1910.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-viewer-tagged-closed.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1273,
+    "baselineInkBottom": 1305,
+    "bodyCenter": 1289.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.15-viewer-tagged-open.png",
+    "dpi": 420,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2114,
+    "fieldBottom": 2231,
+    "fieldCenter": 2172.5,
+    "capTop": 2154,
+    "baselineInkBottom": 2191,
+    "bodyCenter": 2172.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-room-empty-closed.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1231,
+    "fieldBottom": 1348,
+    "fieldCenter": 1289.5,
+    "capTop": 1271,
+    "baselineInkBottom": 1308,
+    "bodyCenter": 1289.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-room-empty-open.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1852,
+    "fieldBottom": 1969,
+    "fieldCenter": 1910.5,
+    "capTop": 1892,
+    "baselineInkBottom": 1929,
+    "bodyCenter": 1910.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-room-typed-closed.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1231,
+    "fieldBottom": 1348,
+    "fieldCenter": 1289.5,
+    "capTop": 1271,
+    "baselineInkBottom": 1308,
+    "bodyCenter": 1289.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-room-typed-open.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1852,
+    "fieldBottom": 1969,
+    "fieldCenter": 1910.5,
+    "capTop": 1892,
+    "baselineInkBottom": 1929,
+    "bodyCenter": 1910.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-room-tagged-closed.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1231,
+    "fieldBottom": 1348,
+    "fieldCenter": 1289.5,
+    "capTop": 1271,
+    "baselineInkBottom": 1308,
+    "bodyCenter": 1289.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-room-tagged-open.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1890,
+    "baselineInkBottom": 1927,
+    "bodyCenter": 1908.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-viewer-empty-closed.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1269,
+    "baselineInkBottom": 1306,
+    "bodyCenter": 1287.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-viewer-empty-open.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1890,
+    "baselineInkBottom": 1927,
+    "bodyCenter": 1908.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-viewer-typed-closed.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1269,
+    "baselineInkBottom": 1306,
+    "bodyCenter": 1287.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-viewer-typed-open.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1849,
+    "fieldBottom": 1969,
+    "fieldCenter": 1909.0,
+    "capTop": 1890,
+    "baselineInkBottom": 1927,
+    "bodyCenter": 1908.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-viewer-tagged-closed.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1228,
+    "fieldBottom": 1348,
+    "fieldCenter": 1288.0,
+    "capTop": 1269,
+    "baselineInkBottom": 1306,
+    "bodyCenter": 1287.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      145,
+      927
+    ],
+    "frame": "420-1.3-viewer-tagged-open.png",
+    "dpi": 420,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2096,
+    "fieldBottom": 2219,
+    "fieldCenter": 2157.5,
+    "capTop": 2144,
+    "baselineInkBottom": 2171,
+    "bodyCenter": 2157.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-room-empty-closed.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1292,
+    "baselineInkBottom": 1319,
+    "bodyCenter": 1305.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-room-empty-open.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1825,
+    "fieldBottom": 1948,
+    "fieldCenter": 1886.5,
+    "capTop": 1873,
+    "baselineInkBottom": 1900,
+    "bodyCenter": 1886.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-room-typed-closed.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1292,
+    "baselineInkBottom": 1319,
+    "bodyCenter": 1305.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-room-typed-open.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1825,
+    "fieldBottom": 1948,
+    "fieldCenter": 1886.5,
+    "capTop": 1873,
+    "baselineInkBottom": 1900,
+    "bodyCenter": 1886.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-room-tagged-closed.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1292,
+    "baselineInkBottom": 1319,
+    "bodyCenter": 1305.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-room-tagged-open.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1870,
+    "baselineInkBottom": 1897,
+    "bodyCenter": 1883.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-viewer-empty-closed.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1289,
+    "baselineInkBottom": 1316,
+    "bodyCenter": 1302.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-viewer-empty-open.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1870,
+    "baselineInkBottom": 1897,
+    "bodyCenter": 1883.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-viewer-typed-closed.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1289,
+    "baselineInkBottom": 1316,
+    "bodyCenter": 1302.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-viewer-typed-open.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1870,
+    "baselineInkBottom": 1897,
+    "bodyCenter": 1883.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-viewer-tagged-closed.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1289,
+    "baselineInkBottom": 1316,
+    "bodyCenter": 1302.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-0.85-viewer-tagged-open.png",
+    "dpi": 450,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2096,
+    "fieldBottom": 2219,
+    "fieldCenter": 2157.5,
+    "capTop": 2142,
+    "baselineInkBottom": 2173,
+    "bodyCenter": 2157.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-room-empty-closed.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1290,
+    "baselineInkBottom": 1321,
+    "bodyCenter": 1305.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-room-empty-open.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1825,
+    "fieldBottom": 1948,
+    "fieldCenter": 1886.5,
+    "capTop": 1871,
+    "baselineInkBottom": 1902,
+    "bodyCenter": 1886.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-room-typed-closed.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1290,
+    "baselineInkBottom": 1321,
+    "bodyCenter": 1305.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-room-typed-open.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1825,
+    "fieldBottom": 1948,
+    "fieldCenter": 1886.5,
+    "capTop": 1871,
+    "baselineInkBottom": 1902,
+    "bodyCenter": 1886.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-room-tagged-closed.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1290,
+    "baselineInkBottom": 1321,
+    "bodyCenter": 1305.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-room-tagged-open.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1868,
+    "baselineInkBottom": 1899,
+    "bodyCenter": 1883.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-viewer-empty-closed.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1287,
+    "baselineInkBottom": 1318,
+    "bodyCenter": 1302.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-viewer-empty-open.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1868,
+    "baselineInkBottom": 1899,
+    "bodyCenter": 1883.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-viewer-typed-closed.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1287,
+    "baselineInkBottom": 1318,
+    "bodyCenter": 1302.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-viewer-typed-open.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1868,
+    "baselineInkBottom": 1899,
+    "bodyCenter": 1883.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-viewer-tagged-closed.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1287,
+    "baselineInkBottom": 1318,
+    "bodyCenter": 1302.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1-viewer-tagged-open.png",
+    "dpi": 450,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2096,
+    "fieldBottom": 2219,
+    "fieldCenter": 2157.5,
+    "capTop": 2140,
+    "baselineInkBottom": 2175,
+    "bodyCenter": 2157.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-room-empty-closed.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1288,
+    "baselineInkBottom": 1323,
+    "bodyCenter": 1305.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-room-empty-open.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1825,
+    "fieldBottom": 1948,
+    "fieldCenter": 1886.5,
+    "capTop": 1869,
+    "baselineInkBottom": 1904,
+    "bodyCenter": 1886.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-room-typed-closed.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1288,
+    "baselineInkBottom": 1323,
+    "bodyCenter": 1305.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-room-typed-open.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1825,
+    "fieldBottom": 1948,
+    "fieldCenter": 1886.5,
+    "capTop": 1869,
+    "baselineInkBottom": 1904,
+    "bodyCenter": 1886.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-room-tagged-closed.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1288,
+    "baselineInkBottom": 1323,
+    "bodyCenter": 1305.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-room-tagged-open.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1866,
+    "baselineInkBottom": 1901,
+    "bodyCenter": 1883.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-viewer-empty-closed.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1285,
+    "baselineInkBottom": 1320,
+    "bodyCenter": 1302.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-viewer-empty-open.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1866,
+    "baselineInkBottom": 1901,
+    "bodyCenter": 1883.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-viewer-typed-closed.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1285,
+    "baselineInkBottom": 1320,
+    "bodyCenter": 1302.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-viewer-typed-open.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1866,
+    "baselineInkBottom": 1901,
+    "bodyCenter": 1883.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-viewer-tagged-closed.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1285,
+    "baselineInkBottom": 1320,
+    "bodyCenter": 1302.5,
+    "offsetPx": -0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.15-viewer-tagged-open.png",
+    "dpi": 450,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2096,
+    "fieldBottom": 2219,
+    "fieldCenter": 2157.5,
+    "capTop": 2139,
+    "baselineInkBottom": 2178,
+    "bodyCenter": 2158.5,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-room-empty-closed.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1287,
+    "baselineInkBottom": 1326,
+    "bodyCenter": 1306.5,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-room-empty-open.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1825,
+    "fieldBottom": 1948,
+    "fieldCenter": 1886.5,
+    "capTop": 1868,
+    "baselineInkBottom": 1907,
+    "bodyCenter": 1887.5,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-room-typed-closed.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1287,
+    "baselineInkBottom": 1326,
+    "bodyCenter": 1306.5,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-room-typed-open.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1825,
+    "fieldBottom": 1948,
+    "fieldCenter": 1886.5,
+    "capTop": 1868,
+    "baselineInkBottom": 1907,
+    "bodyCenter": 1887.5,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-room-tagged-closed.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1244,
+    "fieldBottom": 1367,
+    "fieldCenter": 1305.5,
+    "capTop": 1287,
+    "baselineInkBottom": 1326,
+    "bodyCenter": 1306.5,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-room-tagged-open.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1865,
+    "baselineInkBottom": 1904,
+    "bodyCenter": 1884.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-viewer-empty-closed.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1284,
+    "baselineInkBottom": 1323,
+    "bodyCenter": 1303.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-viewer-empty-open.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1865,
+    "baselineInkBottom": 1904,
+    "bodyCenter": 1884.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-viewer-typed-closed.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1284,
+    "baselineInkBottom": 1323,
+    "bodyCenter": 1303.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-viewer-typed-open.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1820,
+    "fieldBottom": 1948,
+    "fieldCenter": 1884.0,
+    "capTop": 1865,
+    "baselineInkBottom": 1904,
+    "bodyCenter": 1884.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-viewer-tagged-closed.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1239,
+    "fieldBottom": 1367,
+    "fieldCenter": 1303.0,
+    "capTop": 1284,
+    "baselineInkBottom": 1323,
+    "bodyCenter": 1303.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      155,
+      916
+    ],
+    "frame": "450-1.3-viewer-tagged-open.png",
+    "dpi": 450,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2022,
+    "fieldBottom": 2175,
+    "fieldCenter": 2098.5,
+    "capTop": 2083,
+    "baselineInkBottom": 2115,
+    "bodyCenter": 2099.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-room-empty-closed.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1017,
+    "fieldBottom": 1170,
+    "fieldCenter": 1093.5,
+    "capTop": 1078,
+    "baselineInkBottom": 1110,
+    "bodyCenter": 1094.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-room-empty-open.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1718,
+    "fieldBottom": 1871,
+    "fieldCenter": 1794.5,
+    "capTop": 1779,
+    "baselineInkBottom": 1811,
+    "bodyCenter": 1795.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-room-typed-closed.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1017,
+    "fieldBottom": 1170,
+    "fieldCenter": 1093.5,
+    "capTop": 1078,
+    "baselineInkBottom": 1110,
+    "bodyCenter": 1094.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-room-typed-open.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1718,
+    "fieldBottom": 1871,
+    "fieldCenter": 1794.5,
+    "capTop": 1779,
+    "baselineInkBottom": 1811,
+    "bodyCenter": 1795.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-room-tagged-closed.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1017,
+    "fieldBottom": 1170,
+    "fieldCenter": 1093.5,
+    "capTop": 1078,
+    "baselineInkBottom": 1110,
+    "bodyCenter": 1094.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-room-tagged-open.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1776,
+    "baselineInkBottom": 1808,
+    "bodyCenter": 1792.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-viewer-empty-closed.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1010,
+    "fieldBottom": 1170,
+    "fieldCenter": 1090.0,
+    "capTop": 1075,
+    "baselineInkBottom": 1107,
+    "bodyCenter": 1091.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-viewer-empty-open.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1776,
+    "baselineInkBottom": 1808,
+    "bodyCenter": 1792.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-viewer-typed-closed.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1010,
+    "fieldBottom": 1170,
+    "fieldCenter": 1090.0,
+    "capTop": 1075,
+    "baselineInkBottom": 1107,
+    "bodyCenter": 1091.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-viewer-typed-open.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1776,
+    "baselineInkBottom": 1808,
+    "bodyCenter": 1792.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-viewer-tagged-closed.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1010,
+    "fieldBottom": 1170,
+    "fieldCenter": 1090.0,
+    "capTop": 1075,
+    "baselineInkBottom": 1107,
+    "bodyCenter": 1091.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-0.85-viewer-tagged-open.png",
+    "dpi": 560,
+    "fontScale": 0.85,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2022,
+    "fieldBottom": 2175,
+    "fieldCenter": 2098.5,
+    "capTop": 2080,
+    "baselineInkBottom": 2118,
+    "bodyCenter": 2099.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-room-empty-closed.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1017,
+    "fieldBottom": 1170,
+    "fieldCenter": 1093.5,
+    "capTop": 1075,
+    "baselineInkBottom": 1113,
+    "bodyCenter": 1094.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-room-empty-open.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1718,
+    "fieldBottom": 1871,
+    "fieldCenter": 1794.5,
+    "capTop": 1776,
+    "baselineInkBottom": 1814,
+    "bodyCenter": 1795.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-room-typed-closed.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1017,
+    "fieldBottom": 1170,
+    "fieldCenter": 1093.5,
+    "capTop": 1075,
+    "baselineInkBottom": 1113,
+    "bodyCenter": 1094.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-room-typed-open.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1718,
+    "fieldBottom": 1871,
+    "fieldCenter": 1794.5,
+    "capTop": 1776,
+    "baselineInkBottom": 1814,
+    "bodyCenter": 1795.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-room-tagged-closed.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1017,
+    "fieldBottom": 1170,
+    "fieldCenter": 1093.5,
+    "capTop": 1075,
+    "baselineInkBottom": 1113,
+    "bodyCenter": 1094.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-room-tagged-open.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1773,
+    "baselineInkBottom": 1811,
+    "bodyCenter": 1792.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-viewer-empty-closed.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1010,
+    "fieldBottom": 1170,
+    "fieldCenter": 1090.0,
+    "capTop": 1072,
+    "baselineInkBottom": 1110,
+    "bodyCenter": 1091.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-viewer-empty-open.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1773,
+    "baselineInkBottom": 1811,
+    "bodyCenter": 1792.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-viewer-typed-closed.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1010,
+    "fieldBottom": 1170,
+    "fieldCenter": 1090.0,
+    "capTop": 1072,
+    "baselineInkBottom": 1110,
+    "bodyCenter": 1091.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-viewer-typed-open.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1773,
+    "baselineInkBottom": 1811,
+    "bodyCenter": 1792.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-viewer-tagged-closed.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1010,
+    "fieldBottom": 1170,
+    "fieldCenter": 1090.0,
+    "capTop": 1072,
+    "baselineInkBottom": 1110,
+    "bodyCenter": 1091.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1-viewer-tagged-open.png",
+    "dpi": 560,
+    "fontScale": 1.0,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2022,
+    "fieldBottom": 2175,
+    "fieldCenter": 2098.5,
+    "capTop": 2077,
+    "baselineInkBottom": 2121,
+    "bodyCenter": 2099.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-room-empty-closed.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1040,
+    "fieldBottom": 1193,
+    "fieldCenter": 1116.5,
+    "capTop": 1095,
+    "baselineInkBottom": 1139,
+    "bodyCenter": 1117.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-room-empty-open.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1718,
+    "fieldBottom": 1871,
+    "fieldCenter": 1794.5,
+    "capTop": 1773,
+    "baselineInkBottom": 1817,
+    "bodyCenter": 1795.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-room-typed-closed.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1040,
+    "fieldBottom": 1193,
+    "fieldCenter": 1116.5,
+    "capTop": 1095,
+    "baselineInkBottom": 1139,
+    "bodyCenter": 1117.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-room-typed-open.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1718,
+    "fieldBottom": 1871,
+    "fieldCenter": 1794.5,
+    "capTop": 1773,
+    "baselineInkBottom": 1817,
+    "bodyCenter": 1795.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-room-tagged-closed.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1040,
+    "fieldBottom": 1193,
+    "fieldCenter": 1116.5,
+    "capTop": 1095,
+    "baselineInkBottom": 1139,
+    "bodyCenter": 1117.0,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-room-tagged-open.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1770,
+    "baselineInkBottom": 1814,
+    "bodyCenter": 1792.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-viewer-empty-closed.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1040,
+    "fieldBottom": 1200,
+    "fieldCenter": 1120.0,
+    "capTop": 1099,
+    "baselineInkBottom": 1143,
+    "bodyCenter": 1121.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-viewer-empty-open.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1770,
+    "baselineInkBottom": 1814,
+    "bodyCenter": 1792.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-viewer-typed-closed.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1040,
+    "fieldBottom": 1200,
+    "fieldCenter": 1120.0,
+    "capTop": 1099,
+    "baselineInkBottom": 1143,
+    "bodyCenter": 1121.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-viewer-typed-open.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1770,
+    "baselineInkBottom": 1814,
+    "bodyCenter": 1792.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-viewer-tagged-closed.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1040,
+    "fieldBottom": 1200,
+    "fieldCenter": 1120.0,
+    "capTop": 1099,
+    "baselineInkBottom": 1143,
+    "bodyCenter": 1121.0,
+    "offsetPx": 1.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.15-viewer-tagged-open.png",
+    "dpi": 560,
+    "fontScale": 1.15,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 2022,
+    "fieldBottom": 2175,
+    "fieldCenter": 2098.5,
+    "capTop": 2074,
+    "baselineInkBottom": 2123,
+    "bodyCenter": 2098.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-room-empty-closed.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1080,
+    "fieldBottom": 1233,
+    "fieldCenter": 1156.5,
+    "capTop": 1132,
+    "baselineInkBottom": 1181,
+    "bodyCenter": 1156.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-room-empty-open.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1718,
+    "fieldBottom": 1871,
+    "fieldCenter": 1794.5,
+    "capTop": 1770,
+    "baselineInkBottom": 1819,
+    "bodyCenter": 1794.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-room-typed-closed.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1080,
+    "fieldBottom": 1233,
+    "fieldCenter": 1156.5,
+    "capTop": 1132,
+    "baselineInkBottom": 1181,
+    "bodyCenter": 1156.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-room-typed-open.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1718,
+    "fieldBottom": 1871,
+    "fieldCenter": 1794.5,
+    "capTop": 1770,
+    "baselineInkBottom": 1819,
+    "bodyCenter": 1794.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-room-tagged-closed.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1080,
+    "fieldBottom": 1233,
+    "fieldCenter": 1156.5,
+    "capTop": 1132,
+    "baselineInkBottom": 1181,
+    "bodyCenter": 1156.5,
+    "offsetPx": 0.0,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-room-tagged-open.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Room",
+    "content": "Tagged",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1767,
+    "baselineInkBottom": 1816,
+    "bodyCenter": 1791.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-viewer-empty-closed.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1080,
+    "fieldBottom": 1240,
+    "fieldCenter": 1160.0,
+    "capTop": 1136,
+    "baselineInkBottom": 1185,
+    "bodyCenter": 1160.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-viewer-empty-open.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Empty",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1767,
+    "baselineInkBottom": 1816,
+    "bodyCenter": 1791.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-viewer-typed-closed.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1080,
+    "fieldBottom": 1240,
+    "fieldCenter": 1160.0,
+    "capTop": 1136,
+    "baselineInkBottom": 1185,
+    "bodyCenter": 1160.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-viewer-typed-open.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Typed",
+    "keyboard": "open"
+  },
+  {
+    "fieldTop": 1711,
+    "fieldBottom": 1871,
+    "fieldCenter": 1791.0,
+    "capTop": 1767,
+    "baselineInkBottom": 1816,
+    "bodyCenter": 1791.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-viewer-tagged-closed.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "closed"
+  },
+  {
+    "fieldTop": 1080,
+    "fieldBottom": 1240,
+    "fieldCenter": 1160.0,
+    "capTop": 1136,
+    "baselineInkBottom": 1185,
+    "bodyCenter": 1160.5,
+    "offsetPx": 0.5,
+    "inputHorizontalBounds": [
+      193,
+      874
+    ],
+    "frame": "560-1.3-viewer-tagged-open.png",
+    "dpi": 560,
+    "fontScale": 1.3,
+    "surface": "Viewer",
+    "content": "Tagged",
+    "keyboard": "open"
+  }
+]

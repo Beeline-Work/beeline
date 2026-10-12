@@ -42,7 +42,7 @@ describe('Room composer status layout', () => {
   });
 
   it('lets newline content drive the iOS input height without changing web sizing', () => {
-    expect(composerInput).toContain("Platform.OS === 'ios' ? undefined : { height, maxHeight }");
+    expect(composerInput).toContain("Platform.OS === 'ios' ? undefined : { height: inputHeight, maxHeight }");
     expect(composerInput).toContain("Platform.OS === 'android' && styles.inputAndroid");
     expect(composerInput).toContain('multiline');
     expect(composerInput).not.toContain('numberOfLines=');

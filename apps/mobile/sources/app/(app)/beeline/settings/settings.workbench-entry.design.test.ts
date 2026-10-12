@@ -9,7 +9,7 @@ const settings = readFileSync(new URL('./identity.tsx', import.meta.url), 'utf8'
 describe('Settings Workbench entry', () => {
   it('offers a row that opens the Workbench', () => {
     expect(settings).toContain('testID="settings-workbench-row"');
-    expect(settings).toContain("router.push('/beeline/settings/workbench'");
+    expect(settings).toContain("pathname: '/beeline/settings/workbench'");
   });
 
   it('heads that row with its own section', () => {

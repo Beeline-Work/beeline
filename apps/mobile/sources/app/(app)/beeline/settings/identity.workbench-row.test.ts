@@ -424,7 +424,10 @@ describe('Settings Workbench row shares the held Workbench projection', () => {
     expect(workbenchRow(renderer).props.value).toBeUndefined();
     expect(workbenchRow(renderer).props.description).toBeUndefined();
     act(() => workbenchRow(renderer).props.onPress());
-    expect(navigation.push).toHaveBeenCalledWith('/beeline/settings/workbench');
+    expect(navigation.push).toHaveBeenCalledWith({
+      pathname: '/beeline/settings/workbench',
+      params: { workspaceId: 'workspace-1', viewerId: VIEWER },
+    });
   });
 });
 

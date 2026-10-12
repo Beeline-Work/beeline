@@ -448,7 +448,13 @@ export default function BuzzIdentitySettings() {
             <SettingsRow
               accessibilityLabel="Open your Connectors"
               chevron="right"
-              onPress={() => router.push('/beeline/settings/workbench' as never)}
+              onPress={() => router.push({
+                pathname: '/beeline/settings/workbench',
+                params: {
+                  workspaceId: selectedWorkspace?.id ?? currentWorkspaceId ?? '',
+                  viewerId: profilePubkey ?? '',
+                },
+              } as never)}
               testID="settings-workbench-row"
               title="Your connections"
               value={workbench?.value}

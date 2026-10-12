@@ -485,7 +485,16 @@ export async function runMachineHelper(
     void rescan().catch((error) => console.error('[helper] rescan failed:', error));
   };
   signals.on('SIGHUP', onHangup);
-  const stopWatchdog = startLocalWatchdog(notifier, statusLine);
+  const stopWatchdog = startLocalWatchdog(notifier, statusLine, async () => {
+    // A starting/restarting core is not yet proof of work-loop progress. Skip
+    // this tick and try at the next existing tick rather than holding a stale
+    // promise forever after that core eventually establishes itself.
+    if ([...slots.values()].some((slot) => slot.running &&
+        !slot.controller.signal.aborted && !hosted.has(slot.agentId))) return false;
+    // Include every hosted core: one stalled agent cannot borrow another's health.
+    await Promise.all([...hosted.values()].map((agent) => agent.core.requestWorkLoopProgress()));
+    return true;
+  }, undefined, env);
 
   try {
     console.log(`[helper] hosting ${initial.length} agent(s) on one machine socket per server`);

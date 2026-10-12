@@ -1,5 +1,5 @@
 import type { BodyConfig } from './config.js';
-import { isAgentRemovedError, type DaemonApiClient } from './daemon-api-client.js';
+import { DaemonApiError, isAgentRemovedError, type DaemonApiClient } from './daemon-api-client.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { RoomRuntimeCoordinator } from './room-runtime.js';
 import type { InterruptedTurn } from './force-update-journal.js';
@@ -18,6 +18,7 @@ export class ThinDaemonCore {
   private pendingDiscovery = false;
   private discoveryWaiter?: () => void;
   private discoveryStatus = 'starting';
+  private readonly progressWaiters = new Set<() => void>();
 
   constructor(
     runtime: AgentRuntimeRecord,
@@ -40,7 +41,7 @@ export class ThinDaemonCore {
   }
 
   private async waitForDiscovery(signal?: AbortSignal): Promise<void> {
-    if (this.pendingDiscovery || signal?.aborted) return;
+    if (this.pendingDiscovery || this.progressWaiters.size || signal?.aborted) return;
     await new Promise<void>((resolveWait) => {
       const done = () => {
         signal?.removeEventListener('abort', done);
@@ -49,7 +50,15 @@ export class ThinDaemonCore {
       };
       this.discoveryWaiter = done;
       signal?.addEventListener('abort', done, { once: true });
-      if (this.pendingDiscovery) done();
+      if (this.pendingDiscovery || this.progressWaiters.size) done();
+    });
+  }
+
+  /** The existing machine watchdog tick wakes this loop without discovering Rooms. */
+  requestWorkLoopProgress(): Promise<void> {
+    return new Promise<void>((resolveProgress) => {
+      this.progressWaiters.add(resolveProgress);
+      this.discoveryWaiter?.();
     });
   }
 
@@ -122,17 +131,23 @@ export class ThinDaemonCore {
       if (!opts.signal?.aborted) await opts.onEstablished?.();
       const supervisor = this.roomRuntime.supervisor;
       let failures = 0;
+      let discover = true;
       while (!opts.signal?.aborted) {
-        this.pendingDiscovery = false;
+        const acknowledge = [...this.progressWaiters];
+        const shouldDiscover = discover || this.pendingDiscovery;
+        if (shouldDiscover) this.pendingDiscovery = false;
         const wakesBefore = supervisor.wakes;
         try {
-          const membership = await this.roomRuntime.reconcile();
-          if (membership === 'not-member') return 'agent-removed';
-          this.discoveryStatus = membership === 'unknown' ? 'monolith membership degraded' : '';
-          failures = 0;
+          if (shouldDiscover) {
+            const membership = await this.roomRuntime.reconcile();
+            if (membership === 'not-member') return 'agent-removed';
+            this.discoveryStatus = membership === 'unknown' ? 'monolith membership degraded' : '';
+            failures = 0;
+          }
         } catch (error) {
           if (isAgentRemovedError(error)) return 'agent-removed';
-          failures += 1;
+          failures = error instanceof DaemonApiError && !error.retryable
+            ? supervisor.retries + 1 : failures + 1;
           console.error(
             failures > supervisor.retries
               ? '[thin-core] discovery failed; waiting for the next live open or discovery wake:'
@@ -144,17 +159,25 @@ export class ThinDaemonCore {
         }
         if (opts.signal?.aborted) break;
         await opts.onProgress?.(this.healthStatus());
-        if (failures > 0) {
-          // Bounded: three timed retries, then only an open or a wake (which
-          // a reconnect after the suspect ping delivers) tries again.
+        for (const done of acknowledge) {
+          this.progressWaiters.delete(done);
+          done();
+        }
+        if (failures > 0 && failures <= supervisor.retries) {
           await supervisor.retryDelay(failures, opts.signal, wakesBefore);
-          if (failures > supervisor.retries) failures = 0;
-        } else if (!this.pendingDiscovery) {
+          discover = true;
+        } else {
+          // Exhausted or refused reads park until a real discovery event. Local
+          // health ticks still run here, without replaying the refused request.
+          failures = 0;
           await this.waitForDiscovery(opts.signal);
+          discover = this.pendingDiscovery;
         }
       }
       return 'aborted';
     } finally {
+      for (const done of this.progressWaiters) done();
+      this.progressWaiters.clear();
       opts.signal?.removeEventListener('abort', stop);
       await this.roomRuntime.shutdown();
     }

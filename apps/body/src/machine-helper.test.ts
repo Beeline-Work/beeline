@@ -213,6 +213,104 @@ describe('one helper process hosts every agent on the machine', () => {
 });
 
 describe('one update drain for every hosted agent', () => {
+  it.each(['push', 'reconnect'] as const)('stages and applies a %s release through an isolated helper and local server', async (delivery) => {
+    const { root, configPaths, env, signals } = await machine(1);
+    const layout = { libDir: resolve(root, 'lib/beeline'),
+      releasesRoot: resolve(root, 'lib/beeline-releases'), binDir: resolve(root, 'bin') };
+    const oldBundle = resolve(layout.releasesRoot, 'old', 'lib/beeline');
+    await mkdir(oldBundle, { recursive: true });
+    await writeFile(resolve(oldBundle, 'bundle.json'), JSON.stringify({ version: 'v0.1.28', commit: 'old' }));
+    await writeFile(resolve(oldBundle, 'beeline-cli.mjs'), '');
+    await symlink('beeline-releases/old', layout.libDir);
+    env.BEELINE_LIB_DIR = layout.libDir;
+
+    const publishedLib = resolve(root, 'published/lib/beeline');
+    await mkdir(resolve(publishedLib, 'codegraph/bin'), { recursive: true });
+    await writeFile(resolve(publishedLib, 'beeline-cli.mjs'), "console.log('beeline v0.1.29');\n");
+    await writeFile(resolve(publishedLib, 'pi-mcp-adapter.mjs'), 'export {};\n');
+    await writeFile(resolve(publishedLib, 'codegraph/bin/codegraph'), '#!/bin/sh\nexit 0\n');
+    await writeFile(resolve(root, 'published/bundle.json'), JSON.stringify({ version: 'v0.1.29', commit: 'new' }));
+    execFileSync('tar', ['-czf', resolve(root, 'bundle.tar.gz'), '-C', resolve(root, 'published'), '.']);
+    const archive = await readFile(resolve(root, 'bundle.tar.gz'));
+    const manifest = (version: string, commit: string) => JSON.stringify({ schemaVersion: 1,
+      sourceCommit: commit, version, bundles: { [hostPlatformKey()]: { file: 'bundle.tar.gz',
+        sha256: createHash('sha256').update(archive).digest('hex') } } });
+    let published = false;
+    let manifestReads = 0;
+    const server = createServer((request, response) => {
+      if (request.url === '/manifest.json') {
+        manifestReads += 1;
+        response.end(manifest(published ? 'v0.1.29' : 'v0.1.28', published ? 'new' : 'old'));
+      } else if (request.url === '/bundle.tar.gz') response.end(archive);
+      else response.end('{}');
+    });
+    const sockets = new WebSocketServer({ server });
+    const agentId = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
+    sockets.on('connection', (socket) => {
+      if (published) socket.send(JSON.stringify({ type: 'helper-release', version: 'v0.1.29', sha: 'new' }));
+      socket.on('message', (data) => {
+        const frame = JSON.parse(data.toString());
+        if (frame.type === 'register') socket.send(JSON.stringify({ type: 'registered', agentId }));
+        if (frame.type === 'subscribe') socket.send(JSON.stringify({ type: 'subscribed', agentId,
+          roomId: frame.roomId, capabilities: { pushIntake: true, connectionPresence: true } }));
+      });
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    env.BEELINE_UPDATE_MANIFEST_URL = `${origin}/manifest.json`;
+    let running: ReturnType<typeof runMachineHelper> | undefined;
+    try {
+      const runAgent = vi.fn(async (_configPath: string, host: AgentRuntimeHost, signal: AbortSignal) => {
+        const lifecycle = new HelperLifecycle({ controller: new AbortController(), exitProcess: () => undefined });
+        const core = { activeTurnCount: () => 0, quiesceForUpdate: () => undefined,
+          isWorkspaceIdle: () => true } as unknown as ThinDaemonCore;
+        const leave = host.attach({ agentId, runtimeDir: root, lifecycle, core });
+        const api = new DaemonApiClient(origin, 'isolated-test-token', agentId,
+          fetch, undefined, undefined, undefined, host.machineLink(origin));
+        api.setHelperReleaseListener(({ version, sha }) => {
+          host.notifyReleaseAvailable(`${version}:${sha}`);
+          void host.tickUpdate();
+        });
+        const unsubscribe = api.liveSubscribe('room');
+        host.established(agentId);
+        try {
+          await new Promise<void>((resolveStop) => signal.addEventListener('abort', () => resolveStop(), { once: true }));
+        } finally {
+          unsubscribe();
+          leave();
+        }
+        return 'stopped' as const;
+      });
+      running = runMachineHelper({ configPaths, env, signals, runAgent,
+        runUpdateWorker: async () => {
+          const manager = new SelfUpdateManager({ layout, stageOnly: true, env, logger: () => undefined });
+          await manager.checkAndApply();
+        }, exitProcess: () => undefined });
+      await vi.waitFor(() => expect(manifestReads).toBe(1));
+      expect(await activeReleaseId(layout)).toBe('old');
+      if (delivery === 'reconnect') {
+        for (const socket of sockets.clients) socket.close(1012, 'test reconnect');
+        await vi.waitFor(() => expect([...sockets.clients].every((socket) => socket.readyState === socket.CLOSED)).toBe(true));
+        published = true;
+      } else {
+        published = true;
+        for (const socket of sockets.clients) socket.send(JSON.stringify({
+          type: 'helper-release', version: 'v0.1.29', sha: 'new',
+        }));
+      }
+      await vi.waitFor(async () => expect(await activeReleaseId(layout)).toBe('new'), { timeout: 10_000 });
+      expect((await running).reason).toBe('update');
+      expect(manifestReads).toBe(2);
+      expect(await readFile(resolve(layout.releasesRoot, 'new/bundle.json'), 'utf8')).toContain('v0.1.29');
+    } finally {
+      signals.emit('SIGTERM');
+      await running;
+      for (const socket of sockets.clients) socket.terminate();
+      await new Promise<void>((resolveClose) => sockets.close(() => resolveClose()));
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    }
+  }, 20_000);
+
   it.each(['quiet gap', 'deadline', 'deadline retry'] as const)('installs at %s and resumes queued/interrupted work in an isolated helper', async (handoff) => {
     const { root, configPaths, env, signals } = await machine(1);
     const layout = { libDir: resolve(root, 'lib/beeline'),

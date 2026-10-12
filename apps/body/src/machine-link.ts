@@ -117,6 +117,7 @@ export class AgentChannel {
       this.#registeredAt = Date.now();
       this.#registrations += 1;
       this.handlers.onOpen();
+      this.machine.registered();
       for (const listener of [...this.#openListeners]) {
         try {
           listener();
@@ -196,6 +197,8 @@ export class MachineLink {
   readonly link: LiveLink;
   readonly #channels = new Map<string, AgentChannel>();
   #identity: { releaseVersion: string; sourceSha?: string } = { releaseVersion: 'v0.0.0' };
+  #reconciledOnSocket = false;
+  #pendingRelease: Record<string, unknown> | undefined;
   readonly random: () => number;
 
   constructor(
@@ -204,6 +207,7 @@ export class MachineLink {
       factory?: LiveSocketFactory;
       timing?: Partial<LiveLinkTiming>;
       random?: () => number;
+      onRegistered?: () => void;
     },
   ) {
     this.random = options.random ?? Math.random;
@@ -213,10 +217,14 @@ export class MachineLink {
       factory: options.factory ?? ((url, protocols, socketOptions) =>
         new WebSocket(url, protocols, socketOptions)),
       onOpen: () => {
+        this.#reconciledOnSocket = false;
+        this.#pendingRelease = undefined;
         for (const channel of this.#channels.values()) channel.register();
       },
       onMessage: (data) => this.#message(data),
       onClose: () => {
+        this.#reconciledOnSocket = false;
+        this.#pendingRelease = undefined;
         for (const channel of this.#channels.values()) channel.socketClosed();
       },
       onUpdateRequired: (minVersion) => {
@@ -232,6 +240,18 @@ export class MachineLink {
       releaseVersion: helperVersion(identity.releaseVersion),
       ...(identity.sourceSha ? { sourceSha: identity.sourceSha } : {}),
     };
+  }
+
+  /** The first accepted registration follows the server's cached release frame. */
+  registered(): void {
+    if (this.#reconciledOnSocket) return;
+    this.#reconciledOnSocket = true;
+    this.options.onRegistered?.();
+    if (this.#pendingRelease) {
+      const release = this.#pendingRelease;
+      this.#pendingRelease = undefined;
+      this.#broadcast(release);
+    }
   }
 
   /** A later channel for the same agent (an in-process restart) replaces the earlier one. */
@@ -286,10 +306,15 @@ export class MachineLink {
     }
     // Untagged frames belong to the machine: release notices reach every agent.
     if (event.type === 'helper-release') {
-      for (const channel of this.#channels.values()) channel.broadcast(event);
+      if (!this.#reconciledOnSocket) this.#pendingRelease = event;
+      else this.#broadcast(event);
       return;
     }
     // hello is informational; a malformed force-update never authorizes an update.
     if (event.type !== 'hello' && event.type !== 'force-update') this.#logUnknown(event.type);
+  }
+
+  #broadcast(event: Record<string, unknown>): void {
+    for (const channel of this.#channels.values()) channel.broadcast(event);
   }
 }

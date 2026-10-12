@@ -352,7 +352,6 @@ describe('self-update end to end against a local fixture manifest', () => {
     const manager = new SelfUpdateManager({
       layout,
       env: { BEELINE_UPDATE_MANIFEST_URL: manifestUrl },
-      checkIntervalMs: 0,
       idleTimeoutMs: 400,
       idlePollMs: 20,
       isIdle: () => idle,
@@ -508,14 +507,13 @@ describe('self-update end to end against a local fixture manifest', () => {
         BEELINE_UPDATE_DISABLE: '1',
         BEELINE_UPDATE_MANIFEST_URL: `${baseUrl}/dl/manifest.json`,
       },
-      checkIntervalMs: 3_600_000,
       idleTimeoutMs: 10_000,
       idlePollMs: 20,
       isIdle: () => true,
       logger: () => undefined,
     });
 
-    // Disabled + no request + cadence far away → nothing happens on tick.
+    // The automatic path is disabled, but an explicit update still works.
     await manager.tickOnce();
     expect(await activeReleaseId(layout)).toBe('legacy');
 

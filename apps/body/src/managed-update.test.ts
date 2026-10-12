@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { identityFromKey } from './runtime.js';
 import { activeReleaseId, readUpdateState, writeUpdateState, type BeelineInstallLayout } from './self-update.js';
-import { coordinateManagedUpdateHandoff, DEFAULT_UPDATE_INTERVAL_MS, ManagedUpdateDrain, ManagedUpdateHandoff, managedRestartStaggerMs, MAX_HOST_RESTART_STAGGER_MS, UPDATE_CONVERGENCE_SLO_MS, UPDATE_DRAIN_DEADLINE_MS } from './managed-update.js';
+import { coordinateManagedUpdateHandoff, ManagedUpdateDrain, ManagedUpdateHandoff, managedRestartStaggerMs, MAX_HOST_RESTART_STAGGER_MS, UPDATE_CONVERGENCE_SLO_MS, UPDATE_DRAIN_DEADLINE_MS } from './managed-update.js';
 
 const roots: string[] = [];
 const systemdUnits: string[] = [];
@@ -197,7 +197,6 @@ describe('managed update handoff', () => {
     let now = 1_000;
     let workerCalls = 0;
     const update = await ManagedUpdateHandoff.create(layout, () => now, {
-      env: { BEELINE_UPDATE_INITIAL_DELAY_MS: '50' },
       runUpdateWorker: async () => {
         workerCalls += 1;
         await writeUpdateState(layout, { stagedReleaseId: 'new' });
@@ -205,7 +204,7 @@ describe('managed update handoff', () => {
     });
 
     expect(await update.check()).toBe(false);
-    now += 50;
+    update.reconcileOnConnect();
     expect(await update.check()).toBe(false);
     await vi.waitFor(() => expect(workerCalls).toBe(1));
     await vi.waitFor(async () =>
@@ -234,9 +233,9 @@ describe('managed update handoff', () => {
   it('never makes a watchdog progress tick await a slow update worker', async () => {
     const { layout } = await layoutFixture();
     const update = await ManagedUpdateHandoff.create(layout, () => 1_000, {
-      env: { BEELINE_UPDATE_INITIAL_DELAY_MS: '0' },
       runUpdateWorker: () => new Promise<void>(() => undefined),
     });
+    update.reconcileOnConnect();
     const result = await Promise.race([
       update.check(),
       new Promise<'blocked'>((resolveBlocked) => setTimeout(() => resolveBlocked('blocked'), 100)),
@@ -244,7 +243,7 @@ describe('managed update handoff', () => {
     expect(result).toBe(false);
   });
 
-  it('rechecks the published channel inside the convergence SLO by default', async () => {
+  it('checks once on reconnect and never checks periodically', async () => {
     const { layout } = await layoutFixture();
     let now = 1_000;
     let workerCalls = 0;
@@ -254,27 +253,29 @@ describe('managed update handoff', () => {
       },
     });
 
-    expect(DEFAULT_UPDATE_INTERVAL_MS).toBe(30_000);
+    expect(await update.check()).toBe(false);
+    expect(workerCalls).toBe(0);
+    update.reconcileOnConnect();
     expect(await update.check()).toBe(false);
     await vi.waitFor(() => expect(workerCalls).toBe(1));
-    now += DEFAULT_UPDATE_INTERVAL_MS - 1;
+    now += 24 * 60 * 60_000;
     expect(await update.check()).toBe(false);
     expect(workerCalls).toBe(1);
-    now += 1;
+    update.reconcileOnConnect();
     expect(await update.check()).toBe(false);
     await vi.waitFor(() => expect(workerCalls).toBe(2));
   });
 
-  it('checks a newly announced release immediately even inside the cadence window', async () => {
+  it('checks a newly announced release immediately and deduplicates its identity', async () => {
     const { layout } = await layoutFixture();
     let now = 1_000;
     let workerCalls = 0;
     const update = await ManagedUpdateHandoff.create(layout, () => now, {
-      env: { BEELINE_UPDATE_INTERVAL_MS: '21600000' },
       runUpdateWorker: async () => {
         workerCalls += 1;
       },
     });
+    update.reconcileOnConnect();
     await update.check();
     await vi.waitFor(() => expect(workerCalls).toBe(1));
     now += 1;
@@ -284,16 +285,19 @@ describe('managed update handoff', () => {
     await update.check();
     await vi.waitFor(() => expect(workerCalls).toBe(2));
     expect((await readUpdateState(layout)).notifiedReleaseKey).toBe('a'.repeat(40));
+    update.notifyReleaseAvailable('a'.repeat(40));
+    await update.check();
+    expect(workerCalls).toBe(2);
     update.notifyReleaseAvailable('b'.repeat(40));
     await update.check();
     await vi.waitFor(() => expect(workerCalls).toBe(3));
   });
 
-  it('activates an announced release on the next idle progress tick despite a six-hour initial delay', async () => {
+  it('activates an announced release after staging and the idle gate', async () => {
     const { layout } = await layoutFixture();
     let now = 1_000;
     const update = await ManagedUpdateHandoff.create(layout, () => now, {
-      env: { BEELINE_UPDATE_INITIAL_DELAY_MS: '21600000', BEELINE_SYSTEMD_USER: '0' },
+      env: { BEELINE_SYSTEMD_USER: '0' },
       runUpdateWorker: async () => {
         await writeUpdateState(layout, { stagedReleaseId: 'new', lastCheckAt: now });
       },
@@ -421,6 +425,32 @@ describe('managed update drain', () => {
     expect(restarts).toEqual([{ release: 'new', mode: 'drained', at: 1_000 }]);
     expect(state.intakeQuiesced).toBe(true);
     expect(clock.pending()).toBe(0);
+  });
+
+  it('replays a wake that arrives while a drain tick is still resolving', async () => {
+    const { layout } = await layoutFixture();
+    const update = await ManagedUpdateHandoff.create(layout);
+    await rm(layout.libDir);
+    await symlink('beeline-releases/new', layout.libDir);
+    let activeTurns = 1;
+    let releaseWaiting!: () => void;
+    const waiting = new Promise<void>((resolveWaiting) => { releaseWaiting = resolveWaiting; });
+    let enteredWaiting = false;
+    const restart = vi.fn(async () => undefined);
+    const drain = new ManagedUpdateDrain({
+      update,
+      activeTurnCount: () => activeTurns,
+      quiesce: () => true,
+      restart,
+      waiting: async () => { enteredWaiting = true; await waiting; },
+    });
+    const first = drain.tick();
+    await vi.waitFor(() => expect(enteredWaiting).toBe(true));
+    const overlapping = drain.tick();
+    activeTurns = 0;
+    releaseWaiting();
+    await Promise.all([first, overlapping]);
+    await vi.waitFor(() => expect(restart).toHaveBeenCalledOnce());
   });
 
   it('restarts a busy helper on the first tick after its turn ends and cancels the deadline', async () => {
@@ -556,13 +586,13 @@ if (generation > 1) {
   });
 } else {
   const update = await ManagedUpdateHandoff.create(layout, Date.now, {
-    env: { BEELINE_UPDATE_INITIAL_DELAY_MS: '0', BEELINE_UPDATE_INTERVAL_MS: '25' },
     drainDeadlineMs: 500,
     runUpdateWorker: async () => {
       if (!existsSync(publishedPath)) return;
       await writeUpdateState(layout, { stagedReleaseId: 'new', lastCheckAt: Date.now() });
     },
   });
+  update.reconcileOnConnect();
   await notifier.ready('ready; loaded_release=' + loadedRelease);
   await writeFile(statePath, JSON.stringify({ ...previous, generation, loadedRelease }));
   let checking = false;

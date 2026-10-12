@@ -833,8 +833,6 @@ export interface SelfUpdateManagerOptions {
   layout: BeelineInstallLayout;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
-  /** Minimum interval between manifest checks. Default 6h. */
-  checkIntervalMs?: number;
   /** How long to wait for agent work to finish before restarting. Default 30min. */
   idleTimeoutMs?: number;
   idlePollMs?: number;
@@ -858,7 +856,7 @@ export class SelfUpdateManager {
   private readonly options: Required<
     Pick<
       SelfUpdateManagerOptions,
-      'layout' | 'checkIntervalMs' | 'idleTimeoutMs' | 'idlePollMs'
+      'layout' | 'idleTimeoutMs' | 'idlePollMs'
     >
   > & { env: NodeJS.ProcessEnv; now: () => number };
   private readonly isIdle: () => boolean;
@@ -866,7 +864,6 @@ export class SelfUpdateManager {
   private readonly log: (line: string) => void;
   private readonly stageOnly: boolean;
 
-  private nextCheckAllowedAt = 0;
   private disposed = false;
   private applying = false;
   private deferredBusyNotice = false;
@@ -882,8 +879,6 @@ export class SelfUpdateManager {
     };
     this.options = {
       layout: options.layout,
-      checkIntervalMs:
-        options.checkIntervalMs ?? numberEnv('BEELINE_UPDATE_INTERVAL_MS', 6 * 60 * 60_000),
       idleTimeoutMs:
         options.idleTimeoutMs ?? numberEnv('BEELINE_UPDATE_IDLE_TIMEOUT_MS', 30 * 60_000),
       idlePollMs: options.idlePollMs ?? 5_000,
@@ -913,7 +908,7 @@ export class SelfUpdateManager {
     if (this.disposed || this.applying) return;
     const now = this.options.now();
     const disabled = this.options.env.BEELINE_UPDATE_DISABLE === '1';
-    if (disabled || now < this.nextCheckAllowedAt) return;
+    if (disabled) return;
     this.applying = true;
     try {
       await this.checkAndApply();

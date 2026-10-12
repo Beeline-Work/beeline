@@ -213,6 +213,7 @@ describe('check-passed dispatch with a reviewer list', () => {
     expect((await exhaustedNotices())[0]!.text).not.toMatch(/class|tag|tier/i);
     expect(await reviews(REVIEWER_A)).toHaveLength(0);
     expect(await reviews(OWNER_AGENT)).toHaveLength(0);
+    expect((await commands(OWNER_AGENT)).some(command => command.reason === 'corner_review_needed')).toBe(true);
 
     await db.query(
       `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
@@ -272,6 +273,7 @@ describe('a failed review turn', () => {
     await failTurn((await reviews(REVIEWER_B))[0]!);
     expect(await exhaustedNotices()).toHaveLength(1);
     expect(await reviews(OWNER_AGENT)).toHaveLength(0);
+    expect((await commands(OWNER_AGENT)).some(command => command.reason === 'corner_review_needed')).toBe(true);
   });
 
   it('never moves back up the list to an agent that recovered after being skipped', async () => {

@@ -13,6 +13,27 @@ import {
   selectWorkingAgents,
 } from './room-indicators';
 
+describe('queued messages leave the working presentation alone', () => {
+  it('keeps the first turn and its clock while a second message is being sent', () => {
+    const first = {
+      isCorner: false, activeTurnPubkey: 'ruby', activeTurnAgentPubkey: 'ruby',
+      activeTurnRequestId: 'first-message', activeTurnStartedAt: 100,
+      now: 102_100,
+    };
+    expect(selectComposerAckPresentation({ ...first, pendingAckSentAt: 102_000 }))
+      .toEqual(selectComposerAckPresentation(first));
+    expect(selectComposerAckPresentation(first)).toMatchObject({
+      turnKey: 'ruby:first-message', startedAt: 100,
+    });
+  });
+
+  it('shows no acknowledgement after acceptance when there is no running turn', () => {
+    // Accepted pending commands are not lifecycle evidence. Only the local
+    // send bridge or an active turn may supply the composer presentation.
+    expect(selectComposerAckPresentation({ isCorner: false, now: 102_100 })).toBeNull();
+  });
+});
+
 describe('corner-state presentation', () => {
   it('spends gold only on canonical working', () => {
     expect(isPinnedCornerLive('working')).toBe(true);

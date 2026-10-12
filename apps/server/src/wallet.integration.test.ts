@@ -1,6 +1,5 @@
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash, createHmac, generateKeyPairSync } from 'node:crypto';
 import { CdpWalletClient } from './cdp-client.js';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +14,9 @@ import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { walletSource } from './wallet.js';
+import { walletExplorerTxUrl } from '@beeline/api-contract/wallet';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { postWalletNotice, type WalletNotice } from './wallet-notices.js';
 import type { FakeWalletState } from './cdp-fake.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
@@ -85,7 +87,7 @@ describe('wallet over the fake CDP seam', () => {
     const phone = new PhoneService(database, 'http://placeholder', githubOperations);
     const live = new LiveHub();
     const daemon = new DaemonService(database, live);
-    server = createBeelineServer({ database, auth, phone, daemon, live });
+    server = createBeelineServer({ database, auth, phone, daemon, live, cdpWebhookSecrets: { test: 'fixture-only-webhook-secret' } });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     accessToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
@@ -641,49 +643,226 @@ describe('wallet over the fake CDP seam', () => {
     vi.unstubAllGlobals();
   });
 
-  it('wallet notices share the System DM and author', async () => {
-    await createdWallet();
-    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
-    fakeState().holdings.forEach((holdings) => holdings.set('usdc', 500));
-    await daemonOperation('walletPay', {
-      agentId: HELPER,
-      chain: 'base',
-      asset: 'usdc',
-      amount: '120',
-      to: '0xabc',
+  async function notices() {
+    return (await database.query<{
+      id: string; author_id: string; room_id: string; text: string; card: WalletNotice;
+      presentation: string; card_type: string | null; direct_participants: string[];
+    }>(`SELECT message.*,room.direct_participants FROM messages message
+      JOIN rooms room ON room.id=message.room_id
+      WHERE message.card->>'walletNotice'='true' ORDER BY message.created_at,message.id`)).rows;
+  }
+
+  async function deliverWalletEvent(type: string, data: Record<string, unknown>, eventId = 'fixture-event') {
+    const raw = JSON.stringify({ id: eventId, type, data });
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const names = 'content-type x-event-id x-event-type';
+    const signature = createHmac('sha256', 'fixture-only-webhook-secret')
+      .update(`${timestamp}.${names}.application/json.${eventId}.${type}.${raw}`).digest('hex');
+    return fetch(`${origin}/v1/wallet/events/cdp/test`, {
+      method: 'POST', body: raw, headers: {
+        'content-type': 'application/json', 'x-event-id': eventId, 'x-event-type': type,
+        'x-hook0-signature': `t=${timestamp},h=${names},v1=${signature}`,
+      },
     });
+  }
 
-    // System remains an internal human identity.
-    const identity = (
-      await database.query<{ kind: string; hidden_from_roster: boolean }>(
-        `SELECT kind,hidden_from_roster FROM identities WHERE id=$1`,
-        [SYSTEM_IDENTITY_ID],
-      )
-    ).rows[0];
-    expect(identity).toMatchObject({ kind: 'human', hidden_from_roster: true });
+  it('each phone send, agent pay, swap and contract call posts a linked owner-only @System notice', async () => {
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'base', 'usdc', 500);
+    fundChain(wallet.address, 'base', 'eth', 1);
+    const pay = { chain: 'base', asset: 'usdc', amount: '2', to: `0x${'7'.repeat(40)}` };
+    expect(await phoneOperation('sendFromWallet', { ...pay, workspaceId: WORKSPACE })).toMatchObject({ outcome: 'sent' });
+    expect((await daemonOperation('walletPay', { ...pay, agentId: HELPER })).body.outcome).toBe('sent');
+    expect((await daemonOperation('walletSwap', {
+      agentId: HELPER, chain: 'base', fromAsset: 'usdc', toAsset: 'eth', amount: '3',
+    })).body.outcome).toBe('sent');
+    expect((await daemonOperation('walletContractCall', {
+      agentId: HELPER, chain: 'base', contract: pay.to, data: '0x', value: '0.001',
+    })).body.outcome).toBe('sent');
+    const rows = (await notices()).filter(row => row.card.txUrl);
+    expect(rows).toHaveLength(4);
+    expect(rows.map(row => row.card.operation)).toEqual(['send', 'send', 'swap', 'contract']);
+    for (const row of rows) {
+      expect(row.author_id).toBe(SYSTEM_IDENTITY_ID);
+      expect(row.direct_participants.sort()).toEqual([SYSTEM_IDENTITY_ID, HUMAN].sort());
+      expect(row.presentation).toBe('system');
+      expect(row.card_type).toBeNull(); // DM push eligibility + the linked system-line renderer
+      expect(row.card.txUrl).toMatch(/^https:\/\/basescan\.(?:io|org)\/tx\//);
+      expect(row.text).toContain(row.card.counterparty);
+      expect(row.text).toContain('base');
+    }
+    expect(rows[0]!.text).toContain('you');
+    expect(rows.slice(1).every(row => row.text.includes('@bee') && row.card.agentId === HELPER)).toBe(true);
+    expect(rows[2]!.text).toContain('USDC');
+    expect(rows[2]!.text).toContain('ETH');
+    expect(rows[2]!.text).toContain('confirmed swap');
+    const history = await fetch(`${origin}/v1/phone/rooms/${rows[0]!.room_id}/history`, {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(history.status).toBe(200);
+    expect(JSON.stringify(await history.json())).toContain(rows[0]!.card.txUrl);
+    expect((await database.query(`SELECT id FROM messages WHERE author_id=$1 AND card_type='wallet-tx'`,
+      [SYSTEM_IDENTITY_ID])).rows).toHaveLength(0);
+  });
 
-    // Wallet notices share the one read-only System thread.
-    const dm = (
-      await database.query<{ room_id: string }>(
-        `SELECT r.id room_id FROM rooms r
-         WHERE r.direct_participants @> to_jsonb(ARRAY[$1::text])`,
-        [SYSTEM_IDENTITY_ID],
-      )
-    ).rows;
-    expect(dm).toHaveLength(1);
-    const lines = (
-      await database.query<{ author_id: string; card_type: string | null }>(
-        `SELECT author_id,card_type FROM messages WHERE room_id=$1 ORDER BY created_at`,
-        [dm[0]!.room_id],
-      )
-    ).rows;
-    expect(lines.length).toBeGreaterThanOrEqual(2);
-    expect(lines.every((line) => line.author_id === SYSTEM_IDENTITY_ID)).toBe(true);
+  it('pending swaps get one notice without claiming confirmation or crediting output', async () => {
+    await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const hash = `0x${'1'.repeat(64)}`;
+    vi.spyOn(walletSource(), 'swap').mockResolvedValue({ txId: hash, toAmount: '100', status: 'pending' });
+    const result = await daemonOperation('walletSwap', {
+      agentId: HELPER, chain: 'base', fromAsset: 'usdc', toAsset: 'eth', amount: '3',
+    });
+    expect(result.body.outcome).toBe('pending');
+    const rows = (await notices()).filter(row => row.card.txUrl?.endsWith(hash));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.card).toMatchObject({ status: 'pending', operation: 'swap', agentId: HELPER });
+    expect(rows[0]!.text).toContain('confirmation pending');
+    expect(rows[0]!.text).not.toContain('100 ETH');
+    expect((await database.query(`SELECT id FROM wallet_transactions WHERE tx_id=$1`, [hash])).rows).toHaveLength(0);
+  });
+
+  it('failed phone sends, agent sends and swaps, delegation and venue refusals all reach @System', async () => {
+    const wallet = await createdWallet();
+    fundChain(wallet.address, 'base', 'usdc', 500);
+    const pay = { chain: 'base', asset: 'usdc', amount: '2', to: `0x${'7'.repeat(40)}` };
+    expect((await daemonOperation('walletPay', { ...pay, agentId: HELPER })).body.outcome).toBe('delegation-expired');
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    vi.spyOn(walletSource(), 'sendTransaction').mockRejectedValue(new Error('CDP refused transfer'));
+    expect(await phoneOperation('sendFromWallet', { ...pay, workspaceId: WORKSPACE })).toMatchObject({ outcome: 'failed' });
+    expect((await daemonOperation('walletPay', { ...pay, agentId: HELPER })).body.outcome).toBe('failed');
+    const hash = `0x${'2'.repeat(64)}`;
+    vi.spyOn(walletSource(), 'swap').mockRejectedValue(new Error(`transaction ${hash} reverted`));
+    expect((await daemonOperation('walletSwap', {
+      agentId: HELPER, chain: 'base', fromAsset: 'usdc', toAsset: 'eth', amount: '3',
+    })).body.outcome).toBe('failed');
+    expect((await daemonOperation('walletPay', { ...pay, chain: 'arbitrum', to: BRIDGE2, agentId: HELPER })).body.outcome).toBe('failed');
+    const rows = (await notices()).filter(row => row.card.status === 'failed');
+    expect(rows).toHaveLength(5);
+    expect(rows.every(row => row.author_id === SYSTEM_IDENTITY_ID && row.card.reason)).toBe(true);
+    expect(rows.find(row => row.card.operation === 'swap')!.card.txUrl).toContain(hash);
+    expect(rows.find(row => row.card.counterparty === BRIDGE2)!.text).toContain(BRIDGE2);
+  });
+
+  it('provider status and retries settle the same notice and preserve the initiating agent', async () => {
+    const wallet = await createdWallet();
+    const hash = `0x${'3'.repeat(64)}`;
+    const notice: WalletNotice = { walletNotice: true, status: 'pending', operation: 'swap', execution: true,
+      amountText: '3 USDC→ETH', counterparty: 'Coinbase CDP', chain: 'base', agentId: HELPER,
+      agentName: '@bee', txUrl: walletExplorerTxUrl('base', hash) };
+    await postWalletNotice(database, WORKSPACE, HUMAN, notice);
+    const data = { address: wallet.address, transaction_hash: hash, network: 'base-mainnet' };
+    expect((await deliverWalletEvent('wallet.transaction.failed', data)).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.failed', data, 'retry')).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.broadcast', data, 'late')).status).toBe(200);
+    const rows = await notices();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.card).toMatchObject({ status: 'failed', agentId: HELPER, amountText: '3 USDC→ETH' });
+    expect(rows[0]!.text).toContain('@bee');
+  });
+
+  it('signed Base transfer pushes arrive without a wallet read, merge logs and stay private per owner', async () => {
+    const wallet = await createdWallet();
+    const hash = `0x${'4'.repeat(64)}`;
+    const data = { network: 'base-mainnet', transactionHash: hash, logIndex: 1,
+      contractAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      from: `0x${'7'.repeat(40)}`, to: wallet.address, value: '5000000' };
+    expect((await deliverWalletEvent('wallet.activity.multi', data)).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.activity.multi', data, 'retry')).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.activity.multi', { ...data, logIndex: 2,
+      from: wallet.address, to: `0x${'8'.repeat(40)}`, value: '2000000' }, 'outgoing')).status).toBe(200);
+    const rows = await notices();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.card.status).toBe('confirmed');
+    expect(rows[0]!.text).toContain('+5 USDC');
+    expect(rows[0]!.text).toContain('−2 USDC');
+    expect(rows[0]!.text).toContain('initiator not known');
+    expect(rows[0]!.direct_participants.sort()).toEqual([SYSTEM_IDENTITY_ID, HUMAN].sort());
+    expect(rows[0]!.card.txUrl).toContain(hash);
+  });
+
+  it.each([true, false])('provider-first settlement indexes token receipts once (swap=%s), then joins execution attribution', async (includeIncoming) => {
+    const wallet = await createdWallet();
+    const hash = `0x${'5'.repeat(64)}`;
+    const venue = `0x${'6'.repeat(40)}`;
+    const token = `0x${'9'.repeat(40)}`;
+    const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+    const topic = (address: string) => `0x${address.slice(2).padStart(64, '0')}`;
+    const word = (amount: number) => `0x${amount.toString(16).padStart(64, '0')}`;
+    const originalFetch = globalThis.fetch;
+    const rpcCalls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url).startsWith(origin)) return originalFetch(url, init);
+      const batch = JSON.parse(String(init?.body)) as Array<{ id: number; method: string }>;
+      return Response.json(batch.map(call => {
+        rpcCalls.push(call.method);
+        return { id: call.id, jsonrpc: '2.0', result: call.method === 'eth_getTransactionByHash'
+          ? { from: wallet.address, to: venue, value: '0x0', input: '0x12345678' }
+          : { logs: [
+            { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', logIndex: '0x1',
+              topics: [transferTopic, topic(wallet.address), topic(venue)], data: word(5_000_000) },
+            ...(includeIncoming ? [{ address: token, logIndex: '0x2', topics: [transferTopic, topic(venue), topic(wallet.address)], data: word(7) }] : []),
+          ] } };
+      }));
+    });
+    const data = { address: wallet.address, transaction_hash: hash, network: 'base' };
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', data)).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', data, 'retry')).status).toBe(200);
+    expect(rpcCalls).toEqual(['eth_getTransactionByHash', 'eth_getTransactionReceipt']);
+    let rows = await notices();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.text).toContain(includeIncoming ? 'confirmed swap' : 'confirmed contract');
+    expect(rows[0]!.text).toContain('−5 USDC');
+    if (includeIncoming) expect(rows[0]!.text).toContain('+7 raw units');
+    expect(rows[0]!.text).not.toContain('−−');
+    expect(rows[0]!.text).toContain(venue);
+    await postWalletNotice(database, WORKSPACE, HUMAN, {
+      walletNotice: true, status: 'pending', operation: 'swap', execution: true,
+      amountText: '5 USDC→ETH', counterparty: 'Coinbase CDP', chain: 'base', agentId: HELPER,
+      agentName: '@bee', txUrl: walletExplorerTxUrl('base', hash),
+    });
+    rows = await notices();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.card).toMatchObject({ status: 'confirmed', agentId: HELPER });
+    expect(rows[0]!.text).toContain('@bee');
+  });
+
+  it('ignores unknown accounts and testnets and records each insufficient attempt separately', async () => {
+    const wallet = await createdWallet();
+    const data = { address: `0x${'6'.repeat(40)}`, transaction_hash: `0x${'5'.repeat(64)}`, network: 'base-mainnet' };
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', data)).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', { ...data, address: wallet.address, network: 'base-sepolia' })).status).toBe(200);
+    expect(await notices()).toHaveLength(0);
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    const pay = { chain: 'base', asset: 'usdc', amount: '999999', to: `0x${'7'.repeat(40)}`, agentId: HELPER };
+    expect((await daemonOperation('walletPay', pay)).body.outcome).toBe('insufficient');
+    expect((await daemonOperation('walletPay', pay)).body.outcome).toBe('insufficient');
+    const rows = await notices();
+    expect(rows).toHaveLength(2);
+    expect(rows.every(row => row.card.status === 'refused' && row.text.includes(pay.to) && row.text.includes('@bee'))).toBe(true);
+  });
+
+  it('rejects forged provider events and phone sends into inaccessible Workspaces before sending', async () => {
+    await createdWallet();
+    const send = vi.spyOn(walletSource(), 'sendTransaction');
+    const response = await fetch(`${origin}/v1/phone/operations/sendFromWallet`, {
+      method: 'POST', headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ workspaceId: '99999999-9999-4999-8999-999999999999',
+        chain: 'base', asset: 'usdc', amount: '1', to: `0x${'7'.repeat(40)}` }),
+    });
+    expect(response.ok).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    const forged = await fetch(`${origin}/v1/wallet/events/cdp/test`, {
+      method: 'POST', body: '{}', headers: { 'x-hook0-signature': 'forged' },
+    });
+    expect(forged.status).toBe(401);
+    expect(await notices()).toHaveLength(0);
   });
 
   /** Fund one non-Base chain of the fake wallet. */
   function fundChain(address: string, chain: string, symbol: string, units: number) {
-    const key = `${chain}:${address}`;
+    const key = chain === 'base' ? address : `${chain}:${address}`;
     const holdings = fakeState().holdings.get(key) ?? new Map<string, number>();
     holdings.set(symbol, units);
     fakeState().holdings.set(key, holdings);

@@ -10,10 +10,10 @@
  *  - The funded balance IS the limit. The only refusal is insufficient
  *    funds. Wallet resource approvals and signing delegation still apply.
  *  - Every transaction, inbound AND out, appends ONE ledger line to the
- *    @System DM carrying
+ *    owner's @System DM carrying
  *    amount, counterparty, chain and the BALANCE REMAINING. Outbound lines
- *    name the agent that spent. The insufficient-funds notice is the one
- *    non-transaction message. There is no daily roll-up.
+ *    name the agent that spent. Failed and refused attempts are notices too.
+ *    There is no daily roll-up.
  *
  * All Coinbase calls go through the one `CdpWalletSource` seam (`cdp-client.ts`).
  * The real client is used when the CDP env secrets exist; tests and
@@ -45,6 +45,7 @@ import {
 import { ensureSystemDirectMessageRoom } from './system-line.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { systemLine } from './system-line.js';
+import { postWalletNotice, type WalletNotice } from './wallet-notices.js';
 import { fakeCdpWalletSource } from './cdp-fake.js';
 import { realCdpWalletSource, type CdpWalletSource } from './cdp-client.js';
 import { EVM_CHAINS, evmAsset, formatUnits, isEvmAddress, parseUnits } from './evm-chain.js';
@@ -130,7 +131,7 @@ export async function createWallet(
        VALUES ($1,$2,$3,$4) ON CONFLICT(identity_id) DO NOTHING`,
       [identityId, workspaceId, name, account.address],
     );
-    // Wallet notices share the owner's @System thread.
+    // Wallet notices share the owner's System thread.
     await ensureSystemDirectMessageRoom(database, workspaceId, identityId);
   }
   return readWalletView(database, identityId, workspaceId, source);
@@ -220,7 +221,7 @@ export async function delegationView(
 /**
  * The user (present, on their phone) grants or renews the delegated-signing
  * grant. One user-scoped delegation is active at a time: granting replaces
- * a legacy expiry with a standing grant. A grant is announced in the @System thread
+ * a legacy expiry with a standing grant. A grant is announced in the @wallet thread
  * so the ledger shows WHY agents can spend.
  */
 export async function grantWalletDelegation(
@@ -332,7 +333,7 @@ const SNAPSHOT_DECIMALS = 18;
  * Inbound transfers, found from balance increases. CDP v2 has no address
  * history for server wallets, so each read compares every (chain, asset)
  * holding with the last snapshot; an increase is recorded as one inbound
- * transaction and ledger line. The snapshot update is compare-and-set, so
+ * history entry, without claiming a transaction identity or emitting a notice. The snapshot update is compare-and-set, so
  * concurrent reads record an increase once. Unread chains are skipped.
  */
 export async function reconcileBalances(
@@ -392,16 +393,8 @@ export async function reconcileBalances(
       agentId: null,
       txUrl: '',
     });
-    await postLedgerLine(database, workspaceId, identityId, {
-      direction: 'in',
-      agentName: null,
-      amountText: `+${amount} ${row.asset.toUpperCase()}`,
-      counterparty: INBOUND_COUNTERPARTY,
-      chain: row.chain,
-      balanceAfterUsd,
-      txUrl: null,
-      createdAt,
-    });
+    // A balance delta has no transaction identity, sender or venue. Keep it as
+    // history enrichment, never emit a second notice for a provider-announced trade.
     added += 1;
   }
   return added;
@@ -437,8 +430,7 @@ async function creditSnapshot(
 
 /**
  * Send on a named chain. The funded balance is the only gate: a payment
- * larger than what the asset holds moves nothing and posts the one
- * non-transaction ledger message. `agentId` (when present) is the agent that
+ * larger than what the asset holds moves nothing and posts a refusal notice. `agentId` (when present) is the agent that
  * spent and is named on the outbound line.
  */
 export async function sendFromWallet(
@@ -452,7 +444,7 @@ export async function sendFromWallet(
   if (!binding) throw new Error('wallet not created');
   // An agent spends only under a live delegated-signing grant.
   if (agentId && !(await assertAgentDelegation(database, identityId))) {
-    return { outcome: 'delegation-expired' };
+    return delegationRefusal(database, { ownerIdentityId: identityId, workspaceId, binding }, agentId, input);
   }
   const source = walletSource();
   const coins = (await readHoldings(source, binding.eoaAddress)).coins;
@@ -477,7 +469,13 @@ export async function sendFromWallet(
     };
   }
 
-  const sent = await source.sendTransaction(binding.eoaAddress, input);
+  let sent: { txId: string };
+  try {
+    sent = await source.sendTransaction(binding.eoaAddress, input);
+  } catch (error) {
+    return handleSendFailure(database, { ownerIdentityId: identityId, workspaceId, binding },
+      agentId, error, input.asset, input.amount, input.chain, input.to);
+  }
   // Balance after: the same holdings with what moved subtracted, in USD —
   // the line carries what it left behind, not what it spent.
   const balanceAfterUsd = formatUsd(
@@ -512,7 +510,7 @@ export async function sendFromWallet(
     balanceAfterUsd,
     txUrl,
     createdAt: Date.now(),
-  });
+  }, { operation: 'send', ...(agentId ? { agentId } : {}) });
   return { outcome: 'sent', txUrl, amountText, balanceAfterUsd };
 }
 
@@ -687,86 +685,43 @@ export async function walletHistory(
     .reverse();
 }
 
-/**
- * One ledger line in the @System thread. A card, not chat: the
- * thread is a ledger only System writes to.
- */
+/** One owner-only @System notice, shared with provider settlement events. */
 export async function postLedgerLine(
   database: SqlDatabase,
   workspaceId: string,
   identityId: string,
   entry: WalletLedgerEntry,
+  detail: Partial<Pick<WalletNotice, 'status' | 'operation' | 'agentId'>> = {},
 ): Promise<void> {
-  const roomId = await ensureSystemDirectMessageRoom(database, workspaceId, identityId);
-  await systemLine(database, {
-    roomId,
-    authorId: SYSTEM_IDENTITY_ID,
-    id: ledgerLineId(entry),
-    subject: { kind: 'system', name: 'Wallet' },
-    verb: entry.direction === 'in' ? 'received' : 'sent',
-    object: {
-      text: entry.amountText.replace(/^[+\-−]/, ''),
-      ...(entry.txUrl ? { url: entry.txUrl } : {}),
-    },
-    ...(entry.direction === 'out' && entry.agentName ? { consequence: entry.agentName } : {}),
-    presentation: 'card',
-    cardType: 'wallet-tx',
-    card: {
-      direction: entry.direction,
-      amountText: entry.amountText,
-      counterparty: entry.counterparty,
-      chain: entry.chain,
-      balanceAfterUsd: entry.balanceAfterUsd,
-      ...(entry.txUrl ? { txUrl: entry.txUrl } : {}),
-    },
+  await postWalletNotice(database, workspaceId, identityId, {
+    walletNotice: true,
+    status: entry.direction === 'in' ? 'confirmed' : 'submitted',
+    operation: 'transfer',
+    amountText: entry.amountText,
+    counterparty: entry.counterparty,
+    chain: entry.chain,
+    balanceAfterUsd: entry.balanceAfterUsd,
+    agentName: entry.agentName,
+    ...(entry.txUrl ? { txUrl: entry.txUrl } : {}),
+    execution: entry.direction === 'out',
+    ...detail,
   });
 }
 
-/** A deterministic id makes a replayed reconciliation idempotent. */
-function ledgerLineId(entry: WalletLedgerEntry): string {
-  return createHash('sha256')
-    .update(
-      `wallet-ledger:${entry.direction}:${entry.counterparty}:${entry.amountText}:${entry.chain}:${entry.createdAt}`,
-    )
-    .digest('hex');
-}
-
-/**
- * The one non-transaction message: the payment that did not happen, because
- * only the human can fix it. Names the agent that tried and what is there.
- */
+/** Each refused attempt is a notice; retries of a provider transaction share its hash. */
 export async function postInsufficientNotice(
   database: SqlDatabase,
   identityId: string,
   workspaceId: string,
-  input: { chain: WalletChainId; asset: string; amount: string },
+  input: { chain: WalletChainId; asset: string; amount: string; to?: string },
   detail: { needed: string; available: string; asset: string; agentName: string | null },
 ): Promise<void> {
-  const roomId = await ensureSystemDirectMessageRoom(database, workspaceId, identityId);
-  // Bucketed to the minute: a retried attempt inside the window collides and
-  // writes nothing, a later attempt announces itself once more.
-  const id = createHash('sha256')
-    .update(
-      `wallet-insufficient:${identityId}:${detail.agentName ?? ''}:${input.amount}:${detail.asset}:${Math.floor(Date.now() / 60_000)}`,
-    )
-    .digest('hex');
-  await systemLine(database, {
-    roomId,
-    authorId: SYSTEM_IDENTITY_ID,
-    id,
-    subject: { kind: 'system', name: 'Wallet' },
-    verb: 'refused',
-    object: { text: `${input.amount} ${input.asset.toUpperCase()}` },
-    consequence: 'not enough',
-    presentation: 'card',
-    cardType: 'wallet-insufficient',
-    card: {
-      agentName: detail.agentName,
-      needed: detail.needed,
-      available: detail.available,
-      asset: detail.asset,
-      chain: input.chain,
-    },
+  await postWalletNotice(database, workspaceId, identityId, {
+    walletNotice: true, status: 'refused', operation: 'send', execution: true,
+    amountText: `${input.amount} ${input.asset.toUpperCase()}`,
+    counterparty: input.to ?? 'wallet operation', chain: input.chain,
+    agentName: detail.agentName,
+    reason: `not enough funds (${detail.available} ${detail.asset} available)`,
   });
 }
 
@@ -888,60 +843,70 @@ export async function agentWalletTool(
       });
     }
     case 'swap': {
-      if (!(await assertAgentDelegation(database, ctx.ownerIdentityId))) {
-        return { outcome: 'delegation-expired' };
-      }
       const swapChain = validChain(chain);
       const fromAsset = (input?.fromAsset ?? 'usdc').toLowerCase();
       const toAsset = (input?.toAsset ?? 'eth').toLowerCase();
       const amount = input?.amount ?? '';
+      const venue = `Coinbase CDP swap ${fromAsset.toUpperCase()}→${toAsset.toUpperCase()}`;
+      if (!(await assertAgentDelegation(database, ctx.ownerIdentityId)))
+        return delegationRefusal(database, ctx, agentId,
+          { chain: swapChain, asset: fromAsset, amount, to: venue }, 'swap');
+      let before: WalletHoldings;
+      let swapped: Awaited<ReturnType<CdpWalletSource['swap']>>;
       try {
-        const before = await holdings();
-        const swapped = await source.swap(address, { chain: swapChain, fromAsset, toAsset, amount });
-        if (swapped.status === 'pending') {
-          return {
-            outcome: 'pending',
-            txUrl: walletExplorerTxUrl(swapChain, swapped.txId),
-            reason: 'Swap submitted; receipt confirmation timed out. Do not resubmit.',
-          };
-        }
-        await creditSnapshot(database, ctx.ownerIdentityId, swapChain, toAsset, swapped.toAmount);
-        // A swap trades value for value; the wallet total is unchanged but for fees.
-        const totalUsd = holdingsUsd(before.coins);
-        const fromAmountText = `−${amount} ${fromAsset.toUpperCase()}`;
-        const toAmountText = `+${swapped.toAmount} ${toAsset.toUpperCase()}`;
-        const txUrl = walletExplorerTxUrl(swapChain, swapped.txId);
-        await postLedgerLine(database, ctx.workspaceId, ctx.ownerIdentityId, {
-          direction: 'out',
+        before = await holdings();
+        swapped = await source.swap(address, { chain: swapChain, fromAsset, toAsset, amount });
+      } catch (error) {
+        return handleSendFailure(database, ctx, agentId, error, fromAsset, amount, swapChain, venue, 'swap');
+      }
+      if (swapped.status === 'pending') {
+        await postWalletNotice(database, ctx.workspaceId, ctx.ownerIdentityId, {
+          walletNotice: true, status: 'pending', operation: 'swap', execution: true,
+          amountText: `${amount} ${fromAsset.toUpperCase()}→${toAsset.toUpperCase()}`,
+          counterparty: venue, chain: swapChain, agentId,
           agentName: await agentName(database, agentId),
-          amountText: `${fromAmountText} ${toAmountText}`,
-          counterparty: `swap ${fromAsset.toUpperCase()}→${toAsset.toUpperCase()}`,
-          chain: swapChain,
-          balanceAfterUsd: formatUsd(totalUsd),
-          txUrl,
-          createdAt: Date.now(),
-        });
-        await recordTransaction(database, ctx.ownerIdentityId, {
-          txId: swapped.txId,
-          direction: 'out',
-          asset: fromAsset,
-          amount,
-          counterparty: `swap→${toAsset.toUpperCase()}`,
-          chain: swapChain,
-          balanceAfterUsd: formatUsd(totalUsd),
-          txUrl,
-          agentId,
+          txUrl: walletExplorerTxUrl(swapChain, swapped.txId),
         });
         return {
-          outcome: 'sent',
-          txUrl,
-          fromAmountText,
-          toAmountText,
-          balanceAfterUsd: formatUsd(totalUsd),
+          outcome: 'pending',
+          txUrl: walletExplorerTxUrl(swapChain, swapped.txId),
+          reason: 'Swap submitted; receipt confirmation timed out. Do not resubmit.',
         };
-      } catch (error) {
-        return handleSendFailure(database, ctx, agentId, error, fromAsset, amount, swapChain);
       }
+      await creditSnapshot(database, ctx.ownerIdentityId, swapChain, toAsset, swapped.toAmount);
+      // A swap trades value for value; the wallet total is unchanged but for fees.
+      const totalUsd = holdingsUsd(before.coins);
+      const fromAmountText = `−${amount} ${fromAsset.toUpperCase()}`;
+      const toAmountText = `+${swapped.toAmount} ${toAsset.toUpperCase()}`;
+      const txUrl = walletExplorerTxUrl(swapChain, swapped.txId);
+      await postLedgerLine(database, ctx.workspaceId, ctx.ownerIdentityId, {
+        direction: 'out',
+        agentName: await agentName(database, agentId),
+        amountText: `${fromAmountText} ${toAmountText}`,
+        counterparty: venue,
+        chain: swapChain,
+        balanceAfterUsd: formatUsd(totalUsd),
+        txUrl,
+        createdAt: Date.now(),
+      }, { operation: 'swap', status: 'confirmed', agentId });
+      await recordTransaction(database, ctx.ownerIdentityId, {
+        txId: swapped.txId,
+        direction: 'out',
+        asset: fromAsset,
+        amount,
+        counterparty: `swap→${toAsset.toUpperCase()}`,
+        chain: swapChain,
+        balanceAfterUsd: formatUsd(totalUsd),
+        txUrl,
+        agentId,
+      });
+      return {
+        outcome: 'sent',
+        txUrl,
+        fromAmountText,
+        toAmountText,
+        balanceAfterUsd: formatUsd(totalUsd),
+      };
     }
   }
 }
@@ -975,10 +940,10 @@ async function agentSend(
   input: WalletSendInput,
 ): Promise<WalletSendOutcome> {
   if (!(await assertAgentDelegation(database, ctx.ownerIdentityId))) {
-    return { outcome: 'delegation-expired' };
+    return delegationRefusal(database, ctx, agentId, input);
   }
   const refusal = venueRefusal(input);
-  if (refusal) return { outcome: 'failed', reason: refusal };
+  if (refusal) return handleSendFailure(database, ctx, agentId, refusal, input.asset, input.amount, input.chain, input.to);
   const source = walletSource();
   const holdings = await readHoldings(source, ctx.binding.eoaAddress);
   await reconcileBalancesSafely(database, ctx, holdings);
@@ -990,7 +955,7 @@ async function agentSend(
       database,
       ctx.ownerIdentityId,
       ctx.workspaceId,
-      { chain: input.chain, asset: input.asset, amount: input.amount },
+      input,
       {
         needed: input.amount,
         available,
@@ -1000,43 +965,44 @@ async function agentSend(
     );
     return { outcome: 'insufficient', asset: symbol, needed: input.amount, available };
   }
+  let sent: { txId: string };
   try {
-    const sent = await source.sendTransaction(ctx.binding.eoaAddress, input);
-    // What the send left behind: the same holdings with the spent share removed.
-    const totalUsd =
-      holdingsUsd(holdings.coins) -
-      (holding ? usdValue(holding) * (Number(input.amount) / Number(available)) : 0);
-    const txUrl = walletExplorerTxUrl(input.chain, sent.txId);
-    await postLedgerLine(database, ctx.workspaceId, ctx.ownerIdentityId, {
-      direction: 'out',
-      agentName: await agentName(database, agentId),
-      amountText: `−${input.amount} ${symbol.toUpperCase()}`,
-      counterparty: input.to,
-      chain: input.chain,
-      balanceAfterUsd: formatUsd(totalUsd),
-      createdAt: Date.now(),
-      txUrl,
-    });
-    await recordTransaction(database, ctx.ownerIdentityId, {
-      txId: sent.txId,
-      direction: 'out',
-      asset: symbol,
-      amount: input.amount,
-      counterparty: input.to,
-      chain: input.chain,
-      balanceAfterUsd: formatUsd(totalUsd),
-      txUrl,
-      agentId,
-    });
-    return {
-      outcome: 'sent',
-      txUrl,
-      amountText: `−${input.amount} ${symbol.toUpperCase()}`,
-      balanceAfterUsd: formatUsd(totalUsd),
-    };
+    sent = await source.sendTransaction(ctx.binding.eoaAddress, input);
   } catch (error) {
-    return handleSendFailure(database, ctx, agentId, error, symbol, input.amount, input.chain);
+    return handleSendFailure(database, ctx, agentId, error, symbol, input.amount, input.chain, input.to);
   }
+  // What the send left behind: the same holdings with the spent share removed.
+  const totalUsd =
+    holdingsUsd(holdings.coins) -
+    (holding ? usdValue(holding) * (Number(input.amount) / Number(available)) : 0);
+  const txUrl = walletExplorerTxUrl(input.chain, sent.txId);
+  await postLedgerLine(database, ctx.workspaceId, ctx.ownerIdentityId, {
+    direction: 'out',
+    agentName: await agentName(database, agentId),
+    amountText: `−${input.amount} ${symbol.toUpperCase()}`,
+    counterparty: input.to,
+    chain: input.chain,
+    balanceAfterUsd: formatUsd(totalUsd),
+    createdAt: Date.now(),
+    txUrl,
+  }, { operation: 'send', agentId });
+  await recordTransaction(database, ctx.ownerIdentityId, {
+    txId: sent.txId,
+    direction: 'out',
+    asset: symbol,
+    amount: input.amount,
+    counterparty: input.to,
+    chain: input.chain,
+    balanceAfterUsd: formatUsd(totalUsd),
+    txUrl,
+    agentId,
+  });
+  return {
+    outcome: 'sent',
+    txUrl,
+    amountText: `−${input.amount} ${symbol.toUpperCase()}`,
+    balanceAfterUsd: formatUsd(totalUsd),
+  };
 }
 
 /** Calldata selectors that grant a token allowance; `approve` is the bounded way. */
@@ -1114,17 +1080,20 @@ export async function agentContractCall(
   const ctx = await walletAgentContext(database, agentId);
   if (!ctx) throw new Error('no wallet: the agent has no connected owner with a wallet');
   if (!(await assertAgentDelegation(database, ctx.ownerIdentityId)))
-    return { outcome: 'delegation-expired' };
+    return delegationRefusal(database, ctx, agentId,
+      { chain: input.chain, asset: input.approve?.asset ?? 'native', amount: input.approve?.amount ?? input.value ?? '0', to: input.contract }, 'contract');
   let checked: ReturnType<typeof contractCallSpends>;
   try {
     checked = contractCallSpends(input);
   } catch (error) {
-    return { outcome: 'failed', reason: error instanceof Error ? error.message : String(error) };
+    return handleSendFailure(database, ctx, agentId, error,
+      input.approve?.asset ?? 'native', input.approve?.amount ?? input.value ?? '0',
+      input.chain, input.contract, 'contract');
   }
   const { call, spends } = checked;
   for (const spend of spends) {
     const refusal = venueRefusal(spend);
-    if (refusal) return { outcome: 'failed', reason: refusal };
+    if (refusal) return handleSendFailure(database, ctx, agentId, refusal, spend.asset, spend.amount, call.chain, spend.to, 'contract');
   }
   const source = walletSource();
   const holdings = await readHoldings(source, ctx.binding.eoaAddress);
@@ -1140,7 +1109,7 @@ export async function agentContractCall(
         database,
         ctx.ownerIdentityId,
         ctx.workspaceId,
-        { chain: call.chain, asset: symbol, amount: String(amount) },
+        { chain: call.chain, asset: symbol, amount: String(amount), to: call.contract },
         {
           needed: String(amount),
           available,
@@ -1157,93 +1126,77 @@ export async function agentContractCall(
     amount: '0',
     to: call.contract,
   };
+  let sent: { txId: string };
   try {
-    const sent = await source.contractCall(ctx.binding.eoaAddress, call);
-    let totalUsd = holdingsUsd(holdings.coins);
-    for (const [symbol, amount] of needed) {
-      const holding = coins.find((coin) => coin.symbol === symbol);
-      if (holding) totalUsd -= usdValue(holding) * (amount / Number(holding.amount));
-    }
-    const amountText = (spends.length ? spends : [primary])
-      .map((spend) => `−${spend.amount} ${spend.asset.toUpperCase()}`)
-      .join(' ');
-    const txUrl = walletExplorerTxUrl(call.chain, sent.txId);
-    await postLedgerLine(database, ctx.workspaceId, ctx.ownerIdentityId, {
-      direction: 'out',
-      agentName: await agentName(database, agentId),
-      amountText,
-      counterparty: call.contract,
-      chain: call.chain,
-      balanceAfterUsd: formatUsd(totalUsd),
-      createdAt: Date.now(),
-      txUrl,
-    });
-    await recordTransaction(database, ctx.ownerIdentityId, {
-      txId: sent.txId,
-      direction: 'out',
-      asset: primary.asset,
-      amount: primary.amount,
-      counterparty: call.contract,
-      chain: call.chain,
-      balanceAfterUsd: formatUsd(totalUsd),
-      txUrl,
-      agentId,
-    });
-    return { outcome: 'sent', txUrl, amountText, balanceAfterUsd: formatUsd(totalUsd) };
+    sent = await source.contractCall(ctx.binding.eoaAddress, call);
   } catch (error) {
-    return handleSendFailure(
-      database,
-      ctx,
-      agentId,
-      error,
-      primary.asset,
-      primary.amount,
-      call.chain,
-    );
+    return handleSendFailure(database, ctx, agentId, error, primary.asset, primary.amount, call.chain, call.contract, 'contract');
   }
+  let totalUsd = holdingsUsd(holdings.coins);
+  for (const [symbol, amount] of needed) {
+    const holding = coins.find((coin) => coin.symbol === symbol);
+    if (holding) totalUsd -= usdValue(holding) * (amount / Number(holding.amount));
+  }
+  const amountText = (spends.length ? spends : [primary])
+    .map((spend) => `−${spend.amount} ${spend.asset.toUpperCase()}`)
+    .join(' ');
+  const txUrl = walletExplorerTxUrl(call.chain, sent.txId);
+  await postLedgerLine(database, ctx.workspaceId, ctx.ownerIdentityId, {
+    direction: 'out',
+    agentName: await agentName(database, agentId),
+    amountText,
+    counterparty: call.contract,
+    chain: call.chain,
+    balanceAfterUsd: formatUsd(totalUsd),
+    createdAt: Date.now(),
+    txUrl,
+  }, { operation: 'contract', agentId });
+  await recordTransaction(database, ctx.ownerIdentityId, {
+    txId: sent.txId,
+    direction: 'out',
+    asset: primary.asset,
+    amount: primary.amount,
+    counterparty: call.contract,
+    chain: call.chain,
+    balanceAfterUsd: formatUsd(totalUsd),
+    txUrl,
+    agentId,
+  });
+  return { outcome: 'sent', txUrl, amountText, balanceAfterUsd: formatUsd(totalUsd) };
 }
 
-/**
- * A failed source call is a durable failure fact: one ledger line in the
- * @System DM naming the agent, asset and amount, and the outcome the tool
- * reports back. A failed send is never silent and never retried here.
- */
+/** Failures and refusals use the same owner-only path as successful sends. */
 async function handleSendFailure(
   database: SqlDatabase,
   ctx: WalletAgentContext,
-  agentId: string,
+  agentId: string | undefined,
   error: unknown,
   asset: string,
   amount: string,
   chain: WalletChainId,
+  counterparty = 'wallet operation',
+  operation: WalletNotice['operation'] = 'send',
 ): Promise<WalletSendOutcome> {
   const reason = error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
-  const roomId = await ensureSystemDirectMessageRoom(database, ctx.workspaceId, ctx.ownerIdentityId);
-  const id = createHash('sha256')
-    .update(
-      `wallet-failed:${ctx.ownerIdentityId}:${asset}:${amount}:${reason}:${Math.floor(Date.now() / 60_000)}`,
-    )
-    .digest('hex');
-  await systemLine(database, {
-    roomId,
-    authorId: SYSTEM_IDENTITY_ID,
-    id,
-    subject: { kind: 'system', name: 'Wallet' },
-    verb: 'refused',
-    object: { text: `${amount} ${asset.toUpperCase()}` },
-    consequence: reason,
-    presentation: 'card',
-    cardType: 'wallet-insufficient',
-    card: {
-      agentName: await agentName(database, agentId),
-      needed: amount,
-      available: null,
-      asset: asset.toUpperCase(),
-      chain,
-      reason,
-    },
+  // A reverted receipt already has a hash; link the failed on-chain attempt too.
+  const hash = reason.match(/transaction (0x[0-9a-fA-F]{64}) (?:reverted|was not mined)/)?.[1];
+  await postWalletNotice(database, ctx.workspaceId, ctx.ownerIdentityId, {
+    walletNotice: true, status: 'failed', operation, execution: true,
+    amountText: `${amount} ${asset.toUpperCase()}`, counterparty, chain, reason,
+    ...(hash ? { txUrl: walletExplorerTxUrl(chain, hash) } : {}),
+    ...(agentId ? { agentId, agentName: await agentName(database, agentId) } : {}),
   });
   return { outcome: 'failed', reason };
+}
+
+async function delegationRefusal(
+  database: SqlDatabase, ctx: WalletAgentContext, agentId: string,
+  input: { chain: WalletChainId; asset: string; amount: string; to: string },
+  operation: WalletNotice['operation'] = 'send',
+): Promise<{ outcome: 'delegation-expired' }> {
+  await handleSendFailure(database, ctx, agentId, 'signing delegation is inactive',
+    input.asset, input.amount, input.chain, input.to, operation);
+  return { outcome: 'delegation-expired' };
 }
 
 /** Sign through the linked account after the daemon's wallet resource approval. */

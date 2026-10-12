@@ -48,8 +48,72 @@ Call data that grants an allowance itself (`approve`, `increaseAllowance`,
 The call's spends are the native value, the approved amount and a USDC
 `transfer` encoded in the call data. They pass the same checks as `wallet_pay`:
 the owner's signing delegation, the venue rules below and the funded balance.
-A successful call writes one `@System` ledger line naming the agent, the spends
+A successful call writes one `@System` notice naming the agent, the spends
 and the contract.
+
+## Transaction notices and provider push
+
+Every phone send, agent payment, swap and contract call writes a notice in the
+wallet owner's read-only `@System` thread through `wallet-notices.ts` and
+`ensureSystemDirectMessageRoom`. It is an ordinary system line, so the existing
+DM push settings apply. It includes the amount/assets, recipient or CDP swap
+venue, chain, transaction link when one exists, and initiating agent (or `you`
+for a phone send). Failed attempts, inactive delegation, venue refusals and
+insufficient funds use the same thread. A refused attempt has no transaction
+hash. Submitted sends are described as submitted; pending swaps never claim
+confirmation or credit their quoted output.
+
+One owner/chain/transaction hash identifies one notice. CDP retries and later
+settlement update that row, preserving its initiating agent and preventing a
+late broadcast event from replacing a confirmed or failed result. A webhook
+cannot infer the Beeline agent for an externally initiated operation; its notice
+says `initiator not known to Beeline`. Base transfer logs in the same transaction
+are collected in that one notice. USDC is formatted with six decimals; other
+tokens show their contract address and raw units, rather than an invented symbol
+or price. Provider notices do not claim a balance after the trade.
+
+The receiver is `POST /v1/wallet/events/cdp/<receiver-id>` in `wallet-webhooks.ts`.
+It verifies CDP's timestamped `X-Hook0-Signature` v1 against the raw body and
+signed event headers. It routes only accounts already in `wallet_bindings`, only
+to an active Workspace of the owner. Unknown accounts and testnet events are
+acknowledged without notices. Transaction lookup for an unknown wallet lifecycle
+event is one bounded RPC read triggered by the event; no polling job is added.
+
+To enable provider delivery after deployment:
+
+1. Create a CDP subscription for `wallet.transaction.broadcast`,
+   `wallet.transaction.pending`, `wallet.transaction.confirmed` and
+   `wallet.transaction.failed`, targeting
+   `https://<server>/v1/wallet/events/cdp/transactions`.
+2. Create `wallet.activity.multi` subscriptions targeting
+   `https://<server>/v1/wallet/events/cdp/base-transfers-1` (a distinct receiver id
+   for each subscription), with `labels.network=base-mainnet` and
+   `labels.wallet_addresses` containing up to 100 connected EVM addresses.
+   Update these lists when wallets are created; the receiver alone does not
+   register subscriptions or add newly created addresses at CDP.
+3. Store each returned signing secret in the server's
+   `COINBASE_CDP_WEBHOOK_SECRETS` secret as a JSON map from receiver id to secret,
+   for example `{"transactions":"<secret>","base-transfers-1":"<secret>"}`.
+   Never put actual signing secrets in repository files or a person's chat.
+   An unconfigured receiver returns 404. Beeline execution notices work without
+   webhook configuration; external delivery and asynchronous settlement need it.
+
+Provider coverage is limited. CDP's
+[wallet lifecycle events](https://docs.cdp.coinbase.com/webhooks/wallets)
+cover operations performed through CDP; its EVM monitoring window is three
+minutes. Its [multi-address push](https://docs.cdp.coinbase.com/webhooks/onchain-activity/multi-address)
+covers Base ERC-20 transfers only, with a documented per-project rate limit that
+can lose events. It does not cover external native ETH transfers or external
+activity on the other listed chains. An off-chain venue trade authorized by
+typed data (for example, a Hyperliquid fill) is not a CDP transaction or an ERC-20
+transfer. Those trades require the venue's own authenticated push stream, or a
+separate provider with push coverage for that chain. Do not substitute a balance
+poller. No live subscription, secret, order, or funded transaction is created by
+the test suite or this change.
+
+Balance-delta history remains enrichment only: it cannot identify a transaction
+or venue and no longer manufactures a second notice for a push-announced trade.
+Regression coverage: `wallet.integration.test.ts` and `push-sensitivity.test.ts`.
 
 ## Venue rules
 

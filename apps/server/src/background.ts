@@ -444,6 +444,8 @@ export class PushDeliveryLoop {
         JOIN identities recipient ON recipient.id=m.push_identity_id AND recipient.kind='human'
         CROSS JOIN LATERAL (SELECT (
           (room.direct_participants IS NOT NULL AND (m.presentation='message' OR m.card_type IS NULL OR m.card_type='grant-request'))
+          OR (m.card_type='machine-offline' AND m.card->>'status'='open'
+            AND m.card->>'ownerId'=recipient.id)
           OR ${addressedToPersonSql('m', 'recipient.id', 'recipient.handle', 'recipient.kind', false)}
           OR (author.kind='agent' AND m.presentation='message' AND m.request_id IS NOT NULL
             AND EXISTS (SELECT 1 FROM messages part WHERE part.room_id=m.room_id

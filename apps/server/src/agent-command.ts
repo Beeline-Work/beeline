@@ -1,3 +1,4 @@
+import { agentMachineOfflineSql } from './machine-offline.js';
 import { subscriptionPromptBody } from './agent-subscriptions.js';
 import {
   AGENT_SIGN_IN_SERVICE_LABELS,
@@ -1494,6 +1495,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
      WHERE command.state='pending' AND command.action='input'
        AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
        AND command.created_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
+       AND NOT ${agentMachineOfflineSql('command.agent_id')}
        AND NOT EXISTS (SELECT 1 FROM messages notice WHERE notice.id=encode(sha256(convert_to(
          'beeline:'||command.room_id::text||':agent-unreachable:'||command.agent_id||':'||command.source_message_id,
          'UTF8')),'hex'))
@@ -1616,6 +1618,10 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
 export async function noteCornerAgentUnreachable(
   db: SqlDatabase, cornerId: string, agentId: string, sourceMessageId: string,
 ): Promise<void> {
+  // Machine disconnects already notify the machine's owner once. Pending
+  // corner wakes must not turn a continuing outage into requester pings.
+  const offlineMachine = await db.query(`SELECT 1 WHERE ${agentMachineOfflineSql('$1')}`, [agentId]);
+  if (offlineMachine.rowCount) return;
   const corner = (await db.query<{ commissioned_by: string | null }>(
     `SELECT commissioned_by FROM corner_facts WHERE corner_id=$1`, [cornerId],
   )).rows[0];

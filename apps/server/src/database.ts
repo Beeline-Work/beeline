@@ -2939,6 +2939,14 @@ export async function migrate(
        WHERE state='active' AND embedding IS NULL`,
     ));
   await database.query('DROP INDEX IF EXISTS workspace_skills_embedding_idx');
+  // Machine connection changes find their one open notice without scanning
+  // transcript history. messages is busy, so this index builds concurrently.
+  await retryMigrationStep('machine offline notice index', () => createIndexConcurrently(
+    database, 'messages_machine_offline_open_idx',
+    `CREATE INDEX CONCURRENTLY messages_machine_offline_open_idx
+     ON messages((card->>'machineId'),(card->>'ownerId'))
+     WHERE card_type='machine-offline' AND card->>'status'='open'`,
+  ));
   // The Needs-you tray finds undecided grant cards without reading transcripts.
   await retryMigrationStep('grant request index', () => createIndexConcurrently(
     database, 'messages_grant_request_idx',

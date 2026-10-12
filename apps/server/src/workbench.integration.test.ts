@@ -1,3 +1,5 @@
+import { ensureSystemDirectMessageRoom } from './system-line.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { createHash, randomUUID } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,8 +15,6 @@ import { GitHubOperations } from './github-operations.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import {
   applyVaultList,
-  connectorIdentityId,
-  ensureConnectorDirectMessageRoom,
 } from './workbench.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
@@ -687,27 +687,22 @@ describe('workbench connectors', () => {
     expect(cards).toHaveLength(0);
   });
 
-  it('hides an empty connector DM, then reveals its repaired identity with the first card', async () => {
-    const roomId = await ensureConnectorDirectMessageRoom(
-      database,
-      WORKSPACE,
-      'trusty-squire',
-      HUMAN,
-    );
+  it('uses the same System DM for connector receipts', async () => {
+    const roomId = await ensureSystemDirectMessageRoom(database, WORKSPACE, HUMAN);
     expect(
       (await phone.readChats(WORKSPACE, HUMAN))?.chats.some((chat) => chat.room.id === roomId),
-    ).toBe(false);
+    ).toBe(true);
 
     const identity = (
       await database.query<{ name: string; handle: string; avatar: string }>(
         `SELECT name,handle,avatar FROM identities WHERE id=$1`,
-        [connectorIdentityId('trusty-squire')],
+        [SYSTEM_IDENTITY_ID],
       )
     ).rows[0];
     expect(identity).toEqual({
-      name: 'Trusty Squire',
-      handle: 'trusty-squire',
-      avatar: '/v1/connectors/logo/trusty-squire.svg',
+      name: 'System',
+      handle: 'system',
+      avatar: '/v1/connectors/logo/system.svg',
     });
 
     await pairOwnerConnector();
@@ -727,9 +722,9 @@ describe('workbench connectors', () => {
     );
     expect(chat?.latestMessage?.text).toContain('@bee used Acme tooling');
     expect(chat?.directMessage?.peer).toMatchObject({
-      name: 'Trusty Squire',
-      handle: 'trusty-squire',
-      avatar: 'http://placeholder/v1/connectors/logo/trusty-squire.svg',
+      name: 'System',
+      handle: 'system',
+      avatar: 'http://placeholder/v1/connectors/logo/system.svg',
     });
 
     const logo = await fetch(`${origin}/v1/connectors/logo/trusty-squire.svg`);
@@ -770,7 +765,7 @@ describe('workbench connectors', () => {
     });
     const cards = await connectionReceiptCards();
     expect(cards).toHaveLength(1);
-    expect(cards[0]!.author_id).toBe(connectorIdentityId('trusty-squire'));
+    expect(cards[0]!.author_id).toBe(SYSTEM_IDENTITY_ID);
     expect(cards[0]!.text).toContain('@bee used Acme tooling');
     // The card is about the approval-class event, not the ordinary use.
     expect(cards[0]!.text).toContain('fetch_credential');
@@ -1203,7 +1198,7 @@ describe('workbench connectors', () => {
       [WORKSPACE, url],
     );
     expect(dm.rows).toHaveLength(1);
-    expect(dm.rows[0]!.author_id).toBe(connectorIdentityId('tailscale'));
+    expect(dm.rows[0]!.author_id).toBe(SYSTEM_IDENTITY_ID);
     expect(dm.rows[0]!.text).toContain('needs');
     expect(dm.rows[0]!.text).not.toContain(url);
     expect(dm.rows[0]!.system_event.object.url).toBe(url);
@@ -1216,11 +1211,11 @@ describe('workbench connectors', () => {
       [url],
     );
     expect(participants.rows.map((row) => row.identity_id).sort()).toEqual(
-      [HUMAN, connectorIdentityId('tailscale')].sort(),
+      [HUMAN, SYSTEM_IDENTITY_ID].sort(),
     );
   });
 
-  it('keeps the connector receipt DM read-only for everyone but the connector identity', async () => {
+  it('keeps connector receipts in the read-only System DM', async () => {
     const connectorId = await pairOwnerConnector('tailscale');
     await daemonOperation('postConnectionUsage', {
       requestId: createHash('sha256').update('turn-3').digest('hex'),

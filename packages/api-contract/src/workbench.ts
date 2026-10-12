@@ -4,9 +4,7 @@
  * A connection belongs to whoever provisioned it; every read and write is
  * scoped to the VIEWER (`owner_identity_id` must equal the viewer). Receipts
  * arrive from the helper daemon (`postConnectionUsage`, batched one report
- * per agent turn) and are posted as DMs from a hidden CONNECTOR IDENTITY
- * (one per connector type, the way `@system` works) to the connection's
- * human. See `apps/server/src/workbench.ts` for the server authority and
+ * per agent turn) and are posted in the connection owner's read-only @System DM. See `apps/server/src/workbench.ts` for the server authority and
  * `apps/server/src/system-line.ts` for the card grammar.
  *
  * The connector wire vocabulary (statuses, vault metadata, grants, ledger,

@@ -284,9 +284,9 @@ export class MachineLink {
     if (!this.#channels.size) this.link.stop();
   }
 
-  stop(): void {
+  stop(forUpdate = false): void {
     this.#channels.clear();
-    this.link.stop();
+    this.link.stop(forUpdate);
   }
 
   #url(): string {

@@ -137,9 +137,6 @@ import {
   applyVaultList,
   connectorCatalog,
   connectorDisplayName,
-  connectorIdentityId,
-  ensureConnectorIdentity,
-  ensureConnectorDirectMessageRoom,
   isMetadataStale,
   receiveConnectionUsage,
 } from './workbench.js';
@@ -2123,13 +2120,13 @@ export class DaemonService {
           )
         ).rows[0];
         if (command?.state === 'complete') {
-          await ensureConnectorIdentity(database, 'registry-mcp');
+          await ensureSystemIdentity(database);
           await systemLine(database, {
             id: createHash('sha256')
               .update(`registry-mcp-connected:${row.id}:${row.pairing_generation}`)
               .digest('hex'),
             roomId: row.install_room_id,
-            authorId: connectorIdentityId('registry-mcp'),
+            authorId: SYSTEM_IDENTITY_ID,
             subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
             verb: 'connected',
             consequence: 'the requesting agent can continue the original task',
@@ -2281,13 +2278,13 @@ export class DaemonService {
       target.command_state === 'cancelled'
     )
       return;
-    await ensureConnectorIdentity(this.database, 'registry-mcp');
+    await ensureSystemIdentity(this.database);
     const wrote = await systemLine(this.database, {
       id: createHash('sha256')
         .update(`registry-mcp-signin-resume:${row.id}:${signIn.attemptId}`)
         .digest('hex'),
       roomId: target.install_room_id,
-      authorId: connectorIdentityId('registry-mcp'),
+      authorId: SYSTEM_IDENTITY_ID,
       subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
       verb: 'needs',
       object: { text: 'provider sign-in', url: signIn.url },
@@ -2306,7 +2303,7 @@ export class DaemonService {
   }
 
   /**
-   * A Tailscale login URL is posted to the helper owner's connector DM so
+   * A Tailscale login URL is posted to the helper owner's @System DM so
    * they can click it. Workbench still holds the same signIn; this is the
    * owner-visible half when the node needs sign-in instead of failing.
    */
@@ -2332,15 +2329,10 @@ export class DaemonService {
       )
     ).rows[0];
     if (!row || row.connector_type !== 'tailscale') return;
-    const roomId = await ensureConnectorDirectMessageRoom(
-      this.database,
-      row.workspace_id,
-      'tailscale',
-      row.owner_id,
-    );
+    const roomId = await ensureSystemDirectMessageRoom(this.database, row.workspace_id, row.owner_id);
     await systemLine(this.database, {
       roomId,
-      authorId: connectorIdentityId('tailscale'),
+      authorId: SYSTEM_IDENTITY_ID,
       id: createHash('sha256').update(`tailscale-signin:${connectorId}:${url}`).digest('hex'),
       subject: { kind: 'agent', id: agentId, name: row.helper_name },
       verb: 'needs',
@@ -4671,7 +4663,7 @@ export class DaemonService {
   }
   /**
    * Squire owns the decision and its passkey page. Beeline only places that
-   * page in the resource owner's existing connector DM so Telegram is not a
+   * page in the resource owner's @System DM so Telegram is not a
    * prerequisite for seeing it.
    */
   private async linkSpendApproval(input: Input<'createLinkSpendRequest'>,
@@ -4689,16 +4681,14 @@ export class DaemonService {
       AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
       [context.workspace_id, ownerId]);
     if (!member.rowCount) throw new Error('resource owner access denied');
-    const roomId = await ensureConnectorDirectMessageRoom(this.database,
-      context.workspace_id, 'link', ownerId);
-    const connectorId = connectorIdentityId('link');
+    const roomId = await ensureSystemDirectMessageRoom(this.database, context.workspace_id, ownerId);
     const title = `Link purchase at ${input.merchant}`;
     const detail = `${(input.amount / 100).toFixed(2)} USD · ${input.description}`.slice(0, 500);
     const sourceMessageId = this.authorizedCommand?.root_source_message_id;
     const line = await systemLine(this.database, {
       id: createHash('sha256').update(`link-approval:${requestId}`).digest('hex'),
-      roomId, authorId: connectorId,
-      subject: { kind: 'person', id: connectorId, name: 'Link' },
+      roomId, authorId: SYSTEM_IDENTITY_ID,
+      subject: { kind: 'system', name: 'Link' },
       verb: 'needs your approval for', object: title, consequence: detail,
       presentation: 'card', cardType: 'squire-approval',
       card: {
@@ -4770,12 +4760,7 @@ export class DaemonService {
       [context.workspace_id, context.owner_id],
     );
     if (!member.rowCount) throw new Error('resource owner access denied');
-    const roomId = await ensureConnectorDirectMessageRoom(
-      this.database,
-      context.workspace_id,
-      'trusty-squire',
-      context.owner_id,
-    );
+    const roomId = await ensureSystemDirectMessageRoom(this.database, context.workspace_id, context.owner_id);
     const dedupeKey = input.approvalId?.trim() || approvalUrl.toString();
     const messageId = createHash('sha256')
       .update(`squire-approval:v1:${context.workspace_id}:${agentId}:${dedupeKey}`)
@@ -4788,14 +4773,12 @@ export class DaemonService {
       ...(context.agent_handle ? { handle: context.agent_handle } : {}),
       ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}),
     };
-    const connectorId = connectorIdentityId('trusty-squire');
     const line = await systemLine(this.database, {
       id: messageId,
       roomId,
-      authorId: connectorId,
+      authorId: SYSTEM_IDENTITY_ID,
       subject: {
-        kind: 'person',
-        id: connectorId,
+        kind: 'system',
         name: connectorDisplayName('trusty-squire'),
       },
       verb: 'needs your approval for',
@@ -4838,7 +4821,7 @@ export class DaemonService {
   /**
    * Squire's own decision on a pending approval, relayed by the helper over
    * the task connection it kept alive for exactly this wait. Posted to the
-   * Room the turn actually ran in (never the Squire DM `postSquireApproval`
+   * Room the turn actually ran in (never the @System DM `postSquireApproval`
    * used, since a task-relay approval posts no DM card) with `kind:
    * 'squire-approval-decided'` and `wakes: [agentId]`, so the agent's paused
    * turn resumes the same way a decided grant resumes it.
@@ -4860,14 +4843,15 @@ export class DaemonService {
     if (!input.requestId?.trim())
       throw new Error('Squire approval decision requires the paused turn id');
     const agent = await this.identity(agentId);
-    const connectorId = await ensureConnectorIdentity(this.database, 'trusty-squire');
+    await ensureSystemIdentity(this.database);
     const id = createHash('sha256')
       .update(`squire-approval-decided:v1:${input.roomId}:${agentId}:${approvalId}`)
       .digest('hex');
     const line = await systemLine(this.database, {
       id,
       roomId: input.roomId,
-      subject: { kind: 'person', id: connectorId, name: connectorDisplayName('trusty-squire') },
+      authorId: SYSTEM_IDENTITY_ID,
+      subject: { kind: 'system', name: connectorDisplayName('trusty-squire') },
       verb: input.status === 'expired' ? 'saw no answer to' : input.status,
       object: title,
       ...(detail ? { consequence: detail } : {}),
@@ -6154,21 +6138,7 @@ export class DaemonService {
       if (!member.rowCount) throw new Error('resource owner access denied');
       const resourceRoomId = kind === 'shared_asset'
         ? input.roomId
-        : squireRoute
-        ? await ensureConnectorDirectMessageRoom(
-            database,
-            context.workspace_id,
-            'trusty-squire',
-            resourceOwnerId,
-          )
-        : kind === 'mcp' && target === 'wallet'
-          ? await ensureConnectorDirectMessageRoom(
-              database,
-              context.workspace_id,
-              'wallet',
-              resourceOwnerId,
-            )
-          : await ensureSystemDirectMessageRoom(database, context.workspace_id, resourceOwnerId);
+        : await ensureSystemDirectMessageRoom(database, context.workspace_id, resourceOwnerId);
       if (auto) {
         await systemLine(database, {
           roomId: resourceRoomId,
@@ -6211,7 +6181,7 @@ export class DaemonService {
       await systemLine(database, {
         id: messageId,
         roomId: dmRoomId,
-        authorId: squireRoute ? connectorIdentityId('trusty-squire') : agentId,
+        authorId: squireRoute ? SYSTEM_IDENTITY_ID : agentId,
         ...grantCardPhrase(requester, agent, [grantView]),
         presentation: 'card',
         cardType: 'grant-request',
@@ -7096,18 +7066,13 @@ export class DaemonService {
           [row.id, signIn.attemptId],
         );
         if (won.rowCount) {
-          const dmRoomId = await ensureConnectorDirectMessageRoom(
-            this.database,
-            context.workspaceId,
-            'registry-mcp',
-            context.owner.pubkey,
-          );
+          const dmRoomId = await ensureSystemDirectMessageRoom(this.database, context.workspaceId, context.owner.pubkey);
           await systemLine(this.database, {
             id: createHash('sha256')
               .update(`registry-mcp-signin:${row.id}:${signIn.attemptId}`)
               .digest('hex'),
             roomId: dmRoomId,
-            authorId: connectorIdentityId('registry-mcp'),
+            authorId: SYSTEM_IDENTITY_ID,
             subject: { kind: 'system', name: registrySubject(serverName) },
             verb: 'needs',
             object: { text: 'provider sign-in', url: signIn.url },

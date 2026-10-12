@@ -81,6 +81,19 @@ describe('machine disconnect notices', () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it('silently releases every update connection, then notices an unexpected loss after reconnect', async () => {
+    await claim(AGENTS[0]!, 'first');
+    await claim(AGENTS[1]!, 'second');
+    await releaseAgentConnection(db, live, AGENTS[0]!, 'first', true);
+    await releaseAgentConnection(db, live, AGENTS[1]!, 'second', true);
+    expect(await notices()).toHaveLength(0);
+    expect((await db.query('SELECT 1 FROM agent_connections WHERE released_at IS NULL')).rowCount).toBe(0);
+    await claim(AGENTS[0]!, 'new');
+    await releaseAgentConnection(db, live, AGENTS[0]!, 'new');
+    await releaseAgentConnection(db, live, AGENTS[0]!, 'new');
+    expect(await notices()).toHaveLength(1);
+  });
+
   it('keeps the open-notice lookup indexed', async () => {
     const index = (await db.query<{ indexdef: string }>(
       `SELECT indexdef FROM pg_indexes WHERE indexname='messages_machine_offline_open_idx'`,

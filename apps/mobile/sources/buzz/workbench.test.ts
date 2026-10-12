@@ -16,15 +16,12 @@ import {
   connectionsForViewer,
   connectorDescription,
   connectorExpandedActions,
-  connectorIdentityHandle,
-  connectorIdentityId,
   connectorInstrument,
   connectionGrantPending,
   connectionRevokeOffered,
   GOOGLE_CONNECTOR_ORDER,
   googleEntryConnector,
   googleEntryState,
-  isConnectorIdentityId,
   isGoogleToolConnectorId,
   ledgerBytes,
   ledgerStamp,
@@ -418,18 +415,6 @@ describe('connection detail copy', () => {
     expect(ledgerBytes(1234)).toBe('1.2 kB');
     expect(ledgerBytes(80)).toBe('80 B');
     expect(ledgerBytes(0)).toBeUndefined();
-  });
-});
-
-describe('connector identity', () => {
-  it('names the hidden connector identity that sends receipt DMs', () => {
-    expect(connectorIdentityHandle('trusty-squire')).toBe('@trusty-squire');
-    expect(isConnectorIdentityId(connectorIdentityId('trusty-squire'))).toBe(true);
-  });
-
-  it('does not mistake ordinary identities for connectors', () => {
-    expect(isConnectorIdentityId('agent-123')).toBe(false);
-    expect(isConnectorIdentityId(undefined)).toBe(false);
   });
 });
 

@@ -1,3 +1,4 @@
+import { retireBotDirectMessages } from './migrations/one-system-thread.js';
 import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
@@ -2246,16 +2247,8 @@ ALTER TABLE push_delivery_claims DROP CONSTRAINT IF EXISTS push_delivery_claims_
 ALTER TABLE push_delivery_claims ADD CONSTRAINT push_delivery_claims_status_check
   CHECK (status IN ('claimed', 'delivered', 'failed', 'suppressed', 'retryable'));
 
--- At most one latest unseen release candidate per device registration.
-CREATE TABLE IF NOT EXISTS push_release_catchups (
-  device_token text PRIMARY KEY REFERENCES push_devices(token) ON DELETE CASCADE,
-  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
-  message_id text NOT NULL REFERENCES messages(id) ON DELETE CASCADE
-);
--- message_id cascades from messages with no index (the primary key is
--- device_token), so deleting a message made Postgres sequentially scan this
--- table to find rows to cascade-delete.
-CREATE INDEX IF NOT EXISTS push_release_catchups_message_idx ON push_release_catchups(message_id);
+-- Release announcements and their queued device-registration replays are retired.
+DROP TABLE IF EXISTS push_release_catchups;
 
 CREATE TABLE IF NOT EXISTS device_update_receipts (
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -3094,6 +3087,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     });
     return result;
   };
+  await dataStep('one system thread', () =>
+    workflowBackfillOnce(database, 'one-system-thread-v1', retireBotDirectMessages));
   await dataStep('browser observations', () =>
     workflowBackfillOnce(database, 'computer-observations-v1', backfillComputerObservations));
   const searchDocuments = await backfillMessageSearchDocuments(database, 200, true);

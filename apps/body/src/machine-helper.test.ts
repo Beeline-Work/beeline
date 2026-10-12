@@ -237,6 +237,7 @@ describe('one update drain for every hosted agent', () => {
         sha256: createHash('sha256').update(archive).digest('hex') } } });
     let published = false;
     let manifestReads = 0;
+    const closes: { code: number; reason: string }[] = [];
     const server = createServer((request, response) => {
       if (request.url === '/manifest.json') {
         manifestReads += 1;
@@ -247,6 +248,7 @@ describe('one update drain for every hosted agent', () => {
     const sockets = new WebSocketServer({ server });
     const agentId = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
     sockets.on('connection', (socket) => {
+      socket.on('close', (code, reason) => closes.push({ code, reason: reason.toString() }));
       if (published) socket.send(JSON.stringify({ type: 'helper-release', version: 'v0.1.29', sha: 'new' }));
       socket.on('message', (data) => {
         const frame = JSON.parse(data.toString());
@@ -300,6 +302,7 @@ describe('one update drain for every hosted agent', () => {
       }
       await vi.waitFor(async () => expect(await activeReleaseId(layout)).toBe('new'), { timeout: 10_000 });
       expect((await running).reason).toBe('update');
+      await vi.waitFor(() => expect(closes).toContainEqual({ code: 4002, reason: 'helper-update' }));
       expect(manifestReads).toBe(2);
       expect(await readFile(resolve(layout.releasesRoot, 'new/bundle.json'), 'utf8')).toContain('v0.1.29');
     } finally {

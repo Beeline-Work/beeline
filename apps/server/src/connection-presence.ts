@@ -198,9 +198,9 @@ export class ConnectionPresence {
   }
 
   /** The connection ended. Only the agent's current connection goes offline. */
-  async releaseConnection(agentId: string, connectionId: string): Promise<void> {
+  async releaseConnection(agentId: string, connectionId: string, forUpdate = false): Promise<void> {
     if (this.#stopped) return;
-    await releaseAgentConnection(this.database, this.live, agentId, connectionId);
+    await releaseAgentConnection(this.database, this.live, agentId, connectionId, forUpdate);
   }
 
   async announce(roomId: string, agentId: string, metadata: PresenceMetadata = {}): Promise<void> {
@@ -624,6 +624,7 @@ export async function releaseAgentConnection(
   live: LiveHub,
   agentId: string,
   connectionId: string,
+  forUpdate = false,
 ): Promise<boolean> {
   const released = await database.transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
@@ -641,7 +642,7 @@ export async function releaseAgentConnection(
        WHERE agent_id=$1 AND kind='presence' AND body->>'connectionId'=$2`,
       [agentId, connectionId, Math.floor(Date.now() / 1000)],
     );
-    await noteMachineOffline(db, machine);
+    if (!forUpdate) await noteMachineOffline(db, machine);
     return true;
   });
   if (released) await broadcastAgentPresence(database, live, agentId);

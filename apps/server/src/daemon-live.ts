@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { HELPER_UPDATE_CLOSE_CODE, HELPER_UPDATE_CLOSE_REASON } from '@beeline/api-contract/daemon';
 import type { WebSocket } from 'ws';
 import { isTransientDatabaseConnectionError } from './database.js';
 import type { TokenAuth } from './auth.js';
@@ -115,6 +116,7 @@ export class DaemonAgentSession {
   #tail = Promise.resolve();
   #closed = false;
   #claimed = false;
+  #forUpdate = false;
 
   constructor(
     private readonly deps: DaemonLiveDependencies,
@@ -272,8 +274,9 @@ export class DaemonAgentSession {
     });
   }
 
-  close(): void {
+  close(forUpdate = false): void {
     if (this.#closed) return;
+    this.#forUpdate = forUpdate;
     this.#closed = true;
     for (const release of this.#wakeReleases.splice(0)) release();
     for (const release of this.#releases.values()) release();
@@ -285,7 +288,7 @@ export class DaemonAgentSession {
   async #releaseConnection(): Promise<void> {
     if (!this.#claimed || this.deps.shuttingDown()) return;
     this.#claimed = false;
-    await this.deps.connectionPresence?.releaseConnection(this.agentId, this.connectionId)
+    await this.deps.connectionPresence?.releaseConnection(this.agentId, this.connectionId, this.#forUpdate)
       .catch((error) => console.error('[presence] connection release failed',
         error instanceof Error ? error.message : String(error)));
   }
@@ -492,7 +495,7 @@ class HelperVersionGuard {
     private readonly close: (code: number, reason: string) => void,
   ) {
     this.#release = deps.helperVersionGate.subscribe((minimum) => {
-      if (this.#forceUpdate(minimum)) close(1008, 'update required');
+      if (this.#forceUpdate(minimum)) close(HELPER_UPDATE_CLOSE_CODE, HELPER_UPDATE_CLOSE_REASON);
     });
   }
 
@@ -515,7 +518,7 @@ class HelperVersionGuard {
     if (!minimum) return true;
     if (this.#forceUpdate(minimum) || helperVersionBelowMinimum(this.version, minimum)) {
       this.deps.counters.helperVersionRefusals++;
-      this.close(1008, 'update required');
+      this.close(HELPER_UPDATE_CLOSE_CODE, HELPER_UPDATE_CLOSE_REASON);
       return false;
     }
     return true;
@@ -603,10 +606,10 @@ export function serveAgentSocket(
     }
     session.frame(item, bytes);
   });
-  client.on('close', () => {
+  client.on('close', (code, reason) => {
     guard.dispose();
     releaseSubscription?.();
-    session.close();
+    session.close(code === HELPER_UPDATE_CLOSE_CODE && reason.toString() === HELPER_UPDATE_CLOSE_REASON);
   });
 }
 
@@ -751,11 +754,12 @@ export function serveMachineSocket(
     }
     session.frame(item, bytes);
   });
-  client.on('close', () => {
+  client.on('close', (code, reason) => {
     clearTimeout(registrationDeadline);
     guard.dispose();
     releaseSubscription?.();
-    for (const session of sessions.values()) session.close();
+    const forUpdate = code === HELPER_UPDATE_CLOSE_CODE && reason.toString() === HELPER_UPDATE_CLOSE_REASON;
+    for (const session of sessions.values()) session.close(forUpdate);
     sessions.clear();
   });
 }

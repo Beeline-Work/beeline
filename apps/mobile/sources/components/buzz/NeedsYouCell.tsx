@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
@@ -7,11 +7,13 @@ import {
   directMessageTitle,
   roomTitle,
   type NeedsYouItemView,
+  type NeedsYouActionView,
 } from '@beeline/api-contract/phone';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { needsYouExpiryLabel } from '@/buzz/needs-you';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 import brand from '@/buzz/brand.json';
+import { Button } from './Button';
 
 /** How far a phone swipe travels before the rail it reveals dismisses the cell. */
 const SWIPE_RAIL_WIDTH = 96;
@@ -37,12 +39,13 @@ function sourcePath(item: NeedsYouItemView): string {
 }
 
 /**
- * One Needs-you cell, as text only: who asks and what (`Hoots asks to run`)
+ * One Needs-you cell: who asks and what (`Hoots asks to run`)
  * with the age at the right, the exact thing asked for (literals in mono),
  * the request's reason or a choice's options, then where it sits, who it is
  * for and when it expires. The verb names the kind, so there is no type
  * label. Tapping opens the exact message; it clears a question, never an
- * approval. A phone swipes any cell right to dismiss it from the tray;
+ * approval. Inline actions use the existing card decision operations; Squire opens
+ * its own ceremony. A phone swipes any cell right to dismiss it from the tray;
  * a pointer hovers to reveal DISMISS. Dismissal does not decide an approval.
  */
 export function NeedsYouCell({
@@ -52,6 +55,7 @@ export function NeedsYouCell({
   selected = false,
   onOpen,
   onDismiss,
+  onAction,
 }: {
   item: NeedsYouItemView;
   now: number;
@@ -59,8 +63,11 @@ export function NeedsYouCell({
   selected?: boolean;
   onOpen: (item: NeedsYouItemView) => void;
   onDismiss: (item: NeedsYouItemView) => void;
+  onAction?: (item: NeedsYouItemView, action: NeedsYouActionView) => Promise<void>;
 }) {
   const [hovered, setHovered] = useState(false);
+  const [busy, setBusy] = useState<number | null>(null);
+  const sending = useRef(false);
   const approval = item.approval;
   const age = compactRelativeTime(item.createdAt, now);
   const stale = now / 1000 - item.createdAt > STALE_SECONDS;
@@ -73,7 +80,7 @@ export function NeedsYouCell({
     sourcePath(item),
     ...(expiry ? [approval?.kind === 'choice' ? expiry.replace('expires', 'closes') : expiry] : []),
   ].join(' · ');
-  const cell = (
+  const source = (
     <Pressable
       accessibilityHint={
         approval
@@ -154,6 +161,29 @@ export function NeedsYouCell({
       ) : null}
     </Pressable>
   );
+  const cell = <View>{source}
+    {onAction && approval?.actions?.length ? <View style={styles.actionArea}>
+      {approval?.script ? <View style={styles.script}>
+        <Text style={styles.detail}>{approval.script.path}</Text>
+        <Text style={styles.literal} testID={`needs-you-script-${item.messageId}`}>{approval.script.contents}</Text>
+      </View> : null}
+      <View style={styles.actions}>
+        {approval.actions.map((action, index) => <View key={index} style={styles.action}>
+          <Button label={action.label} variant="secondary" disabled={busy !== null} loading={busy === index}
+            testID={`needs-you-action-${item.messageId}-${index}`}
+            onPress={async (event) => {
+              event.stopPropagation();
+              if (sending.current) return;
+              sending.current = true;
+              setBusy(index);
+              try { await onAction(item, action); }
+              finally { sending.current = false; setBusy(null); }
+            }} />
+          {action.detail ? <Text style={styles.detail}>{action.detail}</Text> : null}
+        </View>)}
+      </View>
+    </View> : null}
+  </View>;
   if (desktop) return cell;
   return (
     <Swipeable
@@ -189,6 +219,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   cellActive: { backgroundColor: theme.buzz.bgHighlight },
   cellSelected: { borderLeftWidth: 1, borderLeftColor: theme.buzz.accent },
+  actionArea: { paddingHorizontal: theme.buzz.space.md, paddingBottom: theme.buzz.space.md },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.buzz.space.sm, marginTop: theme.buzz.space.sm },
+  action: { flexShrink: 1 },
+  script: { marginTop: theme.buzz.space.sm },
   head: { flexDirection: 'row', alignItems: 'baseline', gap: theme.buzz.space.sm },
   ask: { ...theme.buzz.type.body, flex: 1, color: theme.buzz.textPrimary },
   actor: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },

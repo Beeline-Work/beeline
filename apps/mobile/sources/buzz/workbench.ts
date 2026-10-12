@@ -412,7 +412,6 @@ export type ConnectionDetailView = {
   ledger: readonly ConnectionLedgerRow[];
 };
 
-const CONNECTOR_IDENTITY_PREFIX = 'connector:';
 
 /**
  * The sovereignty projection: only connections the viewer provisioned. The
@@ -485,20 +484,6 @@ export function connectorDescription(
   ]
     .filter(Boolean)
     .join(' · ');
-}
-
-/** The hidden connector identity that sends receipt DMs, e.g. `@trusty-squire`. */
-export function connectorIdentityHandle(connectorId: WorkbenchConnectorId): string {
-  return `@${connectorId}`;
-}
-
-/** The deterministic identity marker a connector DM's author carries. */
-export function connectorIdentityId(connectorId: WorkbenchConnectorId): string {
-  return `${CONNECTOR_IDENTITY_PREFIX}${connectorId}`;
-}
-
-export function isConnectorIdentityId(identityId: string | undefined | null): boolean {
-  return Boolean(identityId?.startsWith(CONNECTOR_IDENTITY_PREFIX));
 }
 
 /** `api.vercel.com` joined, or `—` when a session kind has no host list. */

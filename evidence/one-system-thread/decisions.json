@@ -1,0 +1,40 @@
+{
+  "workspace": "Beeline Review",
+  "roomId": "65af49b9-fcaa-4bbf-82de-6091ebbbd404",
+  "trace": [
+    {
+      "operation": "decideAgentGrant",
+      "input": {
+        "grantId": "33333333-3333-4333-8333-333333333333",
+        "decision": "once"
+      },
+      "result": {
+        "grantId": "33333333-3333-4333-8333-333333333333",
+        "status": "once",
+        "roomId": "22222222-2222-4222-8222-222222222222"
+      }
+    },
+    {
+      "operation": "decideAgentGrant",
+      "input": {
+        "grantId": "44444444-3333-4333-8333-333333333333",
+        "decision": "deny"
+      },
+      "result": {
+        "grantId": "44444444-3333-4333-8333-333333333333",
+        "status": "denied",
+        "roomId": "22222222-2222-4222-8222-222222222222"
+      }
+    }
+  ],
+  "grants": [
+    {
+      "target": "git status",
+      "status": "denied"
+    },
+    {
+      "target": "npm test",
+      "status": "once"
+    }
+  ]
+}

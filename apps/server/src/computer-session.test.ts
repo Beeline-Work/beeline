@@ -18,6 +18,9 @@ import { DaemonService } from './daemon-service.js';
 import { noteFirstSilence } from './turn-silence-notice.js';
 import { backfillComputerObservations } from './system-line.js';
 import { PhoneService } from './phone-service.js';
+import { CommandExecutionContext, runServerCommandIntake } from '../../body/src/server-command-intake.js';
+import { assembleTurnPrompt } from '../../body/src/prompt-assembly.js';
+import type { DaemonApiClient } from '../../body/src/daemon-api-client.js';
 import {
   computerViewToken, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, refreshComputerSession, serveComputerSession,
   serveComputerStatus, startComputerExpirySweep, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter,
@@ -409,14 +412,36 @@ describe('computer session handoff', () => {
         upstream!.send(JSON.stringify({ type: 'navigation', ...navigation }));
         const command = await until(async () => (await readAgentCommands(database, roomId, AGENT)).commands.find(item =>
           (item.source.systemEvent?.payload as { activity?: string } | undefined)?.activity === 'navigation'));
-        const claimed = await new DaemonService(database, live).execute('claimAgentCommand', {
-          roomId, commandId: command.id, generationId: 'navigation-proof',
-        }, AGENT);
-        expect(claimed.activitySource).toMatchObject({ systemEvent: { kind: 'computer-session-activity',
-          payload: { sessionId: share.id, activity: 'navigation', detail: 'https://httpbin.org' } } });
+        const destination = new URL(navigation.url ?? navigation.origin!).href;
+        const contextDir = await mkdtemp(join(process.cwd(), '.navigation-turn-'));
+        const abort = new AbortController();
+        const daemon = new DaemonService(database, live);
+        let finalInput = '';
+        try {
+          await runServerCommandIntake({
+            api: {
+              execute: (name: string, input: unknown) => name === 'getAgentCommands'
+                ? Promise.resolve({ commandProtocol: 1, commands: [command] })
+                : daemon.execute(name as 'claimAgentCommand', input as { roomId: string; commandId: string; generationId: string }, AGENT),
+              liveSubscribe: () => () => {},
+            } as unknown as DaemonApiClient,
+            roomId, agentId: AGENT, signal: abort.signal,
+            context: new CommandExecutionContext(contextDir), stop: async () => {},
+            run: async delivered => {
+              finalInput = assembleTurnPrompt({ surface: 'room', task: {
+                body: delivered.source.body, outsideEvent: delivered.source.systemEvent,
+                commandReason: delivered.reason,
+              } }).text;
+              abort.abort();
+            },
+          });
+          expect(finalInput).toContain(`Human navigated the shared browser to ${destination}`);
+          expect(finalInput).toContain('observations, not requests');
+          expect(finalInput).toContain(destination);
+        } finally { await rm(contextDir, { recursive: true, force: true }); }
         const events = await database.query<{ detail: string }>(
           `SELECT detail FROM computer_session_events WHERE session_id=$1 AND name='navigation'`, [share.id]);
-        expect(events.rows).toEqual([{ detail: 'https://httpbin.org' }]);
+        expect(events.rows).toEqual([{ detail: destination }]);
       } finally {
         await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
         viewer?.terminate();
@@ -694,6 +719,24 @@ describe('computer session handoff', () => {
       preview.send(JSON.stringify({ type: 'text', text: 'preview cannot control' }));
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(blockedInput).toEqual([]);
+      const warmViewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}&warm=1`);
+      await opened(warmViewer);
+      warmViewer.send(JSON.stringify({ type: 'text', text: 'hidden viewer' }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(blockedInput).toEqual([]);
+      warmViewer.send(JSON.stringify({ type: 'viewer-mode', interactive: true }));
+      warmViewer.send(JSON.stringify({ type: 'text', text: 'visible viewer' }));
+      await until(async () => blockedInput.length ? true : undefined);
+      expect(JSON.parse(blockedInput[0]!)).toEqual({ type: 'text', text: 'visible viewer' });
+      warmViewer.send(JSON.stringify({ type: 'viewer-mode', interactive: false }));
+      warmViewer.send(JSON.stringify({ type: 'text', text: 'closed viewer' }));
+      await until(async () => blockedInput.length >= 2 ? true : undefined);
+      expect(blockedInput.map(value => JSON.parse(value))).toEqual([
+        { type: 'text', text: 'visible viewer' }, { type: 'release' },
+      ]);
+      warmViewer.close();
+      await new Promise<void>((resolve) => warmViewer.once('close', resolve));
+      expect(tunnels).toBe(1);
     } finally {
       await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
       preview.close();

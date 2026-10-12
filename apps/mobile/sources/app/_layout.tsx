@@ -18,6 +18,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/SidebarNavigator';
 import { AppState, View, Platform } from 'react-native';
 import { ModalProvider } from '@/modal';
+import { WarmComputerSessionHost } from '@/components/buzz/ComputerSession';
 import { PostHogProvider } from 'posthog-react-native';
 import { tracking } from '@/track/tracking';
 import { useTrackScreens } from '@/track/useTrackScreens';
@@ -490,6 +491,7 @@ export default function RootLayout() {
                       <SidebarNavigator />
                     </HorizontalSafeAreaWrapper>
                   </CommandPaletteProvider>
+                <WarmComputerSessionHost />
               </ModalProvider>
               <UpdateReadyPrompt />
             </ThemeProvider>

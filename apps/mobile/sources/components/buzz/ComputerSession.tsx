@@ -1,5 +1,6 @@
 import React from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
@@ -11,10 +12,15 @@ import { openExternalUrl } from '@/utils/open-external-url';
 import { ViewerConversationDock } from '@/components/buzz/ViewerConversationDock';
 import { currentViewerConversation } from '@/buzz/viewer-conversation';
 
-export type ComputerSessionView = NonNullable<RoomViewMessage['computerSession']> & { access?: string; agentHandle?: string };
+export type ComputerSessionView = NonNullable<RoomViewMessage['computerSession']> & {
+  access?: string; agentHandle?: string;
+  /** In-memory capture from the mounted preview; never part of the Room DTO. */
+  previewFrame?: Promise<string | null>;
+};
 
-function ComputerStream({ session, preview = false, onEnded, captureRef }: {
-  session: ComputerSessionView; preview?: boolean; onEnded?: () => void;
+function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAccessRejected, captureRef }: {
+  session: ComputerSessionView; preview?: boolean; onEnded?: () => void; onFirstFrame?: () => void;
+  onAccessRejected?: () => void;
   captureRef?: React.MutableRefObject<(() => Promise<string | null>) | null>;
 }) {
   const WebView = useSandboxWebView();
@@ -33,6 +39,7 @@ function ComputerStream({ session, preview = false, onEnded, captureRef }: {
     const handle = (event: MessageEvent) => {
       if (event.origin !== origin || event.data?.id !== session.id) return;
       if (event.data.type === 'computer-ended') onEnded?.();
+      if (event.data.type === 'computer-first-frame') onFirstFrame?.();
       if (event.data.type === 'computer-snapshot') {
         const resolve = pendingCaptures.current.get(event.data.requestId);
         if (resolve) { pendingCaptures.current.delete(event.data.requestId); resolve(event.data.image ?? null); }
@@ -40,9 +47,9 @@ function ComputerStream({ session, preview = false, onEnded, captureRef }: {
     };
     window.addEventListener('message', handle);
     return () => window.removeEventListener('message', handle);
-  }, [onEnded, session.id, session.url]);
+  }, [onEnded, onFirstFrame, session.id, session.url]);
   React.useEffect(() => {
-    if (!captureRef || preview) return;
+    if (!captureRef) return;
     captureRef.current = () => new Promise((resolve) => {
       const requestId = ++nextCapture.current;
       const finish = (image: string | null) => { clearTimeout(timeout); resolve(image); };
@@ -60,6 +67,7 @@ function ComputerStream({ session, preview = false, onEnded, captureRef }: {
       const message = JSON.parse(event.nativeEvent.data) as { type?: string; id?: string; requestId?: number; image?: string };
       if (message.id !== session.id) return;
       if (message.type === 'computer-ended') onEnded?.();
+      if (message.type === 'computer-first-frame') onFirstFrame?.();
       if (message.type === 'computer-snapshot' && message.requestId !== undefined) {
         const resolve = pendingCaptures.current.get(message.requestId);
         if (resolve) { pendingCaptures.current.delete(message.requestId); resolve(message.image ?? null); }
@@ -77,13 +85,18 @@ function ComputerStream({ session, preview = false, onEnded, captureRef }: {
   });
   if (WebView) return <WebView ref={webViewRef} source={{ uri: url }} javaScriptEnabled domStorageEnabled
     onMessage={onStreamMessage}
+    onHttpError={(event: { nativeEvent: { statusCode: number } }) => {
+      if (event.nativeEvent.statusCode === 401 || event.nativeEvent.statusCode === 403) onAccessRejected?.();
+      if (event.nativeEvent.statusCode === 410) onEnded?.();
+    }}
     scrollEnabled={false} automaticallyAdjustContentInsets={false} contentInsetAdjustmentBehavior="never" style={styles.stream} testID={preview ? 'computer-session-preview-webview' : 'computer-session-view-webview'} />;
   return <View style={styles.ended}><Text style={styles.endedText}>Opening browser…</Text></View>;
 }
 
-/** The live card uses a real stream while mounted; it never snapshots or polls. */
+/** The live card streams while mounted; opening captures its latest frame once. */
 export function ComputerSessionCard({ session, isDesktop, agentHandle }: { session: ComputerSessionView; isDesktop?: boolean; agentHandle?: string }) {
   const [access, setAccess] = React.useState<string | null>(session.access ?? null);
+  const captureRef = React.useRef<(() => Promise<string | null>) | null>(null);
   React.useEffect(() => {
     if (session.status !== 'live' || session.access) return;
     let mounted = true;
@@ -96,11 +109,12 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
     if (!access || session.status !== 'live') return;
     // Keep the preview on its existing authorized stream. Replacing its URL
     // tears down the warm connection just as the full viewer needs its frame.
-    await openComputerSessionViewer(session, isDesktop, currentViewerConversation()?.roomId, agentHandle);
+    await openComputerSessionViewer({ ...session, access,
+      previewFrame: captureRef.current?.() }, isDesktop, currentViewerConversation()?.roomId, agentHandle);
   };
   return <View style={styles.card} testID={`computer-session-card-${session.status}`}>
     {session.status === 'live' && access ? <Pressable onPress={() => void open()} accessibilityRole="button" accessibilityLabel={`Open ${session.title} browser`}>
-      <View style={styles.preview} pointerEvents="none"><ComputerStream session={{ ...session, access }} preview /></View>
+      <View style={styles.preview} pointerEvents="none"><ComputerStream session={{ ...session, access }} preview captureRef={captureRef} /></View>
       <View style={styles.caption}><Text numberOfLines={1} style={styles.title}>{session.title}</Text>
         <Text style={styles.kind}>Live browser</Text></View>
     </Pressable> : <View style={styles.caption}><Text numberOfLines={1} style={styles.title}>{session.title}</Text>
@@ -111,12 +125,12 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
   </View>;
 }
 
-/** A transcript reference gets fresh access through the same authority as a card. */
+/** Warm cards open immediately; references without access obtain it first. */
 export async function openComputerSessionViewer(session: ComputerSessionView, isDesktop = false,
   roomId = currentViewerConversation()?.roomId, agentHandle = session.agentHandle) {
   try {
-    const access = session.status === 'live'
-      ? (await monolithPhoneOperation('openComputerSession', { id: session.id })).access : undefined;
+    const access = session.status === 'live' ? session.access
+      ?? (await monolithPhoneOperation('openComputerSession', { id: session.id })).access : undefined;
     const permitted = { ...session, access, agentHandle };
     if (isDesktop && openComputerInDesktopWorkPane(permitted)) return access ?? null;
     Modal.show({ component: ComputerSessionViewer,
@@ -135,8 +149,35 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle }:
   const insets = useSafeAreaInsets();
   const captureRef = React.useRef<(() => Promise<string | null>) | null>(null);
   const [ended, setEnded] = React.useState(session.status === 'ended');
+  const [unavailable, setUnavailable] = React.useState(false);
+  const [refreshedAccess, setRefreshedAccess] = React.useState<string>();
+  const [accessRejected, setAccessRejected] = React.useState(() =>
+    Number(session.access?.split('.')[1]) <= Date.now());
+  const [previewFrame, setPreviewFrame] = React.useState<string | null>(null);
+  const firstFrame = React.useRef(false);
+  React.useEffect(() => {
+    if (session.status !== 'live' || !session.access) return;
+    let mounted = true;
+    // The stream still checks current Room membership and token validity.
+    // Refresh without replacing its URL and restarting a warm connection.
+    void monolithPhoneOperation('openComputerSession', { id: session.id })
+      .then(({ access }) => { if (mounted) setRefreshedAccess(access); })
+      .catch((error: unknown) => {
+        if (mounted && error instanceof Error && 'status' in error
+          && (error.status === 401 || error.status === 403 || error.status === 404)) setUnavailable(true);
+      });
+    return () => { mounted = false; };
+  }, [session.id, session.status, session.access]);
+  React.useEffect(() => {
+    let mounted = true;
+    void session.previewFrame?.then(image => {
+      if (mounted && !firstFrame.current) setPreviewFrame(image);
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, [session.previewFrame]);
   React.useEffect(() => { if (session.status === 'ended') setEnded(true); }, [session.status]);
-  const shownSession = ended ? { ...session, status: 'ended' as const } : session;
+  const shownSession = { ...session, ...(ended ? { status: 'ended' as const } : {}),
+    access: accessRejected && refreshedAccess ? refreshedAccess : session.access };
   const openInBrowser = async () => {
     if (ended || !session.access) return;
     try {
@@ -150,10 +191,22 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle }:
   };
   return <View style={[styles.viewer, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID="computer-session-viewer">
     <View style={styles.controls} testID="computer-session-controls">
-      {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void openInBrowser()} accessibilityRole="button" accessibilityLabel="Open in browser" testID="computer-session-open-browser"><Text style={styles.controlText}>Open ↗</Text></Pressable> : null}
+      {!ended && !unavailable && session.access ? <Pressable style={styles.browserControl} onPress={() => void openInBrowser()} accessibilityRole="button" accessibilityLabel="Open in browser" testID="computer-session-open-browser"><Text style={styles.controlText}>Open ↗</Text></Pressable> : null}
       <Pressable style={styles.control} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close browser" testID="computer-session-close"><Text style={styles.controlText}>✕</Text></Pressable>
     </View>
-    <View style={styles.viewerStream}><ComputerStream session={shownSession} onEnded={() => setEnded(true)} captureRef={captureRef} /></View>
+    <View style={styles.viewerStream}>
+      {unavailable ? <View style={styles.ended}><Text style={styles.endedText}>Browser is unavailable</Text></View>
+        : <ComputerStream session={shownSession} onEnded={() => setEnded(true)}
+          onFirstFrame={() => { firstFrame.current = true; setPreviewFrame(null); }}
+          onAccessRejected={() => {
+            if (accessRejected && refreshedAccess) setUnavailable(true);
+            else setAccessRejected(true);
+          }} captureRef={captureRef} />}
+      {!ended && !unavailable && previewFrame ? <View pointerEvents="none" style={styles.previewFrame}>
+        <Image source={{ uri: `data:image/jpeg;base64,${previewFrame}` }} contentFit="cover" contentPosition="top left"
+          style={styles.stream} testID="computer-session-opening-frame" />
+      </View> : null}
+    </View>
     <ViewerConversationDock kind="computer" title={session.title} roomId={roomId}
       agentHandle={agentHandle} captureScreen={() => captureRef.current?.() ?? Promise.resolve(null)} />
   </View>;
@@ -170,6 +223,7 @@ const styles = StyleSheet.create((theme) => ({
   link: { ...theme.buzz.type.body, color: theme.buzz.accent },
   viewer: { flex: 1, backgroundColor: theme.buzz.bgBase },
   viewerStream: { flex: 1, minHeight: 0 },
+  previewFrame: { position: 'absolute', inset: 0, width: '100%', height: '100%' },
   controls: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.buzz.space.sm,
     marginTop: theme.buzz.space.md, marginHorizontal: theme.buzz.space.md, marginBottom: theme.buzz.space.sm },
   control: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgBase, alignItems: 'center', justifyContent: 'center' },

@@ -1,3 +1,4 @@
+import { retireBotDirectMessages } from './migrations/one-system-thread.js';
 import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
@@ -3036,6 +3037,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     });
     return result;
   };
+  await dataStep('one system thread', () =>
+    workflowBackfillOnce(database, 'one-system-thread-v1', retireBotDirectMessages));
   await dataStep('browser observations', () =>
     workflowBackfillOnce(database, 'computer-observations-v1', backfillComputerObservations));
   const searchDocuments = await backfillMessageSearchDocuments(database, 200, true);

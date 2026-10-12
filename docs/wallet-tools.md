@@ -48,7 +48,7 @@ Call data that grants an allowance itself (`approve`, `increaseAllowance`,
 The call's spends are the native value, the approved amount and a USDC
 `transfer` encoded in the call data. They pass the same checks as `wallet_pay`:
 the owner's signing delegation, the venue rules below and the funded balance.
-A successful call writes one `@wallet` ledger line naming the agent, the spends
+A successful call writes one `@System` ledger line naming the agent, the spends
 and the contract.
 
 ## Venue rules

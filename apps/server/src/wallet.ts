@@ -10,7 +10,7 @@
  *  - The funded balance IS the limit. The only refusal is insufficient
  *    funds. Wallet resource approvals and signing delegation still apply.
  *  - Every transaction, inbound AND out, appends ONE ledger line to the
- *    @wallet DM (the hidden connector identity's read-only thread) carrying
+ *    @System DM carrying
  *    amount, counterparty, chain and the BALANCE REMAINING. Outbound lines
  *    name the agent that spent. The insufficient-funds notice is the one
  *    non-transaction message. There is no daily roll-up.
@@ -42,7 +42,8 @@ import {
   type WalletTypedData,
   type WalletSignTypedDataResult,
 } from '@beeline/api-contract/wallet';
-import { ensureConnectorDirectMessageRoom, ensureConnectorIdentity } from './workbench.js';
+import { ensureSystemDirectMessageRoom } from './system-line.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { systemLine } from './system-line.js';
 import { fakeCdpWalletSource } from './cdp-fake.js';
 import { realCdpWalletSource, type CdpWalletSource } from './cdp-client.js';
@@ -129,8 +130,8 @@ export async function createWallet(
        VALUES ($1,$2,$3,$4) ON CONFLICT(identity_id) DO NOTHING`,
       [identityId, workspaceId, name, account.address],
     );
-    // The @wallet thread exists from the moment the wallet does.
-    await ensureConnectorDirectMessageRoom(database, workspaceId, 'wallet', identityId);
+    // Wallet notices share the owner's @System thread.
+    await ensureSystemDirectMessageRoom(database, workspaceId, identityId);
   }
   return readWalletView(database, identityId, workspaceId, source);
 }
@@ -219,7 +220,7 @@ export async function delegationView(
 /**
  * The user (present, on their phone) grants or renews the delegated-signing
  * grant. One user-scoped delegation is active at a time: granting replaces
- * a legacy expiry with a standing grant. A grant is announced in the @wallet thread
+ * a legacy expiry with a standing grant. A grant is announced in the @System thread
  * so the ledger shows WHY agents can spend.
  */
 export async function grantWalletDelegation(
@@ -233,17 +234,11 @@ export async function grantWalletDelegation(
     `UPDATE wallet_bindings SET delegation_expires_at=NULL,delegation_standing=true,updated_at=now() WHERE identity_id=$1`,
     [identityId],
   );
-  const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(
-    database,
-    workspaceId,
-    'wallet',
-    identityId,
-  );
+  const roomId = await ensureSystemDirectMessageRoom(database, workspaceId, identityId);
   await systemLine(database, {
     roomId,
-    authorId: connectorId,
-    subject: { id: connectorId, kind: 'person', name: 'Wallet' },
+    authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', name: 'Wallet' },
     verb: 'granted',
     object: { text: 'agents permission to sign' },
     consequence: 'until revoked',
@@ -693,8 +688,8 @@ export async function walletHistory(
 }
 
 /**
- * One ledger line from the @wallet connector identity. A card, not chat: the
- * thread is a ledger the connector identity alone writes to.
+ * One ledger line in the @System thread. A card, not chat: the
+ * thread is a ledger only System writes to.
  */
 export async function postLedgerLine(
   database: SqlDatabase,
@@ -702,18 +697,12 @@ export async function postLedgerLine(
   identityId: string,
   entry: WalletLedgerEntry,
 ): Promise<void> {
-  const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(
-    database,
-    workspaceId,
-    'wallet',
-    identityId,
-  );
+  const roomId = await ensureSystemDirectMessageRoom(database, workspaceId, identityId);
   await systemLine(database, {
     roomId,
-    authorId: connectorId,
+    authorId: SYSTEM_IDENTITY_ID,
     id: ledgerLineId(entry),
-    subject: { id: connectorId, kind: 'person', name: 'Wallet' },
+    subject: { kind: 'system', name: 'Wallet' },
     verb: entry.direction === 'in' ? 'received' : 'sent',
     object: {
       text: entry.amountText.replace(/^[+\-−]/, ''),
@@ -753,13 +742,7 @@ export async function postInsufficientNotice(
   input: { chain: WalletChainId; asset: string; amount: string },
   detail: { needed: string; available: string; asset: string; agentName: string | null },
 ): Promise<void> {
-  const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(
-    database,
-    workspaceId,
-    'wallet',
-    identityId,
-  );
+  const roomId = await ensureSystemDirectMessageRoom(database, workspaceId, identityId);
   // Bucketed to the minute: a retried attempt inside the window collides and
   // writes nothing, a later attempt announces itself once more.
   const id = createHash('sha256')
@@ -769,9 +752,9 @@ export async function postInsufficientNotice(
     .digest('hex');
   await systemLine(database, {
     roomId,
-    authorId: connectorId,
+    authorId: SYSTEM_IDENTITY_ID,
     id,
-    subject: { id: connectorId, kind: 'person', name: 'Wallet' },
+    subject: { kind: 'system', name: 'Wallet' },
     verb: 'refused',
     object: { text: `${input.amount} ${input.asset.toUpperCase()}` },
     consequence: 'not enough',
@@ -1222,7 +1205,7 @@ export async function agentContractCall(
 
 /**
  * A failed source call is a durable failure fact: one ledger line in the
- * @wallet DM naming the agent, asset and amount, and the outcome the tool
+ * @System DM naming the agent, asset and amount, and the outcome the tool
  * reports back. A failed send is never silent and never retried here.
  */
 async function handleSendFailure(
@@ -1235,13 +1218,7 @@ async function handleSendFailure(
   chain: WalletChainId,
 ): Promise<WalletSendOutcome> {
   const reason = error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
-  const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(
-    database,
-    ctx.workspaceId,
-    'wallet',
-    ctx.ownerIdentityId,
-  );
+  const roomId = await ensureSystemDirectMessageRoom(database, ctx.workspaceId, ctx.ownerIdentityId);
   const id = createHash('sha256')
     .update(
       `wallet-failed:${ctx.ownerIdentityId}:${asset}:${amount}:${reason}:${Math.floor(Date.now() / 60_000)}`,
@@ -1249,9 +1226,9 @@ async function handleSendFailure(
     .digest('hex');
   await systemLine(database, {
     roomId,
-    authorId: connectorId,
+    authorId: SYSTEM_IDENTITY_ID,
     id,
-    subject: { id: connectorId, kind: 'person', name: 'Wallet' },
+    subject: { kind: 'system', name: 'Wallet' },
     verb: 'refused',
     object: { text: `${amount} ${asset.toUpperCase()}` },
     consequence: reason,
@@ -1320,19 +1297,13 @@ export async function agentSignTypedData(
       reason: error instanceof Error ? error.message : 'typed-data signing failed',
     };
   }
-  const connectorId = await ensureConnectorIdentity(database, 'wallet');
-  const roomId = await ensureConnectorDirectMessageRoom(
-    database,
-    ctx.workspaceId,
-    'wallet',
-    ctx.ownerIdentityId,
-  );
+  const roomId = await ensureSystemDirectMessageRoom(database, ctx.workspaceId, ctx.ownerIdentityId);
   // This is an authorization audit, not an on-chain transaction. Never store
   // the reusable signature in a ledger card or manufacture a transfer amount.
   await systemLine(database, {
     roomId,
-    authorId: connectorId,
-    subject: { id: connectorId, kind: 'person', name: 'Wallet' },
+    authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', name: 'Wallet' },
     verb: 'signed',
     object: { text: 'EIP-712 typed data' },
     consequence: (await agentName(database, agentId)) ?? 'An agent',

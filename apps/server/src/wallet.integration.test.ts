@@ -1,3 +1,4 @@
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { CdpWalletClient } from './cdp-client.js';
@@ -14,7 +15,6 @@ import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { walletSource } from './wallet.js';
-import { connectorIdentityId } from './workbench.js';
 import type { FakeWalletState } from './cdp-fake.js';
 
 const HUMAN = createHash('sha256').update('github:owner').digest('hex');
@@ -256,8 +256,8 @@ describe('wallet over the fake CDP seam', () => {
         headers: { authorization: `Bearer ${accessToken}` },
       })
     ).json()) as { chats: Array<{ directMessage?: { peer: { handle?: string } } }> };
-    expect(emptyChats.chats.some((chat) => chat.directMessage?.peer.handle === 'wallet')).toBe(
-      false,
+    expect(emptyChats.chats.some((chat) => chat.directMessage?.peer.handle === 'system')).toBe(
+      true,
     );
 
     await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
@@ -271,11 +271,11 @@ describe('wallet over the fake CDP seam', () => {
         directMessage?: { peer: { name: string; handle?: string; avatar?: string } };
       }>;
     };
-    const wallet = chats.chats.find((chat) => chat.directMessage?.peer.handle === 'wallet');
+    const wallet = chats.chats.find((chat) => chat.directMessage?.peer.handle === 'system');
     expect(wallet?.directMessage?.peer).toMatchObject({
-      name: 'Wallet',
-      handle: 'wallet',
-      avatar: 'http://placeholder/v1/connectors/logo/wallet.svg',
+      name: 'System',
+      handle: 'system',
+      avatar: 'http://placeholder/v1/connectors/logo/system.svg',
     });
     expect(wallet?.latestMessage?.text).toContain('granted agents permission to sign');
   });
@@ -641,7 +641,7 @@ describe('wallet over the fake CDP seam', () => {
     vi.unstubAllGlobals();
   });
 
-  it('every @wallet DM line is authored by the wallet connector identity, never the agent', async () => {
+  it('wallet notices share the System DM and author', async () => {
     await createdWallet();
     await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
     fakeState().holdings.forEach((holdings) => holdings.set('usdc', 500));
@@ -653,22 +653,21 @@ describe('wallet over the fake CDP seam', () => {
       to: '0xabc',
     });
 
-    // The wallet connector identity is a hidden `kind='human'` row.
+    // System remains an internal human identity.
     const identity = (
       await database.query<{ kind: string; hidden_from_roster: boolean }>(
         `SELECT kind,hidden_from_roster FROM identities WHERE id=$1`,
-        [connectorIdentityId('wallet')],
+        [SYSTEM_IDENTITY_ID],
       )
     ).rows[0];
     expect(identity).toMatchObject({ kind: 'human', hidden_from_roster: true });
 
-    // The wallet DM exists and EVERY line in it comes from @wallet itself —
-    // the same receipt-ledger shape the Trusty Squire DM holds.
+    // Wallet notices share the one read-only System thread.
     const dm = (
       await database.query<{ room_id: string }>(
         `SELECT r.id room_id FROM rooms r
          WHERE r.direct_participants @> to_jsonb(ARRAY[$1::text])`,
-        [connectorIdentityId('wallet')],
+        [SYSTEM_IDENTITY_ID],
       )
     ).rows;
     expect(dm).toHaveLength(1);
@@ -679,7 +678,7 @@ describe('wallet over the fake CDP seam', () => {
       )
     ).rows;
     expect(lines.length).toBeGreaterThanOrEqual(2);
-    expect(lines.every((line) => line.author_id === connectorIdentityId('wallet'))).toBe(true);
+    expect(lines.every((line) => line.author_id === SYSTEM_IDENTITY_ID)).toBe(true);
   });
 
   /** Fund one non-Base chain of the fake wallet. */

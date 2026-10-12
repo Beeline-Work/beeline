@@ -501,7 +501,9 @@ describe('a helper joining a corner it did not open', () => {
     await coordinator.shutdown();
   });
 
-  it('does not keep asking for an unlisted worktree after membership is refused', async () => {
+  it.each([400, 401, 403, 404, 409].flatMap(status =>
+    ['restore', 'token'].map(source => ({ status, source }))))(
+    'parks a refused $status $source cleanup even if discovery still lists the corner', async ({ status, source }) => {
     let now = 10_000;
     const { remote } = await remoteWithCornerBranch();
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-removed-'));
@@ -512,8 +514,14 @@ describe('a helper joining a corner it did not open', () => {
       committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
     });
     const identity = identityFromKey('11'.repeat(32), 'Bee');
-    const execute = vi.fn(async () => {
-      throw new DaemonApiError('daemon room access denied', 403, false);
+    const execute = vi.fn(async (name: string) => {
+      if (source === 'token') {
+        if (name === 'getCornerRestoreState') return {
+          archived: true, parentRoomId: 'room-parent', featureBranch: FEATURE, lifecycle: {},
+        };
+        if (name === 'getRoomRepositoryState') return { resolution: 'repository', remote };
+      }
+      throw new DaemonApiError('daemon room access denied', status, false);
     });
     const coordinator = new RoomRuntimeCoordinator(
       {
@@ -527,6 +535,7 @@ describe('a helper joining a corner it did not open', () => {
       { daemonApi: { execute } as unknown as DaemonApiClient, now: () => now },
     );
     const recovery = coordinator as unknown as {
+      retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void>;
       sweepArchivedCornerWorktrees(
         corners: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
       ): Promise<void>;
@@ -534,13 +543,17 @@ describe('a helper joining a corner it did not open', () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       await recovery.sweepArchivedCornerWorktrees(new Map());
+      const baseline = execute.mock.calls.length;
+      expect(baseline).toBe(source === 'restore' ? 1 : 4);
       now += 5 * 60_000;
       await recovery.sweepArchivedCornerWorktrees(new Map());
-      expect(execute).toHaveBeenCalledTimes(1);
+      await recovery.retryPendingCornerReaps(new Set());
+      expect(execute).toHaveBeenCalledTimes(baseline);
       await recovery.sweepArchivedCornerWorktrees(new Map([
         ['corner-removed', { cornerId: 'corner-removed', parentRoomId: 'room-parent' }],
       ]));
-      expect(execute).toHaveBeenCalledTimes(2);
+      await recovery.retryPendingCornerReaps(new Set());
+      expect(execute).toHaveBeenCalledTimes(baseline);
     } finally {
       errors.mockRestore();
       await coordinator.shutdown();

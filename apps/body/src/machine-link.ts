@@ -35,6 +35,7 @@ export class AgentChannel {
   #registered = false;
   /** A register frame is in flight on the current socket. */
   #pending = false;
+  #refused = false;
   #registeredAt: number | undefined;
   #failures = 0;
   #retry: ReturnType<typeof setTimeout> | undefined;
@@ -64,7 +65,7 @@ export class AgentChannel {
   }
 
   start(): void {
-    if (this.#wanted) return;
+    if (this.#wanted || this.#refused) return;
     this.#wanted = true;
     this.machine.want(this);
   }
@@ -98,7 +99,7 @@ export class AgentChannel {
 
   /** The socket opened: ask the server to take this agent. */
   register(): void {
-    if (!this.#wanted || this.#registered || this.#pending) return;
+    if (!this.#wanted || this.#registered || this.#pending || this.#refused) return;
     clearTimeout(this.#retry);
     this.#retry = undefined;
     // Pending before the send: an answer can arrive before send() returns.
@@ -128,11 +129,20 @@ export class AgentChannel {
       return;
     }
     if (event.type === 'register-refused') {
+      if (this.#refused) return;
       this.#pending = false;
       const code = typeof event.code === 'string' ? event.code : 'refused';
       console.warn(`[machine-link] server refused agent ${this.agentId}: ${code}`);
+      this.#refused = ['daemon_token_required', 'agent_removed', 'too_many_agents'].includes(code);
       this.handlers.onRefused?.(code);
-      this.#retryLater();
+      if (this.#refused) {
+        this.#wanted = false;
+        clearTimeout(this.#retry);
+        this.#retry = undefined;
+        // A helper with only refused agents must not keep opening sockets
+        // that the server will immediately close for having no registration.
+        this.machine.unwant(this);
+      } else this.#retryLater();
       return;
     }
     if (event.type === 'unregistered') {

@@ -446,7 +446,7 @@ export async function cleanupAgentService(
 
 export interface DaemonNotifier {
   ready(status: string): Promise<void>;
-  progress(status: string): Promise<void>;
+  progress(status: string, watchdog?: boolean): Promise<void>;
   stopping(status: string): Promise<void>;
 }
 
@@ -460,14 +460,14 @@ export async function extendSystemdStartTimeout(ms: number): Promise<void> {
   await notify([`EXTEND_TIMEOUT_USEC=${Math.max(0, Math.round(ms)) * 1000}`]).catch(() => undefined);
 }
 
-/** systemd notification transport; the local watchdog timer below never reads the server. */
+/** systemd notification transport; only acknowledged work-loop ticks renew the watchdog. */
 export class SystemdNotifier implements DaemonNotifier {
   async ready(status: string): Promise<void> {
     await notify(['--ready', `--status=${status}`]);
   }
 
-  async progress(status: string): Promise<void> {
-    await notify(['WATCHDOG=1', `STATUS=${status}`]);
+  async progress(status: string, watchdog = false): Promise<void> {
+    await notify([...(watchdog ? ['WATCHDOG=1'] : []), `STATUS=${status}`]);
   }
 
   async stopping(status: string): Promise<void> {
@@ -476,24 +476,30 @@ export class SystemdNotifier implements DaemonNotifier {
 }
 
 /**
- * Keep an idle, socket-connected helper alive in systemd without a server
- * read. It runs only when systemd armed a watchdog, and a failed notification
+ * Wake idle work loops locally and renew systemd only after all acknowledge.
+ * No server read is needed. It runs only when systemd armed a watchdog. A failed notification
  * is logged: it must never become an unhandled rejection that kills the helper.
  */
 export function startLocalWatchdog(
   notifier: Pick<DaemonNotifier, 'progress'>,
   status: () => string,
+  workLoopProgress: () => Promise<void | boolean>,
   intervalMs = 60_000,
   env: NodeJS.ProcessEnv = process.env,
 ): () => void {
   if (!env.WATCHDOG_USEC) return () => undefined;
-  const timer = setInterval(
-    () =>
-      void notifier
-        .progress(status())
-        .catch((error) => console.error('[thin-core] watchdog notification failed:', error)),
-    intervalMs,
-  );
+  let pending = false;
+  let stopped = false;
+  const timer = setInterval(() => {
+    if (pending || stopped) return;
+    pending = true;
+    // The existing local tick asks the work loops to run. A wedged loop never
+    // completes this barrier, even while sockets and other agents keep running.
+    void workLoopProgress()
+      .then((progressed) => stopped || progressed === false ? undefined : notifier.progress(status(), true))
+      .catch((error) => console.error('[thin-core] watchdog notification failed:', error))
+      .finally(() => { pending = false; });
+  }, intervalMs);
   timer.unref?.();
-  return () => clearInterval(timer);
+  return () => { stopped = true; clearInterval(timer); };
 }

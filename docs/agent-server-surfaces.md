@@ -21,4 +21,4 @@
 - **First-entry welcome is four modal cards** (`components/buzz/WelcomeCards.tsx`, human viewers only), driven by `identities.welcome_cards_due` via `readWelcomeCards`/`completeWelcomeCards`.
 - **Repository workflows** are dispatched only by human Workspace managers (`listRoomWorkflows`/`dispatchRoomWorkflow`, exact-repo token, stored default branch).
 - **Reviewer sign-in.** `apps/server/src/review-access.ts` owns the store reviewer identity and `BEELINE_REVIEW_SECRET` (constant-time compare, rate limited, misses 404); entry is only the `/review/` link.
-
+- **Machine disconnect notices.** `machine-offline.ts` uses the existing connection release/claim paths in `connection-presence.ts` to send one `@system` DM to the machine owner per outage, then resolve it on reconnect. Offline corner wakes remain queued silently (`machine-offline.test.ts`).

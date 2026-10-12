@@ -16,20 +16,34 @@ describe('systemd supervision contract', () => {
     try {
       const progress = vi.fn(async () => undefined);
       let status = 'connected';
-      const stop = startLocalWatchdog({ progress }, () => status, 1_000, {
+      const stop = startLocalWatchdog({ progress }, () => status, async () => undefined, 1_000, {
         WATCHDOG_USEC: '180000000',
       });
       await vi.advanceTimersByTimeAsync(3_000);
       expect(progress).toHaveBeenCalledTimes(3);
       status = 'reconnecting';
       await vi.advanceTimersByTimeAsync(1_000);
-      expect(progress).toHaveBeenLastCalledWith('reconnecting');
+      expect(progress).toHaveBeenLastCalledWith('reconnecting', true);
       stop();
       await vi.advanceTimersByTimeAsync(3_000);
       expect(progress).toHaveBeenCalledTimes(4);
     } finally {
       vi.useRealTimers();
     }
+  });
+  it('skips a not-yet-established core and resumes on the next existing local tick', async () => {
+    vi.useFakeTimers();
+    const progress = vi.fn(async () => undefined);
+    let established = false;
+    const stop = startLocalWatchdog({ progress }, () => 'starting', async () => established,
+      1_000, { WATCHDOG_USEC: '180000000' });
+    try {
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(progress).not.toHaveBeenCalled();
+      established = true;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(progress).toHaveBeenCalledWith('starting', true);
+    } finally { stop(); vi.useRealTimers(); }
   });
   it('logs a failed watchdog notification and feeds only an armed watchdog', async () => {
     vi.useFakeTimers();
@@ -40,11 +54,11 @@ describe('systemd supervision contract', () => {
       const progress = vi.fn(async () => {
         throw new Error('systemd-notify exited 1');
       });
-      const unarmed = startLocalWatchdog({ progress }, () => 'idle', 1_000, {});
+      const unarmed = startLocalWatchdog({ progress }, () => 'idle', async () => undefined, 1_000, {});
       await vi.advanceTimersByTimeAsync(3_000);
       expect(progress).not.toHaveBeenCalled();
       unarmed();
-      const stop = startLocalWatchdog({ progress }, () => 'idle', 1_000, { WATCHDOG_USEC: '1' });
+      const stop = startLocalWatchdog({ progress }, () => 'idle', async () => undefined, 1_000, { WATCHDOG_USEC: '1' });
       await vi.advanceTimersByTimeAsync(2_000);
       stop();
       vi.useRealTimers();

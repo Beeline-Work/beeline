@@ -27,9 +27,12 @@ describe('Option A composer chrome', () => {
     expect(surface).toContain('backgroundColor: theme.buzz.bgRaised');
   });
 
-  it('centers Android text within the fixed-height input without trimming font bounds', () => {
-    expect(composer).toContain("inputAndroid: { textAlignVertical: 'center' }");
-    expect(composer).not.toContain('includeFontPadding: false');
+  it('centers Android natural line metrics without restoring a jittering line-height span', () => {
+    const android = styleBlock('  inputAndroid: {', '  sendButton: {');
+    expect(android).toContain('includeFontPadding: false');
+    expect(android).toContain("textAlignVertical: 'center'");
+    expect(android).toContain('paddingBottom: theme.buzz.space.xs');
+    expect(composer).toContain('android: { lineHeight: undefined }');
     expect(composer).toContain("textAlignVertical: 'top'");
   });
 

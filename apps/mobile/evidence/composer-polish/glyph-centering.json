@@ -1,0 +1,26 @@
+{
+  "before-room-single": {
+    "visibleGlyphTop": 1427,
+    "visibleGlyphBottom": 1464,
+    "rowCenter": 1439,
+    "glyphCenterOffset": 6.5
+  },
+  "after-room-single": {
+    "visibleGlyphTop": 1419,
+    "visibleGlyphBottom": 1456,
+    "rowCenter": 1439,
+    "glyphCenterOffset": -1.5
+  },
+  "before-room-placeholder": {
+    "visibleGlyphTop": 2183,
+    "visibleGlyphBottom": 2221,
+    "rowCenter": 2196,
+    "glyphCenterOffset": 6.0
+  },
+  "after-room-placeholder": {
+    "visibleGlyphTop": 2177,
+    "visibleGlyphBottom": 2213,
+    "rowCenter": 2196,
+    "glyphCenterOffset": -1.0
+  }
+}

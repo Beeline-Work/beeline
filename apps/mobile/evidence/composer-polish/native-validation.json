@@ -1,0 +1,63 @@
+{
+  "roomEmpty": {
+    "chat-composer-input-row": "[45,2141][1035,2251]",
+    "chat-input": "[145,2162][927,2231]"
+  },
+  "roomSingle": {
+    "chat-composer-input-row": "[45,1384][1035,1494]",
+    "chat-input": "[145,1405][927,1474]"
+  },
+  "tagKeystrokes": [
+    {
+      "character": "A",
+      "chat-composer-input-row": "[45,1384][1035,1494]",
+      "chat-input": "[145,1405][927,1474]",
+      "text": "@moth Single lineA"
+    },
+    {
+      "character": "g",
+      "chat-composer-input-row": "[45,1384][1035,1494]",
+      "chat-input": "[145,1405][927,1474]",
+      "text": "@moth Single lineAg"
+    },
+    {
+      "character": "j",
+      "chat-composer-input-row": "[45,1384][1035,1494]",
+      "chat-input": "[145,1405][927,1474]",
+      "text": "@moth Single lineAgj"
+    },
+    {
+      "character": "y",
+      "chat-composer-input-row": "[45,1384][1035,1494]",
+      "chat-input": "[145,1405][927,1474]",
+      "text": "@moth Single lineAgjy"
+    },
+    {
+      "character": "p",
+      "chat-composer-input-row": "[45,1384][1035,1494]",
+      "chat-input": "[145,1405][927,1474]",
+      "text": "@moth Single lineAgjyp"
+    },
+    {
+      "character": "q",
+      "chat-composer-input-row": "[45,1384][1035,1494]",
+      "chat-input": "[145,1405][927,1474]",
+      "text": "@moth Single lineAgjypq"
+    }
+  ],
+  "viewerThreeLines": {
+    "viewer-conversation-transcript": "[42,779][1038,1118]",
+    "viewer-conversation-pill": "[32,1142][1049,1360]",
+    "viewer-composer-input-row": "[145,1145][1047,1358]",
+    "viewer-attach-button": "[166,1268][235,1336]",
+    "viewer-input": "[245,1166][937,1337]",
+    "viewer-send": "[957,1268][1025,1336]"
+  },
+  "viewerSent": {
+    "viewer-conversation-transcript": "[42,751][1038,1215]",
+    "viewer-conversation-pill": "[32,1239][1049,1360]",
+    "viewer-composer-input-row": "[145,1242][1047,1353]",
+    "viewer-attach-button": "[166,1263][235,1332]",
+    "viewer-input": "[245,1263][937,1332]"
+  }
+}

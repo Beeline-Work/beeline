@@ -326,7 +326,6 @@ import {
   ChoiceCard,
   WalletCards,
   OrdinaryLedgerMessage,
-  RelayHandOff,
   TargetBranchProposalCard,
   WritePermissionCard,
 } from './RoomMessageVariants';
@@ -5357,9 +5356,6 @@ export function BuzzChatSurface({
             onOpen={() => openCorner(fact.cornerId)}
             testID={`corner-opened-marker-${fact.cornerId}`}
           />
-          {marker.relayReports?.map((report) => (
-            <RelayHandOff key={report.id} message={report} />
-          ))}
         </View>
       );
     },
@@ -5873,7 +5869,6 @@ export function BuzzChatSurface({
           />
         );
       }
-      if (item.relay) return <RelayHandOff message={item} />;
       if (item.cornerApp) {
         return (
           <CornerAppRow
@@ -5914,9 +5909,6 @@ export function BuzzChatSurface({
               onOpenCorner={openCorner}
               onOpenUrl={handleOpenGitHubEvent}
             />
-            {item.relayReports?.map((report) => (
-              <RelayHandOff key={report.id} message={report} />
-            ))}
           </View>
         );
       }

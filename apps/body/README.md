@@ -13,22 +13,27 @@ It keeps only four responsibilities:
 
 Room data and writes go through `DaemonApiClient`. The helper has no relay transport, legacy
 pairing-code redemption, approval or mandate engine, work calendar, repository lifecycle, or
-GitHub event consumer. Its action surface is repository corner start/status plus Room-to-corner
-and sibling-corner steering: `read-only-mcp.ts` exposes `steer_corner` in top-level Rooms and
-corners, `open_corner` in Rooms
-and corners (a corner's new corner opens beside it in the parent Room), and `pr_checks_status` in
-corners through the `beeline-agent` MCP surface. A corner is a code corner exactly when its parent
-Room has a repository: it gets a feature branch, token and worktree. A corner of a Room without a
-repository is repo-less: it works in a scratch workspace and delivers with `post_artifact`. Corners do not post
-reports back to their parent Room; their Room-facing output is server-owned cards.
-Corner turns receive the parent's current member-corner list and may steer a distinct sibling
-under that parent. The server checks live source, destination and parent membership and preserves
-the source corner, root human requester and command linkage. A steer queues the destination
-opener without completing the source turn. Membership alone never authorizes a turn;
-`ask_corner`, `get_corner_ask` and `inspect_corner` remain Room-only.
-To demonstrate sibling steering through the built helper, authenticated server and phone read,
-run `npm run prove:sibling-steer` from the repository root. Deploy the server
-authorization change before the helper that exposes corner steers.
+GitHub event consumer. Its action surface is `open_corner(room, brief)`, `order(address, text)`,
+`report(text)`, `read(address)` and `watch(address)` through `read-only-mcp.ts`.
+A DM can drive work across every Room the agent belongs to. The caller that opens a corner
+is its commander; orders reach the current implementer and reports return one step up.
+The return route comes from `rooms.created_by` and the existing opening command's parent,
+without a responsibility table or work ledger. Private payloads live only in `agent_commands`;
+agent-to-agent orders, reports, drafts and final replies have no transcript or phone push.
+A report to a human appears where that human gave the order.
+
+Opening automatically watches the corner for opened, merged and closed lifecycle events.
+Schedules, chatter and check events never trigger that watch. Merge delivery uses the corner
+watch; Room merged subscriptions and repository merged-PR subscriptions are retired.
+Every reachable member agent may call `merge_corner`, including from a DM, subject to the
+existing green-checks, exact-head yes and no-hold gate. Resource and human-consent rules remain
+owned by their existing operations.
+
+A corner is repository work exactly when its parent Room has a repository: it receives a
+feature branch, token and worktree. Otherwise it works in scratch and delivers artifacts.
+Run `npm run prove:command-grammar` for an isolated review Workspace proof through the built
+MCP tools, authenticated HTTP, PostgreSQL notifications, live helper sockets and phone reads.
+The proof launches no harness or production helper. Deploy the server before the updated helper.
 
 When an imported MCP server is added or removed from the selected harness's operator
 configuration, the helper replaces its retained Room or corner session before the next turn.

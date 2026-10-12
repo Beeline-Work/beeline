@@ -17,7 +17,6 @@ import {
 } from '@/buzz/room-history-pagination';
 import { boundaryRowIndex, messageBoundaryIds } from '@/buzz/room-new-message-boundary';
 import { foldSettledActivityRuns, type ChatDisplayMessage } from '@/buzz/room-view-presentation';
-import { anchorRelayReports } from '@/buzz/system-lines';
 import {
   createTranscriptScrubberStore,
   type TranscriptScrubberStore,
@@ -665,7 +664,7 @@ export function foldTranscriptRows(
   messages: readonly ChatDisplayMessage[],
   firstNewMessageId: string | null | undefined,
 ): { rows: ChatDisplayMessage[]; hostIds: ReadonlyMap<string, string> } {
-  const anchored = anchorCornerMarkers(anchorRelayReports([...messages]));
+  const anchored = anchorCornerMarkers([...messages]);
   const boundary = boundaryRowIndex(anchored, firstNewMessageId);
   const rows =
     boundary < 0

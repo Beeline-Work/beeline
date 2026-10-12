@@ -833,8 +833,6 @@ function projectedMessage(
   };
   if (!row.card_type || !row.card) return base;
   switch (row.card_type) {
-    case 'relay':
-      return { ...base, relay: row.card as NonNullable<RoomViewMessage['relay']> };
     case 'permission':
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
     case 'grant-request':

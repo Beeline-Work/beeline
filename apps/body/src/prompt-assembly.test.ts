@@ -93,7 +93,7 @@ describe('corner wake reporting (Reproduction schedule-silence-4)', () => {
   it('hands a reviewer-approved head to the implementer to merge, unless a human question is open', () => {
     const land = turn('corner_land');
     expect(land).toContain("The reviewer approved this pull request's current head.");
-    expect(land).toContain("if a human's question or proposal in the corner has no answer, name it and do not merge; otherwise call merge_corner.");
+    expect(land).toContain("call merge_corner when the live merge gate allows it. Report unresolved questions to your commander.");
     expect(land).not.toContain(silence);
     expect(turn('corner_check')).not.toContain('The reviewer approved');
   });
@@ -252,7 +252,6 @@ const SESSION_VARIANTS_BASE: Record<string, SessionPromptContext> = {
     agentName: 'Bee',
     soul,
     agentCommand: 'claude-agent-acp',
-    requesterHandle: 'lunchboxfortwo',
   },
 };
 
@@ -422,34 +421,15 @@ describe('prompt assembly guards', () => {
     }
   });
 
-  it('states one merge condition, the one pr_checks_status enforces, and no other', () => {
-    const merges = (name: string) => assembleSessionPrompt(SESSION_VARIANTS[name]!).systemPrompt;
-    expect(merges('code-corner-reviewed')).toContain('its PASS wakes you to merge');
-    expect(merges('code-corner-reviewed')).toContain('otherwise call merge_corner.');
-    expect(merges('code-corner-reviewed')).toContain('a refused merge');
-    expect(merges('code-corner-reviewer')).toContain(
-      'tag the person who assigned you this work, and ask them to approve the merge',
-    );
-    expect(merges('code-corner-reviewer')).toContain('Record their yes with order_corner_merge.');
-    expect(merges('code-corner-reviewer')).toContain('a merge GitHub refused');
-    expect(merges('code-corner-reviewer')).not.toContain('its PASS wakes you to merge');
-    for (const name of ['code-corner-reviewed', 'code-corner-reviewer']) {
-      expect(merges(name), name).not.toMatch(/the server merges/i);
+  it('uses the existing live merge gate without human escalation or reviewer merge bans', () => {
+    for (const name of ['code-corner-reviewed', 'code-corner-reviewer', 'code-corner-no-reviewer']) {
+      const text = assembleSessionPrompt(SESSION_VARIANTS[name]!).systemPrompt;
+      expect(text).toContain('merge_corner');
+      expect(text).not.toMatch(/never merge|do not merge|only human approval|ask a Workspace owner/i);
     }
-    expect(merges('code-corner-no-reviewer')).toContain(
-      "it merges only on a person's yes: ask a Workspace owner or admin to approve the merge, then record their yes with order_corner_merge.",
-    );
-    for (const name of Object.keys(SESSION_VARIANTS)) {
-      expect(merges(name), name).not.toMatch(/yolo/i);
-      expect(merges(name), name).not.toContain('gh pr merge');
-    }
-    for (const name of Object.keys(SESSION_VARIANTS)) {
-      expect(merges(name), name).not.toMatch(/approvalPending|held=false|once checks pass/);
-    }
-    expect(merges('code-corner-reviewed')).not.toContain('@sol');
-    const review = merges('code-corner-reviewer');
-    expect(review).toContain('Never merge a pull request you review.');
-    expect(review).not.toContain('On a checks turn');
+    const reviewer = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewer']!).systemPrompt;
+    expect(reviewer).toContain('configured reviewer');
+    expect(reviewer).toContain('approve_merge');
   });
 
   it('names the app-token PR path when no host gh exists', () => {
@@ -514,7 +494,7 @@ describe('prompt assembly guards', () => {
       expect(text, name).not.toMatch(/approved [0-9a-f<][^`]*, merge/);
     }
     expect(CORNER_CHECKS_NUDGE).toContain("a reviewer's PASS wakes you to merge with merge_corner");
-    expect(CORNER_CHECKS_NUDGE).toContain('Never merge it any other way.');
+    expect(CORNER_CHECKS_NUDGE).toContain('Use merge_corner for landing.');
   });
 
   it('tells a code-corner author that a human opening the corner and prompting inside it is not the outline', () => {
@@ -527,7 +507,7 @@ describe('prompt assembly guards', () => {
 
   it('authorizes building from dispatch and leaves spec or mock questions to judgment', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
-    const nudge = "The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Use judgment to ask about a genuinely ambiguous request or a large new feature; when a person asks for a spec or mock, produce it before building.";
+    const nudge = "The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for a material unresolved choice; when a person asks for a spec or mock, produce it before building.";
     expect(author).toContain(nudge);
     expect(author).not.toContain('wait for a human reply that approves it');
     expect(author).not.toContain('The request that opened the work is not approval');
@@ -545,7 +525,7 @@ describe('prompt assembly guards', () => {
     expect(promptRules.CORNER_DELIVERY_NUDGE).toContain('Only when you write code in this corner and the brief calls for repository changes');
   });
 
-  it('names the reviewed head SHA in a FAIL verdict', () => {
+  it('names the exact reviewed head SHA in a FAIL verdict', () => {
     const head = 'a'.repeat(40);
     const instruction = cornerReviewerInstruction({
       isReviewer: true,
@@ -554,9 +534,9 @@ describe('prompt assembly guards', () => {
       headSha: head,
       briefRevision: 2,
     })!;
-    expect(instruction).toContain(`reviewed head ${head} to fix`);
+    expect(instruction).toContain(`Review PR 7 at ${head}`);
     const skill = beelineReviewSkillMarkdown('test');
-    expect(skill).toContain('reviewed head SHA');
+    expect(skill).toContain('exact reviewed head SHA');
   });
 
   it('documents Connectors discovery and connection in every agent turn', () => {
@@ -578,7 +558,7 @@ describe('prompt assembly guards', () => {
       expect(text).not.toContain('Commit and push');
       expect(text).not.toContain('pr_checks_status');
     }
-    expect(dm).not.toContain('open_corner');
+    expect(dm).toContain('open_corner');
     expect(corner).not.toContain('open_corner');
     expect(room).toContain('open_corner');
   });
@@ -661,15 +641,15 @@ describe('prompt assembly guards', () => {
   it('gives both corner lanes sibling steer context without Room question instructions', () => {
     for (const surface of ['code-corner', 'repo-less-corner'] as const) {
       const session = assembleSessionPrompt({ surface, agentName: 'Bee' }).systemPrompt;
-      expect(session).toContain('Use steer_corner during a turn');
-      expect(session).toContain('Membership alone grants no turn');
+      expect(session).toContain('Use order(address, text) privately across member Rooms');
+      expect(session).toContain('Report one step up to your commander');
       const turn = assembleTurnPrompt({
         surface,
         corners: [{ cornerId: 'sibling-id', parentRoomId: 'room-id', createdBy: 'agent-id', archived: false, objective: 'Other work' }],
         task: { body: 'Steer the sibling' },
       }).text;
       expect(turn).toContain('sibling-id');
-      expect(turn).toContain('inspect_corner or steer_corner for a sibling under this parent Room');
+      expect(turn).toContain('read, inspect_corner or order across member Rooms');
       expect(turn).not.toContain('ask_corner');
     }
   });
@@ -734,7 +714,7 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
 
   it('describes the author when the reviewer opened the corner itself', () => {
     const text = cornerReviewerInstruction({ isReviewer: true, pullRequestNumber: 7, headSha: 'abc' })!;
-    expect(text).toContain('FAIL: tag the agent that wrote this head with the confirmed findings');
+    expect(text).toContain("FAIL: order the worker at this corner's address to fix the blocker");
     expect(text).not.toContain('@author');
   });
 });
@@ -837,7 +817,7 @@ describe('Reproduction runtime-brief-5: delivery capability', () => {
       else if (coding) expect(assembled.systemPrompt).toContain('Open the pull request with gh');
       else expect(assembled.systemPrompt).not.toContain(rule);
     }
-    expect(assembled.systemPrompt).toContain('The human approval quote wins any conflict');
+    expect(assembled.systemPrompt).toContain("The commander's order quote and inherited human constraints win any conflict");
     expect(assembled.systemPrompt).toContain('respect every non-goal and risk');
     expect(assembled.systemPrompt).toContain('post_artifact');
     const turn = assembleTurnPrompt({ surface: 'code-corner', sessionPrefix: assembled.systemPrompt, brief: { brief, fileLines: [] }, task: { body: 'How is the desk doing?' } }).text;

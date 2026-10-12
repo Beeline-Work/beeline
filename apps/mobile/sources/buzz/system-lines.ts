@@ -10,8 +10,6 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * A row from before the grammar has no event and renders its text verbatim.
  */
 export type SystemLineMessage = {
-  relay?: { direction: 'down' | 'up'; anchorMessageId?: string };
-  relayReports?: SystemLineMessage[];
   id: string;
   text: string;
   timestamp: number;
@@ -52,25 +50,4 @@ export function systemLineText(event: SystemEvent, subjects?: readonly SystemSub
   const head = [joinSystemNames(names), event.verb].filter(Boolean).join(' ');
   const line = event.object?.text ? `${head} ${event.object.text}` : head;
   return event.consequence ? `${line} · ${event.consequence}` : line;
-}
-
-/** Attach before partitioning at the unread boundary, so a new report can reach an older card. */
-export function anchorRelayReports<T extends SystemLineMessage>(messages: readonly T[]): T[] {
-  const reports = new Map<string, T[]>();
-  const anchors = new Set(messages.filter((m) => m.daemonFact).map((m) => m.id));
-  for (const message of messages) {
-    const anchor = message.relay?.direction === 'up' ? message.relay.anchorMessageId : undefined;
-    if (anchor && anchors.has(anchor)) {
-      const group = reports.get(anchor) ?? [];
-      group.push(message);
-      reports.set(anchor, group);
-    }
-  }
-  return messages.flatMap((message) => {
-    const anchor = message.relay?.direction === 'up' ? message.relay.anchorMessageId : undefined;
-    if (anchor && anchors.has(anchor)) return [];
-    return [
-      reports.has(message.id) ? { ...message, relayReports: reports.get(message.id) } : message,
-    ];
-  });
 }

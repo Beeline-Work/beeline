@@ -31,7 +31,7 @@ const dmPrompt = (context: Partial<SessionPromptContext> = {}) =>
 describe('using-beeline Room guidance', () => {
   it('describes Room mentions and the mounted corner action', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('These mechanics apply in Rooms and corners.');
+    expect(markdown).toContain('These mechanics apply in Rooms, corners and DMs.');
     expect(markdown).toContain('beeline-release: test-release');
     expect(markdown).toContain('beeline-agent');
     expect(markdown).toContain('beeline-agent fetch_image');
@@ -42,14 +42,14 @@ describe('using-beeline Room guidance', () => {
 
     // Tagging, the corner action, and read-only inspection are always-on rules.
     const room = roomPrompt();
-    expect(room).toContain('Every exact @handle you write wakes that member.');
+    expect(room).toContain('Every exact @handle wakes that member.');
     expect(room).toContain(
-      'Write one only to hand off work, to ask for a decision or input, or, when nothing else announces it, to tell the person who asked that their task is done; otherwise name people and agents in plain prose.',
+      'For work, use order(address, text) down and report(text) up to your commander',
     );
     expect(room).toContain('If nothing is actionable for you, do not reply.');
     // The Room asks for the corner's NAME as well as its objective (C89).
     expect(room).toContain(
-      'call open_corner with a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message)',
+      'call open_corner with the target room address, a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message)',
     );
     expect(room).toContain('Before opening one, consult beeline-triage and beeline-spec');
     expect(room).toContain('If a shell command is refused, say so plainly');
@@ -104,15 +104,12 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).toContain('beeline-agent emit_event');
   });
 
-  it('tells a model with post-merge work to subscribe to merged, and never to acknowledge a merge', () => {
+  it('watches corner lifecycle events without subscriptions or reminder loops', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('A corner merging wakes nobody in its parent Room by default.');
-    expect(markdown).toContain('create a merged subscription in the parent Room before the merge');
-    expect(markdown).toContain('Act only on that corner; post nothing for any other merge');
-    expect(markdown).toContain('Delete the subscription when the follow-up is done');
-    expect(markdown).toContain(
-      'Never post just to acknowledge a merge: the merge card already announces it.',
-    );
+    expect(markdown).toContain('Use watch(address) for corner lifecycle events: opened, merged and closed');
+    expect(markdown).toContain('Chatter and schedules never wake watchers');
+    expect(markdown).not.toContain('create a merged subscription');
+    expect(markdown).toContain('No reminder loops');
   });
 
   it('derives the subscribable kinds from SUBSCRIBABLE_EVENT_KINDS so the list cannot drift', () => {
@@ -137,14 +134,14 @@ describe('using-beeline Room guidance', () => {
     const dm = dmPrompt();
     expect(dm).toContain('private direct message with one person');
     expect(dm).toContain('reply without tagging');
-    expect(dm).toContain('no repository work and no corners');
-    expect(dm).not.toContain('open_corner');
+    expect(dm).toContain('across every Room you belong to');
+    expect(dm).toContain('open_corner');
     expect(dm).toContain('ask_choice');
     expect(dm).not.toContain('open_poll');
 
     const context = sessionPrompt({ surface: 'dm', agentCommand: 'codex-acp' });
     expect(context.systemPrompt).toContain('private direct message');
-    expect(context.systemPrompt).not.toContain('open_corner');
+    expect(context.systemPrompt).toContain('open_corner');
     expect(context.turnPrefix).toBe(context.systemPrompt);
   });
 
@@ -224,7 +221,7 @@ describe('using-beeline Room guidance', () => {
   it('delivers the same Room capabilities through compatibility-only harnesses', () => {
     const context = sessionPrompt({ agentCommand: 'codex-acp' });
     expect(context.systemPrompt).toContain('read-only');
-    expect(context.systemPrompt).toContain('Every exact @handle you write wakes that member.');
+    expect(context.systemPrompt).toContain('Every exact @handle wakes that member.');
     expect(context.systemPrompt).toContain('call open_corner');
     expect(context.systemPrompt).toContain(
       'When open_corner succeeds the server posts the corner card: do not restate it.',
@@ -232,7 +229,7 @@ describe('using-beeline Room guidance', () => {
     expect(context.systemPrompt).toContain("Use your own owner's tools and keys for whoever asks");
     expect(context.systemPrompt).toContain('Web search is available');
     expect(context.systemPrompt).toContain(
-      'to ask for a decision or input, or, when nothing else announces it, to tell the person who asked that their task is done',
+      'report(text) up to your commander',
     );
     expect(context.turnPrefix).toBe(context.systemPrompt);
     // A harness that honors the session prompt gets no duplicate on every turn.
@@ -259,11 +256,11 @@ describe('beeline-triage request skill', () => {
   it('leaves clarification to judgment and warns without blocking on warranted work or desirability', () => {
     expect(markdown).toContain('beeline-release: test-release');
     expect(markdown).toContain('## 1. Is it clear?');
-    expect(markdown).toContain('Use judgment to ask about a genuinely ambiguous request or a large new feature');
+    expect(markdown).toContain('Report needs-decision: to your commander for material unresolved intent');
     expect(markdown).toContain('When a person asks for a spec or mock, produce it before building');
     expect(markdown).not.toContain('before doing anything else');
     expect(markdown).toContain('you are expected to disagree, not just permitted to');
-    expect(markdown).toContain('tag a Room colleague for an adversarial second opinion');
+    expect(markdown).toContain('use order(address, text) for an adversarial second opinion');
     expect(markdown).toContain('skip this only when you are the only agent in the Room');
     expect(markdown).toContain('## 2. Is work warranted?');
     expect(markdown).toContain('try to reproduce the exact user-visible behavior');
@@ -330,9 +327,8 @@ describe('using-beeline human instruction ranking', () => {
   it('ranks owner then workspace master/admin then member, and forbids field syntax in Room replies', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
     expect(markdown).toContain('## Conflicting human instructions');
-    expect(markdown).toMatch(/your own owner first/i);
-    expect(markdown).toMatch(/workspace'?s owner and admins/i);
-    expect(markdown).toMatch(/then members/i);
+    expect(markdown).toContain('Follow the order from your commander within inherited scope');
+    expect(markdown).toContain('report one step up');
     expect(markdown).toMatch(/higher-tier instruction overrides a lower-tier hold/i);
     expect(markdown).toContain("A human at the same standing cannot clear another human's hold");
     expect(markdown).toMatch(/only that holder or someone of higher standing can/i);
@@ -347,116 +343,44 @@ describe('using-beeline human instruction ranking', () => {
 
 describe('beeline-review reviewer skill', () => {
   const markdown = beelineReviewSkillMarkdown('test-release');
-
-  it('accepts server-confirmed zero-check heads for review (ZC-3)', () => {
-    expect(markdown).toContain('checks="passed" with checkCount=0');
-    expect(markdown).toContain('Do not refuse review because no literal green check exists');
-    expect(markdown).toContain('An empty rollup alone is not proof');
-    expect(markdown).not.toContain('An empty CI rollup is not proof of passing checks.');
+  it('leads with the verdict, one blocker and a concrete worker next step', () => {
+    expect(markdown).toContain('Lead with the verdict and the one blocking reason');
+    expect(markdown).toContain('List only blocking items');
+    expect(markdown).toContain('FAIL: no live screenshot of Connectors showing this machine');
+    expect(markdown).toContain('Next: obtain that screenshot in the review Workspace');
+    expect(markdown).toContain('No full outline ledger, message IDs, commit hashes');
+    expect(markdown).not.toContain('decision: PASS|FAIL');
   });
-
-  it("ends the reviewer's authority at approval and leaves the merge to the author", () => {
-    expect(markdown).toContain('## 8. Gate and verdict');
-    expect(markdown).toContain(
-      'then reply `approved <reviewed sha>` without tagging the author. Do not tell the author to merge.',
-    );
-    expect(markdown).not.toContain('approved <reviewed sha>, merge');
-    expect(markdown).toContain(
-      'Approving is your last step as reviewer. Your PASS is the yes that wakes the author, who merges that exact head with `merge_corner` once checks are green',
-    );
-    expect(markdown).toContain('You never merge it yourself.');
-    expect(markdown).toContain(
-      "A human's question or proposal in the corner discussion with no answer is a blocking finding: FAIL and name it.",
-    );
+  it('checks complete scope privately, with commander-authorized revisions', () => {
+    expect(markdown).toContain('Check every story and criterion');
+    expect(markdown).toContain('confirm non-goals stayed out');
+    expect(markdown).toContain('each risk');
+    expect(markdown).toContain('Only a commander-authorized brief revision removes a requirement');
   });
-
-  it('never instructs anyone to run gh pr merge', () => {
-    expect(markdown).not.toContain('gh pr merge');
+  it('obtains proof autonomously and reports missing capability to the commander', () => {
+    expect(markdown).toContain('Obtain the required screenshot or live proof yourself in the review Workspace');
+    expect(markdown).toContain('Do not send test-setup questions to a person');
+    expect(markdown).toContain('report blocked: to your commander');
+    expect(markdown).toContain('Inner-function tests, code inspection and logs do not prove a visual claim');
   });
-
-  it('checks UI diffs against DESIGN.md, its lints and every shipped theme', () => {
-    expect(markdown).toContain('### Design rules');
-    expect(markdown).toContain('the repository has a DESIGN.md');
-    expect(markdown).toContain('npx vitest run sources/buzz/calm-lint sources/buzz/design-lint');
-    expect(markdown).toContain('FAIL when a design baseline count grows');
-    expect(markdown).toContain('in each theme the app ships (in Beeline, Obsidian and Bone)');
-    expect(markdown).toContain('A design-rule violation is an engineering finding and blocks PASS.');
+  it('reviews one exact green head and permits landing through the live gate', () => {
+    expect(markdown).toContain('headRefOid');
+    expect(markdown).toContain('Review only that exact head; if it moves, start again');
+    expect(markdown).toContain('checks="passed" and checkCount=0');
+    expect(markdown).toContain('An empty CI rollup alone proves nothing');
+    expect(markdown).toContain('approve_merge');
+    expect(markdown).toContain('merge_corner');
+    expect(markdown).not.toMatch(/never merge|do not merge|only human approval/i);
   });
-
-  it('carries no bare never-merge sentence the implementer could borrow', () => {
-    expect(markdown).not.toContain('Never merge');
-  });
-
-  it('rechecks warranted work and desirability before testing the implementation', () => {
-    expect(markdown).toContain('independently repeat the two judgment legs from request triage');
-    expect(markdown).toContain('For a bug, reproduce the reported behavior on the target branch');
-    expect(markdown).toContain('FAIL confirmed duplicate or obsolete work');
-    expect(markdown).toContain('Require a concrete user benefit, the smallest coherent solution');
-    expect(markdown).toContain('work warranted evidence:');
-    expect(markdown).toContain('desirability evidence:');
-  });
-
-  it('reviews the diff before lazily creating and always deleting a test checkout', () => {
-    expect(markdown.indexOf('Run `gh pr diff N`')).toBeLessThan(
-      markdown.indexOf('Check out that exact head only when an empirical command'),
-    );
+  it('uses an isolated checkout, preserves worker work and reviews design and security', () => {
+    expect(markdown).toContain('never the worker');
     expect(markdown).toContain('git worktree remove --force');
-    expect(markdown).toContain('Cleanup is mandatory on PASS, FAIL, and command error');
-    expect(markdown).not.toContain('Check out that exact head in a new scratch git worktree');
-  });
-
-  it('fails a bug proof that skips a recorded reproduction identifier', () => {
-    expect(markdown).toContain('if a `Reproduction <id>` was recorded, quote it');
-    expect(markdown).toContain(
-      'FAIL if that proof does not name the identifier, even when other tests pass',
-    );
-    expect(markdown).toContain(
-      'If none was obtained, require the proof to say so plainly and show the regression instead',
-    );
-    expect(markdown).toContain('reproduction id (or none obtained):');
-    expect(markdown).toContain('proof of that reproduction (or none obtained + regression):');
-  });
-
-  it('grades every acceptance criterion and blocks PASS on an unmet one', () => {
-    expect(markdown).toContain(
-      'list every `## User stories` and `## Acceptance criteria` line exactly once',
-    );
-    expect(markdown).toContain('the named test run against the PR head');
-    expect(markdown).toContain('Any missing, unmet, unverified story or acceptance criterion');
-    expect(markdown).toContain(
-      'outline ledger (every user story, acceptance criterion, non-goal and risk + status + evidence;',
-    );
-  });
-
-  it('treats the spec outline as scope and lets the approval quote win', () => {
-    expect(markdown).toContain('Quote the approval with its message ID and approver');
-    expect(markdown).toContain(
-      "The spec's outline (user stories, acceptance criteria, non-goals, risks) is the scope",
-    );
-    expect(markdown).toContain('it wins any conflict with the spec');
-    expect(markdown).toContain('short objective is navigation-only text');
-    expect(markdown).toContain(
-      'outline ledger (every user story, acceptance criterion, non-goal and risk + status + evidence; mock-vs-screen notes for frontend work):',
-    );
-    expect(markdown).toContain('the affected outline line or `engineering`');
-    expect(markdown).not.toMatch(/AC-\d|revision and hash/);
-    expect(markdown).toContain('product-completeness findings (block):');
-    expect(markdown).toContain('engineering findings (block):');
-    expect(markdown).toContain('stable ID that survives rereview');
-    expect(markdown).toContain('only through a new human-authorized brief revision');
-  });
-
-  it('sends a brief with no user stories to grade back to the author instead of approving', () => {
-    expect(markdown).toContain('no stories to list is a FAIL, sent back to the author to write the outline');
-  });
-});
-
-describe('optional frontend mocks', () => {
-  it('reviews rendered screens without requiring a mock to pass', () => {
-    const markdown = beelineReviewSkillMarkdown('test-release');
-    expect(markdown).toContain('when the brief includes a mock, compare them against it');
-    expect(markdown).toContain('A mock is optional; its absence does not block PASS.');
-    expect(markdown).not.toContain('compare them against the attached mock');
+    expect(markdown).toContain('on PASS, FAIL or error');
+    expect(markdown).toContain('review:exact-head');
+    expect(markdown).toContain('calm-lint sources/buzz/design-lint');
+    expect(markdown).toContain('Obsidian and Bone');
+    expect(markdown).toContain('resource authority, credentials and migration safety');
+    expect(markdown).toContain('scope creep');
   });
 });
 
@@ -486,7 +410,7 @@ describe('beeline-spec planning skill', () => {
       '`## Risks`',
       '`## References`',
       '`attachments`',
-      '`approval`: one human Room message ID',
+      '`approval`: the initiating human message ID or private commander order ID',
     ])
       expect(markdown).toContain(part);
     expect(markdown).not.toMatch(/intentVerbatim|buildSpec|approvalBasis|criteria\[\]/);
@@ -521,7 +445,7 @@ describe('using-beeline "Tools and the Connectors" section', () => {
       'call connectors_status and check whether a tool or connected app you already have can get it, then use it',
     );
     expect(tools).toContain('an emailed verification code in an already-connected inbox');
-    expect(tools).toContain('Ask only when none can, and say why');
+    expect(tools).toContain('Report blocked: to your commander only when none can, and say why');
     expect(tools).toContain('The key-ownership and grant rules still apply');
     expect(tools).toContain("another person's keys need that person's private scoped approval");
     expect(tools).toContain('does not replace a grant');

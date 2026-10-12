@@ -17,7 +17,7 @@ import {
 } from './workspace-handles.js';
 import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
-import { cancelCornerAgentCommands, reportUnansweredCornerAsks } from './corner-close.js';
+import { cancelCornerAgentCommands } from './corner-close.js';
 import {
   advanceCorner,
   claimCornerMergeAttempt,
@@ -2313,12 +2313,6 @@ export class GitHubOperations {
           },
         },
       });
-      await reportUnansweredCornerAsks(
-        database,
-        target.corner_id,
-        target.parent_id,
-        target.corner_name,
-      );
       await advanceCorner(database, target.corner_id, {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },

@@ -50,7 +50,7 @@ function githubItem(url: string | undefined) {
 }
 
 function lifecycleItem(message: SystemLineMessage): LifecycleEvent | undefined {
-  if (message.deleted || message.relayReports?.length) return undefined;
+  if (message.deleted) return undefined;
   const fact = message.daemonFact;
   // A corner opened from a message is that message's marker, never a lifecycle cell.
   if (fact?.sourceMessageId) return undefined;

@@ -18,29 +18,27 @@ export const EMPTY_NEW_MESSAGE_QUEUE: NewMessageQueue = {
 
 /** Folding may place a relayed message inside its host card. The divider belongs to the host row. */
 export function messageContainsBoundary(
-  message: Pick<ChatDisplayMessage, 'id' | 'relayReports' | 'foldedIds'>,
+  message: Pick<ChatDisplayMessage, 'id' | 'foldedIds'>,
   boundaryId: string | null | undefined,
 ): boolean {
   if (!boundaryId) return false;
   return (
     message.id === boundaryId ||
-    Boolean(message.foldedIds?.includes(boundaryId)) ||
-    Boolean(message.relayReports?.some((report) => report.id === boundaryId))
+    Boolean(message.foldedIds?.includes(boundaryId))
   );
 }
 
 /** Every durable id represented by one virtualized row, in transcript order. */
 export function messageBoundaryIds(
-  message: Pick<ChatDisplayMessage, 'id' | 'relayReports' | 'foldedIds'>,
+  message: Pick<ChatDisplayMessage, 'id' | 'foldedIds'>,
 ): string[] {
   return [
     ...(message.foldedIds ?? [message.id]),
-    ...(message.relayReports?.map((report) => report.id) ?? []),
   ].filter((id, index, ids) => ids.indexOf(id) === index);
 }
 
 export function boundaryRowIndex(
-  messages: readonly Pick<ChatDisplayMessage, 'id' | 'relayReports' | 'foldedIds'>[],
+  messages: readonly Pick<ChatDisplayMessage, 'id' | 'foldedIds'>[],
   boundaryId: string | null | undefined,
 ): number {
   return messages.findIndex((message) => messageContainsBoundary(message, boundaryId));

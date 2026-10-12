@@ -55,13 +55,12 @@ describe('phone contract', () => {
       createdAt: 1,
       author: identity,
       presentation: 'card',
-      relay,
     };
     expect(isRoomView({ ...room, messages: [message] })).toBe(true);
     expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1_999 }] })).toBe(true);
     expect(
       readRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })?.messages,
-    ).toEqual([{ ...message, presentation: 'card', relay }]);
+    ).toEqual([{ ...message, presentation: 'card' }]);
     // The row's write counter survives the read; a malformed one is dropped.
     expect(readRoomView({ ...room, messages: [{ ...message, version: 3 }] })?.messages[0]?.version).toBe(3);
     expect(
@@ -96,7 +95,7 @@ describe('phone contract', () => {
         ...room,
         messages: [{ ...message, relay: { ...relay, anchorMessageId: 42 } }],
       })?.messages[0]?.relay,
-    ).toEqual(relay);
+    ).toBeUndefined();
 
     // The face ceremony: an optional face id on every identity, never a non-string.
     expect(

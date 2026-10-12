@@ -140,6 +140,7 @@ export type AgentCommand = {
   readonly parentCommandId?: string;
   readonly rootSourceMessageId: string;
   readonly agentDepth: number;
+  readonly private?: boolean;
   readonly source: RoomInboxResult['items'][number];
   /** Superseded wakes, quoted as history; only source authorizes this turn. */
   readonly recoveryContext?: string;
@@ -300,16 +301,9 @@ export type DaemonOperationMap = {
       readonly attachments: readonly DaemonAttachment[];
     }
   >;
-  getCornerAsk: Operation<
-    RoomInput & { readonly askId: string },
-    {
-      readonly askId: string;
-      readonly cornerId: string;
-      readonly question: string;
-      readonly status: 'pending' | 'answered' | 'unanswered';
-      readonly answer?: string;
-    }
-  >;
+  order: Operation<RoomInput & TurnOutputAuthority & { readonly address: string; readonly text: string }, WriteResult>;
+  report: Operation<RoomInput & TurnOutputAuthority & { readonly text: string }, WriteResult>;
+  read: Operation<RoomInput & { readonly address: string; readonly limit?: number }, RoomConversationResult>;
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;
   getPermissionAuthority: Operation<PermissionAuthorityInput, AuthorityDecisionResult>;
   getMissionAuthority: Operation<MissionAuthorityInput, AuthorityDecisionResult>;
@@ -504,6 +498,7 @@ export type DaemonOperationMap = {
   /** Retitles a corner. A human-opened corner may receive its first objective and brief in the same write. */
   renameCorner: Operation<
     TurnOutputAuthority & CornerInput & {
+      readonly roomId?: string;
       readonly name: string;
       readonly objective?: string;
       readonly brief?: CornerBriefDraft;
@@ -849,8 +844,6 @@ export type RoomInboxResult = {
     readonly createdAt: number;
     readonly type: string;
     readonly body: string;
-    /** Present on a corner answer or unanswered-close report. */
-    readonly cornerAskId?: string;
     readonly agentAuthor?: boolean;
     readonly replyToMessageId?: string;
     /** Current author of the reply parent, projected by the server. */
@@ -955,8 +948,6 @@ export type CornerRestoreResult = {
   readonly closeRequested: boolean;
   /** True while a human hold stands on this corner; a held corner publishes nothing. */
   readonly held?: boolean;
-  /** The human who commissioned the corner, as a bare handle. Who a corner without a repository reports delivery to. */
-  readonly requesterHandle?: string;
   /** Server-indexed GitHub facts retained across a helper restart. */
   readonly lifecycle?: CornerLifecycleView;
   /** The latest manager merge request, bound to the exact PR revision it approved. */
@@ -1118,14 +1109,7 @@ export type PostRoomMessageInput = TurnOutputAuthority &
     readonly replyToMessageId?: string;
     /** Inbox message that started this turn; independent of optional reply threading. */
     readonly triggerMessageId?: string;
-    /** Source room is the active command room; destination is authorized separately. */
-    readonly relay?: {
-      readonly fromRoomId: string;
-      readonly toRoomId: string;
-      readonly direction: 'down' | 'up';
-      /** A question receives one muted, linked report in the parent Room. */
-      readonly reply?: 'once';
-    };
+
   };
 export type PostAgentAttachmentInput = TurnOutputAuthority &
   RoomInput & {
@@ -1241,7 +1225,7 @@ export type PostAgentModelCatalogInput = AgentInput & {
   /** The harness kind (`AGENT_KINDS` in `apps/body/src/agent-command.ts`); the automatic "harness" tag. */
   readonly harness?: string;
 };
-export type CornerWatchKind = 'merged' | 'check-passed' | 'check-failed';
+export type CornerWatchKind = 'opened' | 'merged' | 'closed';
 export type CornerWatchResult = {
   readonly kinds: readonly CornerWatchKind[];
   /**
@@ -1298,8 +1282,8 @@ export type CreateCornerInput = TurnOutputAuthority &
     /** Exact handle, without @, of an agent member of the parent Room; defaults to the caller. */
     readonly implementer?: string;
     readonly hold?: boolean;
-    /** Defaults to true: the opener watches the new corner for `merged` in the calling Room. */
-    readonly watchMerge?: boolean;
+    /** Target parent Room; the active command may be in a DM or another Room. */
+    readonly targetRoomId?: string;
     readonly requestId: string;
     /** Stable for one tool call, distinct between separate calls in the same turn. */
     readonly idempotencyKey?: string;

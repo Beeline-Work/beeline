@@ -1247,7 +1247,7 @@ async function provenanceAttempt(
   db: SqlDatabase,
   roomId: string,
   runId: string,
-  sourceMessageId: string | undefined,
+  sourceMessageId: string | null | undefined,
 ): Promise<number | undefined> {
   if (!sourceMessageId) return undefined;
   const source = (
@@ -1374,7 +1374,7 @@ export async function handoff(
         choiceId: answer.choiceId,
         viewerId: answer.viewerId,
         optionId: answer.optionId,
-        sourceMessageId: command.source_message_id,
+        sourceMessageId: command.source_message_id ?? undefined,
       });
       const after = await openRun(db, command.room_id, input.runId);
       return {
@@ -1838,7 +1838,7 @@ export async function activeRunIdsForSchedule(
 
 export async function startWorkflow(
   database: SqlDatabase,
-  command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string; source_message_id?: string; root_source_message_id?: string },
+  command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string; source_message_id?: string | null; root_source_message_id?: string },
   input: { name: string; roleBindings: Readonly<Record<string, WorkflowRoleBinding>> },
 ): Promise<{ runId: string; state: string }> {
   if (typeof input.name !== 'string' || !input.name) throw new Error('workflow name is required');

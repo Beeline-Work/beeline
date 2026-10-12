@@ -3,7 +3,6 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { LedgerSystemLine } from '../sources/components/buzz/Ledger';
 import { beelineThemes } from '../sources/buzz/groknight';
-import { anchorRelayReports } from '../sources/buzz/system-lines';
 const consequence =
   'Execute directly in the corner under its current brief. Preserve the existing ledger, spending caps, expiry and calendar guards. Deduplicate timers against canonical receipts and active runs. Read the required records before executing. Keep one ledger and preserve uncertain calls. Save receipts and report timestamps, then report to the parent Room. '.repeat(
     3,
@@ -64,7 +63,7 @@ async function measure() {
   }
   createRoot(root).render(
     <>
-      {anchorRelayReports(messages).map((m) => (
+      {Array.from(messages).map((m) => (
         <LedgerSystemLine
           key={m.id}
           id={m.id}

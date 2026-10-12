@@ -23,7 +23,7 @@ describe('direct message helper surface', () => {
     const names = tools.map((tool) => tool.name);
     expect(names).toContain('get_room_message');
     expect(names).toContain('post_artifact');
-    expect(names).not.toContain('open_corner');
+    expect(names).toContain('open_corner');
     expect(names).not.toContain('delegate_to_agent');
 
     // The read-only surface is untouched: it never carried daemon tools.
@@ -40,7 +40,7 @@ describe('direct message helper surface', () => {
     expect(agentToolsFor(true, false, true, true).map((tool) => tool.name)).toContain(
       'approve_merge',
     );
-    expect(agentToolsFor(true, false, false, true).map((tool) => tool.name)).not.toContain(
+    expect(agentToolsFor(true, false, false, true).map((tool) => tool.name)).toContain(
       'approve_merge',
     );
     expect(agentToolsFor(true, false, true, false).map((tool) => tool.name)).toContain('scratch_status');
@@ -181,14 +181,13 @@ describe('approve_merge surface', () => {
     expect(names(true, true, true)).toContain('approve_merge');
   });
 
-  it('stays off repo-less corners and outside corners', () => {
-    // Only a corner whose parent Room has a repository sets repositoryCorner.
+  it('admits Room and DM turns that name a corner, while staying off repo-less corner turns', () => {
     for (const memory of [false, true]) {
       expect(names(true, false, memory)).not.toContain('approve_merge');
-      expect(names(false, false, memory)).not.toContain('approve_merge');
-      expect(names(false, true, memory)).not.toContain('approve_merge');
+      expect(names(false, false, memory)).toContain('approve_merge');
+      expect(names(false, true, memory)).toContain('approve_merge');
     }
-    expect(agentToolsFor(true, true, false, true).map((tool) => tool.name)).not.toContain(
+    expect(agentToolsFor(true, true, false, true).map((tool) => tool.name)).toContain(
       'approve_merge',
     );
     expect(agentToolsFor(false, false, true, true).map((tool) => tool.name)).not.toContain(
@@ -196,26 +195,21 @@ describe('approve_merge surface', () => {
     );
   });
 
-  it('says the implementer merges and rejects the wrong caller or head', () => {
-    const tool = agentToolsFor(true, false, true, true).find(
-      (entry) => entry.name === 'approve_merge',
-    )!;
-    expect(tool.description).toContain('exact pull-request head you reviewed');
-    expect(tool.description).not.toContain('brief revision');
-    expect(tool.description).toContain('The implementer is then woken to merge it with merge_corner');
-    expect(tool.description).toContain('Withhold PASS while a human’s question or proposal in the corner discussion has no answer');
-    expect(tool.description).toContain('not the parent Room’s configured reviewer');
-    expect(tool.description).toContain('not the pull request’s current head');
-    expect(tool.description).toContain('Do not tell the author to merge.');
-    expect(tool.description).not.toContain('clearance to merge');
+  it('requires concise proof-first review, with missing capability reported to the commander', () => {
+    const tool = agentToolsFor(true, false, true, true).find(entry => entry.name === 'approve_merge')!;
+    expect(tool.description).toContain('exact current green head');
+    expect(tool.description).toContain('verdict, one blocking reason and the worker');
+    expect(tool.description).toContain('Do not post an outline ledger, message IDs or commit hashes');
+    expect(tool.description).toContain('report blocked: to your commander');
+    expect(tool.description).toContain('Use merge_corner when the live gate permits landing');
   });
 
   it('refuses a brief whose outline ledger has no verified user story', () => {
     const tool = agentToolsFor(true, false, true, true).find(
       (entry) => entry.name === 'approve_merge',
     )!;
-    expect(tool.description).toContain('whose outline ledger has no missing or unverified user story');
-    expect(tool.description).toContain('otherwise send the brief back');
+    expect(tool.description).toContain('after verifying the brief and live proof');
+    expect(tool.description).toContain('On FAIL use order to send the worker its next step');
   });
 });
 
@@ -237,9 +231,9 @@ describe('corner lifecycle tool surfaces', () => {
     // the PR of one by naming its cornerId; a DM has no corners.
     for (const name of ['close_corner', 'rename_corner', 'close_pull_request'])
       expect(room.map((tool) => tool.name)).toContain(name);
-    expect(directMessage.map((tool) => tool.name)).not.toContain('close_corner');
+    expect(directMessage.map((tool) => tool.name)).toContain('close_corner');
     expect(room.map((tool) => tool.name)).toContain('open_corner');
-    expect(directMessage.map((tool) => tool.name)).not.toContain('open_corner');
+    expect(directMessage.map((tool) => tool.name)).toContain('open_corner');
 
     for (const tools of [corner, reviewerCorner]) {
       const names = tools.map((tool) => tool.name);
@@ -253,7 +247,7 @@ describe('corner lifecycle tool surfaces', () => {
     expect(repoLessCorner.map((tool) => tool.name)).toContain('close_corner');
     expect(repoLessCorner.map((tool) => tool.name)).not.toContain('close_pull_request');
     expect(reviewerCorner.map((tool) => tool.name)).toContain('close_pull_request');
-    expect(directMessage.map((tool) => tool.name)).not.toContain('close_pull_request');
+    expect(directMessage.map((tool) => tool.name)).toContain('close_pull_request');
     expect(repoLessCorner.map((tool) => tool.name)).toContain('post_artifact');
     for (const tools of [room, directMessage, corner, reviewerCorner, repoLessCorner]) {
       expect(tools.map((tool) => tool.name)).not.toContain('upgrade_corner_to_code');
@@ -262,11 +256,11 @@ describe('corner lifecycle tool surfaces', () => {
       expect(tools.map((tool) => tool.name)).not.toContain('publish_corner_app');
       expect(tools.map((tool) => tool.name)).not.toContain('open_corner_app');
     }
-    expect(directMessage.map((tool) => tool.name)).not.toContain('rename_corner');
+    expect(directMessage.map((tool) => tool.name)).toContain('rename_corner');
     for (const name of ['list_corners', 'list_room_members', 'read_pull_request', 'post_to_corner']) {
       for (const tools of [room, corner, repoLessCorner])
         expect(tools.map((tool) => tool.name)).toContain(name);
-      expect(directMessage.map((tool) => tool.name)).not.toContain(name);
+      expect(directMessage.map((tool) => tool.name)).toContain(name);
     }
   });
 });
@@ -279,7 +273,7 @@ describe('open_corner arguments', () => {
       required: string[];
       properties: Record<string, { maxLength?: number; description?: string }>;
     };
-    expect(schema.required).toEqual(['name', 'objective']);
+    expect(schema.required).toEqual(['room', 'brief']);
     expect(openCorner().description).toContain('AT MOST THREE WORDS');
     expect(openCorner().description).toContain(
       'Supply a compact brief for a precise small fix or a complete brief and Room files for complex work.',
@@ -359,37 +353,16 @@ describe('open_corner arguments', () => {
   });
 });
 
-it('advertises sibling steers and reads in both corner lanes, but questions only in Rooms', () => {
-  expect(agentToolsFor(true, false).map((t) => t.name)).toContain('steer_corner');
-  expect(agentToolsFor(true, false).map((t) => t.name)).toContain('ask_corner');
-  expect(agentToolsFor(true, false).map((t) => t.name)).toContain('get_corner_ask');
-  expect(agentToolsFor(true, false).map((t) => t.name)).toContain('inspect_corner');
-  expect(agentToolsFor(true, false).map((t) => t.name)).not.toContain('report_to_room');
-  expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('report_to_room');
-  for (const repositoryCorner of [false, true]) {
-    const names = agentToolsFor(true, false, true, repositoryCorner).map((t) => t.name);
-    expect(names).toContain('steer_corner');
-    expect(names).toContain('inspect_corner');
-    for (const name of ['ask_corner', 'get_corner_ask'])
-      expect(names).not.toContain(name);
-    expect(agentToolsFor(true, true, true, repositoryCorner).map((t) => t.name)).not.toContain('steer_corner');
+it('offers the command grammar across Rooms, corners and DMs, with retired tools absent', () => {
+  for (const dm of [false, true]) for (const corner of [false, true]) {
+    const names = agentToolsFor(true, dm, corner, true).map(t => t.name);
+    for (const name of ['order', 'report', 'read', 'watch', 'open_corner', 'inspect_corner'])
+      expect(names).toContain(name);
+    for (const name of ['steer_corner', 'ask_corner', 'get_corner_ask']) expect(names).not.toContain(name);
   }
-  expect(agentToolsFor(true, true).map((t) => t.name)).not.toContain('steer_corner');
-  expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('ask_corner');
-  expect(agentToolsFor(true, false, true).map((t) => t.name)).not.toContain('get_corner_ask');
-  expect(agentToolsFor(true, true).map((t) => t.name)).not.toContain('inspect_corner');
-  const room = assembleSessionPrompt({ surface: 'room', agentName: 'Bee' }).systemPrompt;
-  expect(room).toContain('ask_corner for one answer');
-  expect(room).toContain('steer_corner to pass Room input down');
-  expect(room).toContain('inspect_corner for status');
   const dm = assembleSessionPrompt({ surface: 'dm', agentName: 'Bee' }).systemPrompt;
-  expect(dm).not.toContain('ask_corner');
-  expect(dm).not.toContain('steer_corner');
-  for (const source of ['./monolith-corner-turn.ts', './prompt-assembly.ts']) {
-    const cornerPrompt = readFileSync(new URL(source, import.meta.url), 'utf8');
-    expect(cornerPrompt).not.toContain('report_to_room');
-    expect(cornerPrompt).not.toContain('report the tool reason to the Room');
-  }
+  expect(dm).toContain('across every Room you belong to');
+  expect(dm).toContain('report(text) up to your commander');
 });
 
 it('R8d documents the optional continuation and generic fallback', () => {

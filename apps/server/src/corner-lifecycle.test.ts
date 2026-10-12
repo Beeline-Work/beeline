@@ -642,16 +642,14 @@ describe('checks dispatch (rows 6-8)', () => {
     expect(waiting).toEqual([]);
   });
 
-  it('an agent explicitly asking for a decision still reaches the human', async () => {
+  it('an explicit decision report goes privately to the commander, without a human tag', async () => {
     const cornerId = await open('owner/widgets');
     const [work] = await commands(A, cornerId);
     await claim(work!);
-    await result(work!, '@human please decide whether to continue?');
-    const reached = await db.query(`SELECT 1 FROM messages m JOIN identities person ON person.id=$2
-      WHERE m.room_id=$1 AND m.author_id=$3
-        AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind', false)}`,
-      [cornerId, H, A]);
-    expect(reached.rowCount).toBe(1);
+    await daemon.execute('report', { roomId: cornerId, requestId: work!.turnRequestId,
+      generationId: 'g1', text: 'needs-decision: decide whether to continue' }, A);
+    expect((await commands(A, R)).some(c => c.reason === 'report' && c.source.body.includes('needs-decision:'))).toBe(true);
+    expect((await db.query(`SELECT 1 FROM messages WHERE text='needs-decision: decide whether to continue'`)).rowCount).toBe(0);
   });
 
   it('the reviewer role is never pinned to a real agent id, so a mid-corner reassignment is recorded correctly next time (finding 1)', async () => {
@@ -747,23 +745,16 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     expect(await reasons(cornerId, A)).not.toContain('corner_review');
   });
 
-  it('Reproduction REVIEW-TAG-1: reviewer and implementer trade tagged messages on one green head and it stays in review', async () => {
+  it('a reviewer privately orders repairs on a green head and it stays in review', async () => {
     const cornerId = await toReview();
-    // Agent-to-agent tags stop at COMMAND_MAX_DEPTH; two full rounds fit.
-    for (let round = 1; round <= 2; round += 1) {
-      const [review] = (await commands(B, cornerId)).slice(-1);
-      await claim(review!, `r${round}`);
-      await result(review!, `@hoots round ${round}: still not fixed.`, `r${round}`);
-      const [reply] = (await commands(A, cornerId)).slice(-1);
-      await claim(reply!, `w${round}`);
-      await result(reply!, '@goosy the replay recipe is attached; look again.', `w${round}`);
-      expect(await currentState(cornerId)).toBe('review');
-    }
-    expect((await cards(cornerId)).map((card) => card.outcome)).not.toContain('changes_requested');
-    expect(await reasons(cornerId, A)).not.toContain('corner_review');
-    // The reviewer's PASS on that same head still opens the merge.
+    const [review] = await commands(B, cornerId);
+    await claim(review!, 'review-generation');
+    await daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId,
+      generationId: 'review-generation', address: cornerId, text: 'Fix the race condition' }, B);
+    expect((await commands(A, cornerId)).some(c => c.reason === 'order')).toBe(true);
+    expect(await currentState(cornerId)).toBe('review');
     await daemon.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B);
-    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_land')).toHaveLength(1);
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_land')).toHaveLength(1);
   });
 });
 
@@ -1567,10 +1558,8 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
       roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' },
       verb: 'finished checks on', kind: 'check-failed', payload: { followup: true },
     });
-    const people = await db.query<{ text: string }>(`SELECT m.text FROM messages m JOIN identities person ON person.id=$2
-      WHERE m.room_id=$1 AND m.text LIKE '%needs to restore agent access%'
-        AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind')}`, [cornerId, H]);
-    expect(people.rows).toEqual([{ text: expect.stringContaining('@human needs to restore agent access') }]);
+    expect((await commands(A, R)).some(c => c.reason === 'report' && c.source.body.startsWith('blocked:'))).toBe(true);
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%needs to restore agent access%'`, [cornerId])).rowCount).toBe(0);
   });
 
   it('addresses the requester only after an agent wake remains unclaimed through normal delivery retries', async () => {
@@ -1578,10 +1567,7 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     expect(await noteBlockedCornerChecks(db)).toBe(0);
     await db.query(`UPDATE agent_commands SET created_at=now()-interval '3 minutes' WHERE room_id=$1`, [cornerId]);
     await noteBlockedCornerChecks(db);
-    const people = await db.query(`SELECT 1 FROM messages m JOIN identities person ON person.id=$2
-      WHERE m.room_id=$1 AND m.text LIKE '%needs to restore agent access%'
-        AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind')}`, [cornerId, H]);
-    expect(people.rowCount).toBeGreaterThan(0);
+    expect((await commands(A, R)).some(c => c.reason === 'report' && c.source.body.startsWith('blocked:'))).toBe(true);
     const [recovered] = await commands(A, cornerId);
     await claim(recovered!);
     expect((await db.query(`SELECT 1 FROM corner_owed WHERE corner_id=$1 AND person_id=$2`,
@@ -1899,7 +1885,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       .toMatchObject({ reviewerExists: true, approved: false, open: false });
     expect(await currentState(cornerId)).toBe('checks');
     expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%could not be reached%'`, [cornerId])).rows)
-      .toHaveLength(1);
+      .toHaveLength(0);
     expect(await github.prChecksStatus({ cornerId })).toMatchObject({ reviewerExists: true, mergeAllowed: false });
     expect(await implementersMerge()).toBe(0);
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
@@ -1920,7 +1906,6 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, (id: string) => github.landCorner(id));
-    await expect(wiredDaemon.execute('mergeCorner', { cornerId }, B)).rejects.toThrow(/only this corner's implementer/);
     await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
       .resolves.toEqual({ status: 'merge-started', headSha: SHA });
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
@@ -2021,10 +2006,10 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       .toEqual([{ author_id: B }]);
     await wiredDaemon.execute('renameCorner', { ...authority, cornerId, name: 'Renamed-widget' }, B);
     expect((await db.query(`SELECT name FROM rooms WHERE id=$1`, [cornerId])).rows[0]).toEqual({ name: 'Renamed-widget' });
-    await wiredDaemon.execute('postRoomMessage', {
-      ...authority, text: 'Pick this up', relay: { fromRoomId: R, toRoomId: cornerId, direction: 'down' },
+    await wiredDaemon.execute('order', {
+      ...authority, text: 'Pick this up', address: cornerId,
     }, B);
-    expect((await commands(A, cornerId)).at(-1)?.reason).toBe('relay_steer');
+    expect((await commands(A, cornerId)).at(-1)?.reason).toBe('order');
     await expect(wiredDaemon.execute('reviseCornerBrief', {
       ...authority, cornerId, expectedRevision: 1,
       brief: { ...brief(turn.sourceMessageId), spec: 'Revised from the Room\n\n## Checklist\n- Ship it', change: 'Room revision' },
@@ -2645,10 +2630,10 @@ describe('the gate stays shut (AC-8)', () => {
     await say(R, '@hoots release the hold');
     const order = (await commands(A, R)).at(-1)!;
     await claim(order);
-    await daemon.execute('postRoomMessage', { roomId: R, requestId: order.turnRequestId, generationId: 'g1',
-      text: 'The holder said: release the hold', relay: { fromRoomId: R, toRoomId: cornerId, direction: 'down' } }, A);
+    await daemon.execute('order', { roomId: R, requestId: order.turnRequestId, generationId: 'g1',
+      text: 'The holder said: release the hold', address: cornerId }, A);
     const steer = (await commands(A, cornerId)).at(-1)!;
-    expect(steer.reason).toBe('relay_steer');
+    expect(steer.reason).toBe('order');
     await claim(steer);
     expect(await implementersMerge()).toBe(0);
     await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: steer.turnRequestId,

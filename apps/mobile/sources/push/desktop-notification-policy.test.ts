@@ -61,11 +61,6 @@ describe('native desktop message display policy', () => {
     expect(
       desktopMessageMayNotify({ ...direct, message: { ...message, presentation: 'activity' } }),
     ).toBe(false);
-    expect(
-      desktopMessageMayNotify({
-        ...direct,
-        message: { ...message, relay: { direction: 'up' } as RoomViewMessage['relay'] },
-      }),
-    ).toBe(false);
+
   });
 });

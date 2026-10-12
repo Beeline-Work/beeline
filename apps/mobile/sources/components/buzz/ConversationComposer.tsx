@@ -410,8 +410,7 @@ export function ConversationComposer({
         </View>
       )}
       <View
-        style={[styles.inputRow, multiline && styles.composerMultiline,
-          ...(viewerPill ? [styles.viewerInputRow] : [])]}
+        style={[styles.inputRow, multiline && styles.composerMultiline]}
         testID={`${testIDPrefix}-composer-input-row`}
       >
         {dictationBusy ? (
@@ -450,7 +449,6 @@ export function ConversationComposer({
               styles.input,
               Platform.OS === 'ios' ? undefined : { height, maxHeight },
               Platform.OS === 'android' && styles.inputAndroid,
-              ...(viewerPill ? [styles.viewerInput] : []),
               // The input stays mounted under the waveform; its typed text
               // returns when dictation ends.
               dictationBusy ? styles.inputHidden : undefined,
@@ -801,8 +799,6 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.accent,
   },
   viewerPill: { borderWidth: 0, borderRadius: 0, backgroundColor: 'transparent' },
-  viewerInputRow: { minHeight: 42, paddingVertical: 0 },
-  viewerInput: { textAlignVertical: 'center' },
   adjuncts: { borderBottomWidth: 1, borderBottomColor: theme.buzz.border },
   adjunctDivider: { borderTopWidth: 1, borderTopColor: theme.buzz.border },
   reply: {
@@ -926,9 +922,15 @@ const styles = StyleSheet.create((theme) => ({
     textAlignVertical: 'top',
     outlineStyle: 'none',
   } as any,
-  // Keep Android's font bounds intact, then center its one-line layout in the
-  // fixed field so the visible top and bottom space match.
-  inputAndroid: { textAlignVertical: 'center' },
+  // Space Grotesk's extra font padding is asymmetric. Trim it, then balance
+  // its natural baseline with a bottom inset inside the fixed-height field.
+  // The row's equal insets protect accents and descenders.
+  // Keep lineHeight unset above so leading tags cannot jitter the measurement.
+  inputAndroid: {
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+    paddingBottom: theme.buzz.space.xs,
+  },
   sendButton: {
     width: 26,
     height: 26,

@@ -40,7 +40,7 @@ export function ViewerConversationDock({
   const [revision, setRevision] = React.useState(0);
   const [focused, setFocused] = React.useState(false);
   const [open, setOpen] = React.useState(false);
-  const [expanded, setExpanded] = React.useState(false);
+  const [pillHeight, setPillHeight] = React.useState(44);
   const [tickerVisible, setTickerVisible] = React.useState(false);
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -111,8 +111,6 @@ export function ViewerConversationDock({
       setAttachments([]);
       setHeight(COMPOSER_SINGLE_LINE_INPUT_HEIGHT);
       setRevision((current) => current + 1);
-      setOpen(false);
-      setFocused(false);
       return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not send this message.');
@@ -143,30 +141,32 @@ export function ViewerConversationDock({
   };
 
   const agentReplies = entries.filter((entry) => entry.speaker !== 'You');
-  const showTranscript = Boolean(error || (expanded && entries.length) || (tickerVisible && agentReplies.length));
-  const recent = expanded ? entries.slice(-3) : agentReplies.slice(-2);
+  const showTranscript = Boolean(error || (open && (entries.length || draft.trim())) || (tickerVisible && agentReplies.length));
+  const recent = open ? entries.slice(-3) : agentReplies.slice(-2);
   return <View pointerEvents="box-none" style={styles.overlay} testID="viewer-conversation-dock"
     onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width - 24)}>
-    {showTranscript ? <Pressable
-      accessibilityRole="button" accessibilityLabel={expanded ? 'Collapse recent conversation' : 'Expand recent conversation'}
-      onPress={() => setExpanded((value) => !value)}
-      style={[styles.transcript, { bottom: bottom + Math.max(44, height + 18) + 9 }]}
+    {showTranscript ? <View
+      style={[styles.transcript, { bottom: bottom + pillHeight + 9 }]}
       testID="viewer-conversation-transcript"
     >
       <Text style={styles.transcriptHeading}>Recent conversation · {currentAgent ?? 'agent'}</Text>
       {recent.map((entry) => <View key={entry.id} style={styles.transcriptEntry}>
         <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
-        <Text numberOfLines={expanded ? undefined : 2} style={styles.transcriptText}>{entry.text}</Text>
+        <Text numberOfLines={open ? undefined : 2} style={styles.transcriptText}>{entry.text}</Text>
         {entry.context ? <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference> : null}
       </View>)}
-      {draft.trim() ? <View style={styles.transcriptEntry}><Text style={styles.transcriptSpeaker}>You · draft</Text><Text numberOfLines={2} style={styles.transcriptText}>{draft}</Text></View> : null}
+      {open && draft.trim() ? <View style={styles.transcriptEntry}><Text style={styles.transcriptSpeaker}>You · draft</Text><Text numberOfLines={2} style={styles.transcriptText}>{draft}</Text></View> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
-    </Pressable> : null}
-    <Animated.View style={[styles.pill, { width, bottom }]} testID="viewer-conversation-pill">
+    </View> : null}
+    <Animated.View style={[styles.pill, { width, bottom }]} testID="viewer-conversation-pill"
+      onLayout={(event) => setPillHeight(event.nativeEvent.layout.height)}>
       <Pressable
         accessibilityRole="button" accessibilityLabel={open ? 'Collapse conversation' : 'Talk to agent'}
         accessibilityState={{ expanded: open }}
-        onPress={() => { setOpen((value) => !value); setExpanded(false); }}
+        onPress={() => {
+          if (open) setTickerVisible(false);
+          setOpen((value) => !value);
+        }}
         style={[styles.control, open && styles.controlOpen]}
         testID="viewer-conversation-toggle"
       ><ViewerConversationRing /></Pressable>

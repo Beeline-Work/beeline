@@ -1326,13 +1326,13 @@ export const CORNER_BRIEF_SPEC_MAX_LENGTH = 16_000;
 export type CornerBriefDraft = {
   /**
    * Agent-written Markdown: the human intent quoted, the user stories it
-   * enables, what is not being done, the risks, and references (an HTML
-   * mock for any frontend change), as headings inside one doc.
+   * enables, what is not being done, the risks, and references (a mock
+   * when requested or useful), as headings inside one doc.
    */
   readonly spec: string;
   /** False when no repository files are assigned or edits/PRs are forbidden; attachments are separate. */
   readonly repositoryWork?: boolean;
-  /** The human Room message that approved this spec. The server quotes it. */
+  /** The human Room message dispatching the work or authorizing its revision. The server quotes it. */
   readonly approval: { readonly sourceMessageId: string };
   readonly attachments?: readonly {
     readonly objectId: string;

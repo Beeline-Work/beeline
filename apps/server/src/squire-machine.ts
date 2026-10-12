@@ -111,8 +111,11 @@ export async function squireAssignments(database: SqlDatabase, agentId: string):
 export async function squireWorkStatus(database: SqlDatabase, agentId: string): Promise<ConnectorStatus> {
   const row = (await database.query<{ machine_id: string; machine_name: string | null;
     squire_work: Work; owner_id: string }>(
-    `SELECT COALESCE(machine_id,agent_id) machine_id,machine_name,squire_work,owner_id
-      FROM agents WHERE agent_id=$1`, [agentId],
+    `SELECT COALESCE(a.machine_id,a.agent_id) machine_id,
+      COALESCE(a.machine_name,(SELECT MAX(sibling.machine_name) FROM agents sibling
+        WHERE sibling.owner_id=a.owner_id
+          AND COALESCE(sibling.machine_id,sibling.agent_id)=COALESCE(a.machine_id,a.agent_id))) machine_name,
+      a.squire_work,a.owner_id FROM agents a WHERE a.agent_id=$1`, [agentId],
   )).rows[0];
   if (!row) throw new Error('machine helper not found');
   const report = await machineSquireReport(database, row.owner_id, row.machine_id);

@@ -3928,7 +3928,14 @@ export class PhoneService {
       }
       const machineId = input.machineId || input.agentPubkey;
       const squireOnMachine = await machineSquireReport(database, pairing.created_by, machineId);
-      if (squireOnMachine?.status === 'connected') {
+      const squireInstalling = await database.query(
+        `SELECT 1 FROM agents a JOIN memberships m ON m.identity_id=a.agent_id
+         WHERE a.owner_id=$1 AND COALESCE(a.machine_id,a.agent_id)=$2
+           AND a.squire_work->>'install'='true'
+           AND m.workspace_id=$3 AND m.room_id IS NULL AND m.removed_at IS NULL LIMIT 1`,
+        [pairing.created_by, machineId, pairing.workspace_id],
+      );
+      if (squireOnMachine?.status === 'connected' || squireInstalling.rowCount) {
         await grantSquireToOwnerMachineAgents(database, {
           workspaceId: pairing.workspace_id, ownerIdentityId: pairing.created_by,
           machineId, agentId: input.agentPubkey,

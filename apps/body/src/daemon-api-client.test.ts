@@ -139,6 +139,37 @@ describe('DaemonApiClient', () => {
     }
   }
 
+  it.each([undefined, '', 'unknown-agent'].flatMap((agentId) =>
+    [false, true].map((beforeRegistration) => ({ agentId, beforeRegistration }))))(
+    'delivers machine release notices with agentId=$agentId beforeRegistration=$beforeRegistration',
+    ({ agentId, beforeRegistration }) => {
+      FakeWebSocket.instances.length = 0;
+      const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'agent', fetch,
+        ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
+      const listener = vi.fn();
+      client.setHelperReleaseListener(listener);
+      const unsubscribe = client.liveSubscribe('room-1');
+      const socket = FakeWebSocket.instances[0]!;
+      try {
+        if (beforeRegistration) vi.spyOn(socket, 'send').mockImplementation((value) => {
+          socket.sent.push(value);
+          const frame = JSON.parse(value);
+          if (frame.type === 'register') socket.agentId = frame.agentId;
+        });
+        socket.open();
+        socket.message({ type: 'helper-release', version: 'v0.1.35', sha: 'release-sha',
+          ...(agentId === undefined ? {} : { agentId, roomId: '' }) });
+        if (beforeRegistration) {
+          expect(listener).not.toHaveBeenCalled();
+          socket.message({ type: 'registered' });
+          vi.mocked(socket.send).mockRestore();
+        }
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(listener).toHaveBeenCalledWith({ version: 'v0.1.35', sha: 'release-sha' });
+      } finally { unsubscribe(); }
+    },
+  );
+
   it.each([false, true])('R2a: keeps active delivery when watch leaves first=%s', (watchLeavesFirst) => {
     FakeWebSocket.instances.length = 0;
     const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'agent', fetch,

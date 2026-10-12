@@ -17,6 +17,7 @@ import {
 } from './live-link.js';
 import { MachineLink, type AgentChannel } from './machine-link.js';
 import { agentSignInFrame } from './agent-sign-in.js';
+import { unknownServerEventLogger } from './unknown-server-event.js';
 import {
   readRuntimeRecord,
   runtimeDirectory,
@@ -152,9 +153,14 @@ export type DaemonClientMetrics = {
 };
 
 const REQUEST_DEADLINE_MS = 30_000;
+const DAEMON_LIVE_EVENT_TYPES = new Set<unknown>([
+  'helper-release', 'rooms-changed', 'discovery-wake', 'corner-complete',
+  'connector-assignment', 'agent-sign-in', 'config-changed', 'subscribed', 'commands', 'inbox',
+]);
 
 /** Typed client for the complete named daemon operation contract. */
 export class DaemonApiClient {
+  private readonly logUnknownLiveEvent = unknownServerEventLogger('daemon-live');
   private readonly presenceLifecycleId = randomUUID();
   /** This agent's registration on the machine's one live socket. */
   readonly channel: AgentChannel;
@@ -488,8 +494,10 @@ export class DaemonApiClient {
       for (const registration of room.registrations) registration.onCommands?.(commands);
       return;
     }
-    if (event.type !== 'inbox' || typeof event.roomId !== 'string' || !Array.isArray(event.items))
+    if (event.type !== 'inbox' || typeof event.roomId !== 'string' || !Array.isArray(event.items)) {
+      if (!DAEMON_LIVE_EVENT_TYPES.has(event.type)) this.logUnknownLiveEvent(event.type);
       return;
+    }
     const room = this.liveRooms.get(event.roomId);
     if (!room) return;
     const items: InboxItem[] = [];

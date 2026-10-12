@@ -191,6 +191,34 @@ describe('DaemonApiClient', () => {
     expect(delivered.mock.calls).toEqual([[frame.commands], [frame.commands], [[]]]);
   });
 
+  it('ignores newer machine and agent frames once at debug and keeps delivering commands', () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    FakeWebSocket.instances.length = 0;
+    const client = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'agent', fetch,
+      ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory);
+    const delivered = vi.fn();
+    const off = client.liveSubscribe('room-1', undefined, undefined, undefined, undefined, delivered);
+    try {
+      const socket = FakeWebSocket.instances[0]!;
+      socket.open();
+      for (let i = 0; i < 2; i++) {
+        socket.onmessage?.({ data: JSON.stringify({ type: 'future-machine-event' }) });
+        socket.message({ type: 'future-agent-event', commands: [liveCommand()] });
+      }
+      expect(delivered).not.toHaveBeenCalled();
+      // Malformed known snapshots retain their existing ignore behavior.
+      socket.message({ type: 'commands', roomId: 'room-1', commandProtocol: 1, commands: 'bad' });
+      socket.message({ type: 'commands', roomId: 'room-1', commandProtocol: 1, commands: [liveCommand()] });
+      expect(delivered.mock.calls).toEqual([[[liveCommand()]]]);
+      expect(socket.readyState).toBe(FakeWebSocket.OPEN);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(debug).toHaveBeenCalledTimes(2);
+    } finally {
+      off();
+      debug.mockRestore();
+    }
+  });
+
   it('promotes a one-use exchange into a durable opaque token before operations run', async () => {
     const { runtime, configPath } = await stagedRuntime();
     const request = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {

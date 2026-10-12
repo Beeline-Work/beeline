@@ -107,6 +107,8 @@ describe('agent-owned Chromium sharing', () => {
     const frame = JSON.parse(await firstFrame);
     expect(frame.method).toBe('Page.screencastFrame');
     expect(Buffer.from(frame.params.data, 'base64').subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
+    // A newer relay's activity frame must leave the old source session alive.
+    source!.send(JSON.stringify({ type: 'future-viewer-activity' }));
     source!.send(JSON.stringify({ type: 'takeover' }));
     await until(async () => browserIsHumanControlled(page.id) ? true : undefined);
     source!.send(JSON.stringify({ type: 'release' }));

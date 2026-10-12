@@ -154,6 +154,8 @@ export async function runBrowserProof(options: {
       // stops a timing animation through `global.cancelAnimationFrame`.
       define: {
         'process.env.NODE_ENV': '"development"',
+        // babel-preset-expo inlines this in Metro; Expo web modules read it.
+        'process.env.EXPO_OS': '"web"',
         __DEV__: 'true',
         global: 'globalThis',
       },

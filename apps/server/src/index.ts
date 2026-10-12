@@ -33,6 +33,7 @@ import { GitHubOperations } from './github-operations.js';
 import { createMonolithAuth } from './monolith-auth.js';
 import { ComposioApps } from './composio-apps.js';
 import { LinkAgentWallet } from './link-agent-wallet.js';
+import { cdpWebhookSecretsFromEnv } from './wallet-webhooks.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { ReviewAccess } from './review-access.js';
@@ -336,6 +337,7 @@ async function main() {
   const backgroundJobs = new BackgroundJobRunner();
   const server = createBeelineServer({
     database,
+    cdpWebhookSecrets: cdpWebhookSecretsFromEnv(),
     databaseBudget: budget,
     enrichmentDatabase,
     jobsDatabase,

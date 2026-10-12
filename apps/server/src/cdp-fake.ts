@@ -87,13 +87,13 @@ export function fakeCdpWalletSource(): CdpWalletSource & { readonly state: FakeW
       if (!account) {
         account = {
           name,
-          eoaAddress: `0x${randomUUID().replaceAll('-', '').slice(0, 40)}`,
+          eoaAddress: `0x${createHash('sha256').update(randomUUID()).digest('hex').slice(0, 40)}`,
           solanaAddress: null,
         };
         state.accounts.set(name, account);
       }
       if (!account.eoaAddress) {
-        account.eoaAddress = `0x${randomUUID().replaceAll('-', '').slice(0, 40)}`;
+        account.eoaAddress = `0x${createHash('sha256').update(randomUUID()).digest('hex').slice(0, 40)}`;
       }
       return { address: account.eoaAddress };
     },

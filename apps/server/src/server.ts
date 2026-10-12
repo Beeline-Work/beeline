@@ -11,6 +11,7 @@ import { isAppSignInLink } from './composio-apps.js';
 import type { ComposioApps } from './composio-apps.js';
 import { ingestComposioDelivery } from './composio-delivery.js';
 import { ingestProviderWebhook } from './provider-webhooks.js';
+import { ingestWalletWebhook } from './wallet-webhooks.js';
 import { acceptedJsonEncoding, encodeJsonBody, type JsonEncoding } from './json-response.js';
 import { PhoneViewing } from './phone-viewing.js';
 import {
@@ -132,6 +133,8 @@ export interface GitHubServerHooks {
 
 export interface ServerOptions {
   database: SqlDatabase;
+  /** CDP receiver id -> subscription signing secret, server-only. */
+  cdpWebhookSecrets?: Readonly<Record<string, string>>;
   /** Deployment capacity calculated from PostgreSQL max_connections at boot. */
   databaseBudget?: import('./database-budget.js').DatabaseConnectionBudget;
   enrichmentDatabase?: SqlDatabase;
@@ -1865,6 +1868,20 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const location = await options.github.completeInstallation(state, installationId);
     response.writeHead(302, { location, 'cache-control': 'no-store' });
     response.end();
+    return;
+  }
+
+  const walletWebhookPath = /^\/v1\/wallet\/events\/cdp\/([a-zA-Z0-9_-]{1,100})$/.exec(url.pathname);
+  if (method === 'POST' && walletWebhookPath) {
+    const secret = options.cdpWebhookSecrets?.[walletWebhookPath[1]!];
+    if (typeof secret !== 'string' || !secret) {
+      json(response, 404, { error: 'not_found' });
+      return;
+    }
+    const raw = await bytes(request, MAX_JSON_BYTES);
+    const accepted = await ingestWalletWebhook(options.database, raw, request.headers, secret);
+    json(response, accepted ? 200 : 401,
+      accepted ? { accepted: true } : { error: 'invalid_wallet_webhook' });
     return;
   }
 

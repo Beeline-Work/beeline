@@ -3018,11 +3018,16 @@ export async function migrate(
      ON messages(${cardExpiresAtSql()})
      WHERE ${EXPIRING_CARD_TYPES} AND deleted_at IS NULL`,
   ));
-  await retryMigrationStep('needs-you question lookback index', () => createIndexConcurrently(
-    database, 'messages_needs_you_question_idx',
-    `CREATE INDEX CONCURRENTLY messages_needs_you_question_idx
+  // The v2 predicate includes actionable commander reports. Build it before
+  // retiring the old question-only index, so deployed databases keep indexed reads.
+  await retryMigrationStep('needs-you actionable lookback index', () => createIndexConcurrently(
+    database, 'messages_needs_you_actionable_idx',
+    `CREATE INDEX CONCURRENTLY messages_needs_you_actionable_idx
      ON messages(created_at) WHERE ${askingMessageSql()}`,
   ));
+  await retryMigrationStep('retire needs-you question-only index', async () => {
+    await database.query('DROP INDEX CONCURRENTLY IF EXISTS messages_needs_you_question_idx');
+  });
   await retryMigrationStep('squire decision index', () => createIndexConcurrently(
     database, 'messages_squire_decision_idx',
     `CREATE INDEX CONCURRENTLY messages_squire_decision_idx

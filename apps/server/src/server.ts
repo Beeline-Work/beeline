@@ -32,7 +32,8 @@ import {
   parseArchivedCornerCursor,
   type PhoneService,
 } from './phone-service.js';
-import { DAEMON_OPERATION_NAMES, RelayRefusalError, type DaemonService } from './daemon-service.js';
+import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
+import { CommandRefusalError } from './commander.js';
 import { institutionalMemoryErrorStatus } from './institutional-memory-shadow.js';
 import { ARTIFACT_MAXIMUM_BYTES, decodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
 import {
@@ -608,7 +609,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       const message = error instanceof Error ? error.message : 'request failed';
       let status =
         error instanceof WorkflowAuthorizationError ||
-        error instanceof RelayRefusalError ||
+        error instanceof CommandRefusalError ||
         error instanceof WorkspaceSkillNotFoundError
           ? error.status
           : institutionalMemoryErrorStatus(message) ??
@@ -2582,6 +2583,10 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       return;
     }
     const name = match[1]!;
+    if (name === 'getCornerAsk') {
+      json(response, 410, { error: 'getCornerAsk is retired; use order and report' });
+      return;
+    }
     if (!DAEMON_OPERATION_NAMES.has(name as never)) {
       json(response, 404, { error: 'unknown_daemon_operation' });
       return;

@@ -149,7 +149,6 @@ type HumanMessage = Pick<
   | 'replyToExcerpt'
   | 'requestAuthorId'
   | 'agentHopCount'
-  | 'cornerAskId'
 >;
 
 /**
@@ -1637,14 +1636,13 @@ export class MonolithRoomTurnLoop {
                     fromName: inboxItemAuthorName(item, names),
                     reply: item,
                     outsideEvent: this.commandContext.current?.source.systemEvent,
-                    ...(item.cornerAskId ? { cornerAskId: item.cornerAskId } : {}),
                     body: roomMessagePrompt(
                       '',
                       inboxItemPromptBody(item),
                       item.attachments,
                       delivered,
                       this.acceptsImages(),
-                      item.type === 'message' ? item.id : undefined,
+                      ['message', 'private'].includes(item.type) ? item.id : undefined,
                     ),
                   },
                 });

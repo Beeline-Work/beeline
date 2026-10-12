@@ -499,22 +499,8 @@ describe('DesktopRoomInspector work pane', () => {
     },
   );
 
-  it.each([
-    ['grant', { grantRequest: { agent, owner: person, requester: person, grants: [] } }],
-    [
-      'relay',
-      {
-        relay: {
-          direction: 'down',
-          fromRoomId: 'room',
-          toRoomId: 'working',
-          cornerId: 'working',
-          fromName: 'CloverGTO',
-          received: true,
-        },
-      },
-    ],
-  ] as const)('assigns the first displayed byline date to a %s row', async (_kind, fields) => {
+  it('assigns the first displayed byline date to a grant row', async () => {
+    const fields = { grantRequest: { agent, owner: person, requester: person, grants: [] } };
     const at = (day: number, hour: number) => new Date(2026, 8, day, hour).getTime() / 1000;
     const detail = {
       ...room(),

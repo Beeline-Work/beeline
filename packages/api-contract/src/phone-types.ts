@@ -201,19 +201,6 @@ export type RoomViewActivity = {
 };
 
 export type RoomViewMessage = {
-  readonly relay?: {
-    readonly fromRoomId: string;
-    readonly toRoomId: string;
-    readonly direction: 'down' | 'up';
-    readonly fromName: string;
-    readonly cornerId: string;
-    readonly anchorMessageId?: string;
-    readonly received: boolean;
-    readonly reply?: 'once';
-    readonly askId?: string;
-    readonly answerMessageId?: string;
-    readonly unanswered?: boolean;
-  };
   readonly id: string;
   readonly text: string;
   readonly createdAt: number;

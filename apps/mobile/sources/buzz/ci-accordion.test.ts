@@ -130,7 +130,7 @@ describe('Reproduction CI-ACCORDION-1', () => {
       };
     if (kind === 'other-verb')
       boundary.systemEvent = { ...boundary.systemEvent!, verb: 'ran a workflow' };
-    if (kind === 'reports') boundary.relayReports = [check('report')];
+    if (kind === 'reports') boundary.systemEvent = undefined;
     if (kind === 'issue' || kind === 'pr') {
       boundary.systemEvent = undefined;
       boundary.githubEvent = {

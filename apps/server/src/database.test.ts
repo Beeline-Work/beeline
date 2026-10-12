@@ -47,6 +47,25 @@ it('indexes delivered claims still awaiting a read-clear push', async () => {
   }
 });
 
+it('upgrades the question-only needs-you index to include commander reports', async () => {
+  const database = new PgliteDatabase();
+  try {
+    await migrate(database);
+    await database.query('DROP INDEX messages_needs_you_actionable_idx');
+    await database.query(`CREATE INDEX messages_needs_you_question_idx ON messages(created_at)
+      WHERE presentation='message' AND deleted_at IS NULL AND text LIKE '%?'`);
+    await migrate(database);
+    const indexes = (await database.query<{ indexname: string; indexdef: string }>(
+      `SELECT indexname,indexdef FROM pg_indexes WHERE indexname LIKE 'messages_needs_you_%'`,
+    )).rows;
+    expect(indexes.some(index => index.indexname === 'messages_needs_you_question_idx')).toBe(false);
+    expect(indexes.find(index => index.indexname === 'messages_needs_you_actionable_idx')?.indexdef)
+      .toContain('blocked|needs-decision|failed');
+  } finally {
+    await database.close();
+  }
+});
+
 function result<Row>(rows: Row[]) {
   return { rows, rowCount: rows.length };
 }

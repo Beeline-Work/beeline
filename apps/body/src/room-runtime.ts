@@ -1348,7 +1348,6 @@ export class RoomRuntimeCoordinator {
         ...(corner.openedBy ? { openedBy: corner.openedBy } : {}),
         objective,
         worktreePath: workspacePath,
-        ...(restore.requesterHandle ? { requesterHandle: restore.requesterHandle } : {}),
         ...(worktree
           ? {
               repository: {

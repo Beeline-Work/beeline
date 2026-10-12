@@ -63,6 +63,7 @@ export const SERVER_EVENT_KINDS = [
   'joined',
   'schedule-ran',
   'corner-opened',
+  'corner-closed',
   'check-passed',
   'check-failed',
   'merged',
@@ -92,6 +93,7 @@ export const SERVER_EVENT_KIND_DETAIL: Readonly<Record<ServerEventKind, string>>
   'corner-opened': 'fires when a corner opens under this Room',
   'check-passed': "fires when a corner's pull request checks turn green",
   'check-failed': "fires when a corner's pull request checks turn red",
+  'corner-closed': 'fires when a corner closes without merging',
   'merged': "fires when a corner's pull request merges",
   'grant-decided': 'carries the grant id and status and resumes the turn that asked for the grant',
   'squire-approval-decided':
@@ -134,7 +136,7 @@ export function isPerItemEventKind(value: unknown): value is ServerEventKind {
 
 /** The kinds a Room-wide subscription may react to: Room-level news only. */
 export const SUBSCRIBABLE_EVENT_KINDS: readonly ServerEventKind[] = SERVER_EVENT_KINDS.filter(
-  (kind) => !isPerItemEventKind(kind),
+  (kind) => !isPerItemEventKind(kind) && kind !== 'merged',
 );
 export function isSubscribableEventKind(value: unknown): value is ServerEventKind {
   return (SUBSCRIBABLE_EVENT_KINDS as readonly string[]).includes(value as string);

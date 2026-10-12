@@ -21,6 +21,9 @@ describe('the Needs-you ask rule', () => {
     expect(isNeedsYouAsk('@ada approve the release')).toBe(true);
     expect(isNeedsYouAsk('@ada I would love your feedback.')).toBe(true);
     expect(isNeedsYouAsk('@ada this release train is cursed')).toBe(false);
+    for (const status of ['blocked', 'needs-decision', 'failed'])
+      expect(isNeedsYouAsk(`${status}: pick an endpoint @ada`)).toBe(true);
+    expect(isNeedsYouAsk('done: finished @ada')).toBe(false);
     // A question in the middle is not the rule: the message must END with it.
     expect(isNeedsYouAsk('@ada is this ok? I think so.')).toBe(false);
     // Whole words only: "approved" reports, it does not ask.
@@ -70,6 +73,10 @@ describe('the ask rule in SQL', () => {
   it('reads every message exactly as isNeedsYouAsk does', async () => {
     const database = new PgliteDatabase();
     const samples = [
+      'blocked: missing access @ada',
+      'needs-decision: choose an endpoint @ada',
+      'failed: cannot build @ada',
+      'done: finished @ada',
       '@ada can you look?',
       '@ada can you look?  \n',
       '@ada is this ok? I think so.',

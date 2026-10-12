@@ -63,7 +63,7 @@ beforeAll(async () => {
     C,
     W,
   ]);
-  await db.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [R, C]);
+  await db.query(`UPDATE rooms SET parent_id=$1,created_by=$3 WHERE id=$2`, [R, C, A]);
   // A repository Room: its corners have a pull request path.
   await db.query(
     `UPDATE rooms SET repository_key='owner/widgets',repository_resolution='repository' WHERE id=$1`,
@@ -194,17 +194,15 @@ describe('corner message attribution', () => {
       `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"'),command_check_state=NULL WHERE corner_id=$1`,
       [C],
     );
-    await createAgentCommand(db, {
-      roomId: C,
-      agentId: A,
-      sourceMessageId: source.id,
-      reason: 'corner_objective',
+    const recovery = (await commands(A, C)).map(command => command.id);
+    const opening = await createAgentCommand(db, {
+      roomId: C, agentId: A, sourceMessageId: source.id, reason: 'corner_objective',
     });
-    const [noReviewerWorker] = await commands(A, C);
+    const noReviewerWorker = (await commands(A, C)).find(command => command.id === opening!.id);
     await claim(noReviewerWorker!, 'g2');
     await result(noReviewerWorker!, 'https://github.com/acme/repo/pull/7', 'g2');
     expect(checkGate).toHaveBeenCalledOnce();
-    expect(await commands(A, C)).toHaveLength(0);
+    expect((await commands(A, C)).map(command => command.id)).toEqual(recovery);
   });
 
   it('stores the REVIEWER as author when the reviewer posts the review into a corner it does not own', async () => {
@@ -385,18 +383,16 @@ describe('corner message attribution', () => {
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='corner-merge-yes'`, [C])).rowCount).toBe(0);
   });
 
-  it('names the unavailable reviewer list and the human action on a green head', async () => {
+  it('reports an unavailable reviewer list privately to its commander', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B, reviewerFallbackIds: [A] }, H);
     await greenHead(25, '9'.repeat(40));
     expect(await commands(B, C)).toHaveLength(0);
-    expect((await db.query<{ text: string }>(
-      `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%healthy enough to review%'`, [C],
-    )).rows.map((row) => row.text)).toEqual([
-      'No reviewer on the list is healthy enough to review this · a human can set a different reviewer, or wait for one on the list to come back healthy',
-    ]);
+    expect((await commands(A, R)).filter(command => command.reason === 'report')
+      .some(command => command.private && command.source.body.startsWith('blocked: no reviewer on the configured list'))).toBe(true);
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%healthy enough to review%'`, [C])).rowCount).toBe(0);
   });
 
-  it('posts the failure and wakes the implementer when reviewer command insertion cannot queue', async () => {
+  it('reports the failure privately and wakes the implementer when reviewer command insertion cannot queue', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(26, 'a'.repeat(40));
     await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, B]);
@@ -414,14 +410,9 @@ describe('corner message attribution', () => {
     try {
       await reconcileConfiguredCornerReviewers(db, R);
       expect(await commands(B, C)).toHaveLength(0);
-      expect((await db.query<{ text: string }>(
-        `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%reviewer command could not be queued%'`, [C],
-      )).rows.map((row) => row.text)).toEqual([
-        expect.stringContaining('the reviewer command could not be queued on ' + 'a'.repeat(40)),
-      ]);
-      expect((await db.query<{ text: string }>(
-        `SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%review queue denied by trigger%'`, [C],
-      )).rows).toHaveLength(1);
+      expect((await commands(A, R)).filter(command => command.reason === 'report')
+        .some(command => command.private && command.source.body.includes('reviewer command could not be queued'))).toBe(true);
+      expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%review queue denied by trigger%'`, [C])).rowCount).toBe(0);
       const handback = await commands(A, C);
       expect(handback.map(command => command.reason)).toEqual(['corner_review_needed']);
       expect(handback[0]?.source.body).toContain('review queue denied by trigger');
@@ -698,7 +689,9 @@ describe('corner message attribution', () => {
           [C],
         )
       ).rows.map((row) => row.text),
-    ).toEqual(['@goosy could not be reached · not a current member of the parent Room; a Workspace owner or admin must restore reviewer membership']);
+    ).toEqual([]);
+    expect((await commands(A, R)).filter(command => command.reason === 'report')
+      .some(command => command.private && command.source.body.includes('not a current member of the parent Room'))).toBe(true);
   });
 
   it('names a parent-member reviewer it cannot deliver into the corner and still retries', async () => {
@@ -764,7 +757,9 @@ describe('corner message attribution', () => {
             [C],
           )
         ).rows.map((row) => row.text),
-      ).toEqual(['@goosy could not be reached · not a current member of this corner; a Workspace owner or admin must restore reviewer membership']);
+      ).toEqual([]);
+      expect((await commands(A, R)).filter(command => command.reason === 'report')
+        .some(command => command.private && command.source.body.includes('not a current member of this corner'))).toBe(true);
     } finally {
       await db.query(`
         DROP TRIGGER IF EXISTS keep_reviewer_off_corner ON memberships;

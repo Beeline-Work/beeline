@@ -92,7 +92,7 @@ describe('new-message boundary', () => {
   it('resolves an exact row or a relayed message nested inside its host', () => {
     const rows = [
       message('read'),
-      { ...message('host'), relayReports: [message('relayed')] },
+      { ...message('host'), foldedIds: ['host', 'relayed'] },
       message('later'),
     ];
     expect(boundaryRowIndex(rows, 'host')).toBe(1);
@@ -101,7 +101,7 @@ describe('new-message boundary', () => {
   });
 
   it('resolves and queues a relay report attached to an existing virtualized row', () => {
-    const folded = { ...message('old'), relayReports: [message('new-fact')] };
+    const folded = { ...message('old'), foldedIds: ['old', 'new-fact'] };
     expect(boundaryRowIndex([folded], 'new-fact')).toBe(0);
     expect(messageBoundaryIds(folded)).toEqual(['old', 'new-fact']);
     expect(

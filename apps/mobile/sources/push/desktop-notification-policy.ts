@@ -15,7 +15,7 @@ export function desktopMessageMayNotify(input: {
   if (level === 'off' || input.windowFocused || input.openChannelId === room.room.id) return false;
   if (message.deleted || !message.text.trim() || message.author.pubkey === viewerPubkey)
     return false;
-  if (message.presentation === 'activity' || message.relay?.direction === 'up') return false;
+  if (message.presentation === 'activity') return false;
   if (message.presentation === 'card' && !message.grantRequest) return false;
   if (message.grantRequest?.grants?.every((grant) => grant.auto)) return false;
   return Boolean(

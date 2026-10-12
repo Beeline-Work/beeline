@@ -413,6 +413,8 @@ export async function fireRepositorySubscriptions(
   db: SqlDatabase, installationId: number, event: string, body: Record<string, unknown>, deliveryId: string,
 ): Promise<string[]> {
   const action = typeof body.action === 'string' ? body.action : '';
+  if (event === 'pull_request' && action === 'closed' &&
+      (body.pull_request as { merged?: unknown } | undefined)?.merged === true) return [];
   const eventName = `${event === 'issues' ? 'issue' : event}.${action}`;
   if (!isRepositorySubscriptionEvent(eventName)) return [];
   const repositoryObject = body.repository;

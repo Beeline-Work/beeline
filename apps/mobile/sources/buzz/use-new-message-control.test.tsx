@@ -633,12 +633,12 @@ describe('the transcript new-message control', () => {
     expect(badges(renderer)).toEqual(['1']);
   });
 
-  it('shows no control for an relay report attached to a host row already on screen', () => {
-    // A relay report adds a durable id without changing the id of the row that carries
+  it('shows no control for an folded message attached to a host row already on screen', () => {
+    // A folded message adds a durable id without changing the id of the row that carries
     // it, so the arrival joins the queue while the newest row is unchanged and
     // still visible. There is nothing to jump to; only viewport visibility can
     // tell the control that, because the count says otherwise.
-    const host = { ...row('host-4', 4), relayReports: [row('fold-a', 4)] };
+    const host = { ...row('host-4', 4), foldedIds: ['host-4', 'fold-a'] };
     const opened: HarnessProps = { ...AT_TAIL, messages: [...SEED.slice(0, 4), host] };
     const renderer = mount(opened);
     report([host]);
@@ -647,7 +647,7 @@ describe('the transcript new-message control', () => {
       ...opened,
       messages: [
         ...SEED.slice(0, 4),
-        { ...host, relayReports: [row('fold-a', 4), row('fold-b', 5)] },
+        { ...host, foldedIds: ['host-4', 'fold-a', 'fold-b'] },
       ],
       arrivingIds: new Set(['fold-b']),
       pinnedToTail: false,

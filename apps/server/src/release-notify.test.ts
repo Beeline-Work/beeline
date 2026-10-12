@@ -218,7 +218,7 @@ describe('notifyReleaseDelivered', () => {
     } finally {
       vi.useRealTimers();
     }
-    live.publish({ type: 'helper-release', roomId: '', agentId: '',
+    live.publish({ type: 'helper-release',
       version: 'v0.0.128', sha: 'a'.repeat(40) });
     expect(received).toEqual(['a'.repeat(40)]);
     expect(query).toHaveBeenCalledTimes(1);

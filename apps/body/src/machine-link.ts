@@ -306,18 +306,18 @@ export class MachineLink {
     }
     if (!value || typeof value !== 'object') return;
     const event = value as Record<string, unknown>;
-    if (event.type === 'force-update' && typeof event.minVersion === 'string') {
-      this.link.requireUpdate(event.minVersion);
+    // Machine-wide events take precedence over legacy or stray agent tags.
+    if (event.type === 'force-update') {
+      if (typeof event.minVersion === 'string') this.link.requireUpdate(event.minVersion);
       return;
     }
-    if (typeof event.agentId === 'string') {
-      this.#channels.get(event.agentId)?.receive(event);
-      return;
-    }
-    // Untagged frames belong to the machine: release notices reach every agent.
     if (event.type === 'helper-release') {
       if (!this.#reconciledOnSocket) this.#pendingRelease = event;
       else this.#broadcast(event);
+      return;
+    }
+    if (typeof event.agentId === 'string' && event.agentId.length > 0) {
+      this.#channels.get(event.agentId)?.receive(event);
       return;
     }
     // hello is informational; a malformed force-update never authorizes an update.

@@ -591,7 +591,7 @@ export function serveAgentSocket(
   void session.claim();
   trackSubscriptions(() => session.subscriptions);
   const releaseSubscription = deps.releaseNotify?.subscribeHelperRelease((release) =>
-    send({ type: 'helper-release', ...release }),
+    send({ type: 'helper-release', version: release.version, sha: release.sha }),
   );
   client.on('message', (raw: Buffer | ArrayBuffer | Buffer[]) => {
     if (!guard.admit()) return;
@@ -651,7 +651,7 @@ export function serveMachineSocket(
   }, MACHINE_REGISTRATION_DEADLINE_MS);
   registrationDeadline.unref?.();
   const releaseSubscription = deps.releaseNotify?.subscribeHelperRelease((release) =>
-    send({ type: 'helper-release', ...release }),
+    send({ type: 'helper-release', version: release.version, sha: release.sha }),
   );
   const unregistered = (agentId: string, reason: string, code?: number) =>
     send({ type: 'unregistered', agentId, reason, ...(code ? { code } : {}) });

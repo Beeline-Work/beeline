@@ -119,6 +119,8 @@ export type PrivateCommandPayload = {
   kind: 'order' | 'report' | 'lifecycle';
   attachments?: RoomInboxResult['items'][number]['attachments'];
   reportedGenerationId?: string;
+  /** Origin of a forwarded report, for the existing human attention index. */
+  originCornerId?: string;
 };
 export type CommandRow = {
   id: string;
@@ -330,7 +332,7 @@ export async function createAgentCommand(
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
   const member = await db.query<{ opening: CommandRow | null; source_text: string | null }>(
     `SELECT (SELECT to_jsonb(opened) FROM agent_commands opened
-       WHERE opened.room_id=r.id AND opened.private_payload->>'kind'='order'
+       WHERE r.parent_id IS NOT NULL AND opened.room_id=r.id AND opened.private_payload->>'kind'='order'
        ORDER BY (opened.agent_id=$2) DESC,opened.created_at DESC,opened.id DESC LIMIT 1) opening,
        (SELECT text FROM messages WHERE id=$3) source_text
      FROM memberships m JOIN rooms r ON r.id=m.room_id

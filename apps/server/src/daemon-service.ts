@@ -425,6 +425,8 @@ export class DaemonService {
           throw error;
         },
       ));
+    if (name === 'postRoomMessage' && candidate.relay !== undefined)
+      throw new CommandRefusalError('relay cards are retired; use order and report', 410);
     const turnWrites = new Set([
       'postAgentAvatar',
       'postRoomMessage',

@@ -109,8 +109,8 @@ export function addressedToPersonSql(
  *   until it is decided; neither expires (`expires_at` NULL);
  * - an unresolved failed agent wake until that person posts in
  *   the corner after it; it never expires;
- * - a tag, reply or deliverable until that person posts in the corner after
- *   it, or `CORNER_OWED_EXPIRY_HOURS` pass (`expires_at`).
+ * - a tag, reply, deliverable or actionable report until its person replies after
+ *   it in the message's Room, or `CORNER_OWED_EXPIRY_HOURS` pass (`expires_at`).
  *
  * `answerable` rows are the ones a later post by their person clears.
  * `bulk` reads many items at once (backfill, a person's refresh): it reads
@@ -126,7 +126,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
             AND answer.presentation='message' AND answer.deleted_at IS NULL
             AND answer.created_at>item.created_at
         )`;
-  return `SELECT item.room_id,person.id,item.id,item.created_at,
+  return `SELECT owed_corner.id,person.id,item.id,item.created_at,
       CASE
         WHEN item.card_type IN ('grant-request','${CORNER_AGENT_UNREACHABLE_CARD_TYPE}') THEN NULL
         WHEN item.card_type='${CHOICE_CARD_TYPE}'
@@ -136,8 +136,16 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
       item.card_type IS DISTINCT FROM 'grant-request'
         AND item.card_type IS DISTINCT FROM '${CHOICE_CARD_TYPE}'
     FROM messages item
-    JOIN rooms owed_corner ON owed_corner.id=item.room_id AND owed_corner.parent_id IS NOT NULL
-    JOIN memberships person_member ON person_member.room_id=item.room_id
+    LEFT JOIN agent_commands report ON report.id=item.request_id AND report.agent_id=item.author_id
+    LEFT JOIN rooms origin ON origin.id=CASE
+      WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
+        THEN (report.private_payload->>'originCornerId')::uuid
+      ELSE report.room_id END AND origin.parent_id IS NOT NULL
+    JOIN rooms owed_corner ON owed_corner.id=CASE
+      WHEN item.presentation='message' AND item.text ~ '^(blocked|needs-decision|failed):[[:space:]]*[^[:space:]]'
+        THEN COALESCE(origin.id,item.room_id) ELSE item.room_id END
+      AND owed_corner.parent_id IS NOT NULL
+    JOIN memberships person_member ON person_member.room_id=owed_corner.id
       AND person_member.removed_at IS NULL
       AND person_member.identity_id IS DISTINCT FROM item.author_id
     JOIN identities person ON person.id=person_member.identity_id AND person.kind='human'
@@ -151,6 +159,9 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
         : ''
     }
     WHERE item.deleted_at IS NULL AND (${where})
+      AND (item.room_id=owed_corner.id OR EXISTS (
+        SELECT 1 FROM memberships source_member WHERE source_member.room_id=item.room_id
+          AND source_member.identity_id=person.id AND source_member.removed_at IS NULL))
       ${
         bulk
           ? `AND (item.created_at>now()-interval '${CORNER_OWED_EXPIRY_HOURS} hours'
@@ -173,6 +184,21 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
         ELSE ${addressedToPersonSql('item', 'person.id', 'person.handle', 'person.kind')}
           AND ${answered}
       END`;
+}
+
+/** Refresh report-derived attention after edits or membership changes in its return Room. */
+function refreshReportedCornersSql(room: string, person: string): string {
+  return `PERFORM corner_owed_refresh(origin.id, ${person})
+    FROM (SELECT DISTINCT source_origin.id FROM messages question
+      JOIN agent_commands report ON report.id=question.request_id AND report.agent_id=question.author_id
+      JOIN rooms source_origin ON source_origin.id=CASE
+        WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
+          THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END
+        AND source_origin.parent_id IS NOT NULL
+      WHERE question.room_id=${room} AND question.presentation='message' AND question.deleted_at IS NULL
+        AND question.created_at>now()-interval '${CORNER_OWED_EXPIRY_HOURS} hours'
+        AND question.text ~ '^(blocked|needs-decision|failed):[[:space:]]*[^[:space:]]'
+    ) origin;`;
 }
 
 const CORNER_OWED_INSERT = `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable)`;
@@ -208,7 +234,7 @@ LANGUAGE plpgsql AS $corner_owed$
 BEGIN
   DELETE FROM corner_owed WHERE corner_id=p_corner AND person_id=p_person;
   ${CORNER_OWED_INSERT}
-  ${cornerOwedRowsSql('item.room_id=p_corner AND person.id=p_person', true)}
+  ${cornerOwedRowsSql('owed_corner.id=p_corner AND person.id=p_person', true)}
   ON CONFLICT DO NOTHING;
 END
 $corner_owed$;
@@ -227,16 +253,31 @@ $corner_owed$;
 CREATE OR REPLACE FUNCTION corner_owed_message_changed() RETURNS trigger
 LANGUAGE plpgsql AS $corner_owed$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM rooms WHERE id=NEW.room_id AND parent_id IS NOT NULL) THEN
+  -- A reply in the return Room also answers reports owed by their originating corner.
+  IF TG_OP='INSERT' AND NEW.presentation='message' AND NEW.deleted_at IS NULL THEN
+    DELETE FROM corner_owed owed
+    WHERE owed.person_id=NEW.author_id AND owed.answerable AND owed.created_at<NEW.created_at
+      AND (owed.corner_id=NEW.room_id OR EXISTS (
+        SELECT 1 FROM messages question WHERE question.id=owed.message_id AND question.room_id=NEW.room_id));
+  END IF;
+  IF TG_OP='UPDATE' AND (OLD.presentation='message' OR NEW.presentation='message')
+    AND (OLD.deleted_at IS DISTINCT FROM NEW.deleted_at
+      OR OLD.created_at IS DISTINCT FROM NEW.created_at
+      OR OLD.presentation IS DISTINCT FROM NEW.presentation
+      OR OLD.author_id IS DISTINCT FROM NEW.author_id) THEN
+    ${refreshReportedCornersSql('NEW.room_id', 'NEW.author_id')}
+    IF OLD.author_id IS DISTINCT FROM NEW.author_id THEN
+      ${refreshReportedCornersSql('OLD.room_id', 'OLD.author_id')}
+    END IF;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM rooms WHERE id=NEW.room_id AND parent_id IS NOT NULL)
+    AND NOT EXISTS (SELECT 1 FROM agent_commands report JOIN rooms origin ON origin.id=CASE
+      WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
+        THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END
+      WHERE report.id=NEW.request_id AND report.agent_id=NEW.author_id AND origin.parent_id IS NOT NULL) THEN
     RETURN NULL;
   END IF;
   IF TG_OP='INSERT' THEN
-    -- A person's post answers every answerable item owed to them before it.
-    IF NEW.presentation='message' AND NEW.deleted_at IS NULL THEN
-      DELETE FROM corner_owed
-      WHERE corner_id=NEW.room_id AND person_id=NEW.author_id AND answerable
-        AND created_at<NEW.created_at;
-    END IF;
     ${CORNER_OWED_INSERT}
     ${cornerOwedRowsSql('item.id=NEW.id', false)}
     ON CONFLICT DO NOTHING;
@@ -294,6 +335,7 @@ BEGIN
       AND corner_member.identity_id=member.identity_id AND corner_member.removed_at IS NULL
     WHERE corner.parent_id=member.room_id;
   END IF;
+  ${refreshReportedCornersSql('member.room_id', 'member.identity_id')}
   RETURN NULL;
 END
 $corner_owed$;

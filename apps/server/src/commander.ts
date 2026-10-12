@@ -130,6 +130,20 @@ export async function reportToCommander(
         [roomId],
       )
     ).rows[0];
+  const incoming = command;
+  const places = [
+    incoming?.private_payload?.originCornerId,
+    ...(incoming?.private_payload?.kind === 'report'
+      ? [incoming.private_payload.fromRoomId, roomId]
+      : [roomId, incoming?.private_payload?.fromRoomId]),
+  ].filter((place): place is string => typeof place === 'string');
+  const origin = (
+    await db.query<{ id: string }>(
+      `SELECT id FROM rooms WHERE id=ANY($1::uuid[]) AND parent_id IS NOT NULL
+     ORDER BY array_position($1::uuid[],id) LIMIT 1`,
+      [places],
+    )
+  ).rows[0]?.id;
   if (command) command = await commandOrder(db, command);
   let recipient: string | undefined;
   let returnRoom: string | undefined;
@@ -208,6 +222,7 @@ export async function reportToCommander(
         fromRoomId: roomId,
         kind: 'report',
         attachments: options.attachments,
+        originCornerId: origin,
       },
       parent,
       retainDepth: true,
@@ -215,16 +230,23 @@ export async function reportToCommander(
     });
     if (!queued) throw new CommandRefusalError('commander could not receive report', 409);
   } else {
+    // The existing attention index follows this transport provenance; no public relay is created.
+    if (origin && incoming?.private_payload)
+      await db.query(
+        `UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{originCornerId}',to_jsonb($2::text)) WHERE id=$1`,
+        [incoming.id, origin],
+      );
     // Only a human address is a chat message; private coordination never enters messages.
     await db.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments)
-       VALUES($1,$2,$3,$4,'message',$5::jsonb) ON CONFLICT(id) DO NOTHING`,
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments,request_id)
+       VALUES($1,$2,$3,$4,'message',$5::jsonb,$6) ON CONFLICT(id) DO NOTHING`,
       [
         reportId,
         returnRoom,
         agentId,
         member.handle ? `${text} @${member.handle}` : text,
         JSON.stringify(options.attachments ?? []),
+        incoming?.id ?? null,
       ],
     );
   }

@@ -7,11 +7,7 @@ import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
-import {
-  createAgentCommand,
-  noteBlockedCornerChecks,
-  readAgentCommands,
-} from './agent-command.js';
+import { createAgentCommand, noteBlockedCornerChecks, readAgentCommands } from './agent-command.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 
@@ -747,4 +743,179 @@ it('delivers files queued after an explicit report on the final reply', async ()
       ])
     ).rowCount,
   ).toBe(0);
+});
+
+it('keeps unrelated Room subscriptions independent of completed orders', async () => {
+  await daemon.execute(
+    'order',
+    { ...authority(order), address: ROOM, text: 'One-off Room instruction' },
+    RUBY,
+  );
+  const prior = (await commands(ROOM, WORKER)).find((c) => c.reason === 'order')!;
+  await claim(prior);
+  await daemon.execute(
+    'postRoomMessage',
+    { ...authority(prior), text: 'One-off complete' },
+    WORKER,
+  );
+  await systemLine(db, {
+    roomId: ROOM,
+    authorId: WORKER,
+    subject: { kind: 'agent', id: WORKER, name: 'Worker' },
+    verb: 'received',
+    object: 'an unrelated Room event',
+    kind: 'subscription-fired',
+    wakes: [WORKER],
+    subscriptionPrompt: 'POST IN THE ROOM',
+    payload: { text: 'new event' },
+  });
+  const event = (await commands(ROOM, WORKER)).find((c) => c.reason === 'subscribed_event')!;
+  await claim(event);
+  await daemon.execute(
+    'postRoomMessage',
+    { ...authority(event), text: 'Unrelated subscription result' },
+    WORKER,
+  );
+  expect(event.private).not.toBe(true);
+  expect(event.parentCommandId).not.toBe(prior.id);
+  expect(
+    (
+      await db.query(
+        `SELECT 1 FROM messages WHERE room_id=$1 AND text='Unrelated subscription result'`,
+        [ROOM],
+      )
+    ).rowCount,
+  ).toBe(1);
+  expect(
+    (await commands(DM, RUBY)).some(
+      (c) => c.reason === 'report' && c.source.body.includes('Unrelated subscription result'),
+    ),
+  ).toBe(false);
+});
+it('refuses retired relay writes on private turns without reporting success', async () => {
+  const opened = await open(),
+    turn = await worker(opened.cornerId);
+  const r = await daemon
+    .execute(
+      'postRoomMessage',
+      {
+        ...authority(turn),
+        text: 'Old steer',
+        relay: { fromRoomId: opened.cornerId, toRoomId: ROOM, direction: 'down' },
+      } as any,
+      WORKER,
+    )
+    .then(
+      (v) => ({ ok: true, value: v }),
+      (e) => ({ ok: false, status: e.status, message: e.message }),
+    );
+  expect(r).toMatchObject({ ok: false, status: 410 });
+  expect(
+    (await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [turn.id])).rows[0]?.state,
+  ).toBe('claimed');
+  expect((await commands(DM, RUBY)).some((c) => c.reason === 'report')).toBe(false);
+});
+it('keeps the originating corner waiting for a decision returned to its parent Room', async () => {
+  await phone.execute(
+    'sendRoomMessage',
+    {
+      roomId: ROOM,
+      messageId: randomBytes(32).toString('hex'),
+      text: '@ruby open a corner and choose endpoint',
+    },
+    HUMAN,
+  );
+  const incoming = (await commands(ROOM, RUBY)).find((c) => c.reason === 'human_tag')!;
+  await claim(incoming);
+  const opened = await daemon.execute(
+    'createCorner',
+    {
+      ...authority(incoming),
+      targetRoomId: ROOM,
+      name: 'Endpoint',
+      objective: 'Choose endpoint',
+      implementer: 'worker',
+      brief: { spec: 'Choose endpoint', approval: { sourceMessageId: incoming.sourceMessageId } },
+    },
+    RUBY,
+  );
+  const turn = await worker(opened.cornerId);
+  await daemon.execute(
+    'report',
+    { ...authority(turn), text: 'needs-decision: choose endpoint' },
+    WORKER,
+  );
+  const returned = (await commands(ROOM, RUBY)).find((c) => c.reason === 'report')!;
+  await claim(returned);
+  await daemon.execute(
+    'report',
+    { ...authority(returned), text: 'needs-decision: choose endpoint' },
+    RUBY,
+  );
+  expect(
+    (await db.query(`SELECT 1 FROM corner_owed WHERE corner_id=$1`, [opened.cornerId])).rowCount,
+  ).toBe(1);
+  await daemon.execute(
+    'postRoomMessage',
+    { ...authority(turn), text: 'Reported the decision' },
+    WORKER,
+  );
+  const state = async () =>
+    (await phone.readCorners(ROOM, HUMAN))?.corners.find(
+      (item) => item.corner.id === opened.cornerId,
+    )?.state;
+  expect(await state()).toBe('waiting');
+  await db.query('SELECT corner_owed_refresh($1,$2)', [opened.cornerId, HUMAN]);
+  expect(await state()).toBe('waiting');
+  await phone.execute(
+    'sendRoomMessage',
+    { roomId: ROOM, messageId: randomBytes(32).toString('hex'), text: 'Use endpoint v2' },
+    HUMAN,
+  );
+  expect(
+    (await db.query(`SELECT 1 FROM corner_owed WHERE corner_id=$1`, [opened.cornerId])).rowCount,
+  ).toBe(0);
+  expect(await state()).toBe('idle');
+  await db.query('SELECT corner_owed_refresh($1,$2)', [opened.cornerId, HUMAN]);
+  expect(await state()).toBe('idle');
+  await db.query(
+    `UPDATE messages SET deleted_at=now() WHERE room_id=$1 AND text IN ('Use endpoint v2','@ruby Use endpoint v2')`,
+    [ROOM],
+  );
+  expect(await state()).toBe('waiting');
+});
+
+it('keeps DM-returned decisions indexed until answered or source membership ends', async () => {
+  const opened = await open(),
+    turn = await worker(opened.cornerId);
+  await daemon.execute(
+    'report',
+    { ...authority(turn), text: 'needs-decision: choose endpoint' },
+    WORKER,
+  );
+  await daemon.execute(
+    'postRoomMessage',
+    { ...authority(turn), text: 'Reported the decision' },
+    WORKER,
+  );
+  const returned = (await commands(DM, RUBY)).find((c) => c.reason === 'report')!;
+  await claim(returned);
+  await daemon.execute(
+    'report',
+    { ...authority(returned), text: 'needs-decision: choose endpoint' },
+    RUBY,
+  );
+  expect((await phone.readRoom(opened.cornerId, HUMAN))?.cornerOwed).toBe(true);
+  await db.query('SELECT corner_owed_refresh($1,$2)', [opened.cornerId, HUMAN]);
+  expect((await phone.readRoom(opened.cornerId, HUMAN))?.cornerOwed).toBe(true);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
+    DM,
+    HUMAN,
+  ]);
+  expect((await phone.readRoom(opened.cornerId, HUMAN))?.cornerOwed).toBe(false);
+  await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [
+    DM,
+    HUMAN,
+  ]);
+  expect((await phone.readRoom(opened.cornerId, HUMAN))?.cornerOwed).toBe(true);
 });

@@ -307,6 +307,20 @@ describe('monolith integration', () => {
     expect(watch.status).toBe(400);
     const empty = await request('/v1/daemon/operations/report', 'POST', { ...turn, text: 'blocked:' }, daemonToken);
     expect(empty.status).toBe(400);
+    const privateOrder = (await createAgentCommand(database, {
+      roomId: ROOM, agentId: AGENT, sourceMessageId: null, reason: 'order', turnRequestId: 'retired-private',
+      privatePayload: { kind: 'order', authorId: HUMAN, fromRoomId: ROOM, text: 'Do the private work' },
+    }))!;
+    await claimAgentCommand(database, ROOM, AGENT, privateOrder.id, 'private-g');
+    const privateRelay = await request('/v1/daemon/operations/postRoomMessage', 'POST', {
+      roomId: ROOM, requestId: 'retired-private', generationId: 'private-g', text: 'Old private steer',
+      relay: { fromRoomId: ROOM, toRoomId: ROOM, direction: 'down' },
+    }, daemonToken);
+    expect(privateRelay.status).toBe(410);
+    expect((await database.query(`SELECT state FROM agent_commands WHERE id=$1`, [privateOrder.id])).rows[0]?.state).toBe('claimed');
+    expect((await database.query(`SELECT 1 FROM messages WHERE text LIKE 'done: Old private steer%'`)).rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM agent_commands WHERE private_payload->>'text'='done: Old private steer'`)).rowCount).toBe(0);
+
   });
   it('answers a membership-check outage while ordering as a 503, never a membership refusal', async () => {
     const steerCorner = '55555555-5555-4555-8555-555555555555';

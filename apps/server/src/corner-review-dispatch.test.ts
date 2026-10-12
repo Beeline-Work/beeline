@@ -194,17 +194,15 @@ describe('corner message attribution', () => {
       `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"'),command_check_state=NULL WHERE corner_id=$1`,
       [C],
     );
-    await createAgentCommand(db, {
-      roomId: C,
-      agentId: A,
-      sourceMessageId: source.id,
-      reason: 'corner_objective',
+    const recovery = (await commands(A, C)).map(command => command.id);
+    const opening = await createAgentCommand(db, {
+      roomId: C, agentId: A, sourceMessageId: source.id, reason: 'corner_objective',
     });
-    const [noReviewerWorker] = await commands(A, C);
+    const noReviewerWorker = (await commands(A, C)).find(command => command.id === opening!.id);
     await claim(noReviewerWorker!, 'g2');
     await result(noReviewerWorker!, 'https://github.com/acme/repo/pull/7', 'g2');
     expect(checkGate).toHaveBeenCalledOnce();
-    expect(await commands(A, C)).toHaveLength(0);
+    expect((await commands(A, C)).map(command => command.id)).toEqual(recovery);
   });
 
   it('stores the REVIEWER as author when the reviewer posts the review into a corner it does not own', async () => {

@@ -102,7 +102,7 @@ async function fixture(options: { machineReport?: { status: string }; noBroker?:
       else resolve(response.result.content[0].text);
     });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
-      params: { name: 'workbench_status', arguments: {} } }) + '\n');
+      params: { name: 'connectors_status', arguments: {} } }) + '\n');
   });
   return { statusText, calls, closeRelay: () => relay.close(), appView: () => ({ status, cause, connections }),
     mountedTool: () => fetch(`${endpoint.url}/mcp`, {

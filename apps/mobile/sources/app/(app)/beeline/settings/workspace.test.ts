@@ -15,7 +15,7 @@ const avatarUpload = vi.hoisted(() => ({ pickAndUploadAvatar: vi.fn() }));
 const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefined) }));
 const modal = vi.hoisted(() => ({ actionSheet: vi.fn() }));
 const phoneOperation = vi.hoisted(() => vi.fn());
-const runtime = vi.hoisted(() => ({ monolithEnabled: true }));
+const runtime = vi.hoisted(() => ({ monolithEnabled: true, relayUrl: 'https://usebeeline.app' }));
 // The shared registry entries settings reads, keyed by endpoint.
 const hotSurfaces = vi.hoisted(() => ({
   values: new Map<string, unknown>(),
@@ -114,7 +114,7 @@ vi.mock('@/sync/transport/live-connection', () => ({
 }));
 vi.mock('@/buzz/avatar-upload', () => avatarUpload);
 vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({ monolithEnabled: runtime.monolithEnabled }),
+  getBuzzRuntimeConfig: () => runtime,
 }));
 vi.mock('expo-clipboard', () => clipboard);
 vi.mock('@/modal', () => ({ Modal: modal }));
@@ -833,5 +833,43 @@ describe('Weight tier settings', () => {
     expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).not.toContain(
       'Weight tiers',
     );
+  });
+});
+
+
+describe('public Workspace join links', () => {
+  it('lets an admin view, copy and rotate the permanent link', async () => {
+    const view = workspaceView('admin');
+    view.workspace.visibility = 'public';
+    roomViews.workspace.mockResolvedValue(view);
+    const token = `inv_${'d'.repeat(64)}`;
+    const nextToken = `inv_${'e'.repeat(64)}`;
+    phoneOperation.mockResolvedValueOnce({ token, expiresAt: 0 }).mockResolvedValueOnce({ token: nextToken, expiresAt: 0 });
+    const renderer = await render();
+    expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1' });
+    const copy = renderer.root.findByProps({ testID: 'workspace-public-join-copy' });
+    expect(copy.props.description).toBe(`https://usebeeline.app/join/${token}`);
+    await act(async () => copy.props.onPress());
+    expect(clipboard.setStringAsync).toHaveBeenCalledWith(`https://usebeeline.app/join/${token}`);
+    await act(async () => renderer.root.findByProps({ testID: 'workspace-public-join-rotate' }).props.onPress());
+    const dialog = renderer.root.findAll((node: any) => node.props.title === 'Rotate public join link?' && node.props.actions)[0];
+    expect(phoneOperation).not.toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1', rotate: true });
+    await act(async () => dialog.props.actions[1].onPress());
+    expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1', rotate: true });
+    expect(renderer.root.findByProps({ testID: 'workspace-public-join-copy' }).props.description).toBe(`https://usebeeline.app/join/${nextToken}`);
+    await act(async () => renderer.unmount());
+  });
+  it('hides permanent links in private Workspaces and from regular members', async () => {
+    let renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'workspace-public-join-setting' })).toHaveLength(0);
+    expect(phoneOperation).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+    const view = workspaceView('member');
+    view.workspace.visibility = 'public';
+    roomViews.workspace.mockResolvedValue(view);
+    renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'workspace-public-join-setting' })).toHaveLength(0);
+    expect(phoneOperation).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
   });
 });

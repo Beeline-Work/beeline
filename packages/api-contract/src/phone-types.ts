@@ -1086,7 +1086,7 @@ export type AgentYoloView = {
 export type InviteView = {
   readonly name: string;
   readonly avatar?: string;
-  /** Absolute Unix timestamp in seconds. */
+  /** Absolute Unix timestamp in seconds; zero for a permanent public link. */
   readonly expiresAt: number;
   /** Present when the authenticated viewer has already accepted this invite. */
   readonly joinedWorkspaceId?: string;

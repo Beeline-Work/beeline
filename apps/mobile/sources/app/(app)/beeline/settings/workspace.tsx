@@ -21,6 +21,7 @@ import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
 import { refreshChatList, useChatList, type ChatListKey } from '@/buzz/chat-list-store';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
+import { buildCommunityInviteUrl } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { isWorkspaceOwnerRole } from '@/buzz/workspace-role';
 import { MEMBERS_LABEL, ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
@@ -144,6 +145,11 @@ export default function WorkspaceSettings() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ communityId?: string | string[] }>();
   const communityId = firstParam(params.communityId);
+  const [joinLinkBusy, setJoinLinkBusy] = useState(false);
+  const joinLinkGeneration = useRef(0);
+  const [publicJoinUrl, setPublicJoinUrl] = useState<string | null>(null);
+  const [joinLinkCopied, setJoinLinkCopied] = useState(false);
+  const [rotateLinkOpen, setRotateLinkOpen] = useState(false);
   const [client, setClient] = useState<BuzzClient | null>(null);
   const [workspaceAddress, setWorkspaceAddress] = useState<ReturnType<typeof surfaceAddress> | null>(null);
   const workspaceView = useSurfaceSnapshot(workspaceAddress, isWorkspaceView);
@@ -173,6 +179,34 @@ export default function WorkspaceSettings() {
     if (workspace) workspaceDraft.initialize(workspace.name);
   }, [workspace?.name, workspaceDraft]);
   const canManageWorkspace = workspaceView?.viewer.permissions.manage === true;
+  const loadPublicJoinLink = useCallback(async (rotate = false) => {
+    if (!communityId || !canManageWorkspace || workspace?.visibility !== 'public') return;
+    const generation = ++joinLinkGeneration.current;
+    setJoinLinkBusy(true);
+    setError(null);
+    try {
+      const invite = await monolithPhoneOperation('createInvite', {
+        workspaceId: communityId,
+        ...(rotate ? { rotate: true } : {}),
+      });
+      if (generation !== joinLinkGeneration.current) return;
+      setPublicJoinUrl(buildCommunityInviteUrl(invite.token, getBuzzRuntimeConfig().relayUrl));
+      setJoinLinkCopied(false);
+    } catch (caught) {
+      if (generation === joinLinkGeneration.current)
+        setError(`Could not load public join link: ${String(caught)}`);
+    } finally {
+      if (generation === joinLinkGeneration.current) setJoinLinkBusy(false);
+    }
+  }, [communityId, canManageWorkspace, workspace?.visibility]);
+  useEffect(() => {
+    setPublicJoinUrl(null);
+    setJoinLinkBusy(false);
+    if (getBuzzRuntimeConfig().monolithEnabled) void loadPublicJoinLink();
+    return () => {
+      joinLinkGeneration.current += 1;
+    };
+  }, [loadPublicJoinLink]);
   const isWorkspaceOwner = isWorkspaceOwnerRole(workspaceView?.viewer.role);
   const rooms = useMemo<WorkspaceRoomSetting[]>(() => {
     const indexedRooms = workspaceView?.managerSettings?.rooms;
@@ -538,6 +572,40 @@ export default function WorkspaceSettings() {
                     testID="workspace-name-save"
                   />
                 </View>
+              </View>
+            )}
+            {workspace?.visibility === 'public' && getBuzzRuntimeConfig().monolithEnabled && (
+              <View testID="workspace-public-join-setting">
+                <SettingsRow
+                  title={joinLinkBusy ? 'Loading join link…' : joinLinkCopied ? 'Join link copied' : 'Copy public join link'}
+                  description={publicJoinUrl ?? 'Anyone can use this link to join, any number of times.'}
+                  disabled={workingKey !== null || joinLinkBusy}
+                  onPress={() => {
+                    if (!publicJoinUrl) {
+                      void loadPublicJoinLink();
+                      return;
+                    }
+                    void Clipboard.setStringAsync(publicJoinUrl).then(() => setJoinLinkCopied(true));
+                  }}
+                  testID="workspace-public-join-copy"
+                />
+                <SettingsRow
+                  title="Rotate public join link"
+                  description="Replace the link and invalidate the old one."
+                  disabled={workingKey !== null || joinLinkBusy || !publicJoinUrl}
+                  onPress={() => setRotateLinkOpen(true)}
+                  testID="workspace-public-join-rotate"
+                />
+                <HullDialog
+                  visible={rotateLinkOpen}
+                  title="Rotate public join link?"
+                  body="The old link will stop working. Update any websites or messages where you shared it."
+                  onRequestClose={() => setRotateLinkOpen(false)}
+                  actions={[
+                    { label: 'Cancel', testID: 'workspace-public-join-cancel', onPress: () => setRotateLinkOpen(false) },
+                    { label: 'Rotate link', testID: 'workspace-public-join-confirm', onPress: () => { setRotateLinkOpen(false); void loadPublicJoinLink(true); } },
+                  ]}
+                />
               </View>
             )}
             <View testID="workspace-visibility-setting">

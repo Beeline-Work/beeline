@@ -83,3 +83,11 @@ test('terms page carries the beeline brand tokens and links home', () => {
   assert.match(termsHtml, /<title>Beeline Terms<\/title>/);
   assert.match(termsHtml, /--brass:#d7af5f/);
 });
+
+ test('support community link matches the permanent public invite seeded by migration', () => {
+  const token = html.match(/href="https:\/\/usebeeline.app\/join\/(inv_[0-9a-f]{64})">Join Beeline Community/)?.[1];
+  assert.ok(token);
+  const schema = fs.readFileSync(path.join(ROOT, 'apps/server/src/database.ts'), 'utf8');
+  assert.ok(schema.includes(token));
+  assert.ok(schema.includes('8556a9be-d929-41e7-a0ef-d70af452a494'));
+});

@@ -20,10 +20,10 @@ Activity observations use hidden `activity` rows with no durable fact. Passive o
 
 ## Checks
 
-After integrating the dependency and rebasing onto main: 125 related server tests, 117 helper tests and 30 mobile tests passed. The final computer-session/live-delta and system-line tests passed again (15 tests) after the last test changes. Server, helper and mobile type checks passed. Both the bundle and APK were rebuilt from the combined branch, and the after frames were refreshed.
+After integrating the dependency and rebasing onto main: 125 related server tests, 117 helper tests and 39 focused mobile tests (including design lint) passed. The final computer-session/live-delta and system-line tests passed again (15 tests) after the last test changes. Server, helper and mobile type checks passed. CI exposed three off-scale toolbar spacing values; these now use the existing 8/16 px house tokens without changing the page offset or composer/keyboard gap. Both the bundle and APK were rebuilt after that fix, and the after frames were refreshed.
 
 Coverage includes passive open/close without commands, actual viewer naming with no handle, next-turn context, hidden phone transcript rows, historical cleanup, explicit close without control writes, frame relay/access/expiry, and source grammar enforcement.
 
 No live model helper was started. The no-wake claim is verified at the authoritative command store rather than by observing model behavior. No captain Workspace, live helper, shared no-mistakes daemon or shared Squire broker was restarted or updated.
 
-Final local release APK SHA-256: `3a392163364392d34c865c8a252248604e5e867ede755e1efb7888c28ec6a60d`.
+Final local release APK SHA-256: `167179bb96d283186da27812250c6d71831119d586989e59557d77aafc52eac4`.

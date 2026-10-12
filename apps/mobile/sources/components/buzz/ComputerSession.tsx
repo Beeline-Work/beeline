@@ -148,7 +148,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle }:
       Modal.alert('Could not open browser', 'The live browser is unavailable. Try again.');
     }
   };
-  return <View style={[styles.viewer, { paddingTop: insets.top + 12, paddingBottom: insets.bottom }]} testID="computer-session-viewer">
+  return <View style={[styles.viewer, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID="computer-session-viewer">
     <View style={styles.controls} testID="computer-session-controls">
       {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void openInBrowser()} accessibilityRole="button" accessibilityLabel="Open in browser" testID="computer-session-open-browser"><Text style={styles.controlText}>Open ↗</Text></Pressable> : null}
       <Pressable style={styles.control} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close browser" testID="computer-session-close"><Text style={styles.controlText}>✕</Text></Pressable>
@@ -170,7 +170,8 @@ const styles = StyleSheet.create((theme) => ({
   link: { ...theme.buzz.type.body, color: theme.buzz.accent },
   viewer: { flex: 1, backgroundColor: theme.buzz.bgBase },
   viewerStream: { flex: 1, minHeight: 0 },
-  controls: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginHorizontal: 12, marginBottom: 12 },
+  controls: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.buzz.space.sm,
+    marginTop: theme.buzz.space.md, marginHorizontal: theme.buzz.space.md, marginBottom: theme.buzz.space.sm },
   control: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgBase, alignItems: 'center', justifyContent: 'center' },
   browserControl: { height: 42, paddingHorizontal: theme.buzz.space.sm, borderRadius: 14, borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgBase, alignItems: 'center', justifyContent: 'center' },
   controlText: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },

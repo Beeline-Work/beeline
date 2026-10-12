@@ -15,7 +15,7 @@ vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ t
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: { create: (factory: any) => factory({ buzz: {
     transcriptCard: { marginTop: 8, cornerRadius: 12, side: 16, footerMinHeight: 40 },
-    space: { xs: 4, sm: 8 }, type: { body: {}, bodyStrong: {}, machine: {} },
+    space: { xs: 4, sm: 8, md: 16 }, type: { body: {}, bodyStrong: {}, machine: {} },
     border: '#444', borderStrong: '#555', bgBase: '#111', textPrimary: '#fff', ledgerQuiet: '#aaa', accent: '#c90',
   } }) },
 }));
@@ -80,9 +80,11 @@ it('keeps only Open and Close above the page; closing never controls or ends the
   const onClose = vi.fn();
   let tree: ReturnType<typeof create>;
   await act(async () => { tree = create(<ComputerSessionViewer session={session} onClose={onClose} />); });
-  expect(tree!.root.findByProps({ testID: 'computer-session-viewer' }).props.style[1]).toEqual({ paddingTop: 12, paddingBottom: 24 });
+  expect(tree!.root.findByProps({ testID: 'computer-session-viewer' }).props.style[1]).toEqual({ paddingTop: 0, paddingBottom: 24 });
   const controls = tree!.root.findByProps({ testID: 'computer-session-controls' });
   expect(controls.props.style.position).toBeUndefined();
+  expect(controls.props.style.marginTop + controls.props.style.marginBottom).toBe(24);
+  expect(controls.props.style.marginHorizontal).toBe(16);
   expect(controls.findAllByType('Pressable').map((button: any) => button.props.accessibilityLabel))
     .toEqual(['Open in browser', 'Close browser']);
   await act(async () => tree!.root.findByProps({ testID: 'computer-session-close' }).props.onPress());

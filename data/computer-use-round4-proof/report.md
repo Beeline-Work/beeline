@@ -20,7 +20,7 @@ Activity observations use hidden `activity` rows with no durable fact. Passive o
 
 ## Checks
 
-After rebasing onto the dependency: 125 related server tests, 117 helper tests and 30 mobile tests passed. The final computer-session/live-delta and system-line tests passed again (15 tests) after the last test changes. Server, helper and mobile type checks passed. Both the bundle and APK were rebuilt from the combined branch, and the after frames were refreshed.
+After integrating the dependency and rebasing onto main: 125 related server tests, 117 helper tests and 30 mobile tests passed. The final computer-session/live-delta and system-line tests passed again (15 tests) after the last test changes. Server, helper and mobile type checks passed. Both the bundle and APK were rebuilt from the combined branch, and the after frames were refreshed.
 
 Coverage includes passive open/close without commands, actual viewer naming with no handle, next-turn context, hidden phone transcript rows, historical cleanup, explicit close without control writes, frame relay/access/expiry, and source grammar enforcement.
 

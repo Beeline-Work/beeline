@@ -5,10 +5,18 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 import { publishViewerConversation, removeViewerConversation } from '@/buzz/viewer-conversation';
 
+const keyboardListeners = vi.hoisted(() => new Map<string, Set<() => void>>());
 vi.mock('react-native', () => {
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
   return {
     View: host('View'), Text: host('Text'), Pressable: host('Pressable'), Platform: { OS: 'android' },
+    Keyboard: {
+      addListener: (name: string, callback: () => void) => {
+        const listeners = keyboardListeners.get(name) ?? new Set();
+        listeners.add(callback); keyboardListeners.set(name, listeners);
+        return { remove: () => listeners.delete(callback) };
+      },
+    },
     Animated: { View: host('View'), Value: class {}, timing: () => ({ start() {} }) },
   };
 });
@@ -53,12 +61,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it('shows the draft only once the expanded viewer has content', () => {
+it('keeps an unsent draft in the composer without revealing the transcript', () => {
   toggle();
   expect(renderer.root.findAllByProps({ testID: 'viewer-conversation-transcript' })).toHaveLength(0);
   type('First line\nSecond line\nThird line');
-  expect(transcriptText()).toContain('First line\nSecond line\nThird line');
-  expect(transcriptText()).not.toContain('Earlier Room history');
+  expect(renderer.root.findAllByProps({ testID: 'viewer-conversation-transcript' })).toHaveLength(0);
+  expect(send).not.toHaveBeenCalled();
 });
 
 it('keeps the pill and sent transcript expanded until the gold circle is tapped', async () => {
@@ -78,7 +86,29 @@ it('keeps the pill and sent transcript expanded until the gold circle is tapped'
   expect(transcriptText()).toContain('One more reply');
 });
 
-it('shows an incoming reply in the ticker while the pill is collapsed', () => {
+it('ignores unrelated replies while the browser keyboard or composer is used without sending', () => {
+  act(() => renderer.update(<ViewerConversationDock kind="computer" title="Checkout" roomId="viewer-test" />));
+  for (const event of ['keyboardDidShow', 'keyboardDidHide']) {
+    act(() => { for (const listener of keyboardListeners.get(event) ?? []) listener(); });
+    expect(renderer.root.findAllByType('Composer')).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'viewer-conversation-transcript' })).toHaveLength(0);
+  }
+  publish([reply('old', 'Earlier Room history'), reply('new', 'A fresh reply')]);
+  expect(renderer.root.findAllByProps({ testID: 'viewer-conversation-transcript' })).toHaveLength(0);
+  toggle();
+  type('Unsent thought');
+  act(() => composer().props.onFocus());
+  act(() => composer().props.onBlur());
+  toggle();
+  expect(renderer.root.findAllByProps({ testID: 'viewer-conversation-transcript' })).toHaveLength(0);
+  expect(send).not.toHaveBeenCalled();
+});
+
+it('shows a reply to a sent message in the ticker while the pill is collapsed', async () => {
+  toggle();
+  type('Please check this');
+  await act(async () => { await composer().props.onSend(); });
+  toggle();
   publish([reply('old', 'Earlier Room history'), reply('new', 'A fresh reply')]);
   expect(transcriptText()).toContain('A fresh reply');
   expect(node('viewer-conversation-toggle').props.accessibilityState.expanded).toBe(false);
@@ -96,6 +126,19 @@ it('retains the draft and expanded pill when delivery fails', async () => {
   await act(async () => { expect(await composer().props.onSend()).toBe(false); });
   expect(composer().props.value).toBe('Try again');
   expect(node('viewer-conversation-toggle').props.accessibilityState.expanded).toBe(true);
+});
+
+it('retains a reply that arrives before the composer send returns', async () => {
+  let finish!: (sent: boolean) => void;
+  send.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  toggle();
+  type('Please check this');
+  let pending!: Promise<boolean>;
+  act(() => { pending = composer().props.onSend(); });
+  publish([reply('old', 'Earlier Room history'), reply('fast', 'Checked it')]);
+  expect(transcriptText()).toContain('Checked it');
+  await act(async () => { finish(true); await pending; });
+  expect(transcriptText()).toContain('Please check this');
 });
 
 it('grows with content and stops at the existing maximum', () => {

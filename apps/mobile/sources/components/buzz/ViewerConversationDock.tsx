@@ -33,6 +33,7 @@ export function ViewerConversationDock({
   const initialIds = React.useRef(new Set(conversation?.messages.map((message) => message.id) ?? []));
   const initialTranscriptSeen = React.useRef(Boolean(conversation));
   const receivedIds = React.useRef(new Set<string>());
+  const sentToAgent = React.useRef(false);
   const [entries, setEntries] = React.useState<Entry[]>([]);
   const [draft, setDraft] = React.useState('');
   const draftRef = React.useRef('');
@@ -49,7 +50,7 @@ export function ViewerConversationDock({
   // One slot belongs to the artifact or browser snapshot attached at send time.
   const maxPickedAttachments = MAX_MESSAGE_ATTACHMENTS - 1;
   const [availableWidth, setAvailableWidth] = React.useState(366);
-  const width = React.useRef(new Animated.Value(42)).current;
+  const width = React.useRef(new Animated.Value(44)).current;
   const bottom = insets.bottom + (kind === 'computer' ? 12 + 42 + 12 : 12);
   const context = viewerContext(kind, title);
   const currentAgent = viewerAgentHandle(kind, agentHandle, conversation?.messages ?? []);
@@ -65,16 +66,20 @@ export function ViewerConversationDock({
       !initialIds.current.has(message.id) && !receivedIds.current.has(message.id));
     if (!arrivals.length) return;
     for (const message of arrivals) receivedIds.current.add(message.id);
-    setEntries((current) => [...current, ...arrivals.map((message) => ({
+    if (!sentToAgent.current) return;
+    const replies = arrivals.filter((message) => !currentAgent ||
+      message.author.handle?.replace(/^@/, '') === currentAgent);
+    if (!replies.length) return;
+    setEntries((current) => [...current, ...replies.map((message) => ({
       id: message.id,
       speaker: message.author.handle ?? message.author.name,
       text: message.text,
     }))].slice(-8));
-  }, [conversation?.messages]);
+  }, [conversation?.messages, currentAgent]);
 
   React.useEffect(() => {
     Animated.timing(width, {
-      toValue: open ? Math.max(42, availableWidth) : 42,
+      toValue: open ? Math.max(44, availableWidth) : 44,
       duration: 220,
       useNativeDriver: false,
     }).start();
@@ -93,16 +98,19 @@ export function ViewerConversationDock({
     if ((!text && !attachments.length) || !conversation || sending) return false;
     setSending(true);
     setError(null);
+    const previouslySent = sentToAgent.current;
     try {
       const screenshotBase64 = kind === 'computer' ? await captureScreen?.() : undefined;
       if (kind === 'computer' && !screenshotBase64) throw new Error('The browser screen is not ready to capture. Try again.');
+      // A fast reply can arrive before the send RPC returns.
+      sentToAgent.current = true;
       const succeeded = await conversation.send({
         text, context, agentHandle: currentAgent,
         ...(artifact ? { artifact } : {}),
         ...(screenshotBase64 ? { screenshotBase64 } : {}),
         ...(attachments.length ? { pickedAttachments: attachments } : {}),
       }, dictated);
-      if (!succeeded) return false;
+      if (!succeeded) { sentToAgent.current = previouslySent; return false; }
       setEntries((current) => [...current, {
         id: `local:${Date.now()}`, speaker: 'You', text, context,
       }].slice(-8));
@@ -113,6 +121,7 @@ export function ViewerConversationDock({
       setRevision((current) => current + 1);
       return true;
     } catch (caught) {
+      sentToAgent.current = previouslySent;
       setError(caught instanceof Error ? caught.message : 'Could not send this message.');
       return false;
     } finally {
@@ -141,7 +150,7 @@ export function ViewerConversationDock({
   };
 
   const agentReplies = entries.filter((entry) => entry.speaker !== 'You');
-  const showTranscript = Boolean(error || (open && (entries.length || draft.trim())) || (tickerVisible && agentReplies.length));
+  const showTranscript = Boolean(error || (open && entries.length) || (tickerVisible && agentReplies.length));
   const recent = open ? entries.slice(-3) : agentReplies.slice(-2);
   return <View pointerEvents="box-none" style={styles.overlay} testID="viewer-conversation-dock"
     onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width - 24)}>
@@ -155,7 +164,6 @@ export function ViewerConversationDock({
         <Text numberOfLines={open ? undefined : 2} style={styles.transcriptText}>{entry.text}</Text>
         {entry.context ? <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference> : null}
       </View>)}
-      {open && draft.trim() ? <View style={styles.transcriptEntry}><Text style={styles.transcriptSpeaker}>You · draft</Text><Text numberOfLines={2} style={styles.transcriptText}>{draft}</Text></View> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View> : null}
     <Animated.View style={[styles.pill, { width, bottom }]} testID="viewer-conversation-pill"
@@ -201,7 +209,7 @@ const styles = StyleSheet.create((theme) => ({
   overlay: { ...StyleSheet.absoluteFillObject, zIndex: 20 },
   pill: { position: 'absolute', right: 12, minHeight: 44, borderRadius: 999,
     borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgRaised,
-    flexDirection: 'row', alignItems: 'center', overflow: 'hidden' },
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   control: { width: 42, height: 42, borderRadius: 14, backgroundColor: theme.buzz.bgBase,
     alignItems: 'center', justifyContent: 'center' },
   controlOpen: { borderRightWidth: 1, borderRightColor: theme.buzz.border, borderRadius: 0,

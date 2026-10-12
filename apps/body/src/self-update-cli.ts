@@ -102,8 +102,8 @@ ${pc.dim('Usage:')}
   beeline update --force             Apply even when the comparison is indeterminate
   beeline update --manifest-url <u>  Override the published manifest URL
 
-The supervised daemon also checks automatically (every BEELINE_UPDATE_INTERVAL_MS,
-default 30s) with the same busy gate; BEELINE_UPDATE_DISABLE=1 turns the
+The supervised helper checks the manifest on connection and on release notices,
+then waits for a quiet gap to restart. BEELINE_UPDATE_DISABLE=1 turns the
 automatic path off. \`beeline update\` always works.
 `);
 }

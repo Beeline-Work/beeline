@@ -311,8 +311,6 @@ export async function runAgentRuntime(
       host.notifyReleaseAvailable(`${version}:${sha}`);
       void host.tickUpdate();
     });
-    // The update check reads the static release manifest, never the server.
-    daemonApi.onLiveOpen(() => void host.tickUpdate());
     core.setInteractiveIdleListener(() => {
       void host.tickUpdate();
     });

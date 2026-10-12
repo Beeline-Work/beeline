@@ -17,7 +17,6 @@ import { convergeHelperServiceUnit, convergeTrustySquireBrokerService } from './
 import { withAdapterInstallLock } from './adapter-install-lock.js';
 
 export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
-export const DEFAULT_UPDATE_INTERVAL_MS = 30_000;
 // Leave time for service shutdown and successor startup within the convergence target.
 export const UPDATE_DRAIN_DEADLINE_MS = 5 * 60_000;
 export const MAX_HOST_RESTART_STAGGER_MS = 15_000;
@@ -37,7 +36,6 @@ const UPDATE_WORKER_DEADLINE_MS = UPDATE_CONVERGENCE_SLO_MS - 60_000;
 // Must exceed the worker's absolute deadline: a legitimate long archive
 // download must never be mistaken for a dead owner by another agent daemon.
 const LOCK_STALE_MS = UPDATE_WORKER_DEADLINE_MS + 5 * 60_000;
-const DEFAULT_UPDATE_INITIAL_DELAY_MS = 0;
 
 export interface ManagedUpdateRestartRequest {
   loadedRelease: string;
@@ -136,15 +134,16 @@ export function versionAtLeast(actual: string, minimum: string): boolean {
   return true;
 }
 
-/** Pull-based update handoff: called only from completed thin-core ticks. */
+/** Event-driven update handoff; progress ticks only observe staged work and the drain. */
 export class ManagedUpdateHandoff {
   readonly #layout: BeelineInstallLayout;
   readonly #loadedRelease: string | undefined;
   readonly #now: () => number;
   readonly #env: NodeJS.ProcessEnv;
   readonly #runUpdateWorker: () => Promise<void>;
+  readonly #onWorkerSettled: (() => void) | undefined;
   readonly #drainDeadlineMs: number;
-  #nextUpdateCheckAt: number;
+  #checkRequested = false;
   #updateCycleDeadlineAt: number | undefined;
   #worker: Promise<void> | undefined;
   #requested = false;
@@ -158,6 +157,7 @@ export class ManagedUpdateHandoff {
     now?: () => number;
     env?: NodeJS.ProcessEnv;
     runUpdateWorker?: () => Promise<void>;
+    onWorkerSettled?: () => void;
     drainDeadlineMs?: number;
   }) {
     this.#layout = options.layout;
@@ -165,10 +165,8 @@ export class ManagedUpdateHandoff {
     this.#now = options.now ?? Date.now;
     this.#env = options.env ?? process.env;
     this.#runUpdateWorker = options.runUpdateWorker ?? runManagedUpdateWorkerProcess;
+    this.#onWorkerSettled = options.onWorkerSettled;
     this.#drainDeadlineMs = options.drainDeadlineMs ?? UPDATE_DRAIN_DEADLINE_MS;
-    this.#nextUpdateCheckAt =
-      this.#now() +
-      numberEnv(this.#env, 'BEELINE_UPDATE_INITIAL_DELAY_MS', DEFAULT_UPDATE_INITIAL_DELAY_MS);
   }
 
   static async create(
@@ -177,6 +175,7 @@ export class ManagedUpdateHandoff {
     options: {
       env?: NodeJS.ProcessEnv;
       runUpdateWorker?: () => Promise<void>;
+      onWorkerSettled?: () => void;
       drainDeadlineMs?: number;
     } = {},
   ): Promise<ManagedUpdateHandoff> {
@@ -193,7 +192,12 @@ export class ManagedUpdateHandoff {
   notifyReleaseAvailable(releaseKey: string): void {
     if (!releaseKey || this.#notifiedReleaseKey === releaseKey) return;
     this.#notifiedReleaseKey = releaseKey;
-    this.#nextUpdateCheckAt = 0;
+    this.#checkRequested = true;
+  }
+
+  /** A fresh socket covers notices missed while disconnected with one manifest read. */
+  reconcileOnConnect(): void {
+    this.#checkRequested = true;
   }
 
   /**
@@ -208,11 +212,42 @@ export class ManagedUpdateHandoff {
    */
   async check(): Promise<boolean> {
     if (this.#requested || !this.#loadedRelease) return this.#requested;
-    if (this.#stagedReleaseId) return false;
     const desiredRelease = await activeReleaseId(this.#layout).catch(() => undefined);
     if (desiredRelease && desiredRelease !== this.#loadedRelease) {
       return this.#armRestart(desiredRelease);
     }
+
+    // A newer notice arriving during a download must finish its own manifest
+    // check before we arm the drain for the previously staged bundle.
+    if (this.#worker) return false;
+    if (this.#env.BEELINE_UPDATE_DISABLE !== '1' && this.#checkRequested) {
+      this.#checkRequested = false;
+      const now = this.#now();
+      const notifiedReleaseKey = this.#notifiedReleaseKey;
+      this.#updateCycleDeadlineAt = now + this.#drainDeadlineMs;
+      this.#worker = withInstallLock(this.#layout, async () => {
+        const current = await activeReleaseId(this.#layout).catch(() => undefined);
+        if (current && current !== this.#loadedRelease) return;
+        await this.#runUpdateWorker();
+        if (notifiedReleaseKey) {
+          await writeUpdateState(this.#layout, {
+            ...(await readUpdateState(this.#layout)),
+            notifiedReleaseKey,
+          });
+        }
+      })
+        .catch((error) => {
+          console.error(
+            `[thin-core] update worker failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        })
+        .finally(() => {
+          this.#worker = undefined;
+          this.#onWorkerSettled?.();
+        });
+      return false;
+    }
+    if (this.#stagedReleaseId) return false;
 
     const state = await readUpdateState(this.#layout);
     if (state.stagedReleaseId && state.stagedReleaseId !== this.#loadedRelease) {
@@ -232,51 +267,6 @@ export class ManagedUpdateHandoff {
       return false;
     }
 
-    const now = this.#now();
-    if (this.#env.BEELINE_UPDATE_DISABLE === '1' || now < this.#nextUpdateCheckAt) return false;
-    this.#nextUpdateCheckAt =
-      now + numberEnv(this.#env, 'BEELINE_UPDATE_INTERVAL_MS', DEFAULT_UPDATE_INTERVAL_MS);
-    if (!this.#worker) {
-      this.#updateCycleDeadlineAt = now + this.#drainDeadlineMs;
-      // Never await archive/network work from the progress callback: doing so
-      // would freeze WATCHDOG ticks during a healthy but slow update. The core
-      // observes the worker's atomic anchor change on a later completed tick.
-      this.#worker = withInstallLock(this.#layout, async () => {
-        // Another daemon may have applied the update while this one waited.
-        const current = await activeReleaseId(this.#layout).catch(() => undefined);
-        if (current && current !== this.#loadedRelease) return;
-        // All daemons sharing this install start together. Keep the short SLO
-        // cadence without making each one fetch the same manifest: the first
-        // lock holder records the install-scoped check and the rest reuse it.
-        const state = await readUpdateState(this.#layout);
-        const interval = numberEnv(
-          this.#env,
-          'BEELINE_UPDATE_INTERVAL_MS',
-          DEFAULT_UPDATE_INTERVAL_MS,
-        );
-        if (
-          state.notifiedReleaseKey === this.#notifiedReleaseKey &&
-          state.lastCheckAt !== undefined &&
-          now - state.lastCheckAt < interval
-        )
-          return;
-        await this.#runUpdateWorker();
-        if (this.#notifiedReleaseKey) {
-          await writeUpdateState(this.#layout, {
-            ...(await readUpdateState(this.#layout)),
-            notifiedReleaseKey: this.#notifiedReleaseKey,
-          });
-        }
-      })
-        .catch((error) => {
-          console.error(
-            `[thin-core] update worker failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        })
-        .finally(() => {
-          this.#worker = undefined;
-        });
-    }
     return false;
   }
 
@@ -419,6 +409,7 @@ export class ManagedUpdateDrain {
   readonly #clearTimer: (handle: unknown) => void;
   #waitLogTimer: unknown;
   #resolving: Promise<ManagedUpdateHandoffProgress> | undefined;
+  #rerunRequested = false;
   #restarting = false;
 
   constructor(options: ManagedUpdateDrainOptions) {
@@ -435,9 +426,19 @@ export class ManagedUpdateDrain {
 
   #resolve(): Promise<ManagedUpdateHandoffProgress> {
     if (this.#restarting) return Promise.resolve('restarting');
-    if (this.#resolving) return this.#resolving;
+    if (this.#resolving) {
+      this.#rerunRequested = true;
+      return this.#resolving;
+    }
     this.#resolving = this.#step().finally(() => {
       this.#resolving = undefined;
+      if (this.#rerunRequested) {
+        this.#rerunRequested = false;
+        void this.#resolve().catch((error) => {
+          if (this.#options.failed) this.#options.failed(error);
+          else this.#log(`[thin-core] update drain failed: ${String(error)}`);
+        });
+      }
     });
     return this.#resolving;
   }
@@ -497,11 +498,6 @@ export class ManagedUpdateDrain {
 function updateWaitMs(options: ManagedUpdateDrainOptions, request: ManagedUpdateRestartRequest): number {
   const remaining = request.drainDeadlineAt - (options.now ?? Date.now)();
   return remaining > 0 ? remaining : UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS;
-}
-
-function numberEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
-  const value = Number(env[name]);
-  return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
 /**

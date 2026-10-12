@@ -91,6 +91,7 @@ export async function runMachineHelper(
     env?: NodeJS.ProcessEnv;
     /** Test seams: production runs the real per-agent runtime on process signals. */
     runAgent?: typeof runAgentRuntime;
+    runUpdateWorker?: () => Promise<void>;
     signals?: EventEmitter;
     exitProcess?: (code: number) => void;
   } = {},
@@ -286,6 +287,8 @@ export async function runMachineHelper(
   if (layout) {
     update = await ManagedUpdateHandoff.create(layout, Date.now, {
       env,
+      ...(options.runUpdateWorker ? { runUpdateWorker: options.runUpdateWorker } : {}),
+      onWorkerSettled: () => { void tickUpdate(); },
     });
   }
   const recoverManagedRestart = (error: unknown) => {
@@ -345,7 +348,13 @@ export async function runMachineHelper(
     machineLink: (baseUrl) => {
       let link = links.get(baseUrl);
       if (!link) {
-        link = new MachineLink({ baseUrl });
+        link = new MachineLink({
+          baseUrl,
+          onRegistered: () => {
+            update?.reconcileOnConnect();
+            void tickUpdate();
+          },
+        });
         link.setHelperIdentity({
           releaseVersion: loadedReleaseIdentity?.version,
           sourceSha: loadedReleaseIdentity?.commit,

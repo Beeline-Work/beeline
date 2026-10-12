@@ -10,6 +10,7 @@ import { SQUIRE_TASK_IDLE_LEASE_MS, SquireTaskRelay } from './squire-task-relay.
 import { grantedHostRouteWires } from './host-mcp-route.js';
 import { piMcpBridgeSource } from './pi-mcp-bridge.js';
 import type { StdioSquireMcpClient } from './squire-mcp-client.js';
+import type { SquireShareLease } from './squire-share-renewals.js';
 
 const relays: SquireTaskRelay[] = [];
 afterEach(() => { for (const relay of relays.splice(0)) relay.close(); vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -27,6 +28,7 @@ function fixture(
   authorize = async () => true,
   respond?: (method: string, params: { name?: string }) => Promise<unknown>,
   onApprovalDecided?: (decision: unknown) => void,
+  onShareRenewed?: (lease: SquireShareLease) => Promise<boolean>,
 ) {
   let spawns = 0;
   let exits = 0;
@@ -47,7 +49,7 @@ function fixture(
       }),
       close: () => { exits++; },
     } as unknown as StdioSquireMcpClient;
-  }, onApprovalDecided);
+  }, onApprovalDecided, undefined, onShareRenewed);
   relays.push(relay);
   return { relay, stats: () => ({ spawns, exits }),
     die: () => callbacks?.onExit(2000 + spawns, 1),
@@ -72,6 +74,25 @@ async function request(
 }
 
 describe('helper-owned Squire task relay', () => {
+  it('renews a human-controlled share on its owning connection after the model turn ends', async () => {
+    const persist = vi.fn(async (_lease: SquireShareLease) => true);
+    const url = `https://squire.test/s/${'a'.repeat(43)}/`;
+    const { relay, stats } = fixture(undefined, undefined, async (_method, params) => {
+      if (params.name === 'operate_start') return { content: [{ type: 'text', text: '{"sessionId":"browser-1"}' }] };
+      return { content: [{ type: 'text', text: JSON.stringify({ url,
+        expires_at: new Date(Date.now() + 500).toISOString(), control: 'human' }) }] };
+    }, undefined, persist);
+    relay.activate(command('root', 'turn-one'), 'generation');
+    await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start' });
+    await request(relay, 'root', 'turn-one', 'tools/call', {
+      name: 'operate_share', arguments: { session_id: 'browser-1' },
+    });
+    relay.deactivate('turn-one');
+    await new Promise(resolve => setTimeout(resolve, 1_200));
+    expect(persist.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(persist.mock.calls[0]?.[0]).toMatchObject({ sessionId: 'browser-1', upstreamUrl: url });
+    expect(stats()).toEqual({ spawns: 1, exits: 0 });
+  });
   it('lists tools during Pi session startup before a turn, without authorizing a call', async () => {
     const { relay, stats } = fixture();
     const listed = await request(relay, 'startup', 'startup', 'tools/list');

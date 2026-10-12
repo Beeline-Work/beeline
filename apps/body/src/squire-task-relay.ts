@@ -11,6 +11,7 @@ import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
+import { SquireShareRenewals, type SquireShareLease } from './squire-share-renewals.js';
 import { squireApprovalFromMcp } from './resource-mcp-facade.js';
 import {
   forgetSquireSessions,
@@ -117,6 +118,7 @@ export class SquireTaskRelay {
   private approvalRequestId?: string;
   private closed = false;
   private callTail: Promise<void> = Promise.resolve();
+  private readonly shareRenewals: SquireShareRenewals;
 
   constructor(
     private readonly agentId: string,
@@ -141,10 +143,17 @@ export class SquireTaskRelay {
      */
     private readonly onApprovalDecided: (decision: SquireApprovalDecision) => void = () => {},
     private readonly onSessionEnded: (sessionId: string) => void = () => {},
-  ) {}
+    onShareRenewed: (lease: SquireShareLease) => Promise<boolean> = async () => false,
+  ) {
+    this.shareRenewals = new SquireShareRenewals(
+      (id, client) => !this.closed && squireSessionOwner(id)?.client === client,
+      onShareRenewed,
+      (id) => this.onSessionEnded(id),
+    );
+  }
 
   private ended(ids: Iterable<string>): void {
-    for (const id of ids) this.onSessionEnded(id);
+    for (const id of ids) { this.shareRenewals.stop(id); this.onSessionEnded(id); }
   }
 
   async listen(): Promise<{ url: string; token: string; contextFile: string }> {
@@ -236,6 +245,7 @@ export class SquireTaskRelay {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.shareRenewals.close();
     this.active = undefined;
     this.approvalRequestId = undefined;
     this.retire('helper-exit');
@@ -459,6 +469,8 @@ export class SquireTaskRelay {
       // owning relay; only its schedule lineage is recorded here.
       if (this.activeScheduleId)
         for (const id of requestedIds) tagSquireSessionSchedule(id, this.activeScheduleId);
+      if (safeToolName === 'operate_share' && requestedIds.length === 1)
+        this.shareRenewals.track(requestedIds[0]!, callClient, result);
       const approval = input.method === 'tools/call' && squireApprovalFromMcp(
         { id: 1, method: input.method, params: input.params }, { id: 1, result },
       );

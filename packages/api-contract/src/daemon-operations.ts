@@ -469,6 +469,12 @@ export type DaemonOperationMap = {
   endComputerSession: Operation<RoomInput & {
     readonly sessionId: string;
   }, WriteResult>;
+  /** Keep an owned live share's upstream lease current between model turns. */
+  refreshComputerSession: Operation<RoomInput & {
+    readonly sessionId: string;
+    readonly upstreamUrl: string;
+    readonly expiresAt: number;
+  }, { readonly live: boolean }>;
   /** A Squire in-task result named a stale/logged-out provider session
    * (`needs_user.wall === 'google_session'`); a reconnect card goes to the
    * SAME Room carrying Squire's own hosted sign-in page, and the paused

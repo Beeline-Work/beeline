@@ -541,6 +541,7 @@ export class MonolithRoomTurnLoop {
       (sessionId) => {
         options.api.execute('endComputerSession', { roomId: options.roomId, sessionId }).catch(() => {});
       },
+      async (lease) => (await options.api.execute('refreshComputerSession', { roomId: options.roomId, ...lease })).live,
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.roomId, {

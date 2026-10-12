@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -18,7 +19,7 @@ import { noteFirstSilence } from './turn-silence-notice.js';
 import { backfillComputerObservations } from './system-line.js';
 import { PhoneService } from './phone-service.js';
 import {
-  computerViewToken, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, serveComputerSession,
+  computerViewToken, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, refreshComputerSession, serveComputerSession,
   serveComputerStatus, startComputerExpirySweep, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter,
 } from './computer-session.js';
 
@@ -371,9 +372,121 @@ describe('computer session handoff', () => {
     }
   }, 60_000);
 
-  it('ends a Squire card at its stored expiry, closes viewers and refuses new ones', async () => {
+  for (const navigation of [{ url: 'https://httpbin.org/post?custname=private' }, { origin: 'https://httpbin.org' }]) {
+    it(`carries Squire's human form-navigation ${'url' in navigation ? 'URL' : 'origin'} into the agent turn`, async () => {
+      const roomId = randomUUID();
+      await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Navigation proof')`, [roomId, WORKSPACE]);
+      for (const identityId of [AGENT, HUMAN]) await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, roomId, identityId]);
+      const squire = createServer((_request, response) => response.writeHead(200).end('live'));
+      const streams = new WebSocketServer({ noServer: true });
+      let upstream: WebSocket | undefined;
+      squire.on('upgrade', (request, socket, head) => streams.handleUpgrade(request, socket, head, client => { upstream = client; }));
+      await new Promise<void>(resolve => squire.listen(0, '127.0.0.1', resolve));
+      const share = await createComputerSession(database, live, {
+        roomId, agentId: AGENT, sessionId: `form-submit-${roomId}`,
+        upstreamUrl: `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/form/`,
+      });
+      let viewer: WebSocket | undefined;
+      try {
+        const access = await computerViewToken(database, share.id, HUMAN);
+        viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
+        await opened(viewer);
+        await until(async () => upstream);
+        // Squire announces page state on stream start too. Agent/preview
+        // navigation must not masquerade as a human's action.
+        upstream!.send(JSON.stringify({ type: 'navigation', ...navigation }));
+        const input = next(upstream!);
+        viewer.send(JSON.stringify({ type: 'click', x: 0.1, y: 0.8 }));
+        expect(JSON.parse(await input)).toMatchObject({ type: 'click' });
+        upstream!.send(JSON.stringify({ type: 'control', state: 'human' }));
+        upstream!.send(JSON.stringify({ type: 'frame', data: Buffer.from('form-response').toString('base64') }));
+        await until(async () => (await database.query(`SELECT 1 FROM computer_session_events WHERE session_id=$1 AND name='input'`,
+          [share.id])).rowCount ? true : undefined);
+        expect((await database.query(`SELECT 1 FROM computer_session_events WHERE session_id=$1 AND name='navigation'`, [share.id])).rowCount).toBe(0);
+        // Only Squire's explicit main-frame navigation notification supplies
+        // navigation evidence; pointer events and changed pixels cannot.
+        upstream!.send(JSON.stringify({ type: 'navigation', ...navigation }));
+        const command = await until(async () => (await readAgentCommands(database, roomId, AGENT)).commands.find(item =>
+          (item.source.systemEvent?.payload as { activity?: string } | undefined)?.activity === 'navigation'));
+        const claimed = await new DaemonService(database, live).execute('claimAgentCommand', {
+          roomId, commandId: command.id, generationId: 'navigation-proof',
+        }, AGENT);
+        expect(claimed.activitySource).toMatchObject({ systemEvent: { kind: 'computer-session-activity',
+          payload: { sessionId: share.id, activity: 'navigation', detail: 'https://httpbin.org' } } });
+        const events = await database.query<{ detail: string }>(
+          `SELECT detail FROM computer_session_events WHERE session_id=$1 AND name='navigation'`, [share.id]);
+        expect(events.rows).toEqual([{ detail: 'https://httpbin.org' }]);
+      } finally {
+        await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+        viewer?.terminate();
+        for (const client of streams.clients) client.terminate();
+        await new Promise<void>(resolve => streams.close(() => resolve()));
+        await new Promise<void>(resolve => squire.close(() => resolve()));
+      }
+    });
+  }
+
+  it('keeps renewed leases live, binds renewal to owner/source, and never revives an ended card', async () => {
+    const upstreamUrl = `https://squire.test/s/${'r'.repeat(43)}/`;
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'rolling-share', upstreamUrl, expiresAt: Date.now() + 1_000,
+    });
+    const daemon = new DaemonService(database, live);
+    const renew = (expiresAt: number) => daemon.execute('refreshComputerSession', {
+      roomId: ROOM, sessionId: 'rolling-share', upstreamUrl, expiresAt,
+    }, AGENT);
+    for (let lifetime = 0; lifetime < 3; lifetime++) {
+      // Cross each prior upstream deadline; the persisted renewal wins the sweep.
+      await database.query(`UPDATE computer_sessions SET expires_at=now()-interval '1 second' WHERE id=$1`, [share.id]);
+      expect(await renew(Date.now() + 60_000)).toEqual({ live: true });
+      await expireComputerSessions(database, live);
+      expect((await getComputerSession(database, share.id))?.status).toBe('live');
+    }
+    const lease = { roomId: ROOM, agentId: AGENT, sessionId: 'rolling-share', upstreamUrl, expiresAt: Date.now() + 120_000 };
+    expect(await refreshComputerSession(database, { ...lease, agentId: OTHER })).toEqual({ live: false });
+    expect(await refreshComputerSession(database, { ...lease, upstreamUrl: 'https://another.test/' })).toEqual({ live: false });
+    await expect(renew(NaN)).rejects.toThrow('expiry is invalid');
+    await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+    expect(await renew(Date.now() + 120_000)).toEqual({ live: false });
+    expect((await getComputerSession(database, share.id))?.status).toBe('ended');
+  });
+
+  it('rechecks expiry when renewal races a sweep that already selected the old lease', async () => {
+    const gone = createServer((_request, response) => response.writeHead(410).end());
+    await new Promise<void>(resolve => gone.listen(0, '127.0.0.1', resolve));
+    const upstreamUrl = `http://127.0.0.1:${(gone.address() as AddressInfo).port}/s/${'r'.repeat(43)}/`;
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'renewal-race', upstreamUrl, expiresAt: Date.now() + 1_000,
+    });
+    await database.query(`UPDATE computer_sessions SET expires_at=now()-interval '1 second' WHERE id=$1`, [share.id]);
+    const racing = new Proxy(database, { get(target, property) {
+      if (property === 'query') return async (sql: string, values?: unknown[]) => {
+        const selected = await target.query(sql, values);
+        if (sql.includes('FROM computer_sessions WHERE expires_at<=now()'))
+          await refreshComputerSession(database, {
+            roomId: ROOM, agentId: AGENT, sessionId: 'renewal-race', upstreamUrl, expiresAt: Date.now() + 60_000,
+          });
+        return selected;
+      };
+      const value = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    await expireComputerSessions(racing, live);
+    expect((await getComputerSession(database, share.id))?.status).toBe('live');
+    expect((await database.query<{ status: string }>(`SELECT card->>'status' AS status FROM messages WHERE id=$1`,
+      [(await getComputerSession(database, share.id))!.message_id])).rows[0]?.status).toBe('live');
+    await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+    await new Promise<void>(resolve => gone.close(() => resolve()));
+  });
+
+  it('keeps a stale lease live until Squire confirms the source was reaped, then closes viewers', async () => {
     const token = 'e'.repeat(43);
-    const squire = createServer((_request, response) => { response.writeHead(200).end('<!doctype html>'); });
+    let upstreamEnded = false;
+    let upstreamUnavailable = false;
+    const squire = createServer((_request, response) => {
+      response.writeHead(upstreamEnded ? 410 : upstreamUnavailable ? 503 : 200).end('<!doctype html>');
+    });
     const upstreamSockets = new WebSocketServer({ noServer: true });
     squire.on('upgrade', (request, socket, head) =>
       upstreamSockets.handleUpgrade(request, socket, head, (client) => upstreamSockets.emit('connection', client, request)));
@@ -392,12 +505,23 @@ describe('computer session handoff', () => {
       const viewerClosed = new Promise<void>((resolve) => viewer.once('close', () => resolve()));
       await new Promise((resolve) => setTimeout(resolve, 1_600));
 
-      // Before any sweep, the expired link already refuses new connections.
-      expect((await fetch(`${origin}/s/${share.id}/?access=${access}`)).status).toBe(410);
-      const refused = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
-      await expect(opened(refused)).rejects.toThrow();
+      // Upstream leases roll independently of a delayed helper renewal.
+      expect((await getComputerSession(database, share.id))?.status).toBe('live');
+      await expireComputerSessions(database, live);
+      expect((await getComputerSession(database, share.id))?.status).toBe('live');
+      upstreamUnavailable = true;
+      await expireComputerSessions(database, live);
+      expect((await getComputerSession(database, share.id))?.status).toBe('live');
+      upstreamUnavailable = false;
+      const another = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
+      await opened(another);
+      another.close();
+      await new Promise<void>(resolve => another.once('close', resolve));
 
-      // A restarted server keeps no timers; its first sweep reads the stored expiry.
+      upstreamEnded = true;
+      expect((await fetch(`${origin}/s/${share.id}/?access=${access}`)).status).toBe(410);
+
+      // A restarted server reconciles the source's actual end, not its old deadline.
       await migrate(database);
       const stop = startComputerExpirySweep(database, live, 60_000);
       try {
@@ -405,6 +529,8 @@ describe('computer session handoff', () => {
           'SELECT status FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.status === 'ended' ? true : undefined);
       } finally { stop(); }
       await viewerClosed;
+      const refused = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
+      await expect(opened(refused)).rejects.toThrow();
       const card = (await database.query<{ card: { status: string } }>(
         `SELECT m.card FROM messages m JOIN computer_sessions c ON c.message_id=m.id WHERE c.id=$1`, [share.id])).rows[0];
       expect(card?.card.status).toBe('ended');

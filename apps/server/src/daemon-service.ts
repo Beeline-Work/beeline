@@ -19,7 +19,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { createComputerSession, endComputerSession, getComputerSession } from './computer-session.js';
+import { createComputerSession, endComputerSession, getComputerSession, refreshComputerSession } from './computer-session.js';
 import type {
   DaemonAttachment,
   DaemonOperationMap,
@@ -1370,6 +1370,10 @@ export class DaemonService {
         }
         return this.writeResult() as Output<Name>;
       }
+      case 'refreshComputerSession':
+        return (await refreshComputerSession(this.database, {
+          ...input as Input<'refreshComputerSession'>, agentId: authenticatedAgentId,
+        })) as Output<Name>;
       case 'postSquireLoginWall':
         return (await this.squireLoginWall(
           input as Input<'postSquireLoginWall'>,
@@ -8087,6 +8091,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postSquireApproval: true,
   postComputerSession: true,
   endComputerSession: true,
+  refreshComputerSession: true,
   postSquireLoginWall: true,
   postSquireApprovalDecision: true,
   postPermissionRequest: true,

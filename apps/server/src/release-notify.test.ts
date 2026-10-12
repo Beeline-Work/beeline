@@ -3,6 +3,10 @@ import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
 import { ReleaseNotifier } from './release-notify.js';
+import { PhoneService } from './phone-service.js';
+import { PushDeliveryLoop } from './background.js';
+import { ensureSystemDirectMessageRoom } from './system-line.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 const OWNER = 'a'.repeat(64);
 const OTHER_PERSON = 'b'.repeat(64);
@@ -66,6 +70,23 @@ describe('helper release delivery', () => {
     const stop = reconnect.subscribeHelperRelease(({ sha }) => offline.push(sha));
     await vi.waitFor(() => expect(offline).toContain('a'.repeat(40)));
     stop();
+  });
+
+  it('does not replay old release announcements when a phone registers for push', async () => {
+    const room = await ensureSystemDirectMessageRoom(database, WORKSPACE, OWNER);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
+      VALUES('old-release',$1,$2,'Beeline release v0.0.128 is out! New functionalities are in the changelog',
+        'system',now()-interval '2 hours')`, [room, SYSTEM_IDENTITY_ID]);
+    const phone = new PhoneService(database, 'https://server.test');
+    const send = vi.fn(async () => undefined);
+    const loop = new PushDeliveryLoop(database, { send });
+    expect(await loop.runOnce()).toBe(0);
+    await phone.execute('registerPushDevice', {
+      token: 'new-phone', platform: 'android', environment: 'physical',
+    }, OWNER);
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect((await database.query('SELECT 1 FROM push_delivery_claims')).rowCount).toBe(0);
   });
 
   it('does not query again during five idle minutes and reconciles once on reconnect', async () => {

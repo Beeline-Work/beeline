@@ -23,7 +23,6 @@ import { beginComposioAppSignIn, completeComposioSignIn } from './app-connection
 import { projectCornerBrief, type CornerBriefRow } from './corner-brief.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
 import { storeWorkspaceAvatar } from './durable-avatar.js';
-import { queueLatestReleasePush } from './release-push-catchup.js';
 import { validateWebPushSubscription, webPushPublicKey } from './web-push.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
 import {
@@ -8389,7 +8388,6 @@ export class PhoneService {
           input.platform === 'web' ? JSON.stringify(input.keys) : null,
         ],
       );
-      await queueLatestReleasePush(database, viewerId, input.token);
     });
     return { accepted: true };
   }
@@ -8482,7 +8480,7 @@ export class PhoneService {
     );
   }
   /**
-   * An `@system` notification DM (release or Workspace lifecycle) is
+   * An `@system` notification DM (Workspace lifecycle) is
    * read-only: only `@system` may post into a direct-message Room it is a
    * participant of. A person who IS a member of that Room (they must be, to
    * read it) still cannot send or reply, so this is distinct from

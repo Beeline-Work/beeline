@@ -18,14 +18,9 @@ import type { ObjectService } from './object-service.js';
 import { addressedToPersonSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
-import {
-  claimReleaseCatchup,
-  PUSH_MAX_ATTEMPTS,
-  RELEASE_CATCHUP_CANDIDATES_SQL,
-  retireTerminalReleaseCatchups,
-} from './release-push-catchup.js';
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
+const PUSH_MAX_ATTEMPTS = 3;
 /** Bound concurrent device sends after serial claim/suppress. APNS can take
  * up to APNS_REQUEST_TIMEOUT_MS per token; serializing 100 candidates on the
  * sole background leader otherwise stalls attention delivery. */
@@ -295,10 +290,9 @@ export class PushDeliveryLoop {
       `INSERT INTO push_delivery_floors(id) VALUES('message-delivery') ON CONFLICT(id) DO NOTHING`,
     );
     // Candidate messages expire after an hour. A terminal claim outside that
-    // window cannot suppress a future push, except an explicit release catchup.
+    // window cannot suppress a future push.
     // Retain mobile claims for read-clear for at most a week.
     await this.database.query(TERMINAL_PUSH_CLAIMS_SQL, [1000]);
-    await retireTerminalReleaseCatchups(this.database);
     const candidates = await this.database.query<{
       message_id: string;
       workspace_id: string;
@@ -310,7 +304,6 @@ export class PushDeliveryLoop {
       text: string;
       token: string;
       identity_id: string;
-      is_release_catchup: boolean;
       platform: 'android' | 'ios' | 'web';
       action: 'grant' | 'reply' | null;
       grant_id: string | null;
@@ -383,7 +376,7 @@ export class PushDeliveryLoop {
             WHEN m.presentation IN ('system','card') THEN btrim(m.text)
             ELSE concat_ws(': ',COALESCE(NULLIF(author.name,''),'Someone'),btrim(m.text))
           END text,
-          m.push_token token,m.push_identity_id identity_id,false is_release_catchup,m.created_at,
+          m.push_token token,m.push_identity_id identity_id,m.created_at,
           -- Inline notification actions. A grant card answers from the
           -- notification only while it asks exactly one thing that is still
           -- pending, since three buttons cannot answer two asks. A reply is offered
@@ -491,7 +484,7 @@ export class PushDeliveryLoop {
           notification.room_id::text channel_id,NULL::text corner_id,'message' target,
           'workspace-join' notification_type,
           btrim(notification.text) text,device.device_token token,push_device.identity_id,
-          false is_release_catchup,notification.created_at,
+          notification.created_at,
           NULL::text action,NULL::text grant_id,NULL::text grant_kind,NULL::text grant_target,
           NULL::text grant_agent_name,NULL::text author_name,NULL::text collapse_id,
           false direct_attention,NULL::text room_name,NULL::text corner_name,NULL::jsonb dm_peer
@@ -508,20 +501,12 @@ export class PushDeliveryLoop {
           AND notification.created_at>=floor.started_at
           AND notification.created_at>=now()-interval '1 hour'
           AND btrim(notification.text)<>''
-        UNION ALL
-        SELECT catchup.message_id,catchup.workspace_id,catchup.room_id,catchup.channel_id,
-          catchup.corner_id,catchup.target,catchup.notification_type,catchup.text,catchup.token,
-          catchup.identity_id,catchup.is_release_catchup,catchup.created_at,catchup.action,
-          catchup.grant_id,catchup.grant_kind,catchup.grant_target,catchup.grant_agent_name,
-          catchup.author_name,NULL::text collapse_id,false direct_attention,
-          catchup.room_name,catchup.corner_name,catchup.dm_peer
-        FROM (${RELEASE_CATCHUP_CANDIDATES_SQL}) catchup
       ), unclaimed AS (
         SELECT DISTINCT ON (candidate.message_id,candidate.token)
           candidate.message_id,candidate.workspace_id,candidate.room_id,candidate.channel_id,
           candidate.corner_id,candidate.target,
           candidate.notification_type,candidate.text,candidate.token,candidate.identity_id,
-          candidate.is_release_catchup,candidate.created_at,device.platform,
+          candidate.created_at,device.platform,
           candidate.action,candidate.grant_id,candidate.grant_kind,candidate.grant_target,
           candidate.grant_agent_name,candidate.author_name,candidate.collapse_id,
           candidate.direct_attention,candidate.room_name,candidate.corner_name,candidate.dm_peer
@@ -532,10 +517,10 @@ export class PushDeliveryLoop {
           ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
         WHERE claim.message_id IS NULL OR (claim.status='retryable'
           AND claim.next_retry_at<=now() AND claim.attempts<${PUSH_MAX_ATTEMPTS})
-        ORDER BY candidate.message_id,candidate.token,candidate.is_release_catchup DESC
+        ORDER BY candidate.message_id,candidate.token
       )
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
-        notification_type,text,token,identity_id,is_release_catchup,platform,
+        notification_type,text,token,identity_id,platform,
         action,grant_id,grant_kind,grant_target,grant_agent_name,author_name,collapse_id,
         direct_attention,room_name,corner_name,dm_peer
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
@@ -548,61 +533,54 @@ export class PushDeliveryLoop {
     const claimedDeliveries: ClaimedDelivery[] = [];
     let claimedRows = 0;
     for (const candidate of candidates.rows) {
-      const claimed = candidate.is_release_catchup
-        ? await claimReleaseCatchup(
-            this.database,
-            candidate.message_id,
-            candidate.token,
-            candidate.identity_id,
+      const claimed = Boolean(
+        (
+          await this.database.query(
+            `INSERT INTO push_delivery_claims AS claim(message_id,device_token,status)
+             SELECT $1,$2,'claimed'
+             WHERE EXISTS (SELECT 1 FROM push_devices WHERE token=$2 AND identity_id=$3)
+               AND EXISTS (SELECT 1 FROM identities WHERE id=$3 AND push_level<>'off')
+               AND ($6<>'message' OR EXISTS (
+                 SELECT 1 FROM messages m JOIN memberships member ON member.room_id=m.room_id
+                 WHERE m.id=$1 AND member.identity_id=$3 AND member.removed_at IS NULL))
+               AND NOT EXISTS (
+                 SELECT 1 FROM messages m WHERE m.id=$1 AND ${earlierTurnPushSql('m', '$2')}
+               )
+               AND (
+                 ($6='workspace-join' AND EXISTS (
+                   SELECT 1 FROM memberships
+                   WHERE workspace_id=$4 AND room_id IS NULL AND identity_id=$3
+                     AND removed_at IS NULL
+                 ))
+                 OR ($6='message' AND (
+                   NOT EXISTS (
+                     SELECT 1 FROM messages message JOIN rooms room ON room.id=message.room_id
+                     WHERE message.id=$1 AND message.card_type IS NOT NULL
+                       AND room.direct_participants @> jsonb_build_array($5::text)
+                   )
+                   OR EXISTS (
+                     SELECT 1 FROM memberships
+                     WHERE workspace_id=$4 AND room_id IS NULL AND identity_id=$3
+                       AND removed_at IS NULL
+                   )
+                 ))
+               )
+             ON CONFLICT(message_id,device_token) DO UPDATE
+               SET status='claimed',attempts=claim.attempts+1,claimed_at=now(),
+                 completed_at=NULL,error=NULL,next_retry_at=NULL
+               WHERE claim.status='retryable' AND claim.next_retry_at<=now()
+                 AND claim.attempts<${PUSH_MAX_ATTEMPTS}`,
+            [
+              candidate.message_id,
+              candidate.token,
+              candidate.identity_id,
+              candidate.workspace_id,
+              SYSTEM_IDENTITY_ID,
+              candidate.notification_type,
+            ],
           )
-        : Boolean(
-            (
-              await this.database.query(
-                `INSERT INTO push_delivery_claims AS claim(message_id,device_token,status)
-                 SELECT $1,$2,'claimed'
-                 WHERE EXISTS (SELECT 1 FROM push_devices WHERE token=$2 AND identity_id=$3)
-                   AND EXISTS (SELECT 1 FROM identities WHERE id=$3 AND push_level<>'off')
-                   AND ($6<>'message' OR EXISTS (
-                     SELECT 1 FROM messages m JOIN memberships member ON member.room_id=m.room_id
-                     WHERE m.id=$1 AND member.identity_id=$3 AND member.removed_at IS NULL))
-                   AND NOT EXISTS (
-                     SELECT 1 FROM messages m WHERE m.id=$1 AND ${earlierTurnPushSql('m', '$2')}
-                   )
-                   AND (
-                     ($6='workspace-join' AND EXISTS (
-                       SELECT 1 FROM memberships
-                       WHERE workspace_id=$4 AND room_id IS NULL AND identity_id=$3
-                         AND removed_at IS NULL
-                     ))
-                     OR ($6='message' AND (
-                       NOT EXISTS (
-                         SELECT 1 FROM messages message JOIN rooms room ON room.id=message.room_id
-                         WHERE message.id=$1 AND message.card_type IS NOT NULL
-                           AND room.direct_participants @> jsonb_build_array($5::text)
-                       )
-                       OR EXISTS (
-                         SELECT 1 FROM memberships
-                         WHERE workspace_id=$4 AND room_id IS NULL AND identity_id=$3
-                           AND removed_at IS NULL
-                       )
-                     ))
-                   )
-                 ON CONFLICT(message_id,device_token) DO UPDATE
-                   SET status='claimed',attempts=claim.attempts+1,claimed_at=now(),
-                     completed_at=NULL,error=NULL,next_retry_at=NULL
-                   WHERE claim.status='retryable' AND claim.next_retry_at<=now()
-                     AND claim.attempts<${PUSH_MAX_ATTEMPTS}`,
-                [
-                  candidate.message_id,
-                  candidate.token,
-                  candidate.identity_id,
-                  candidate.workspace_id,
-                  SYSTEM_IDENTITY_ID,
-                  candidate.notification_type,
-                ],
-              )
-            ).rowCount,
-          );
+        ).rowCount,
+      );
       if (!claimed) continue;
       claimedRows++;
       // Consume suppressed candidates permanently, so leaving a Room does not replay them.
@@ -714,11 +692,6 @@ export class PushDeliveryLoop {
                 `UPDATE push_delivery_claims SET status='delivered',completed_at=now() WHERE message_id=$1 AND device_token=$2`,
                 [candidate.message_id, candidate.token],
               );
-              if (candidate.is_release_catchup)
-                await this.database.query(
-                  `DELETE FROM push_release_catchups WHERE device_token=$1 AND message_id=$2`,
-                  [candidate.token, candidate.message_id],
-                );
               localDelivered += 1;
             } catch (error) {
               await this.database.query(

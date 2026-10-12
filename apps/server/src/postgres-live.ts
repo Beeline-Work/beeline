@@ -296,8 +296,6 @@ BEGIN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '');
     WHEN 'workspace_join_notifications' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '');
-    WHEN 'push_release_catchups' THEN
-      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '');
     WHEN 'helper_release_notifications' THEN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP, 'roomId', '',
@@ -348,7 +346,7 @@ BEGIN
     'github_installations', 'github_repositories',
     'workspace_connectors', 'workspace_connections', 'agents', 'agent_avatars',
     'registry_mcp_oauth_attempts', 'push_devices',
-    'workspace_join_notifications', 'push_release_catchups',
+    'workspace_join_notifications',
     'helper_release_notifications', 'workspaces', 'identities'
   ] LOOP
     IF NOT EXISTS (
@@ -597,8 +595,7 @@ export class PostgresLiveListener {
     const payload = decodePayload(raw);
     if (!payload) return;
     const pushOnly = payload.table === 'push_devices' ||
-      payload.table === 'workspace_join_notifications' ||
-      payload.table === 'push_release_catchups';
+      payload.table === 'workspace_join_notifications';
     if ((payload.table === 'messages' && payload.operation !== 'DELETE') ||
         pushOnly ||
         (payload.table === 'agent_turns' && payload.operation === 'UPDATE'))

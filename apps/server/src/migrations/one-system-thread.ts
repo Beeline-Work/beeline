@@ -7,7 +7,6 @@ import { ensureSystemIdentity } from '../system-line.js';
 /** Retire bot ledgers and their contents. New notices use @System exclusively. */
 export async function retireBotDirectMessages(database: SqlDatabase): Promise<void> {
   await database.transaction(async db => {
-    await ensureSystemIdentity(db);
     // Internal human identities (review/scheduler included) must not hold DMs.
     // Deleted people are conversation history, not system bots.
     await db.query(`DELETE FROM rooms room WHERE room.direct_participants IS NOT NULL
@@ -18,6 +17,8 @@ export async function retireBotDirectMessages(database: SqlDatabase): Promise<vo
 
     const botIds = [...CONNECTOR_KINDS, 'composio'].map(type =>
       createHash('sha256').update(`beeline:connector-identity:${type}`).digest('hex'));
+    const legacyBots = await db.query('SELECT 1 FROM identities WHERE id=ANY($1::text[]) LIMIT 1', [botIds]);
+    if (legacyBots.rowCount) await ensureSystemIdentity(db);
     // Retained shared-Room records keep their author and creator foreign keys
     // valid after the obsolete connector identities themselves are deleted.
     await db.query('UPDATE messages SET author_id=$1 WHERE author_id=ANY($2::text[])', [SYSTEM_IDENTITY_ID, botIds]);

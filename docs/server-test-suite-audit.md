@@ -114,8 +114,7 @@ This inventory covers every current `apps/server/src/**/*.test.ts` file after th
 | `recent-identity-times.test.ts` | RecentIdentityTimes | retained |
 | `registry-mcp-oauth.test.ts` | lets only the paired helper claim one short-lived callback code; reports an authorization attempt nobody started as expired; pushes a connector wake when the human cancels a registry sign-in | retained |
 | `registry-mcp.integration.test.ts` | Registry MCP connection orchestration | retained |
-| `release-notify.test.ts` | notifyReleaseDelivered; composeReleaseNotice | retained |
-| `release-push-catchup.test.ts` | release push catch-up at device registration | retained |
+| `release-notify.test.ts` | helper pushes without announcement messages or registration replays | retained |
 | `review-access.test.ts` | the review identity; the Google Play review secret | retained |
 | `reviewer-approval-surface.test.ts` | the turn a reconciled reviewer is woken into | retained |
 | `agent-subscriptions.test.ts` | covered repository subscriptions, one wake per delivery, outside-data quoting, and removal | retained |

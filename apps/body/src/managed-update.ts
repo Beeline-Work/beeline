@@ -19,7 +19,7 @@ import { withAdapterInstallLock } from './adapter-install-lock.js';
 export const UPDATE_CONVERGENCE_SLO_MS = 10 * 60_000;
 export const DEFAULT_UPDATE_INTERVAL_MS = 30_000;
 // Leave time for service shutdown and successor startup within the convergence target.
-export const UPDATE_DRAIN_DEADLINE_MS = UPDATE_CONVERGENCE_SLO_MS - 150_000;
+export const UPDATE_DRAIN_DEADLINE_MS = 5 * 60_000;
 export const MAX_HOST_RESTART_STAGGER_MS = 15_000;
 
 /** Stable per-agent spread after intake quiesces, bounded by the handoff deadline. */
@@ -301,14 +301,15 @@ export class ManagedUpdateHandoff {
 
   /**
    * Resolve one handoff tick against the daemon's authoritative turn registry.
-   * The coordinator keeps intake open while turns run and only closes it
-   * in a quiet gap before activating a staged release.
+   * The coordinator keeps intake open until a quiet gap or the bounded
+   * drain deadline before activating a staged release.
    */
-  async restartRequest(readyToRestart: (request: ManagedUpdateRestartRequest) => boolean): Promise<
+  async restartRequest(readyToRestart: (request: ManagedUpdateRestartRequest, deadlineReached: boolean) => boolean): Promise<
     | { kind: 'none' }
     | { kind: 'waiting'; request: ManagedUpdateRestartRequest }
     | {
         kind: 'restart';
+        mode: ManagedUpdateRestartMode;
         request: ManagedUpdateRestartRequest;
       }
   > {
@@ -316,7 +317,8 @@ export class ManagedUpdateHandoff {
     if (!activeDrift && !this.#stagedReleaseId) return { kind: 'none' };
     const request = this.#restartRequest;
     if (!request) throw new Error('update drift was detected without an in-memory restart request');
-    if (!readyToRestart(request)) {
+    const deadlineReached = this.#now() >= request.drainDeadlineAt;
+    if (!readyToRestart(request, deadlineReached)) {
       return { kind: 'waiting', request };
     }
     if (this.#stagedReleaseId) {
@@ -359,20 +361,20 @@ export class ManagedUpdateHandoff {
         });
       }
       this.#stagedReleaseId = undefined;
-      this.#requested = false;
-      this.#restartRequest = undefined;
-      this.#armRestart(stagedReleaseId);
+      // Activation must not grant another drain window if the restart fails.
+      this.#requested = true;
+      this.#restartRequest = request;
     }
-    return { kind: 'restart', request: this.#restartRequest ?? request };
+    return { kind: 'restart', mode: deadlineReached ? 'interrupted' : 'drained', request: this.#restartRequest ?? request };
   }
 }
 
-export type ManagedUpdateRestartMode = 'drained';
+export type ManagedUpdateRestartMode = 'drained' | 'interrupted';
 
 /** One funnel from a completed core tick to the process handoff callback. */
 export async function coordinateManagedUpdateHandoff(
   update: ManagedUpdateHandoff,
-  readyToRestart: (request: ManagedUpdateRestartRequest) => boolean,
+  readyToRestart: (request: ManagedUpdateRestartRequest, deadlineReached: boolean) => boolean,
   restart: (request: ManagedUpdateRestartRequest, mode: ManagedUpdateRestartMode) => Promise<void>,
   waiting: (request: ManagedUpdateRestartRequest) => Promise<void> = async () => undefined,
 ): Promise<ManagedUpdateHandoffProgress> {
@@ -382,7 +384,7 @@ export async function coordinateManagedUpdateHandoff(
     await waiting(next.request);
     return 'waiting-for-idle';
   }
-  await restart(next.request, 'drained');
+  await restart(next.request, next.mode ?? 'drained');
   return 'restarting';
 }
 
@@ -390,22 +392,25 @@ export const UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS = 60_000;
 
 export interface ManagedUpdateDrainOptions {
   update: ManagedUpdateHandoff;
-  /** Atomically prove idle and close intake immediately before restarting. */
-  quiesce: () => boolean;
+  /** Close intake atomically; the deadline permits interrupting active turns. */
+  quiesce: (deadlineReached: boolean) => boolean;
   activeTurnCount: () => number;
-  /** Exits the process after every active turn has finished. */
+  /** Exits after a quiet gap, or journals interrupted work at the deadline. */
   restart: (request: ManagedUpdateRestartRequest, mode: ManagedUpdateRestartMode) => Promise<void>;
   /** Progress report while a turn keeps the armed restart waiting (sd_notify STATUS). */
   waiting?: (request: ManagedUpdateRestartRequest) => Promise<void>;
+  /** Restore serving when a timer-driven activation/restart fails. */
+  failed?: (error: unknown) => void;
   log?: (line: string) => void;
   setTimer?: (callback: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+  now?: () => number;
 }
 
 /**
- * Each completed core tick calls `tick()`. Busy helpers continue serving,
- * even past the update target; only a quiet gap may close intake. The minute
- * timer reports the wait and provides a fallback idle check.
+ * Each completed core tick calls `tick()`. Busy helpers keep intake open for
+ * at most the drain window. The timer also enforces the deadline if no core
+ * tick arrives, then the successor reclaims interrupted work.
  */
 export class ManagedUpdateDrain {
   readonly #options: ManagedUpdateDrainOptions;
@@ -442,7 +447,7 @@ export class ManagedUpdateDrain {
     let armed: ManagedUpdateRestartRequest | undefined;
     const progress = await coordinateManagedUpdateHandoff(
       update,
-      () => activeTurnCount() === 0 && quiesce(),
+      (_request, deadlineReached) => (activeTurnCount() === 0 || deadlineReached) && quiesce(deadlineReached),
       async (request, mode) => {
         this.#disarm();
         await this.#options.restart(request, mode);
@@ -455,21 +460,25 @@ export class ManagedUpdateDrain {
         await this.#options.waiting?.(request);
       },
     );
-    if (armed && !this.#waitLogTimer) this.#arm();
+    if (armed && !this.#waitLogTimer) this.#arm(armed);
     return progress;
   }
 
-  #arm(): void {
+  #arm(request: ManagedUpdateRestartRequest): void {
     this.#logWaiting();
-    this.#scheduleWaitLog();
+    this.#scheduleWaitLog(request);
   }
 
-  #scheduleWaitLog(): void {
+  #scheduleWaitLog(request: ManagedUpdateRestartRequest): void {
     this.#waitLogTimer = this.#setTimer(() => {
       this.#waitLogTimer = undefined;
       if (this.#restarting) return;
-      void this.#resolve().catch((error) => this.#log(`[thin-core] update drain failed: ${String(error)}`));
-    }, UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS);
+      void this.#resolve().catch((error) => {
+        if (this.#options.failed) this.#options.failed(error);
+        else this.#log(`[thin-core] update drain failed: ${String(error)}`);
+        if (!this.#restarting && this.#waitLogTimer === undefined) this.#scheduleWaitLog(request);
+      });
+    }, Math.min(UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS, updateWaitMs(this.#options, request)));
   }
 
   #logWaiting(): void {
@@ -483,6 +492,11 @@ export class ManagedUpdateDrain {
     if (this.#waitLogTimer !== undefined) this.#clearTimer(this.#waitLogTimer);
     this.#waitLogTimer = undefined;
   }
+}
+
+function updateWaitMs(options: ManagedUpdateDrainOptions, request: ManagedUpdateRestartRequest): number {
+  const remaining = request.drainDeadlineAt - (options.now ?? Date.now)();
+  return remaining > 0 ? remaining : UPDATE_DRAIN_WAIT_LOG_INTERVAL_MS;
 }
 
 function numberEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {

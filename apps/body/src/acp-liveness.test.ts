@@ -105,6 +105,18 @@ describe('ACP turn liveness over real stdio', () => {
     console.log('Reproduction ACP-L1: 40 silent tool minutes → Release poll finished normally.');
   });
 
+  it('bounds an abandoned open tool instead of leaving its prompt claimed forever', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const opened = once(client, 'session/update');
+    const idle = client.sessionPrompt(sessionId, 'tool').catch((error) => error);
+    await opened;
+    const cancel = vi.spyOn(client, 'sessionCancel');
+    await vi.advanceTimersByTimeAsync(TURN_BACKSTOP_MS);
+    expect(cancel).toHaveBeenCalledWith(sessionId);
+    expect(await idle).toBeInstanceOf(AcpTurnBackstopError);
+    expect(client.isAlive).toBe(true);
+  });
+
   it.each(['exit', 'killed', 'stdout', 'stdin'])(
     'reports %s promptly as runtime_exited',
     async (action) => {
@@ -151,13 +163,15 @@ describe('ACP turn liveness over real stdio', () => {
     await opened;
     const cancel = vi.spyOn(client, 'sessionCancel');
     const idle = client.sessionPrompt(sessionId, 'silent').catch((error) => error);
-    await vi.advanceTimersByTimeAsync(TURN_BACKSTOP_MS - 1);
+    await vi.advanceTimersByTimeAsync(TURN_BACKSTOP_MS / 2);
+    await client.setModel(sibling, JSON.stringify({ sessionUpdate: 'tool_call_update', toolCallId: 'poll', status: 'in_progress' }));
+    await vi.advanceTimersByTimeAsync(TURN_BACKSTOP_MS / 2 - 1);
     expect(cancel).not.toHaveBeenCalled();
     const observed = once(client, 'session/update');
     await vi.advanceTimersByTimeAsync(1);
     const error = await idle;
     expect(error).toBeInstanceOf(AcpTurnBackstopError);
-    expect(error.message).toContain('30 minutes; last activity: session/prompt');
+    expect(error.message).toContain('45 minutes; last activity: session/prompt');
     expect((await observed)[0].update.sessionUpdate).toBe('cancel_observed');
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(cancel).toHaveBeenCalledWith(sessionId);
@@ -211,7 +225,7 @@ describe('ACP turn liveness over real stdio', () => {
     );
     await vi.advanceTimersByTimeAsync(TURN_BACKSTOP_MS);
     expect((await idle).message).toBe(
-      'turn_backstop: no ACP traffic for 30 minutes; last activity: plan',
+      'turn_backstop: no ACP traffic for 45 minutes; last activity: plan',
     );
   });
 
@@ -225,7 +239,7 @@ describe('ACP turn liveness over real stdio', () => {
     expect(await idle).toBeInstanceOf(AcpTurnBackstopError);
   });
 
-  it('keeps multiple pending tools open until the final tool completes, then starts a full window', async () => {
+  it('re-arms the idle window on tool progress and completion', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     let failure: unknown;
     const prompt = client.sessionPrompt(sessionId, 'silent').catch((error) => {

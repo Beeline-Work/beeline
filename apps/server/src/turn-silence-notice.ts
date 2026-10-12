@@ -10,6 +10,7 @@
 import { isAgentSignInHarness, type AgentSignInHarness } from '@beeline/api-contract/daemon';
 import {
   classifyTurnSilence,
+  hiccupAttemptLimit,
   escalateExhaustedHiccup,
   phraseTurnSilence,
   shouldRestartHiccup,
@@ -172,7 +173,7 @@ export async function noteFirstSilence(
 
   // A steer is an agent-authored relay card, but it is the destination
   // corner's request all the same: its failure gets the line and the retry.
-  const trigger = (
+  let trigger = (
     await database.query<{ agent_name: string; login_handle: string | null; harness: string | null }>(
       `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
               agent.handle login_handle,
@@ -187,6 +188,19 @@ export async function noteFirstSilence(
       [input.roomId, input.requestId, input.agentId],
     )
   ).rows[0];
+  // A harness hang or update interruption belongs to the claimed command,
+  // including agent/system dispatches that have no human trigger message.
+  if (!trigger && (input.reasonKind === 'update-interrupted' || input.reason?.startsWith('turn_backstop:'))) {
+    trigger = (await database.query<{ agent_name: string; login_handle: string | null; harness: string | null }>(
+      `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
+              agent.handle login_handle, configuration.harness
+       FROM agent_commands command JOIN identities agent ON agent.id=command.agent_id
+       LEFT JOIN agents configuration ON configuration.agent_id=agent.id
+       WHERE command.room_id=$1 AND command.turn_request_id=$2 AND command.agent_id=$3
+         AND command.action IN ('input','resume') LIMIT 1`,
+      [input.roomId, input.requestId, input.agentId],
+    )).rows[0];
+  }
   if (!trigger) return NO_RESTART;
 
   return database.transaction((db) =>
@@ -244,8 +258,8 @@ async function inscribeSilence(
   if (!command && input.generationId != null) return NO_RESTART;
   const canIncrement = command?.state === 'claimed';
   const attempt = canIncrement ? command!.hiccup_attempts + 1 : (command?.hiccup_attempts ?? 0);
-  const restart = Boolean(canIncrement && shouldRestartHiccup(classified.kind, attempt));
-  const givingUp = classified.kind === 'hiccup' && canIncrement && attempt >= 3;
+  const restart = Boolean(canIncrement && shouldRestartHiccup(classified.kind, attempt, classified.fault));
+  const givingUp = classified.kind === 'hiccup' && canIncrement && attempt >= hiccupAttemptLimit(classified.fault);
   // An auth-shaped fault gets the same bounded hiccup retries as any other
   // transient condition; only once those are exhausted does the Room line
   // (and the card it carries) identify failed provider authentication

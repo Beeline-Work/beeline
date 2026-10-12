@@ -11,6 +11,7 @@ import {
 import { settleDaemonStartFailure } from './daemon-failure.js';
 import { helperStatusPath, type AgentSlotState, type HelperStatusFile } from './helper-status.js';
 import { ForceUpdateCoordinator } from './force-update.js';
+import { journalInterruptedTurns } from './force-update-journal.js';
 import { HelperLifecycle, type HelperExitReason } from './helper-lifecycle.js';
 import { supervisor } from './helper-service.js';
 import {
@@ -287,19 +288,29 @@ export async function runMachineHelper(
       env,
     });
   }
+  const recoverManagedRestart = (error: unknown) => {
+    console.error('[helper] managed restart failed; serving again:', error);
+    for (const agent of hosted.values())
+      agent.lifecycle.resumeAfterFailedUpdate(() => agent.core.resumeServing());
+  };
   // Serve new messages while an update waits. Close intake across the machine
-  // only in a quiet gap, then restart immediately; pending commands stay on the server.
+  // in a quiet gap or at the deadline; interrupted commands are replayed by the successor.
   const updateDrain = update
     ? new ManagedUpdateDrain({
         update,
-        quiesce: () =>
-          !forceUpdate?.active && lifecycle.serving && quiesceHostedAgents([...hosted.values()]),
+        failed: recoverManagedRestart,
+        quiesce: (deadlineReached) =>
+          !forceUpdate?.active && lifecycle.serving && quiesceHostedAgents([...hosted.values()], deadlineReached),
         activeTurnCount: () =>
           [...hosted.values()].reduce((sum, agent) => sum + agent.core.activeTurnCount(), 0),
-        restart: async ({ desiredRelease }) => {
+        restart: async ({ desiredRelease }, mode) => {
+          if (mode === 'interrupted') {
+            for (const agent of hosted.values())
+              journalInterruptedTurns(agent.runtimeDir, agent.core.interruptForServerMinimum());
+          }
           stoppingStatus =
             `update pending, converging; loaded_release=${loadedRelease ?? 'unknown'}; ` +
-            `desired_release=${desiredRelease}; drain complete; intake quiesced`;
+            `desired_release=${desiredRelease}; drain ${mode}; intake quiesced`;
           await notifier.stopping(stoppingStatus).catch((error) =>
             console.error('[helper] stopping notification failed:', error));
           restartHelper('update');
@@ -319,9 +330,7 @@ export async function runMachineHelper(
     try {
       await updateDrain?.tick();
     } catch (error) {
-      console.error('[helper] managed restart failed; serving again:', error);
-      for (const agent of hosted.values())
-        agent.lifecycle.resumeAfterFailedUpdate(() => agent.core.resumeServing());
+      recoverManagedRestart(error);
     }
     void sweepHostDisk();
   };
@@ -496,10 +505,10 @@ export async function runMachineHelper(
 }
 
 /**
- * Prove every agent idle before closing any intake, in one synchronous step.
+ * Close every intake in one synchronous step; permit busy agents only at the update deadline.
  */
-export function quiesceHostedAgents(agents: readonly HostedAgent[]): boolean {
-  if (agents.some((agent) => agent.core.activeTurnCount() > 0)) return false;
+export function quiesceHostedAgents(agents: readonly HostedAgent[], deadlineReached = false): boolean {
+  if (!deadlineReached && agents.some((agent) => agent.core.activeTurnCount() > 0)) return false;
   if (agents.some((agent) => !agent.lifecycle.serving &&
       !(agent.lifecycle.state.kind === 'quiescing' && agent.lifecycle.state.reason === 'update')))
     return false;

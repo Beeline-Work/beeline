@@ -563,14 +563,14 @@ describe('Room turn failure receipt', () => {
     const failed = receipts.find((receipt) => receipt.status === 'failed')!;
     expect(failed).toEqual(expect.objectContaining({ requestId: 'ask-1', status: 'failed' }));
     expect(failed.reason).toBe(
-      `turn_backstop: no ACP traffic for 30 minutes; last activity: session/prompt`,
+      `turn_backstop: no ACP traffic for 45 minutes; last activity: session/prompt`,
     );
     expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'complete' }));
     expect(posted).toEqual([]);
     expect(cornerOpens).toBe(0);
   });
 
-  it('cancels a silent turn and answers the next turn in the retained runtime', async () => {
+  it('discards a hung harness session and answers the next turn in a fresh session', async () => {
     const { receipts, posted, promptTimeouts, sessionsOpened } = await runTurn({
       agentCommand: '/fake-agent',
       agentKind: 'codex',
@@ -582,16 +582,16 @@ describe('Room turn failure receipt', () => {
       },
     });
 
-    expect(promptTimeouts).toEqual([1_800_000, 1_800_000]);
+    expect(promptTimeouts).toEqual([ROOM_PROMPT_BACKSTOP_MS, ROOM_PROMPT_BACKSTOP_MS]);
     expect(receipts.filter((receipt) => receipt.status !== 'working')).toEqual([
       expect.objectContaining({ requestId: 'ask-1', status: 'failed' }),
       expect.objectContaining({ requestId: 'ask-2', status: 'complete' }),
     ]);
     expect(posted).toEqual([expect.objectContaining({ text: 'Back again.' })]);
-    expect(sessionsOpened).toBe(1);
+    expect(sessionsOpened).toBe(2);
   });
 
-  it('allows a Room model thirty minutes of silence before its backstop', async () => {
+  it('allows a Room model forty-five minutes of silence before its backstop', async () => {
     const { promptTimeouts, posted } = await runTurn({
       agentCommand: '/opt/harness/pi-acp',
       agentKind: 'pi',
@@ -604,7 +604,7 @@ describe('Room turn failure receipt', () => {
     });
 
     expect(promptTimeouts).toEqual([ROOM_PROMPT_BACKSTOP_MS]);
-    expect(ROOM_PROMPT_BACKSTOP_MS).toBe(1_800_000);
+    expect(ROOM_PROMPT_BACKSTOP_MS).toBe(2_700_000);
     expect(posted).toEqual([expect.objectContaining({ text: 'A late but valid answer' })]);
   });
 

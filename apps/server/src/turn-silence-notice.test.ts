@@ -145,9 +145,10 @@ describe('first-silence notice', () => {
     });
   });
 
-  it('requeues the exact interrupted command without spending a hiccup attempt or restarting the helper', async () => {
+  it.each(['human', 'agent'])('requeues an interrupted %s command without spending a hiccup attempt', async (author) => {
     const requestId = 'e'.repeat(64);
     const command = await ask(database, requestId);
+    if (author === 'agent') await database.query('UPDATE messages SET author_id=$1 WHERE id=$2', [AGENT, requestId]);
     const daemon = new DaemonService(database, new LiveHub());
     const receipt = {
       roomId: ROOM,
@@ -425,6 +426,28 @@ describe('first-silence notice', () => {
       silence: 'hiccup',
       state: 'failed',
     });
+  });
+
+  it.each(['human', 'agent'])('retries a hung harness once for a %s trigger, then completes its command', async (author) => {
+    const requestId = 'hang-request';
+    const command = await ask(database, requestId);
+    if (author === 'agent') await database.query('UPDATE messages SET author_id=$1 WHERE id=$2', [AGENT, requestId]);
+    const daemon = new DaemonService(database, new LiveHub());
+    for (const attempt of [1, 2]) {
+      if (attempt > 1) await claimAgentCommand(database, ROOM, AGENT, command.id, `g${attempt}`);
+      const result = await daemon.execute('postAgentTurnReceipt', {
+        roomId: ROOM, requestId, generationId: `g${attempt}`, status: 'failed',
+        reason: 'turn_backstop: no ACP traffic for 45 minutes; last activity: tool_call',
+        reasonKind: 'hiccup',
+      }, AGENT);
+      expect(Boolean(result.hiccupRestart)).toBe(attempt === 1);
+      expect((await commandState(database, command.id))?.state).toBe(attempt === 1 ? 'pending' : 'complete');
+    }
+    expect((await failureLine(database, requestId))?.text).toContain('Stopped retrying after two tries.');
+    expect((await database.query(
+      `SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      [ROOM, requestId, AGENT],
+    )).rows[0]?.status).toBe('failed');
   });
 
   it('reports an exhausted auth-shaped hiccup without assuming the helper is signed out', async () => {

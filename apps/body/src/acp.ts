@@ -108,7 +108,9 @@ export class AcpRequestTimeoutError extends Error {
   }
 }
 
-export const TURN_BACKSTOP_MS = 30 * 60_000;
+// Host traces include completed attempts with 41.4 minutes to first output.
+// Bound idle time (including an abandoned tool) beyond that observed tail.
+export const TURN_BACKSTOP_MS = 45 * 60_000;
 
 export class AcpTurnBackstopError extends Error {
   override readonly cause = 'turn_backstop';
@@ -689,7 +691,6 @@ interface Pending {
   detail?: string;
   sessionId?: string;
   lastActivity?: string;
-  openToolCalls?: Set<string>;
 }
 
 export class AcpClient extends EventEmitter {
@@ -1183,8 +1184,8 @@ export class AcpClient extends EventEmitter {
   /**
    * Run one prompt turn. `timeoutMs` is an idle window, not a hard cap on
    * turn length: every inbound ACP message for this session re-arms it.
-   * Open tool calls suspend the backstop until completion. A silent session
-   * with no open tool is cancelled without stopping the runtime.
+   * Tool progress re-arms the same bound; an open tool never disables it.
+   * A silent session is cancelled without stopping sibling sessions.
    * `onChunk` is the ACP-boundary
    * streaming hook: called for every incremental `agent_message_chunk`
    * delta as it arrives, so a caller can project live text without waiting
@@ -1344,14 +1345,13 @@ export class AcpClient extends EventEmitter {
   }
 
   /**
-   * A tool owns its deadline. Silence while it is open is never a turn failure.
-   * After the last tool closes, start a full backstop window for this session.
+   * Bound silence even when a tool stays open: a missing terminal tool update
+   * must not leave a claimed turn running indefinitely.
    */
   private resetPendingIdleTimeout(id: number): void {
     const p = this.pending.get(id);
     if (!p || p.idleTimeoutMs === undefined) return;
     this.clearTimer(p);
-    if (p.openToolCalls?.size) return;
     const { idleTimeoutMs, reject, detail, sessionId, lastActivity } = p;
     p.timer = setTimeout(() => {
       this.pending.delete(id);
@@ -1392,16 +1392,6 @@ export class AcpClient extends EventEmitter {
         pending.lastActivity = typeof update?.sessionUpdate === 'string'
           ? update.sessionUpdate
           : method ?? `response:${response?.method ?? 'request'}`;
-        if (
-          typeof update?.toolCallId === 'string' &&
-          (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update')
-        ) {
-          if (update.status === 'pending' || update.status === 'in_progress') {
-            pending.openToolCalls?.add(update.toolCallId);
-          } else if (update.status === 'completed' || update.status === 'failed') {
-            pending.openToolCalls?.delete(update.toolCallId);
-          }
-        }
         this.resetPendingIdleTimeout(requestId);
       }
     }
@@ -1613,7 +1603,7 @@ export class AcpClient extends EventEmitter {
         method,
         ...(sessionId ? { sessionId } : {}),
         ...(detail ? { detail } : {}),
-        ...(backstop ? { idleTimeoutMs: timeoutMs, lastActivity: method, openToolCalls: new Set<string>() } : {}),
+        ...(backstop ? { idleTimeoutMs: timeoutMs, lastActivity: method } : {}),
       });
       if (backstop) this.resetPendingIdleTimeout(id);
       this.write(payload);

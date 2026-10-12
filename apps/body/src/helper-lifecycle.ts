@@ -55,8 +55,8 @@ export type HelperLifecycleState =
  *
  *   serving → quiescing(reason) → stopping (80 s hard) → exited(code)
  *
- * A managed update quiesces only when no turn runs, and waits as long as turns
- * do. `/restart` and a forced update quiesce at once and cancel work. Only the
+ * A managed update waits for a quiet gap for at most five minutes, then
+ * journals and interrupts active work for the successor. `/restart` and a forced update quiesce at once and cancel work. Only the
  * final stop has a hard limit. A managed restart that fails while quiescing
  * goes back to serving, so the helper never refuses turns for good.
  */

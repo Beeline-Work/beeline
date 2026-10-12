@@ -272,6 +272,8 @@ describe('pending failed-command completion', () => {
 
 describe('hiccup restart budget', () => {
   it('restarts the first two silences and gives up on the third', () => {
+    expect(shouldRestartHiccup('hiccup', 1, 'turn_backstop: idle')).toBe(true);
+    expect(shouldRestartHiccup('hiccup', 2, 'turn_backstop: idle')).toBe(false);
     expect(shouldRestartHiccup('hiccup', 1)).toBe(true);
     expect(shouldRestartHiccup('hiccup', 2)).toBe(true);
     expect(shouldRestartHiccup('hiccup', HICCUP_ATTEMPT_LIMIT)).toBe(false);

@@ -30,6 +30,7 @@ import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capa
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
+  AcpTurnBackstopError,
   isPureRetryNarration,
   type McpServerWire,
   type PromptResult,
@@ -2306,6 +2307,7 @@ export class MonolithCornerTurnLoop {
         void finishTrace('cancelled').catch(() => undefined);
         return;
       }
+      if (error instanceof AcpTurnBackstopError) await this.discardSession();
       const reason = distillTurnFailureReason(error);
       startTraceStats();
       await api.execute('postAgentTurnReceipt', {

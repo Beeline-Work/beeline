@@ -3987,7 +3987,7 @@ describe('corner turn failure receipt', () => {
     const failed = receipts.find((receipt) => receipt.status === 'failed')!;
     expect(failed).toEqual(expect.objectContaining({ roomId: 'corner-id', status: 'failed' }));
     const reason = failed.reason as string;
-    expect(reason).toContain('turn_backstop: no ACP traffic for 30 minutes; last activity: plan');
+    expect(reason).toContain('turn_backstop: no ACP traffic for 45 minutes; last activity: plan');
     expect(reason).toContain('[REDACTED]');
     expect(reason).not.toMatch(/ghp_abc|\n|\bat AcpClient/);
   });

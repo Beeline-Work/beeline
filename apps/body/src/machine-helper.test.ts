@@ -12,6 +12,8 @@ import { activeReleaseId, hostPlatformKey, SelfUpdateManager } from './self-upda
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRuntimeHost, HostedAgent } from './agent-runtime.js';
+import { reportInterruptedTurns } from './force-update-journal.js';
+import * as updateJournal from './force-update-journal.js';
 import { daemonFailurePath } from './daemon-failure.js';
 import { HelperLifecycle, type HelperExitReason } from './helper-lifecycle.js';
 import { helperStatusLines, helperStatusPath } from './helper-status.js';
@@ -211,7 +213,7 @@ describe('one helper process hosts every agent on the machine', () => {
 });
 
 describe('one update drain for every hosted agent', () => {
-  it('downloads and installs between turns, then answers queued work promptly in an isolated helper', async () => {
+  it.each(['quiet gap', 'deadline', 'deadline retry'] as const)('installs at %s and resumes queued/interrupted work in an isolated helper', async (handoff) => {
     const { root, configPaths, env, signals } = await machine(1);
     const layout = { libDir: resolve(root, 'lib/beeline'),
       releasesRoot: resolve(root, 'lib/beeline-releases'), binDir: resolve(root, 'bin') };
@@ -246,6 +248,8 @@ describe('one update drain for every hosted agent', () => {
     const agentId = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
     const queued = new Map<string, AgentCommand>();
     const claims = new Map<string, number>();
+    const claimed = new Map<string, AgentCommand>();
+    const claimGenerations: string[] = [];
     const replies: string[] = [];
     const errors: unknown[] = [];
     const push = () => {
@@ -273,7 +277,12 @@ describe('one update drain for every hosted agent', () => {
         return;
       } else if (req.url?.endsWith('/claimAgentCommand')) {
         claims.set(input.commandId, Date.now());
+        claimed.set(input.commandId, queued.get(input.commandId)!);
+        claimGenerations.push(input.generationId);
         queued.delete(input.commandId);
+      } else if (req.url?.endsWith('/postAgentTurnReceipt') && input.reasonKind === 'update-interrupted') {
+        const command = claimed.get(input.requestId)!;
+        queued.set(command.id, command);
       } else if (req.url?.endsWith('/postRoomMessage')) replies.push(input.text);
       res.end(JSON.stringify({ id: 'ok' }));
     });
@@ -295,28 +304,39 @@ describe('one update drain for every hosted agent', () => {
     const held = new Promise<void>((resolveHeld) => { finishHeld = resolveHeld; });
     let host!: AgentRuntimeHost;
     let core!: ThinDaemonCore;
+    let agentLifecycle!: HelperLifecycle;
+    let generation = 0;
     const runAgent = async (configPath: string, runtimeHost: AgentRuntimeHost, signal: AbortSignal) => {
       host = runtimeHost;
+      const run = ++generation;
       const runtime = await readRuntimeRecord(configPath);
       runtime.transport = { kind: 'monolith', baseUrl: origin, daemonToken: 'isolated-test-token' };
       const api = new DaemonApiClient(origin, 'isolated-test-token', agentId);
+      await reportInterruptedTurns(dirname(configPath), api, agentId);
       core = new ThinDaemonCore(runtime, configPath, { workspaceRoot: root } as never, { daemonApi: api });
       const lifecycle = new HelperLifecycle({ controller: new AbortController(), exitProcess: () => undefined });
+      agentLifecycle = lifecycle;
       const leave = host.attach({ agentId, runtimeDir: dirname(configPath), lifecycle, core });
       const internal = core as unknown as { roomRuntime: {
         running: Map<string, unknown>; restartRequested: boolean;
       } };
       const intakes = ['long-room', 'message-room'].map((roomId) => {
         let busy = false;
-        internal.roomRuntime.running.set(roomId, { body: { isBusy: () => busy },
-          controller: new AbortController(), promise: Promise.resolve() });
         const context = new CommandExecutionContext(root);
+        internal.roomRuntime.running.set(roomId, { body: { isBusy: () => busy,
+          interruptForServerMinimum: () => busy && context.current ? {
+            roomId, requestId: context.current.turnRequestId, generationId: context.generationId,
+          } : undefined }, controller: new AbortController(), promise: Promise.resolve() });
         return runServerCommandIntake({ api, roomId, agentId, context, signal,
           canStartTurn: () => !internal.roomRuntime.restartRequested,
           onClaiming: () => { busy = true; }, onClaimFailed: () => { busy = false; },
           onLeave: () => { busy = false; }, stop: finishHeld, onError: (error) => errors.push(error),
           run: async (command) => {
-            if (command.id === 'held') await held;
+            if (command.id === 'held' && run === 1) {
+              await Promise.race([held, new Promise<void>((resolveAbort) =>
+                signal.addEventListener('abort', () => resolveAbort(), { once: true }))]);
+              if (signal.aborted) return;
+            }
             await context.bind(api).execute('postRoomMessage', { roomId, text: command.id });
           } });
       });
@@ -327,6 +347,7 @@ describe('one update drain for every hosted agent', () => {
     let running: ReturnType<typeof runMachineHelper> | undefined;
     try {
       await send('held', 'long-room');
+      if (handoff !== 'quiet gap') vi.useFakeTimers({ toFake: ['Date'] });
       running = runMachineHelper({ configPaths, env: helperEnv, signals, runAgent, exitProcess: () => undefined });
       await vi.waitFor(() => expect(claims.has('held')).toBe(true));
       const manager = new SelfUpdateManager({ layout, stageOnly: true, env: { ...helperEnv,
@@ -344,13 +365,26 @@ describe('one update drain for every hosted agent', () => {
       // The original turn remains active: this claim did not wait for its end.
       expect(core.activeTurnCount()).toBe(1);
       expect(await activeReleaseId(layout)).toBe('old');
-      finishHeld();
-      await vi.waitFor(() => expect(core.activeTurnCount()).toBe(0));
+      if (handoff === 'quiet gap') {
+        finishHeld();
+        await vi.waitFor(() => expect(core.activeTurnCount()).toBe(0));
+      } else {
+        // Move wall time across the cap while keeping the real HTTP/socket transport.
+        vi.setSystemTime(Date.now() + 5 * 60_000 + 1);
+      }
+      if (handoff === 'deadline retry') {
+        vi.spyOn(updateJournal, 'journalInterruptedTurns').mockImplementationOnce(() => {
+          throw new Error('interruption journal temporarily unavailable');
+        });
+        await host.tickUpdate();
+        expect(agentLifecycle.serving).toBe(true);
+      }
       const restartAt = Date.now();
       await host.tickUpdate();
       expect((await running).reason).toBe('update');
       expect(await activeReleaseId(layout)).toBe('new');
       expect(Date.now() - restartAt).toBeLessThan(1_000);
+      vi.useRealTimers();
 
       // Arrives with no serving helper. The successor's initial GET claims it.
       await send('during-restart');
@@ -361,6 +395,11 @@ describe('one update drain for every hosted agent', () => {
       const successorAnswerMs = Date.now() - queuedAt;
       expect(successorClaimMs).toBeLessThan(2_000);
       expect(successorAnswerMs).toBeLessThan(2_000);
+      if (handoff !== 'quiet gap') {
+        await vi.waitFor(() => expect(replies).toContain('held'));
+        expect(claimGenerations[0]).not.toBe(claimGenerations.at(-1));
+        expect(replies.filter((reply) => reply === 'held')).toHaveLength(1);
+      }
       expect(queued.size).toBe(0);
       expect(await readFile(legacyAttemptPath, 'utf8')).toBe(legacyAttempt);
       expect(await readFile(resolve(layout.releasesRoot, 'new/bundle.json'), 'utf8')).toContain('v0.1.29');
@@ -396,6 +435,12 @@ describe('one update drain for every hosted agent', () => {
     const idle = [hosted(false), hosted(false)];
     expect(quiesceHostedAgents(idle)).toBe(true);
     expect(idle.every((agent) => agent.closed() && !agent.lifecycle.serving)).toBe(true);
+  });
+
+  it('closes every intake when the deadline arrives even with busy turns', () => {
+    const agents = [hosted(false), hosted(true), hosted(false)];
+    expect(quiesceHostedAgents(agents, true)).toBe(true);
+    expect(agents.every((agent) => agent.closed() && !agent.lifecycle.serving)).toBe(true);
   });
 
   it('keeps every agent serving while any hosted turn is busy', () => {

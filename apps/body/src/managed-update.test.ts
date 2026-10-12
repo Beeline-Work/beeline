@@ -188,7 +188,7 @@ describe('managed update handoff', () => {
     expect(restarts).toEqual([]);
     expect(await activeReleaseId(layout)).toBe('old');
     expect(await coordinateManagedUpdateHandoff(update, () => true, restart)).toBe('restarting');
-    expect(restarts).toEqual(['new:drained']);
+    expect(restarts).toEqual(['new:interrupted']);
     expect(await activeReleaseId(layout)).toBe('new');
   });
 
@@ -381,7 +381,7 @@ async function settle(): Promise<void> {
 describe('managed update drain', () => {
   const MINUTE = 60_000;
 
-  async function drainFixture(options: { activeTurns: number; drainDeadlineMs?: number }) {
+  async function drainFixture(options: { activeTurns: number; drainDeadlineMs?: number; failRestartOnce?: boolean }) {
     const { layout } = await layoutFixture();
     const clock = new FakeClock();
     const state = { activeTurns: options.activeTurns, intakeQuiesced: false };
@@ -400,9 +400,15 @@ describe('managed update drain', () => {
       },
       activeTurnCount: () => state.activeTurns,
       restart: async (request, mode) => {
+        if (options.failRestartOnce) {
+          options.failRestartOnce = false;
+          throw new Error('restart failed');
+        }
         restarts.push({ release: request.desiredRelease, mode, at: clock.now });
       },
       log: (line) => logs.push(line),
+      failed: () => { state.intakeQuiesced = false; },
+      now: () => clock.now,
       setTimer: clock.setTimer,
       clearTimer: clock.clearTimer,
     });
@@ -440,17 +446,30 @@ describe('managed update drain', () => {
     expect(restarts).toHaveLength(1);
   });
 
-  it('keeps serving past the old drain deadline until there is a quiet gap', async () => {
+  it('interrupts busy work at the drain deadline without waiting for another core tick', async () => {
     const { clock, state, restarts, drain } = await drainFixture({ activeTurns: 2 });
     expect(await drain.tick()).toBe('waiting-for-idle');
     expect(state.intakeQuiesced).toBe(false);
-    await clock.advance(UPDATE_DRAIN_DEADLINE_MS + MINUTE);
+    await clock.advance(UPDATE_DRAIN_DEADLINE_MS - 1);
     expect(restarts).toEqual([]);
+    await clock.advance(1);
+    expect(state.activeTurns).toBe(2);
+    expect(state.intakeQuiesced).toBe(true);
+    expect(restarts).toEqual([{ release: 'new', mode: 'interrupted', at: 1_000 + UPDATE_DRAIN_DEADLINE_MS }]);
+    expect(clock.pending()).toBe(0);
+  });
+
+  it('restores serving and retries when the timer-driven restart fails', async () => {
+    const { clock, state, restarts, drain } = await drainFixture({ activeTurns: 1, drainDeadlineMs: 50, failRestartOnce: true });
+    await drain.tick();
+    await clock.advance(50);
     expect(state.intakeQuiesced).toBe(false);
-    state.activeTurns = 0;
-    expect(await drain.tick()).toBe('restarting');
+    expect(restarts).toEqual([]);
+    expect(clock.pending()).toBe(1);
+    await clock.advance(MINUTE);
     expect(state.intakeQuiesced).toBe(true);
     expect(restarts).toHaveLength(1);
+    expect(clock.pending()).toBe(0);
   });
 
   it('logs one waiting line per minute with the current turn count', async () => {

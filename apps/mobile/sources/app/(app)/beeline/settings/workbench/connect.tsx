@@ -151,7 +151,7 @@ function ConnectToolFlow() {
       void pair(requested.id);
       return;
     }
-    if (online.length !== 1) return;
+    if (requestedHelperId || online.length !== 1) return;
     autoPairRef.current = true;
     void pair(online[0]!.id);
   }, [helpers, offerCeremony, pair, requestedHelperId]);
@@ -181,10 +181,13 @@ function ConnectToolFlow() {
   const connectorName = connectorNameFor(connectorId);
   const machineName = install?.helperName ?? selectedHelperName;
 
-  const noHelpers = helpers !== null && helpers.every((helper) => !helper.online);
+  const requestedHelper = helpers?.find((helper) => helper.id === requestedHelperId);
+  const requestedUnavailable = Boolean(requestedHelperId && helpers !== null && !requestedHelper?.online);
+  const noHelpers = !requestedHelperId && helpers !== null && helpers.every((helper) => !helper.online);
   // Only online helpers are eligible. A sole eligible machine has no choice
   // to make; the helper row still stays visible above installation output.
-  const onlineHelpers = helpers?.filter((helper) => helper.online) ?? [];
+  const onlineHelpers = helpers?.filter((helper) => helper.online &&
+    (!requestedHelperId || helper.id === requestedHelperId)) ?? [];
   const someHelpers = onlineHelpers.length > 0;
 
   return (
@@ -207,6 +210,13 @@ function ConnectToolFlow() {
             <SurfaceGlyphLoader testID="connect-loader" />
             <Text style={styles.note}>Looking for your machine…</Text>
           </View>
+        ) : null}
+        {requestedUnavailable && !offerCeremony ? (
+          <SettingsRow
+            title={requestedHelper?.name ?? 'Selected machine'}
+            description="Unavailable — waiting for this machine to come online"
+            testID="connect-requested-unavailable"
+          />
         ) : null}
         {noHelpers && !offerCeremony ? (
           <View testID="connect-no-helper">

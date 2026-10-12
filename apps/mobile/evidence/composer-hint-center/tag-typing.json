@@ -1,0 +1,194 @@
+[
+  {
+    "surface": "Room",
+    "text": "@ruby A",
+    "inputBounds": [
+      193,
+      1112,
+      874,
+      1203
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1231
+    ]
+  },
+  {
+    "surface": "Room",
+    "text": "@ruby Ag",
+    "inputBounds": [
+      193,
+      1112,
+      874,
+      1203
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1231
+    ]
+  },
+  {
+    "surface": "Room",
+    "text": "@ruby Agj",
+    "inputBounds": [
+      193,
+      1112,
+      874,
+      1203
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1231
+    ]
+  },
+  {
+    "surface": "Room",
+    "text": "@ruby Agjy",
+    "inputBounds": [
+      193,
+      1112,
+      874,
+      1203
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1231
+    ]
+  },
+  {
+    "surface": "Room",
+    "text": "@ruby Agjyp",
+    "inputBounds": [
+      193,
+      1112,
+      874,
+      1203
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1231
+    ]
+  },
+  {
+    "surface": "Room",
+    "text": "@ruby Agjypq",
+    "inputBounds": [
+      193,
+      1112,
+      874,
+      1203
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1231
+    ]
+  },
+  {
+    "surface": "Viewer",
+    "text": "@ruby A",
+    "inputBounds": [
+      193,
+      1116,
+      874,
+      1207
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1238
+    ]
+  },
+  {
+    "surface": "Viewer",
+    "text": "@ruby Ag",
+    "inputBounds": [
+      193,
+      1116,
+      874,
+      1207
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1238
+    ]
+  },
+  {
+    "surface": "Viewer",
+    "text": "@ruby Agj",
+    "inputBounds": [
+      193,
+      1116,
+      874,
+      1207
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1238
+    ]
+  },
+  {
+    "surface": "Viewer",
+    "text": "@ruby Agjy",
+    "inputBounds": [
+      193,
+      1116,
+      874,
+      1207
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1238
+    ]
+  },
+  {
+    "surface": "Viewer",
+    "text": "@ruby Agjyp",
+    "inputBounds": [
+      193,
+      1116,
+      874,
+      1207
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1238
+    ]
+  },
+  {
+    "surface": "Viewer",
+    "text": "@ruby Agjypq",
+    "inputBounds": [
+      193,
+      1116,
+      874,
+      1207
+    ],
+    "rowBounds": [
+      60,
+      1084,
+      1021,
+      1238
+    ]
+  }
+]

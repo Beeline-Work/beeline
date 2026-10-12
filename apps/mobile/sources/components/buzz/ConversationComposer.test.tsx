@@ -106,6 +106,44 @@ describe('one composer', () => {
     expect(f.renderer.root.findByType('TextInput').props.placeholder).toBe('Message');
   });
 
+  it('centers measured type and fits scaled natural lines without adding span line heights', () => {
+    platform.OS = 'android';
+    const f = render('');
+    const input = () => f.renderer.root.findByType('TextInput');
+    const measure = f.renderer.root.findByProps({ testID: 'chat-text-measurement' });
+    const drawOffset = () => Object.assign({}, ...input().props.style.filter(Boolean)).transform[0].translateY;
+    for (const scale of [0.85, 1, 1.15, 1.3]) {
+      const line = { height: 22 * scale, ascender: 18 * scale, capHeight: 12 * scale };
+      act(() => measure.props.onTextLayout({ nativeEvent: { lines: [line] } }));
+      const capCenter = line.ascender - line.capHeight / 2 + drawOffset();
+      expect(capCenter).toBeCloseTo(line.height / 2);
+      const style = Object.assign({}, ...input().props.style.filter(Boolean));
+      expect(style.height).toBe(Math.max(COMPOSER_SINGLE_LINE_INPUT_HEIGHT, Math.ceil(line.height)));
+      expect(style.paddingBottom).toBeUndefined();
+      expect(style.includeFontPadding).toBe(false);
+    }
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() => f.renderer.update(<ConversationComposer {...props} value="Message" viewerPill />));
+    expect(drawOffset()).toBeCloseTo(-1.3);
+    act(() => f.renderer.update(<ConversationComposer {...props} value="Message" viewerPill height={29} />));
+    expect(f.renderer.root.findByProps({ testID: 'chat-composer-input-row' }).props.style[2]).toBe(false);
+  });
+
+  it('centers iOS minimum-height text and removes that extra inset when the paragraph grows', () => {
+    platform.OS = 'ios';
+    const f = render('Message');
+    const input = () => f.renderer.root.findByType('TextInput');
+    const measure = f.renderer.root.findByProps({ testID: 'chat-text-measurement' });
+    // TextKit's used rect can be shorter than its full line fragment.
+    act(() => measure.props.onTextLayout({ nativeEvent: { lines: [{ height: 22, ascender: 17, descender: 6, capHeight: 11 }] } }));
+    const drawOffset = () => Object.assign({}, ...input().props.style.filter(Boolean)).transform[0].translateY;
+    expect(drawOffset()).toBe(1.5);
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() => f.renderer.update(<ConversationComposer {...props} value="Message\nMessage" height={46} />));
+    expect(drawOffset()).toBe(0);
+    expect(input().props.style[1]).toBeUndefined();
+  });
+
   it('renders a sentence-case reply quote inside the composer frame', () => {
     const cancelReply = vi.fn();
     const f = render('');
@@ -197,13 +235,14 @@ describe('one composer', () => {
     expect(input.props.value).toBe(value);
     expect(input.props.multiline).toBe(true);
     expect(input.props.numberOfLines).toBeUndefined();
-    expect(input.props.style).toHaveLength(5);
+    expect(input.props.style).toHaveLength(6);
     expect(input.props.style[0]).not.toHaveProperty('flex');
     expect(input.parent.parent.props.style).toMatchObject({ flex: 1, position: 'relative' });
     expect(input.props.style[1]).toBeUndefined();
     expect(input.props.style[2]).toBe(false);
-    expect(input.props.style[3]).toBeUndefined();
+    expect(input.props.style[3]).toEqual({ transform: [{ translateY: 0 }] });
     expect(input.props.style[4]).toBeUndefined();
+    expect(input.props.style[5]).toBeUndefined();
   });
 
   it('rejects stale native text events after dispatch and replaces the consumed field', () => {
@@ -279,7 +318,7 @@ describe('one composer', () => {
     for (const value of ['', 'one line', '@moth one line']) {
       const f = render(value);
       const input = f.renderer.root.findByType('TextInput');
-      expect(input.props.style[2]).toEqual({ includeFontPadding: false, textAlignVertical: 'center', paddingBottom: 4 });
+      expect(input.props.style[2]).toEqual({ includeFontPadding: false, textAlignVertical: 'center' });
       expect(input.props.style[1]).toEqual({
         height: COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
         maxHeight: COMPOSER_MAX_INPUT_HEIGHT,
@@ -294,7 +333,7 @@ describe('one composer', () => {
     const props = f.renderer.root.findByType(ConversationComposer).props;
     act(() => f.renderer.update(<ConversationComposer {...props} viewerPill height={72} />));
     const row = f.renderer.root.findByProps({ testID: 'chat-composer-input-row' }).props.style;
-    expect(row).toEqual([expect.objectContaining({ paddingVertical: 8, paddingHorizontal: 8 }), { alignItems: 'flex-end' }]);
+    expect(row).toEqual([expect.objectContaining({ paddingVertical: 8, paddingHorizontal: 8 }), { minHeight: 44 }, { alignItems: 'flex-end' }]);
     expect(f.renderer.root.findByType('TextInput').props.style[1].height).toBe(72);
     expect(f.renderer.root.findByProps({ testID: 'chat-attach-button' }).props.style.height).toBe(26);
     expect(f.renderer.root.findByProps({ testID: 'chat-send' }).props.style.height).toBe(26);
@@ -373,7 +412,7 @@ describe('one composer', () => {
 
   it('bottom-aligns the controls only after the field grows beyond one line', () => {
     const f = render('one line');
-    expect(f.renderer.root.findByProps({ testID: 'chat-composer-input-row' }).props.style[1]).toBe(
+    expect(f.renderer.root.findByProps({ testID: 'chat-composer-input-row' }).props.style[2]).toBe(
       false,
     );
     const props = f.renderer.root.findByType(ConversationComposer).props;
@@ -383,7 +422,7 @@ describe('one composer', () => {
       ),
     );
     expect(
-      f.renderer.root.findByProps({ testID: 'chat-composer-input-row' }).props.style[1],
+      f.renderer.root.findByProps({ testID: 'chat-composer-input-row' }).props.style[2],
     ).toMatchObject({
       alignItems: 'flex-end',
     });

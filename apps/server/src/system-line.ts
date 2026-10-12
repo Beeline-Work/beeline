@@ -731,14 +731,11 @@ export async function backfillComputerObservations(database: SqlDatabase): Promi
       system_event=jsonb_set(system_event,'{subject,name}',
         to_jsonb(replace(system_event->'subject'->>'name','A person','Shared browser')))
     WHERE system_event->>'kind'='computer-session-activity'`);
-  // A passive observation accepted by the previous release must not start
-  // a turn after this migration. Preserve coalesced meaningful input.
+  // Browser activity accepted by an older release must not start a turn.
+  // Claimed turns and commands sourced from a person's message stay intact.
   await database.query(`UPDATE agent_commands command SET state='cancelled',completed_at=now()
     FROM messages source WHERE source.id=command.source_message_id
       AND command.state='pending'
       AND command.reason IN ('subscribed_event','computer_activity')
-      AND source.system_event->>'kind'='computer-session-activity'
-      AND source.system_event->'payload'->>'activity' IN ('viewer-opened','viewer-closed','takeover')
-      AND (command.recovery_context IS NULL OR
-        replace(command.recovery_context,'A person','Shared browser')=source.text)`);
+      AND source.system_event->>'kind'='computer-session-activity'`);
 }

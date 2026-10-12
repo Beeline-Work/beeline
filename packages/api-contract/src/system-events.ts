@@ -105,7 +105,7 @@ export const SERVER_EVENT_KIND_DETAIL: Readonly<Record<ServerEventKind, string>>
   'poll-closed': 'fires when a posted poll closes, starting a new turn for the asking agent',
   'workflow-handoff': 'fires when a workflow run starts or hands off to its next role',
   'subscription-fired': 'wakes the agent that subscribed to one outside event',
-  'computer-session-activity': 'wakes the sharing agent on human browser input or navigation while in control; opening and closing the view are context only',
+  'computer-session-activity': 'records shared-browser activity as context for the next turn; never wakes an agent',
 };
 
 /**

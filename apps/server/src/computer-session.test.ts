@@ -132,7 +132,7 @@ describe('computer session handoff', () => {
     await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
   });
 
-  it('retires historical viewer lines and unclaimed passive wakes, preserving meaningful requests', async () => {
+  it('retires all unclaimed browser wakes while preserving sent messages', async () => {
     const share = await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'old-view', upstreamUrl: 'body:',
     });
@@ -148,11 +148,16 @@ describe('computer session handoff', () => {
     // Legacy pre-coalescing commands had the normal subscribed-event reason.
     await database.query(`UPDATE agent_commands SET reason='subscribed_event' WHERE source_message_id=$1`, [passive.id]);
     const meaningful = await observation('input');
+    const humanId = randomUUID();
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Please check this screen')`, [humanId, ROOM, HUMAN]);
+    const human = await createAgentCommand(database, { roomId: ROOM, agentId: AGENT, sourceMessageId: humanId, reason: 'human_tag' });
     await backfillComputerObservations(database);
+    expect((await database.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [human!.id])).rows[0]?.state).toBe('pending');
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [human!.id]);
     const commands = await database.query<{source_message_id: string;state: string}>(
       `SELECT source_message_id,state FROM agent_commands WHERE source_message_id=ANY($1::text[])`, [[passive.id,meaningful.id]]);
     expect(commands.rows).toEqual(expect.arrayContaining([
-      {source_message_id: passive.id,state:'cancelled'}, {source_message_id: meaningful.id,state:'pending'},
+      {source_message_id: passive.id,state:'cancelled'}, {source_message_id: meaningful.id,state:'cancelled'},
     ]));
     const rows = await database.query<{text: string;presentation: string}>(
       `SELECT text,presentation FROM messages WHERE id=ANY($1::text[])`, [[passive.id,meaningful.id]]);
@@ -251,7 +256,7 @@ describe('computer session handoff', () => {
     expect((await database.query(
       `SELECT id FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`,
       [activity.find((event) => event.system_event.payload.activity === 'handback')!.id, AGENT],
-    )).rowCount).toBe(1);
+    )).rowCount).toBe(0);
     viewer.close();
     expect((await getComputerSession(database, share.id))?.status).toBe('live');
     source.close();
@@ -376,7 +381,7 @@ describe('computer session handoff', () => {
   }, 60_000);
 
   for (const navigation of [{ url: 'https://httpbin.org/post?custname=private' }, { origin: 'https://httpbin.org' }]) {
-    it(`carries Squire's human form-navigation ${'url' in navigation ? 'URL' : 'origin'} into the agent turn`, async () => {
+    it(`keeps Squire's human input/navigation/handback quiet until a composer message (${'url' in navigation ? 'URL' : 'origin'})`, async () => {
       const roomId = randomUUID();
       await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Navigation proof')`, [roomId, WORKSPACE]);
       for (const identityId of [AGENT, HUMAN]) await database.query(
@@ -407,11 +412,29 @@ describe('computer session handoff', () => {
         await until(async () => (await database.query(`SELECT 1 FROM computer_session_events WHERE session_id=$1 AND name='input'`,
           [share.id])).rowCount ? true : undefined);
         expect((await database.query(`SELECT 1 FROM computer_session_events WHERE session_id=$1 AND name='navigation'`, [share.id])).rowCount).toBe(0);
+        for (const message of [{ type: 'wheel', delta_y: 100 }, { type: 'text', text: 'private page input' }]) {
+          const forwarded = next(upstream!);
+          viewer.send(JSON.stringify(message));
+          expect(JSON.parse(await forwarded)).toEqual(message);
+        }
+        await until(async () => (await database.query(`SELECT 1 FROM messages WHERE system_event->'payload'->>'sessionId'=$1
+          AND system_event->'payload'->>'detail'='typing'`, [share.id])).rowCount ? true : undefined);
+        expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [roomId])).rowCount).toBe(0);
         // Only Squire's explicit main-frame navigation notification supplies
         // navigation evidence; pointer events and changed pixels cannot.
         upstream!.send(JSON.stringify({ type: 'navigation', ...navigation }));
-        const command = await until(async () => (await readAgentCommands(database, roomId, AGENT)).commands.find(item =>
-          (item.source.systemEvent?.payload as { activity?: string } | undefined)?.activity === 'navigation'));
+        await until(async () => (await database.query(`SELECT 1 FROM messages WHERE
+          system_event->'payload'->>'sessionId'=$1 AND system_event->'payload'->>'activity'='navigation'`, [share.id])).rowCount ? true : undefined);
+        await phone.execute('handbackComputerSession', { id: share.id }, HUMAN);
+        await until(async () => (await database.query(`SELECT 1 FROM messages WHERE
+          system_event->'payload'->>'sessionId'=$1 AND system_event->'payload'->>'activity'='handback'`, [share.id])).rowCount ? true : undefined);
+        expect((await database.query(`SELECT id FROM agent_commands WHERE room_id=$1`, [roomId])).rowCount).toBe(0);
+        await database.query(`UPDATE identities SET handle='computer-agent' WHERE id=$1`, [AGENT]);
+        await phone.execute('sendRoomMessage', { roomId, text: '@computer-agent Please check this screen' }, HUMAN);
+        const commands = (await readAgentCommands(database, roomId, AGENT)).commands;
+        expect(commands).toHaveLength(1);
+        const command = commands[0]!;
+        expect(command.reason).toBe('human_tag');
         const destination = new URL(navigation.url ?? navigation.origin!).href;
         const contextDir = await mkdtemp(join(process.cwd(), '.navigation-turn-'));
         const abort = new AbortController();
@@ -435,9 +458,9 @@ describe('computer session handoff', () => {
               abort.abort();
             },
           });
-          expect(finalInput).toContain(`Human navigated the shared browser to ${destination}`);
-          expect(finalInput).toContain('observations, not requests');
-          expect(finalInput).toContain(destination);
+          expect(finalInput).toContain('@computer-agent Please check this screen');
+          const conversation = await daemon.execute('getRoomConversation', { roomId }, AGENT);
+          expect(conversation.items.some(item => item.body === `Human navigated the shared browser to ${destination}`)).toBe(true);
         } finally { await rm(contextDir, { recursive: true, force: true }); }
         const events = await database.query<{ detail: string }>(
           `SELECT detail FROM computer_session_events WHERE session_id=$1 AND name='navigation'`, [share.id]);

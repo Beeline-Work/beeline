@@ -1,0 +1,104 @@
+{
+  "activity": [
+    {
+      "activity": {
+        "activity": "viewer-opened",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "activity": "takeover",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "pointer",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "pointer",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "pointer",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "scroll",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "typing",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "pointer",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "http://127.0.0.1:8184/destination",
+        "activity": "navigation",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "activity": "handback",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "activity": "takeover",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "pointer",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "pointer",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    },
+    {
+      "activity": {
+        "detail": "pointer",
+        "activity": "input",
+        "sessionId": "KYwOWNfK5mRYSpdetVq9Zrbae12Tnv4pmOugTWJ-is4"
+      }
+    }
+  ],
+  "commands": [
+    {
+      "reason": "human_tag",
+      "state": "pending"
+    }
+  ]
+}

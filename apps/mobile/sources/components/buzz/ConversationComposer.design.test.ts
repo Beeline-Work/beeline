@@ -31,7 +31,8 @@ describe('Option A composer chrome', () => {
     const android = styleBlock('  inputAndroid: {', '  sendButton: {');
     expect(android).toContain('includeFontPadding: false');
     expect(android).toContain("textAlignVertical: 'center'");
-    expect(android).toContain('paddingBottom: theme.buzz.space.xs');
+    expect(android).not.toContain('paddingBottom:');
+    expect(composer).toContain('onTextLayout={measureTextBody}');
     expect(composer).toContain('android: { lineHeight: undefined }');
     expect(composer).toContain("textAlignVertical: 'top'");
   });

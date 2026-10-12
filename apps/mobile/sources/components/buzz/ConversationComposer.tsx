@@ -12,6 +12,7 @@ import {
   type TextInputContentSizeChangeEventData,
   type TextInputKeyPressEventData,
   type TextInputSelectionChangeEventData,
+  type TextLayoutEvent,
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { groknight } from '@/buzz/groknight';
@@ -174,9 +175,36 @@ export function ConversationComposer({
   onRetryAttachment,
 }: Props) {
   const { theme } = useUnistyles();
-  const multiline = height > COMPOSER_SINGLE_LINE_INPUT_HEIGHT;
   const containerRef = React.useRef<HTMLElement | null>(null);
   const ownInputRef = React.useRef<TextInput | null>(null);
+  const [textOffset, setTextOffset] = React.useState(0);
+  const [nativeLineHeight, setNativeLineHeight] = React.useState(COMPOSER_SINGLE_LINE_INPUT_HEIGHT);
+  // A scaled single line is still one line. Bottom-align only a paragraph
+  // taller than the measured line, so the viewer's spare space stays balanced.
+  const multiline = height > Math.max(COMPOSER_SINGLE_LINE_INPUT_HEIGHT, Math.ceil(nativeLineHeight));
+  // A caller can keep an empty field at 26dp (the viewer does). A scaled
+  // natural line must still fit before Android can center its baseline.
+  const inputHeight = Platform.OS === 'android' ? Math.max(height, Math.ceil(nativeLineHeight)) : height;
+  // iOS top-aligns its intrinsic text. Its 26dp minimum leaves extra space
+  // only for a short single line; a grown paragraph has no such extra inset.
+  const drawingOffset = textOffset + (Platform.OS === 'ios' && !multiline
+    ? Math.max(0, COMPOSER_SINGLE_LINE_INPUT_HEIGHT - nativeLineHeight) / 2
+    : 0);
+  const measureTextBody = React.useCallback((event: TextLayoutEvent) => {
+    const line = event.nativeEvent.lines[0];
+    if (!line) return;
+    // Center the cap-to-baseline body, rather than the font's asymmetric
+    // ascent/descent box. Text and TextInput use the same natural metrics.
+    // Moving the drawing does not change contentSize or inline span layout.
+    // iOS reports the used glyph rect as `height`; ascent + descent describe
+    // its full line fragment, including paragraph leading.
+    const lineHeight = Platform.OS === 'ios' ? line.ascender + line.descender : line.height;
+    const offset = lineHeight / 2 - line.ascender + line.capHeight / 2;
+    if (Number.isFinite(offset)) {
+      setTextOffset(offset);
+      setNativeLineHeight(lineHeight);
+    }
+  }, []);
   const setInputRef = React.useCallback(
     (node: TextInput | null) => {
       ownInputRef.current = node;
@@ -243,6 +271,39 @@ export function ConversationComposer({
         : { paddingTop: top, textIndent: right + INLINE_TAG_GAP },
     );
   }, []);
+
+  React.useLayoutEffect(() => {
+    if (TAGS_AS_SPANS) return;
+    const input = ownInputRef.current as unknown as HTMLTextAreaElement | null;
+    if (!input || typeof input.getBoundingClientRect !== 'function') return;
+    let active = true;
+    const measure = () => {
+      if (!active || typeof CanvasRenderingContext2D === 'undefined') return;
+      const css = getComputedStyle(input);
+      const context = document.createElement('canvas').getContext('2d');
+      if (!context) return;
+      context.font = `${css.fontStyle} ${css.fontWeight} ${css.fontSize} ${css.fontFamily}`;
+      const metrics = context.measureText('M');
+      const lineHeight = parseFloat(css.lineHeight);
+      const inputHeight = Math.min(input.clientHeight, COMPOSER_SINGLE_LINE_INPUT_HEIGHT);
+      const offset = (inputHeight - lineHeight) / 2 +
+        (metrics.actualBoundingBoxAscent - metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent) / 2;
+      if (Number.isFinite(offset)) setTextOffset(offset);
+    };
+    measure();
+    // Re-measure after the actual face arrives, and after responsive resizing.
+    void document.fonts?.ready.then(measure);
+    document.fonts?.addEventListener('loadingdone', measure);
+    window.addEventListener('resize', measure);
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure);
+    observer?.observe(input);
+    return () => {
+      active = false;
+      document.fonts?.removeEventListener('loadingdone', measure);
+      window.removeEventListener('resize', measure);
+      observer?.disconnect();
+    };
+  }, [height, inputRevision, tagSplit.prefix, theme.buzz.type.body]);
 
   // Speech recognition — internal hook, scoped to the composer.
   // What the current take added to the text, so ■ can take exactly that out.
@@ -410,7 +471,7 @@ export function ConversationComposer({
         </View>
       )}
       <View
-        style={[styles.inputRow, multiline && styles.composerMultiline]}
+        style={[styles.inputRow, viewerPill && styles.viewerPillRow, multiline && styles.composerMultiline]}
         testID={`${testIDPrefix}-composer-input-row`}
       >
         {dictationBusy ? (
@@ -438,6 +499,25 @@ export function ConversationComposer({
           </TouchableOpacity>
         )}
         <View style={styles.inputWrapper}>
+          {Platform.OS !== 'web' ? (
+            <Text
+              accessible={false}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              pointerEvents="none"
+              numberOfLines={1}
+              onTextLayout={measureTextBody}
+              style={[styles.textMeasurement, Platform.OS === 'android' && styles.inputAndroid]}
+              testID={`${testIDPrefix}-text-measurement`}
+            >
+              {tagSegments(tagSplit.prefix).map((segment, index) => (
+                <Text key={index} style={segment.startsWith('@') ? styles.inlineTag : undefined}>
+                  {segment}
+                </Text>
+              ))}
+              Message
+            </Text>
+          ) : null}
           <TextInput
             key={inputRevision}
             ref={setInputRef}
@@ -447,8 +527,9 @@ export function ConversationComposer({
             autoFocus={focused}
             style={[
               styles.input,
-              Platform.OS === 'ios' ? undefined : { height, maxHeight },
+              Platform.OS === 'ios' ? undefined : { height: inputHeight, maxHeight },
               Platform.OS === 'android' && styles.inputAndroid,
+              { transform: [{ translateY: drawingOffset }] },
               // The input stays mounted under the waveform; its typed text
               // returns when dictation ends.
               dictationBusy ? styles.inputHidden : undefined,
@@ -551,7 +632,7 @@ export function ConversationComposer({
               // A narrower field can wrap the tags onto another line.
               onLayout={measureTags}
               pointerEvents="box-none"
-              style={styles.tagOverlay}
+              style={[styles.tagOverlay, { transform: [{ translateY: textOffset }] }]}
               testID={`${testIDPrefix}-tags`}
             >
               {tagSplit.tags.map((handle, index) => (
@@ -799,6 +880,8 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.accent,
   },
   viewerPill: { borderWidth: 0, borderRadius: 0, backgroundColor: 'transparent' },
+  // Without the Room's two border insets, the row itself fills the 44dp field.
+  viewerPillRow: { minHeight: 44 },
   adjuncts: { borderBottomWidth: 1, borderBottomColor: theme.buzz.border },
   adjunctDivider: { borderTopWidth: 1, borderTopColor: theme.buzz.border },
   reply: {
@@ -922,14 +1005,17 @@ const styles = StyleSheet.create((theme) => ({
     textAlignVertical: 'top',
     outlineStyle: 'none',
   } as any,
-  // Space Grotesk's extra font padding is asymmetric. Trim it, then balance
-  // its natural baseline with a bottom inset inside the fixed-height field.
-  // The row's equal insets protect accents and descenders.
-  // Keep lineHeight unset above so leading tags cannot jitter the measurement.
+  textMeasurement: {
+    ...theme.buzz.type.body,
+    ...Platform.select({ android: { lineHeight: undefined }, default: {} }),
+    position: 'absolute',
+    opacity: 0,
+  },
+  // Keep lineHeight unset so leading tags cannot jitter the measurement.
+  // The measured drawing offset above balances the actual cap-height body.
   inputAndroid: {
     includeFontPadding: false,
     textAlignVertical: 'center',
-    paddingBottom: theme.buzz.space.xs,
   },
   sendButton: {
     width: 26,

@@ -96,4 +96,6 @@ python3 apps/mobile/scripts/composer-hint-center-web-proof.py
 
 Validation after integrating current main: root `npm run typecheck`; 130 tests across 10 composer, speech, viewer, layout and design suites; `npm run dead-code` (91 baseline findings, zero introduced). The new native-metric regression fails on the baseline and passes with the fix. Native iOS is not pixel-tested in this Linux environment; the minimum-height/multiline behavior has a component regression test.
 
+The rebuilt final APK also passed a 12-frame recheck at 420dpi / font scale 1.0 after main integration and the iOS metric refinement; its Android drawing calculation is identical to the full matrix.
+
 Validated release-fixture APK SHA-256: `5ee44f811a9af590aceb0e4e980a41bf60a9d58bc1224332d389f3b8b3719cf6`. APK, generated signing configuration and local logs are ignored.

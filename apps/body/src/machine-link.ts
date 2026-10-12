@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { helperVersion } from './helper-version.js';
+import { unknownServerEventLogger } from './unknown-server-event.js';
 import { LiveLink, type LiveLinkTiming, type LiveSocketFactory } from './live-link.js';
 
 /** Subprotocol of the one socket a helper machine holds for all of its agents. */
@@ -191,6 +192,7 @@ export class AgentChannel {
  * `AgentChannel` on it; the socket opens while any agent wants it.
  */
 export class MachineLink {
+  readonly #logUnknown = unknownServerEventLogger('machine-link');
   readonly link: LiveLink;
   readonly #channels = new Map<string, AgentChannel>();
   #identity: { releaseVersion: string; sourceSha?: string } = { releaseVersion: 'v0.0.0' };
@@ -283,7 +285,11 @@ export class MachineLink {
       return;
     }
     // Untagged frames belong to the machine: release notices reach every agent.
-    if (event.type === 'helper-release')
+    if (event.type === 'helper-release') {
       for (const channel of this.#channels.values()) channel.broadcast(event);
+      return;
+    }
+    // hello is informational; a malformed force-update never authorizes an update.
+    if (event.type !== 'hello' && event.type !== 'force-update') this.#logUnknown(event.type);
   }
 }

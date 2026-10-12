@@ -1,9 +1,13 @@
 import { WebSocket } from 'ws';
+import { unknownServerEventLogger } from './unknown-server-event.js';
 
 export type ChromiumPage = { id: string; type: string; title?: string; url?: string; webSocketDebuggerUrl?: string };
+const COMPUTER_ACTIVITY_NAMES = [
+  'viewer-opened', 'viewer-closed', 'takeover', 'input', 'navigation', 'handback',
+] as const;
 export type ComputerActivityEvent = {
   type: 'event'; seq: number; at: string;
-  name: 'viewer-opened' | 'viewer-closed' | 'takeover' | 'input' | 'navigation' | 'handback';
+  name: typeof COMPUTER_ACTIVITY_NAMES[number];
   detail?: string;
 };
 
@@ -51,6 +55,7 @@ export async function shareChromiumPage(input: {
   const relay = new WebSocket(source, { headers: { authorization: `Bearer ${input.daemonToken}` } });
   try { await opened(relay); } catch (error) { cdp.close(); throw error; }
   const share: Share = { cdp, relay, controlled: false };
+  const logUnknown = unknownServerEventLogger('computer-share');
   shares.get(input.page.id)?.cdp.close();
   shares.set(input.page.id, share);
   let serial = 1;
@@ -111,6 +116,7 @@ export async function shareChromiumPage(input: {
       if (inputCount++ < 5) console.error(`[computer-share] forwarded ${message.method}`);
       sendCdp(message.method, message.params ?? {});
     }
+    else if (message.type !== 'takeover' && message.type !== 'release') logUnknown(message.type);
   });
   const finish = () => {
     if (shares.get(input.page.id) !== share) return;
@@ -146,6 +152,7 @@ export async function waitForComputerHandback(input: {
   onEvent?: (event: ComputerActivityEvent) => void;
 }): Promise<{ type: 'handoff' | 'ended'; note?: string; events: ComputerActivityEvent[] }> {
   const events: ComputerActivityEvent[] = [];
+  const logUnknown = unknownServerEventLogger('computer-handback');
   let since = 0;
   for (let attempt = 0; attempt < 2; attempt++) {
     const url = new URL(`/s/${input.shareId}/wait?since=${since}`, input.serverBaseUrl);
@@ -164,10 +171,15 @@ export async function waitForComputerHandback(input: {
             type?: string; note?: string; seq?: number; at?: string;
             name?: ComputerActivityEvent['name']; detail?: string;
           };
+          if (!value || typeof value.type !== 'string' || !value.type) throw new Error('invalid handback event');
           if (value.type === 'event') {
             if (typeof value.seq === 'number' && Number.isSafeInteger(value.seq) && value.seq > since &&
                 typeof value.at === 'string' && value.name) {
               since = value.seq;
+              if (!COMPUTER_ACTIVITY_NAMES.includes(value.name)) {
+                logUnknown(value.name);
+                return;
+              }
               const event: ComputerActivityEvent = { type: 'event', seq: value.seq, at: value.at,
                 name: value.name, ...(value.detail ? { detail: value.detail } : {}) };
               events.push(event);
@@ -175,7 +187,10 @@ export async function waitForComputerHandback(input: {
             }
             return;
           }
-          if (value.type !== 'handoff' && value.type !== 'ended') throw new Error('invalid handback event');
+          if (value.type !== 'handoff' && value.type !== 'ended') {
+            logUnknown(value.type);
+            return;
+          }
           settled = true;
           if (timer) clearTimeout(timer);
           resolve({ type: value.type, ...(value.note ? { note: value.note } : {}), events });

@@ -2583,6 +2583,10 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       return;
     }
     const name = match[1]!;
+    if (name === 'getCornerAsk') {
+      json(response, 410, { error: 'getCornerAsk is retired; use order and report' });
+      return;
+    }
     if (!DAEMON_OPERATION_NAMES.has(name as never)) {
       json(response, 404, { error: 'unknown_daemon_operation' });
       return;

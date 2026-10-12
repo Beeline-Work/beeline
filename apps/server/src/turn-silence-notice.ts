@@ -1,3 +1,5 @@
+import { reportToCommander } from './commander.js';
+import type { CommandRow } from './agent-command.js';
 /**
  * First silence after a delivered message: one durable Room line, and for a
  * hiccup only, reopen the original command so the helper answers it again
@@ -175,7 +177,11 @@ export async function noteFirstSilence(
   // The destination
   // corner's request all the same: its failure gets the line and the retry.
   let trigger = (
-    await database.query<{ agent_name: string; login_handle: string | null; harness: string | null }>(
+    await database.query<{
+      agent_name: string;
+      login_handle: string | null;
+      harness: string | null;
+    }>(
       `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
               agent.handle login_handle,
               (SELECT harness FROM agents WHERE agent_id=$3) harness
@@ -190,16 +196,29 @@ export async function noteFirstSilence(
   ).rows[0];
   // A harness hang or update interruption belongs to the claimed command,
   // including agent/system dispatches that have no human trigger message.
-  if (!trigger && (input.reasonKind === 'update-interrupted' || input.reason?.startsWith('turn_backstop:'))) {
-    trigger = (await database.query<{ agent_name: string; login_handle: string | null; harness: string | null }>(
-      `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
+  if (!trigger) {
+    trigger = (
+      await database.query<{
+        agent_name: string;
+        login_handle: string | null;
+        harness: string | null;
+      }>(
+        `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
               agent.handle login_handle, configuration.harness
        FROM agent_commands command JOIN identities agent ON agent.id=command.agent_id
        LEFT JOIN agents configuration ON configuration.agent_id=agent.id
        WHERE command.room_id=$1 AND command.turn_request_id=$2 AND command.agent_id=$3
-         AND command.action IN ('input','resume') LIMIT 1`,
-      [input.roomId, input.requestId, input.agentId],
-    )).rows[0];
+         AND command.action IN ('input','resume')
+         AND (command.private_payload IS NOT NULL OR $4::boolean) LIMIT 1`,
+        [
+          input.roomId,
+          input.requestId,
+          input.agentId,
+          input.reasonKind === 'update-interrupted' ||
+            Boolean(input.reason?.startsWith('turn_backstop:')),
+        ],
+      )
+    ).rows[0];
   }
   if (!trigger) return NO_RESTART;
 
@@ -238,13 +257,8 @@ async function inscribeSilence(
   const reason = (input.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX);
   const classified = classifyTurnSilence(reason || undefined, input.reasonKind);
   const command = (
-    await database.query<{
-      id: string;
-      state: 'pending' | 'claimed';
-      hiccup_attempts: number;
-      generation_id: string | null;
-    }>(
-      `SELECT id,state,hiccup_attempts,generation_id FROM agent_commands
+    await database.query<CommandRow>(
+      `SELECT * FROM agent_commands
        WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action IN ('input','resume')
          AND ((state='pending' AND $4::text IS NULL) OR
               (state='claimed' AND generation_id=$4))
@@ -258,8 +272,11 @@ async function inscribeSilence(
   if (!command && input.generationId != null) return NO_RESTART;
   const canIncrement = command?.state === 'claimed';
   const attempt = canIncrement ? command!.hiccup_attempts + 1 : (command?.hiccup_attempts ?? 0);
-  const restart = Boolean(canIncrement && shouldRestartHiccup(classified.kind, attempt, classified.fault));
-  const givingUp = classified.kind === 'hiccup' && canIncrement && attempt >= hiccupAttemptLimit(classified.fault);
+  const restart = Boolean(
+    canIncrement && shouldRestartHiccup(classified.kind, attempt, classified.fault),
+  );
+  const givingUp =
+    classified.kind === 'hiccup' && canIncrement && attempt >= hiccupAttemptLimit(classified.fault);
   // An auth-shaped fault gets the same bounded hiccup retries as any other
   // transient condition; only once those are exhausted does the Room line
   // (and the card it carries) identify failed provider authentication
@@ -296,26 +313,28 @@ async function inscribeSilence(
     [input.roomId, input.requestId, input.agentId, reason || classified.fault || null],
   );
 
-  const recent = (
-    await database.query<{ id: string }>(
-      `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
+  if (!command?.private_payload) {
+    const recent = (
+      await database.query<{ id: string }>(
+        `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'
          AND card->>'requestId'=$2 AND card->>'agentId'=$3 AND card->>'state'='failed'
          AND ($4::boolean OR created_at>now()-interval '10 minutes')
        ORDER BY created_at DESC,id DESC LIMIT 1`,
-      [input.roomId, input.requestId, input.agentId, classified.kind === 'update-interrupted'],
-    )
-  ).rows[0];
-  if (recent) {
-    if (restart || givingUp || classified.kind === 'update-interrupted')
-      await restateSystemLine(database, recent.id, systemPhrase, card);
-  } else {
-    await systemLine(database, {
-      roomId: input.roomId,
-      ...systemPhrase,
-      cardType: 'turn-failed',
-      card,
-      afterMessageId: input.requestId,
-    });
+        [input.roomId, input.requestId, input.agentId, classified.kind === 'update-interrupted'],
+      )
+    ).rows[0];
+    if (recent) {
+      if (restart || givingUp || classified.kind === 'update-interrupted')
+        await restateSystemLine(database, recent.id, systemPhrase, card);
+    } else {
+      await systemLine(database, {
+        roomId: input.roomId,
+        ...systemPhrase,
+        cardType: 'turn-failed',
+        card,
+        afterMessageId: input.requestId,
+      });
+    }
   }
 
   let hiccupRestart = false;
@@ -335,15 +354,17 @@ async function inscribeSilence(
     // Presence may have already reopened this exact command while the helper
     // was installing. Its generation-free receipt still replaces the generic
     // failure line and confirms that the original request is pending.
-    updateRequeued = command.state === 'pending' || await reopenCommand(
-      database,
-      live,
-      input.roomId,
-      input.agentId,
-      command.id,
-      command.generation_id,
-      command.hiccup_attempts,
-    );
+    updateRequeued =
+      command.state === 'pending' ||
+      (await reopenCommand(
+        database,
+        live,
+        input.roomId,
+        input.agentId,
+        command.id,
+        command.generation_id,
+        command.hiccup_attempts,
+      ));
   } else if (classified.kind === 'offline' && command?.state === 'claimed') {
     // The helper never posted a turn. Leave the original request eligible for
     // `beeline start` instead of completing it the way a spent hiccup is.
@@ -369,6 +390,22 @@ async function inscribeSilence(
     );
   }
 
+  if (
+    command?.private_payload &&
+    !hiccupRestart &&
+    !updateRequeued &&
+    classified.kind !== 'offline'
+  ) {
+    await reportToCommander(
+      database,
+      input.roomId,
+      input.agentId,
+      `failed: ${reason || classified.fault || 'agent turn failed'}`,
+      command,
+      `failure:${command.id}:${attempt}`,
+      { automatic: true },
+    );
+  }
   return { kind: classified.kind, hiccupRestart, updateRequeued, attempt };
 }
 
@@ -383,7 +420,7 @@ async function reopenCommand(
 ): Promise<boolean> {
   const updated = await database.query(
     `UPDATE agent_commands SET
-       state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,
+       state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,private_payload=private_payload-'reportedGenerationId',
        completed_at=NULL,hiccup_attempts=$2
      WHERE id=$1 AND state='claimed' AND generation_id=$3`,
     [commandId, hiccupAttempts, generationId],

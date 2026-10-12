@@ -201,10 +201,10 @@ describe('approve_merge surface', () => {
     expect(tool.description).toContain('verdict, one blocking reason and the worker');
     expect(tool.description).toContain('Do not post an outline ledger, message IDs or commit hashes');
     expect(tool.description).toContain('report blocked: to your commander');
-    expect(tool.description).toContain('Use merge_corner when the live gate permits landing');
+    expect(tool.description).toContain('PASS wakes the implementer to land');
   });
 
-  it('refuses a brief whose outline ledger has no verified user story', () => {
+  it('requires review of every brief story against available proof', () => {
     const tool = agentToolsFor(true, false, true, true).find(
       (entry) => entry.name === 'approve_merge',
     )!;
@@ -356,12 +356,13 @@ describe('open_corner arguments', () => {
 it('offers the command grammar across Rooms, corners and DMs, with retired tools absent', () => {
   for (const dm of [false, true]) for (const corner of [false, true]) {
     const names = agentToolsFor(true, dm, corner, true).map(t => t.name);
-    for (const name of ['order', 'report', 'read', 'watch', 'open_corner', 'inspect_corner'])
+    for (const name of ['order', 'report', 'read', 'watch', 'list_rooms', 'open_corner', 'inspect_corner'])
       expect(names).toContain(name);
     for (const name of ['steer_corner', 'ask_corner', 'get_corner_ask']) expect(names).not.toContain(name);
   }
   const dm = assembleSessionPrompt({ surface: 'dm', agentName: 'Bee' }).systemPrompt;
-  expect(dm).toContain('across every Room you belong to');
+  expect(dm).toContain('list_rooms');
+  expect(dm).toContain('across member Rooms');
   expect(dm).toContain('report(text) up to your commander');
 });
 

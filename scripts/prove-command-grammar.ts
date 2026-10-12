@@ -149,9 +149,14 @@ async function main() {
         return await result;
       } finally { child.kill(); }
     }
-    const opened = JSON.parse(await mcp(initial, 'open_corner', { room: ROOM, name: 'Widget', objective: 'Build the widget',
+    const rooms = JSON.parse(await mcp(initial, 'list_rooms', {})).rooms as Array<{ roomId: string; name: string }>;
+    const target = rooms.find(room => room.name === 'Widgets')!;
+    assert.equal(target.roomId, ROOM);
+    const opened = JSON.parse(await mcp(initial, 'open_corner', { room: target.roomId, name: 'Widget', objective: 'Build the widget',
       implementer: 'worker', brief: { spec: 'Build the widget', approval: { sourceMessageId: initial.sourceMessageId } } }));
     const corner = opened.cornerId as string;
+    assert.ok(JSON.parse(await mcp(initial, 'list_corners', {})).corners.some((item: { cornerId: string }) => item.cornerId === corner));
+    assert.ok(JSON.parse(await mcp(initial, 'list_room_members', { address: target.roomId })).members.some((item: { handle: string }) => item.handle === 'worker'));
     console.log('PASS: built open_corner opens in a member Room from Ruby’s DM');
     subscribe(workerApi, corner, workerPush);
     const worker = await pushed(WORKER, command => command.reason === 'corner_objective');
@@ -166,7 +171,8 @@ async function main() {
     assert.equal((await orderPush).private, true);
     console.log('PASS: private blocked report and private return order arrive through live sockets');
     await mcp(blocked, 'report', { text: 'needs-decision: choose the endpoint policy' });
-    assert.ok((await phoneRoom(DM)).messages.some(message => message.text === 'needs-decision: choose the endpoint policy'));
+    const humanView = await phoneRoom(DM);
+    assert.ok(humanView.messages.some(message => message.text === `needs-decision: choose the endpoint policy @${humanView.viewer.identity.handle}`));
     console.log('PASS: a decision Ruby cannot settle appears only in the captain’s originating DM');
     const before = rubyPush.size;
     await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at)

@@ -43,7 +43,7 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 | `postAgentDraft`, `postAgentThought`, `retractAgentLiveOutput`  | the four live-output publications at `activity.ts:1014,1030,1060,1088` split by their typed presentation                                |
 | `postTargetBranchProposal`                                      | current typed control publication reached from `body.ts:7940`                                                                           |
 | `reviseCornerBrief` | Records the full revision and returns `wake: { queued, agentId?, reason? }`; opener commands may come from the parent or a sibling via `roomId`, implementer commands from the target |
-| `createCorner`, `ensureAgentMembership`                         | current higher-level channel helpers invoked by Body; their relay publications become atomic named operations rather than raw endpoints |
+| `createCorner`, `ensureAgentMembership`                         | current higher-level channel helpers invoked by Body; their create/open calls become atomic named operations rather than raw endpoints |
 
 `events-service.ts:421` and `:422` are alternate injected/default publisher branches; `:448` is the bounded delivery attempt. They are three production publish call sites but one named domain write.
 

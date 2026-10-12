@@ -105,43 +105,27 @@ describe('first-silence notice', () => {
     });
   });
 
-  it('Reproduction steer-dead-acp: writes the line and resends a failed steer', async () => {
+  it('retries a private order hiccup without writing a public failure line', async () => {
     const requestId = '1'.repeat(63) + 'e';
-    // The steering agent is the destination's own implementer: the relay card
-    // is agent-authored, with no human message behind the turn.
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
-       VALUES($1,$2,$3,'Steer: also cover the Room loop','card','relay','{}'::jsonb)`,
-      [requestId, ROOM, AGENT],
-    );
     const command = await createAgentCommand(database, {
       roomId: ROOM,
       agentId: AGENT,
-      sourceMessageId: requestId,
-      reason: 'relay_steer',
+      sourceMessageId: null,
+      turnRequestId: requestId,
+      privatePayload: { kind: 'order', text: 'Also cover the Room loop', authorId: HUMAN, fromRoomId: ROOM },
+      reason: 'order',
     });
     await claimAgentCommand(database, ROOM, AGENT, command!.id, 'g1');
     const result = await new DaemonService(database, new LiveHub()).execute(
       'postAgentTurnReceipt',
-      {
-        roomId: ROOM,
-        requestId,
-        generationId: 'g1',
-        status: 'failed',
-        reason: 'AcpClient not started',
-        reasonKind: 'hiccup',
-      },
+      { roomId: ROOM, requestId, generationId: 'g1', status: 'failed',
+        reason: 'AcpClient not started', reasonKind: 'hiccup' },
       AGENT,
     );
-    const line = await failureLine(database, requestId);
-    console.info(`Reproduction steer-dead-acp: turn-failed line=${JSON.stringify(line?.text ?? null)}`);
     expect(result).toMatchObject({ hiccupRestart: true, hiccupAttempt: 1 });
-    expect(line).toMatchObject({ silence: 'hiccup', state: 'failed' });
-    expect(line?.text).toContain('AcpClient not started');
+    expect(await failureLine(database, requestId)).toBeUndefined();
     expect(await commandState(database, command!.id)).toEqual({
-      state: 'pending',
-      hiccup_attempts: 1,
-      generation_id: null,
+      state: 'pending', hiccup_attempts: 1, generation_id: null,
     });
   });
 

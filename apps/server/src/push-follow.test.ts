@@ -77,13 +77,12 @@ describe('Followed level follows corners', () => {
     expect(await delivered()).toEqual([update]);
   });
 
-  it('follows a corner the person steered from its Room', async () => {
+  it('follows a corner the person ordered from its Room', async () => {
     const ask = await post('@bee tell the corner to use Postgres', person, room);
-    const relay = await post('Use Postgres', agent);
     await db.query(
       `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth)
-       VALUES('steer',$1,$2,$3,'turn','input','relay_steer','root',$4,1)`,
-      [corner, agent, relay, ask],
+       VALUES('order',$1,$2,NULL,'turn','input','order','root',$3,1)`,
+      [corner, agent, ask],
     );
     send.mockClear();
     const update = await post('Untagged update', teammate);

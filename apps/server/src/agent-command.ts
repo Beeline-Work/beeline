@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS agent_commands (
 );
 ALTER TABLE agent_commands ALTER COLUMN source_message_id DROP NOT NULL;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS private_payload jsonb;
+ALTER TABLE corner_watches ADD COLUMN IF NOT EXISTS incoming_command_id text REFERENCES agent_commands(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS corner_watches_incoming_command_idx ON corner_watches(incoming_command_id);
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS avatar_job boolean NOT NULL DEFAULT false;
 CREATE UNIQUE INDEX IF NOT EXISTS agent_commands_one_avatar_job ON agent_commands(agent_id)
   WHERE avatar_job AND state IN ('pending','claimed');
@@ -115,6 +117,8 @@ export type PrivateCommandPayload = {
   authorId: string;
   fromRoomId: string;
   kind: 'order' | 'report' | 'lifecycle';
+  attachments?: RoomInboxResult['items'][number]['attachments'];
+  reportedGenerationId?: string;
 };
 export type CommandRow = {
   id: string;
@@ -150,7 +154,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
   return `recovery_scope AS MATERIALIZED (
     SELECT command.* FROM agent_commands command
     WHERE command.room_id=${roomSql} AND command.agent_id=${agentSql}
-      AND command.action IN ('input','resume') AND NOT command.avatar_job AND command.private_payload IS NULL
+      AND command.action IN ('input','resume') AND NOT command.avatar_job
       AND (command.state='pending' OR (command.state='claimed' AND
         (command.lease_expires_at<=now() OR command.id=${claimSql})))
     ORDER BY command.created_at,command.id FOR UPDATE
@@ -164,7 +168,8 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
           AND (timer.workflow_run->>'timer'='deadline'
             OR timer.workflow_run->>'attempt'=latest.card->>'seq')) expired
     FROM recovery_scope command
-    JOIN messages source ON source.id=command.source_message_id AND source.room_id=command.room_id
+    JOIN messages source ON source.id=command.source_message_id
+      AND (source.room_id=command.room_id OR command.action='resume')
     LEFT JOIN room_choices choice ON choice.id::text=source.card->>'choiceId' AND choice.room_id=command.room_id
     LEFT JOIN messages choice_source ON choice_source.id=choice.message_id
     LEFT JOIN agent_commands parent ON command.action='resume' AND parent.id=command.parent_command_id
@@ -185,7 +190,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
   ), return_queue AS MATERIALIZED (
     SELECT command.*,row_number() OVER (ORDER BY command.created_at DESC,command.id DESC) position
     FROM recovery_scope command
-    WHERE command.reason<>'computer_activity' AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
+    WHERE command.private_payload IS NULL AND command.reason<>'computer_activity' AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
   ), return_head AS MATERIALIZED (
     SELECT newest.id FROM return_queue newest WHERE newest.position=1
       AND EXISTS(SELECT 1 FROM return_queue old WHERE old.created_offline IS TRUE
@@ -325,8 +330,8 @@ export async function createAgentCommand(
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
   const member = await db.query<{ opening: CommandRow | null; source_text: string | null }>(
     `SELECT (SELECT to_jsonb(opened) FROM agent_commands opened
-       WHERE opened.room_id=r.id AND opened.reason='corner_objective'
-       ORDER BY opened.created_at,opened.id LIMIT 1) opening,
+       WHERE opened.room_id=r.id AND opened.private_payload->>'kind'='order'
+       ORDER BY (opened.agent_id=$2) DESC,opened.created_at DESC,opened.id DESC LIMIT 1) opening,
        (SELECT text FROM messages WHERE id=$3) source_text
      FROM memberships m JOIN rooms r ON r.id=m.room_id
      JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
@@ -336,18 +341,15 @@ export async function createAgentCommand(
   if (!member.rowCount) return undefined;
   const opening = member.rows[0]!.opening;
   const lifecycle = input.reason.startsWith('corner_') || input.reason === 'subscribed_event' && Boolean(opening);
-  const watchParent = input.reason === 'watched_corner' && input.privatePayload
-    ? (await db.query<CommandRow>(`SELECT parent.* FROM agent_commands opened
-      JOIN agent_commands parent ON parent.id=opened.parent_command_id
-      WHERE opened.room_id=$1 AND opened.reason='corner_objective'
-        AND parent.room_id=$2 AND parent.agent_id=$3 ORDER BY opened.created_at LIMIT 1`,
-      [input.privatePayload.fromRoomId, input.roomId, input.agentId])).rows[0]
-    : undefined;
-  const parent = input.parent ?? watchParent ?? (lifecycle ? opening ?? undefined : undefined);
-  const privatePayload = input.privatePayload ?? (lifecycle && opening?.private_payload
-    ? { ...opening.private_payload, text: member.rows[0]!.source_text ?? opening.private_payload.text }
+  const parent = input.parent ?? (lifecycle ? opening ?? undefined : undefined);
+  const privatePayload = input.privatePayload ?? (parent?.private_payload
+    ? { ...parent.private_payload, reportedGenerationId: undefined, kind: 'lifecycle' as const,
+        text: input.action === 'resume' && member.rows[0]!.source_text
+          ? `${parent.private_payload.text}\nResume context: ${member.rows[0]!.source_text}`
+          : member.rows[0]!.source_text ?? parent.private_payload.text }
     : undefined);
-  const depth = parent ? input.retainDepth || lifecycle || watchParent ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : 0;
+  const depth = parent ? input.retainDepth || lifecycle || input.action === 'resume'
+    ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : 0;
   if (depth === undefined) return undefined;
   const id = input.id ?? randomBytes(32).toString('hex');
   // Capture known offline presence at dispatch. An absent connection record
@@ -1246,18 +1248,20 @@ export async function readAgentCommands(
        UPDATE agent_commands command SET recovery_context=context.recovery_context
        FROM return_context context WHERE context.id=command.id RETURNING command.id,command.recovery_context
      )
-     SELECT c.*,COALESCE(kept_context.recovery_context,c.recovery_context) delivered_context,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,CASE WHEN workflow_latest.card IS NOT NULL THEN workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->>'hint' WHEN m.room_id=c.room_id THEN COALESCE(m.card->>'receiptHint',choice_message.card->>'receiptHint') END receipt_hint,m.author_id,m.attachments,m.system_event,m.presentation,m.reply_to_message_id,reply_parent.author_id reply_to_author_id,reply_author.name reply_to_author_name,left(reply_parent.text,${REPLY_EXCERPT_MAX_LENGTH + 1}) reply_to_excerpt,CASE WHEN m.room_id=c.room_id THEN m.card_type END wake_card_type,CASE WHEN m.room_id=c.room_id THEN m.card END wake_card,workflow_latest.card->>'toState' workflow_state,NULLIF(workflow_start.card->>'runStatus','live') workflow_status,workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->'on' workflow_outcomes,watched_corner.id watched_corner_id,watched_corner.name watched_corner_name,watched_fact.lifecycle->'pr'->>'mergeCommitSha' watched_merge_commit FROM agent_commands c LEFT JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
+     SELECT c.*,COALESCE(kept_context.recovery_context,c.recovery_context) delivered_context,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,CASE WHEN workflow_latest.card IS NOT NULL THEN workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->>'hint' WHEN m.room_id=c.room_id THEN COALESCE(m.card->>'receiptHint',choice_message.card->>'receiptHint') END receipt_hint,m.author_id,m.attachments,m.system_event,m.presentation,m.reply_to_message_id,reply_parent.author_id reply_to_author_id,reply_author.name reply_to_author_name,left(reply_parent.text,${REPLY_EXCERPT_MAX_LENGTH + 1}) reply_to_excerpt,CASE WHEN m.room_id=c.room_id AND m.card->>'runId' IS NOT NULL THEN m.card_type WHEN resume_source.room_id=c.room_id AND resume_source.card->>'runId' IS NOT NULL THEN resume_source.card_type WHEN m.room_id=c.room_id THEN m.card_type END wake_card_type,CASE WHEN m.room_id=c.room_id AND m.card->>'runId' IS NOT NULL THEN m.card WHEN resume_source.room_id=c.room_id AND resume_source.card->>'runId' IS NOT NULL THEN resume_source.card WHEN m.room_id=c.room_id THEN m.card END wake_card,workflow_latest.card->>'toState' workflow_state,NULLIF(workflow_start.card->>'runStatus','live') workflow_status,workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->'on' workflow_outcomes,watched_corner.id watched_corner_id,watched_corner.name watched_corner_name,watched_fact.lifecycle->'pr'->>'mergeCommitSha' watched_merge_commit FROM agent_commands c LEFT JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
  LEFT JOIN kept_context ON kept_context.id=c.id
  LEFT JOIN messages reply_parent ON reply_parent.id=m.reply_to_message_id
  LEFT JOIN identities reply_author ON reply_author.id=reply_parent.author_id
  LEFT JOIN rooms watched_corner ON watched_corner.id=m.room_id AND c.reason='watched_corner'
  LEFT JOIN corner_facts watched_fact ON watched_fact.corner_id=watched_corner.id
+ LEFT JOIN agent_commands resume_parent ON resume_parent.id=c.parent_command_id AND c.action='resume'
+ LEFT JOIN messages resume_source ON resume_source.id=resume_parent.source_message_id
  LEFT JOIN room_choices choice ON choice.id::text=m.card->>'choiceId' AND choice.room_id=c.room_id
  LEFT JOIN messages choice_message ON choice_message.id=choice.message_id
  LEFT JOIN LATERAL (
    SELECT latest.card FROM messages latest
    WHERE latest.room_id=c.room_id AND latest.card_type='workflow-handoff'
-     AND latest.card->>'runId'=COALESCE(m.card->>'runId',choice_message.card->>'runId')
+     AND latest.card->>'runId'=COALESCE(m.card->>'runId',choice_message.card->>'runId',resume_source.card->>'runId')
    ORDER BY (latest.card->>'seq')::int DESC NULLS LAST,latest.created_at DESC,latest.id DESC LIMIT 1
  ) workflow_latest ON true
  LEFT JOIN messages workflow_start ON workflow_start.id=workflow_latest.card->>'runId' AND workflow_start.room_id=c.room_id
@@ -1311,7 +1315,7 @@ export async function readAgentCommands(
       id: r.id,
       roomId: r.room_id,
       agentId: r.agent_id,
-      sourceMessageId: r.source_message_id ?? r.id,
+      sourceMessageId: r.private_payload ? r.id : r.source_message_id ?? r.id,
       turnRequestId: r.turn_request_id,
       action: r.action,
       reason: r.reason,
@@ -1323,10 +1327,10 @@ export async function readAgentCommands(
       rootSourceMessageId: r.root_source_message_id,
       agentDepth: r.agent_depth,
       source: {
-        id: r.source_message_id ?? r.id,
+        id: r.private_payload ? r.id : r.source_message_id ?? r.id,
         authorId: r.private_payload?.authorId ?? r.author_id,
-        body: r.private_payload?.text ?? (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}${r.system_event?.kind === 'merged' && r.watched_merge_commit ? ` · merge commit ${r.watched_merge_commit}` : ''}\n` : '') + subscriptionPromptBody(r.text, r.system_event ?? null) + checkFailureLogBody(r.system_event ?? null) + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
-        attachments: r.attachments ?? [],
+        body: (r.private_payload?.text ?? (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}${r.system_event?.kind === 'merged' && r.watched_merge_commit ? ` · merge commit ${r.watched_merge_commit}` : ''}\n` : '') + subscriptionPromptBody(r.text, r.system_event ?? null)) + checkFailureLogBody(r.system_event ?? null) + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
+        attachments: r.private_payload?.attachments ?? r.attachments ?? [],
         createdAt: Math.floor(r.created_at.getTime() / 1000),
         type: r.private_payload ? 'private' : r.presentation,
         systemEvent: r.system_event,
@@ -1517,16 +1521,16 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
   // Delivery already gets its normal push and the 30-second renudge. A
   // command still unclaimed after two minutes is an agent-start failure,
   // independent of whether CI happens to be red.
-  const undelivered = await db.query<{ room_id: string; agent_id: string; source_message_id: string }>(
-    `SELECT command.room_id,command.agent_id,command.source_message_id FROM agent_commands command
+  const undelivered = await db.query<CommandRow>(
+    `SELECT command.* FROM agent_commands command
      JOIN rooms corner ON corner.id=command.room_id AND corner.archived_at IS NULL
      JOIN corner_facts fact ON fact.corner_id=corner.id
      WHERE command.state='pending' AND command.action='input'
        AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
        AND command.created_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
        AND NOT ${agentMachineOfflineSql('command.agent_id')}
-       AND NOT EXISTS (SELECT 1 FROM messages notice WHERE notice.id=encode(sha256(convert_to(
-         'beeline:'||command.room_id::text||':agent-unreachable:'||command.agent_id||':'||command.source_message_id,
+       AND NOT EXISTS (SELECT 1 FROM agent_commands notice WHERE notice.id=encode(sha256(convert_to(
+         'unreachable:'||command.room_id::text||':'||command.agent_id||':'||command.id,
          'UTF8')),'hex'))
        AND NOT EXISTS (SELECT 1 FROM agent_commands busy WHERE busy.room_id=command.room_id
          AND busy.agent_id=command.agent_id AND busy.state='claimed' AND busy.lease_expires_at>now())
@@ -1536,13 +1540,13 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
     await db.transaction(async db => {
       const pending = await db.query(`SELECT 1 FROM agent_commands command
         JOIN rooms corner ON corner.id=command.room_id AND corner.archived_at IS NULL
-        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.source_message_id=$3
+        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.id=$3
           AND command.state='pending' AND command.action='input'
           AND NOT EXISTS (SELECT 1 FROM agent_commands busy WHERE busy.room_id=command.room_id
             AND busy.agent_id=command.agent_id AND busy.state='claimed' AND busy.lease_expires_at>now())
-        FOR UPDATE OF command`, [command.room_id, command.agent_id, command.source_message_id]);
+        FOR UPDATE OF command`, [command.room_id, command.agent_id, command.id]);
       if (pending.rowCount)
-        await noteCornerAgentUnreachable(db, command.room_id, command.agent_id, command.source_message_id);
+        await noteCornerAgentUnreachable(db, command.room_id, command.agent_id, command.id, command);
     });
   }
   const blocked = await db.query<{
@@ -1645,11 +1649,11 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
 
 /** A failed worker wake reports one step up, without human tags or manager fallbacks. */
 export async function noteCornerAgentUnreachable(
-  db: SqlDatabase, cornerId: string, agentId: string, sourceMessageId: string,
+  db: SqlDatabase, cornerId: string, agentId: string, sourceMessageId: string, command?: CommandRow,
 ): Promise<void> {
   await reportToCommander(db, cornerId, agentId,
     'blocked: the implementing agent could not be reached to continue this corner',
-    undefined, createHash('sha256').update(`unreachable:${cornerId}:${agentId}:${sourceMessageId}`).digest('hex'));
+    command, createHash('sha256').update(`unreachable:${cornerId}:${agentId}:${sourceMessageId}`).digest('hex'), { automatic: true });
 }
 
 /** Recover blocker lifecycles whose note or command was lost before delivery. */

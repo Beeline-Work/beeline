@@ -130,11 +130,11 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).toContain('A plurality is a fact');
   });
 
-  it('delivers strictly conversational guidance for a direct message', () => {
+  it('lets a direct message drive member Rooms through the command grammar', () => {
     const dm = dmPrompt();
     expect(dm).toContain('private direct message with one person');
     expect(dm).toContain('reply without tagging');
-    expect(dm).toContain('across every Room you belong to');
+    expect(dm).toContain('across member Rooms');
     expect(dm).toContain('open_corner');
     expect(dm).toContain('ask_choice');
     expect(dm).not.toContain('open_poll');
@@ -260,7 +260,7 @@ describe('beeline-triage request skill', () => {
     expect(markdown).toContain('When a person asks for a spec or mock, produce it before building');
     expect(markdown).not.toContain('before doing anything else');
     expect(markdown).toContain('you are expected to disagree, not just permitted to');
-    expect(markdown).toContain('use order(address, text) for an adversarial second opinion');
+    expect(markdown).toContain('order a corner or agent DM for one adversarial second opinion');
     expect(markdown).toContain('skip this only when you are the only agent in the Room');
     expect(markdown).toContain('## 2. Is work warranted?');
     expect(markdown).toContain('try to reproduce the exact user-visible behavior');

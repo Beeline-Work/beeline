@@ -90,8 +90,8 @@ it('Ruby reports a decision she cannot settle to the captain visibly in the orig
   await claim(report);
   await daemon.execute('report', { ...authority(report), text: 'needs-decision: choose the product scope' }, RUBY);
   const rows = (await db.query(`SELECT room_id,author_id,text FROM messages WHERE text=$1`,
-    ['needs-decision: choose the product scope'])).rows;
-  expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text: 'needs-decision: choose the product scope' }]);
+    ['needs-decision: choose the product scope @captain'])).rows;
+  expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text: 'needs-decision: choose the product scope @captain' }]);
   expect((await phone.readRoom(DM, HUMAN))?.messages.some(m => m.text === rows[0]!.text)).toBe(true);
 });
 it('nested Room orders forward reports one commander at a time before reaching the human', async () => {
@@ -115,7 +115,7 @@ it('nested Room orders forward reports one commander at a time before reaching t
   expect((await db.query(`SELECT 1 FROM messages WHERE text=$1`, [text])).rowCount).toBe(0);
   await claim(rubyReport);
   await daemon.execute('report', { ...authority(rubyReport), text }, RUBY);
-  expect((await db.query(`SELECT room_id,author_id FROM messages WHERE text=$1`, [text])).rows)
+  expect((await db.query(`SELECT room_id,author_id FROM messages WHERE text=$1`, [`${text} @captain`])).rows)
     .toEqual([{ room_id: DM, author_id: RUBY }]);
 });
 it('a real GitHub merge webhook wakes Ruby once through the corner lifecycle', async () => {

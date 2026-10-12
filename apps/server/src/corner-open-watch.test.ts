@@ -62,7 +62,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => db?.close());
 
-async function open(watchMerge?: boolean, roomId = R) {
+async function open(roomId = R) {
   await phone.execute(
     'sendRoomMessage',
     { roomId, messageId: randomBytes(32).toString('hex'), text: '@ruby please do this' },
@@ -166,7 +166,7 @@ it('opening always watches lifecycle events, with no visibility or merge-watch o
 
 it('a late watch_corner on a merged corner returns the merge and wakes once', async () => {
   await clearWakes();
-  const created = await open(false);
+  const created = await open();
   await db.query(`DELETE FROM corner_watches WHERE corner_id=$1`, [created.cornerId]);
   await merge(created.cornerId);
   const late = await daemon.execute(
@@ -193,7 +193,7 @@ it('a late watch_corner on a merged corner returns the merge and wakes once', as
 }, 30_000);
 
 it('a watch_corner on a corner closed without merging says so', async () => {
-  const created = await open(false);
+  const created = await open();
   await daemon.execute('archiveCorner', { cornerId: created.cornerId }, A);
   expect(
     await daemon.execute(
@@ -217,8 +217,8 @@ it('Room merged subscriptions are retired; a corner watch is the merge wake', as
 }, 30_000);
 
 it('a watch held by an archived opener corner is a no-op on merge', async () => {
-  const opener = await open(false);
-  const created = await open(undefined, opener.cornerId);
+  const opener = await open();
+  const created = await open(opener.cornerId);
   expect(created.watch).toEqual({ roomId: opener.cornerId, kinds: ['opened', 'merged', 'closed'] });
   await daemon.execute('archiveCorner', { cornerId: opener.cornerId }, A);
   await merge(created.cornerId);

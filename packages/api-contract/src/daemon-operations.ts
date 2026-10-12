@@ -316,7 +316,7 @@ export type DaemonOperationMap = {
   listAgentSubscriptions: Operation<RoomInput, RoomSubscriptionListResult>;
   deleteAgentSubscription: Operation<RoomInput & { subscriptionId: string }, WriteResult>;
   watchCorner: Operation<
-    RoomInput & { readonly cornerId: string; readonly kinds: readonly CornerWatchKind[] },
+    TurnOutputAuthority & RoomInput & { readonly cornerId: string; readonly kinds: readonly CornerWatchKind[] },
     CornerWatchResult
   >;
   listEventSubscriptions: Operation<RoomInput, EventSubscriptionsResult>;
@@ -418,7 +418,9 @@ export type DaemonOperationMap = {
     | { readonly status: 'closed'; readonly pullRequestNumber: number; readonly url: string }
     | { readonly status: 'blocked'; readonly blocker: string }
   >;
-  /** Every corner, open and closed, under a Room the caller is a member of. */
+  /** Current member address discovery across Rooms, corners and DMs. */
+  listRooms: Operation<RoomInput, { readonly rooms: readonly { readonly roomId: string; readonly name: string; readonly parentRoomId?: string; readonly directMessage: boolean }[] }>;
+  /** Every corner, open and closed, under a member Room; across member Rooms from a DM. */
   listReachableCorners: Operation<RoomInput, CornerListResult>;
   /** Current members of a Room the caller is in, or of a corner it reaches. */
   listRoomMembers: Operation<RoomInput, RoomMemberListResult>;

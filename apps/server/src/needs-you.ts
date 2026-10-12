@@ -71,9 +71,9 @@ const TRIGGER_WORD = new RegExp(
 /** A closing question mark, allowing only ordinary trailing whitespace — `askSql` reads the same. */
 const ENDS_WITH_QUESTION = /\?[ \t\n\r\f\v]*$/;
 
-/** The ask half of the rule: ends with `?`, or says please / approve / feedback as a word. */
+/** Actionable reports, trailing questions, or please / approve / feedback as a word. */
 export function isNeedsYouAsk(text: string): boolean {
-  return ENDS_WITH_QUESTION.test(text) || TRIGGER_WORD.test(text);
+  return /^(blocked|needs-decision|failed):\s*\S/.test(text) || ENDS_WITH_QUESTION.test(text) || TRIGGER_WORD.test(text);
 }
 
 /**
@@ -83,11 +83,12 @@ export function isNeedsYouAsk(text: string): boolean {
  * re-checks every row the query returns.
  */
 export function askSql(textExpr: string): string {
-  return `(${textExpr} ~ '\\?[ \\t\\n\\r\\f\\v]*$'
+  return `(${textExpr} ~ '^(blocked|needs-decision|failed):[[:space:]]*[^[:space:]]'
+    OR ${textExpr} ~ '\\?[ \\t\\n\\r\\f\\v]*$'
     OR ${textExpr} ~* '(^|[^[:alnum:]_])(${NEEDS_YOU_TRIGGER_WORDS.join('|')})($|[^[:alnum:]_])')`;
 }
 
-/** Message `m` (or the bare row) is a live ask; `messages_needs_you_question_idx` indexes it. */
+/** Message `m` (or the bare row) is a live ask; `messages_needs_you_actionable_idx` indexes it. */
 export function askingMessageSql(m?: string): string {
   const column = (name: string) => (m ? `${m}.${name}` : name);
   return `${column('presentation')}='message' AND ${column('deleted_at')} IS NULL

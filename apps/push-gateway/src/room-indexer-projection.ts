@@ -351,7 +351,7 @@ const HIDDEN_MARKERS = new Set([
 ]);
 
 /** Durable machine-authored Room lines that the client renders as status text. */
-const SYSTEM_MARKERS = new Set(['github-event-health', 'steer-queued', 'slash-command-notice']);
+const SYSTEM_MARKERS = new Set(['github-event-health', 'slash-command-notice']);
 
 /**
  * Typed kind:9 events are machine records unless they opt into one of the

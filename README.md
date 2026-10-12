@@ -173,6 +173,8 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 | Tool                                                   | Where          | What it does                                                  |
 | ------------------------------------------------------ | -------------- | ------------------------------------------------------------- |
 | `open_corner`                                          | Rooms, corners | Open one write-enabled corner with a ≤24-word objective       |
+| `order`, `report`                                      | All member places | Send private orders down and reports one step up |
+| `read`, `watch`, `list_rooms`                          | All member places | Discover and read addresses; watch corner lifecycle only |
 | `pr_checks_status`                                     | Corners        | Read checks, human hold, and PR/head-bound merge approval     |
 | `post_artifact`                                        | Everywhere     | Upload one file (path or html/bytes) as an attachment         |
 | `fetch_image`                                          | Everywhere     | Download one photograph into scratch for a data: embed        |

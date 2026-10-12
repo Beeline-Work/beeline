@@ -1384,12 +1384,17 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
     const [reply] = (await commands(A, cornerId)).slice(-1);
     await claim(reply!);
     await result(reply!, 'The proof is attached; a required entry point is still unavailable.');
+    const returned = (await commands(B, cornerId)).find(command => command.reason === 'report')!;
+    await claim(returned);
+    await daemon.execute('report', { roomId: cornerId, requestId: returned.turnRequestId, generationId: 'g1',
+      text: 'blocked: required entry point is unavailable' }, B);
+    await result(returned, 'Reported the remaining capability blocker to the commander.');
     const before = await cards(cornerId);
     for (let replay = 0; replay < 2; replay++)
       await advanceCorner(db, cornerId, { kind: 'checks', result: 'passing', sourceMessageId: review!.sourceMessageId });
     expect(await reasons(cornerId, A)).toContain('corner_review_needed');
     expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_review_needed')).toHaveLength(1);
-    expect(await reasons(cornerId, B)).toEqual(['subscribed_event']);
+    expect(await reasons(cornerId, B)).toEqual(['subscribed_event', 'report', 'report']);
     expect(await cards(cornerId)).toEqual(before);
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: false, open: false });
     expect((await commands(A, cornerId)).find(command => command.reason === 'corner_review_needed')?.source.body)
@@ -1527,8 +1532,8 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     await checkRun(cornerId, 'Server suite', 'success');
     const [fix] = (await commands(A, cornerId)).filter((command) => command.reason === 'corner_check');
     // The turn names the failed job even while another job runs.
-    const source = await db.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [fix!.sourceMessageId]);
-    expect(source.rows[0]!.text).toContain('failing Body suite');
+    expect(fix!.private).toBe(true);
+    expect(fix!.source.body).toContain('failing Body suite');
     await claim(fix!);
     await result(fix!, 'Fixed the Body suite failure and pushed.');
     const repaired = '9'.repeat(40);

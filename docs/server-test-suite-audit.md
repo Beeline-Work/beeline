@@ -36,7 +36,7 @@ This inventory covers every current `apps/server/src/**/*.test.ts` file after th
 | `corner-lifecycle.test.ts` | corner transition authority, merge gate, handbacks, review wakes, holds, recovery, and reach | retained |
 | `corner-open-from-corner.test.ts` | opens a sibling corner in the parent Room from a corner turn; attaches a file shared in the calling corner to the sibling corner brief | retained |
 | `corner-open-implementer.test.ts` | Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as author; refuses implementer %s without any opening writes; refuses a removed parent member without any opening writes; related cases | retained |
-| `corner-open-watch.test.ts` | open_corner watches for merged by default and the merge wakes the opener once; watchMerge false opens without a watch and the merge wakes nobody; a late watch_corner on a merged corner returns the merge and wakes once; related cases | retained |
+| `corner-open-watch.test.ts` | opening always watches opened, merged and closed; merges wake privately once; late watches return the lifecycle snapshot and wake once; related cases | retained |
 | `corner-owed.test.ts` | corner_owed | retained |
 | `corner-review-dispatch.test.ts` | reviewer dispatch, worker attribution, and no-check PR handling | retained |
 | `corner-reviewer-list.test.ts` | a failed review turn; approve_merge with a reviewer list; updateRoom reviewer list; related cases | retained |

@@ -866,7 +866,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'order',
-    description: 'Give a top-down instruction to the working agent at a Room, corner or agent DM address you belong to. Agent-to-agent delivery is private and wakes the recipient without a transcript message. Use a Room id as the address.',
+    description: 'Give a top-down instruction to the worker of a corner or agent DM. A top-level Room address broadcasts to every other agent member. Give the instruction at a Room, corner or agent DM address you belong to. Agent-to-agent delivery is private and wakes the recipient without a transcript message. Use a Room id as the address.',
     inputSchema: { type: 'object', required: ['address', 'text'], properties: {
       address: { type: 'string', format: 'uuid' },
       text: { type: 'string', minLength: 1, maxLength: 16000 },
@@ -876,7 +876,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
     name: 'report',
     description: 'Report one step up to the commander who ordered this work. No address argument: the corner and order know the return address. Begin done:, blocked:, needs-decision: or failed:. Agent commanders receive this privately. A human commander sees it where they gave the order. If you cannot handle a report, report to your own commander.',
     inputSchema: { type: 'object', required: ['text'], properties: {
-      text: { type: 'string', pattern: '^(done|blocked|needs-decision|failed):', minLength: 1, maxLength: 16000 },
+      text: { type: 'string', pattern: '^(done|blocked|needs-decision|failed):\\s*\\S', minLength: 1, maxLength: 16000 },
     }, additionalProperties: false },
   },
   {
@@ -1137,7 +1137,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'set_corner_hold',
     description:
-      'Set an explicit merge hold for this turn’s original human requester. Supply releaseHoldId to release a stored hold: only its holder or a human with higher standing may do so. Chat never sets or releases holds; pr_checks_status lists active hold IDs.',
+      'Set an explicit merge hold for the human who ordered this work. Supply releaseHoldId to release a stored hold: only its holder or a human with higher standing may do so. Chat never sets or releases holds; pr_checks_status lists active hold IDs.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1150,7 +1150,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'order_corner_merge',
     description:
-      'Record this turn’s original human requester’s yes to merge the corner’s current pull request head. Only a current Workspace owner or admin’s yes is recorded; anyone else is refused. The server merges at once when checks are green and no hold stands; otherwise the yes stays on this head until they are. A new commit cancels it. Chat never orders a merge directly.',
+      'Record the human who ordered this work’s yes to merge the corner’s current pull request head. Only a current Workspace owner or admin’s yes is recorded; anyone else is refused. The server merges at once when checks are green and no hold stands; otherwise the yes stays on this head until they are. A new commit cancels it. Chat never orders a merge directly.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1193,7 +1193,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
         },
         hold: {
           type: 'boolean',
-          description: 'Create a merge hold atomically, for the original human requester.',
+          description: 'Create a merge hold atomically, for the human who ordered this work.',
         },
 
       },
@@ -1438,7 +1438,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'approve_merge',
-    description: 'Record the configured reviewer’s PASS for the exact current green head after verifying the brief and live proof. Pass the reviewed head SHA only as the tool argument. Lead the posted review with verdict, one blocking reason and the worker’s next step; list only blockers, with evidence behind a link. Do not post an outline ledger, message IDs or commit hashes. Demand only proof the worker can produce with its tools. Human-only proof gets one blocked report to the commander, never repeated FAILs. Obtain test setup yourself in the review Workspace; report blocked: to your commander for missing capability. On FAIL use order to send the worker its next step. Use merge_corner when the live gate permits landing.',
+    description: 'Record the configured reviewer’s PASS for the exact current green head after verifying the brief and live proof. Pass the reviewed head SHA only as the tool argument. Lead the posted review with verdict, one blocking reason and the worker’s next step; list only blockers, with evidence behind a link. Do not post an outline ledger, message IDs or commit hashes. Demand only proof the worker can produce with its tools. Human-only proof gets one blocked report to the commander, never repeated FAILs. Obtain test setup yourself in the review Workspace; report blocked: to your commander for missing capability. On FAIL use order to send the worker its next step. PASS wakes the implementer to land. Follow an explicit commander order to land through merge_corner when the live gate permits it.',
     inputSchema: {
       type: 'object',
       required: ['headSha'],
@@ -1456,7 +1456,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'merge_corner',
     description: "Squash-merge a reachable corner's pull request at its current head. Membership of the corner or parent Room is enough, including from a DM. The server merges only on green live checks, an exact-head yes and no hold; otherwise it returns the blocker. Report unresolved questions to your commander.",
-    inputSchema: { type: 'object', properties: { cornerId: { type: 'string', format: 'uuid' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { cornerId: { type: 'string', format: 'uuid', description: 'Required from a Room or DM; omit in the active corner.' } }, additionalProperties: false },
   },
   {
     name: 'close_pull_request',
@@ -1465,18 +1465,23 @@ const AGENT_TOOLS: ToolDefinition[] = [
     inputSchema: { type: 'object', properties: { cornerId: { type: 'string', format: 'uuid', description: 'Omit inside the active corner.' } }, additionalProperties: false },
   },
   {
+    name: 'list_rooms',
+    description: 'List your member Rooms, corners and DMs with their names and addresses. Use these addresses with open_corner, order, read, watch and member reads.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'list_corners',
     description:
-      'List every corner, open and closed, under this Room (or, from a corner, under its parent Room), with its name, objective, pull request number and state.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      'List corners under a member Room address. Omit address for the active Room; from a DM this lists corners across all your member Rooms. Includes name, objective, pull request and state.',
+    inputSchema: { type: 'object', properties: { address: { type: 'string', format: 'uuid' } }, additionalProperties: false },
   },
   {
     name: 'list_room_members',
     description:
-      'List the current members of this Room or corner, or of a named corner under your Room: id, person or agent, name, handle and role.',
+      'List current members of any member Room, corner or DM address: id, person or agent, name, handle and role. Omit address for this turn.',
     inputSchema: {
       type: 'object',
-      properties: { cornerId: { type: 'string', format: 'uuid', description: 'Omit for the active Room or corner.' } },
+      properties: { address: { type: 'string', format: 'uuid', description: 'Member Room, corner or DM; omit for this turn.' }, cornerId: { type: 'string', format: 'uuid', description: 'A corner address; omit when using address.' } },
       additionalProperties: false,
     },
   },
@@ -1875,6 +1880,7 @@ export function agentToolsFor(
     }
     if (
       [
+        'list_rooms',
         'inspect_corner',
         'close_corner',
         'rename_corner',
@@ -2394,7 +2400,6 @@ async function turnPromptSectionIds(): Promise<string[]> {
  */
 const SAFE_TO_REPEAT_DAEMON_OPERATIONS: ReadonlySet<string> = new Set([
   'getAgentAvatar',
-  'getCornerAsk',
   'getCornerRestoreState',
   'getPrChecksStatus',
   'getRoomAuthority',
@@ -2409,6 +2414,7 @@ const SAFE_TO_REPEAT_DAEMON_OPERATIONS: ReadonlySet<string> = new Set([
   'getWorkflowRun',
   'listAppTools',
   'listCornerBriefRevisions',
+  'listRooms',
   'listRoomCorners',
   'listAgentSubscriptions',
   'loadWorkspaceSkill',
@@ -4815,17 +4821,19 @@ export async function callAgentTool(
       return JSON.stringify(
         await daemonExecute('closeCornerPullRequest', { cornerId: targetCornerId(args) }),
       );
+    case 'list_rooms':
+      return JSON.stringify(await daemonExecute('listRooms', { roomId: agentScheduleRoomId() }));
     case 'list_corners':
       return JSON.stringify(
         await daemonExecute('listReachableCorners', {
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          roomId: typeof args.address === 'string' ? args.address : requiredEnv('BEELINE_DAEMON_ROOM_ID'),
         }),
       );
     case 'list_room_members':
       return JSON.stringify(
         await daemonExecute('listRoomMembers', {
           roomId:
-            typeof args.cornerId === 'string' && args.cornerId
+            typeof args.address === 'string' ? args.address : typeof args.cornerId === 'string' && args.cornerId
               ? args.cornerId
               : process.env.BEELINE_DAEMON_CORNER_ID?.trim() ||
                 requiredEnv('BEELINE_DAEMON_ROOM_ID'),

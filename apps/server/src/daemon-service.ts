@@ -1,4 +1,4 @@
-import { commandAddress, sendOrder, reportToCommander } from './commander.js';
+import { commandAddress, sendOrder, reportToCommander, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -110,6 +110,7 @@ import {
   ensureSystemIdentity,
   systemIdentityMention,
   systemLine,
+  GITHUB_SUBJECT,
   type SystemPhrase,
   wakeLateCornerWatcher,
 } from './system-line.js';
@@ -282,8 +283,8 @@ async function settleTurnFailureLine(
   }
 }
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
-/** Reads of one corner that a member of its parent Room may also make. */
-const CORNER_REACH_READS = new Set<string>([
+/** Corner reads and merge writes that also admit a current parent Room member. */
+const CORNER_REACH_OPERATIONS = new Set<string>([
   'getCornerRestoreState',
   'getPrChecksStatus',
   'getRoomAuthority',
@@ -386,10 +387,10 @@ export class DaemonService {
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.agentId === 'string' && candidate.agentId !== authenticatedAgentId)
       throw new Error('daemon token does not own requested agent');
-    // A read of one corner is authorized on that corner, never on a roomId the
+    // A corner operation is authorized on that corner, never on a roomId the
     // caller also sends; otherwise any Room the caller belongs to would open it.
     const scopedRoom =
-      CORNER_REACH_READS.has(name) && typeof candidate.cornerId === 'string'
+      CORNER_REACH_OPERATIONS.has(name) && typeof candidate.cornerId === 'string'
         ? candidate.cornerId
         : typeof candidate.roomId === 'string'
           ? candidate.roomId
@@ -414,8 +415,8 @@ export class DaemonService {
     if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
       ({ cornerReviewer, isCorner, privateCommand } = await this.access(scopedRoom, authenticatedAgentId, candidate.requestId).catch(
         (error: unknown) => {
-          // Reads of one corner also admit a member of its parent Room.
-          if (error instanceof AccessDeniedError && CORNER_REACH_READS.has(name))
+          // Reachable corner operations also admit a parent Room member.
+          if (error instanceof AccessDeniedError && CORNER_REACH_OPERATIONS.has(name))
             return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
               cornerReviewer: false,
               isCorner: true,
@@ -516,7 +517,7 @@ export class DaemonService {
         true,
       );
       if (isCorner)
-        await this.reconcileZeroCheckWorkerCompletion(scopedRoom!, authenticatedAgentId, output.id);
+        await this.reconcileZeroCheckWorkerCompletion(scopedRoom!, authenticatedAgentId);
       return output as Output<Name>;
     }
     if (
@@ -562,11 +563,6 @@ export class DaemonService {
               `SELECT 1 FROM agent_commands command
                JOIN agent_turns turn ON turn.room_id=command.room_id
                  AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
-               JOIN messages line ON line.room_id=command.room_id
-                 AND line.card_type='turn-failed'
-                 AND line.card->>'requestId'=command.turn_request_id
-                 AND line.card->>'agentId'=command.agent_id
-                 AND line.card->>'silenceKind'='update-interrupted'
                WHERE command.room_id=$1 AND command.agent_id=$2
                  AND command.turn_request_id=$3 AND command.action IN ('input','resume')
                  AND command.state='pending' AND turn.status='failed'
@@ -625,8 +621,10 @@ export class DaemonService {
         if (command.private_payload && [
           'postRoomMessage', 'postAgentDraft', 'postAgentThought', 'postAgentActivity',
         ].includes(name)) {
-          // The helper may stream or return prose; private work has only report() as its output.
+          // Final ACP prose is a bottom-up report too; older helpers need no new tool to deliver it.
           if (name === 'postRoomMessage') {
+            const text = String(candidate.text ?? '').trim();
+            await this.report(/^(done|blocked|needs-decision|failed):\s*\S/.test(text) ? text : `done: ${text || 'completed the order'}`, authenticatedAgentId, command, db, true);
             await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command.id]);
             await db.query(`UPDATE agent_turns SET status='complete',created_at=now()
               WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status<>'cancelled'`,
@@ -807,7 +805,6 @@ export class DaemonService {
         await this.reconcileZeroCheckWorkerCompletion(
           scopedRoom!,
           authenticatedAgentId,
-          (output as { id: string }).id,
         );
       }
       return output;
@@ -1057,9 +1054,7 @@ export class DaemonService {
         return await sendOrder(this.database, this.authorizedCommand!, authenticatedAgentId,
           String(candidate.address), String(candidate.text)) as Output<Name>;
       case 'report':
-        return await reportToCommander(this.database, scopedRoom!, authenticatedAgentId,
-          String(candidate.text), this.authorizedCommand,
-          createHash('sha256').update(`report:${this.authorizedCommand!.id}:${candidate.text}`).digest('hex')) as Output<Name>;
+        return await this.report(String(candidate.text), authenticatedAgentId) as Output<Name>;
       case 'read': {
         const target = await commandAddress(this.database, String(candidate.address), authenticatedAgentId, true);
         return await this.inbox('getRoomConversation', { roomId: target.id, limit: candidate.limit as number | undefined }, authenticatedAgentId) as Output<Name>;
@@ -1168,6 +1163,14 @@ export class DaemonService {
           authenticatedAgentId,
           (input as Input<'listRoomCorners'>).activeOnly === true,
         )) as Output<Name>;
+      case 'listRooms': {
+        const rooms = await this.database.query<{ roomId: string; name: string; parentRoomId: string | null; directMessage: boolean }>(
+          `SELECT room.id "roomId",room.name,room.parent_id "parentRoomId",room.direct_participants IS NOT NULL "directMessage"
+           FROM rooms room JOIN memberships member ON member.room_id=room.id
+           WHERE member.identity_id=$1 AND member.removed_at IS NULL AND room.archived_at IS NULL
+           ORDER BY room.name,room.id`, [authenticatedAgentId]);
+        return { rooms: rooms.rows.map(({ parentRoomId, ...room }) => ({ ...room, ...(parentRoomId ? { parentRoomId } : {}) })) } as Output<Name>;
+      }
       case 'listReachableCorners':
         return (await this.corners(
           (input as Input<'listReachableCorners'>).roomId,
@@ -1816,7 +1819,7 @@ export class DaemonService {
           input as Input<'notifyFeedbackFixed'>,
         )) as Output<Name>;
       default:
-        throw new Error(`unsupported daemon operation: ${String(name)}`);
+        throw new CommandRefusalError(`unsupported daemon operation: ${String(name)}; use order and report`, 410);
     }
   }
 
@@ -1834,7 +1837,6 @@ export class DaemonService {
   private async reconcileZeroCheckWorkerCompletion(
     cornerId: string,
     workerAgentId: string,
-    sourceMessageId: string,
   ): Promise<void> {
     if (!this.prChecksStatus) return;
     const candidate = (
@@ -1913,12 +1915,8 @@ export class DaemonService {
          WHERE corner_id=$1`,
         [cornerId, JSON.stringify(lifecycle)],
       );
-      await routeSystemCommand(db, {
-        roomId: cornerId,
-        sourceMessageId,
-        kind: 'check-passed',
-        targets: [],
-      });
+      await systemLine(db, { roomId: cornerId, authorId: workerAgentId,
+        subject: GITHUB_SUBJECT, verb: 'passed checks on', object: 'this zero-check pull request', kind: 'check-passed' });
     });
   }
 
@@ -3177,7 +3175,8 @@ export class DaemonService {
               COALESCE(f.owner_agent_id,r.created_by) created_by,
               r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
-       WHERE r.parent_id=$1 ${activeOnly ? 'AND r.archived_at IS NULL' : ''} AND ($3 OR EXISTS(
+       WHERE (r.parent_id=$1 OR (EXISTS(SELECT 1 FROM rooms dm WHERE dm.id=$1 AND dm.direct_participants IS NOT NULL)
+         AND EXISTS(SELECT 1 FROM memberships target WHERE target.room_id=r.parent_id AND target.identity_id=$2 AND target.removed_at IS NULL))) ${activeOnly ? 'AND r.archived_at IS NULL' : ''} AND ($3 OR EXISTS(
          SELECT 1 FROM memberships m
          WHERE m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL))`,
       [roomId, agentId, reachable],
@@ -3643,7 +3642,7 @@ export class DaemonService {
     atomicCommandWrite = false,
   ) {
     if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
-    if ('relay' in input) throw new Error('relay cards are retired; use order and report');
+    if ('relay' in input) throw new CommandRefusalError('relay cards are retired; use order and report', 410);
     const messageId = id();
     const parent = input.replyToMessageId
       ? (
@@ -4213,11 +4212,7 @@ export class DaemonService {
           ...(input.promptBytes !== undefined ? { promptBytes: input.promptBytes } : {}),
         });
       }
-      if (input.status === 'failed' && this.authorizedCommand?.private_payload) {
-        await reportToCommander(database, input.roomId, agentId,
-          `failed: ${reason ?? 'agent turn failed'}`, this.authorizedCommand,
-          createHash('sha256').update(`failure:${this.authorizedCommand.id}`).digest('hex'));
-      } else if (input.status === 'failed') {
+      if (input.status === 'failed') {
         silence = await this.inscribeTurnFailure(
           database,
           input.roomId,
@@ -5429,6 +5424,34 @@ export class DaemonService {
     );
     return this.writeResult();
   }
+  private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false) {
+    const pending = (await database.query<{ id: string; url: string; name: string; mime_type: string; size: number }>(
+      `WITH RECURSIVE chain AS (
+         SELECT * FROM agent_commands WHERE id=$1
+         UNION ALL SELECT parent.* FROM agent_commands parent JOIN chain child ON parent.id=child.parent_command_id
+       ) SELECT attachment.id,attachment.url,attachment.name,attachment.mime_type,attachment.size::integer size
+       FROM agent_pending_attachments attachment WHERE attachment.room_id=$2 AND attachment.agent_id=$3
+         AND attachment.request_id IN (SELECT turn_request_id FROM chain WHERE room_id=$2 AND agent_id=$3)
+       ORDER BY attachment.created_at,attachment.id`, [command.id, command.room_id, agentId],
+    )).rows;
+    // Explicit report already delivered this generation; final prose adds nothing
+    // unless tools queued more files after that report.
+    if (automatic && command.private_payload?.reportedGenerationId === command.generation_id && !pending.length)
+      return this.writeResult();
+    const attachments = [...(command.private_payload?.attachments ?? []),
+      ...pending.map(row => ({ url: row.url, name: row.name, mimeType: row.mime_type, size: row.size }))]
+      .filter((row, index, all) => all.findIndex(other => other.url === row.url) === index);
+    const result = await reportToCommander(database, command.room_id, agentId, text, command,
+      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${JSON.stringify(attachments)}`).digest('hex'), { attachments, automatic });
+    if ('delivered' in result && !result.delivered) return result;
+    for (const attachment of pending) await database.query(
+      `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,
+      [command.room_id, agentId, attachment.id]);
+    if (command.private_payload) await database.query(
+      `UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{reportedGenerationId}',to_jsonb($2::text)) WHERE id=$1`,
+      [command.id, command.generation_id]);
+    return result;
+  }
   private async watchCorner(
     input: Input<'watchCorner'>,
     agentId: string,
@@ -5437,9 +5460,13 @@ export class DaemonService {
       !Array.isArray(input.kinds) ||
       input.kinds.some((kind) => !['opened', 'merged', 'closed'].includes(kind))
     )
-      throw new Error('watch kinds must be opened, merged or closed');
+      throw new CommandRefusalError('watch kinds must be opened, merged or closed', 400);
     const kinds = [...new Set(input.kinds)];
     return this.database.transaction(async (db) => {
+      const incoming = (await db.query<CommandRow>(`SELECT * FROM agent_commands
+        WHERE room_id=$1 AND agent_id=$2 AND action IN ('input','resume')
+          AND ($3::text IS NULL OR turn_request_id=$3)
+        ORDER BY created_at DESC,id DESC LIMIT 1`, [input.roomId, agentId, input.requestId ?? null])).rows[0];
       const member = await db.query<{ parent_id: string | null }>(
         `SELECT r.parent_id FROM memberships m JOIN rooms r ON r.id=m.room_id
          WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
@@ -5471,7 +5498,7 @@ export class DaemonService {
         await db.query(`DELETE FROM corner_watches WHERE watcher_room_id=$1 AND agent_id=$2 AND corner_id=$3`, [input.roomId, agentId, input.cornerId]);
         if (!landed) return { kinds: [], state: 'closed', snapshot };
         const woken = kinds.includes('merged')
-          ? await wakeLateCornerWatcher(db, input.roomId, agentId, input.cornerId)
+          ? await wakeLateCornerWatcher(db, input.roomId, agentId, input.cornerId, incoming)
           : false;
         return { kinds: [], state: 'merged', woken, snapshot };
       }
@@ -5482,9 +5509,9 @@ export class DaemonService {
         );
       else
         await db.query(
-          `INSERT INTO corner_watches(watcher_room_id,agent_id,corner_id,kinds) VALUES($1,$2,$3,$4::jsonb)
-         ON CONFLICT(watcher_room_id,agent_id,corner_id) DO UPDATE SET kinds=EXCLUDED.kinds,updated_at=now()`,
-          [input.roomId, agentId, input.cornerId, JSON.stringify(kinds)],
+          `INSERT INTO corner_watches(watcher_room_id,agent_id,corner_id,kinds,incoming_command_id) VALUES($1,$2,$3,$4::jsonb,$5)
+         ON CONFLICT(watcher_room_id,agent_id,corner_id) DO UPDATE SET kinds=EXCLUDED.kinds,incoming_command_id=EXCLUDED.incoming_command_id,updated_at=now()`,
+          [input.roomId, agentId, input.cornerId, JSON.stringify(kinds), incoming?.id ?? null],
         );
       return { kinds, state: 'active', snapshot };
     });
@@ -7034,7 +7061,9 @@ export class DaemonService {
         [commandRoomId],
       )
     ).rows[0];
-    const roomId = input.targetRoomId ?? host?.parent_id ?? commandRoomId;
+    const targetRoomId = input.targetRoomId ?? host?.parent_id ?? commandRoomId;
+    const target = (await this.database.query<{ parent_id: string | null }>(`SELECT parent_id FROM rooms WHERE id=$1`, [targetRoomId])).rows[0];
+    const roomId = target?.parent_id ?? targetRoomId;
     if (roomId !== commandRoomId) await this.access(roomId, agentId);
     const parent = (
       await this.database.query<{
@@ -7274,11 +7303,11 @@ export class DaemonService {
         retainDepth: true,
         turnRequestId: input.requestId,
       });
-      // The opener hears the merge where it opened the corner, unless it opts out.
+      // Opening watches lifecycle events where the commander opened the corner.
       await db.query(
-          `INSERT INTO corner_watches(watcher_room_id,agent_id,corner_id,kinds) VALUES($1,$2,$3,'["opened","merged","closed"]'::jsonb)
+          `INSERT INTO corner_watches(watcher_room_id,agent_id,corner_id,kinds,incoming_command_id) VALUES($1,$2,$3,'["opened","merged","closed"]'::jsonb,$4)
            ON CONFLICT(watcher_room_id,agent_id,corner_id) DO NOTHING`,
-          [commandRoomId, agentId, cornerId],
+          [commandRoomId, agentId, cornerId, parentCommand.id],
         );
       // One durable open marker in the parent Room; the phone renders this as
       // a daemon-fact card. Corner lifecycle is outside the push ceiling
@@ -7795,6 +7824,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   approveCornerMerge: true,
   mergeCorner: true,
   closeCornerPullRequest: true,
+  listRooms: true,
   listReachableCorners: true,
   listRoomMembers: true,
   readCornerPullRequest: true,

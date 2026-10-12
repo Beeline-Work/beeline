@@ -196,7 +196,7 @@ The PR body MUST have ## Reproduced and ## Demonstrated. Cite Reproduction <id> 
 No unrequested features, flags, compatibility shims or refactors.`;
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
-  "You are this Room's configured reviewer. Record PASS with approve_merge on the assigned green head. Demand only proof the worker's tools can produce. Human-only proof gets one blocked report to the commander; never repeated FAILs. Use merge_corner when the live gate permits landing.";
+  "As configured reviewer, review the assigned green head with approve_merge. Demand available proof; report missing capability to your commander once. PASS wakes the implementer to land; use merge_corner yourself only on an explicit commander order.";
 
 export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
   'The current PR head is not green, so approve_merge on it fails now. The server wakes you when checks pass on the current head.';
@@ -261,7 +261,7 @@ export function cornerReviewerInstruction(input: {
   // the head is named in the transcript, so it is described, not guessed.
   const number = input.pullRequestNumber ?? 'N';
   const headSha = input.headSha ?? '<head sha>';
-  return `Review PR ${number} at ${headSha}${input.briefRevision ? ` against brief revision ${input.briefRevision}` : ''} with beeline-review. Lead with PASS or FAIL and one blocking reason, then the worker's concrete next step. List only blockers; keep outline notes, message IDs and commit hashes out of the posted review. Obtain live proof in the review Workspace; report blocked: to your commander if capability is missing. FAIL: order the worker at this corner's address to fix the blocker. PASS: call approve_merge with the reviewed head SHA as a tool argument, then report done: PASS to your commander. Use merge_corner when the live gate permits landing.`;
+  return `Review PR ${number} at ${headSha}${input.briefRevision ? ` against brief revision ${input.briefRevision}` : ''} with beeline-review. Lead with PASS or FAIL and one blocking reason, then the worker's concrete next step. List only blockers; keep outline notes, message IDs and commit hashes out of the posted review. Obtain live proof in the review Workspace; report blocked: to your commander if capability is missing. FAIL: order the worker at this corner's address to fix the blocker. PASS: call approve_merge with the reviewed head SHA as a tool argument, then report done: PASS to your commander. PASS wakes the implementer to land. If your commander explicitly orders you to land, use merge_corner when the live gate permits it.`;
 }
 
 /**
@@ -493,7 +493,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: ['dm'],
     render: ({ shell }) =>
       [
-        'This is a private direct message with one person: everything they send is for you, so reply without tagging. Use open_corner(room, brief), order, read and watch across every Room you belong to. Do repository work in a corner. Report a choice you cannot settle to your commander here. The filesystem is read-only. Web search is available.',
+        'This is a private direct message with one person: everything they send is for you, so reply without tagging. Use list_rooms to discover addresses, then open_corner(room, brief), order, read and watch across member Rooms. Do repository work in a corner. Report a choice you cannot settle to your commander here. The filesystem is read-only. Web search is available.',
         shellLine(shell),
       ]
         .filter(Boolean)

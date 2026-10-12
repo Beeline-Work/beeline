@@ -1,4 +1,4 @@
-import { createAgentCommand, routeSystemCommand } from './agent-command.js';
+import { createAgentCommand, type CommandRow, routeSystemCommand } from './agent-command.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   MAX_EVENT_DEPTH,
@@ -468,7 +468,7 @@ export async function systemLine(
     db: SqlDatabase,
     cascade: Cascade | undefined,
     notBefore: Date | null,
-    watches: { watcher_room_id: string; agent_id: string }[],
+    watches: { watcher_room_id: string; agent_id: string; incoming_command: CommandRow | null }[],
   ) => {
     const result = await db.query(
       `INSERT INTO messages(
@@ -507,6 +507,7 @@ export async function systemLine(
           sourceMessageId: id,
           privatePayload: { text: `Watched corner ${watched?.name ?? input.subject.name} (${input.card?.cornerId ?? input.roomId}): ${input.kind === 'corner-opened' ? 'opened' : input.kind === 'corner-closed' ? 'closed' : input.kind}${input.kind === 'merged' && watched?.merge_sha ? ` · merge commit ${watched?.merge_sha}` : ''}\n${text}`, authorId, fromRoomId: String(input.card?.cornerId ?? input.roomId), kind: 'lifecycle' },
           reason: 'watched_corner',
+          parent: watch.incoming_command ?? undefined, retainDepth: true,
           action: 'input',
         });
       await routeSystemCommand(db, {
@@ -553,8 +554,9 @@ export async function systemLine(
     const watches =
       input.kind && ['corner-opened', 'merged', 'corner-closed'].includes(input.kind)
         ? (
-            await tx.query<{ watcher_room_id: string; agent_id: string }>(
-              `SELECT w.watcher_room_id,w.agent_id FROM corner_watches w
+            await tx.query<{ watcher_room_id: string; agent_id: string; incoming_command: CommandRow | null }>(
+              `SELECT w.watcher_room_id,w.agent_id,to_jsonb(incoming) incoming_command FROM corner_watches w
+           LEFT JOIN agent_commands incoming ON incoming.id=w.incoming_command_id
            JOIN rooms corner ON corner.id=w.corner_id AND corner.parent_id IS NOT NULL
            JOIN rooms watcher ON watcher.id=w.watcher_room_id AND watcher.archived_at IS NULL
            JOIN memberships m ON m.room_id=w.watcher_room_id AND m.identity_id=w.agent_id
@@ -590,6 +592,7 @@ export async function wakeLateCornerWatcher(
   watcherRoomId: string,
   agentId: string,
   cornerId: string,
+  incoming?: CommandRow,
 ): Promise<boolean> {
   const line = (
     await db.query<{ id: string }>(
@@ -614,6 +617,7 @@ export async function wakeLateCornerWatcher(
       sourceMessageId: line.id,
       privatePayload: { text: `Watched address ${cornerId}: merged`, authorId: agentId, fromRoomId: cornerId, kind: 'lifecycle' },
       reason: 'watched_corner',
+      parent: incoming, retainDepth: true,
       action: 'input',
     }),
   );

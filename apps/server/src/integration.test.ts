@@ -5650,7 +5650,7 @@ describe('monolith integration', () => {
     ).toBe('invite-only');
   });
 
-  it('rotates refresh tokens, replays a lost reply, and rejects used phone and daemon credentials', async () => {
+  it('renews durable phone credentials until explicit sign-out and rejects revoked daemon credentials', async () => {
     const initial = await auth.exchangeGitHubOidc('proof');
     const refreshed = await request(
       '/v1/auth/refresh',
@@ -5661,6 +5661,7 @@ describe('monolith integration', () => {
     expect(refreshed.status).toBe(200);
     const successor = (await refreshed.json()) as { accessToken: string; refreshToken: string };
     expect(successor.accessToken).not.toBe(initial.accessToken);
+    expect(successor.refreshToken).toBe(initial.refreshToken);
     const replay = await request(
       '/v1/auth/refresh',
       'POST',
@@ -5668,8 +5669,10 @@ describe('monolith integration', () => {
       '',
     );
     expect(replay.status).toBe(200);
-    expect(await replay.json()).toEqual(successor);
+    expect(await replay.json()).toMatchObject({ refreshToken: initial.refreshToken, identityId: initial.identityId });
     expect((await request('/v1/auth/refresh', 'POST', { refreshToken: successor.refreshToken }, '')).status).toBe(200);
+    expect((await request('/v1/auth/logout', 'POST', { refreshToken: initial.refreshToken }, '')).status).toBe(200);
+    expect((await request('/v1/auth/logout', 'POST', { refreshToken: initial.refreshToken }, '')).status).toBe(200);
     const stale = await request('/v1/auth/refresh', 'POST', { refreshToken: initial.refreshToken }, '');
     expect(stale.status).toBe(401);
     await database.query(`UPDATE daemon_tokens SET revoked_at=now()`);

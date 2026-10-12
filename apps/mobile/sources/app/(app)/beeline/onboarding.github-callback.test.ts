@@ -649,6 +649,16 @@ describe('GitHub callback delivery into onboarding', () => {
     },
   );
 
+  it('returns a signed-in device to Rooms when OTA replays a completed, now-expired GitHub launch callback', async () => {
+    runtime.current.monolithEnabled = true;
+    monolith.identityId.mockResolvedValue(MONOLITH_IDENTITY);
+    linking.initialUrl = callbackUrl(STATE, Math.floor(Date.now() / 1_000) - 3_600);
+    const renderer = await render();
+    expect(monolith.exchangeGitHubTicket).not.toHaveBeenCalled();
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
+    expect(noticeText(renderer)).not.toContain('SESSION_EXPIRED');
+  });
+
   it('cold-starts, binds the proof, saves the identity, and enters the workspace', async () => {
     await persistGitHubSignInState(STATE);
     linking.initialUrl = callbackUrl();

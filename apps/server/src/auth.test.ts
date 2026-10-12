@@ -1,7 +1,8 @@
+import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
+import { migrate, migrateData } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { TokenAuth, tokenHash, verifierFromEnvironment } from './auth.js';
+import { TokenAuth, tokenHash, verifierFromEnvironment, type PhoneTokens } from './auth.js';
 
 describe('opaque token ceremony', () => {
   let db: PgliteDatabase;
@@ -20,65 +21,111 @@ describe('opaque token ceremony', () => {
     return { auth, initial };
   }
 
-  it('replays the exact successor after a lost refresh reply without revoking the family', async () => {
+  it('renews an unused session after every access row expired and was swept, across a server restart', async () => {
+    let now = new Date('2026-10-12T19:53:39Z');
+    const { initial } = await phoneAuth(() => now);
+    now = new Date('2026-10-12T20:40:00Z');
+    await db.query('DELETE FROM phone_access_tokens WHERE expires_at < $1', [now]);
+    expect((await db.query('SELECT 1 FROM phone_access_tokens')).rowCount).toBe(0);
+    const afterDeploy = new TokenAuth(db, async () => { throw new Error('unused'); }, () => now);
+    expect(await afterDeploy.authenticatePhone(initial.accessToken)).toBeNull();
+    const renewed = await afterDeploy.refresh(initial.refreshToken);
+    expect(renewed?.identityId).toBe(initial.identityId);
+    expect(await afterDeploy.authenticatePhone(renewed!.accessToken)).toBe(initial.identityId);
+  });
+
+  async function legacySuccessor(previous: PhoneTokens, generation: number): Promise<PhoneTokens> {
+    const next = { ...previous, refreshToken: `legacy-successor-${generation}` };
+    const key = createHash('sha256').update('beeline:refresh-replay:').update(previous.refreshToken).digest();
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(JSON.stringify(next), 'utf8'), cipher.final()]);
+    const sealed = [iv, cipher.getAuthTag(), encrypted].map(p => p.toString('base64url')).join('.');
+    await db.query(`INSERT INTO phone_sessions(refresh_hash,identity_id,family_id,expires_at)
+      SELECT $1,identity_id,family_id,expires_at FROM phone_sessions WHERE refresh_hash=$2`,
+      [tokenHash(next.refreshToken), tokenHash(previous.refreshToken)]);
+    await db.query('UPDATE phone_sessions SET consumed_at=now(),successor_tokens=$2 WHERE refresh_hash=$1',
+      [tokenHash(previous.refreshToken), sealed]);
+    return next;
+  }
+
+  it('revokes only the signed-out device, leaving another sign-in for the same person usable', async () => {
+    const { auth, initial } = await phoneAuth(() => new Date('2026-10-12T19:53:39Z'));
+    const otherDevice = await auth.exchangeGitHubOidc('another-device');
+    expect(otherDevice.identityId).toBe(initial.identityId);
+    expect((await db.query('SELECT DISTINCT family_id FROM phone_sessions')).rowCount).toBe(2);
+    await auth.revokePhoneSession(initial.refreshToken);
+    await auth.revokePhoneSession(initial.refreshToken);
+    expect(await auth.refresh(initial.refreshToken)).toBeNull();
+    expect(await auth.authenticatePhone(initial.accessToken)).toBeNull();
+    expect(await auth.authenticatePhone(otherDevice.accessToken)).toBe(initial.identityId);
+    expect((await auth.refresh(otherDevice.refreshToken))?.identityId).toBe(initial.identityId);
+  });
+
+  it('retains the device credential after a lost reply, sleep beyond two minutes, and months of inactivity', async () => {
     let now = new Date('2026-10-11T14:00:00Z');
     const { auth, initial } = await phoneAuth(() => now);
-    const successor = await auth.refresh(initial.refreshToken);
-    now = new Date(now.getTime() + 119_999);
-    const afterRestart = new TokenAuth(
-      db,
-      async () => {
-        throw new Error('unused');
-      },
-      () => now,
-    );
-    expect(await afterRestart.refresh(initial.refreshToken)).toEqual(successor);
-    expect(await auth.authenticatePhone(successor!.accessToken)).toBe(initial.identityId);
-    const stored = await db.query<{ successor_tokens: string }>(
-      `SELECT successor_tokens FROM phone_sessions WHERE refresh_hash=$1`,
-      [tokenHash(initial.refreshToken)],
-    );
-    expect(stored.rows[0]?.successor_tokens).not.toContain(successor!.refreshToken);
-    expect(stored.rows[0]?.successor_tokens).not.toContain(successor!.accessToken);
-  });
-
-  it('revokes the family when a consumed token returns after the grace window', async () => {
-    let now = new Date('2026-10-11T14:00:00Z');
-    const { auth, initial } = await phoneAuth(() => now);
-    const successor = await auth.refresh(initial.refreshToken);
-    now = new Date(now.getTime() + 120_001);
-    expect(await auth.refresh(initial.refreshToken)).toBeNull();
-    expect(await auth.refresh(successor!.refreshToken)).toBeNull();
-    expect(await auth.authenticatePhone(successor!.accessToken)).toBeNull();
-  });
-
-  it('revokes the family when the successor was already consumed', async () => {
-    const now = new Date('2026-10-11T14:00:00Z');
-    const { auth, initial } = await phoneAuth(() => now);
-    const successor = await auth.refresh(initial.refreshToken);
-    const next = await auth.refresh(successor!.refreshToken);
-    expect(await auth.refresh(initial.refreshToken)).toBeNull();
-    expect(await auth.refresh(next!.refreshToken)).toBeNull();
-    expect(await auth.authenticatePhone(next!.accessToken)).toBeNull();
-  });
-
-  it('serializes two simultaneous refreshes into one successor', async () => {
-    const now = new Date('2026-10-11T14:00:00Z');
-    const { auth, initial } = await phoneAuth(() => now);
-    const [first, second] = await Promise.all([
-      auth.refresh(initial.refreshToken),
-      auth.refresh(initial.refreshToken),
+    await auth.refresh(initial.refreshToken); // server committed, reply was lost
+    now = new Date('2027-10-11T14:00:00Z');
+    const afterRestart = new TokenAuth(db, async () => { throw new Error('unused'); }, () => now);
+    const renewed = await afterRestart.refresh(initial.refreshToken);
+    expect(renewed?.refreshToken).toBe(initial.refreshToken);
+    expect(renewed!.refreshExpiresAt).toBeGreaterThan(now.getTime());
+    expect(await afterRestart.authenticatePhone(renewed!.accessToken)).toBe(initial.identityId);
+    expect((await db.query('SELECT * FROM phone_sessions')).rows).toEqual([
+      expect.objectContaining({ consumed_at: null, successor_tokens: null }),
     ]);
-    expect(first).toEqual(second);
-    expect(
-      (
-        await db.query(
-          `SELECT 1 FROM phone_sessions WHERE family_id=(SELECT family_id FROM phone_sessions WHERE refresh_hash=$1)`,
-          [tokenHash(initial.refreshToken)],
-        )
-      ).rowCount,
-    ).toBe(2);
+  });
+
+  it('recovers a legacy lost rotation reply long after the old grace window and access expiry', async () => {
+    let now = new Date('2026-10-11T14:00:00Z');
+    const { auth, initial } = await phoneAuth(() => now);
+    const successor = await legacySuccessor(initial, 1);
+    now = new Date('2026-10-15T14:00:00Z');
+    const recovered = await auth.refresh(initial.refreshToken);
+    expect(recovered?.refreshToken).toBe(successor.refreshToken);
+    expect(await auth.authenticatePhone(recovered!.accessToken)).toBe(initial.identityId);
+  });
+
+  it('follows already-advanced legacy successors without revoking the current device session', async () => {
+    const { auth, initial } = await phoneAuth(() => new Date('2026-10-11T14:00:00Z'));
+    const successor = await legacySuccessor(initial, 1);
+    const latest = await legacySuccessor(successor, 2);
+    expect((await auth.refresh(initial.refreshToken))?.refreshToken).toBe(latest.refreshToken);
+    expect((await auth.refresh(successor.refreshToken))?.refreshToken).toBe(latest.refreshToken);
+    await auth.revokePhoneSession(initial.refreshToken);
+    expect(await auth.refresh(latest.refreshToken)).toBeNull();
+  });
+
+  it('rejects an unrecoverable pre-replay token without deleting its live family', async () => {
+    const { auth, initial } = await phoneAuth(() => new Date('2026-10-11T14:00:00Z'));
+    const latest = await legacySuccessor(initial, 1);
+    await db.query('UPDATE phone_sessions SET successor_tokens=NULL WHERE refresh_hash=$1', [tokenHash(initial.refreshToken)]);
+    expect(await auth.refresh(initial.refreshToken)).toBeNull();
+    expect((await auth.refresh(latest.refreshToken))?.refreshToken).toBe(latest.refreshToken);
+  });
+
+  it('upgrades the old expiry values before the sweep and keeps the change idempotent', async () => {
+    const { auth, initial } = await phoneAuth(() => new Date('2026-10-11T14:00:00Z'));
+    await db.query('DELETE FROM workflow_backfills WHERE name=$1', ['durable-phone-sessions-v1']);
+    await db.query('UPDATE phone_sessions SET expires_at=$1', [new Date('2026-11-10T14:00:00Z')]);
+    await migrateData(db);
+    await migrateData(db);
+    await db.query('DELETE FROM phone_sessions WHERE expires_at < $1', [new Date('2027-11-10T14:00:00Z')]);
+    expect((await auth.refresh(initial.refreshToken))?.refreshToken).toBe(initial.refreshToken);
+    expect((await db.query('SELECT expires_at FROM phone_sessions')).rows).toEqual([
+      { expires_at: new Date('9999-12-31T23:59:59Z') },
+    ]);
+  });
+
+  it('allows simultaneous renewals without rotating, clobbering or growing the refresh family', async () => {
+    const { auth, initial } = await phoneAuth(() => new Date('2026-10-11T14:00:00Z'));
+    const [first, second] = await Promise.all([auth.refresh(initial.refreshToken), auth.refresh(initial.refreshToken)]);
+    expect(first?.refreshToken).toBe(initial.refreshToken);
+    expect(second?.refreshToken).toBe(initial.refreshToken);
+    expect((await db.query('SELECT 1 FROM phone_sessions')).rowCount).toBe(1);
     expect(await auth.authenticatePhone(first!.accessToken)).toBe(initial.identityId);
+    expect(await auth.authenticatePhone(second!.accessToken)).toBe(initial.identityId);
   });
   it('makes daemon exchange codes one use and token hashes the only stored secret', async () => {
     await db.query(

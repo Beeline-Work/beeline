@@ -114,17 +114,17 @@ export async function loadBuzzViewerPubkey(): Promise<string | null> {
   return identity?.publicKey ?? null;
 }
 
-/** Load the stored Buzz identity (null if never set). */
+/**
+ * Load the device's signed-in identity without contacting the server. A token
+ * renewal can fail while offline, asleep or during a deploy; that is a read
+ * failure, never evidence that the person signed out. Authenticated operations
+ * renew their own access token through MonolithSession.
+ */
 export async function loadBuzzIdentity(): Promise<Identity | null> {
   if (getBuzzRuntimeConfig().monolithEnabled) {
     const identityId = await monolithSession.identityId();
     if (!identityId) return null;
-    try {
-      await monolithSession.authorization();
-      return { publicKey: identityId, secretKey: new Uint8Array() };
-    } catch {
-      return null;
-    }
+    return { publicKey: identityId, secretKey: new Uint8Array() };
   }
   const nsec = await secretGet();
   if (!nsec) return null;

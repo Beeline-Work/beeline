@@ -4,7 +4,8 @@ Beeline's production monolith is one framework-free TypeScript process backed by
 
 ## Surfaces
 
-- `/v1/auth/github/exchange`, `/v1/auth/refresh`: opaque phone access and rotating refresh tokens.
+- `/v1/auth/github/exchange`, `/v1/auth/refresh`: opaque access tokens (15 minutes) and a durable credential for each device sign-in. Renewal keeps that credential; lost replies, inactivity and server restarts do not sign the device out. Legacy sealed rotation replies recover into the same session. Credentials remain hashed in the database and protected by device storage. A credential remains usable until revoked, so its theft requires revoking the session rather than waiting for age-based expiry.
+- `/v1/auth/logout`: idempotent revocation of the presented device session and its access tokens; other devices remain signed in. The phone erases local credentials even when offline revocation cannot reach the server. Account deletion also removes its sessions through foreign-key cascades.
 - `/v1/auth/github/reconnect`: authenticated replacement of the current
   identity's server-side GitHub credential from a fresh, same-subject GitHub
   ticket; an account mismatch returns `409` and leaves the phone session intact.

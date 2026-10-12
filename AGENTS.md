@@ -96,6 +96,7 @@ Read [Body agent invariants](docs/agent-body.md) for this area’s authoritative
 
 ## Mobile client
 
+- **A saved sign-in survives network failures and inactivity.** `loadBuzzIdentity` (`auth/buzz-identity-storage.ts`) restores the saved identity locally; operations renew access themselves. `TokenAuth.refresh` (`apps/server/src/auth.ts`) retains the device credential, recovering legacy sealed successors; only explicit device revocation or account deletion ends it. `runMaintenance` sweeps access tokens, never device sessions. Coverage: `buzz-identity-session.test.ts`, `monolith-session.test.ts`, `auth.test.ts`.
 - `apps/mobile` is vendored Happy, isolated from root workspaces (`npm run mobile:install`); `@beeline/*` resolves to built `dist/` via Metro. Android `app.usebeeline`, iOS `app.usebeeline.mobile`, scheme `beeline://`. Reads go through `RoomViewClient`; MMKV holds only scoped DTOs + outbox.
 - **A mobile fix must not depend on a brand-new `@beeline/buzz-client` export**: Metro reads `dist/`, and a missing symbol inside `.catch` fails silently. Rebuild `@beeline/nostr` and `@beeline/buzz-client` after SDK edits.
 - **Mobile tests:** read rendered text from `.props.children`, never `.children` or `JSON.stringify(node)`; pretty-format walks the circular Fiber graph and OOMs the worker.

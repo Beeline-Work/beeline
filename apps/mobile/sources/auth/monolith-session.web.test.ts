@@ -64,6 +64,31 @@ describe('ordinary web monolith session storage', () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([200, 401])('preserves another tab\'s same-identity sign-in when an old HTTP %i arrives before its storage event', async status => {
+    const first = openTab();
+    await first.exchangeGitHubTicket('first');
+    origin.setItem('buzzy.monolith.access.v1', JSON.stringify({
+      token: tokens.accessToken, expiresAt: Date.now() - 1, identityId: tokens.identityId,
+    }));
+    let reply!: (response: Response) => void;
+    let started!: () => void;
+    const requestStarted = new Promise<void>(resolve => { started = resolve; });
+    fetcher.mockImplementationOnce(() => {
+      started();
+      return new Promise<Response>(resolve => { reply = resolve; });
+    });
+    const stale = openTab();
+    const assertion = expect(stale.authorization()).rejects.toMatchObject({ name: 'MonolithSessionChangedError' });
+    await requestStarted;
+    const next = { ...tokens, accessToken: 'new-access', refreshToken: 'new-refresh' };
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify(next)));
+    await openTab().exchangeGitHubTicket('second');
+    reply(new Response(JSON.stringify(tokens), { status }));
+    await assertion;
+    expect(origin.getItem('buzzy.monolith.refresh.v1')).toBe('new-refresh');
+    expect(await stale.authorization()).toBe('new-access');
+  });
+
   it('keeps the session in the origin localStorage', async () => {
     const storage = await monolithSecureStorage(false);
     await storage.setItemAsync('buzzy.monolith.identity.v1', tokens.identityId);

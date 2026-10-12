@@ -154,7 +154,7 @@ export default function BuzzIdentitySettings() {
 
   const signOut = useCallback(async () => {
     await Promise.all([
-      monolithSession.clear(),
+      monolithSession.signOut(),
       clearBuzzIdentity(),
       clearPendingGitHubSignInState(),
     ]);

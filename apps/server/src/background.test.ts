@@ -13,6 +13,7 @@ import {
   type LeaderConnection,
 } from './background.js';
 import { migrate } from './database.js';
+import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
@@ -2365,6 +2366,23 @@ describe('background advisory-lock ownership', () => {
       await db.close();
     }
   });
+  it('sweeps expired access tokens while retaining device sessions, including rows from a rolled-back server', async () => {
+    const db = new PgliteDatabase();
+    try {
+      await migrate(db);
+      let now = new Date('2026-09-01T00:00:00Z');
+      const auth = new TokenAuth(db, async () => ({ subject: 'maintenance-owner', login: 'owner', name: 'Owner' }), () => now);
+      const tokens = await auth.exchangeGitHubOidc('proof');
+      await db.query('UPDATE phone_sessions SET expires_at=$1', [new Date('2026-09-30T00:00:00Z')]);
+      await runMaintenance(db);
+      expect((await db.query('SELECT 1 FROM phone_access_tokens')).rowCount).toBe(0);
+      expect((await db.query('SELECT 1 FROM phone_sessions')).rowCount).toBe(1);
+      now = new Date();
+      const renewed = await auth.refresh(tokens.refreshToken);
+      expect(await auth.authenticatePhone(renewed!.accessToken)).toBe(tokens.identityId);
+    } finally { await db.close(); }
+  });
+
   it('retains imported historical presence while expiring ordinary live output', async () => {
     const db = new PgliteDatabase();
     try {

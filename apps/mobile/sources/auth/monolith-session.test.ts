@@ -21,6 +21,7 @@ import {
   MonolithRefreshError,
   MonolithSession,
   MonolithSessionRequiredError,
+  MonolithSessionChangedError,
   monolithOrigins,
 } from './monolith-session';
 import { TokenAuth } from '../../../server/src/auth';
@@ -37,6 +38,129 @@ const tokens = (generation: number) => ({
 
 describe('monolith phone session', () => {
   beforeEach(() => secure.clear());
+
+  it.each([200, 401])('drops an old refresh HTTP %i after another identity signs in', async status => {
+    secure.set('buzzy.monolith.refresh.v1', 'old-refresh');
+    secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
+    let reply!: (response: Response) => void;
+    let started!: () => void;
+    const requestStarted = new Promise<void>(resolve => { started = resolve; });
+    const replacement = { ...tokens(2), identityId: 'b'.repeat(64) };
+    const fetcher = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      if (String(input).endsWith('/v1/auth/refresh')) {
+        started();
+        return new Promise(resolve => { reply = resolve; });
+      }
+      return new Response(JSON.stringify(replacement));
+    });
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    const old = session.authorization();
+    const assertion = expect(old).rejects.toBeInstanceOf(MonolithSessionChangedError);
+    await requestStarted;
+    await session.exchangeGitHubTicket('new-sign-in');
+    reply(new Response(JSON.stringify(tokens(1)), { status }));
+    await assertion;
+    expect(await session.identityId()).toBe(replacement.identityId);
+    expect(await session.authorization()).toBe(replacement.accessToken);
+    expect(secure.get('buzzy.monolith.refresh.v1')).toBe(replacement.refreshToken);
+  });
+
+  it('cannot resurrect a signed-out identity with an in-flight refresh reply', async () => {
+    secure.set('buzzy.monolith.refresh.v1', 'old-refresh');
+    secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
+    let reply!: (response: Response) => void;
+    let started!: () => void;
+    const requestStarted = new Promise<void>(resolve => { started = resolve; });
+    const fetcher = vi.fn(async () => {
+      started();
+      return new Promise<Response>(resolve => { reply = resolve; });
+    });
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    const old = session.authorization();
+    const assertion = expect(old).rejects.toBeInstanceOf(MonolithSessionChangedError);
+    await requestStarted;
+    await session.clear();
+    reply(new Response(JSON.stringify(tokens(1))));
+    await assertion;
+    expect(await session.identityId()).toBeNull();
+    expect(secure.size).toBe(0);
+  });
+
+  it('does not retry an old account\'s rejected write as the newly signed-in person', async () => {
+    let reply!: (response: Response) => void;
+    let started!: () => void;
+    const writeStarted = new Promise<void>(resolve => { started = resolve; });
+    const replacement = { ...tokens(2), identityId: 'b'.repeat(64) };
+    const fetcher = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      if (String(input).includes('/operations/')) {
+        started(); return new Promise(resolve => { reply = resolve; });
+      }
+      return new Response(JSON.stringify(fetcher.mock.calls.length === 1 ? tokens(1) : replacement));
+    });
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await session.exchangeGitHubTicket('first');
+    const assertion = expect(session.fetch('https://server.example/v1/phone/operations/sendRoomMessage', {
+      method: 'POST', body: JSON.stringify({ text: 'old account action' }),
+    })).rejects.toBeInstanceOf(MonolithSessionChangedError);
+    await writeStarted;
+    await session.exchangeGitHubTicket('second');
+    reply(new Response(null, { status: 401 }));
+    await assertion;
+    expect(fetcher.mock.calls.filter(([input]) => String(input).includes('/operations/'))).toHaveLength(1);
+    expect(await session.authorization()).toBe(replacement.accessToken);
+    expect(await session.identityId()).toBe(replacement.identityId);
+  });
+
+  it('bounds a refresh body that stalls after successful response headers and retries without sign-out', async () => {
+    secure.set('buzzy.monolith.refresh.v1', 'old-refresh');
+    secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
+    let started!: () => void;
+    const bodyStarted = new Promise<void>(resolve => { started = resolve; });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce({ status: 200, ok: true, json: () => { started(); return new Promise(() => undefined); } })
+      .mockResolvedValueOnce(new Response(JSON.stringify(tokens(2))));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    vi.useFakeTimers();
+    try {
+      const assertion = expect(session.authorization()).rejects.toBeInstanceOf(MonolithRequestTimeoutError);
+      await bodyStarted;
+      await vi.advanceTimersByTimeAsync(10_000);
+      await assertion;
+      expect(await session.identityId()).toBe('a'.repeat(64));
+      expect(await session.authorization()).toBe('access-2');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('erases local credentials and sends device revocation on explicit sign-out', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(1))));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await session.exchangeGitHubTicket('ticket');
+    await session.signOut();
+    expect(await session.identityId()).toBeNull();
+    expect(secure.size).toBe(0);
+    expect(fetcher).toHaveBeenLastCalledWith('https://server.example/v1/auth/logout', expect.objectContaining({
+      body: JSON.stringify({ refreshToken: 'refresh-1' }), method: 'POST',
+    }));
+  });
+
+  it('finishes signing out offline even when revocation ignores abort', async () => {
+    secure.set('buzzy.monolith.refresh.v1', 'old-refresh');
+    secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
+    let started!: () => void;
+    const revocationStarted = new Promise<void>(resolve => { started = resolve; });
+    const session = new MonolithSession('https://server.example', vi.fn(() => {
+      started(); return new Promise(() => undefined);
+    }) as typeof fetch);
+    vi.useFakeTimers();
+    try {
+      const signedOut = session.signOut();
+      await revocationStarted;
+      await vi.advanceTimersByTimeAsync(2_000);
+      await signedOut;
+      expect(await session.identityId()).toBeNull();
+      expect(secure.size).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
 
   it('exchanges once and reuses the access token', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(1)), { status: 200 }));
@@ -338,9 +462,11 @@ describe('monolith phone session', () => {
         expect(secure.get('buzzy.monolith.refresh.v1')).toBe(initial.refreshToken);
         await vi.advanceTimersByTimeAsync(10_000);
         await firstAssertion;
-        const access = await session.authorization();
+        await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+        const cold = new MonolithSession('https://server.example', fetcher as typeof fetch);
+        const access = await cold.authorization();
         expect(await auth.authenticatePhone(access)).toBe(initial.identityId);
-        expect(secure.get('buzzy.monolith.refresh.v1')).not.toBe(initial.refreshToken);
+        expect(secure.get('buzzy.monolith.refresh.v1')).toBe(initial.refreshToken);
         expect(await session.identityId()).toBe(initial.identityId);
       } finally {
         vi.useRealTimers();

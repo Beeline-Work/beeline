@@ -196,10 +196,13 @@ export function ConversationComposer({
     // Center the cap-to-baseline body, rather than the font's asymmetric
     // ascent/descent box. Text and TextInput use the same natural metrics.
     // Moving the drawing does not change contentSize or inline span layout.
-    const offset = line.height / 2 - line.ascender + line.capHeight / 2;
+    // iOS reports the used glyph rect as `height`; ascent + descent describe
+    // its full line fragment, including paragraph leading.
+    const lineHeight = Platform.OS === 'ios' ? line.ascender + line.descender : line.height;
+    const offset = lineHeight / 2 - line.ascender + line.capHeight / 2;
     if (Number.isFinite(offset)) {
       setTextOffset(offset);
-      setNativeLineHeight(line.height);
+      setNativeLineHeight(lineHeight);
     }
   }, []);
   const setInputRef = React.useCallback(

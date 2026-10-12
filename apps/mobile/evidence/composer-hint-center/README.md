@@ -8,7 +8,7 @@ The 1080×2340 screenshot has a field border at y=1260…1381, center 1320.5. Th
 
 ## Change
 
-`ConversationComposer` measures its real native line with `onTextLayout`, then moves the drawing by `lineHeight / 2 - ascender + capHeight / 2`. Android keeps `includeFontPadding: false`, zero fixed vertical padding, and unset input/tag line heights. The drawing transform does not contribute to content-size measurement. The composer also reserves at least the measured natural line height: the viewer's parent deliberately keeps an empty draft at 26dp, which is smaller than some scaled fonts. On iOS, only a short single line receives the extra space from that 26dp minimum; an intrinsically grown paragraph does not.
+`ConversationComposer` measures its real native line with `onTextLayout`, then moves the drawing by `lineHeight / 2 - ascender + capHeight / 2`. Android keeps `includeFontPadding: false`, zero fixed vertical padding, and unset input/tag line heights. The drawing transform does not contribute to content-size measurement. The composer also reserves at least the measured natural line height: the viewer's parent deliberately keeps an empty draft at 26dp, which is smaller than some scaled fonts. On iOS, ascent plus descent identify the full TextKit line fragment rather than its smaller used glyph rectangle. Only a short single line receives the extra space from that 26dp minimum; an intrinsically grown paragraph does not.
 
 Web uses the loaded face's Canvas cap/ascent/descent metrics and the input's computed line box. It re-measures after font loading, theme/height changes and resize. The browser tag overlay moves with the input. The viewer's borderless row fills its existing 44dp container, rather than leaving a 42dp row at its top. A single scaled line is identified by its measured height, so it does not become falsely bottom-aligned as a multiline paragraph.
 
@@ -94,6 +94,6 @@ CHROME_DEVTOOLS_AXI_SESSION=beeline-hint-center CHROME_DEVTOOLS_AXI_PORT=9238 \
 python3 apps/mobile/scripts/composer-hint-center-web-proof.py
 ```
 
-The new native-metric regression fails on the baseline. Root typecheck, focused composer/speech/layout/design tests and dead-code checks are required before delivery. Native iOS is not pixel-tested in this Linux environment; the minimum-height/multiline behavior has a component regression test.
+Validation after integrating current main: root `npm run typecheck`; 130 tests across 10 composer, speech, viewer, layout and design suites; `npm run dead-code` (91 baseline findings, zero introduced). The new native-metric regression fails on the baseline and passes with the fix. Native iOS is not pixel-tested in this Linux environment; the minimum-height/multiline behavior has a component regression test.
 
-Validated release-fixture APK SHA-256: `9af379005fde48a203d5330ff98fe4923a3a36e86524b9c6b16edcf80aa1ede2`. APK, generated signing configuration and local logs are ignored.
+Validated release-fixture APK SHA-256: `5ee44f811a9af590aceb0e4e980a41bf60a9d58bc1224332d389f3b8b3719cf6`. APK, generated signing configuration and local logs are ignored.

@@ -134,7 +134,8 @@ describe('one composer', () => {
     const f = render('Message');
     const input = () => f.renderer.root.findByType('TextInput');
     const measure = f.renderer.root.findByProps({ testID: 'chat-text-measurement' });
-    act(() => measure.props.onTextLayout({ nativeEvent: { lines: [{ height: 23, ascender: 17, capHeight: 11 }] } }));
+    // TextKit's used rect can be shorter than its full line fragment.
+    act(() => measure.props.onTextLayout({ nativeEvent: { lines: [{ height: 22, ascender: 17, descender: 6, capHeight: 11 }] } }));
     const drawOffset = () => Object.assign({}, ...input().props.style.filter(Boolean)).transform[0].translateY;
     expect(drawOffset()).toBe(1.5);
     const props = f.renderer.root.findByType(ConversationComposer).props;

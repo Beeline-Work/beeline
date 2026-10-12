@@ -558,7 +558,7 @@ export function computerViewerHtml(id: string): string {
 const computerWebSockets = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
 type BodyChannel = { source?: WebSocket; lastFrame?: { data: Buffer; binary: boolean }; viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; pausedViewers: Set<WebSocket>; previewSentAt: Map<WebSocket, number>; controller?: WebSocket; ending?: boolean };
 const bodyChannels = new Map<string, BodyChannel>();
-type SquireChannel = { viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; upstreams: Set<WebSocket>; humanControl: boolean; html?: string; lastFrame?: { data: Buffer; binary: boolean }; previewSentAt: Map<WebSocket, number> };
+type SquireChannel = { viewers: Set<WebSocket>; interactiveViewers: Set<WebSocket>; upstreams: Set<WebSocket>; humanControl: boolean; humanViewerId?: string; pendingHumanInput?: { viewerId: string; category: string }; html?: string; lastFrame?: { data: Buffer; binary: boolean }; previewSentAt: Map<WebSocket, number> };
 const squireChannels = new Map<string, SquireChannel>();
 function squireChannel(id: string): SquireChannel {
   let channel = squireChannels.get(id);

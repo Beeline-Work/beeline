@@ -129,12 +129,17 @@ describe('computer session handoff', () => {
     const share = await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'old-view', upstreamUrl: 'body:',
     });
+    const meaningfulShare = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'old-input', upstreamUrl: 'body:',
+    });
     const observation = (activity: string) => systemLine(database, {
       roomId: ROOM, authorId: SYSTEM_IDENTITY_ID, subject: { kind: 'system', name: 'A person' },
       verb: activity === 'input' ? 'used' : 'opened', object: 'the shared browser',
-      kind: 'computer-session-activity', payload: { sessionId: share.id, activity }, wakes: [AGENT],
+      kind: 'computer-session-activity', payload: { sessionId: activity === 'input' ? meaningfulShare.id : share.id, activity }, wakes: [AGENT],
     });
     const passive = await observation('viewer-opened');
+    // Legacy pre-coalescing commands had the normal subscribed-event reason.
+    await database.query(`UPDATE agent_commands SET reason='subscribed_event' WHERE source_message_id=$1`, [passive.id]);
     const meaningful = await observation('input');
     await backfillComputerObservations(database);
     const commands = await database.query<{source_message_id: string;state: string}>(
@@ -147,6 +152,7 @@ describe('computer session handoff', () => {
     expect(rows.rows.every(row => row.presentation === 'activity' && !row.text.includes('A person'))).toBe(true);
     await backfillComputerObservations(database);
     await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+    await endComputerSession(database, live, (await getComputerSession(database, meaningfulShare.id))!);
   });
 
   it('posts a live card, relays frames and only the controller input, then ends the card', async () => {

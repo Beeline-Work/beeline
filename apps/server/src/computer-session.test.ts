@@ -120,6 +120,9 @@ describe('computer session handoff', () => {
       (item.systemEvent?.payload as { sessionId?: string } | undefined)?.sessionId === share.id);
     expect(context.map(item => item.body)).toEqual(['Human opened the shared browser', 'Human closed the shared browser view']);
     expect(context.every(item => item.type === 'activity')).toBe(true);
+    for (const item of context) expect(await phone.readLiveDelta(ROOM, HUMAN, {
+      type: 'message', messageId: item.id,
+    })).toBeNull();
     expect((await phone.readRoom(ROOM, HUMAN))?.messages.some(message =>
       message.systemEvent?.kind === 'computer-session-activity')).toBe(false);
     await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
@@ -509,6 +512,10 @@ describe('computer session handoff', () => {
     squire.on('upgrade', (request, socket, head) => streams.handleUpgrade(request, socket, head, (client) => {
       tunnels++;
       source = client;
+      client.on('message', data => {
+        const message = JSON.parse(data.toString());
+        client.send(JSON.stringify({ type: 'control', state: message.type === 'release' ? 'agent' : 'human' }));
+      });
       client.send(frame);
     }));
     await new Promise<void>((resolve) => squire.listen(0, '127.0.0.1', resolve));
@@ -552,8 +559,10 @@ describe('computer session handoff', () => {
       await until(async () => (await database.query(
         `SELECT 1 FROM computer_session_events WHERE session_id=$1 AND name='input' AND detail='pointer'`, [share.id],
       )).rowCount ? true : undefined);
+      const release = next(source!);
       pointerViewer.close();
       await new Promise<void>((resolve) => pointerViewer.once('close', resolve));
+      expect(JSON.parse(await release)).toEqual({ type: 'release' });
       const blockedInput: string[] = [];
       source!.on('message', (data) => blockedInput.push(data.toString()));
       preview.send(JSON.stringify({ type: 'text', text: 'preview cannot control' }));

@@ -14,14 +14,16 @@ Both APKs use the Hermes **release** variant with a local development signing ke
 
 The reported overlap was not reproduced on this emulator. Its before frame already had a small gap; the implementation now defines the gap and prevents the embedded WebView from applying a second bottom safe-area inset. The approved `computer-collapsed` board was absent from this worktree; the implementation follows the brief's explicit vertical stack.
 
-Filling uses uniform cover scaling rather than stretching: a desktop page is cropped horizontally in portrait. Horizontal dragging pans the crop; vertical dragging scrolls the remote page, and pinch zoom retains its focal point. Gesture execution was not verified in a browser because firstmate authorized shipping the Android evidence after the shared chrome-devtools-axi session failed.
+Filling uses uniform cover scaling rather than stretching: a desktop page is cropped horizontally in portrait. A native horizontal swipe pans the crop ([after pan](android-after-pan.png)) without creating an agent command. Vertical dragging scrolls the remote page; pinch zoom retains its focal point in the existing gesture code. Pinch execution was not verified; firstmate authorized shipping the Android evidence after the shared chrome-devtools-axi session failed.
 
 Activity observations use hidden `activity` rows with no durable fact. Passive open/close/takeover observations carry no wake targets and become context on the next requested Room turn. Meaningful input/navigation while in human control still uses the dependency's coalescing path. A migration hides old lines and cancels pending passive-only commands while preserving meaningful coalesced input. Hand back and End share controls are removed from the native and standalone viewers; closing only disconnects the viewer and leaves the session live.
 
 ## Checks
 
-Before rebasing: 12 server tests, 26 helper tests and 9 mobile component tests passed. Server, helper and mobile type checks passed. The final combined-branch results are recorded in the PR.
+After rebasing onto the dependency: 125 related server tests, 117 helper tests and 30 mobile tests passed. The final computer-session/live-delta and system-line tests passed again (15 tests) after the last test changes. Server, helper and mobile type checks passed. Both the bundle and APK were rebuilt from the combined branch, and the after frames were refreshed.
 
 Coverage includes passive open/close without commands, actual viewer naming with no handle, next-turn context, hidden phone transcript rows, historical cleanup, explicit close without control writes, frame relay/access/expiry, and source grammar enforcement.
 
 No live model helper was started. The no-wake claim is verified at the authoritative command store rather than by observing model behavior. No captain Workspace, live helper, shared no-mistakes daemon or shared Squire broker was restarted or updated.
+
+Final local release APK SHA-256: `3a392163364392d34c865c8a252248604e5e867ede755e1efb7888c28ec6a60d`.

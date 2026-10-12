@@ -84,7 +84,7 @@ function notifyWaiters(id: string, value: { type: 'handoff' | 'ended'; note?: st
 }
 
 async function recordComputerActivity(
-  database: SqlDatabase, row: ComputerSessionRow, name: ComputerActivityEvent['name'], detail?: string,
+  database: SqlDatabase, row: ComputerSessionRow, name: ComputerActivityEvent['name'], detail?: string, viewerId?: string,
 ): Promise<void> {
   const result = await database.query<{ id: string; created_at: Date }>(
     `INSERT INTO computer_session_events(session_id,name,detail)
@@ -108,16 +108,21 @@ async function recordComputerActivity(
     navigation: { verb: 'navigated', object: 'the shared browser' },
     handback: { verb: 'returned', object: 'control of the shared browser' },
   };
+  const viewer = viewerId ? (await database.query<{ name: string; handle: string | null }>(
+    'SELECT name,handle FROM identities WHERE id=$1', [viewerId],
+  )).rows[0] : undefined;
   const phrase = words[name];
   void systemLine(database, {
     roomId: row.room_id,
     authorId: SYSTEM_IDENTITY_ID,
-    subject: { kind: 'system', name: 'A person' },
+    subject: viewer ? { kind: 'person', ...(viewer.handle ? { id: viewerId } : {}), name: viewer.name }
+      : { kind: 'system', name: 'Shared browser' },
     verb: phrase.verb,
     object: { text: phrase.object, ...(name === 'navigation' && detail ? { url: detail } : {}) },
     kind: 'computer-session-activity',
     payload: { sessionId: row.id, activity: name, ...(detail ? { detail } : {}) },
-    wakes: [row.agent_id],
+    presentation: 'activity',
+    wakes: name === 'input' || name === 'navigation' || name === 'handback' ? [row.agent_id] : [],
   }).catch((error: unknown) => console.warn('[computer-share] activity Room event failed', error));
   if (event.seq % 20 === 0) void database.query(
     `DELETE FROM computer_session_events WHERE session_id=$1 AND id <
@@ -352,9 +357,8 @@ export async function serveComputerSession(
       #screen{display:block!important;position:relative!important;overflow:hidden!important;align-items:unset!important;justify-content:unset!important;touch-action:none!important}
       canvas{display:block!important;position:absolute!important;max-width:none!important;max-height:none!important;object-fit:fill!important;touch-action:none!important}
       #bar{position:fixed!important;z-index:2;right:12px;bottom:max(12px,env(safe-area-inset-bottom))!important;padding:0!important;background:transparent!important}
-      #beeline-handback{position:fixed;z-index:2;right:12px;bottom:72px;border:1px solid #ffffff44;border-radius:14px;padding:10px 14px;background:#261a2ae8;color:#f6edf4;font:500 13px system-ui,sans-serif}
-      #beeline-end{position:fixed;z-index:2;right:12px;bottom:122px;border:1px solid #ffffff44;border-radius:14px;padding:10px 14px;background:#261a2ae8;color:#f6edf4;font:500 13px system-ui,sans-serif}
       #state{display:none!important}
+      body.beeline-embedded #bar{bottom:12px!important}
       #focus{width:42px;height:42px;margin:0!important;padding:0;border:1px solid #ffffff44;border-radius:14px;background:#261a2ae8;color:#f6edf4;font-size:0}
       #focus::before{content:'⌨';font-size:20px}
       @media(pointer:fine){#bar{display:none!important}}
@@ -362,26 +366,23 @@ export async function serveComputerSession(
     const bridge = `<script>
       const beelineScreen=document.getElementById('screen'),beelineCanvas=document.getElementById('canvas');
       const beelineQuery=new URLSearchParams(location.search),beelinePreview=beelineQuery.has('preview');
+      if(beelineQuery.has('embedded'))document.body.classList.add('beeline-embedded');
       if(beelinePreview)document.getElementById('bar').style.display='none';
-      let beelineZoom=1,beelineLeft=0,beelineTop=0;
+      let beelineZoom=1,beelineLeft=0,beelineTop=0,beelineFitted=false;
       addEventListener('message',event=>{if(event.data?.type!=='viewer-snapshot-request'||event.data.id!=='${id}')return;
         let image=null;try{if(beelineCanvas.width>1&&beelineCanvas.height>1)
           image=beelineCanvas.toDataURL('image/jpeg',0.72).split(',')[1]||null;}catch{}
         const answer={type:'computer-snapshot',id:'${id}',requestId:event.data.requestId,image};
         if(event.source!==window)event.source?.postMessage(answer,event.origin);window.ReactNativeWebView?.postMessage(JSON.stringify(answer));});
       function beelineFit(){if(!beelineCanvas.width||!beelineCanvas.height)return;
-        const scale=(beelinePreview?Math.max:Math.min)(beelineScreen.clientWidth/beelineCanvas.width,beelineScreen.clientHeight/beelineCanvas.height)*beelineZoom;
+        const scale=Math.max(beelineScreen.clientWidth/beelineCanvas.width,beelineScreen.clientHeight/beelineCanvas.height)*beelineZoom;
         const w=beelineCanvas.width*scale,h=beelineCanvas.height*scale;
-        if(beelineZoom===1){beelineLeft=(beelineScreen.clientWidth-w)/2;beelineTop=(beelineScreen.clientHeight-h)/2;}
+        if(!beelineFitted){beelineLeft=0;beelineTop=0;beelineFitted=true;}
         else{beelineLeft=Math.min(0,Math.max(beelineScreen.clientWidth-w,beelineLeft));beelineTop=Math.min(0,Math.max(beelineScreen.clientHeight-h,beelineTop));}
         beelineCanvas.style.width=Math.ceil(w)+'px';beelineCanvas.style.height=Math.ceil(h)+'px';
         beelineCanvas.style.left=Math.round(beelineLeft)+'px';beelineCanvas.style.top=Math.round(beelineTop)+'px';}
       new MutationObserver(beelineFit).observe(beelineCanvas,{attributes:true,attributeFilter:['width','height']});
       addEventListener('resize',beelineFit);beelineFit();
-      if(!beelinePreview&&!beelineQuery.has('embedded')){const button=document.createElement('button');
-        button.id='beeline-handback';button.textContent='Hand back';button.onclick=()=>send({type:'handback'});document.body.append(button);
-        const end=document.createElement('button');end.id='beeline-end';end.textContent='End share';
-        end.onclick=()=>send({type:'end-share'});document.body.append(end);}
       if(matchMedia('(pointer:coarse)').matches){let drag,pinch;const pointers=new Map();
         beelineCanvas.addEventListener('pointerdown',event=>{if(event.pointerType!=='touch')return;
           event.preventDefault();event.stopImmediatePropagation();beelineCanvas.setPointerCapture(event.pointerId);
@@ -399,7 +400,7 @@ export async function serveComputerSession(
             beelineTop=(a.y+b.y)/2-beelineScreen.getBoundingClientRect().top-(pinch.y-pinch.top)*z;beelineFit();return;}
           if(drag?.id!==event.pointerId)return;const dx=drag.x-event.clientX,dy=drag.y-event.clientY;
           if(Math.abs(dx)+Math.abs(dy)>3){drag.moved=true;
-            if(beelineZoom>1){beelineLeft-=dx;beelineTop-=dy;beelineFit();}
+            if(beelineZoom>1||(Math.abs(dx)>Math.abs(dy)&&beelineCanvas.getBoundingClientRect().width>beelineScreen.clientWidth)){beelineLeft-=dx;beelineTop-=dy;beelineFit();}
             else send({type:'wheel',delta_x:dx,delta_y:dy,...point(event)});}
           drag.x=event.clientX;drag.y=event.clientY;},true);
         beelineCanvas.addEventListener('pointerup',event=>{if(event.pointerType!=='touch')return;
@@ -461,7 +462,7 @@ export function computerViewerHtml(id: string): string {
   button,a{border:1px solid #ffffff44;border-radius:999px;background:#261a2ad9;color:#f6edf4;padding:10px 14px;font:500 13px system-ui,sans-serif;text-decoration:none;cursor:pointer}
   body.embedded #controls{display:none}
   #keys{position:absolute;opacity:0;width:1px;height:1px;left:0;bottom:0}
-  </style></head><body><div id="stage"><img id="screen" alt="Live browser"></div><div id="ended">Browser session ended</div><input id="keys" autocomplete="off" autocapitalize="off"><div id="controls"><button id="handback" aria-label="Hand browser back to agent">Hand back</button><button id="end" aria-label="End browser share">End share</button><button id="back" aria-label="Close browser">✕</button></div><script>
+  </style></head><body><div id="stage"><img id="screen" alt="Live browser"></div><div id="ended">Browser session ended</div><input id="keys" autocomplete="off" autocapitalize="off"><div id="controls"><button id="back" aria-label="Close browser">✕</button></div><script>
   const query=new URLSearchParams(location.search), preview=query.has('preview');
   if(query.has('embedded')) document.body.classList.add('embedded');
   const image=document.getElementById('screen'), stage=document.getElementById('stage'), ended=document.getElementById('ended'), keys=document.getElementById('keys');
@@ -471,12 +472,12 @@ export function computerViewerHtml(id: string): string {
     if(event.source!==window)event.source?.postMessage(answer,event.origin);window.ReactNativeWebView?.postMessage(JSON.stringify(answer));});
   const socketUrl=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/s/${id}/ws'+location.search;
   let wire, serial=1, controlling=false, width=1, height=1, leaving=false, endedSession=false, reconnected=false;
-  let zoom=1,offsetX=0,offsetY=0;
+  let zoom=1,offsetX=0,offsetY=0,fitted=false;
   const pointers=new Map();
   function fit(){if(width<=1||height<=1)return;
-    const base=(preview?Math.max:Math.min)(stage.clientWidth/width,stage.clientHeight/height);
+    const base=Math.max(stage.clientWidth/width,stage.clientHeight/height);
     const w=width*base*zoom,h=height*base*zoom;
-    if(zoom===1){offsetX=(stage.clientWidth-w)/2;offsetY=(stage.clientHeight-h)/2;}
+    if(!fitted){offsetX=0;offsetY=0;fitted=true;}
     else{offsetX=Math.min(0,Math.max(stage.clientWidth-w,offsetX));offsetY=Math.min(0,Math.max(stage.clientHeight-h,offsetY));}
     image.style.width=Math.ceil(w)+'px';image.style.height=Math.ceil(h)+'px';
     image.style.left=Math.round(offsetX)+'px';image.style.top=Math.round(offsetY)+'px';}
@@ -529,7 +530,7 @@ export function computerViewerHtml(id: string): string {
         offsetY=m.y-stage.getBoundingClientRect().top-(pinch.y-pinch.offsetY)*z;fit();return;}
       if(touch?.id===event.pointerId){const dx=touch.clientX-event.clientX,dy=touch.clientY-event.clientY;
         if(Math.abs(dx)+Math.abs(dy)>3){touch.moved=true;
-          if(zoom>1){offsetX-=dx;offsetY-=dy;fit();}
+          if(zoom>1||(Math.abs(dx)>Math.abs(dy)&&image.getBoundingClientRect().width>stage.clientWidth)){offsetX-=dx;offsetY-=dy;fit();}
           else{const p=point(event);cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:dx,deltaY:dy});}}
         touch.clientX=event.clientX;touch.clientY=event.clientY;return;}}
     if(!event.buttons)return;const p=point(event);
@@ -549,8 +550,6 @@ export function computerViewerHtml(id: string): string {
     const p=point(event);cdp('Input.dispatchMouseEvent',{type:'mouseWheel',x:p.x,y:p.y,deltaX:event.deltaX,deltaY:event.deltaY});},{passive:false});
   keys.addEventListener('input',()=>{if(keys.value){takeover();cdp('Input.insertText',{text:keys.value});keys.value='';}});
   keys.addEventListener('keydown',event=>{if(['Enter','Backspace','Tab','Escape','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)){takeover();cdp('Input.dispatchKeyEvent',{type:'keyDown',key:event.key,code:event.code});cdp('Input.dispatchKeyEvent',{type:'keyUp',key:event.key,code:event.code});event.preventDefault();}});
-  document.getElementById('handback').onclick=()=>{send({type:'handback'});controlling=false;};
-  document.getElementById('end').onclick=()=>send({type:'end-share'});
   document.getElementById('back').onclick=()=>{finish();window.close();history.back();};
   addEventListener('pagehide',finish);
   </script></body></html>`;
@@ -668,6 +667,7 @@ export async function upgradeBodyComputerSource(
       try {
         const event = JSON.parse(data.toString()) as { type?: string; name?: string; detail?: string };
         if (event.type === 'share-event' && event.name === 'navigation') {
+          if (!channel.controller) return;
           void recordComputerActivity(database, row, 'navigation', event.detail?.slice(0, 200)).catch(() => {});
           return;
         }
@@ -704,13 +704,15 @@ export async function upgradeBodyComputerSource(
 }
 
 function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffer, database: SqlDatabase, live: LiveHub, row: ComputerSessionRow): void {
-  const preview = new URL(request.url ?? '/', 'http://beeline.local').searchParams.has('preview');
+  const query = new URL(request.url ?? '/', 'http://beeline.local').searchParams;
+  const preview = query.has('preview');
+  const viewerId = query.get('access')!.split('.')[0]!;
   computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
     const channel = bodyChannel(row.id);
     channel.viewers.add(viewer);
     if (!preview) channel.interactiveViewers.add(viewer);
     if (channel.lastFrame) viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
-    if (!preview) void recordComputerActivity(database, row, 'viewer-opened').catch(() => {});
+    if (!preview) void recordComputerActivity(database, row, 'viewer-opened', undefined, viewerId).catch(() => {});
     const lastInputAt = new Map<string, number>();
     const handBack = () => {
       if (preview || channel.ending) return;
@@ -729,7 +731,7 @@ function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffe
       } else if (message.type === 'takeover' && !channel.controller) {
         channel.controller = viewer;
         channel.source?.send(data);
-        void recordComputerActivity(database, row, 'takeover').catch(() => {});
+        void recordComputerActivity(database, row, 'takeover', undefined, viewerId).catch(() => {});
       } else if (message.type === 'release' && channel.controller === viewer) {
         channel.controller = undefined;
         channel.source?.send(data);
@@ -751,7 +753,7 @@ function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffe
         const now = Date.now();
         if (now - (lastInputAt.get(category) ?? 0) >= 1_000) {
           lastInputAt.set(category, now);
-          void recordComputerActivity(database, row, 'input', category).catch(() => {});
+          void recordComputerActivity(database, row, 'input', category, viewerId).catch(() => {});
         }
       }
     });
@@ -764,7 +766,7 @@ function upgradeBodyViewer(request: IncomingMessage, socket: Duplex, head: Buffe
         channel.controller = undefined;
         channel.source?.send(JSON.stringify({ type: 'release' }));
       }
-      if (!preview) void recordComputerActivity(database, row, 'viewer-closed').catch(() => {});
+      if (!preview) void recordComputerActivity(database, row, 'viewer-closed', undefined, viewerId).catch(() => {});
     });
   });
 }
@@ -791,7 +793,9 @@ export async function upgradeComputerSession(
   if (target.protocol === 'https:') target.protocol = 'wss:';
   if (target.protocol === 'http:') target.protocol = 'ws:';
   if (!['ws:', 'wss:'].includes(target.protocol)) { socket.destroy(); return; }
-  const preview = new URL(request.url ?? '/', 'http://beeline.local').searchParams.has('preview');
+  const query = new URL(request.url ?? '/', 'http://beeline.local').searchParams;
+  const preview = query.has('preview');
+  const viewerId = query.get('access')!.split('.')[0]!;
   computerWebSockets.handleUpgrade(request, socket, head, (viewer) => {
     const channel = squireChannel(id);
     const startedAt = Date.now();
@@ -801,7 +805,7 @@ export async function upgradeComputerSession(
       viewer.send(channel.lastFrame.data, { binary: channel.lastFrame.binary });
       console.info(`[computer-share] squire cached JPEG session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`);
     }
-    if (!preview) void recordComputerActivity(database, row, 'viewer-opened').catch(() => {});
+    if (!preview) void recordComputerActivity(database, row, 'viewer-opened', undefined, viewerId).catch(() => {});
     let upstream = [...channel.upstreams][0];
     const newTunnel = !upstream;
     if (!upstream) {
@@ -834,7 +838,9 @@ export async function upgradeComputerSession(
         const now = Date.now();
         if (now - (lastInputAt.get(category) ?? 0) >= 1_000) {
           lastInputAt.set(category, now);
-          void recordComputerActivity(database, row, 'input', category).catch(() => {});
+          channel.humanViewerId = viewerId;
+          if (channel.humanControl) void recordComputerActivity(database, row, 'input', category, viewerId).catch(() => {});
+          else channel.pendingHumanInput = { viewerId, category };
         }
       }
       if (source.readyState === WebSocket.OPEN) source.send(data, { binary });
@@ -847,7 +853,7 @@ export async function upgradeComputerSession(
       channel.viewers.delete(viewer);
       channel.interactiveViewers.delete(viewer);
       channel.previewSentAt.delete(viewer);
-      if (!preview) void recordComputerActivity(database, row, 'viewer-closed').catch(() => {});
+      if (!preview) void recordComputerActivity(database, row, 'viewer-closed', undefined, viewerId).catch(() => {});
       if (!channel.interactiveViewers.size && channel.humanControl) {
         channel.humanControl = false;
         if (source.readyState === WebSocket.OPEN) source.send(JSON.stringify({ type: 'release' }));
@@ -866,14 +872,17 @@ export async function upgradeComputerSession(
       if (message?.type === 'control') {
         if (message.state === 'human' && !channel.humanControl) {
           channel.humanControl = true;
-          void recordComputerActivity(database, row, 'takeover').catch(() => {});
+          void recordComputerActivity(database, row, 'takeover', undefined, channel.humanViewerId).catch(() => {});
+          const pending = channel.pendingHumanInput;
+          channel.pendingHumanInput = undefined;
+          if (pending) void recordComputerActivity(database, row, 'input', pending.category, pending.viewerId).catch(() => {});
         }
         if (message.state === 'agent') channel.humanControl = false;
       }
-      if (message?.type === 'navigation') {
+      if (message?.type === 'navigation' && channel.humanControl) {
         let origin: string | undefined;
         try { if (message.url) origin = new URL(message.url).origin; } catch { /* No page content. */ }
-        void recordComputerActivity(database, row, 'navigation', origin).catch(() => {});
+        void recordComputerActivity(database, row, 'navigation', origin, channel.humanViewerId).catch(() => {});
       }
       const frame = isFrameMessage(data);
       if (message?.type === 'blank') channel.lastFrame = undefined;

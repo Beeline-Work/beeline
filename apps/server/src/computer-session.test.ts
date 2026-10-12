@@ -15,6 +15,7 @@ import { systemLine } from './system-line.js';
 import { createAgentCommand, claimAgentCommand, readAgentCommands } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { noteFirstSilence } from './turn-silence-notice.js';
+import { backfillComputerObservations } from './system-line.js';
 import { PhoneService } from './phone-service.js';
 import {
   computerViewToken, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, serveComputerSession,
@@ -101,6 +102,53 @@ describe('computer session handoff', () => {
     await database.close();
   });
 
+  it('keeps passive viewer context for the next agent read without a wake or human transcript line', async () => {
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'passive-view', upstreamUrl: 'body:',
+    });
+    const access = await computerViewToken(database, share.id, HUMAN);
+    const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/ws?access=${access}`);
+    await opened(viewer); viewer.close();
+    await new Promise<void>(resolve => viewer.once('close', resolve));
+    await until(async () => (await database.query(`SELECT 1 FROM messages WHERE
+      system_event->'payload'->>'sessionId'=$1 AND system_event->'payload'->>'activity'='viewer-closed'`, [share.id])).rowCount ? true : undefined);
+    const commands = await database.query(`SELECT 1 FROM agent_commands command JOIN messages source
+      ON source.id=command.source_message_id WHERE source.system_event->'payload'->>'sessionId'=$1`, [share.id]);
+    expect(commands.rowCount).toBe(0);
+    const conversation = await new DaemonService(database, live).execute('getRoomConversation', { roomId: ROOM }, AGENT);
+    const context = conversation.items.filter(item =>
+      (item.systemEvent?.payload as { sessionId?: string } | undefined)?.sessionId === share.id);
+    expect(context.map(item => item.body)).toEqual(['Human opened the shared browser', 'Human closed the shared browser view']);
+    expect(context.every(item => item.type === 'activity')).toBe(true);
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.some(message =>
+      message.systemEvent?.kind === 'computer-session-activity')).toBe(false);
+    await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+  });
+
+  it('retires historical viewer lines and unclaimed passive wakes, preserving meaningful requests', async () => {
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'old-view', upstreamUrl: 'body:',
+    });
+    const observation = (activity: string) => systemLine(database, {
+      roomId: ROOM, authorId: SYSTEM_IDENTITY_ID, subject: { kind: 'system', name: 'A person' },
+      verb: activity === 'input' ? 'used' : 'opened', object: 'the shared browser',
+      kind: 'computer-session-activity', payload: { sessionId: share.id, activity }, wakes: [AGENT],
+    });
+    const passive = await observation('viewer-opened');
+    const meaningful = await observation('input');
+    await backfillComputerObservations(database);
+    const commands = await database.query<{source_message_id: string;state: string}>(
+      `SELECT source_message_id,state FROM agent_commands WHERE source_message_id=ANY($1::text[])`, [[passive.id,meaningful.id]]);
+    expect(commands.rows).toEqual(expect.arrayContaining([
+      {source_message_id: passive.id,state:'cancelled'}, {source_message_id: meaningful.id,state:'pending'},
+    ]));
+    const rows = await database.query<{text: string;presentation: string}>(
+      `SELECT text,presentation FROM messages WHERE id=ANY($1::text[])`, [[passive.id,meaningful.id]]);
+    expect(rows.rows.every(row => row.presentation === 'activity' && !row.text.includes('A person'))).toBe(true);
+    await backfillComputerObservations(database);
+    await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+  });
+
   it('posts a live card, relays frames and only the controller input, then ends the card', async () => {
     const share = await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'chromium-page-1', upstreamUrl: 'body:', title: 'Dashboard',
@@ -138,6 +186,14 @@ describe('computer session handoff', () => {
     const reconnectFrame = next(viewer);
     await opened(viewer);
     expect(await reconnectFrame).toBe(frame);
+    await until(async () => (await database.query(`SELECT 1 FROM messages
+      WHERE system_event->'payload'->>'sessionId'=$1
+      AND system_event->'payload'->>'activity'='viewer-closed'`, [share.id])).rowCount ? true : undefined);
+    expect((await database.query(`SELECT 1 FROM agent_commands command JOIN messages source ON source.id=command.source_message_id
+      WHERE source.system_event->'payload'->>'sessionId'=$1`, [share.id])).rowCount).toBe(0);
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.some(message =>
+      message.systemEvent?.kind === 'computer-session-activity')).toBe(false);
+
     await new Promise<void>((resolve) => setTimeout(resolve, 5_100));
     expect((await getComputerSession(database, share.id))?.handoff_count).toBe(0);
     const pausedFrames: string[] = [];
@@ -175,6 +231,8 @@ describe('computer session handoff', () => {
       );
       return result.rows.some((event) => event.system_event.payload.activity === 'handback') ? result.rows : undefined;
     });
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.some(message =>
+      message.systemEvent?.kind === 'computer-session-activity')).toBe(false);
     expect(activity.map((event) => event.system_event.payload.activity))
       .toEqual(expect.arrayContaining(['viewer-opened', 'viewer-closed', 'takeover', 'input', 'handback']));
     expect((await database.query(
@@ -263,7 +321,9 @@ describe('computer session handoff', () => {
       expect(html).not.toContain(upstreamUrl);
       expect(html).not.toContain(token);
       expect(html).toContain('new URL("stream" + location.search, location.href)');
-      expect(html).toContain('(beelinePreview?Math.max:Math.min)');
+      expect(html).toContain('const scale=Math.max(');
+      expect(html).not.toContain('beeline-handback');
+      expect(html).not.toContain('beeline-end');
       const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
       await opened(viewer);
       await until(async () => upstream);

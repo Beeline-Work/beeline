@@ -50,7 +50,7 @@ export function ViewerConversationDock({
   const maxPickedAttachments = MAX_MESSAGE_ATTACHMENTS - 1;
   const [availableWidth, setAvailableWidth] = React.useState(366);
   const width = React.useRef(new Animated.Value(42)).current;
-  const bottom = insets.bottom + (kind === 'computer' ? 63 : 12);
+  const bottom = insets.bottom + (kind === 'computer' ? 12 + 42 + 12 : 12);
   const context = viewerContext(kind, title);
   const currentAgent = viewerAgentHandle(kind, agentHandle, conversation?.messages ?? []);
 

@@ -1564,7 +1564,7 @@ export class MonolithRoomTurnLoop {
               const transcriptRows = conversation.items
                 .filter(
                   (message) =>
-                    message.type === 'message' &&
+                    (message.type === 'message' || message.systemEvent?.kind === 'computer-session-activity') &&
                     message.id !== item.id &&
                     !active.steers.some((steerItem) => steerItem.id === message.id),
                 )

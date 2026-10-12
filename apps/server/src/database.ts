@@ -1,3 +1,4 @@
+import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
 import { PROVIDER_WEBHOOKS_SCHEMA } from './provider-webhooks.js';
@@ -3027,6 +3028,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     });
     return result;
   };
+  await dataStep('browser observations', () =>
+    workflowBackfillOnce(database, 'computer-observations-v1', backfillComputerObservations));
   const searchDocuments = await backfillMessageSearchDocuments(database, 200, true);
   await dataStep('Squire approval expiry backfill', () => backfillSquireApprovalExpiry(database));
   await dataStep('webhook payload and retention', () =>

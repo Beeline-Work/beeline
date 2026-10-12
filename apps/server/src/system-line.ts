@@ -71,7 +71,8 @@ export interface SystemLineInput {
    * is a routing list only — it starts turns, and never stands in for a tag.
    */
   readonly wakes?: readonly string[];
-  readonly presentation?: 'system' | 'card';
+  /** Agent-only browser observations use activity and never paint in the transcript. */
+  readonly presentation?: 'system' | 'card' | 'activity';
   readonly cardType?: string;
   readonly card?: Record<string, unknown>;
   readonly requestId?: string;
@@ -721,3 +722,23 @@ export function identitySubject(row: {
 }
 
 export const GITHUB_SUBJECT: SystemSubject = { kind: 'github', name: 'GitHub' };
+
+/** Retire historical human-facing browser observations without losing agent context. */
+export async function backfillComputerObservations(database: SqlDatabase): Promise<void> {
+  // Old viewer lines remain agent context, but never return in phone history.
+  await database.query(`UPDATE messages SET presentation='activity',durable_fact=NULL,
+      text=replace(text,'A person','Shared browser'),
+      system_event=jsonb_set(system_event,'{subject,name}',
+        to_jsonb(replace(system_event->'subject'->>'name','A person','Shared browser')))
+    WHERE system_event->>'kind'='computer-session-activity'`);
+  // A passive observation accepted by the previous release must not start
+  // a turn after this migration. Preserve coalesced meaningful input.
+  await database.query(`UPDATE agent_commands command SET state='cancelled',completed_at=now()
+    FROM messages source WHERE source.id=command.source_message_id
+      AND command.state='pending'
+      AND command.reason IN ('subscribed_event','computer_activity')
+      AND source.system_event->>'kind'='computer-session-activity'
+      AND source.system_event->'payload'->>'activity' IN ('viewer-opened','viewer-closed','takeover')
+      AND (command.recovery_context IS NULL OR
+        replace(command.recovery_context,'A person','Shared browser')=source.text)`);
+}

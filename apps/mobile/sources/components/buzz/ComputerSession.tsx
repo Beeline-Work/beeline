@@ -77,7 +77,7 @@ function ComputerStream({ session, preview = false, onEnded, captureRef }: {
   });
   if (WebView) return <WebView ref={webViewRef} source={{ uri: url }} javaScriptEnabled domStorageEnabled
     onMessage={onStreamMessage}
-    scrollEnabled={false} style={styles.stream} testID={preview ? 'computer-session-preview-webview' : 'computer-session-view-webview'} />;
+    scrollEnabled={false} automaticallyAdjustContentInsets={false} contentInsetAdjustmentBehavior="never" style={styles.stream} testID={preview ? 'computer-session-preview-webview' : 'computer-session-view-webview'} />;
   return <View style={styles.ended}><Text style={styles.endedText}>Opening browser…</Text></View>;
 }
 
@@ -128,7 +128,7 @@ export async function openComputerSessionViewer(session: ComputerSessionView, is
   }
 }
 
-/** Full area of the artifact viewer, with only the two rounded controls. */
+/** Browser controls occupy their own row above the live page. */
 export function ComputerSessionViewer({ session, onClose, roomId, agentHandle }: {
   session: ComputerSessionView; onClose: () => void; roomId?: string; agentHandle?: string;
 }) {
@@ -148,32 +148,12 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle }:
       Modal.alert('Could not open browser', 'The live browser is unavailable. Try again.');
     }
   };
-  const handBack = async () => {
-    if (ended) return;
-    try {
-      await monolithPhoneOperation('handbackComputerSession', { id: session.id });
-      onClose();
-    } catch {
-      Modal.alert('Could not hand back browser', 'The live browser is unavailable. Try again.');
-    }
-  };
-  const endShare = async () => {
-    if (ended) return;
-    try {
-      await monolithPhoneOperation('endComputerSession', { id: session.id });
-      setEnded(true);
-    } catch {
-      Modal.alert('Could not end browser share', 'The live browser is unavailable. Try again.');
-    }
-  };
-  return <View style={[styles.viewer, { paddingTop: insets.top + 48 + 16, paddingBottom: insets.bottom }]} testID="computer-session-viewer">
-    <View style={styles.viewerStream}><ComputerStream session={shownSession} onEnded={() => setEnded(true)} captureRef={captureRef} /></View>
-    <View style={[styles.controls, { top: insets.top + 12 }]}>
+  return <View style={[styles.viewer, { paddingTop: insets.top + 12, paddingBottom: insets.bottom }]} testID="computer-session-viewer">
+    <View style={styles.controls} testID="computer-session-controls">
       {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void openInBrowser()} accessibilityRole="button" accessibilityLabel="Open in browser" testID="computer-session-open-browser"><Text style={styles.controlText}>Open ↗</Text></Pressable> : null}
-      {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void handBack()} accessibilityRole="button" accessibilityLabel="Hand browser back to agent" testID="computer-session-handback"><Text style={styles.controlText}>Hand back</Text></Pressable> : null}
-      {!ended && session.access ? <Pressable style={styles.browserControl} onPress={() => void endShare()} accessibilityRole="button" accessibilityLabel="End browser share" testID="computer-session-end"><Text style={styles.controlText}>End share</Text></Pressable> : null}
       <Pressable style={styles.control} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close browser" testID="computer-session-close"><Text style={styles.controlText}>✕</Text></Pressable>
     </View>
+    <View style={styles.viewerStream}><ComputerStream session={shownSession} onEnded={() => setEnded(true)} captureRef={captureRef} /></View>
     <ViewerConversationDock kind="computer" title={session.title} roomId={roomId}
       agentHandle={agentHandle} captureScreen={() => captureRef.current?.() ?? Promise.resolve(null)} />
   </View>;
@@ -190,7 +170,7 @@ const styles = StyleSheet.create((theme) => ({
   link: { ...theme.buzz.type.body, color: theme.buzz.accent },
   viewer: { flex: 1, backgroundColor: theme.buzz.bgBase },
   viewerStream: { flex: 1, minHeight: 0 },
-  controls: { position: 'absolute', right: 12, flexDirection: 'row', gap: 8 },
+  controls: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginHorizontal: 12, marginBottom: 12 },
   control: { width: 42, height: 42, borderRadius: 14, borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgBase, alignItems: 'center', justifyContent: 'center' },
   browserControl: { height: 42, paddingHorizontal: theme.buzz.space.sm, borderRadius: 14, borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgBase, alignItems: 'center', justifyContent: 'center' },
   controlText: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },

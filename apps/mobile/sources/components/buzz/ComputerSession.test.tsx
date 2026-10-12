@@ -76,17 +76,18 @@ it('mints a fresh steering token before opening the system browser', async () =>
   await act(async () => tree!.unmount());
 });
 
-it('hands back only on the explicit control, while close leaves the share live', async () => {
+it('keeps only Open and Close above the page; closing never controls or ends the share', async () => {
   const onClose = vi.fn();
   let tree: ReturnType<typeof create>;
   await act(async () => { tree = create(<ComputerSessionViewer session={session} onClose={onClose} />); });
-  expect(tree!.root.findByProps({ testID: 'computer-session-viewer' }).props.style[1]).toEqual({ paddingTop: 64, paddingBottom: 24 });
+  expect(tree!.root.findByProps({ testID: 'computer-session-viewer' }).props.style[1]).toEqual({ paddingTop: 12, paddingBottom: 24 });
+  const controls = tree!.root.findByProps({ testID: 'computer-session-controls' });
+  expect(controls.props.style.position).toBeUndefined();
+  expect(controls.findAllByType('Pressable').map((button: any) => button.props.accessibilityLabel))
+    .toEqual(['Open in browser', 'Close browser']);
   await act(async () => tree!.root.findByProps({ testID: 'computer-session-close' }).props.onPress());
   expect(onClose).toHaveBeenCalledOnce();
   expect(phoneOperation).not.toHaveBeenCalled();
-  await act(async () => tree!.root.findByProps({ testID: 'computer-session-handback' }).props.onPress());
-  await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('handbackComputerSession', { id: 'session-1' }));
-  expect(onClose).toHaveBeenCalledTimes(2);
   await act(async () => tree!.unmount());
 });
 
@@ -95,15 +96,6 @@ it('offers no browser handoff after the session ends', async () => {
   await act(async () => { tree = create(<ComputerSessionViewer session={{ ...session, status: 'ended' }} onClose={() => undefined} />); });
   expect(tree!.root.findAllByProps({ testID: 'computer-session-open-browser' })).toHaveLength(0);
   expect(tree!.root.findAllByProps({ testID: 'computer-session-end' })).toHaveLength(0);
-  await act(async () => tree!.unmount());
-});
-
-it('ends a share only when End share is pressed', async () => {
-  let tree: ReturnType<typeof create>;
-  await act(async () => { tree = create(<ComputerSessionViewer session={session} onClose={() => undefined} />); });
-  await act(async () => tree!.root.findByProps({ testID: 'computer-session-end' }).props.onPress());
-  await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('endComputerSession', { id: 'session-1' }));
-  expect(tree!.root.findAllByProps({ testID: 'computer-session-ended' }).length).toBeGreaterThan(0);
   await act(async () => tree!.unmount());
 });
 

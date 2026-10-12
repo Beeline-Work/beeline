@@ -449,12 +449,13 @@ describe('Room turn phase trace', () => {
     const cacheRoot = await mkdtemp(join(tmpdir(), 'beeline-trace-routing-'));
     roots.push(cacheRoot);
     await writeFile(
-      join(cacheRoot, 'z-ai_glm-5.3-flash.json'),
+      join(cacheRoot, 'z-ai_glm-5.3-flash.daily.json'),
       JSON.stringify({
-        policy: 'cache-sticky-v1',
+        policy: 'cost-daily-v1',
         model: 'z-ai/glm-5.3-flash',
         fetchedAt: Date.now(),
         providers: ['venice', 'phala'],
+        ranking: ['venice', 'phala'].map((provider) => ({ provider, cacheShare: .9, measuredCalls: 1, effectiveInputPrice: .1 })),
         bar: 98,
         input: null,
         limits: null,

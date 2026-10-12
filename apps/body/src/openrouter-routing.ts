@@ -1,46 +1,24 @@
 /**
- * Per-model OpenRouter provider pinning derived from live data.
+ * Per-model OpenRouter provider selection, fixed for a day.
  *
- * #840 pinned EVERY OpenRouter model to one hard-coded pair
- * (`deepinfra`/`novita`, no fallbacks). That is right for `z-ai/glm-5.3-flash`
- * and wrong for any model those two do not serve ("no endpoints"), and a pair
- * has no headroom when one provider degrades. This module instead asks
- * OpenRouter's public endpoints listing (`/api/v1/models/<model>/endpoints`,
- * no key needed) which providers currently serve the model reliably:
+ * The public endpoints listing supplies tools, full context, 30-minute uptime
+ * (at least 95%), and prompt/cache-read prices. Each eligible provider must
+ * answer the existing small tool-enabled text probe. Among survivors, keep
+ * the three cheapest effective input prices:
+ *   prompt price × uncached share + cache-read price × cached share.
+ * Shares come from this agent's own last-seven-day generation records;
+ * providers with no observations use the median measured provider share.
+ * With no measured shares yet, assume a cold prompt. Latency never reorders
+ * or replaces the set, and no manual `provider.order` is sent: pi's stable
+ * session id lets OpenRouter retain its cache provider and fail over inside
+ * `only` on a real request failure.
  *
- *   keep   uptime_last_30m >= 98 AND `tools` in supported_parameters AND
- *          context_length >= the model's advertised context
- *   prefer providers publishing discounted `pricing.input_cache_read`, even
- *          at the relaxed uptime bar, over providers with no cache discount
- *   only   that set; when fewer than 2 qualify the bar drops to 95 (logged);
- *          when none qualify at all, #840's pair remains the last resort
- *   order  OMITTED: pi sends its session id, and OpenRouter's native sticky
- *          routing keeps its cache provider until failure. A manual order
- *          disables that stickiness and retries the old head on every call.
- *   allow_fallbacks: true WITHIN the set, require_parameters: false (a
- *          provider may ignore a sampling knob it does not know; with `true`
- *          OpenRouter answers pi's full parameter set — stop, top_p, reasoning,
- *          tool_choice… — with 404 "No endpoints found that can handle the
- *          requested parameters" for every provider, the live 2026-09-03 fault;
- *          the `tools` filter above already guarantees tool calling)
- *
- * The result is cached per model for 24h (`<cacheDir>/<model>.json`), read
- * back when the API is unreachable (stale is better than blind), and applied
- * to that one model's entry in the agent's pi `models.json` — never globally.
- *
- * Uptime is not the same fact as an answer (C92). Measured live on
- * 2026-09-04 for `z-ai/glm-5.3-flash`, half the pinned set accepted a
- * tool-enabled request and returned an EMPTY completion — a 200 OK that keeps
- * the provider's uptime at 100%, never triggers OpenRouter's own fallback, and
- * reaches the Room as a turn that says nothing. So the uptime/tools filter is
- * only the first pass: the survivors are then ASKED, one small tool-enabled
- * request each with `allow_fallbacks: false`, and only the ones that answer
- * with text are pinned. Latency is recorded but never reorders the pin. That
- * probe costs money and time, so it is bounded
- * (`OPENROUTER_PROBE_MAX_CANDIDATES`, run in parallel with a short timeout), cached beside the uptime set
- * (`<cacheDir>/<model>.probe.json`, its own TTL), and NEVER blocks a turn: a
- * cold probe cache returns the cache-preferred set immediately and refreshes
- * in the background for the next activation.
+ * The qualified set and generation facts are cached privately per model.
+ * A cold activation waits for qualification once; an expired daily set is
+ * served immediately while its replacement is built in the background for
+ * the next activation. Live sessions are never changed by a refresh. Missing
+ * API credentials or a failed refresh retain the existing reliability/stale
+ * fallback; an empty-completion retry still explicitly pins one provider.
  *
  * The SAME listing also names the model's real input modalities
  * (`architecture.input_modalities`), and that fact has to be pinned beside the
@@ -67,14 +45,16 @@
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { readOpenRouterTraffic, type OpenRouterProviderTraffic } from './openrouter-history.js';
+import { writePrivateFileAtomically } from './atomic-private-file.js';
 
 export const OPENROUTER_ENDPOINTS_BASE_URL = 'https://openrouter.ai/api/v1/models';
 export const OPENROUTER_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export const OPENROUTER_ROUTING_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 export const OPENROUTER_ROUTING_FETCH_TIMEOUT_MS = 10_000;
 /** The answer probe is a live purchase; keep it short-lived but not per-turn. */
-export const OPENROUTER_PROBE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-/** At most this many uptime survivors are ever asked, in parallel. */
+export const OPENROUTER_PROBE_CACHE_TTL_MS = OPENROUTER_ROUTING_CACHE_TTL_MS;
+/** Default bound for the direct probe helper; daily qualification checks all eligible providers. */
 export const OPENROUTER_PROBE_MAX_CANDIDATES = 6;
 export const OPENROUTER_PROBE_TIMEOUT_MS = 20_000;
 export const OPENROUTER_UPTIME_BAR = 98;
@@ -106,6 +86,9 @@ export interface OpenRouterEndpoint {
   tools: boolean;
   /** Published cache reads cost less than ordinary prompt tokens. */
   discountedCacheRead?: boolean;
+  providerName?: string;
+  promptPrice?: number;
+  cacheReadPrice?: number;
 }
 
 /** The window and output ceiling pinned on the model (`modelOverrides`). */
@@ -141,9 +124,8 @@ export interface OpenRouterRoutingDecision {
   /** The one daemon log line describing this decision. */
   line: string;
   /**
-   * Present only when the answer probe could not be served from cache: it is
-   * running in the background and resolves to the decision the NEXT activation
-   * will get. Never rejects, and never awaited on the turn path.
+   * An expired qualified daily set is served while its replacement is built
+   * in the background for the next activation. Never rejects.
    */
   refresh?: Promise<OpenRouterRoutingDecision | undefined>;
 }
@@ -177,13 +159,6 @@ export interface OpenRouterProbeResult {
   latencyMs: number;
   /** Why it did not answer, for the log line ('empty completion', 'HTTP 429'…). */
   note?: string;
-}
-
-interface CachedProbe {
-  model: string;
-  fetchedAt: number;
-  /** Only the providers that answered; latency is diagnostic, never routing priority. */
-  answered: { provider: string; latencyMs: number }[];
 }
 
 /**
@@ -243,6 +218,9 @@ export function parseOpenRouterEndpoints(payload: unknown): {
       contextLength,
       maxCompletionTokens,
       tools: supported.includes('tools'),
+      ...(typeof endpoint.provider_name === 'string' ? { providerName: endpoint.provider_name } : {}),
+      ...(promptPrice === undefined ? {} : { promptPrice }),
+      ...(cacheReadPrice === undefined ? {} : { cacheReadPrice }),
       discountedCacheRead:
         promptPrice !== undefined && cacheReadPrice !== undefined && cacheReadPrice < promptPrice,
     });
@@ -264,6 +242,41 @@ export function parseOpenRouterEndpoints(payload: unknown): {
         : advertisedContextLength(endpoints),
     inputModalities: modalities?.length ? modalities : undefined,
   };
+}
+
+export interface OpenRouterProviderCost {
+  provider: string;
+  cacheShare: number;
+  measuredCalls: number;
+  /** USD per prompt token, weighted by this provider's measured cache reuse. */
+  effectiveInputPrice: number;
+}
+
+/** Input cost is comparable at a common prompt size; latency never reorders providers. */
+export function rankOpenRouterProviders(
+  endpoints: readonly OpenRouterEndpoint[],
+  contextLength: number | undefined,
+  traffic: readonly OpenRouterProviderTraffic[],
+  answered: readonly string[],
+): OpenRouterProviderCost[] {
+  const shares = traffic.filter((row) => row.promptTokens > 0).map((row) => row.cacheShare).sort((a, b) => a - b);
+  const middle = Math.floor(shares.length / 2);
+  // With no observations, assume a cold prompt rather than inventing savings.
+  const medianShare = shares.length ? (shares[middle]! + shares[Math.floor((shares.length - 1) / 2)]!) / 2 : 0;
+  const normalize = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const ranked = new Map<string, OpenRouterProviderCost>();
+  for (const endpoint of endpoints) {
+    if (!endpoint.tools || endpoint.uptime < OPENROUTER_UPTIME_BAR_RELAXED ||
+        (contextLength !== undefined && endpoint.contextLength < contextLength) ||
+        !answered.includes(endpoint.provider) || endpoint.promptPrice === undefined) continue;
+    const measured = traffic.find((row) => normalize(row.provider) === normalize(endpoint.providerName ?? endpoint.provider));
+    const cacheShare = measured?.cacheShare ?? medianShare;
+    const effectiveInputPrice = endpoint.promptPrice * (1 - cacheShare) +
+      (endpoint.cacheReadPrice ?? endpoint.promptPrice) * cacheShare;
+    const row = { provider: endpoint.provider, cacheShare, measuredCalls: measured?.calls ?? 0, effectiveInputPrice };
+    if (!ranked.has(row.provider) || effectiveInputPrice < ranked.get(row.provider)!.effectiveInputPrice) ranked.set(row.provider, row);
+  }
+  return [...ranked.values()].sort((a, b) => a.effectiveInputPrice - b.effectiveInputPrice || a.provider.localeCompare(b.provider));
 }
 
 /** Missing/blank prices must not become zero through Number(null) or Number(''). */
@@ -452,39 +465,6 @@ async function writeCache(cacheDir: string, value: CachedRouting): Promise<void>
   });
 }
 
-function probeCachePath(cacheDir: string, model: string): string {
-  return resolve(cacheDir, `${model.replace(/[^A-Za-z0-9._-]+/g, '_')}.probe.json`);
-}
-
-async function readProbeCache(cacheDir: string, model: string): Promise<CachedProbe | undefined> {
-  try {
-    const parsed = JSON.parse(await readFile(probeCachePath(cacheDir, model), 'utf8')) as unknown;
-    if (!parsed || typeof parsed !== 'object') return undefined;
-    const cached = parsed as Partial<CachedProbe>;
-    if (cached.model !== model || typeof cached.fetchedAt !== 'number') return undefined;
-    if (!Array.isArray(cached.answered)) return undefined;
-    const answered: CachedProbe['answered'] = [];
-    for (const entry of cached.answered) {
-      if (!entry || typeof entry !== 'object') return undefined;
-      const { provider, latencyMs } = entry as { provider?: unknown; latencyMs?: unknown };
-      if (typeof provider !== 'string' || !provider || typeof latencyMs !== 'number') {
-        return undefined;
-      }
-      answered.push({ provider, latencyMs });
-    }
-    return { model, fetchedAt: cached.fetchedAt, answered };
-  } catch {
-    return undefined;
-  }
-}
-
-async function writeProbeCache(cacheDir: string, value: CachedProbe): Promise<void> {
-  await mkdir(cacheDir, { recursive: true, mode: 0o700 });
-  await writeFile(probeCachePath(cacheDir, value.model), `${JSON.stringify(value, null, 2)}\n`, {
-    mode: 0o600,
-  });
-}
-
 /**
  * The one request the probe sends: a tool-enabled completion pinned to a
  * single provider with no fallbacks, asking for one word. Tools are declared
@@ -619,7 +599,8 @@ function decision(
 ): OpenRouterRoutingDecision {
   const criteria = bar === null ? 'fallback pair' : `uptime ≥${bar}%, tools`;
   const suffix = [
-    bar === OPENROUTER_UPTIME_BAR_RELAXED ? 'bar lowered: reliability fallback or cache continuity' : '',
+    bar === OPENROUTER_UPTIME_BAR_RELAXED && !note?.startsWith('daily')
+      ? 'bar lowered: reliability fallback or cache continuity' : '',
     source === 'cache' ? 'cached' : '',
     source === 'stale-cache' ? 'stale cache' : '',
     note ?? '',
@@ -665,6 +646,8 @@ export interface ResolveOpenRouterRoutingInput {
   /** Bound on the probe; tests pass a smaller one. */
   probeMaxCandidates?: number;
   probeTimeoutMs?: number;
+  /** This agent's Room homes; read-only session IDs for seven-day generation facts. */
+  historyRoomsDir?: string;
 }
 
 /**
@@ -777,124 +760,105 @@ async function resolveUptimeRouting(
   );
 }
 
-/**
- * One in-flight probe per (cache dir, model). Every Room of a daemon shares
- * the cache, so without this a restart would ask each provider once per Room.
- */
-const inFlightProbes = new Map<string, Promise<OpenRouterRoutingDecision | undefined>>();
-
-/** The probed set, restricted to providers the current uptime pass still keeps. */
-function answeringProviders(probe: CachedProbe, candidates: readonly string[]): string[] {
-  return candidates.filter((provider) => probe.answered.some((entry) => entry.provider === provider));
+/** The daily, qualified top-three set, separate from legacy endpoint/probe caches. */
+interface DailyRouting {
+  policy: 'cost-daily-v1';
+  model: string;
+  fetchedAt: number;
+  providers: string[];
+  ranking: OpenRouterProviderCost[];
+  input?: Array<'text' | 'image'>;
+  limits?: OpenRouterModelLimits;
 }
 
-async function refreshAnswerProbe(
-  input: ResolveOpenRouterRoutingInput,
-  base: OpenRouterRoutingDecision,
-  apiKey: string,
-): Promise<OpenRouterRoutingDecision | undefined> {
+function dailyCachePath(input: ResolveOpenRouterRoutingInput): string {
+  return resolve(input.cacheDir, `${input.model.replace(/[^A-Za-z0-9._-]+/g, '_')}.daily.json`);
+}
+
+async function readDailyRouting(input: ResolveOpenRouterRoutingInput): Promise<DailyRouting | undefined> {
+  try {
+    const row = JSON.parse(await readFile(dailyCachePath(input), 'utf8')) as DailyRouting;
+    if (row.policy !== 'cost-daily-v1' || row.model !== input.model || !Number.isFinite(row.fetchedAt) ||
+        !Array.isArray(row.providers) || !row.providers.length || row.providers.length > 3 ||
+        !row.providers.every((provider) => typeof provider === 'string' && provider.length > 0) ||
+        !Array.isArray(row.ranking) || !row.ranking.every((entry) => entry &&
+          typeof entry.provider === 'string' && Number.isFinite(entry.effectiveInputPrice) && entry.effectiveInputPrice >= 0 &&
+          Number.isFinite(entry.cacheShare) && entry.cacheShare >= 0 && entry.cacheShare <= 1) ||
+        !row.providers.every((provider) => row.ranking.some((entry) => entry.provider === provider))) return undefined;
+    return { policy: 'cost-daily-v1', model: row.model, fetchedAt: row.fetchedAt, providers: row.providers, ranking: row.ranking,
+      ...(Array.isArray(row.input) ? { input: row.input.filter((value) => value === 'text' || value === 'image') } : {}),
+      ...(cachedLimits(row.limits) ? { limits: cachedLimits(row.limits) } : {}) };
+  } catch { return undefined; }
+}
+
+function dailyDecision(row: DailyRouting, source: OpenRouterRoutingSource): OpenRouterRoutingDecision {
+  return decision(row.model, row.providers, OPENROUTER_UPTIME_BAR_RELAXED, source,
+    'daily effective input cost; seven-day cache shares; answer-probed', true, row.input, row.limits);
+}
+
+/** A cold agent qualifies once; expired decisions refresh in the background for new activations. */
+async function buildDailyRouting(input: ResolveOpenRouterRoutingInput): Promise<DailyRouting> {
   const now = input.now ?? Date.now;
-  const results = await probeOpenRouterProviders({
-    model: input.model,
-    providers: base.providers,
-    apiKey,
-    ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
-    ...(input.now ? { now: input.now } : {}),
-    ...(input.probeTimeoutMs === undefined ? {} : { timeoutMs: input.probeTimeoutMs }),
-    ...(input.probeMaxCandidates === undefined ? {} : { maxCandidates: input.probeMaxCandidates }),
+  const response = await (input.fetchImpl ?? fetch)(`${OPENROUTER_ENDPOINTS_BASE_URL}/${input.model}/endpoints`, {
+    signal: AbortSignal.timeout(input.timeoutMs ?? OPENROUTER_ROUTING_FETCH_TIMEOUT_MS),
   });
-  const answered = results
-    .filter((result) => result.answered)
-    .map((result) => ({ provider: result.provider, latencyMs: result.latencyMs }));
-  const silent = results.filter((result) => !result.answered);
-  if (answered.length === 0) {
-    // Nobody answered: that is a fact about this moment, not about the set.
-    // Do not cache it — the candidate set stays in force and the next
-    // activation asks again.
-    return undefined;
-  }
-  await writeProbeCache(input.cacheDir, {
-    model: input.model,
-    fetchedAt: now(),
-    answered,
-  }).catch(() => undefined);
-  const dropped = silent.length
-    ? `dropped ${silent.map((result) => `${result.provider} (${result.note ?? 'no answer'})`).join(', ')}`
-    : 'every candidate answered';
-  return decision(
-    input.model,
-    answered.map((entry) => entry.provider),
-    base.bar,
-    base.source,
-    `answer-probed, cache-sticky; ${dropped}`,
-    true,
-    base.input,
-    base.limits,
-  );
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const { endpoints, contextLength, inputModalities } = parseOpenRouterEndpoints(await response.json());
+  const eligible = [...new Set(endpoints.filter((endpoint) => endpoint.tools &&
+    endpoint.uptime >= OPENROUTER_UPTIME_BAR_RELAXED && endpoint.promptPrice !== undefined &&
+    (contextLength === undefined || endpoint.contextLength >= contextLength)).map((endpoint) => endpoint.provider))];
+  if (!eligible.length) throw new Error('no priced provider met the tools/context/95% gate');
+  const [traffic, probes] = await Promise.all([
+    readOpenRouterTraffic({ model: input.model, cacheDir: input.cacheDir,
+      ...(input.historyRoomsDir ? { roomsDir: input.historyRoomsDir } : {}),
+      apiKey: input.apiKey!, now: now(), fetchImpl: input.fetchImpl, timeoutMs: input.timeoutMs }),
+    probeOpenRouterProviders({ model: input.model, providers: eligible, apiKey: input.apiKey!,
+      fetchImpl: input.fetchImpl, now: input.now, timeoutMs: input.probeTimeoutMs,
+      // Gate every eligible provider once per day, rather than using the old
+      // uptime-first six as a proxy for the cheapest qualified set.
+      maxCandidates: input.probeMaxCandidates ?? eligible.length }),
+  ]);
+  const ranking = rankOpenRouterProviders(endpoints, contextLength, traffic,
+    probes.filter((probe) => probe.answered).map((probe) => probe.provider));
+  if (!ranking.length) throw new Error('no eligible provider answered the text probe');
+  const providers = ranking.slice(0, 3).map((row) => row.provider);
+  const row: DailyRouting = { policy: 'cost-daily-v1', model: input.model, fetchedAt: now(), providers, ranking,
+    input: piInputModalities(inputModalities), limits: openRouterModelLimits(endpoints, providers) };
+  await writePrivateFileAtomically(dailyCachePath(input), `${JSON.stringify(row, null, 2)}\n`).catch(() => undefined);
+  return row;
 }
 
-/**
- * The pin a daemon activation applies. The uptime ladder chooses the
- * candidates; the answer probe (cached separately, refreshed in the
- * background) reduces them to the providers that actually reply. Never
- * throws, and never waits on the probe: the decision's `line` is the one log
- * line a caller prints, and `refresh` — when present — is the background probe
- * whose own line the caller may print when it lands.
- */
-export async function resolveOpenRouterRouting(
-  input: ResolveOpenRouterRoutingInput,
-): Promise<OpenRouterRoutingDecision> {
-  const base = await resolveUptimeRouting(input);
+// Keep completed attempts too: an unreachable API or unwritable disk must not
+// turn the daily ranking into a per-activation retry/purchase loop.
+const dailyAttempts = new Map<string, { startedAt: number; result: Promise<OpenRouterRoutingDecision> }>();
+
+export async function resolveOpenRouterRouting(input: ResolveOpenRouterRoutingInput): Promise<OpenRouterRoutingDecision> {
+  const cached = await readDailyRouting(input);
   const override = input.providerOverride?.trim();
   if (override) {
-    return decision(
-      input.model,
-      [override],
-      base.bar,
-      base.source,
-      'pinned to one provider after an empty completion',
-      false,
-      base.input,
-      base.limits,
-    );
+    const base = cached ? dailyDecision(cached, 'cache') : await resolveUptimeRouting(input);
+    return decision(input.model, [override], base.bar, base.source,
+      'pinned to one provider after an empty completion', false, base.input, base.limits);
   }
-  const apiKey = input.apiKey?.trim();
-  if (!apiKey || base.providers.length < 2) return base;
+  // Without a credential we cannot buy the answer probe or read account
+  // generations. Preserve the legacy reliability fallback for standalone use.
+  if (!input.apiKey?.trim()) return resolveUptimeRouting(input);
   const now = input.now ?? Date.now;
-  const probe = await readProbeCache(input.cacheDir, input.model);
-  if (probe && now() - probe.fetchedAt < OPENROUTER_PROBE_CACHE_TTL_MS) {
-    const answered = answeringProviders(probe, base.providers);
-    if (answered.length > 0) {
-      return decision(
-        input.model,
-        answered,
-        base.bar,
-        base.source,
-        'answer-probed, cached',
-        true,
-        base.input,
-        base.limits,
-      );
-    }
-  }
-  // Cold or unusable probe cache: the turn starts NOW on the cache-preferred set and
-  // the probe lands for the next activation.
+  if (cached && now() - cached.fetchedAt < OPENROUTER_ROUTING_CACHE_TTL_MS) return dailyDecision(cached, 'cache');
   const key = `${input.cacheDir}\u0000${input.model}`;
-  let refresh = inFlightProbes.get(key);
-  if (!refresh) {
-    const tracked: Promise<OpenRouterRoutingDecision | undefined> = refreshAnswerProbe(
-      input,
-      base,
-      apiKey,
-    )
-      .catch(() => undefined)
-      .finally(() => {
-        if (inFlightProbes.get(key) === tracked) inFlightProbes.delete(key);
-      });
-    inFlightProbes.set(key, tracked);
-    refresh = tracked;
+  let attempt = dailyAttempts.get(key);
+  if (!attempt || now() - attempt.startedAt >= OPENROUTER_ROUTING_CACHE_TTL_MS) {
+    const result = buildDailyRouting(input).then((row) => dailyDecision(row, 'live')).catch(async (error) => {
+      const base = cached ? dailyDecision(cached, 'stale-cache') : await resolveUptimeRouting(input);
+      return { ...base, line: `${base.line}; daily ranking unavailable: ${error instanceof Error ? error.message : String(error)}` };
+    });
+    attempt = { startedAt: now(), result };
+    dailyAttempts.set(key, attempt);
   }
-  return { ...base, refresh };
+  if (cached) return { ...dailyDecision(cached, 'stale-cache'), refresh: attempt.result };
+  // The first pin needs real price/traffic facts and an affirmative probe.
+  // Only this cold activation waits; retained sessions are never rewritten.
+  return attempt.result;
 }
 
 /**
@@ -1006,7 +970,7 @@ export function openRouterRoutingInput(
     openRouterRouting: {
       model,
       cacheDir: config.openRouterRoutingCacheDir,
-      ...(apiKey ? { apiKey } : {}),
+      ...(apiKey ? { apiKey, historyRoomsDir: resolve(config.openRouterRoutingCacheDir, '../rooms') } : {}),
       ...(fetchImpl ? { fetchImpl } : {}),
       ...(extra?.providerOverride ? { providerOverride: extra.providerOverride } : {}),
       ...(extra?.onDecision ? { onDecision: extra.onDecision } : {}),

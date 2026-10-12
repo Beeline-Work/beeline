@@ -768,12 +768,13 @@ describe('Room turn failure receipt', () => {
       return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
     };
     await writeFile(
-      join(cacheRoot, 'z-ai_glm-5.3-flash.json'),
+      join(cacheRoot, 'z-ai_glm-5.3-flash.daily.json'),
       JSON.stringify({
-        policy: 'cache-sticky-v1',
+        policy: 'cost-daily-v1',
         model: 'z-ai/glm-5.3-flash',
         fetchedAt: Date.now(),
         providers: ['venice', 'phala'],
+        ranking: ['venice', 'phala'].map((provider) => ({ provider, cacheShare: .9, measuredCalls: 1, effectiveInputPrice: .1 })),
         bar: 98,
         // A post-C87 cache entry always carries `input` (an array, or `null`
         // when the listing named none), and `limits` the same way; omitting
@@ -854,12 +855,13 @@ describe('Room turn failure receipt', () => {
       roots.push(cacheRoot);
       const file = MODEL.replace(/[^A-Za-z0-9._-]+/g, '_');
       await writeFile(
-        join(cacheRoot, `${file}.json`),
+        join(cacheRoot, `${file}.daily.json`),
         JSON.stringify({
-          policy: 'cache-sticky-v1',
+          policy: 'cost-daily-v1',
           model: MODEL,
           fetchedAt: Date.now(),
           providers: PROVIDERS,
+          ranking: PROVIDERS.map((provider) => ({ provider, cacheShare: .9, measuredCalls: 1, effectiveInputPrice: .1 })),
           bar: 98,
           input: null,
           limits: null,

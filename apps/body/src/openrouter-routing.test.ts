@@ -14,6 +14,7 @@ import {
   openRouterModelLimits,
   openRouterRoutingInput,
   openRouterRoutingFor,
+  rankOpenRouterProviders,
   parseOpenRouterEndpoints,
   piInputModalities,
   probeOpenRouterProviders,
@@ -596,7 +597,7 @@ describe('openRouterRoutingInput', () => {
   it('names the model and cache dir only for an OpenRouter selection', () => {
     const config = { agentEnv: { OPENROUTER_API_KEY: 'k' }, openRouterRoutingCacheDir: '/cache' };
     expect(openRouterRoutingInput(config, { model: 'openrouter/z-ai/glm-5.3-flash' })).toEqual({
-      openRouterRouting: { model: MODEL, cacheDir: '/cache', apiKey: 'k' },
+      openRouterRouting: { model: MODEL, cacheDir: '/cache', apiKey: 'k', historyRoomsDir: '/rooms' },
     });
     expect(openRouterRoutingInput(config, { model: 'claude-opus-4-1' })).toEqual({});
     expect(
@@ -647,192 +648,23 @@ function probeFetchStub(
 }
 
 describe('the OpenRouter answer probe', () => {
-  it('drops an empty provider without promoting a faster provider over the candidate set', async () => {
-    const cacheDir = await scratch();
-    await seedUptimeCache(cacheDir, ['morph', 'venice', 'phala']);
+  it('keeps the tool-enabled empty-completion test and bounded direct probe', async () => {
     const { fetchImpl, asked } = probeFetchStub({
-      morph: { text: '' },
-      venice: { text: 'ready', delayMs: 40 },
-      phala: { text: 'ready', delayMs: 5 },
+      a: { text: '' }, b: { text: 'ready', delayMs: 5 }, c: { text: 'ready' },
     });
-
-    const decision = await resolveOpenRouterRouting({
-      model: MODEL,
-      cacheDir,
-      apiKey: 'k',
-      fetchImpl,
-    });
-    const probed = await decision.refresh;
-
-    expect(asked.sort()).toEqual(['morph', 'phala', 'venice']);
-    expect(probed?.providers).toEqual(['venice', 'phala']);
-    expect(probed?.routing).toEqual({
-      only: ['venice', 'phala'],
-      allow_fallbacks: true,
-      require_parameters: false,
-    });
-    expect(probed?.line).toContain('answer-probed, cache-sticky');
-    expect(probed?.line).toContain('dropped morph (empty completion)');
-    const cached = JSON.parse(
-      readFileSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'), 'utf8'),
-    ) as { answered: { provider: string }[] };
-    expect(cached.answered.map((entry) => entry.provider)).toEqual(['venice', 'phala']);
-  });
-
-  it('never blocks a turn on a cold probe cache: the uptime order is served now', async () => {
-    const cacheDir = await scratch();
-    await seedUptimeCache(cacheDir, ['morph', 'venice', 'phala']);
-    const { fetchImpl } = probeFetchStub({
-      morph: { text: '' },
-      venice: { text: 'ready', delayMs: 40 },
-      phala: { text: 'ready', delayMs: 5 },
-    });
-
-    const decision = await resolveOpenRouterRouting({
-      model: MODEL,
-      cacheDir,
-      apiKey: 'k',
-      fetchImpl,
-    });
-
-    // The decision the activation applies is the uptime order, in hand before
-    // a single provider has been asked; the probe lands for the next one.
-    expect(decision.providers).toEqual(['morph', 'venice', 'phala']);
-    expect(decision.refresh).toBeDefined();
-    expect(existsSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'))).toBe(false);
-    await decision.refresh;
-  });
-
-  it('serves a fresh probe cache without asking anyone, and never resurrects a dropped provider', async () => {
-    const cacheDir = await scratch();
-    await seedUptimeCache(cacheDir, ['morph', 'venice', 'phala']);
-    await writeFile(
-      resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'),
-      JSON.stringify({
-        model: MODEL,
-        fetchedAt: Date.now(),
-        // `fireworks` no longer clears the uptime/tools pass; a cached answer
-        // must not put it back in the pin.
-        answered: [
-          { provider: 'phala', latencyMs: 5 },
-          { provider: 'fireworks', latencyMs: 6 },
-          { provider: 'venice', latencyMs: 40 },
-        ],
-      }),
-    );
-    const { fetchImpl, asked } = probeFetchStub({});
-
-    const decision = await resolveOpenRouterRouting({
-      model: MODEL,
-      cacheDir,
-      apiKey: 'k',
-      fetchImpl,
-    });
-
-    expect(asked).toEqual([]);
-    expect(decision.refresh).toBeUndefined();
-    expect(decision.providers).toEqual(['venice', 'phala']);
-    expect(decision.line).toContain('answer-probed, cached');
-  });
-
-  it('refreshes rather than trusting a probe older than its TTL', async () => {
-    const cacheDir = await scratch();
-    await seedUptimeCache(cacheDir, ['morph', 'venice']);
-    await writeFile(
-      resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'),
-      JSON.stringify({
-        model: MODEL,
-        fetchedAt: Date.now() - OPENROUTER_PROBE_CACHE_TTL_MS - 1,
-        answered: [{ provider: 'morph', latencyMs: 2 }],
-      }),
-    );
-    const { fetchImpl, asked } = probeFetchStub({
-      morph: { text: '' },
-      venice: { text: 'ready' },
-    });
-
-    const decision = await resolveOpenRouterRouting({
-      model: MODEL,
-      cacheDir,
-      apiKey: 'k',
-      fetchImpl,
-    });
-    const probed = await decision.refresh;
-
-    expect(asked.sort()).toEqual(['morph', 'venice']);
-    expect(probed?.providers).toEqual(['venice']);
-  });
-
-  it('keeps the uptime order and caches nothing when no provider answers', async () => {
-    const cacheDir = await scratch();
-    await seedUptimeCache(cacheDir, ['morph', 'venice']);
-    const { fetchImpl } = probeFetchStub({
-      morph: { text: '' },
-      venice: { text: '', status: 429 },
-    });
-
-    const decision = await resolveOpenRouterRouting({
-      model: MODEL,
-      cacheDir,
-      apiKey: 'k',
-      fetchImpl,
-    });
-
-    expect(await decision.refresh).toBeUndefined();
-    expect(decision.providers).toEqual(['morph', 'venice']);
-    expect(existsSync(resolve(cacheDir, 'z-ai_glm-5.3-flash.probe.json'))).toBe(false);
-  });
-
-  it('runs no probe at all without an OpenRouter key', async () => {
-    const cacheDir = await scratch();
-    await seedUptimeCache(cacheDir, ['morph', 'venice']);
-    const { fetchImpl, asked } = probeFetchStub({ morph: { text: 'ready' } });
-
-    const decision = await resolveOpenRouterRouting({ model: MODEL, cacheDir, fetchImpl });
-
-    expect(asked).toEqual([]);
-    expect(decision.refresh).toBeUndefined();
-    expect(decision.providers).toEqual(['morph', 'venice']);
-  });
-
-  it('asks at most the bounded number of candidates', async () => {
-    const { fetchImpl, asked } = probeFetchStub({
-      a: { text: 'ready' },
-      b: { text: 'ready' },
-      c: { text: 'ready' },
-    });
-    const results = await probeOpenRouterProviders({
-      model: MODEL,
-      providers: ['a', 'b', 'c'],
-      apiKey: 'k',
-      fetchImpl,
-      maxCandidates: 2,
-    });
+    const results = await probeOpenRouterProviders({ model: MODEL, providers: ['a', 'b', 'c'], apiKey: 'k', fetchImpl, maxCandidates: 2 });
     expect(asked.sort()).toEqual(['a', 'b']);
-    expect(results.map((result) => result.answered)).toEqual([true, true]);
+    expect(results.map((row) => row.answered)).toEqual([false, true]);
+    expect(results[0]?.note).toBe('empty completion');
+    expect(OPENROUTER_PROBE_CACHE_TTL_MS).toBe(OPENROUTER_ROUTING_CACHE_TTL_MS);
   });
 
-  it('pins exactly one provider with no fallbacks when a turn re-pins after an empty completion', async () => {
+  it('keeps the named override without buying another probe', async () => {
     const cacheDir = await scratch();
     await seedUptimeCache(cacheDir, ['morph', 'venice', 'phala']);
-    const { fetchImpl, asked } = probeFetchStub({});
-
-    const decision = await resolveOpenRouterRouting({
-      model: MODEL,
-      cacheDir,
-      apiKey: 'k',
-      fetchImpl,
-      providerOverride: 'venice',
-    });
-
-    expect(asked).toEqual([]);
-    expect(decision.routing).toEqual({
-      only: ['venice'],
-      order: ['venice'],
-      allow_fallbacks: false,
-      require_parameters: false,
-    });
-    expect(decision.line).toContain('pinned to one provider after an empty completion');
+    const decision = await resolveOpenRouterRouting({ model: MODEL, cacheDir, apiKey: 'k',
+      providerOverride: 'venice', fetchImpl: probeFetchStub({}).fetchImpl });
+    expect(decision.routing).toEqual({ only: ['venice'], order: ['venice'], allow_fallbacks: false, require_parameters: false });
   });
 });
 
@@ -919,5 +751,126 @@ describe('OpenRouter cache continuity', () => {
     expect(decision.source).toBe('live');
     expect(decision.providers).toEqual(['warm']);
     expect(decision.routing).not.toHaveProperty('order');
+  });
+});
+
+
+describe('daily effective-cost routing', () => {
+  const endpoint = (provider: string, price: number, cachePrice: number) => ({
+    tag: provider, provider_name: provider, context_length: 1000,
+    uptime_last_30m: 100, supported_parameters: ['tools'],
+    pricing: { prompt: price, input_cache_read: cachePrice },
+  });
+  const traffic = (provider: string, cacheShare: number) => ({
+    provider, cacheShare, calls: 10, promptTokens: 1000, cachedTokens: 1000 * cacheShare,
+  });
+
+  it('drops Wafer from the cheapest three using measured cache share despite its published discount', () => {
+    const { endpoints } = parseOpenRouterEndpoints({ data: { endpoints: [
+      endpoint('Wafer', .08, .034), endpoint('Relace', .05, .008),
+      endpoint('Baidu', .0333, .000666), endpoint('DigitalOcean', .165, .006),
+    ] } });
+    const ranked = rankOpenRouterProviders(endpoints, 1000, [
+      traffic('Wafer', .57), traffic('Relace', .936), traffic('Baidu', .897), traffic('DigitalOcean', .967),
+    ], ['Wafer', 'Relace', 'Baidu', 'DigitalOcean']);
+    expect(ranked.slice(0, 3).map((row) => row.provider)).toEqual(['Baidu', 'Relace', 'DigitalOcean']);
+    expect(ranked[3]?.effectiveInputPrice).toBeCloseTo(.05378);
+  });
+
+  it('uses the median measured provider cache share for unseen providers', () => {
+    const { endpoints } = parseOpenRouterEndpoints({ data: { endpoints: [endpoint('unseen', 1, .1)] } });
+    const [ranked] = rankOpenRouterProviders(endpoints, 1000,
+      [traffic('a', .2), traffic('b', .8)], ['unseen']);
+    expect(ranked).toMatchObject({ cacheShare: .5, measuredCalls: 0, effectiveInputPrice: .55 });
+  });
+
+  it('requires tools, full context, 95% uptime and a nonempty answer, and never ranks by latency', () => {
+    const base = endpoint('eligible', 1, .1);
+    const { endpoints } = parseOpenRouterEndpoints({ data: { endpoints: [
+      base, { ...base, tag: 'silent' }, { ...base, tag: 'no-tools', supported_parameters: [] },
+      { ...base, tag: 'short', context_length: 999 }, { ...base, tag: 'down', uptime_last_30m: 94.99 },
+      { ...base, tag: 'relaxed', uptime_last_30m: 95, pricing: { prompt: .5, input_cache_read: .05 } },
+    ] } });
+    expect(rankOpenRouterProviders(endpoints, 1000, [], ['eligible', 'no-tools', 'short', 'down', 'relaxed'])
+      .map((row) => row.provider)).toEqual(['relaxed', 'eligible']);
+  });
+
+  function dailyFetch() {
+    const listing = { data: { context_length: 1000, architecture: { input_modalities: ['text'] }, endpoints: [
+      endpoint('expensive', .08, .034), endpoint('cheap', .0333, .000666),
+      endpoint('middle', .05, .008), endpoint('silent', .001, .0001),
+    ] } };
+    const requests: string[] = [];
+    const fetchImpl = vi.fn(async (url: unknown, init?: RequestInit) => {
+      const address = String(url); requests.push(address);
+      if (address.endsWith('/endpoints')) return jsonResponse(listing);
+      const body = JSON.parse(String(init?.body));
+      expect(body.provider.allow_fallbacks).toBe(false);
+      expect(body.tools).toHaveLength(1);
+      const provider = body.provider.only[0];
+      return jsonResponse({ choices: [{ message: { content: provider === 'silent' ? '' : 'ready' } }] });
+    }) as unknown as typeof fetch;
+    return { fetchImpl, requests };
+  }
+
+  it('qualifies once, keeps the top-three set fixed all day and refreshes only for new activations', async () => {
+    const cacheDir = await scratch(); let clock = 1_000_000;
+    const { fetchImpl, requests } = dailyFetch();
+    const input = { model: MODEL, cacheDir, apiKey: 'k', fetchImpl, now: () => clock };
+    const initial = await resolveOpenRouterRouting(input);
+    expect(initial.providers).toEqual(['cheap', 'middle', 'expensive']);
+    expect(initial.routing).not.toHaveProperty('order');
+    expect(initial.routing.allow_fallbacks).toBe(true);
+    const count = requests.length;
+    clock += 6 * 60 * 60 * 1000;
+    const later = await resolveOpenRouterRouting(input);
+    expect(later.providers).toEqual(initial.providers);
+    expect(later.refresh).toBeUndefined(); expect(requests).toHaveLength(count);
+    clock += OPENROUTER_ROUTING_CACHE_TTL_MS;
+    const stale = await resolveOpenRouterRouting(input);
+    expect(stale.providers).toEqual(initial.providers);
+    expect(stale.refresh).toBeDefined();
+    await stale.refresh;
+    expect(requests.length).toBeGreaterThan(count);
+    const updated = await resolveOpenRouterRouting(input);
+    expect(updated.source).toBe('cache'); expect(updated.refresh).toBeUndefined();
+  });
+
+  it('uses real generation-cache shares when building the daily set and keeps them fixed between rebuilds', async () => {
+    const cacheDir = await scratch(); const now = () => 1_000_000;
+    const path = resolve(cacheDir, 'z-ai_glm-5.3-flash.generations.json');
+    const observations = [
+      { id: 'middle', timestamp: now(), provider: 'middle', promptTokens: 100, cachedTokens: 99 },
+      { id: 'cheap', timestamp: now(), provider: 'cheap', promptTokens: 100, cachedTokens: 0 },
+      { id: 'expensive', timestamp: now(), provider: 'expensive', promptTokens: 100, cachedTokens: 0 },
+    ];
+    await writeFile(path, JSON.stringify({ model: MODEL, observations }));
+    const { fetchImpl, requests } = dailyFetch();
+    const input = { model: MODEL, cacheDir, apiKey: 'k', fetchImpl, now };
+    const initial = await resolveOpenRouterRouting(input);
+    expect(initial.providers).toEqual(['middle', 'cheap', 'expensive']);
+    const count = requests.length;
+    await writeFile(path, JSON.stringify({ model: MODEL, observations: observations.map((row) => ({ ...row, cachedTokens: 0 })) }));
+    expect((await resolveOpenRouterRouting(input)).providers).toEqual(initial.providers);
+    expect(requests).toHaveLength(count);
+    const pin = withOpenRouterModelRouting({}, { model: MODEL, routing: initial.routing }) as any;
+    expect(pin.providers.openrouter.modelOverrides[MODEL].compat.openRouterRouting).toEqual({
+      only: ['middle', 'cheap', 'expensive'], allow_fallbacks: true, require_parameters: false,
+    });
+  });
+
+  it('coalesces parallel cold activations and does not retry a failed daily build per call', async () => {
+    const cacheDir = await scratch();
+    const { fetchImpl, requests } = dailyFetch();
+    const input = { model: MODEL, cacheDir, apiKey: 'k', fetchImpl };
+    const results = await Promise.all([resolveOpenRouterRouting(input), resolveOpenRouterRouting(input)]);
+    expect(results[0].providers).toEqual(results[1].providers);
+    expect(requests.filter((url) => url.endsWith('/endpoints'))).toHaveLength(1);
+    const failedDir = await scratch();
+    const down = vi.fn(async () => { throw new Error('offline'); }) as unknown as typeof fetch;
+    await resolveOpenRouterRouting({ ...input, cacheDir: failedDir, fetchImpl: down });
+    const count = (down as any).mock.calls.length;
+    await resolveOpenRouterRouting({ ...input, cacheDir: failedDir, fetchImpl: down });
+    expect((down as any).mock.calls).toHaveLength(count);
   });
 });

@@ -1,0 +1,130 @@
+{
+  "screenPx": [
+    1080,
+    2400
+  ],
+  "density": 2.625,
+  "windowOffsetPx": 136,
+  "bandDp": 42,
+  "results": [
+    {
+      "frame": "android-after-pending-bone.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": null,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": null
+    },
+    {
+      "frame": "android-after-pending-obsidian.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": null,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": null
+    },
+    {
+      "frame": "android-after-queued-bone.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 0,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 0
+    },
+    {
+      "frame": "android-after-queued-obsidian.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 0,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 0
+    },
+    {
+      "frame": "android-after-send-keyboard-obsidian.png",
+      "composerTopPx": 1357,
+      "upperAirOffCanvasPixels": 0,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 0
+    },
+    {
+      "frame": "android-after-settled-bone.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 0,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 0
+    },
+    {
+      "frame": "android-after-settled-obsidian.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 0,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 0
+    },
+    {
+      "frame": "android-after-working-bone.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 0,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 0
+    },
+    {
+      "frame": "android-after-working-obsidian.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 0,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 0
+    },
+    {
+      "frame": "android-before-queued-bone.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 8755,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 7215
+    },
+    {
+      "frame": "android-before-queued-obsidian.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 8755,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 5755
+    },
+    {
+      "frame": "android-before-settled-bone.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 8755,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 7215
+    },
+    {
+      "frame": "android-before-settled-obsidian.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 8755,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 5755
+    },
+    {
+      "frame": "android-before-waiting-bone.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 8755,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 7215
+    },
+    {
+      "frame": "android-before-waiting-obsidian.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 8755,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 5755
+    },
+    {
+      "frame": "android-before-working-bone.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 8755,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 7215
+    },
+    {
+      "frame": "android-before-working-obsidian.png",
+      "composerTopPx": 2177,
+      "upperAirOffCanvasPixels": 8755,
+      "composerJoinOffCanvasPixels": 0,
+      "transcriptInkPixelsOutsideGlyph": 5755
+    }
+  ]
+}

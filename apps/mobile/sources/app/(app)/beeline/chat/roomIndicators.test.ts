@@ -138,7 +138,7 @@ describe('server-owned composer status above the Room composer', () => {
     expect(received).toContain('isCorner');
     expect(received).toContain('writeResult.activeSteerAgentIds?.includes');
     expect(received).toContain('turnRequestId: activeAgentTurn.requestId');
-    expect(chatSource).toContain('received={shownComposerAck.received}');
+    expect(chatSource).toContain('received={composerAck.received}');
     expect(chatSource).toContain('STEER_RECEIVED_VISIBLE_MS');
   });
 
@@ -149,20 +149,22 @@ describe('server-owned composer status above the Room composer', () => {
 
   it('renders the turn indicator on its own gate, inside a slot that is always there', () => {
     expect(chatSource).toContain('desktopExperience ? (');
-    // The SLOT is unconditional on phone — it holds the band's measured
-    // height so the transcript does not move when the band comes or goes.
+    // The absolute SLOT is unconditional on phone, so showing the band
+    // never changes the transcript viewport.
     // Only the LINE is gated on a turn. Re-gating the slot on `composerAck`
     // puts the jump straight back.
     expect(chatSource).toMatch(/\{!desktopExperience && \(\s*<TurnBandSlot\s/);
-    // The height lives in `TurnBandSlot`, measured off a hidden copy of the
-    // band. A screen-local reserve keyed off the visible band is what let a
-    // taller first band shrink the transcript once.
+    // A screen-local reserve keyed off the visible band once let a
+    // taller first band shrink the transcript.
     expect(chatSource).not.toContain('minHeight: turnBandReserve');
     expect(chatSource).not.toContain('onLayout={onTurnBandLayout}');
-    expect(chatSource).toContain('{waitingAgents.map((agent) => (');
-    expect(chatSource).toContain('{shownComposerAck ? (');
+    expect(chatSource).not.toContain('WaitingForAgentLine');
+    expect(chatSource).not.toContain('waitingAgents');
+    expect(chatSource).not.toContain('shownComposerAck');
+    expect(chatSource).toContain('applyPendingAgentCommands(writeResult.pendingAgentCommands)');
+    expect(chatSource).toContain('{composerAck ? (');
     expect(chatSource).toContain('<TurnProgressLine');
-    expect(chatSource).toContain('label={shownComposerAck.label}');
+    expect(chatSource).toContain('label={composerAck.label}');
   });
 
   it('uses one optimistic-send overlay for both Rooms and corners', () => {

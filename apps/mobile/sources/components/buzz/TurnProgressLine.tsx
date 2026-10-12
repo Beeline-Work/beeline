@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
 import { HullLivePulse } from './MonoHull';
 import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
@@ -41,7 +41,7 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * never recreates the transcript.
  *
  * The same live treatment also covers the short local "sending…" bridge. It
- * expires at its deadline. Waiting has its own server-owned pending-command line.
+ * expires at its deadline. Accepted but unclaimed commands stay silent.
  *
  * The LINE still goes nowhere — it has no `onPress` and no destination, which
  * is what keeps it from stranding a reader in a dead channel. `onStop` is a
@@ -152,20 +152,6 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
   );
 }
 
-/** The server accepted a tagged message; its helper has not claimed the command yet. */
-export function WaitingForAgentLine({ handle, testID }: { handle: string; testID?: string }) {
-  const { theme } = useUnistyles();
-  const label = `Waiting for @${handle}`;
-  return (
-    <View accessibilityLabel={label} accessibilityLiveRegion="polite" style={styles.bar} testID={testID}>
-      <View style={styles.row}>
-        <View style={styles.glyphCell}><BeelineMarkSpinner ink={theme.buzz.dim} /></View>
-        <Text numberOfLines={1} style={[styles.label, styles.waitingLabel]}>{label}</Text>
-      </View>
-    </View>
-  );
-}
-
 /**
  * Where the turn line lives: in the margin the transcript already leaves below
  * its newest message, painted over it rather than added beneath it.
@@ -190,12 +176,14 @@ export function TurnBandSlot({
   children?: React.ReactNode;
   testID?: string;
 }) {
-  // The slot is absolute (`room-bottom-chrome`): its bottom lands on the
-  // composer's top edge and it takes no room in the column, so the list's
+  const hasLine = React.Children.toArray(children).length > 0;
+  // The slot is absolute (`room-bottom-chrome`), anchored on the composer.
+  // Coverage paints the full air above the ink and overlaps the composer
+  // padding below it. It takes no room in the column, so the list's
   // height is identical whether or not the line is showing. It reserves
   // nothing and has no height of its own for the transcript to move by.
   return (
-    <View pointerEvents="box-none" style={styles.slot} testID={testID}>
+    <View pointerEvents="box-none" style={[styles.slot, hasLine && styles.coverage]} testID={testID}>
       {children}
     </View>
   );
@@ -207,6 +195,7 @@ const styles = StyleSheet.create((theme) => {
   return {
     // The line's surface is the transcript's own; see `room-bottom-chrome`.
     slot: bottomChrome.hangingTurnChrome,
+    coverage: bottomChrome.turnChromeCoverage,
     // The line sits inside the margin the transcript already leaves below its
     // newest message, so it adds no height and must stay one row.
     bar: {
@@ -237,9 +226,6 @@ const styles = StyleSheet.create((theme) => {
       minWidth: 0,
       color: groknight.accent,
       lineHeight: TURN_LABEL_LINE_HEIGHT,
-    },
-    waitingLabel: {
-      color: groknight.dim,
     },
     counter: {
       ...groknight.type.machine,

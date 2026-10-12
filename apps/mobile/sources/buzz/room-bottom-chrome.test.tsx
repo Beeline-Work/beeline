@@ -61,7 +61,7 @@ vi.mock('react-native-reanimated', async () => {
   };
 });
 
-import { TurnBandSlot, TurnProgressLine } from '@/components/buzz/TurnProgressLine';
+import { TurnBandSlot, TurnProgressLine, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { beelineThemes, groknight } from './groknight';
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import { phoneTranscriptTailPadding } from './room-scroll-follow';
@@ -73,6 +73,7 @@ import {
   TURN_LINE_ROW_MIN_HEIGHT,
   TURN_LABEL_LINE_HEIGHT,
   roomBottomChromeStyles,
+  TURN_CHROME_COMPOSER_OVERLAP,
 } from './room-bottom-chrome';
 
 /**
@@ -176,6 +177,36 @@ function newestMessageToComposerGap({ lineShown }: { lineShown: boolean }): numb
 }
 
 describe('the Room turn line paints the transcript margin', () => {
+  it.each(['working', 'settled'] as const)('paints the whole %s band through the composer join', (state) => {
+    const line = state === 'working'
+      ? React.createElement(TurnProgressLine, { label: 'Ruby working…' })
+      : React.createElement(TurnSettledLine, { line: 'Ruby finished' });
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(React.createElement(TurnBandSlot, { testID: 'slot' }, line)); });
+    const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
+    const translation = style.transform?.[0]?.translateY ?? 0;
+    const paintedHeight = TURN_LINE_BOX_HEIGHT + px(style.paddingTop) + px(style.paddingBottom);
+    // The canvas starts at the full 42px band's top and ends INSIDE the
+    // composer, so no shared-edge pixel or outer air can expose the list.
+    expect(paintedHeight - translation).toBe(newestMessageToComposerGap({ lineShown: true }));
+    expect(translation).toBe(TURN_CHROME_COMPOSER_OVERLAP);
+    expect(translation).toBeGreaterThan(1);
+    // Extra bottom padding and translation cancel: the ink does not move.
+    expect(style.paddingBottom - translation).toBe(0);
+    expect(style.position).toBe('absolute');
+    act(() => renderer.unmount());
+  });
+
+  it('paints no extra strip when the slot has no lines (including empty mapped waits)', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(React.createElement(TurnBandSlot, { testID: 'slot' }, [[], null])); });
+    const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
+    expect(style.paddingTop).toBeUndefined();
+    expect(style.paddingBottom).toBeUndefined();
+    expect(style.transform).toBeUndefined();
+    act(() => renderer.unmount());
+  });
+
   it.each(['obsidian', 'bone'] as const)('joins the line and composer on one opaque %s surface', (name) => {
     const theme = beelineThemes[name];
     const styles = roomBottomChromeStyles(theme);

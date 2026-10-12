@@ -4602,6 +4602,10 @@ export class PhoneService {
           await this.viewerWorkbenchWorkspace(viewerId),
         )) as Output<Name>;
       case 'sendFromWallet':
+        await this.requireWorkspaceMember(
+          (input as Input<'sendFromWallet'>).workspaceId,
+          viewerId,
+        );
         return (await sendFromWallet(
           this.database,
           viewerId,

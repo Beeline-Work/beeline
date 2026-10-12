@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PushDeliveryLoop } from './background.js';
 import { PgliteDatabase } from './test-support.js';
+import { postWalletNotice } from './wallet-notices.js';
 
 const person = 'a'.repeat(64),
   teammate = 'b'.repeat(64),
@@ -58,6 +59,21 @@ beforeEach(async () => {
 });
 afterEach(() => db.close());
 describe('push sensitivity service path', () => {
+  it('wallet transaction notices deliver one owner-only DM push with amount and agent', async () => {
+    await db.query(`UPDATE identities SET push_level='direct' WHERE id=$1`, [person]);
+    await postWalletNotice(db, workspace, person, {
+      walletNotice: true, status: 'submitted', operation: 'send', execution: true,
+      amountText: '5 USDC', counterparty: '0xrecipient', chain: 'base', agentId: agent,
+      agentName: '@bee', txUrl: `https://basescan.org/tx/0x${'1'.repeat(64)}`,
+    });
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      text: expect.stringContaining('5 USDC'), workspaceId: workspace,
+    }));
+    expect(send.mock.calls[0]![1].text).toContain('@bee');
+    expect(await loop.runOnce()).toBe(0);
+  });
+
   it('Reproduction PUSH-LEVELS: delivers the final untagged turn in my corner', async () => {
     const turn = 'd'.repeat(64);
     await db.query(

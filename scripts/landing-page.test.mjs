@@ -79,6 +79,14 @@ test('landing page names the browser option once and removes the split download 
   assert.doesNotMatch(html, /class="stores"|class="store"/);
 });
 
+test('landing hero links the launch video and permanent community invite without a private-repo footer link', () => {
+  assert.match(html, /href="https:\/\/youtu\.be\/i2sHELZVlWM"[^>]*>▶ Watch the launch video<\/a>/);
+  assert.match(html, /href="https:\/\/usebeeline\.app\/join\/inv_8765f41a655c33815ea86cecf199ab60983b9326bb02b869f6436af1286dd0f2">Join the Beeline Community<\/a>/);
+  const footer = html.match(/<footer>([\s\S]*?)<\/footer>/)[1];
+  assert.doesNotMatch(footer, /github\.com\/Beeline-Work\/beeline/);
+  assert.doesNotMatch(html, /community-link-pending/);
+});
+
 test('terms page carries the beeline brand tokens and links home', () => {
   assert.match(termsHtml, /<title>Beeline Terms<\/title>/);
   assert.match(termsHtml, /--brass:#d7af5f/);

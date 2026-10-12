@@ -36,19 +36,22 @@ function element(dataset = {}) {
     dataset,
     classList: new FakeClassList(),
     style: { setProperty() {} },
-    setAttribute() {},
-    appendChild() {},
+    attributes: {},
+    children: [],
+    setAttribute(name, value) { this.attributes[name] = value; },
+    appendChild(child) { this.children.push(child); },
     remove() {},
     parentElement: null,
     clientWidth: 0,
+    offsetHeight: 79,
     innerHTML: '',
   };
 }
 
-function runLandingAnimation({ reducedMotion }) {
+function runLandingAnimation({ reducedMotion, width = 880 }) {
   const stage = element();
   const wrap = element();
-  wrap.clientWidth = 880;
+  wrap.clientWidth = width;
   stage.parentElement = wrap;
   const wires = element();
   const screen = element();
@@ -117,6 +120,7 @@ function runLandingAnimation({ reducedMotion }) {
     advanceTo,
     visibleTurns: () => allTurns.filter((turn) => turn.classList.contains('in')).length,
     pendingTimers: () => timers.filter((timer) => !timer.cancelled).length,
+    wirePaths: () => wires.children.filter((child) => child.attributes.d).map((child) => child.attributes.d),
   };
 }
 
@@ -141,4 +145,17 @@ test('landing transcript starts empty on every animated cycle and rests complete
     'reduced motion should keep the completed static transcript',
   );
   assert.equal(reduced.pendingTimers(), 0, 'reduced motion should not schedule animation work');
+});
+
+test('lower profile wires leave the top of each tile upward before curving toward the screen', () => {
+  const mobile = runLandingAnimation({ reducedMotion: true, width: 380 });
+  const profilePaths = mobile.wirePaths().slice(4);
+  assert.equal(profilePaths.length, 2);
+  for (const d of profilePaths) {
+    const [, startY, firstY, channelY] = d.match(/^M [\d.]+ ([\d.]+) V ([\d.]+) Q [\d.]+ ([\d.]+)/);
+    assert.equal(Number(startY), 792 - 79 / 2, 'wire must attach to the upper edge of the profile tile');
+    assert.ok(Number(firstY) < Number(startY), 'wire must leave the profile upward');
+    assert.ok(Number(channelY) < Number(firstY), 'rounded bend must continue upward');
+    assert.ok(Number(channelY) > 710, 'channel must remain below the screen');
+  }
 });

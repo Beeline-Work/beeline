@@ -56,16 +56,12 @@ describe('release data cleanup', () => {
       .toEqual([{ status: 'cancelled' }]);
   });
 
-  it('expires terminal claims outside the candidate window but preserves release catchups', async () => {
+  it('expires terminal claims while retaining mobile read-clear claims for a week', async () => {
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Human')`, [HUMAN]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Space')`, [WORKSPACE]);
     await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [ROOM, WORKSPACE]);
-    await db.query(`INSERT INTO messages(id,room_id,author_id,text)
-      VALUES('catchup',$1,$2,'Release')`, [ROOM, HUMAN]);
     await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment)
       VALUES('device',$1,'ios','physical')`, [HUMAN]);
-    await db.query(`INSERT INTO push_release_catchups(device_token,identity_id,message_id)
-      VALUES('device',$1,'catchup')`, [HUMAN]);
     // An iOS delivered claim no read-clear push has named stays (sendReadClears)
     // for a week, so a Room never read cannot grow claims forever.
     await db.query(`INSERT INTO push_delivery_claims
@@ -74,11 +70,11 @@ describe('release data cleanup', () => {
       ('unnamed','device','delivered',now()-interval '2 hours',NULL),
       ('stale','device','delivered',now()-interval '8 days',NULL),
       ('fresh','device','delivered',now(),NULL),
-      ('catchup','device','failed',now()-interval '2 hours',NULL)`);
+      ('failed','device','failed',now()-interval '2 hours',NULL)`);
     await compactPushClaims(db);
     expect((await db.query(`SELECT message_id FROM push_delivery_claims
       ORDER BY message_id`)).rows).toEqual([
-      { message_id: 'catchup' }, { message_id: 'fresh' }, { message_id: 'unnamed' },
+      { message_id: 'fresh' }, { message_id: 'unnamed' },
     ]);
   });
 });

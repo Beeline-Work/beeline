@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   CONNECTABLE_CONNECTOR_KINDS,
-  CONNECTOR_KINDS,
   isConnectorKind,
   type ConnectorAssignment,
   type ConnectorKind,
@@ -15,11 +14,12 @@ import {
   type WorkbenchCatalogEntry,
 } from '@beeline/api-contract/workbench';
 import type { ConnectionGrant } from '@beeline/api-contract/daemon';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { notifyAgentConfigChange } from './postgres-live.js';
 import {
-  directMessageRoomId,
+  ensureSystemDirectMessageRoom,
   restateSystemLine,
   systemLine,
   type SystemPhrase,
@@ -30,10 +30,7 @@ import {
  *
  * A connection belongs to the HUMAN who provisioned it; every read and write
  * re-checks `owner_identity_id` against the viewer. Receipts the helper
- * reports land as DMs from a hidden CONNECTOR IDENTITY — one per connector
- * type, provisioned exactly the way `@system` is (apps/server/src/system-line.ts):
- * an ordinary `kind='human'` row with a fixed id and `hidden_from_roster=true`,
- * holding one read-only DM per provisioning person.
+ * reports land in the owner's read-only @System DM alongside other system notices.
  */
 
 export const CONNECTOR_METADATA_TTL_MS = 5 * 60_000;
@@ -89,75 +86,6 @@ export function connectorLogo(type: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-/** The deterministic hidden identity that speaks FOR one connector type. */
-export function connectorIdentityId(
-  type: ConnectorKind | (typeof RETIRED_CONNECTOR_KINDS)[number],
-): string {
-  return createHash('sha256').update(`beeline:connector-identity:${type}`).digest('hex');
-}
-
-const CONNECTOR_TYPES_BY_ID = new Map(
-  [...CONNECTOR_KINDS, ...RETIRED_CONNECTOR_KINDS].map((type) => [connectorIdentityId(type), type]),
-);
-
-/** Every fixed connector speaker id, for read surfaces that distinguish its ledger DM. */
-export function connectorIdentityIds(): readonly string[] {
-  return [...CONNECTOR_TYPES_BY_ID.keys()];
-}
-
-/**
- * True when any direct participant of this DM is a connector identity. Those
- * DMs are receipt ledgers, not conversations: only the connector identity
- * itself may post there.
- */
-export function dmParticipantsIncludeConnectorIdentity(
-  participants: readonly string[] | null,
-): boolean {
-  return Boolean(participants?.some((participant) => CONNECTOR_TYPES_BY_ID.has(participant)));
-}
-
-export async function ensureConnectorIdentity(
-  database: SqlDatabase,
-  type: ConnectorKind,
-): Promise<string> {
-  const id = connectorIdentityId(type);
-  await database.query(
-    `INSERT INTO identities(id,kind,name,handle,hidden_from_roster,avatar)
-     VALUES ($1,'human',$2,$3,true,$4) ON CONFLICT(id) DO UPDATE
-     SET name=EXCLUDED.name,handle=EXCLUDED.handle,
-         hidden_from_roster=true,avatar=EXCLUDED.avatar,updated_at=now()`,
-    [id, connectorDisplayName(type), type, `/v1/connectors/logo/${type}.svg`],
-  );
-  return id;
-}
-
-/** The deterministic read-only DM between one connector identity and one human. */
-export async function ensureConnectorDirectMessageRoom(
-  database: SqlDatabase,
-  workspaceId: string,
-  type: ConnectorKind,
-  personId: string,
-): Promise<string> {
-  const connectorId = await ensureConnectorIdentity(database, type);
-  const participants = [connectorId, personId].sort() as [string, string];
-  const roomId = directMessageRoomId(workspaceId, participants);
-  await database.query(
-    `INSERT INTO rooms(id,workspace_id,created_by,name,visibility,direct_participants)
-     VALUES ($1,$2,$3,'Direct message','invite-only',$4::jsonb)
-     ON CONFLICT(id) DO UPDATE SET visibility='invite-only'`,
-    [roomId, workspaceId, connectorId, JSON.stringify(participants)],
-  );
-  for (const memberId of participants)
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES ($1,$2,$3,'member')
-       ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-       DO UPDATE SET removed_at=NULL`,
-      [workspaceId, roomId, memberId],
-    );
-  return roomId;
 }
 
 function formatBytes(bytes: number): string {
@@ -355,15 +283,10 @@ async function postUsageReceiptCard(
     return existing.message_id;
   }
 
-  const roomId = await ensureConnectorDirectMessageRoom(
-    database,
-    connector.workspace_id,
-    connector.connector_type,
-    connection.owner_identity_id,
-  );
+  const roomId = await ensureSystemDirectMessageRoom(database, connector.workspace_id, connection.owner_identity_id);
   const line = await systemLine(database, {
     roomId,
-    authorId: connectorIdentityId(connector.connector_type),
+    authorId: SYSTEM_IDENTITY_ID,
     id: messageId,
     ...phrase,
     presentation: 'card',
@@ -470,12 +393,7 @@ export async function grantSquireToOwnerMachineAgents(
     agentId?: string;
   },
 ): Promise<string[]> {
-  const dmRoomId = await ensureConnectorDirectMessageRoom(
-    database,
-    input.workspaceId,
-    'trusty-squire',
-    input.ownerIdentityId,
-  );
+  const dmRoomId = await ensureSystemDirectMessageRoom(database, input.workspaceId, input.ownerIdentityId);
   const agents = await database.query<{ agent_id: string }>(
     input.agentId
       ? `SELECT a.agent_id FROM agents a

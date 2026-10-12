@@ -13,6 +13,7 @@
       "entry": [
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/{provision-smoke,publish-smoke-replies}.ts",
+        "scripts/prove-tray-inline.ts",
         // CI and the local Android runner invoke these tools by path.
         "scripts/latency-rig/*.{mjs,cjs}",
       ],
@@ -68,6 +69,7 @@
         "scripts/pr-accordion-proof.tsx",
         "scripts/ci-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",
+        "scripts/tray-inline-native-proof.tsx",
         "scripts/needs-you-badge-proof.tsx",
         "scripts/desktop-rail-mine-proof.tsx",
         "scripts/desktop-ui-fixes-proof.tsx",

@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 
 /**
- * The read-only `@system` identity that DMs lifecycle facts and release
- * announcements to people. It is an ordinary human
+ * The read-only `@system` identity that DMs system and connector notices
+ * to people. Release delivery only wakes helpers. It is an ordinary human
  * identity — no daemon, no agent row, no owner — like REVIEW_IDENTITY_ID
  * (apps/server/src/review-access.ts) or SCHEDULE_SCHEDULER_ID
  * (scheduled-prompts.ts), distinguished only by this fixed id and

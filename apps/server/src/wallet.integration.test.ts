@@ -14,7 +14,6 @@ import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { GitHubOperations } from './github-operations.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { walletSource } from './wallet.js';
-import { connectorIdentityId } from './workbench.js';
 import { walletExplorerTxUrl } from '@beeline/api-contract/wallet';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { postWalletNotice, type WalletNotice } from './wallet-notices.js';
@@ -259,8 +258,8 @@ describe('wallet over the fake CDP seam', () => {
         headers: { authorization: `Bearer ${accessToken}` },
       })
     ).json()) as { chats: Array<{ directMessage?: { peer: { handle?: string } } }> };
-    expect(emptyChats.chats.some((chat) => chat.directMessage?.peer.handle === 'wallet')).toBe(
-      false,
+    expect(emptyChats.chats.some((chat) => chat.directMessage?.peer.handle === 'system')).toBe(
+      true,
     );
 
     await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE, ttlHours: 24 });
@@ -274,11 +273,11 @@ describe('wallet over the fake CDP seam', () => {
         directMessage?: { peer: { name: string; handle?: string; avatar?: string } };
       }>;
     };
-    const wallet = chats.chats.find((chat) => chat.directMessage?.peer.handle === 'wallet');
+    const wallet = chats.chats.find((chat) => chat.directMessage?.peer.handle === 'system');
     expect(wallet?.directMessage?.peer).toMatchObject({
-      name: 'Wallet',
-      handle: 'wallet',
-      avatar: 'http://placeholder/v1/connectors/logo/wallet.svg',
+      name: 'System',
+      handle: 'system',
+      avatar: 'http://placeholder/v1/connectors/logo/system.svg',
     });
     expect(wallet?.latestMessage?.text).toContain('granted agents permission to sign');
   });
@@ -704,7 +703,7 @@ describe('wallet over the fake CDP seam', () => {
     expect(history.status).toBe(200);
     expect(JSON.stringify(await history.json())).toContain(rows[0]!.card.txUrl);
     expect((await database.query(`SELECT id FROM messages WHERE author_id=$1 AND card_type='wallet-tx'`,
-      [connectorIdentityId('wallet')])).rows).toHaveLength(0);
+      [SYSTEM_IDENTITY_ID])).rows).toHaveLength(0);
   });
 
   it('pending swaps get one notice without claiming confirmation or crediting output', async () => {

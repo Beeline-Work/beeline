@@ -15,3 +15,7 @@ export * from './feedback.js';
 export * from './agent-sign-in.js';
 
 export * from './corner-lifecycle-contract.js';
+
+/** Invisible WebSocket close signal used only when a helper restarts for an update. */
+export const HELPER_UPDATE_CLOSE_CODE = 4002;
+export const HELPER_UPDATE_CLOSE_REASON = 'helper-update';

@@ -43,7 +43,6 @@ import { REVIEW_IDENTITY_ID, ReviewAccess } from './review-access.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { connectorIdentityId } from './workbench.js';
 import { closeExpiredChoices } from './room-choice.js';
 
 /** Who a message tags, read the way every surface reads it: from its own text. */
@@ -12819,7 +12818,7 @@ describe('monolith integration', () => {
     }>(`SELECT room_id,author_id,card FROM messages WHERE card_type='squire-approval'`);
     expect(rows.rows).toHaveLength(1);
     const row = rows.rows[0]!;
-    expect(row.author_id).toBe(connectorIdentityId('trusty-squire'));
+    expect(row.author_id).toBe(SYSTEM_IDENTITY_ID);
     expect(row.room_id).not.toBe(ROOM);
     expect(row.card).toMatchObject({
       approvalUrl: payload.approvalUrl,
@@ -12859,8 +12858,8 @@ describe('monolith integration', () => {
     expect(rows.rows).toHaveLength(1);
     const row = rows.rows[0]!;
     expect(row.room_id).toBe(ROOM);
-    expect(row.author_id).toBe(connectorIdentityId('trusty-squire'));
-    expect(row.text).toBe('@trusty-squire approved Purchase approval · Noise-cancelling headphones · at Acme');
+    expect(row.author_id).toBe(SYSTEM_IDENTITY_ID);
+    expect(row.text).toBe('Trusty Squire approved Purchase approval · Noise-cancelling headphones · at Acme');
     expect(row.system_event.kind).toBe('squire-approval-decided');
     expect(row.card).toMatchObject({
       approvalId: 'purchase-decided-1',
@@ -12895,7 +12894,7 @@ describe('monolith integration', () => {
         `SELECT text,card FROM messages WHERE card_type='squire-approval-decision' AND card->>'approvalId'='purchase-decided-2'`,
       )
     ).rows[0]!;
-    expect(deniedRow.text).toBe('@trusty-squire denied Purchase approval · A different item');
+    expect(deniedRow.text).toBe('Trusty Squire denied Purchase approval · A different item');
     expect(deniedRow.card).toMatchObject({ status: 'denied' });
     const resumeDenied = await database.query<{ action: string }>(
       `SELECT action FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action='resume'`,
@@ -12922,7 +12921,7 @@ describe('monolith integration', () => {
         `SELECT text,card FROM messages WHERE card_type='squire-approval-decision' AND card->>'approvalId'='fetch-expired-1'`,
       )
     ).rows[0]!;
-    expect(expiredRow.text).toBe('@trusty-squire saw no answer to Credential access approval · Reveal groq');
+    expect(expiredRow.text).toBe('Trusty Squire saw no answer to Credential access approval · Reveal groq');
     expect(expiredRow.card).toMatchObject({ status: 'expired', tool: 'fetch_credential' });
     const resumeExpired = await database.query<{ action: string }>(
       `SELECT action FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action='resume'`,

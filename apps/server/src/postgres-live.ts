@@ -624,7 +624,7 @@ export class PostgresLiveListener {
     if (payload.table === 'helper_release_notifications' &&
         payload.releaseVersion && payload.releaseSha) {
       this.live.publish({
-        type: 'helper-release', roomId: '', agentId: '',
+        type: 'helper-release',
         version: payload.releaseVersion, sha: payload.releaseSha,
       });
       return;
@@ -923,7 +923,7 @@ export class PostgresLiveListener {
         sourceRoomId: payload.sourceRoomId });
       return;
     }
-    const event: LiveEvent = {
+    const event: Extract<LiveEvent, { type: 'invalidate' }> = {
       type: 'invalidate',
       roomId: payload.roomId,
       reason: `postgres:${payload.table}`,

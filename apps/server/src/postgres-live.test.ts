@@ -281,7 +281,7 @@ describe('Postgres live fanout', () => {
       VALUES(true,'v0.0.128',$1)`, ['a'.repeat(40)]);
     await eventually(() => events.some((event) => event.type === 'helper-release'));
     expect(events.filter((event) => event.type === 'helper-release')).toEqual([{
-      type: 'helper-release', roomId: '', agentId: '',
+      type: 'helper-release',
       version: 'v0.0.128', sha: 'a'.repeat(40),
     }]);
     expect(query).toHaveBeenCalledTimes(1);

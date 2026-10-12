@@ -8,6 +8,7 @@ import { MACHINE_SOCKET_PROTOCOL } from './daemon-live.js';
 import { DaemonService } from './daemon-service.js';
 import { migrate, type SqlDatabase } from './database.js';
 import { LiveHub } from './live.js';
+import { ReleaseNotifier } from './release-notify.js';
 import type { PhoneService } from './phone-service.js';
 import { createBeelineServer, type ServerOptions } from './server.js';
 import { PgliteDatabase } from './test-support.js';
@@ -100,6 +101,22 @@ async function register(
 }
 
 describe('one machine socket for every agent on a helper machine', () => {
+  it.each([MACHINE_SOCKET_PROTOCOL, 'bearer.bdt_a'])(
+    'sends release pushes without Room or agent routing fields over %s', async (protocol) => {
+      const live = new LiveHub();
+      const database = { query: vi.fn(async () => ({ rows: [] })) } as unknown as SqlDatabase;
+      const releaseNotify = new ReleaseNotifier(database, { live });
+      const { port } = await start({ live, releaseNotify });
+      const client = await connect(port, protocol);
+      await client.next((frame) => frame.type === 'hello');
+      if (protocol === MACHINE_SOCKET_PROTOCOL) await register(client, AGENT_A, 'bdt_a');
+      live.publish({ type: 'helper-release', version: 'v0.1.35', sha: 'release-sha' });
+      expect(await client.next((frame) => frame.type === 'helper-release')).toEqual({
+        type: 'helper-release', version: 'v0.1.35', sha: 'release-sha',
+      });
+    },
+  );
+
   it('authorizes each agent separately; a retired, invalid or mismatched token rejects only that agent', async () => {
     const live = new LiveHub();
     const { port } = await start({ live });

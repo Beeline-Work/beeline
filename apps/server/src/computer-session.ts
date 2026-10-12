@@ -194,24 +194,39 @@ export async function createComputerSession(
 export async function getComputerSession(database: SqlDatabase, id: string): Promise<ComputerSessionRow | undefined> {
   if (!/^[A-Za-z0-9_-]{43}$/.test(id)) return undefined;
   return (await database.query<ComputerSessionRow>(
-    // An expired link reads as ended at once, before the sweep updates the card.
-    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,
-       CASE WHEN expires_at<=now() THEN 'ended' ELSE status END AS status,
+    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,status,
        relay_instance_id,handoff_count,view_secret
      FROM computer_sessions WHERE id=$1`, [id],
   )).rows[0];
+}
+
+/** A renewed upstream lease cannot resurrect an explicitly ended share. */
+export async function refreshComputerSession(
+  database: SqlDatabase,
+  input: { roomId: string; agentId: string; sessionId: string; upstreamUrl: string; expiresAt: number },
+): Promise<{ live: boolean }> {
+  if (!Number.isFinite(input.expiresAt) || input.expiresAt <= Date.now())
+    throw new Error('computer share expiry is invalid');
+  const result = await database.query(
+    `UPDATE computer_sessions
+     SET expires_at=GREATEST(expires_at,to_timestamp($5::double precision/1000))
+     WHERE room_id=$1 AND agent_id=$2 AND source_session_id=$3 AND upstream_url=$4 AND status='live'`,
+    [input.roomId, input.agentId, input.sessionId, input.upstreamUrl, input.expiresAt],
+  );
+  return { live: Boolean(result.rowCount) };
 }
 
 export async function endComputerSession(
   database: SqlDatabase,
   live: LiveHub | undefined,
   row: ComputerSessionRow,
+  expiredOnly = false,
 ): Promise<void> {
   if (row.status === 'ended') return;
   const changed = await database.transaction(async (db) => {
     const update = await db.query(
       `UPDATE computer_sessions SET status='ended',ended_at=now()
-       WHERE id=$1 AND status='live'`, [row.id],
+       WHERE id=$1 AND status='live' AND (NOT $2::boolean OR expires_at<=now())`, [row.id, expiredOnly],
     );
     if (!update.rowCount) return false;
     await db.query(
@@ -237,9 +252,10 @@ function closeComputerChannels(id: string): void {
 }
 
 /**
- * Ends every live card whose Squire link has expired. The expiry is stored,
- * so a restarted server ends cards that expired while it was down. Another
- * instance may end the row first; this instance still closes its own sockets.
+ * A stale upstream lease prompts a liveness check, never a blind ending.
+ * Squire 1.1.33 keeps its URL alive while the operate session lives, even if
+ * a helper's renewal request is delayed. Gone URLs reconcile session reaps
+ * after restart; transport failures leave the card live for the next sweep.
  */
 export async function expireComputerSessions(database: SqlDatabase, live: LiveHub | undefined): Promise<number> {
   const local = [...new Set([...bodyChannels.keys(), ...squireChannels.keys(), ...handbackWaiters.keys()])];
@@ -248,8 +264,14 @@ export async function expireComputerSessions(database: SqlDatabase, live: LiveHu
      FROM computer_sessions WHERE expires_at<=now() AND (status='live' OR id=ANY($1::text[]))`, [local],
   )).rows;
   for (const row of rows) {
-    await endComputerSession(database, live, row);
-    if (row.status === 'ended') closeComputerChannels(row.id);
+    if (row.status === 'ended') { closeComputerChannels(row.id); continue; }
+    if (row.upstream_url === 'body:') continue;
+    const upstream = await fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(5_000) })
+      .catch(() => undefined);
+    void upstream?.body?.cancel().catch(() => {});
+    if (upstream?.status !== 404 && upstream?.status !== 410) continue;
+    // A helper may have renewed the lease after this sweep selected the row.
+    await endComputerSession(database, live, row, true);
   }
   return rows.length;
 }
@@ -867,7 +889,7 @@ export async function upgradeComputerSession(
     source.once('open', () => console.info(`[computer-share] squire tunnel open session=${id.slice(0, 8)} ms=${Date.now() - startedAt}`));
     let firstJpegLogged = false;
     source.on('message', (data, binary) => {
-      let message: { type?: string; state?: string; url?: string } | undefined;
+      let message: { type?: string; state?: string; url?: string; origin?: string } | undefined;
       try { message = JSON.parse(data.toString()) as typeof message; } catch { /* Forward unknown frames. */ }
       if (message?.type === 'control') {
         if (message.state === 'human' && !channel.humanControl) {
@@ -881,8 +903,11 @@ export async function upgradeComputerSession(
       }
       if (message?.type === 'navigation' && channel.humanControl) {
         let origin: string | undefined;
-        try { if (message.url) origin = new URL(message.url).origin; } catch { /* No page content. */ }
-        void recordComputerActivity(database, row, 'navigation', origin, channel.humanViewerId).catch(() => {});
+        try {
+          const url = new URL(message.url ?? message.origin ?? '');
+          if (url.protocol === 'http:' || url.protocol === 'https:') origin = url.origin;
+        } catch { /* No page content. */ }
+        if (origin) void recordComputerActivity(database, row, 'navigation', origin, channel.humanViewerId).catch(() => {});
       }
       const frame = isFrameMessage(data);
       if (message?.type === 'blank') channel.lastFrame = undefined;
